@@ -13,20 +13,25 @@ on:
     paths:
       - 'src/**'
       - 'bin/**'
+      - 'tests/**'
+      - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'biome.jsonc'
       - '.github/workflows/release.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'bin/**'
       - 'tests/**'
+      - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'biome.jsonc'
       - 'install.sh'
       - '.github/workflows/release.yml'
   workflow_dispatch:
@@ -55,6 +60,8 @@ jobs:
 
       - name: Install and build
         run: npm ci # its prepare script builds the client and the server
+
+      - run: npm run lint
 
       - run: npm run typecheck
 

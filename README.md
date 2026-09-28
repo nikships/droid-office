@@ -421,16 +421,22 @@ Anyone who can sign in can drive Claude Code, OpenCode, Codex or Droid in that d
 ## Development
 
 ```bash
-npm install
+npm install          # also builds, and installs the pre-commit hook
 npm run build        # vite (client) + tsc (server)
+npm run lint         # Biome: lint and formatting check, fails on any warning
+npm run format       # Biome: rewrite the files in the house format
 npm run typecheck
 npm test             # provider, event bridge, queue and PTY integration tests
 node bin/agent-office.js /path/to/project --password dev
 ```
 
+**Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. Fix what `npm run lint` reports rather than silencing it; `npm run format` takes care of the formatting.
+
+**Pre-commit hook.** `npm install` in a clone points git at [`.husky/`](.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't, like the packed release.
+
 `npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers. The PTY host keeps running its old code, though: after changing `ptyhost.ts`, bump `PTY_PROTOCOL` in `ptys.ts` and the next server replaces the host (its workers resume their sessions).
 
-**Releases.** Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](.github/workflows/release.yml), and `install.sh` installs the newest one. The workflow builds and typechecks the office, runs the tests, packs the release with an `npm-shrinkwrap.json` so every install gets the tested dependency versions, then installs the pack through `install.sh` and starts it before publishing. Pull requests run the same steps but publish nothing. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so bump `package.json` to start a new minor version.
+**Releases.** Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](.github/workflows/release.yml), and `install.sh` installs the newest one. The workflow builds, lints and typechecks the office, runs the tests, packs the release with an `npm-shrinkwrap.json` so every install gets the tested dependency versions, then installs the pack through `install.sh` and starts it before publishing. Pull requests run the same steps but publish nothing. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so bump `package.json` to start a new minor version.
 
 ## License
 
