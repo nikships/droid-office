@@ -2,7 +2,7 @@
 
 - This directory is the Vite root; the config is the repository root's `vite.config.ts`. An HTML page ships only if it is listed in `build.rollupOptions.input` there; unlisted pages such as `vr-preview.html` exist only under the dev server.
 - `tsconfig.client.json` (Bundler resolution, DOM lib, no Node types) typechecks this directory. Relative imports have no extension.
-- `package.json` and `vite.config.mjs` here are detection shims for the IWSDK CLI. Never run `npm install` here or add dependencies to them; dependencies go in the root `package.json`.
+- `package.json`, `package-lock.json` and `vite.config.mjs` here are detection shims for the IWSDK CLI. Never add dependencies to them; dependencies go in the root `package.json`. The shim's only dependency is the `@iwsdk/cli` pin, which must equal the root lockfile's version (`tests/iwsdk-shim.test.ts`). After bumping `@iwsdk/cli` at the root, set the same version here and run `npm install --package-lock-only` in this directory.
 - Keep modules that `tests/` imports (for example `vr/math.ts`, `world/office.ts`, `player.ts`) loadable in Node: no DOM or WebGL access at import time.
 
 ## WebXR and the IWSDK runtime

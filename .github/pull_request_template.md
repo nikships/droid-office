@@ -18,14 +18,14 @@ These are the checks `.github/workflows/release.yml` runs on this PR, in order. 
 
 - [ ] `npm ci` (its `prepare` script runs `npm run build`, building the client and the server)
 - [ ] `npm run typecheck`
-- [ ] `npm test`
+- [ ] `npm run test:coverage` (the tests, failing below the coverage thresholds in `package.json`)
 - [ ] Pack the release (`npm pack` of the built app with `npm-shrinkwrap.json`)
 - [ ] Install the packed release with `install.sh` and start it (smoke test: `/login.html` answers 200)
 
-`release.yml` only runs on pull requests that touch `src/**`, `bin/**`, `tests/**`, `package.json`, `package-lock.json`, `tsconfig*.json`, `vite.config.ts`, `install.sh` or the workflow itself.
+`release.yml` runs only on pull requests that touch a path in its `pull_request.paths` filter.
 
 ## Review checklist
 
-- [ ] `PTY_PROTOCOL` in `src/server/ptys.ts` is bumped if the messages in `src/server/ptyhost.ts` changed
+- [ ] `PTY_PROTOCOL` in `src/server/ptys.ts` is bumped if code the PTY host runs changed (see `src/server/AGENTS.md`)
 - [ ] `README.md` and `AGENTS.md` are updated for user-visible behavior
 - [ ] Any new check is also a step in `.github/workflows/release.yml`, and the CI checks list above matches it

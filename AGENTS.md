@@ -30,6 +30,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | Build `dist/public` (client) and `dist/server` (server) | `npm run build` |
 | Typecheck server and client | `npm run typecheck` |
 | All tests | `npm test` |
+| All tests with the coverage thresholds in its script (Node 22.8+) | `npm run test:coverage` |
 | One test file | `node --import tsx --test tests/<name>.test.ts` |
 | Run the built office against a project | `node bin/agent-office.js <project> --password dev` |
 
@@ -40,6 +41,7 @@ Tests are flat files named `tests/<name>.test.ts` using `node:test` and `node:as
 ## Conventions
 
 - `.agent-office/` is runtime state (config, workers, scrollback, queue, worktrees). Never commit it.
+- `.env.example` lists every environment variable the office and the installers read. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.
 - Commit subjects use a conventional prefix: `feat:`, `fix:`, `docs:` or `chore:`.
 
@@ -50,7 +52,7 @@ Run the checks CI runs (`.github/workflows/release.yml`, Node 22), in order, and
 ```bash
 npm ci
 npm run typecheck
-npm test
+npm run test:coverage
 ```
 
 CI then packs the release and starts it through `install.sh` (steps "Pack the release" and "Install it with install.sh and start it"). When changing `install.sh`, the `files` or `bin` fields of `package.json`, or server startup, also run those steps locally as the workflow writes them.
