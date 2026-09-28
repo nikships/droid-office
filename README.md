@@ -119,6 +119,8 @@ It prints the URLs your teammates can open. If you leave out `--password`, it ge
 
 The office keeps its data in `~/agent-office` (`--home` or `AGENT_OFFICE_HOME` to move it) and clones projects into their own folder, `~/.agent-office/projects/<owner>/<repo>`, so they never land inside a checkout of Agent Office. To clone them somewhere else, like `~/Workspace`, an admin picks the **Workspace folder** in ⚙️ Settings (or start with `--projects` or `AGENT_OFFICE_PROJECTS`). A folder inside a git checkout is refused. Floors you already have stay where they are, and a checkout of the same repository that's already in the new folder is used as it is. The list of floors is `~/agent-office/.agent-office/floors.json`. Each floor keeps its workers, queue, pictures and worktrees in its own checkout's `.agent-office/`.
 
+Every setting the office and the installers read from the environment is listed, with its default, in [`.env.example`](.env.example). The office doesn't load `.env` files: export the settings in the shell that starts it, or set them as `Environment=` lines in its systemd unit. A command-line flag wins over its environment variable.
+
 To start the office in a project you already have, pass its folder: `agent-office ~/code/my-project`. That project becomes a floor, and the office keeps its data in `~/code/my-project/.agent-office` as it always did. An office that already ran in a project (from before there were floors) carries on in it when you start `agent-office` there again.
 
 ### Accounts
@@ -424,7 +426,7 @@ Anyone who can sign in can drive Claude Code, OpenCode, Codex or Droid in that d
 npm install
 npm run build        # vite (client) + tsc (server)
 npm run typecheck
-npm test             # provider, event bridge, queue and PTY integration tests
+npm test             # provider, event bridge, queue and PTY integration tests, and .env.example in sync
 node bin/agent-office.js /path/to/project --password dev
 ```
 
