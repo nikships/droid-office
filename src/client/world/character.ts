@@ -179,8 +179,8 @@ export function boxOfStuff(): THREE.Group {
   const card = toon('#c8955c');
   g.add(mesh(new THREE.BoxGeometry(W, T, D), card, 0, T / 2, 0));
   for (const s of [-1, 1]) {
-    g.add(mesh(new THREE.BoxGeometry(W, H, T), card, 0, H / 2, s * (D - T) / 2));
-    g.add(mesh(new THREE.BoxGeometry(T, H, D - 2 * T), card, s * (W - T) / 2, H / 2, 0));
+    g.add(mesh(new THREE.BoxGeometry(W, H, T), card, 0, H / 2, (s * (D - T)) / 2));
+    g.add(mesh(new THREE.BoxGeometry(T, H, D - 2 * T), card, (s * (W - T)) / 2, H / 2, 0));
   }
   // Full to the brim.
   g.add(mesh(new THREE.BoxGeometry(W - 2 * T, 0.01, D - 2 * T), toon('#8b6a47'), 0, H * 0.7, 0, false));
@@ -1326,8 +1326,7 @@ export class Worker {
     const { status, bouncing: bounce, task } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
     const bg = hot ? (status === 'done' ? '#caffbf' : '#ffd6e0') : status === 'working' ? '#ffec99' : '#fffaf3';
-    const bubble =
-      status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : '';
+    const bubble = status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : '';
     const key = task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble;
     if (key === this.bubbleKey) return;
     this.bubbleKey = key;
@@ -1367,11 +1366,7 @@ export class Worker {
       this.action = this.nextAction;
       this.actionT = 0;
     }
-    const act: Act =
-      hopping || (this.bouncing && this.status === 'done') ? 'up'
-      : this.status === 'needs_input' ? 'waiting'
-      : this.status === 'working' ? (this.action ?? 'type')
-      : 'rest';
+    const act: Act = hopping || (this.bouncing && this.status === 'done') ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest';
     const s = this.pose(act, dt, t);
     // A zombie at rest stands with its arms out in front of it, groping, listing to one side and swaying.
     const shamble = this.costume === 'halloween' ? Math.min(1, this.acts.get('rest') ?? 0) : 0;

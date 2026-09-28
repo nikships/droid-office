@@ -24,10 +24,18 @@ test('normalizes overlapping Codex token buckets without inventing cost or API c
   assert.equal(codexTokenUsage({ ...totals(), total_tokens: 200000 })?.totalTokens, 200000);
   assert.equal(codexTokenUsage({ ...totals(), total_tokens: 200000 })?.incomplete, true);
   assert.equal(codexTokenUsage({ ...totals(), cache_write_input_tokens: undefined })?.cacheWrite, 0);
-  for (const bad of [null, { ...totals(), input_tokens: -1 }, { ...totals(), cached_input_tokens: 121 }, { ...totals(), reasoning_output_tokens: 31 }, { ...totals(), total_tokens: Number.MAX_SAFE_INTEGER + 1 }, { ...totals(), output_tokens: Infinity }]) assert.equal(codexTokenUsage(bad), undefined);
+  for (const bad of [
+    null,
+    { ...totals(), input_tokens: -1 },
+    { ...totals(), cached_input_tokens: 121 },
+    { ...totals(), reasoning_output_tokens: 31 },
+    { ...totals(), total_tokens: Number.MAX_SAFE_INTEGER + 1 },
+    { ...totals(), output_tokens: Infinity },
+  ])
+    assert.equal(codexTokenUsage(bad), undefined);
 });
 
-test('replaces cumulative snapshots, ignores replays, and waits for complete appended lines', t => {
+test('replaces cumulative snapshots, ignores replays, and waits for complete appended lines', (t) => {
   const { home, file } = fixture(t);
   const reader = new CodexUsageReader();
   writeFileSync(file, header() + event() + '\n' + event() + '\n');
@@ -41,7 +49,7 @@ test('replaces cumulative snapshots, ignores replays, and waits for complete app
   assert.deepEqual(reader.read(file, 'thread-1', home), codexTokenUsage(totals(140, 40)));
 });
 
-test('rejects foreign session metadata, outside paths and symlink escapes', t => {
+test('rejects foreign session metadata, outside paths and symlink escapes', (t) => {
   const { home, file } = fixture(t);
   const reader = new CodexUsageReader();
   writeFileSync(file, header('foreign-thread') + event() + '\n');
@@ -55,7 +63,7 @@ test('rejects foreign session metadata, outside paths and symlink escapes', t =>
   assert.equal(reader.read(link, 'thread-1', home), undefined);
 });
 
-test('bounded tail recovers cumulative usage after large non-metric records', t => {
+test('bounded tail recovers cumulative usage after large non-metric records', (t) => {
   const { home, file } = fixture(t);
   writeFileSync(file, header() + JSON.stringify({ type: 'response_item', payload: 'x'.repeat(5 * 1024 * 1024) }) + '\n' + event() + '\n');
   assert.deepEqual(new CodexUsageReader().read(file, 'thread-1', home), codexTokenUsage(totals()));

@@ -416,7 +416,8 @@ export function loadConfig(argv: string[]): Config {
   };
 }
 
-export async function ensureSelfSigned(cfg: Config): Promise<void> {  if (!cfg.tls || cfg.tls.cert) return;
+export async function ensureSelfSigned(cfg: Config): Promise<void> {
+  if (!cfg.tls || cfg.tls.cert) return;
   const certPath = path.join(cfg.dataDir, 'tls-cert.pem');
   const keyPath = path.join(cfg.dataDir, 'tls-key.pem');
   if (existsSync(certPath) && existsSync(keyPath)) {

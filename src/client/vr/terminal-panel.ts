@@ -290,16 +290,35 @@ export class VrTerminalPanel {
     const visible = Math.min(total || VISIBLE_ROWS, VISIBLE_ROWS);
     const buttons = [
       { id: 'close', rect: CLOSE_BTN, onClick: () => this.close() },
-      { id: 'ask', rect: ASK_BTN, onClick: () => { if (this.workerId) this.onAsk?.(this.workerId); } },
+      {
+        id: 'ask',
+        rect: ASK_BTN,
+        onClick: () => {
+          if (this.workerId) this.onAsk?.(this.workerId);
+        },
+      },
       { id: 'kill', rect: KILL_BTN, onClick: () => this.tapKill() },
       { id: 'keys', rect: KEYS_BTN, onClick: () => this.onKeyboard?.() },
     ];
     const w = this.deps.getWorker(this.workerId);
     if (w && isAsleep(w.status)) {
-      buttons.push({ id: 'resume', rect: RESUME_BTN, onClick: () => { if (this.workerId) this.onResume?.(this.workerId); } });
+      buttons.push({
+        id: 'resume',
+        rect: RESUME_BTN,
+        onClick: () => {
+          if (this.workerId) this.onResume?.(this.workerId);
+        },
+      });
     }
     if (s && total > visible && !this.pinned(total, visible)) {
-      buttons.push({ id: 'jump', rect: JUMP_BTN, onClick: () => { this.panel.setScrollOffset('term', Number.MAX_SAFE_INTEGER); this.stickToBottom = true; } });
+      buttons.push({
+        id: 'jump',
+        rect: JUMP_BTN,
+        onClick: () => {
+          this.panel.setScrollOffset('term', Number.MAX_SAFE_INTEGER);
+          this.stickToBottom = true;
+        },
+      });
     }
     this.panel.setButtons(buttons);
   }
@@ -360,7 +379,8 @@ export class VrTerminalPanel {
       ctx.fillText('⌨', k.x + k.w / 2, hy + 1);
     }
     // Wake (asleep only) and send-home buttons.
-    if (worker && isAsleep(worker.status)) {      const r = { x: RESUME_BTN.x * w, y: RESUME_BTN.y * h, w: RESUME_BTN.w * w, h: RESUME_BTN.h * h };
+    if (worker && isAsleep(worker.status)) {
+      const r = { x: RESUME_BTN.x * w, y: RESUME_BTN.y * h, w: RESUME_BTN.w * w, h: RESUME_BTN.h * h };
       const hot = state.hoverId === 'resume' || state.pressedId === 'resume';
       ctx.fillStyle = hot ? '#ee6018' : 'rgba(255,255,255,0.08)';
       ctx.beginPath();

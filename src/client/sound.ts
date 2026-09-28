@@ -357,7 +357,9 @@ export class OfficeSound {
         [0.3, 0.04],
         [0.4, 0],
       ]);
-      o.connect(biquad(ctx, 'bandpass', 1400, 2.5)).connect(g).connect(out);
+      o.connect(biquad(ctx, 'bandpass', 1400, 2.5))
+        .connect(g)
+        .connect(out);
       for (const n of [o, wobble]) {
         n.start(t0);
         n.stop(t0 + 0.45);
@@ -587,7 +589,10 @@ export class OfficeSound {
     const breath = this.noise(this.buf.white);
     const rasp = ctx.createGain();
     rasp.gain.value = 0.35;
-    breath.connect(biquad(ctx, 'bandpass', 1800, 0.8)).connect(rasp).connect(g);
+    breath
+      .connect(biquad(ctx, 'bandpass', 1800, 0.8))
+      .connect(rasp)
+      .connect(g);
     voice.start(t);
     voice.stop(t + len + 0.02);
     breath.start(t, rand(0, 4));
@@ -647,7 +652,10 @@ export class OfficeSound {
         [0.01, peak * 0.5],
         [0.25, 0],
       ]);
-      crack.connect(biquad(ctx, 'bandpass', 1800, 0.6)).connect(cg).connect(this.ambience);
+      crack
+        .connect(biquad(ctx, 'bandpass', 1800, 0.6))
+        .connect(cg)
+        .connect(this.ambience);
       crack.start(t0);
       crack.stop(t0 + 0.3);
     }
@@ -707,7 +715,10 @@ export class OfficeSound {
     thumpG.gain.setValueAtTime(0.0001, t0);
     thumpG.gain.exponentialRampToValueAtTime(0.45 * strength, t0 + 0.005);
     thumpG.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
-    thump.connect(biquad(ctx, 'lowpass', 420, 0.8)).connect(thumpG).connect(out);
+    thump
+      .connect(biquad(ctx, 'lowpass', 420, 0.8))
+      .connect(thumpG)
+      .connect(out);
     thump.start(t0);
     thump.stop(t0 + 0.15);
     const wash = this.noise(this.buf.white, true);
@@ -715,7 +726,10 @@ export class OfficeSound {
     washG.gain.setValueAtTime(0, t0);
     washG.gain.linearRampToValueAtTime(0.03 * strength, t0 + 0.45);
     washG.gain.exponentialRampToValueAtTime(0.0001, t0 + 3.5 * long);
-    wash.connect(biquad(ctx, 'bandpass', 3200, 1.2)).connect(washG).connect(out);
+    wash
+      .connect(biquad(ctx, 'bandpass', 3200, 1.2))
+      .connect(washG)
+      .connect(out);
     wash.start(t0);
     wash.stop(t0 + 3.5 * long + 0.05);
   }
@@ -866,7 +880,9 @@ export class OfficeSound {
       [0.05, 0.08],
       [0.11, 0],
     ]);
-    o.connect(biquad(ctx, 'bandpass', 1100, 2.5)).connect(g).connect(this.ambience);
+    o.connect(biquad(ctx, 'bandpass', 1100, 2.5))
+      .connect(g)
+      .connect(this.ambience);
     o.start(t0);
     o.stop(t0 + 0.14);
     // The catch in the throat, just before it.
@@ -876,7 +892,9 @@ export class OfficeSound {
       [0.004, 0.08],
       [0.02, 0],
     ]);
-    n.connect(biquad(ctx, 'bandpass', 1800, 1)).connect(ng).connect(this.ambience);
+    n.connect(biquad(ctx, 'bandpass', 1800, 1))
+      .connect(ng)
+      .connect(this.ambience);
     n.start(t0 - 0.015);
     n.stop(t0 + 0.02);
   }

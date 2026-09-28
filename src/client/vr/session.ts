@@ -423,7 +423,25 @@ export class VRSession {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 8), new THREE.MeshBasicMaterial({ color: 0x7df9ff, depthTest: false, transparent: true }));
       dot.renderOrder = 9998;
       targetRay.add(line, dot);
-      const st: RayState = { targetRay, grip, hand, source: null, handed: null, selectHeld: false, pinchHeld: false, hold: new PinchHold(), touch: new TouchPress(), hover: null, uiConsumed: false, teleportHeld: false, wasN: false, line, dot, ctrlModel, fallback };
+      const st: RayState = {
+        targetRay,
+        grip,
+        hand,
+        source: null,
+        handed: null,
+        selectHeld: false,
+        pinchHeld: false,
+        hold: new PinchHold(),
+        touch: new TouchPress(),
+        hover: null,
+        uiConsumed: false,
+        teleportHeld: false,
+        wasN: false,
+        line,
+        dot,
+        ctrlModel,
+        fallback,
+      };
       targetRay.addEventListener('connected', (e) => this.onConnected(i, e.data));
       targetRay.addEventListener('disconnected', () => this.onDisconnected(i));
       // Three forwards every session event to all three spaces of a source, so the target-ray
@@ -440,16 +458,10 @@ export class VRSession {
       this.rays.push(st);
     }
     // Parabolic arc + landing marker, drawn while a teleport is aimed.
-    this.arc = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(new Array(ARC_STEPS).fill(0).map(() => new THREE.Vector3())),
-      new THREE.LineBasicMaterial({ color: 0x7df9ff, transparent: true, opacity: 0.9 }),
-    );
+    this.arc = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new Array(ARC_STEPS).fill(0).map(() => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0x7df9ff, transparent: true, opacity: 0.9 }));
     this.arc.frustumCulled = false;
     this.arc.visible = false;
-    this.marker = new THREE.Mesh(
-      new THREE.RingGeometry(0.18, 0.26, 32),
-      new THREE.MeshBasicMaterial({ color: 0x51ff7a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }),
-    );
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.26, 32), new THREE.MeshBasicMaterial({ color: 0x51ff7a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.renderOrder = 9998;
     this.marker.visible = false;
@@ -806,8 +818,12 @@ export class VRSession {
       // only holds the headset pose in reference space (see HeadPose), so it can't feed this.
       this.headWorld(_h);
       this.lookDir(_d);
-      _head.pos[0] = _h.x; _head.pos[1] = _h.y; _head.pos[2] = _h.z;
-      _head.dir[0] = _d.x; _head.dir[1] = _d.y; _head.dir[2] = _d.z;
+      _head.pos[0] = _h.x;
+      _head.pos[1] = _h.y;
+      _head.pos[2] = _h.z;
+      _head.dir[0] = _d.x;
+      _head.dir[1] = _d.y;
+      _head.dir[2] = _d.z;
       this.ui.update(dt, _head);
       for (let i = 0; i < 2; i++) {
         if (this.rays[i]?.uiConsumed) this.ui.stickScroll(i, this.stick(i).y, dt);
@@ -837,7 +853,7 @@ export class VRSession {
     const blocked = !!this.hooks.player.rig || this.teleportAiming();
     for (const st of this.rays) {
       const tip = st.source?.hand && st.hand.visible ? st.hand.joints['index-finger-tip'] : null;
-      const target = !blocked && !st.uiConsumed && tip?.visible ? this.hooks.touchTarget?.(tip.getWorldPosition(_e)) ?? null : null;
+      const target = !blocked && !st.uiConsumed && tip?.visible ? (this.hooks.touchTarget?.(tip.getWorldPosition(_e)) ?? null) : null;
       const pressed = st.touch.update(!!target, now);
       if (st.touch.active) st.hold.consume();
       if (pressed && target) {

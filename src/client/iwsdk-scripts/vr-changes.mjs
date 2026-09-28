@@ -106,11 +106,25 @@ export default async function run({ frame }) {
   }
   const workers = await frame.evaluate(() => window.__vrtest?.workers?.() ?? []);
   console.log('CHANGES:', JSON.stringify({ ...out, shellGone: !workers.some((w) => w.id === shell) }));
-  const ok = out.rowBtn === true && out.view === 'changes' &&
-    out.commitBtn === true && out.commitAsked?.prompt === true && out.committed?.ahead === 1 &&
-    out.prBtn === true && out.prTitle === 'zzz probe commit' && out.prBodyAsked?.prompt === true && out.noPr === null &&
-    out.undone === true && out.relisted?.length === 1 && out.relisted[0].uncommitted === true &&
-    out.discardBtn === true && typeof out.armToast === 'string' && out.armToast.includes('back to the last commit') && out.armView === 'changes' &&
-    out.fireBtn === true && out.discarded === true && !workers.some((w) => w.id === shell);
+  const ok =
+    out.rowBtn === true &&
+    out.view === 'changes' &&
+    out.commitBtn === true &&
+    out.commitAsked?.prompt === true &&
+    out.committed?.ahead === 1 &&
+    out.prBtn === true &&
+    out.prTitle === 'zzz probe commit' &&
+    out.prBodyAsked?.prompt === true &&
+    out.noPr === null &&
+    out.undone === true &&
+    out.relisted?.length === 1 &&
+    out.relisted[0].uncommitted === true &&
+    out.discardBtn === true &&
+    typeof out.armToast === 'string' &&
+    out.armToast.includes('back to the last commit') &&
+    out.armView === 'changes' &&
+    out.fireBtn === true &&
+    out.discarded === true &&
+    !workers.some((w) => w.id === shell);
   return { ok };
 }

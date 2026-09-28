@@ -237,13 +237,7 @@ export class Arcade {
     if (!g || !g.playing) return 'none';
     const pieces = f.pieces - g.pieces;
     const lines = f.lines - g.lines;
-    const adds =
-      pieces >= 0 &&
-      lines >= 0 &&
-      f.score >= g.score &&
-      pieces <= this.pieces.left(g.keys) &&
-      f.lines * 10 <= f.pieces * 4 &&
-      f.level === levelFor(f.lines);
+    const adds = pieces >= 0 && lines >= 0 && f.score >= g.score && pieces <= this.pieces.left(g.keys) && f.lines * 10 <= f.pieces * 4 && f.level === levelFor(f.lines);
     const clears = adds ? g.clears + clearPoints(g.lines, lines, pieces) : -Infinity;
     if (!adds || f.score > DROP_POINTS * (f.pieces + 1) + clears) {
       this.games.delete(g.id);

@@ -1,15 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const CODEX_HOOK_EVENTS = [
-  'SessionStart',
-  'UserPromptSubmit',
-  'PreToolUse',
-  'PostToolUse',
-  'PermissionRequest',
-  'Stop',
-  'Interrupt',
-] as const;
+export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'Interrupt'] as const;
 
 export type CodexHookEventName = (typeof CODEX_HOOK_EVENTS)[number];
 

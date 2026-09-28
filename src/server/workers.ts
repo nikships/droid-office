@@ -33,9 +33,34 @@ import type { Capacity } from './machine.js';
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 
 const NAMES = [
-  'Pixel', 'Byte', 'Nibble', 'Sprocket', 'Widget', 'Gizmo', 'Bolt', 'Cosmo', 'Dot', 'Echo',
-  'Fizz', 'Glitch', 'Hopper', 'Jinx', 'Kilo', 'Lumen', 'Mochi', 'Noodle', 'Orbit', 'Pip',
-  'Quark', 'Rivet', 'Sparky', 'Tofu', 'Uno', 'Volt', 'Waffle', 'Zippy',
+  'Pixel',
+  'Byte',
+  'Nibble',
+  'Sprocket',
+  'Widget',
+  'Gizmo',
+  'Bolt',
+  'Cosmo',
+  'Dot',
+  'Echo',
+  'Fizz',
+  'Glitch',
+  'Hopper',
+  'Jinx',
+  'Kilo',
+  'Lumen',
+  'Mochi',
+  'Noodle',
+  'Orbit',
+  'Pip',
+  'Quark',
+  'Rivet',
+  'Sparky',
+  'Tofu',
+  'Uno',
+  'Volt',
+  'Waffle',
+  'Zippy',
 ];
 const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb', '#f7aef8', '#72ddf7', '#ffb400', '#00a6a6'];
 
@@ -43,9 +68,19 @@ const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb'
 // would make a worker think it is a child session — that silently turns off transcript saving,
 // which breaks resume.
 const SCRUB_ENV = new Set([
-  'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_EXECPATH', 'CLAUDE_PID', 'CLAUDE_EFFORT',
-  'CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
-  'NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION',
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
+  'CODEX_THREAD_ID',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'VSCODE_INJECTION',
+  'TERM_PROGRAM',
+  'TERM_PROGRAM_VERSION',
 ]);
 const SCRUB_PREFIXES = ['CLAUDE_CODE_SESSION', 'CLAUDE_CODE_CHILD', 'CLAUDE_CODE_MESSAGING', 'NEBULA_', 'AGENT_OFFICE_'];
 const scrubbed = (k: string) => SCRUB_ENV.has(k) || SCRUB_PREFIXES.some((p) => k.startsWith(p));
@@ -260,8 +295,18 @@ export class WorkerManager {
    * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares.
    */
-  spawn(deskId: string, by: string, prompt?: string, worktree = false, kind: WorkerKind = 'agent', provider?: AgentProvider, model?: string, effort?: AgentEffort, meeting?: { id: string; worktree?: WorkerInfo['worktree'] }): WorkerInfo | string {
-    const selectedProvider = kind === 'agent' ? provider ?? this.defaultProvider : undefined;
+  spawn(
+    deskId: string,
+    by: string,
+    prompt?: string,
+    worktree = false,
+    kind: WorkerKind = 'agent',
+    provider?: AgentProvider,
+    model?: string,
+    effort?: AgentEffort,
+    meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
+  ): WorkerInfo | string {
+    const selectedProvider = kind === 'agent' ? (provider ?? this.defaultProvider) : undefined;
     const modelError = validateWorkerModel(kind, selectedProvider, model);
     if (modelError) return modelError;
     const effortError = validateWorkerEffort(kind, selectedProvider, effort);
@@ -1137,7 +1182,7 @@ export class WorkerManager {
           ? 'Open the terminal: complete login and review Office hooks in /hooks'
           : info.provider === 'droid'
             ? 'Waiting on Droid setup or hooks — open the terminal'
-          : 'Waiting on a setup prompt (trust / login) — open the terminal';
+            : 'Waiting on a setup prompt (trust / login) — open the terminal';
         this.setStatus(w, 'needs_input');
       } else this.setStatus(w, 'idle');
     }, 12000);
@@ -1159,7 +1204,7 @@ export class WorkerManager {
   /** What a worker's terminal runs: the shell, the configured agent command, or another provider's CLI. */
   private command(info: WorkerInfo): string {
     if (info.kind === 'shell') return defaultShell();
-    return info.provider === this.defaultProvider ? this.agentCmd : info.provider ?? this.agentCmd;
+    return info.provider === this.defaultProvider ? this.agentCmd : (info.provider ?? this.agentCmd);
   }
 
   private cwd(info: WorkerInfo): string {
@@ -1283,9 +1328,7 @@ export class WorkerManager {
     const blocked = loggedOut || (SETUP_PROMPT.test(text) && (s === 'starting' || w.bootBlocked));
     if (blocked && s !== 'needs_input') {
       w.bootBlocked = true;
-      w.info.activity = loggedOut
-        ? "Claude isn't signed in on this machine — open the terminal and type /login"
-        : 'Waiting on a setup prompt (trust / login) — open the terminal';
+      w.info.activity = loggedOut ? "Claude isn't signed in on this machine — open the terminal and type /login" : 'Waiting on a setup prompt (trust / login) — open the terminal';
       this.setStatus(w, 'needs_input');
     } else if (!blocked && w.bootBlocked && s === 'needs_input') {
       w.bootBlocked = false;
@@ -1434,13 +1477,14 @@ process.stdin.on('end', () => {
       for (const s of saved) {
         if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
         const tracker = restoreTracker(s.tracker);
-        const provider = s.kind === 'shell'
-          ? undefined
-          : s.provider === 'claude' || s.provider === 'opencode' || s.provider === 'codex' || s.provider === 'droid' || s.provider === 'custom'
-            ? s.provider
-            : tracker.transcript
-              ? 'claude'
-              : this.defaultProvider;
+        const provider =
+          s.kind === 'shell'
+            ? undefined
+            : s.provider === 'claude' || s.provider === 'opencode' || s.provider === 'codex' || s.provider === 'droid' || s.provider === 'custom'
+              ? s.provider
+              : tracker.transcript
+                ? 'claude'
+                : this.defaultProvider;
         const info: WorkerInfo = {
           id: s.id,
           kind: s.kind === 'shell' ? 'shell' : 'agent',
@@ -1542,12 +1586,17 @@ function validTask(t: unknown): WorkerTask | undefined {
 function isOpenCodeHookEvent(value: unknown): value is OpenCodeStatusEvent {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  return typeof v.type === 'string' && ['session', 'prompt', 'tool', 'permission', 'question', 'error'].includes(v.type)
-    && typeof v.sessionId === 'string' && v.sessionId.length > 0
-    && typeof v.status === 'string' && ['starting', 'working', 'needs_input', 'done'].includes(v.status)
-    && (v.prompt === undefined || typeof v.prompt === 'string')
-    && (v.tool === undefined || typeof v.tool === 'string')
-    && (v.detail === undefined || typeof v.detail === 'string');
+  return (
+    typeof v.type === 'string' &&
+    ['session', 'prompt', 'tool', 'permission', 'question', 'error'].includes(v.type) &&
+    typeof v.sessionId === 'string' &&
+    v.sessionId.length > 0 &&
+    typeof v.status === 'string' &&
+    ['starting', 'working', 'needs_input', 'done'].includes(v.status) &&
+    (v.prompt === undefined || typeof v.prompt === 'string') &&
+    (v.tool === undefined || typeof v.tool === 'string') &&
+    (v.detail === undefined || typeof v.detail === 'string')
+  );
 }
 
 function snapshotScreen(term: HeadlessTerminal, last: string[]) {
@@ -1701,7 +1750,11 @@ function run(cmd: string, args: string[], cwd: string, timeout = 30_000): Promis
  */
 function draftPr(info: WorkerInfo, commits: string[], by: string): { title: string; body: string } {
   const task = (info.prompt ?? '').replace(/\r\n?/g, '\n').trim();
-  const firstLine = task.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const firstLine =
+    task
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean) ?? '';
   // The issues board hands work over as: Work on GitHub issue #12: "Title" (or GitLab issue).
   const issue = /\bissue #(\d+):\s*["“](.+?)["”]\.?\s*$/i.exec(firstLine);
   const title = truncate(issue?.[2] || firstLine.replace(/[.:;,]+$/, '') || commits[0]?.replace(/^\S+\s+/, '') || info.worktree?.branch || info.name, PR_TITLE_MAX);

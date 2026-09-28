@@ -141,7 +141,14 @@ export class VrPromptPanel {
     ];
     if (opts.engine) {
       const engine = opts.engine;
-      buttons.push({ id: 'engine', rect: ENGINE_BTN, onClick: () => { engine.onCycle(); this.panel.markDirty(); } });
+      buttons.push({
+        id: 'engine',
+        rect: ENGINE_BTN,
+        onClick: () => {
+          engine.onCycle();
+          this.panel.markDirty();
+        },
+      });
     }
     if (opts.alt) {
       buttons.push({ id: 'alt', rect: ALT_BTN, onClick: () => this.chooseAlt() });
