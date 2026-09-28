@@ -13,10 +13,15 @@ on:
     paths:
       - 'src/**'
       - 'bin/**'
+      - 'tests/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'install.sh'
+      - 'install.ps1'
+      - '.env.example'
+      - '.gitignore'
       - '.github/workflows/release.yml'
   pull_request:
     paths:
@@ -28,6 +33,9 @@ on:
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'install.sh'
+      - 'install.ps1'
+      - '.env.example'
+      - '.gitignore'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
