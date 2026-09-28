@@ -249,6 +249,13 @@ first (`npm ci --legacy-peer-deps`). Factory reloads the project config automati
 the runtime, browser and XR tools become available without a global MCP entry.
 `--no-install` prevents the MCP launcher from downloading a different CLI version.
 
+`src/client/package.json` is a detection shim, never installed: the CLI treats the nearest
+directory with a `package.json` that lists an `@iwsdk/*` package plus a Vite config as the
+workspace, and the Vite plugin publishes its session under the Vite root (`src/client`).
+Its `@iwsdk/cli` pin and `src/client/package-lock.json` must match the root lockfile;
+`tests/iwsdk-shim.test.ts` fails when they drift. After bumping `@iwsdk/cli` at the root,
+update the shim's pin and run `npm install --package-lock-only` in `src/client`.
+
 Start the test runtime with `npm run dev:runtime` when using the browser/XR tools.
 Runtime status and target discovery report whether a session is ready; they do not
 start a browser or imply that a physical headset is connected.
