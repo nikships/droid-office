@@ -278,7 +278,11 @@ export function textToAdf(text: string): { type: 'doc'; version: 1; content: Adf
 
 // ---- The board ---------------------------------------------------------------------------------------
 
-/** The columns of a board, from the Agile API's `board/{id}/configuration`. */
+/**
+ * The columns of a board, from the Agile API's `board/{id}/configuration`. A column with no statuses
+ * is left out, as Jira leaves it off the board: a kanban board's Backlog column, while its backlog is
+ * off, is one.
+ */
 export function columnsOf(config: unknown): JiraColumn[] {
   const cols = (config as { columnConfig?: { columns?: unknown[] } } | undefined)?.columnConfig?.columns;
   if (!Array.isArray(cols)) return [];
@@ -287,7 +291,23 @@ export function columnsOf(config: unknown): JiraColumn[] {
       const col = c as { name?: unknown; statuses?: { id?: unknown }[] };
       return { name: str(col.name) || '?', statusIds: (Array.isArray(col.statuses) ? col.statuses : []).map((s) => String(s?.id ?? '')).filter(Boolean) };
     })
-    .filter((c) => c.name);
+    .filter((c) => c.name && c.statusIds.length);
+}
+
+/**
+ * A kanban board's sub-filter (`subQuery` in its configuration), which Jira applies on top of the
+ * board's filter: an issue it doesn't match isn't on the board. Undefined when the board has none.
+ */
+export function subQueryOf(config: unknown): string | undefined {
+  const q = str((config as { subQuery?: { query?: unknown } } | undefined)?.subQuery?.query)
+    .replace(/\s+order\s+by\s[\s\S]*$/i, '')
+    .trim();
+  return q || undefined;
+}
+
+/** The JQL for the Jira tab: the epic's direct children that the board's sub-filter lets through, in the board's rank order. */
+export function childrenJql(epic: string, subQuery?: string): string {
+  return `parent = ${epic}${subQuery ? ` AND (${subQuery})` : ''} ORDER BY Rank ASC`;
 }
 
 /** Where tickets go on the Jira tab: the board's columns in order, plus one for statuses the board has no column for. */

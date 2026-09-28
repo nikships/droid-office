@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { FloorJira, JiraApi, type JiraError, JiraOffice, jiraSite, redact, ticketOf, workerTicket } from '../src/server/jira.js';
-import { adfToMarkdown, columnsOf, jiraKey, keysIn, pickTransition, textToAdf, ticketColumns, ticketPrompt, type JiraBoardState, type JiraTicket, type JiraTransition } from '../src/shared/jira.js';
+import { adfToMarkdown, childrenJql, columnsOf, jiraKey, keysIn, pickTransition, subQueryOf, textToAdf, ticketColumns, ticketPrompt, type JiraBoardState, type JiraTicket, type JiraTransition } from '../src/shared/jira.js';
 
 const TOKEN = 'ATATT3xFfGF0-secret-token-value';
 const SITE = 'https://example.atlassian.net';
@@ -152,9 +152,11 @@ async function connected(routes: Parameters<typeof fakeJira>[0]) {
 
 const EPIC = { key: 'EDP-168', fields: { summary: 'In-app chat', issuetype: { name: 'Epic', hierarchyLevel: 1 }, project: { key: 'EDP' } } };
 const CONFIG = {
+  subQuery: { query: 'fixVersion in unreleasedVersions() OR fixVersion is EMPTY' },
   columnConfig: {
     columns: [
-      { name: 'Backlog', statuses: [{ id: '1' }] },
+      { name: 'Backlog', statuses: [] },
+      { name: 'To Do', statuses: [{ id: '1' }] },
       { name: 'In Progress', statuses: [{ id: '3' }] },
       { name: 'Review', statuses: [{ id: '10' }] },
       { name: 'Done', statuses: [{ id: '5' }, { id: '6' }] },
@@ -249,11 +251,11 @@ test("the board shows the epic's direct children in the board's columns, and sav
   assert.ok('epic' in r);
   await floor.refresh(true);
   const search = jira.calls.find((c) => c.url === '/rest/api/3/search/jql');
-  assert.equal(search?.body.jql, 'parent = EDP-168 ORDER BY Rank ASC');
+  assert.equal(search?.body.jql, 'parent = EDP-168 AND (fixVersion in unreleasedVersions() OR fixVersion is EMPTY) ORDER BY Rank ASC');
   const board = boards.at(-1)!;
   assert.deepEqual(
     board.columns.map((c) => c.name),
-    ['Backlog', 'In Progress', 'Review', 'Done'],
+    ['To Do', 'In Progress', 'Review', 'Done'],
   );
   assert.deepEqual(
     board.items.map((t) => [t.key, t.status, t.assignee, t.url]),
@@ -291,7 +293,7 @@ test('the board backs off when Jira rate limits it', async () => {
 test('maps statuses to the board columns, with a column for statuses it has none for', () => {
   const columns = columnsOf(CONFIG);
   assert.deepEqual(columns, [
-    { name: 'Backlog', statusIds: ['1'] },
+    { name: 'To Do', statusIds: ['1'] },
     { name: 'In Progress', statusIds: ['3'] },
     { name: 'Review', statusIds: ['10'] },
     { name: 'Done', statusIds: ['5', '6'] },
@@ -300,7 +302,7 @@ test('maps statuses to the board columns, with a column for statuses it has none
   assert.deepEqual(
     out.map((c) => [c.name, c.items.map((t) => t.key)]),
     [
-      ['Backlog', ['A-1']],
+      ['To Do', ['A-1']],
       ['In Progress', ['A-4']],
       ['Review', []],
       ['Done', ['A-2']],
@@ -308,6 +310,12 @@ test('maps statuses to the board columns, with a column for statuses it has none
     ],
   );
   assert.deepEqual(columnsOf({}), []);
+  assert.equal(subQueryOf(CONFIG), 'fixVersion in unreleasedVersions() OR fixVersion is EMPTY');
+  assert.equal(subQueryOf({ subQuery: { query: ' labels = x ORDER BY Rank ' } }), 'labels = x');
+  assert.equal(subQueryOf({ subQuery: { query: '' } }), undefined);
+  assert.equal(subQueryOf({}), undefined);
+  assert.equal(childrenJql('EDP-168'), 'parent = EDP-168 ORDER BY Rank ASC');
+  assert.equal(childrenJql('EDP-168', 'labels = x'), 'parent = EDP-168 AND (labels = x) ORDER BY Rank ASC');
 });
 
 const T = (id: string, name: string, to: string, toCategory: JiraTransition['toCategory']): JiraTransition => ({ id, name, to, toCategory });
@@ -491,6 +499,12 @@ test('claiming assigns the ticket to the office and moves it to In Progress; a m
   assert.equal(await floor.claim('EDP-12'), undefined);
   assert.deepEqual(jira.calls.find((c) => c.method === 'PUT')?.body, { accountId: 'acc-1' });
   assert.equal(status.name, 'In Progress');
+  // Handed out again while it's in review, it stays in review.
+  status = { id: '41', name: 'In Review', statusCategory: { key: 'indeterminate' } };
+  const moves = jira.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/transitions')).length;
+  assert.equal(await floor.claim('EDP-12'), undefined);
+  assert.equal(status.name, 'In Review');
+  assert.equal(jira.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/transitions')).length, moves);
   const pr = { number: 3, url: 'https://github.com/o/r/pull/3', title: 'EDP-12: Fix' };
   assert.equal(await floor.finish('EDP-12', pr), undefined);
   assert.equal(status.name, 'Done');

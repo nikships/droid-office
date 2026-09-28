@@ -2,9 +2,11 @@ import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync 
 import path from 'node:path';
 import {
   adfToMarkdown,
+  childrenJql,
   columnsOf,
   jiraKey,
   pickTransition,
+  subQueryOf,
   textToAdf,
   type JiraBoardChoice,
   type JiraBoardState,
@@ -181,17 +183,19 @@ export class JiraApi {
     return out;
   }
 
-  async columns(boardId: number): Promise<JiraColumn[]> {
-    return columnsOf(await this.request('GET', `/rest/agile/1.0/board/${boardId}/configuration`));
+  /** The board's columns and its sub-filter. */
+  async board(boardId: number): Promise<{ columns: JiraColumn[]; subQuery?: string }> {
+    const config = await this.request('GET', `/rest/agile/1.0/board/${boardId}/configuration`);
+    return { columns: columnsOf(config), subQuery: subQueryOf(config) };
   }
 
-  /** The epic's direct children, in the board's rank order. */
-  async children(epic: string): Promise<RawIssue[]> {
+  /** The epic's direct children that the board's sub-filter lets through, in the board's rank order. */
+  async children(epic: string, subQuery?: string): Promise<RawIssue[]> {
     const out: RawIssue[] = [];
     let nextPageToken: string | undefined;
     do {
       const page = await this.request<{ issues?: RawIssue[]; nextPageToken?: string; isLast?: boolean }>('POST', '/rest/api/3/search/jql', {
-        jql: `parent = ${epic} ORDER BY Rank ASC`,
+        jql: childrenJql(epic, subQuery),
         fields: CARD_FIELDS,
         maxResults: 100,
         ...(nextPageToken ? { nextPageToken } : {}),
@@ -415,6 +419,8 @@ export class FloorJira {
   board: JiraBoardState | null = null;
   private file: string;
   private columnsAt = 0;
+  /** The board's sub-filter, read with its columns. */
+  private subQuery?: string;
   private backoffUntil = 0;
   private strikes = 0;
   /** Tickets already moved to Done for a merged PR, by "<key>#<pr>", so a second look doesn't comment again. */
@@ -446,6 +452,7 @@ export class FloorJira {
   /** The office connected, reconnected or disconnected: start over. Resolves once the board is read again. */
   connectionChanged(): Promise<void> {
     this.columnsAt = 0;
+    this.subQuery = undefined;
     this.backoffUntil = 0;
     this.strikes = 0;
     this.board = this.emptyBoard();
@@ -488,7 +495,8 @@ export class FloorJira {
     }
     if (!board) return { choose: boards };
     try {
-      await api.columns(board.id);
+      const config = await api.board(board.id);
+      if (!config.columns.length) return { error: `The ${board.name} board has no columns with statuses in them, so there's nothing to sort the tickets into` };
     } catch (err) {
       return { error: `Couldn't read the columns of the ${board.name} board: ${(err as Error).message}` };
     }
@@ -518,9 +526,14 @@ export class FloorJira {
     this.board = { ...this.board, loading: true };
     this.events.board(this.board);
     try {
-      const columns = force || !this.board.columns.length || Date.now() - this.columnsAt > COLUMNS_MS ? await api.columns(epic.boardId) : this.board.columns;
-      this.columnsAt = columns === this.board.columns ? this.columnsAt : Date.now();
-      const items = (await api.children(epic.key)).map((r) => ticketOf(api.site, r));
+      let columns = this.board.columns;
+      if (force || !columns.length || Date.now() - this.columnsAt > COLUMNS_MS) {
+        const config = await api.board(epic.boardId);
+        columns = config.columns;
+        this.subQuery = config.subQuery;
+        this.columnsAt = Date.now();
+      }
+      const items = (await api.children(epic.key, this.subQuery)).map((r) => ticketOf(api.site, r));
       if (this.epic !== epic) return;
       this.strikes = 0;
       this.board = { epic: epic.key, columns, items, fetchedAt: Date.now(), loading: false };
@@ -615,8 +628,11 @@ export class FloorJira {
       const me = this.office.accountId;
       if (!me) return 'The office is not connected to Jira';
       await api.assign(key, me);
-      const status = String((await api.issue(key, ['status'])).fields?.status?.name ?? '');
-      if (!/^in[\s-]*progress$/i.test(status)) {
+      const current = (await api.issue(key, ['status'])).fields?.status;
+      const status = String(current?.name ?? '');
+      // Already under way, in review (which a board like EDP's keeps in its In Progress column) or
+      // finished: picking it up again doesn't send it back.
+      if (!/^in[\s-]*progress$/i.test(status) && !/review/i.test(status) && current?.statusCategory?.key !== 'done') {
         const move = pickTransition(await api.transitions(key), 'progress');
         if (move && move.to !== status) await api.transition(key, move.id);
       }
