@@ -14,10 +14,12 @@ on:
       - 'src/**'
       - 'bin/**'
       - 'tests/**'
+      - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'biome.jsonc'
       - 'install.sh'
       - 'install.ps1'
       - '.env.example'
@@ -28,10 +30,12 @@ on:
       - 'src/**'
       - 'bin/**'
       - 'tests/**'
+      - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
+      - 'biome.jsonc'
       - 'install.sh'
       - 'install.ps1'
       - '.env.example'
@@ -63,6 +67,8 @@ jobs:
 
       - name: Install and build
         run: npm ci # its prepare script builds the client and the server
+
+      - run: npm run lint
 
       - run: npm run typecheck
 
