@@ -10,7 +10,6 @@
  * to the bottom.
  */
 
-import type * as THREE from 'three';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, type Run, type WorkerInfo } from '../../shared/protocol';
 import { findLine, type BufferLike } from '../../shared/search';
 import { isAsleep } from '../../shared/status';
@@ -101,7 +100,7 @@ export class VrTerminalPanel {
 
   constructor(deps: VrTerminalDeps, widthM = 0.92, heightM = 0.6) {
     this.deps = deps;
-    this.panel = new WorldPanel({ width: widthM, height: heightM, paint: (ctx, w, h, dirty, state) => this.paint(ctx, w, h, state) });
+    this.panel = new WorldPanel({ width: widthM, height: heightM, paint: (ctx, w, h, _dirty, state) => this.paint(ctx, w, h, state) });
     this.panel.setScrollRegion('term', BODY);
     this.panel.onScroll = () => {
       this.stickToBottom = false;

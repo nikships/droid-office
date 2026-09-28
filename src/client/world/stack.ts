@@ -141,7 +141,7 @@ function shaft(shape: 'square' | 'round', half: number, from: number, to: number
   for (let i = 0; i < pos.count; i++) {
     // 1 at the hole, 0 at the far end.
     const k = to > from ? 0.5 - pos.getY(i) / h : 0.5 + pos.getY(i) / h;
-    c.copy(near).lerp(far, Math.min(1, Math.pow(1 - k, 0.7)));
+    c.copy(near).lerp(far, Math.min(1, (1 - k) ** 0.7));
     colors.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));

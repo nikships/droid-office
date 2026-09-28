@@ -22,7 +22,6 @@ function fixture(t: { after(fn: () => void): void }) {
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
   const target: ChangesTarget = { name: 'Worker 1', cwd: dir, rel: '' };
   const changes = new Changes(
-    dir,
     'main',
     (id) => (id === 'w1' ? target : undefined),
     () => undefined,

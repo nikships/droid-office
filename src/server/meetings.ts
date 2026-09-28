@@ -245,7 +245,7 @@ export class MeetingRoom {
   /** Stops the meeting that's running. Its workers stay at the table. */
   stop(by: string): string | undefined {
     const m = this.current;
-    if (!m || m.status !== 'running') return 'No meeting is on';
+    if (m?.status !== 'running') return 'No meeting is on';
     this.halt(m, `stopped by ${by}`);
     return undefined;
   }
@@ -496,7 +496,7 @@ export class MeetingRoom {
     const own = path.resolve(this.dir, '.agent-office', 'worktrees') + path.sep;
     for (const leftover of [m.notes, m.pattern === 'review' ? m.output : undefined]) {
       const abs = leftover && path.resolve(cwd, leftover);
-      if (abs && abs.startsWith(own)) rmSync(abs, { recursive: true, force: true });
+      if (abs?.startsWith(own)) rmSync(abs, { recursive: true, force: true });
     }
     const state = await this.trees.inspect(wt);
     if (state.error || state.dirty) {
@@ -590,7 +590,6 @@ export class MeetingRoom {
 
   /** The parts of step `step` of round `round`, or null when that round has no such step. */
   private plan(m: Meeting, round: number, step: number): Part[] | null {
-    const n = m.seats.length;
     // Parts name their files by full path: a worktree sits inside the project's own folder, and an
     // agent can take a relative path to be the project's (and then it's asked about writing outside).
     const A = (rel: string) => path.join(this.cwd(m), rel);

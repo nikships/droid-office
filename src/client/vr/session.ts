@@ -23,7 +23,7 @@ import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.
 import { GRAVITY, STEP } from '../player';
 import type { PlayerController } from '../player';
 import type { Settings } from '../state';
-import type { Collider, InteractKind, Interactable } from '../world/office';
+import type { InteractKind, Interactable } from '../world/office';
 import type { CarriedIssue, GhIssue } from '../../shared/protocol';
 import type { HeadPose } from './math';
 import { describeSessionError, requestVRSession, type VrReferenceSpace } from './support';
@@ -354,7 +354,6 @@ export class VRSession {
   sway = 0;
 
   private renderer: THREE.WebGLRenderer;
-  private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private hooks: VRHooks;
   private session: XRSession | null = null;
@@ -386,7 +385,6 @@ export class VRSession {
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, hooks: VRHooks) {
     this.renderer = renderer;
-    this.scene = scene;
     this.camera = camera;
     this.hooks = hooks;
     this.dolly.visible = false;

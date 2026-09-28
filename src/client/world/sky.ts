@@ -174,7 +174,7 @@ const HAZE = /* glsl */ `
 // Everything with fog gets the haze above; every lit material also gets the lines before that,
 // sharing one set of uniforms. Nothing else in the office uses onBeforeCompile, so this is its
 // default; unlit ones (glass, signs, outlines) only get the haze.
-THREE.Material.prototype.onBeforeCompile = function (shader) {
+THREE.Material.prototype.onBeforeCompile = (shader) => {
   if (shader.fragmentShader.includes('#include <fog_fragment>')) {
     shader.uniforms.skyStreet = uniforms.skyStreet;
     shader.vertexShader = shader.vertexShader.replace('#include <fog_pars_vertex>', `#include <fog_pars_vertex>\n${HAZE_PARS_VERTEX}`).replace('#include <fog_vertex>', `#include <fog_vertex>\n${HAZE_VERTEX}`);

@@ -101,7 +101,7 @@ export function writeCodexHook(dataDir: string): string {
 }
 
 /** The helper only reads bounded hook stdin and the worker bridge environment. */
-export const CODEX_HOOK_SOURCE = String.raw`'use strict';
+export const CODEX_HOOK_SOURCE = `'use strict';
 const MAX = 64 * 1024;
 const EVENTS = new Set(${JSON.stringify(CODEX_HOOK_EVENTS)});
 const MAX_ID = 160;

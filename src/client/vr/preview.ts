@@ -410,7 +410,7 @@ button('terminal: close', () => vrUi.closeTerminal());
 const menuAnchor = vrUi.menu.panel.group.position.clone();
 button(
   'follow: on',
-  (function () {
+  (() => {
     let on = true;
     return function (this: HTMLButtonElement) {
       on = !on;

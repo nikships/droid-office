@@ -595,7 +595,7 @@ class VrUi implements VrUiHandle {
     const st = this.rays.get(rayId);
     if (!st?.panel) return;
     const entry = this.ordered().find((e) => e.ui === st.panel);
-    if (!entry || !entry.scrollId) return;
+    if (!entry?.scrollId) return;
     st.panel.panel.scrollStick(entry.scrollId, axisY, dt, 12);
   };
 

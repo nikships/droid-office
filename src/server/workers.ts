@@ -631,7 +631,7 @@ export class WorkerManager {
   /** Claude Code hook callback. */
   handleHook(workerId: string, token: string, event: string, payload: any): boolean {
     const w = this.workers.get(workerId);
-    if (!w || !w.pty || w.info.kind !== 'agent' || (w.info.provider !== 'claude' && w.info.provider !== 'custom') || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || w.info.kind !== 'agent' || (w.info.provider !== 'claude' && w.info.provider !== 'custom') || !safeEq(token, w.hookToken)) return false;
     const now = Date.now();
     if (payload?.session_id && typeof payload.session_id === 'string' && payload.session_id !== w.info.sessionId) {
       w.info.sessionId = payload.session_id;
@@ -702,7 +702,7 @@ export class WorkerManager {
   /** Droid lifecycle hooks do not use Claude's transcript or spend ledger. */
   handleDroidHook(workerId: string, token: string, event: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
-    if (!w || !w.pty || w.info.kind !== 'agent' || w.info.provider !== 'droid' || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || w.info.kind !== 'agent' || w.info.provider !== 'droid' || !safeEq(token, w.hookToken)) return false;
     if (!payload || typeof payload !== 'object') return false;
     const report = payload as Record<string, unknown>;
     if (report.hook_event_name !== event || typeof report.session_id !== 'string' || !report.session_id) return false;
@@ -748,7 +748,7 @@ export class WorkerManager {
   /** Native Codex lifecycle hooks register the root rollout for bounded metric reads. */
   handleCodexHook(workerId: string, token: string, event: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
-    if (!w || !w.pty || w.info.kind !== 'agent' || w.info.provider !== 'codex' || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || w.info.kind !== 'agent' || w.info.provider !== 'codex' || !safeEq(token, w.hookToken)) return false;
     const report = normalizeCodexHook(event, payload);
     if (!report) return false;
     if (w.info.sessionId && w.info.sessionId !== report.sessionId && event !== 'SessionStart') return false;
@@ -797,7 +797,7 @@ export class WorkerManager {
         }
         busy();
         break;
-      case 'PermissionRequest':
+      case 'PermissionRequest': {
         w.info.activity = `Wants permission: ${truncate(report.tool ?? 'tool', 80)}`;
         // PermissionRequest has no tool_use_id in the native schema. Keep every matching
         // active call pending so an unrelated parallel tool cannot dismiss the prompt.
@@ -806,6 +806,7 @@ export class WorkerManager {
         for (const [id] of candidates) w.codexPending.add(id);
         this.setStatus(w, 'needs_input');
         break;
+      }
       case 'PostToolUse':
         if (report.toolUseId) {
           w.codexTools.delete(report.toolUseId);
@@ -827,7 +828,7 @@ export class WorkerManager {
   /** OpenCode plugin callback. The plugin has already filtered child sessions before this bridge. */
   handleOpenCodeHook(workerId: string, token: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
-    if (!w || !w.pty || w.info.kind !== 'agent' || w.info.provider !== 'opencode' || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || w.info.kind !== 'agent' || w.info.provider !== 'opencode' || !safeEq(token, w.hookToken)) return false;
     if (payload && typeof payload === 'object' && 'type' in payload && payload.type === 'usage') {
       const report = payload as { sessionId?: unknown; usage?: unknown };
       const usage = reportedUsage(report.usage);
@@ -1376,7 +1377,7 @@ process.stdin.on('end', () => {
     const commandFor = (provider: 'claude' | 'droid', event: string) => {
       const curl =
         `curl -sS -m 3 --retry ${HOOK_TRIES - 1} --retry-delay 1 --retry-connrefused -X POST -H "Authorization: Bearer $AGENT_OFFICE_HOOK_TOKEN" -H "Content-Type: application/json" ` +
-        `--data-binary @- \"$AGENT_OFFICE_HOOK_URL/hooks/${provider}?worker=$AGENT_OFFICE_WORKER_ID&event=${event}\"`;
+        `--data-binary @- "$AGENT_OFFICE_HOOK_URL/hooks/${provider}?worker=$AGENT_OFFICE_WORKER_ID&event=${event}"`;
       return (
         `if [ -z "$AGENT_OFFICE_WORKER_ID" ] || [ -z "$AGENT_OFFICE_HOOK_URL" ]; then exit 0; fi; ` +
         `if command -v curl >/dev/null 2>&1; then ${curl} >/dev/null 2>&1; ` +
@@ -1714,7 +1715,7 @@ export function resolveCommand(cmd: string): string | null {
       .trim()
       .split('\n')
       .pop();
-    if (found && found.startsWith('/')) return found;
+    if (found?.startsWith('/')) return found;
   } catch {
     // fall through
   }

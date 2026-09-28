@@ -157,7 +157,7 @@ function blocks(kind: number, rot: number): [number, number][] {
 
 /** Seconds per row at a level: a second at 1, quicker and quicker after. */
 function gravity(level: number): number {
-  return Math.pow(0.8 - (level - 1) * 0.007, level - 1);
+  return (0.8 - (level - 1) * 0.007) ** (level - 1);
 }
 
 export class Blocks {

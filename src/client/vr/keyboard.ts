@@ -8,7 +8,6 @@
  * backspace as DEL, enter as CR, esc, tab, arrows as CSI, and ctrl+letter as control codes.
  */
 
-import type * as THREE from 'three';
 import { TERM_FONT } from '../fonts';
 import { keyRects, type HeadPose, type KeyDef, type KeyRect, type Rect } from './math';
 import { WorldPanel } from './panel';

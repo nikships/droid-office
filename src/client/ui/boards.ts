@@ -103,7 +103,7 @@ function queueChip(issue: number): Node | '' {
   return t.pr ? h('span.qchip.done', {}, `🔀 ${words().pr} ${words().ref(t.pr.number)} · ${provider}`) : '';
 }
 
-function card(ref: string, title: string, meta: (Node | string)[], i: number, onclick: () => void) {
+function card(ref: string, title: string, meta: (Node | string)[], onclick: () => void) {
   return h(
     'li.card',
     { tabindex: 0, onclick, onkeydown: ((e: KeyboardEvent) => e.key === 'Enter' && onclick()) as EventListener },
@@ -136,9 +136,9 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     if (kind === 'issues') {
       for (const col of issueColumns(store.issues.items)) {
         const ul = h('ul');
-        col.items.forEach((it, i) =>
+        col.items.forEach((it) =>
           ul.append(
-            card(`#${it.number}`, it.title, [...labelChips(it.labels), queueChip(it.number), it.assignees.length ? `👤 ${it.assignees.join(', ')}` : `by ${it.author}`, it.comments ? `💬 ${it.comments}` : '', timeAgo(it.updatedAt)], i, () =>
+            card(`#${it.number}`, it.title, [...labelChips(it.labels), queueChip(it.number), it.assignees.length ? `👤 ${it.assignees.join(', ')}` : `by ${it.author}`, it.comments ? `💬 ${it.comments}` : '', timeAgo(it.updatedAt)], () =>
               openIssue(it, net, actions),
             ),
           ),
@@ -149,7 +149,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     } else {
       for (const col of pullColumns(store.pulls.items)) {
         const ul = h('ul');
-        col.items.forEach((it, i) => {
+        col.items.forEach((it) => {
           const w = workerForPull(store.workers.values(), it);
           ul.append(
             card(
@@ -165,7 +165,6 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
                 h('span', { style: 'color:var(--danger)' }, `-${it.deletions}`),
                 timeAgo(it.updatedAt),
               ],
-              i,
               () => openPull(it, net, actions),
             ),
           );

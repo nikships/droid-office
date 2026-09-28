@@ -238,7 +238,7 @@ export class Laptop {
 
   private setLid(open: number) {
     this.openT = open;
-    const e = 1 - Math.pow(1 - open, 3);
+    const e = 1 - (1 - open) ** 3;
     this.lid.rotation.x = Math.PI / 2 - e * (Math.PI / 2 + 0.22);
   }
 

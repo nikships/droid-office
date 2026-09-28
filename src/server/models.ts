@@ -31,7 +31,7 @@ export async function fetchOpenCodeModels(command: string, cwd: string, runner: 
     });
     const models: string[] = [];
     const seen = new Set<string>();
-    for (const raw of result.stdout.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '').split(/\r?\n/)) {
+    for (const raw of result.stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').split(/\r?\n/)) {
       const model = raw.trim().replace(/^[-*]\s+/, '');
       if (isValidOpenCodeModel(model) && !seen.has(model)) {
         seen.add(model);

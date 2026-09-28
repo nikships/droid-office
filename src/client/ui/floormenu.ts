@@ -29,7 +29,10 @@ export function closeFloorMenu() {
 
 /** Opens the floor list under `anchor`, or closes it if it's open. */
 export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): void {
-  if (current) return current.close();
+  if (current) {
+    current.close();
+    return;
+  }
   const el = h('div.floor-menu.panel', { role: 'menu', 'aria-label': 'Floors' });
 
   const item = (f: FloorInfo, i: number, here: number) => {

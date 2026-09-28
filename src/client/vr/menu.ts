@@ -19,7 +19,6 @@
  * in the terminal): the main menu grows a 📝 Changes row while a terminal is focused.
  */
 
-import type * as THREE from 'three';
 import type { ChangeStatus, ChangesState, ChatLine, FloorInfo, GhIssue, GhMergeMethod, GhPull, GhState, MeetingState, PeerInfo, QueueState, QueueTask, SearchResults, ServicesState, TerminalHit, WorkerInfo } from '../../shared/protocol';
 import { fmtTokens } from '../../shared/protocol';
 import { MEETING_PATTERNS, meetingSpend } from '../../shared/meetings';
@@ -501,7 +500,7 @@ export class VrMenu {
   /** The search view's rows: matching chat lines first, then terminal lines (the search window's order). */
   private searchRows(): ({ kind: 'chat'; chat: ChatLine } | { kind: 'term'; hit: TerminalHit })[] {
     const s = this.stores.getSearch();
-    if (!s || s.status !== 'done' || !s.results) return [];
+    if (s?.status !== 'done' || !s.results) return [];
     const rows: ({ kind: 'chat'; chat: ChatLine } | { kind: 'term'; hit: TerminalHit })[] = s.results.chat.map((chat) => ({ kind: 'chat' as const, chat }));
     // Workers sent home since the search ran have nothing left to open (the search window's rule).
     for (const hit of s.results.terminals) {
@@ -1708,7 +1707,7 @@ export class VrMenu {
     const d = this.detail;
     if (!d || this.view !== 'detail' || d.kind !== 'pull' || d.number !== number) return;
     const m = this.mergeFor(number);
-    if (!m || m.state !== 'ready' || !m.status?.can) return;
+    if (m?.state !== 'ready' || !m.status?.can) return;
     if (this.mergeArmedFor === number && performance.now() < this.mergeArmedUntil) {
       this.mergeArmedFor = null;
       this.mergeArmedUntil = 0;

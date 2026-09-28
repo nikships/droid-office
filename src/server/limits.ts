@@ -165,6 +165,6 @@ function ask(claude: string, env: Record<string, string>): Promise<any> {
     child.on('error', () => finish(null));
     child.on('close', () => finish(null));
     child.stdin.on('error', () => {});
-    child.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'usage', request: { subtype: 'get_usage', skip_behaviors: true } }) + '\n');
+    child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'usage', request: { subtype: 'get_usage', skip_behaviors: true } })}\n`);
   });
 }

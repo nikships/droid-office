@@ -5,7 +5,6 @@
  * (⏎ sends, esc cancels, ⌫ edits, ←/→ move). Single-line input with wrapped display.
  */
 
-import type * as THREE from 'three';
 import { TERM_FONT } from '../fonts';
 import type { HeadPose, Rect } from './math';
 import { WorldPanel } from './panel';

@@ -214,7 +214,7 @@ export class OfficeSound {
   /** Moves your ears and schedules whatever the room does next. */
   update(l: Listener) {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running') return;
+    if (ctx?.state !== 'running') return;
     this.listener = l;
     // Level the facing, so looking straight down never lines it up with "up".
     const len = Math.hypot(l.fx, l.fz) || 1;
@@ -628,7 +628,7 @@ export class OfficeSound {
   /** Thunder, `delay` seconds after the flash: a crack when it's close, then a long low rumble. */
   thunder(delay: number, loud: number) {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running') return;
+    if (ctx?.state !== 'running') return;
     this.count('thunder');
     const t0 = ctx.currentTime + delay;
     const peak = 0.45 * loud * (this.where() === 'office' ? 0.6 : 1);

@@ -914,7 +914,7 @@ if (new URLSearchParams(location.search).has('vrtest')) {
     // Flips this client's VR merge box to mergeable (the merge check fires at a PR GitHub
     // refuses — conflicted — so the send, the waiter and the toast verify with no merge).
     seedMerge: () => {
-      if (!vrMerge || vrMerge.state !== 'ready' || !vrMerge.status) return null;
+      if (vrMerge?.state !== 'ready' || !vrMerge.status) return null;
       vrMerge = { ...vrMerge, status: { ...vrMerge.status, icon: '✅', short: 'Ready to merge', cls: 'ok', can: true, auto: false } };
       vrUi?.menu.refresh();
       return vrMerge.number;

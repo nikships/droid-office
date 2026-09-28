@@ -323,11 +323,7 @@ export class Person {
   private costume: Theme | null = null;
   private hat: THREE.Object3D[] = [];
 
-  constructor(
-    private name: string,
-    color: string,
-    look: Look,
-  ) {
+  constructor(name: string, color: string, look: Look) {
     this.look = { ...look };
     this.shirt = toonUnique(color);
     const skin = (this.skin = toonUnique(SKIN_TONES[look.skin]));
@@ -522,7 +518,6 @@ export class Person {
   }
 
   setLabel(name: string, muted: boolean | null) {
-    this.name = name;
     if (this.label) {
       this.root.remove(this.label);
       disposeSprite(this.label);
@@ -1501,7 +1496,8 @@ export class Worker {
     if (d.t >= up + moves + down) {
       this.dancing = null;
       this.settle();
-      return this.update(0, t);
+      this.update(0, t);
+      return;
     }
     // Between the seat (0) and the stage (1), with a hop's arc over the line between them.
     let on = 1;

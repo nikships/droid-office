@@ -162,7 +162,6 @@ export class Changes {
   private opened = new Map<string, { number: number; url: string }>();
 
   constructor(
-    private dir: string,
     /** The branch the office was opened on: what diffs are taken against and what PRs target. */
     private baseBranch: string | undefined,
     private target: (workerId: string) => ChangesTarget | undefined,

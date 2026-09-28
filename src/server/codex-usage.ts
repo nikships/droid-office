@@ -60,7 +60,7 @@ export class CodexUsageReader {
       if (start) lines.shift();
       for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].includes('"token_count"')) continue;
-        let row;
+        let row: { type?: string; payload?: { type?: string; info?: { total_token_usage?: unknown } } };
         try {
           row = JSON.parse(lines[i]);
         } catch {

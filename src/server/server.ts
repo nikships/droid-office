@@ -2,7 +2,6 @@ import http from 'node:http';
 import https from 'node:https';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -1717,7 +1716,7 @@ export async function startServer(cfg: Config) {
       }
       case 'jukebox.stop': {
         const floor = here();
-        if (!floor || !floor.jukebox.stop(who)) break;
+        if (!floor?.jukebox.stop(who)) break;
         jukeboxChanged(floor);
         toastFloor(floor, `🔇 ${who} turned the jukebox off`);
         break;

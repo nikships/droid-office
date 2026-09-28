@@ -300,7 +300,7 @@ test('OpenCode workers use OpenCode-only hooks/config, never invoke Claude namin
   assert.equal(first.filter((r) => r.kind === 'claude').length, 0, 'OpenCode must not launch the Claude task namer');
 
   const transcript = path.join(f.root, 'must-not-be-read.jsonl');
-  writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'x', model: 'opus', usage: { input_tokens: 9000, output_tokens: 1000 } } }) + '\n');
+  writeFileSync(transcript, `${JSON.stringify({ type: 'assistant', message: { id: 'x', model: 'opus', usage: { input_tokens: 9000, output_tokens: 1000 } } })}\n`);
   assert.equal(workers.handleOpenCodeHook(worker.id, 'wrong-token', { type: 'session', sessionId: 'oc-1', status: 'starting' }), false);
   assert.equal(workers.handleOpenCodeHook(worker.id, firstWorker.env.hookToken!, { type: 'session', sessionId: 'oc-1', status: 'starting', transcript_path: transcript }), true);
   assert.equal(workers.get(worker.id)?.status, 'idle');
@@ -909,7 +909,7 @@ test('Codex token snapshots survive restart, preserve permissions, and stay outs
   mkdirSync(dir, { recursive: true });
   const transcript = path.join(dir, 'rollout-fixture-metrics-root.jsonl');
   const metric = (input: number) =>
-    JSON.stringify({
+    `${JSON.stringify({
       type: 'event_msg',
       payload: {
         type: 'token_count',
@@ -923,8 +923,8 @@ test('Codex token snapshots survive restart, preserve permissions, and stay outs
           },
         },
       },
-    }) + '\n';
-  writeFileSync(transcript, JSON.stringify({ type: 'session_meta', payload: { id: 'metrics-root' } }) + '\n' + metric(120));
+    })}\n`;
+  writeFileSync(transcript, `${JSON.stringify({ type: 'session_meta', payload: { id: 'metrics-root' } })}\n${metric(120)}`);
   assert.equal(workers.handleCodexHook(worker.id, 'wrong', 'SessionStart', { session_id: 'metrics-root', transcript_path: transcript }), false);
   assert.equal(worker.usage, undefined);
   workers.handleCodexHook(worker.id, token, 'SessionStart', { session_id: 'metrics-root', transcript_path: transcript });

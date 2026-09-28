@@ -216,7 +216,7 @@ export function loadConfig(argv: string[]): Config {
       case '-h':
       case '--help':
         process.stdout.write(HELP);
-        process.exit(0);
+        return process.exit(0);
       case '-p':
       case '--port':
         port = Number(takeValue(argv, i++, a));
