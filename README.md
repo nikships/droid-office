@@ -433,7 +433,9 @@ node bin/agent-office.js /path/to/project --password dev
 
 `npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script. CI runs it on every pull request. Coverage thresholds need Node 22.8 or newer; `npm test` still runs on Node 20.
 
-`npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers. The PTY host keeps running its old code, though: after changing `ptyhost.ts`, bump `PTY_PROTOCOL` in `ptys.ts` and the next server replaces the host (its workers resume their sessions).
+`npm run dev` runs Vite with hot reload on :5173 and proxies to the server on :4600. Server edits restart the server, not the workers.
+
+Rules for changing the code, such as what to bump when the PTY host changes, are in [`AGENTS.md`](AGENTS.md) and the `AGENTS.md` files in [`src/server`](src/server/AGENTS.md), [`src/client`](src/client/AGENTS.md) and [`src/shared`](src/shared/AGENTS.md).
 
 **Releases.** Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](.github/workflows/release.yml), and `install.sh` installs the newest one. The workflow builds and typechecks the office, runs the tests with the coverage thresholds, packs the release with an `npm-shrinkwrap.json` so every install gets the tested dependency versions, then installs the pack through `install.sh` and starts it before publishing. Pull requests run the same steps but publish nothing. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so bump `package.json` to start a new minor version.
 
