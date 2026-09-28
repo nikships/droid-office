@@ -433,7 +433,7 @@ npm run test:coverage  # the same tests with a coverage report; needs Node 22.8+
 node bin/agent-office.js /path/to/project --password dev
 ```
 
-**Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. Fix what `npm run lint` reports rather than silencing it; `npm run format` takes care of the formatting.
+**Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
 
 **Pre-commit hook.** `npm install` in a clone points git at [`.husky/`](.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't, like the packed release.
 

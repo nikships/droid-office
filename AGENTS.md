@@ -24,10 +24,12 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 
 | Task | Command |
 | --- | --- |
-| Clean install (also builds client and server through `prepare`) | `npm ci` |
+| Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `npm ci` |
 | Add or change a dependency (updates `package-lock.json`; commit both files) | `npm install <pkg>` |
 | Dev: Vite with hot reload on :5173, server on :4600, password `dev` | `npm run dev` |
 | Build `dist/public` (client) and `dist/server` (server) | `npm run build` |
+| Lint and format check with Biome (`biome.jsonc`); any warning fails | `npm run lint` |
+| Rewrite files in the Biome format | `npm run format` |
 | Typecheck server and client | `npm run typecheck` |
 | All tests | `npm test` |
 | All tests with the coverage thresholds in its script (Node 22.8+) | `npm run test:coverage` |
@@ -44,6 +46,8 @@ Tests are flat files named `tests/<name>.test.ts` using `node:test` and `node:as
 - `.env.example` lists every environment variable the office and the installers read. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.
 - Commit subjects use a conventional prefix: `feat:`, `fix:`, `docs:` or `chore:`.
+- Fix what `npm run lint` reports in code. Never add `biome-ignore` or other suppression comments, and do not turn off rules in `biome.jsonc` to pass a check.
+- Do not bypass the pre-commit hook (`.husky/pre-commit`) with `--no-verify`; fix what it reports.
 
 ## Validation before a PR
 
@@ -51,6 +55,7 @@ Run the checks CI runs (`.github/workflows/release.yml`, Node 22), in order, and
 
 ```bash
 npm ci
+npm run lint
 npm run typecheck
 npm run test:coverage
 ```

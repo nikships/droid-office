@@ -11,14 +11,7 @@ const SKIP = new Set(['node_modules', 'dist', '.iwsdk']);
 const INSTALLERS = ['install.sh', 'install.ps1'];
 
 /** Set by the office for its own workers, or by the installers for themselves: not user settings. */
-const INTERNAL = new Set([
-  'AGENT_OFFICE_HOOK_URL',
-  'AGENT_OFFICE_HOOK_TOKEN',
-  'AGENT_OFFICE_WORKER_ID',
-  'AGENT_OFFICE_SESSION_ID',
-  'AGENT_OFFICE_CLAIM_TOKEN',
-  'AGENT_OFFICE_INSTALL_REFRESH',
-]);
+const INTERNAL = new Set(['AGENT_OFFICE_HOOK_URL', 'AGENT_OFFICE_HOOK_TOKEN', 'AGENT_OFFICE_WORKER_ID', 'AGENT_OFFICE_SESSION_ID', 'AGENT_OFFICE_CLAIM_TOKEN', 'AGENT_OFFICE_INSTALL_REFRESH']);
 /** The operating system's own variables, read to find the shell and programs. */
 const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC']);
 
@@ -64,12 +57,18 @@ test('.env.example lists every setting the office and installers read', () => {
 
 test('.env.example lists nothing the code no longer reads', () => {
   const inCode = namesInCode();
-  assert.deepEqual([...documented()].filter((name) => !inCode.has(name)), []);
+  assert.deepEqual(
+    [...documented()].filter((name) => !inCode.has(name)),
+    [],
+  );
 });
 
 test('.env.example leaves out the internal and system variables', () => {
   const listed = documented();
-  assert.deepEqual([...INTERNAL, ...SYSTEM].filter((name) => listed.has(name)), []);
+  assert.deepEqual(
+    [...INTERNAL, ...SYSTEM].filter((name) => listed.has(name)),
+    [],
+  );
 });
 
 test('.gitignore keeps real .env files out of git but not .env.example', () => {

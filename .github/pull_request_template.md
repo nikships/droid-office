@@ -14,9 +14,10 @@
 
 ## CI checks
 
-These are the checks `.github/workflows/release.yml` runs on this PR, in order. Run the first three locally before you push.
+These are the checks `.github/workflows/release.yml` runs on this PR, in order. Run the first four locally before you push.
 
 - [ ] `npm ci` (its `prepare` script runs `npm run build`, building the client and the server)
+- [ ] `npm run lint`
 - [ ] `npm run typecheck`
 - [ ] `npm run test:coverage` (the tests, failing below the coverage thresholds in `package.json`)
 - [ ] Pack the release (`npm pack` of the built app with `npm-shrinkwrap.json`)
