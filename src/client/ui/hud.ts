@@ -159,6 +159,7 @@ export function openHelp() {
     ['/', 'Search the chat and every terminal on your floor, back to before the office last restarted'],
     ['V / M', 'Join voice / mute'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
+    ['⛶', 'Full screen: the button in the bottom right corner (or ☰ → Full screen). Hold Esc, or click the button again, to leave it'],
     ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude)'],
     ['Shift + Esc', 'Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal)'],
     ['⚙️', 'Settings (in the ☰ menu): switch between first and third person'],

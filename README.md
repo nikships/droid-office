@@ -220,6 +220,7 @@ OpenCode metrics come from assistant-message token/cost records exposed by its p
 | / | Search the chat and every terminal on your floor |
 | V / M | Join voice / mute |
 | Tab | The ☰ menu: every window, and what shows on screen |
+| ⛶ (bottom right) | Full screen, and back (also in the ☰ menu). Esc still closes windows in full screen; hold Esc to leave it |
 | Esc | Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude) |
 | Shift + Esc | Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal) |
 

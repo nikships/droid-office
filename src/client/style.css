@@ -139,7 +139,8 @@ button { font-family: inherit; }
 .panel-x:hover { background: var(--surface-hover); color: var(--text); }
 @media (hover: none) { .panel-x { opacity: .6; } }
 
-.side { position: absolute; top: 64px; right: 12px; width: 250px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 80px); pointer-events: none; }
+/* Stops short of the full screen button under it. */
+.side { position: absolute; top: 64px; right: 12px; width: 250px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 124px); pointer-events: none; }
 .side > * { pointer-events: auto; }
 /* Numbered eyebrows: the index in orange, the label in gray, mono and uppercase. */
 .side h3 { margin: 0 0 6px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); display: flex; align-items: baseline; gap: 6px; }
@@ -296,6 +297,10 @@ button { font-family: inherit; }
 .toast.warn { border-color: rgba(242, 184, 75, .45); color: var(--warning); background: rgba(242, 184, 75, .08); }
 .toast.error { border-color: rgba(239, 68, 68, .5); color: var(--danger); background: rgba(239, 68, 68, .08); }
 @keyframes toast-in { from { transform: translateY(-10px); opacity: 0; } }
+
+/* Full screen (ui/fullscreen.ts), in the corner the sidebar and the chat leave free. */
+.fullscreen-btn { position: absolute; right: 12px; bottom: 12px; width: 32px; padding: 0; justify-content: center; }
+.fullscreen-btn[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
 
 .conn { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(239, 68, 68, .12); color: var(--danger); font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--danger); }
 
@@ -521,7 +526,7 @@ button { font-family: inherit; }
   .side { width: min(250px, calc(100vw - 24px)); max-height: calc(100vh - 290px); }
   .dock-btn .lbl { display: none; }
   .hint { max-width: calc(100vw - 24px); bottom: 190px; }
-  .chat { width: calc(100vw - 24px); }
+  .chat { width: calc(100vw - 68px); }
 }
 
 /* Invite teammates */

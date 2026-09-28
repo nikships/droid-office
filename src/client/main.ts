@@ -63,6 +63,7 @@ import { mirrorWhiteboard, openWhiteboard, routeWhiteboardMessage } from './ui/w
 import { renderLimits } from './ui/limits';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
 import { mountHud } from './ui/menu';
+import { mountFullscreen } from './ui/fullscreen';
 import { openJukebox } from './ui/jukebox';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
@@ -3279,6 +3280,8 @@ function use(it: Interactable | null, key: DeskKey, note = aimedNote) {
 // ---- Input ----------------------------------------------------------------------------------------
 window.addEventListener('keydown', (e) => {
   if (modalOpen() || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+  // In full screen the page keeps Esc (see mountFullscreen), so the browser no longer frees the mouse on it.
+  if (e.key === 'Escape' && fullscreen.escapeLocked()) player.unlock();
   if (relookOnKey && e.key !== 'Escape' && player.canLock) player.lock();
   if (hanger.active && hangingKey(e.code)) {
     e.preventDefault();
@@ -3597,6 +3600,7 @@ const noMedia = () => (window.isSecureContext ? undefined : 'Voice and screen sh
 /** This page came over plain http:// on the LAN: WebXR stays undefined there, so Enter VR shows dimmed with the reason instead of hiding. Set by the probe below. */
 let xrInsecure = false;
 const noXr = () => (xrInsecure ? 'Enter VR needs HTTPS or localhost — reopen this office over https:// (start it with --self-signed)' : undefined);
+const fullscreen = mountFullscreen();
 const hud = mountHud(
   [
     { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
@@ -3632,6 +3636,7 @@ const hud = mountHud(
     { id: 'accounts', icon: '🔑', label: 'Accounts', section: 'Together', shown: () => store.me.admin, title: () => 'Invite people, see who has an account, revoke them', run: () => openAccounts(net) },
     { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
     { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
+    { id: 'fullscreen', icon: '⛶', label: () => (fullscreen.isOn() ? 'Exit full screen' : 'Full screen'), section: 'Office', shown: () => fullscreen.available, on: () => fullscreen.isOn(), title: () => 'Fill the screen with the office (also the button in the bottom right corner)', run: () => fullscreen.toggle() },
     {
       id: 'upgrade',
       icon: '⬆️',
@@ -3664,6 +3669,7 @@ const hud = mountHud(
   settings,
   () => saveSettings(settings),
 );
+fullscreen.onChange(() => hud.refresh());
 // Whether this browser can do immersive VR: when it can, the Enter VR button joins the top bar.
 // Insecure origins keep a dimmed button that says why (see noXr), so the headset browser that
 // opened the http:// address learns the fix instead of finding nothing.
