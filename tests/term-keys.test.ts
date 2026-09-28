@@ -110,6 +110,23 @@ test('VR keyboard: modified Enter stays a CR on other workers', (t) => {
   assert.deepEqual(inputs(), ['\r', '\r']);
 });
 
+test('physical keyboard in VR: modified Enter is re-encoded for Droid, other Enters keep their bytes', (t) => {
+  stubDom(t);
+  const run = (provider: WorkerInfo['provider']) => {
+    const sent: VrTerminalMsg[] = [];
+    const w = { id: 'w1', kind: 'agent', cols: 96, rows: 28, provider } as WorkerInfo;
+    const panel = new VrTerminalPanel({ send: (m) => sent.push(m), subscribe: () => () => {}, getScreen: () => undefined, getWorker: () => w });
+    panel.open('w1');
+    panel.typeEnter({ ctrl: true }, '\r');
+    panel.typeEnter({ shift: true }, '\r');
+    panel.typeEnter({ alt: true }, '\x1b\r');
+    panel.typeEnter({}, '\r');
+    return sent.flatMap((m) => (m.t === 'term.input' ? [m.data] : []));
+  };
+  assert.deepEqual(run('droid'), [CTRL_ENTER, SHIFT_ENTER, '\x1b\r', '\r']);
+  assert.deepEqual(run('claude'), ['\r', '\r', '\x1b\r', '\r']);
+});
+
 test('VR keyboard: a target without sendEnter still gets a CR', (t) => {
   stubDom(t);
   const got: string[] = [];

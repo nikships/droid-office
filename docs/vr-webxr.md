@@ -32,6 +32,7 @@ menu's ❓ row brings it back).
 | Input | Action |
 |---|---|
 | Trigger / pinch tap | **E** on whatever the ray points at (desks, boards, elevator, gong, dog, seats…) |
+| Touch a cab floor button with an index fingertip | Ride to that floor, without pinching |
 | Pinch hold (hands) | Aim a teleport arc; release to go (green lands, red doesn't) |
 | Both hands pinch-hold, rays off the panels | Toggle the ☰ menu (the hands' squeeze) |
 | Squeeze | Cancel: the carried issue card goes back, else the topmost window closes, else ☰ |
@@ -50,6 +51,45 @@ frame from the union of the runtime's `select` and three's joint-distance
 see "Input" below. Every VR move goes through the avatar and the normal `move` messages, so
 desktop users see the VR user walk, glide, turn and teleport like anyone else.
 
+### Physical keyboard
+
+A Bluetooth keyboard paired to the headset types while presenting. Keys go to the open
+prompt (hire, ask, chat, search, comment…) first, else to the focused world-space terminal.
+In a prompt, Enter sends, Escape cancels, ←/→/Home/End move and Backspace/Delete edit. In a
+terminal, keys arrive as xterm bytes, including Ctrl chords (Ctrl+C), Alt as meta,
+modified arrows, Home/End, PageUp/PageDown and Shift+Tab. In a Droid worker's terminal,
+Ctrl+Enter queues and Shift+Enter adds a newline, the same as the desktop terminal
+(`src/client/term-keys.ts`). With neither panel open, keys
+type nothing and a toast says where they go.
+
+No key reaches a desktop keybind while presenting: E doesn't interact, N doesn't jump, WASD
+doesn't walk, T/Enter don't open chat, Tab doesn't open ☰. The boundary is one capture-phase
+`keydown`/`keyup` listener on `window` (`src/client/vr/physical-keys.ts`), registered before
+every other key listener. While `vr.active` it stops every key event there. Typeable keys
+also lose their browser default. ⌘/Meta chords, function keys and bare modifiers keep their
+browser behavior. On session enter, the focused DOM element is blurred, so an IME can't
+compose into the chat box behind the headset.
+
+The world-space keyboard is the fallback for hand-only users. It opens with every prompt
+and terminal until a physical key types, then it tucks away and stays hidden for later
+prompts and terminals. The **⌨** button on the terminal header and the prompt's title row
+brings it back (and hides it again). Showing it this way re-arms the virtual keyboard until
+the next physical key.
+
+### Elevator cab buttons
+
+In VR, the cab's west wall has one labeled key per floor and an **R · Rooftop bar** key.
+Aim and tap, or touch a key with a tracked index fingertip. The key depresses and returns;
+the normal elevator trip closes the doors, fades, changes floors and opens the doors on arrival.
+The current floor is gold and does not start another trip. Floors still cloning are gray and
+cannot be selected. Added, renamed, removed and finished-cloning floors update both cabs.
+Long names are shortened on the key; the ray's aim hint shows the full name.
+
+Touch fires once until the finger withdraws, with a short release margin for tracking jitter.
+A touch consumes that hand's pinch so its release cannot also select or teleport. Without hand
+tracking, ray taps still work. The **☰ → Floors** menu and tapping the elevator housing remain
+fallbacks, including from outside the cab. Desktop retains its decorative cab panel and E/menu flow.
+
 ## Settings (⚙️ → VR)
 
 | Setting | Default | What it does |
@@ -65,7 +105,7 @@ Persisted in the existing settings store (`Settings.vr`, localStorage) like ever
 
 E in VR opens panels floating in the office, not DOM modals: the ☰ menu (hire, queue,
 board, services, floors, jukebox, bar, chat, people, meeting, settings), worker terminals (ask,
-wake, send-home), the prompt + QWERTY keyboard,
+wake, send-home, ⌨ keyboard toggle), the prompt + QWERTY keyboard,
 the controls card, and a toast mirror. Both rays press independently (two-handed typing),
 held keys repeat like a desktop board, and the prompt + keyboard ride teleports along.
 A strip low in the view names what E would do to the ray's target (the desktop hint
@@ -201,6 +241,18 @@ thin accessor over those same records). The shipped `dist/` build loads the real
 - `?vrtest=1` exposes `window.__vrtest` (ray state, teleports, key presses, panel probes);
   `src/client/iwsdk-scripts/` drives it through the IWSDK Quest 3 emulation.
 
+## Factory MCP setup
+
+The project's `.factory/mcp.json` registers `iwsdk-runtime` using the installed
+`@iwsdk/cli` and the `src/client` runtime workspace. Install the root dependencies
+first (`npm ci --legacy-peer-deps`). Factory reloads the project config automatically;
+the runtime, browser and XR tools become available without a global MCP entry.
+`--no-install` prevents the MCP launcher from downloading a different CLI version.
+
+Start the test runtime with `npm run dev:runtime` when using the browser/XR tools.
+Runtime status and target discovery report whether a session is ready; they do not
+start a browser or imply that a physical headset is connected.
+
 ## What needs a headset to verify
 
 Without XR hardware, the following were **not** verified and must be checked on-device before
@@ -216,3 +268,17 @@ calling VR done:
 8. In-headset frame rate with the full office (two eye renders × outline pass).
 9. Session edge cases: headset sleep/resume mid-session, controller disconnect/reconnect,
    entering VR while seated/climbing/riding the elevator.
+10. Physical keyboard: a Bluetooth keyboard paired to the headset delivers `keydown` to the
+    page during the immersive session (the emulator run drives Chromium's key input, not a
+    headset's), plus IME and non-US layouts through it.
+11. Galaxy XR cab buttons: ride by ray tap and index-finger touch, hold contact without repeat
+    rides, withdraw and press again, and travel to/from the roof. Check label readability and
+    reach while standing/seated, live floor additions/removals/clone completion, and the
+    floors-menu fallback. This physical-headset check is still pending; automated tests or
+    IWSDK emulation do not satisfy it.
+
+The cab's geometry, picking, press animation, list updates and touch debounce have Node tests
+in `tests/elevator.test.ts` and `tests/vr.test.ts`. In an active IWSDK session, after visiting
+the roof, run `npx --no-install @iwsdk/cli browser run iwsdk-scripts/vr-elevator-live-list.mjs`
+from `src/client` to check both cabs against added, cloning, ready and removed floors.
+That script injects client-only fixture data and restores the original list afterward.
