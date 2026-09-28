@@ -53,7 +53,7 @@
  */
 
 import * as THREE from 'three';
-import type { ChangesState, ChatLine, FloorInfo, GhIssue, GhPull, GhState, MeetingState, PeerInfo, QueueState, ServicesState, WorkerInfo } from '../../shared/protocol';
+import type { AgentProvider, ChangesState, ChatLine, FloorInfo, GhIssue, GhPull, GhState, MeetingState, PeerInfo, QueueState, ServicesState, WorkerInfo } from '../../shared/protocol';
 import type { JukeboxState } from '../../shared/jukebox';
 import { SEARCH_MIN, searchKey } from '../../shared/search';
 import { isAsleep } from '../../shared/status';
@@ -85,6 +85,8 @@ export interface VrUiDeps {
   subscribe: (topic: 'screens' | 'workers' | 'issues' | 'pulls' | 'queue' | 'chat' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services' | 'peers' | 'dog', fn: () => void) => () => void;
   getScreen: (workerId: string) => ScreenState | undefined;
   getWorker: (workerId: string) => WorkerInfo | undefined;
+  /** A worker's provider after the office default fills in a missing one (the store's resolvedProvider). */
+  providerOf?: (w: WorkerInfo) => AgentProvider | undefined;
   getWorkers: () => WorkerInfo[];
   getIssues: () => GhState<GhIssue>;
   getPulls: () => GhState<GhPull>;
@@ -197,6 +199,11 @@ class VrUi implements VrUiHandle {
   readonly group = new THREE.Group();
   private rays = new Map<number, RayState>();
   private keyboardExplicit: KeyboardTarget | null | undefined = undefined;
+  /** The keyboard's default target: the focused terminal. */
+  private terminalTarget: KeyboardTarget = {
+    sendText: (text) => this.terminal.type(text),
+    sendEnter: (mods) => this.terminal.typeEnter(mods),
+  };
   /** The last head pose update() saw: newly opened panels land in front of it. */
   private headPos: [number, number, number] | null = null;
   private headDir: [number, number, number] | null = null;
@@ -206,7 +213,7 @@ class VrUi implements VrUiHandle {
   constructor(private scene: THREE.Scene, private deps: VrUiDeps) {
     const layout = deps.layout ?? {};
     this.terminal = new VrTerminalPanel(
-      { send: deps.send, subscribe: deps.subscribe, getScreen: deps.getScreen, getWorker: deps.getWorker },
+      { send: deps.send, subscribe: deps.subscribe, getScreen: deps.getScreen, getWorker: deps.getWorker, providerOf: deps.providerOf },
     );
     this.menu = new VrMenu(
       {
@@ -242,7 +249,7 @@ class VrUi implements VrUiHandle {
     this.prompt = new VrPromptPanel();
     this.toast = new VrToast();
     // The keyboard feeds the focused terminal unless redirected (see setKeyboardTarget).
-    this.keyboard.setTarget({ sendText: (text) => this.terminal.type(text) });
+    this.keyboard.setTarget(this.terminalTarget);
     // The terminal's own ✕ button also dismisses the keyboard (unless retargeted).
     this.terminal.onClose = () => {
       if (this.keyboardExplicit === undefined) this.keyboard.hide();
@@ -416,7 +423,7 @@ class VrUi implements VrUiHandle {
 
   /** The prompt is done: the keyboard goes back to the terminal (or away, when none is up). */
   private endAskText() {
-    this.keyboard.setTarget({ sendText: (text) => this.terminal.type(text) });
+    this.keyboard.setTarget(this.terminalTarget);
     this.keyboardExplicit = undefined;
     if (!this.terminal.visible) this.keyboard.hide();
   }
@@ -441,7 +448,7 @@ class VrUi implements VrUiHandle {
       this.keyboard.setTarget(t);
       this.keyboard.show();
     } else {
-      this.keyboard.setTarget({ sendText: (text) => this.terminal.type(text) });
+      this.keyboard.setTarget(this.terminalTarget);
       this.keyboardExplicit = undefined;
       if (!this.terminal.visible) this.keyboard.hide();
     }

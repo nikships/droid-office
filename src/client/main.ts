@@ -498,6 +498,7 @@ const vr = new VRSession(renderer, scene, camera, {
       subscribe: (topic, fn) => store.on(topic, fn),
       getScreen: (id) => store.screens.get(id),
       getWorker: (id) => store.workers.get(id),
+      providerOf: (w) => resolvedProvider(w.provider, store.project),
       getWorkers: () => [...store.workers.values()],
       getIssues: () => store.issues,
       getPulls: () => store.pulls,
