@@ -66,7 +66,8 @@ jobs:
 
       - run: npm run typecheck
 
-      - run: npm test
+      - name: Test with coverage
+        run: npm run test:coverage # fails below the line and function thresholds in package.json
 
       - name: Pack the release
         id: pack
