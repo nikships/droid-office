@@ -324,10 +324,10 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   });
   dirDefault.addEventListener('click', () => net.send({ t: 'floor.projectsDir', dir: '' }));
 
-  // Jira: the office's one shared account (admins connect it), and the epic this floor's issue board shows.
+  // Jira: the office's one account (admins connect it; a read-only token is enough), and the epic this floor's issue board shows.
   const jiraSite = h('input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraEmail = h('input', { type: 'email', placeholder: 'Atlassian account email', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraToken = h('input', { type: 'password', placeholder: 'Atlassian API token', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
+  const jiraEmail = h('input', { type: 'email', placeholder: 'Email of the account the token belongs to', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraToken = h('input', { type: 'password', placeholder: 'API token (read-only is enough)', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
   const jiraConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
   const jiraCancel = h('button.btn', { type: 'button' }, 'Cancel');
   const jiraForm = h('div.jira-form', {}, jiraSite, jiraEmail, jiraToken, h('div.seg', {}, jiraConnect, jiraCancel));
@@ -337,9 +337,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const jiraNote = h('p.setting-note');
   const epicInput = h('input', { type: 'text', placeholder: 'Epic key, e.g. EDP-168', 'aria-label': 'Jira epic for this floor', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const epicSave = h('button.btn.primary', { type: 'button' }, 'Set epic') as HTMLButtonElement;
-  const epicBoard = h('select.provider-select.hidden', { 'aria-label': 'Which Jira board' }) as HTMLSelectElement;
   const epicRemove = h('button.btn.danger', { type: 'button' }, 'Remove epic');
-  const epicRow = h('div.webhook', {}, epicInput, epicBoard, epicSave);
+  const epicRow = h('div.webhook', {}, epicInput, epicSave);
   const epicActions = h('div.seg', { style: 'margin-top:8px' }, epicRemove);
   const epicNote = h('p.setting-note');
   let editingJira = false;
@@ -359,24 +358,24 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     jiraNote.textContent = jiraError
       ? `⚠️ ${jiraError}`
       : connection
-        ? `🎫 Connected to ${connection.site} as ${connection.name} (${connection.email}), set up by ${connection.by} ${timeAgo(connection.at)}. Everything done from the Jira tab and by workers runs as this account.`
+        ? `🎫 Reading ${connection.site} as ${connection.name === connection.email ? connection.email : `${connection.name} (${connection.email})`}, set up by ${connection.by} ${timeAgo(connection.at)}. The office only reads Jira; it never changes a ticket.`
         : admin
-          ? 'Connect the office to Jira Cloud with one shared account: its email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.'
+          ? 'Connect the office to Jira Cloud: a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. A read-only token (scope read:jira-work) is enough, since the office only reads. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.'
           : 'The office isn’t connected to Jira. An admin can connect it.';
     const showEpic = !!connection && onFloor;
     epicRow.classList.toggle('hidden', !admin || !showEpic);
     epicActions.classList.toggle('hidden', !admin || !showEpic || !epic);
     epicSave.disabled = jiraBusy === 'epic';
-    epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : epicBoard.classList.contains('hidden') ? 'Set epic' : 'Use this board';
+    epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : 'Set epic';
     if (!epicInput.value && epic) epicInput.value = epic.key;
     epicNote.classList.toggle('hidden', !showEpic);
     epicNote.classList.toggle('bad', !!epicError);
     epicNote.textContent = epicError
       ? `⚠️ ${epicError}`
       : epic
-        ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}: its tickets in the columns of the ${epic.boardName} board. Set by ${epic.by} ${timeAgo(epic.at)}.`
+        ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}: all of its tickets, in To Do, In Progress and Done. Set by ${epic.by} ${timeAgo(epic.at)}.`
         : admin
-          ? 'Give this floor a Jira epic and its issue board gets a Jira tab: the epic’s tickets in the columns of its project’s Jira board.'
+          ? 'Give this floor a Jira epic and its issue board gets a Jira tab with all of the epic’s tickets, in To Do, In Progress and Done.'
           : 'This floor has no Jira epic. An admin can set one.';
   };
   const offSetup = onJiraSetup((msg) => {
@@ -390,18 +389,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     } else {
       jiraBusy = '';
       epicError = msg.error ?? '';
-      if (msg.choose?.length) {
-        epicBoard.replaceChildren(...msg.choose.map((b) => h('option', { value: String(b.id) }, `${b.name}${b.type ? ` (${b.type})` : ''}`)));
-        epicBoard.classList.remove('hidden');
-        epicError = '';
-      }
-      if (msg.ok) {
-        epicBoard.classList.add('hidden');
-        epicBoard.replaceChildren();
-      }
     }
     paintJira();
-    if (msg.choose?.length) epicNote.textContent = 'The project has more than one Jira board. Pick the one whose columns the Jira tab should use.';
   });
   paintJira();
   const connectJira = () => {
@@ -438,15 +427,10 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     if (!key) return epicInput.focus();
     jiraBusy = 'epic';
     epicError = '';
-    const boardId = epicBoard.classList.contains('hidden') ? undefined : Number(epicBoard.value);
-    net.send({ t: 'jira.epic', key, boardId });
+    net.send({ t: 'jira.epic', key });
     paintJira();
   };
   epicSave.addEventListener('click', saveEpic);
-  epicInput.addEventListener('input', () => {
-    epicBoard.classList.add('hidden');
-    paintJira();
-  });
   epicInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveEpic();
   });

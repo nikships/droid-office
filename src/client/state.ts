@@ -317,12 +317,6 @@ class Store {
     return tasks.find((t) => t.status !== 'done') ?? tasks[tasks.length - 1];
   }
 
-  /** The queue task for a Jira ticket, like taskForIssue. */
-  taskForTicket(key: string): QueueTask | undefined {
-    const tasks = this.queue.tasks.filter((t) => t.ticket === key);
-    return tasks.find((t) => t.status !== 'done') ?? tasks[tasks.length - 1];
-  }
-
   /** Everything on the floor you just arrived on, in place of the last one's. */
   private enter(v: FloorView) {
     this.floor = v.floor;

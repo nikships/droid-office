@@ -21,7 +21,6 @@ import { Whiteboard } from './whiteboard.js';
 import { MeetingRoom } from './meetings.js';
 import { Worktrees } from './worktrees.js';
 import { FloorJira, type JiraOffice } from './jira.js';
-import { keysIn } from '../shared/jira.js';
 import type { Ledger } from './usage.js';
 import type { Capacity } from './machine.js';
 
@@ -178,7 +177,6 @@ export class Floor {
       update: (state) => ctx.emit(this, { t: 'queue', state }),
       toast: (text, level) => ctx.toast(this, text, level),
       claimIssue: (issue) => this.board.claim(issue),
-      claimTicket: (key) => this.jira.claim(key),
       refreshGitHub: () => void this.board.refresh(),
       hiringPaused: () => ctx.ledger.hiringPaused,
       room: () => ctx.capacity.room(),
@@ -245,26 +243,9 @@ export class Floor {
     }, REFRESH_MS);
   }
 
-  /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR, and its Jira tickets move to Done. */
+  /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR. */
   merged(n: number, by?: string) {
     if (this.merges.ring(n)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
-    const pr = this.board.pulls.items.find((p) => p.number === n);
-    if (pr) this.finishTickets(pr);
-  }
-
-  /**
-   * A merged pull request finishes the epic's tickets whose key is in its title or branch: each moves
-   * to Done, if the workflow lets it, with the PR's link.
-   */
-  private finishTickets(pr: { number: number; url: string; title: string; headRefName: string }) {
-    if (!this.jira.on) return;
-    for (const key of keysIn(`${pr.title} ${pr.headRefName}`)) {
-      if (!this.jira.has(key)) continue;
-      void this.jira.finish(key, pr).then((err) => {
-        if (err) this.ctx.toast(this, `Couldn't move ${key} to Done in Jira: ${err}`, 'warn');
-        else this.ctx.toast(this, `🎫 ${key} is done: its ${forgeWords(this.board.forge).pr} merged`);
-      });
-    }
   }
 
   /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */

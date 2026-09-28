@@ -18,7 +18,6 @@ import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
-import { jiraKey } from '../shared/jira.js';
 import type { ServiceOwner } from './services.js';
 import { TaskNamer, fallbackTask } from './tasks.js';
 import { addUsage, newTracker, restoreTracker, scanTracker, trackerUsage, zeroUsage, type Ledger, type UsageTracker } from './usage.js';
@@ -185,7 +184,7 @@ export class WorkerManager {
   }
   private openCodePlugin: string;
   private codexHook: string;
-  /** Where the office-queue and office-jira commands are, for the workers' PATH (see writeCommands). */
+  /** Where the office-queue command is, for the board agents' PATH (see writeQueueCommand). */
   private queueBin: string | undefined;
   private screenTimer: NodeJS.Timeout;
   /** The office is shutting down: workers exiting now are being stopped, not failing to resume. */
@@ -219,7 +218,7 @@ export class WorkerManager {
     this.writeHookSettings();
     this.openCodePlugin = writeOpenCodePlugin(dataDir);
     this.codexHook = writeCodexHook(dataDir);
-    this.queueBin = this.writeCommands();
+    this.queueBin = this.writeQueueCommand();
     this.agentPath = resolveCommand(agentCmd);
     const claude = this.defaultProvider === 'claude' ? this.agentPath : resolveCommand('claude');
     this.namer = new TaskNamer(claude, childEnv(), (id, task, ctx) => {
@@ -306,8 +305,6 @@ export class WorkerManager {
     model?: string,
     effort?: AgentEffort,
     meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
-    /** The Jira ticket it's there for: the one its office-jira command may update. */
-    ticket?: string,
   ): WorkerInfo | string {
     const selectedProvider = kind === 'agent' ? (provider ?? this.defaultProvider) : undefined;
     const modelError = validateWorkerModel(kind, selectedProvider, model);
@@ -334,10 +331,8 @@ export class WorkerManager {
     const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'] = meeting?.worktree;
-    const key = kind === 'agent' && !seat.station && !meeting ? jiraKey(ticket) : undefined;
     if (worktree) {
-      // A ticket's key goes in its branch name, so Jira and the office both find the branch's pull request.
-      const made = this.trees.create(`${key ? `${key.toLowerCase()}-` : ''}${name.toLowerCase()}-${id.slice(0, 4)}`);
+      const made = this.trees.create(`${name.toLowerCase()}-${id.slice(0, 4)}`);
       if (typeof made === 'string') return made;
       wt = made;
     }
@@ -362,7 +357,6 @@ export class WorkerManager {
       viewerIds: [],
       activity: prompt ? truncate(prompt, 80) : undefined,
       meeting: meeting?.id,
-      ticket: key,
     };
     const w = newWorker(info, newTracker());
     this.workers.set(id, w);
@@ -410,20 +404,6 @@ export class WorkerManager {
     if (!w.pty) w.info.lastInput = { by, at: Date.now() };
     const err = w.pty ? this.prompt(w.info.id, clean, by) : this.resume(w.info.id, clean);
     return err ?? { info: w.info, hired: false };
-  }
-
-  /** Hands a worker a Jira ticket: from now on its office-jira command updates that one. */
-  setTicket(id: string, key: string): string | undefined {
-    const w = this.workers.get(id);
-    if (!w) return 'No such worker';
-    if (w.info.kind !== 'agent' || DESK_BY_ID.get(w.info.deskId)?.station || w.info.meeting) return `${w.info.name} can't take a Jira ticket`;
-    const k = jiraKey(key);
-    if (!k) return 'Not a Jira ticket key';
-    if (w.info.ticket === k) return undefined;
-    w.info.ticket = k;
-    this.emitUpdate(w);
-    this.persist();
-    return undefined;
   }
 
   /** The worker whose terminal holds this hook token: how a worker proves it's asking for itself. */
@@ -1050,10 +1030,8 @@ export class WorkerManager {
       AGENT_OFFICE_HOOK_URL: this.hook.url,
       AGENT_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // A board agent reaches the queue with office-queue, and a worker handed a Jira ticket updates it
-    // with office-jira, whichever agent it runs. Every agent gets both (a ticket can be handed to a
-    // worker already at its desk); the office refuses whoever has no business using them.
-    if (!isShell && this.queueBin) {
+    // A board agent reaches the queue with the office-queue command, whichever agent it runs.
+    if (station && this.queueBin) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
       env[key] = [this.queueBin, env[key]].filter(Boolean).join(path.delimiter);
@@ -1436,28 +1414,21 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes the office-queue and office-jira commands into the data dir's bin/, each running its
-   * script in bin/ with the office's own node, and returns that directory. Rewritten on every start,
-   * so after an upgrade they run the new install's scripts.
+   * Writes the office-queue command into the data dir's bin/, running bin/office-queue.js with the
+   * office's own node, and returns that directory. Rewritten on every start, so after an upgrade it
+   * runs the new install's script.
    */
-  private writeCommands(): string | undefined {
+  private writeQueueCommand(): string | undefined {
+    const script = queueScript();
+    if (!script) return undefined;
     const dir = path.join(this.dataDir, 'bin');
-    let wrote = false;
-    for (const [name, what] of [
-      ['office-queue', "Agent Office's task queue, for the board agents"],
-      ['office-jira', 'The Jira ticket a worker was handed, through Agent Office'],
-    ] as const) {
-      const script = officeScript(`${name}.js`);
-      if (!script) continue;
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const file = path.join(dir, name);
-      writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\nexec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
-      chmodSync(file, 0o700);
-      // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Claude Code's shell there) runs the sh one.
-      if (WIN) writeFileSync(`${file}.cmd`, `@"${process.execPath}" "${script}" %*\r\n`);
-      wrote = true;
-    }
-    return wrote ? dir : undefined;
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, 'office-queue');
+    writeFileSync(file, `#!/bin/sh\n# Agent Office's task queue, for the board agents (see bin/office-queue.js).\nexec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
+    chmodSync(file, 0o700);
+    // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Claude Code's shell there) runs the sh one.
+    if (WIN) writeFileSync(`${file}.cmd`, `@"${process.execPath}" "${script}" %*\r\n`);
+    return dir;
   }
 
   private saveScrollback(w: Worker) {
@@ -1486,7 +1457,6 @@ process.stdin.on('end', () => {
       task: info.task,
       pr: info.pr,
       meeting: info.meeting,
-      ticket: info.ticket,
       tracker: info.kind === 'agent' ? tracker : undefined,
       usage: info.provider === 'opencode' || info.provider === 'codex' ? info.usage : undefined,
       codexTranscript: info.provider === 'codex' ? codexTranscript : undefined,
@@ -1542,7 +1512,6 @@ process.stdin.on('end', () => {
           viewers: [],
           viewerIds: [],
           meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
-          ticket: s.kind === 'shell' ? undefined : jiraKey(s.ticket),
         };
         const w = newWorker(info, tracker, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
         if (provider === 'codex' && typeof s.codexTranscript === 'string') w.codexTranscript = s.codexTranscript;
@@ -1694,11 +1663,11 @@ function screenText(term: HeadlessTerminal, from = 0): string {
   return out.join('\n');
 }
 
-/** A script in bin/ of the install this office runs from (src/server under tsx, dist/server/server built). */
-function officeScript(name: string): string | undefined {
+/** bin/office-queue.js in the install this office runs from (src/server under tsx, dist/server/server built). */
+function queueScript(): string | undefined {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 4; i++, dir = path.dirname(dir)) {
-    const file = path.join(dir, 'bin', name);
+    const file = path.join(dir, 'bin', 'office-queue.js');
     if (existsSync(file)) return file;
   }
   return undefined;
@@ -1789,9 +1758,7 @@ function draftPr(info: WorkerInfo, commits: string[], by: string): { title: stri
       .find(Boolean) ?? '';
   // The issues board hands work over as: Work on GitHub issue #12: "Title" (or GitLab issue).
   const issue = /\bissue #(\d+):\s*["“](.+?)["”]\.?\s*$/i.exec(firstLine);
-  // And the Jira tab as: Work on Jira ticket EDP-12: "Summary". The key leads the title, so Jira links it.
-  const ticket = /\bJira ticket ([A-Z][A-Z0-9_]*-\d+):\s*["“](.+?)["”]\.?\s*$/.exec(firstLine);
-  const title = truncate((ticket && `${ticket[1]}: ${ticket[2]}`) || issue?.[2] || firstLine.replace(/[.:;,]+$/, '') || commits[0]?.replace(/^\S+\s+/, '') || info.worktree?.branch || info.name, PR_TITLE_MAX);
+  const title = truncate(issue?.[2] || firstLine.replace(/[.:;,]+$/, '') || commits[0]?.replace(/^\S+\s+/, '') || info.worktree?.branch || info.name, PR_TITLE_MAX);
   const closes = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[^\n]{0,40}?#(\d+)/i.exec(task)?.[1] ?? issue?.[1];
   const parts: string[] = [];
   if (task) parts.push(`## Task\n\n${task.length > PR_TASK_MAX ? `${task.slice(0, PR_TASK_MAX)}…` : task}`);

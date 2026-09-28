@@ -6,7 +6,7 @@ import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { DogState } from './dog.js';
 import type { EmoteId } from './emotes.js';
-import type { JiraBoardChoice, JiraBoardState, JiraComment, JiraFloorState } from './jira.js';
+import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { DrinkId } from './rooftop.js';
 import type { WbElement, WbPointer, WhiteboardView } from './whiteboard.js';
@@ -104,8 +104,6 @@ export interface WorkerInfo {
   lastInput?: { by: string; at: number };
   /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
   meeting?: string;
-  /** The Jira ticket it was handed (see shared/jira.ts): the one ticket its office-jira command can update. */
-  ticket?: string;
 }
 
 /** Session usage. The persistent office ledger continues to cover Claude Code only. */
@@ -295,8 +293,6 @@ export interface QueueTask {
   effort?: AgentEffort;
   /** The GitHub issue it came from, when it did. */
   issue?: number;
-  /** The Jira ticket it came from (a key like EDP-12), when it did. */
-  ticket?: string;
   title: string;
   prompt: string;
   addedBy: string;
@@ -968,19 +964,16 @@ export type ClientMsg =
   /** An emote (hold G, or 1–6): everyone else on your floor sees your character do it. Rate limited, see EmoteBucket. */
   | { t: 'emote'; emote: EmoteId }
   | { t: 'profile'; name: string; color: string; look: Look }
-  /**
-   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
-   * With `ticket`, it's there for that Jira ticket: assigned to the office's Jira account and moved to In Progress.
-   */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; ticket?: string }
+  /** With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue. */
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
   | { t: 'worker.worktree'; workerId: string }
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
-  /** With `issue` or `ticket`, the prompt hands the worker that GitHub issue or Jira ticket, which is taken as for worker.spawn. */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; ticket?: string }
+  /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number }
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.
@@ -1006,7 +999,7 @@ export type ClientMsg =
   | { t: 'horn' }
   /** Close an issue, or a pull request without merging it; the answer comes back as gh.closed. */
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; ticket?: string; provider?: AgentProvider; model?: string; effort?: AgentEffort }
+  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; provider?: AgentProvider; model?: string; effort?: AgentEffort }
   | { t: 'queue.remove'; taskId: string }
   /** Move a queued task up (-1) or down (+1) the queue. */
   | { t: 'queue.move'; taskId: string; delta: number }
@@ -1027,19 +1020,14 @@ export type ClientMsg =
   | { t: 'notify.test' }
   /** Admins: the most workers the office runs at once, across every floor; null takes the limit off. */
   | { t: 'machine.limit'; limit: number | null }
-  /** Admins: connect the office to Jira Cloud as one shared account; answered with `jira.setup`. */
+  /** Admins: connect the office to Jira Cloud with one account's email and API token (read-only is enough); answered with `jira.setup`. */
   | { t: 'jira.connect'; site: string; email: string; token: string }
   /** Admins: forget the office's Jira connection. */
   | { t: 'jira.disconnect' }
-  /** Admins: map the floor you're on to a Jira epic ('' removes it); answered with `jira.setup`, which may ask for `boardId`. */
-  | { t: 'jira.epic'; key: string; boardId?: number }
+  /** Admins: show a Jira epic on the floor you're on ('' removes it); answered with `jira.setup`. */
+  | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
-  /** Move a ticket through one of its transitions (see JiraTicketDetail.transitions); answered with `jira.done`. */
-  | { t: 'jira.transition'; key: string; transition: string }
-  | { t: 'jira.comment'; key: string; body: string }
-  /** Assign a ticket to the office's Jira account. */
-  | { t: 'jira.assign'; key: string }
   | { t: 'voice'; voice: boolean; muted: boolean; sharing: boolean }
   | { t: 'rtc'; to: string; data: unknown }
   | { t: 'chat'; text: string }
@@ -1208,10 +1196,8 @@ export type ServerMsg =
   /** The office's Jira connection or this floor's epic changed. */
   | { t: 'jira'; state: JiraFloorState }
   | { t: 'jira.board'; state: JiraBoardState | null }
-  /** To the admin setting Jira up: done, why not, or the boards to choose between. */
-  | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string; choose?: JiraBoardChoice[] }
-  /** To whoever moved, commented on or assigned a ticket. */
-  | { t: 'jira.done'; key: string; action: 'transition' | 'comment' | 'assign'; error?: string; comment?: JiraComment }
+  /** To the admin setting Jira up: done, or why not. */
+  | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
   | { t: 'proxy'; state: ProxyState }
   | { t: 'sky'; state: SkyState }

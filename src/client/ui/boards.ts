@@ -6,9 +6,9 @@ import { h, openModal, timeAgo } from './dom';
 import { labelChip, openIssue, openPull } from './pull';
 import { providerLabel } from './provider';
 import type { MeetingPreset } from './meeting';
-import { renderJiraBoard, type JiraActions } from './jira';
+import { renderJiraBoard } from './jira';
 
-export interface BoardActions extends JiraActions {
+export interface BoardActions {
   /** Start a worker on a ready-made prompt (shown for editing first). */
   assign(prompt: string, title: string): void;
   /** Your own prompt about an issue or PR; `context` goes first so the worker knows which. */
@@ -155,7 +155,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     statusText();
     if (onJira()) {
       const { scrollLeft } = body;
-      renderJiraBoard(body, net, actions);
+      renderJiraBoard(body, actions);
       body.scrollLeft = scrollLeft;
       return;
     }
@@ -215,11 +215,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   };
 
   const unsubs = [store.on(kind, render), store.on('queue', render)];
-  if (kind === 'issues')
-    unsubs.push(
-      store.on('jiraBoard', render),
-      store.on('workers', () => onJira() && render()),
-    );
+  if (kind === 'issues') unsubs.push(store.on('jiraBoard', render));
   // Which desk a PR came from can change (a worker sent home, a PR opened from a desk).
   if (kind === 'pulls') unsubs.push(store.on('workers', render));
   const timer = setInterval(statusText, 15000);
