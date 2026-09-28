@@ -20,6 +20,8 @@ import { Jukebox } from './jukebox.js';
 import { Whiteboard } from './whiteboard.js';
 import { MeetingRoom } from './meetings.js';
 import { Worktrees } from './worktrees.js';
+import { FloorJira, type JiraOffice } from './jira.js';
+import { keysIn } from '../shared/jira.js';
 import type { Ledger } from './usage.js';
 import type { Capacity } from './machine.js';
 
@@ -34,6 +36,8 @@ export interface FloorContext {
   ledger: Ledger;
   /** The office's worker limit, across every floor. */
   capacity: Capacity;
+  /** The office's Jira connection, which every floor's epic goes through. */
+  jira: JiraOffice;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
   toast(floor: Floor, text: string, level?: ToastLevel): void;
@@ -85,6 +89,8 @@ export class Floor {
   readonly workers: WorkerManager;
   /** The issue and PR boards, on GitHub or GitLab as the floor's repository is. */
   readonly board: Board;
+  /** The floor's Jira epic, as the issue board's Jira tab (see jira.ts). */
+  readonly jira: FloorJira;
   readonly queue: TaskQueue;
   readonly changes: Changes;
   readonly decor: Decor;
@@ -122,6 +128,10 @@ export class Floor {
         this.merged(p.number);
       }
     };
+    this.jira = new FloorJira(dataDir, ctx.jira, {
+      state: (state) => ctx.emit(this, { t: 'jira', state }),
+      board: (state) => ctx.emit(this, { t: 'jira.board', state }),
+    });
     this.board = forge === 'gitlab' && def.repo ? new GitLab(def.dir, def.repo, onIssues, onPulls) : new GitHub(def.dir, onIssues, onPulls);
 
     // Before the workers, so it hears about the ones who wake up needing input.
@@ -168,6 +178,7 @@ export class Floor {
       update: (state) => ctx.emit(this, { t: 'queue', state }),
       toast: (text, level) => ctx.toast(this, text, level),
       claimIssue: (issue) => this.board.claim(issue),
+      claimTicket: (key) => this.jira.claim(key),
       refreshGitHub: () => void this.board.refresh(),
       hiringPaused: () => ctx.ledger.hiringPaused,
       room: () => ctx.capacity.room(),
@@ -225,20 +236,41 @@ export class Floor {
     this.ready = this.workers.start();
 
     void this.board.refresh();
+    void this.jira.refresh();
     // A floor with people on it, or work under way, keeps its boards fresh; the others check in now and then.
     this.timer = setInterval(() => {
-      if (this.active() || Date.now() - this.board.issues.fetchedAt > IDLE_REFRESH_MS) void this.board.refresh();
+      const active = this.active();
+      if (active || Date.now() - this.board.issues.fetchedAt > IDLE_REFRESH_MS) void this.board.refresh();
+      if (active || Date.now() - this.jira.fetchedAt > IDLE_REFRESH_MS) void this.jira.refresh();
     }, REFRESH_MS);
   }
 
-  /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR. */
+  /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR, and its Jira tickets move to Done. */
   merged(n: number, by?: string) {
     if (this.merges.ring(n)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
+    const pr = this.board.pulls.items.find((p) => p.number === n);
+    if (pr) this.finishTickets(pr);
+  }
+
+  /**
+   * A merged pull request finishes the epic's tickets whose key is in its title or branch: each moves
+   * to Done, if the workflow lets it, with the PR's link.
+   */
+  private finishTickets(pr: { number: number; url: string; title: string; headRefName: string }) {
+    if (!this.jira.on) return;
+    for (const key of keysIn(`${pr.title} ${pr.headRefName}`)) {
+      if (!this.jira.has(key)) continue;
+      void this.jira.finish(key, pr).then((err) => {
+        if (err) this.ctx.toast(this, `Couldn't move ${key} to Done in Jira: ${err}`, 'warn');
+        else this.ctx.toast(this, `🎫 ${key} is done: its ${forgeWords(this.board.forge).pr} merged`);
+      });
+    }
   }
 
   /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
   arrived() {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
+    if (Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
   }
 
   private active(): boolean {

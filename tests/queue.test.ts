@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentEffort, AgentProvider, WorkerInfo } from '../src/shared/protocol.js';
+import type { AgentEffort, AgentProvider, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
 function fixture(defaultProvider: AgentProvider = 'claude') {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-queue-'));
@@ -14,7 +14,7 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
     defaultProvider,
     list: () => workers,
     deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, _worktree, kind, provider, model, effort) {
+    spawn(deskId, by, prompt, _worktree, kind, provider, model, effort, _meeting, ticket) {
       const worker: WorkerInfo = {
         id: `worker-${hired++}`,
         deskId,
@@ -23,6 +23,7 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
         model,
         effort,
         prompt,
+        ticket,
         name: 'Test',
         color: '#ffffff',
         status: 'working',
@@ -46,11 +47,16 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
   };
   const queues: TaskQueue[] = [];
   let emptied = 0;
+  const claimed: string[] = [];
   const open = (room?: () => number) => {
     const queue = new TaskQueue(dir, manager, false, {
       update() {},
       toast() {},
       claimIssue: async () => undefined,
+      claimTicket: async (key) => {
+        claimed.push(key);
+        return undefined;
+      },
       refreshGitHub() {},
       hiringPaused: () => undefined,
       emptied: () => emptied++,
@@ -64,6 +70,7 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
     workers,
     open,
     emptied: () => emptied,
+    claimed,
     close() {
       queues.forEach((q) => q.shutdown());
       rmSync(dir, { recursive: true, force: true });
@@ -343,4 +350,45 @@ test('an office at its worker limit holds the queue, and a finished queue worker
   limit = 2;
   q.pump();
   assert.equal(q.state().tasks[2].status, 'running');
+});
+
+test('a Jira ticket queues once, is claimed when a worker takes it, and finds its PR by key', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const q = f.open();
+  q.setLimit(0);
+  assert.equal(q.add('Do EDP-12', 'Tester', 'EDP-12: Fix login', undefined, 'claude', undefined, undefined, 'EDP-12'), undefined);
+  assert.equal(q.add('Again', 'Tester', undefined, undefined, 'claude', undefined, undefined, 'EDP-12'), 'EDP-12 is already on the queue');
+  q.shutdown();
+  const restored = f.open();
+  assert.equal(restored.state().tasks[0].ticket, 'EDP-12');
+  restored.setLimit(1);
+  assert.equal(f.workers[0].ticket, 'EDP-12');
+  assert.deepEqual(f.claimed, ['EDP-12']);
+  const pull = (number: number, title: string, headRefName: string): GhPull => ({
+    number,
+    title,
+    headRefName,
+    state: 'OPEN',
+    isDraft: false,
+    url: `https://github.com/o/r/pull/${number}`,
+    author: 'x',
+    labels: [],
+    reviewDecision: '',
+    baseRefName: 'main',
+    createdAt: new Date().toISOString(),
+    updatedAt: '',
+    additions: 0,
+    deletions: 0,
+    checks: 'none',
+    body: '',
+    closes: [],
+  });
+  restored.onPulls([pull(1, 'EDP-120: Something else', 'edp-120-x'), pull(2, 'Fix login', 'office/edp-12-test-1a2b')]);
+  assert.equal(restored.state().tasks[0].pr?.number, 2);
+  assert.equal(restored.dropTicket('EDP-12'), false, 'a running task stays');
+  restored.setLimit(0);
+  restored.add('Other', 'Tester', undefined, undefined, 'claude', undefined, undefined, 'EDP-13');
+  assert.equal(restored.dropTicket('EDP-13'), true);
+  assert.equal(restored.state().tasks.length, 1);
 });

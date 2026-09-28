@@ -1039,7 +1039,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   assert.equal(second.args.at(-1), 'Close the duplicates');
 });
 
-test('the queue agent is launched without file-editing tools, and board agents get office-queue on their PATH', async (t) => {
+test('the queue agent is launched without file-editing tools, and agents get office-queue and office-jira on their PATH', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateProviderEnvironment(f, t);
@@ -1067,6 +1067,8 @@ test('the queue agent is launched without file-editing tools, and board agents g
   // The command is there, and runs the shipped script with the office's own node.
   accessSync(path.join(bin, 'office-queue'), constants.X_OK);
   assert.match(execFileSync(path.join(bin, 'office-queue'), ['--help'], { encoding: 'utf8' }), /office-queue add --title/);
+  accessSync(path.join(bin, 'office-jira'), constants.X_OK);
+  assert.match(execFileSync(path.join(bin, 'office-jira'), ['--help'], { encoding: 'utf8' }), /office-jira transition "In Review"/);
 
   const hired = workers.station('station-queue', 'Ada', 'Fix the typo in the README');
   assert.equal(typeof hired, 'object');
@@ -1097,7 +1099,9 @@ test('the queue agent is launched without file-editing tools, and board agents g
   assert.equal(second.args.at(-1), 'Also bump the version');
   assert.ok(onPath(second));
 
-  // The other board agents keep their tools but get the command; a desk worker gets neither.
+  // The other board agents keep their tools but get the command. A desk worker keeps its tools and
+  // gets the commands too (it may be handed a Jira ticket while it runs); the office refuses its
+  // office-queue calls.
   const pulls = workers.station('station-pulls', 'Ada', 'Sum up the open PRs');
   const desk = workers.spawn('desk-2', 'Ada', 'Fix login');
   assert.ok(typeof pulls === 'object' && typeof desk === 'object');
@@ -1113,7 +1117,7 @@ test('the queue agent is launched without file-editing tools, and board agents g
   assert.equal(denied(pullsLaunch.args), undefined);
   assert.ok(onPath(pullsLaunch));
   assert.equal(denied(deskLaunch.args), undefined);
-  assert.equal((deskLaunch.env.path ?? '').split(path.delimiter).includes(bin), false);
+  assert.ok(onPath(deskLaunch));
 });
 
 test('a Claude worker acts out its latest tool call, and puts its head in its hands when its tests keep failing', async (t) => {

@@ -5,6 +5,7 @@ import type { ThemePick, WebhookKind } from '../../shared/protocol';
 import { THEME_PICKS } from '../../shared/theme';
 import { DOG_NAME_MAX, cleanDogName } from '../../shared/dog';
 import { h, openModal, timeAgo } from './dom';
+import { onJiraSetup } from './jira';
 
 const VIEWS: [ViewMode, string, string][] = [
   ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
@@ -323,6 +324,137 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   });
   dirDefault.addEventListener('click', () => net.send({ t: 'floor.projectsDir', dir: '' }));
 
+  // Jira: the office's one shared account (admins connect it), and the epic this floor's issue board shows.
+  const jiraSite = h('input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraEmail = h('input', { type: 'email', placeholder: 'Atlassian account email', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraToken = h('input', { type: 'password', placeholder: 'Atlassian API token', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
+  const jiraConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
+  const jiraCancel = h('button.btn', { type: 'button' }, 'Cancel');
+  const jiraForm = h('div.jira-form', {}, jiraSite, jiraEmail, jiraToken, h('div.seg', {}, jiraConnect, jiraCancel));
+  const jiraChange = h('button.btn', { type: 'button' }, 'Change');
+  const jiraRemove = h('button.btn.danger', { type: 'button' }, 'Remove');
+  const jiraActions = h('div.seg', { style: 'margin-top:8px' }, jiraChange, jiraRemove);
+  const jiraNote = h('p.setting-note');
+  const epicInput = h('input', { type: 'text', placeholder: 'Epic key, e.g. EDP-168', 'aria-label': 'Jira epic for this floor', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const epicSave = h('button.btn.primary', { type: 'button' }, 'Set epic') as HTMLButtonElement;
+  const epicBoard = h('select.provider-select.hidden', { 'aria-label': 'Which Jira board' }) as HTMLSelectElement;
+  const epicRemove = h('button.btn.danger', { type: 'button' }, 'Remove epic');
+  const epicRow = h('div.webhook', {}, epicInput, epicBoard, epicSave);
+  const epicActions = h('div.seg', { style: 'margin-top:8px' }, epicRemove);
+  const epicNote = h('p.setting-note');
+  let editingJira = false;
+  let jiraBusy: '' | 'connect' | 'epic' = '';
+  let jiraError = '';
+  let epicError = '';
+  const paintJira = () => {
+    const { connection, epic } = store.jira;
+    const admin = store.me.admin;
+    const onFloor = !!store.floor;
+    jiraForm.classList.toggle('hidden', !admin || (!!connection && !editingJira));
+    jiraCancel.classList.toggle('hidden', !connection);
+    jiraActions.classList.toggle('hidden', !admin || !connection || editingJira);
+    jiraConnect.disabled = jiraBusy === 'connect';
+    jiraConnect.textContent = jiraBusy === 'connect' ? 'Checking…' : 'Connect';
+    jiraNote.classList.toggle('bad', !!jiraError);
+    jiraNote.textContent = jiraError
+      ? `⚠️ ${jiraError}`
+      : connection
+        ? `🎫 Connected to ${connection.site} as ${connection.name} (${connection.email}), set up by ${connection.by} ${timeAgo(connection.at)}. Everything done from the Jira tab and by workers runs as this account.`
+        : admin
+          ? 'Connect the office to Jira Cloud with one shared account: its email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.'
+          : 'The office isn’t connected to Jira. An admin can connect it.';
+    const showEpic = !!connection && onFloor;
+    epicRow.classList.toggle('hidden', !admin || !showEpic);
+    epicActions.classList.toggle('hidden', !admin || !showEpic || !epic);
+    epicSave.disabled = jiraBusy === 'epic';
+    epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : epicBoard.classList.contains('hidden') ? 'Set epic' : 'Use this board';
+    if (!epicInput.value && epic) epicInput.value = epic.key;
+    epicNote.classList.toggle('hidden', !showEpic);
+    epicNote.classList.toggle('bad', !!epicError);
+    epicNote.textContent = epicError
+      ? `⚠️ ${epicError}`
+      : epic
+        ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}: its tickets in the columns of the ${epic.boardName} board. Set by ${epic.by} ${timeAgo(epic.at)}.`
+        : admin
+          ? 'Give this floor a Jira epic and its issue board gets a Jira tab: the epic’s tickets in the columns of its project’s Jira board.'
+          : 'This floor has no Jira epic. An admin can set one.';
+  };
+  const offSetup = onJiraSetup((msg) => {
+    if (msg.step === 'connect') {
+      jiraBusy = '';
+      jiraError = msg.error ?? '';
+      if (msg.ok) {
+        editingJira = false;
+        jiraToken.value = '';
+      }
+    } else {
+      jiraBusy = '';
+      epicError = msg.error ?? '';
+      if (msg.choose?.length) {
+        epicBoard.replaceChildren(...msg.choose.map((b) => h('option', { value: String(b.id) }, `${b.name}${b.type ? ` (${b.type})` : ''}`)));
+        epicBoard.classList.remove('hidden');
+        epicError = '';
+      }
+      if (msg.ok) {
+        epicBoard.classList.add('hidden');
+        epicBoard.replaceChildren();
+      }
+    }
+    paintJira();
+    if (msg.choose?.length) epicNote.textContent = 'The project has more than one Jira board. Pick the one whose columns the Jira tab should use.';
+  });
+  paintJira();
+  const connectJira = () => {
+    if (!jiraSite.value.trim()) return jiraSite.focus();
+    if (!jiraEmail.value.trim()) return jiraEmail.focus();
+    if (!jiraToken.value.trim()) return jiraToken.focus();
+    jiraBusy = 'connect';
+    jiraError = '';
+    net.send({ t: 'jira.connect', site: jiraSite.value.trim(), email: jiraEmail.value.trim(), token: jiraToken.value.trim() });
+    paintJira();
+  };
+  jiraConnect.addEventListener('click', connectJira);
+  jiraToken.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') connectJira();
+  });
+  jiraChange.addEventListener('click', () => {
+    editingJira = true;
+    jiraSite.value = store.jira.connection?.site ?? '';
+    jiraEmail.value = store.jira.connection?.email ?? '';
+    paintJira();
+    jiraToken.focus();
+  });
+  jiraCancel.addEventListener('click', () => {
+    editingJira = false;
+    jiraError = '';
+    jiraToken.value = '';
+    paintJira();
+  });
+  jiraRemove.addEventListener('click', () => {
+    if (confirm('Disconnect the office from Jira? Every floor’s Jira tab goes away until someone connects it again.')) net.send({ t: 'jira.disconnect' });
+  });
+  const saveEpic = () => {
+    const key = epicInput.value.trim();
+    if (!key) return epicInput.focus();
+    jiraBusy = 'epic';
+    epicError = '';
+    const boardId = epicBoard.classList.contains('hidden') ? undefined : Number(epicBoard.value);
+    net.send({ t: 'jira.epic', key, boardId });
+    paintJira();
+  };
+  epicSave.addEventListener('click', saveEpic);
+  epicInput.addEventListener('input', () => {
+    epicBoard.classList.add('hidden');
+    paintJira();
+  });
+  epicInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveEpic();
+  });
+  epicRemove.addEventListener('click', () => {
+    epicInput.value = '';
+    net.send({ t: 'jira.epic', key: '' });
+  });
+
   // The dog on this floor, named for everyone here.
   const dogInput = h('input', { type: 'text', maxlength: DOG_NAME_MAX, 'aria-label': 'The dog’s name', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const dogSave = h('button.btn.primary', { type: 'button' }, 'Rename');
@@ -405,6 +537,13 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       h('label', { style: 'margin-top:18px' }, 'Worker limit'),
       limitRow,
       limitNote,
+      h('label', { style: 'margin-top:18px' }, 'Jira'),
+      jiraForm,
+      jiraActions,
+      jiraNote,
+      epicRow,
+      epicActions,
+      epicNote,
       h('label', { style: 'margin-top:18px' }, 'Workspace folder'),
       dirRow,
       dirActions,
@@ -422,6 +561,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const offTheme = store.on('theme', paintTheme);
   const offLimit = [store.on('machine', paintLimit), store.on('me', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir), store.on('me', paintDir)];
+  const offJira = [store.on('jira', paintJira), store.on('me', paintJira), offSetup];
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {
@@ -430,6 +570,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       offTheme();
       offLimit.forEach((off) => off());
       offDir.forEach((off) => off());
+      offJira.forEach((off) => off());
     },
   });
   close.addEventListener('click', () => modal.close());

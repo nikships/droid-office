@@ -21,6 +21,7 @@ import { Ledger } from './usage.js';
 import { PlanLimitsReader } from './limits.js';
 import { DROIDPROXY_AUTH_DIR, DroidProxyUsage } from './droidproxy.js';
 import { Webhook } from './webhook.js';
+import { JiraOffice, workerTicket } from './jira.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
@@ -41,6 +42,7 @@ import { lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { ROOF, isDrink } from '../shared/rooftop.js';
+import { JIRA_COMMENT_MAX, jiraKey, type JiraComment } from '../shared/jira.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -275,6 +277,7 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(req, res, url);
+    if (url.pathname === '/office/jira') return officeJira(req, res, url);
     if (req.method !== 'POST' || !['/hooks/claude', '/hooks/opencode', '/hooks/codex', '/hooks/droid'].includes(url.pathname)) return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -335,6 +338,62 @@ export async function startServer(cfg: Config) {
     toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue #${issue}` : `“${task.title}”`}`);
     send(res, 200, { ok: true, task: { id: task.id, title: task.title, status: task.status } });
   };
+  /**
+   * The Jira ticket a worker was handed, for its office-jira command (bin/office-jira.js): GET views
+   * it (with ?what=transitions, the moves it can make), POST {action: 'comment', body} comments on it
+   * and POST {action: 'transition', to} moves it. Only the worker's own ticket: any other key is
+   * refused. The office's Jira token stays here; the worker only ever has its own hook token.
+   */
+  const officeJira = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
+    const workerId = url.searchParams.get('worker') ?? '';
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const floor = workerFloor(workerId);
+    const agent = floor?.workers.authenticate(workerId, token);
+    if (!floor || !agent) return send(res, 401, { error: 'Send your own AGENT_OFFICE_WORKER_ID as ?worker= and AGENT_OFFICE_HOOK_TOKEN as the bearer token' });
+    let body: { action?: unknown; body?: unknown; to?: unknown; key?: unknown } = {};
+    if (req.method === 'POST') {
+      try {
+        body = JSON.parse(await readBody(req, 256 * 1024));
+      } catch {
+        return send(res, 400, { error: 'Send JSON: {"action": "comment", "body": "…"} or {"action": "transition", "to": "In Review"}' });
+      }
+    } else if (req.method !== 'GET') return send(res, 405, { error: 'GET or POST' });
+    const requested = url.searchParams.get('key') ?? (typeof body?.key === 'string' ? body.key : undefined);
+    const allowed = workerTicket(agent, requested);
+    if ('error' in allowed) return send(res, allowed.status, { error: allowed.error });
+    const { key } = allowed;
+    if (!floor.jira.on) return send(res, 409, { error: "This floor isn't connected to a Jira epic any more" });
+    try {
+      if (req.method === 'GET') {
+        if (url.searchParams.get('what') === 'transitions') return send(res, 200, { key, transitions: await floor.jira.transitions(key) });
+        const d = await floor.jira.detail(key);
+        return send(res, 200, { key: d.key, summary: d.summary, type: d.type, status: d.status, priority: d.priority, assignee: d.assignee, url: d.url, description: d.description, comments: d.comments, transitions: d.transitions });
+      }
+      if (body.action === 'comment') {
+        const text = typeof body.body === 'string' ? body.body.replace(/\r\n?/g, '\n').trim() : '';
+        if (!text) return send(res, 400, { error: 'The comment is empty' });
+        if (text.length > JIRA_COMMENT_MAX) return send(res, 400, { error: `Jira takes comments of up to ${JIRA_COMMENT_MAX} characters` });
+        const comment = await floor.jira.comment(key, text);
+        toastFloor(floor, `🎫 ${agent.name} commented on ${key}`);
+        return send(res, 200, { ok: true, comment });
+      }
+      if (body.action === 'transition') {
+        const to = typeof body.to === 'string' ? body.to.trim().slice(0, 200) : '';
+        if (!to) return send(res, 400, { error: 'Say which status to move it to, e.g. "In Review"' });
+        const moved = await floor.jira.transition(key, to);
+        if (!moved) {
+          const options = (await floor.jira.transitions(key)).map((t) => t.to);
+          return send(res, 409, { error: `${key} can't move to "${to}" from where it is. It can move to: ${options.join(', ') || 'nothing'}` });
+        }
+        toastFloor(floor, `🎫 ${agent.name} moved ${key} to ${moved.to}`);
+        return send(res, 200, { ok: true, status: moved.to });
+      }
+      return send(res, 400, { error: 'action is "comment" or "transition"' });
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      return send(res, status === 403 || status === 404 || status === 429 ? status : 502, { error: (err as Error).message });
+    }
+  };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');
@@ -391,6 +450,9 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`agent-office: --webhook: ${err}`);
   }
 
+  // The office's one Jira Cloud account, which every floor's epic board goes through (⚙️ Settings, admins).
+  const jira = new JiraOffice(cfg.dataDir);
+
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
   const machine = new Machine(
@@ -426,6 +488,7 @@ export async function startServer(cfg: Config) {
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
     ledger,
     capacity: machine,
+    jira,
     emit: toFloor,
     toast: toastFloor,
     termData: (workerId, data, viewers) => {
@@ -535,6 +598,8 @@ export async function startServer(cfg: Config) {
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     whiteboard: { elements: floor?.whiteboard.scene() ?? [], people: floor ? drawing(floor) : [] },
     meeting: floor?.meetings.state() ?? { current: null, past: [] },
+    jira: floor?.jira.state() ?? { connection: jira.connection() },
+    jiraBoard: floor?.jira.board ?? null,
     cabinet: { ...cabinetState(floor), frame: (floor && cabinetPlayer(floor)?.frame) ?? null },
   });
   /** The rooftop bar: nobody works up there, so it has none of a floor's things. */
@@ -786,6 +851,16 @@ export async function startServer(cfg: Config) {
         });
         res.end(r.body);
         return;
+      }
+      if (p === '/api/jira/ticket' && req.method === 'GET') {
+        // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
+        if (!floor) return send(res, 404, { error: 'No such floor' });
+        try {
+          return send(res, 200, await floor.jira.detail(url.searchParams.get('key') ?? ''));
+        } catch (err) {
+          const status = (err as { status?: number }).status;
+          return send(res, status === 400 || status === 403 || status === 404 ? status : 502, { error: (err as Error).message });
+        }
       }
       if (p === '/api/search' && req.method === 'GET') return send(res, 200, search(url.searchParams.get('q') ?? '', floor));
       if (p.startsWith('/api/gh/') && req.method === 'GET') {
@@ -1063,6 +1138,15 @@ export async function startServer(cfg: Config) {
     floor.queue.dropIssue(n);
     void floor.board.claim(n).then((err) => warn(c, err && `Couldn't assign issue #${n} on ${forgeWords(floor.board.forge).site}: ${err}`));
   };
+  /** A worker took on Jira ticket `key`: it's assigned to the office's account and moved to In Progress, and taken off the queue. */
+  const takeTicket = (c: Client, floor: Floor, key: string) => {
+    floor.queue.dropTicket(key);
+    void floor.jira.claim(key).then((err) => warn(c, err && `Couldn't assign ${key} in Jira: ${err}`));
+  };
+  /** Every floor's Jira tab starts over with the office's new connection (or none). */
+  const jiraConnectionChanged = () => {
+    for (const f of floors.values()) void f.jira.connectionChanged();
+  };
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
@@ -1226,11 +1310,13 @@ export async function startServer(cfg: Config) {
         }
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort);
-        const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
+        const ticket = kind === 'agent' && floor.jira.on ? jiraKey(msg.ticket) : undefined;
+        const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, ticket);
+        const issue = kind === 'agent' && !ticket ? issueNumber(msg.issue) : undefined;
         if (typeof r === 'string') warn(c, r);
-        else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
+        else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${ticket ? ` for ${ticket}` : issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
         if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
+        if (typeof r !== 'string' && r.ticket) takeTicket(c, floor, r.ticket);
         break;
       }
       case 'worker.resume': {
@@ -1279,10 +1365,19 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), who) : 'No such worker';
         warn(c, err);
-        const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
+        const ticket = w?.info.kind === 'agent' && w.floor.jira.on ? jiraKey(msg.ticket) : undefined;
+        const issue = w?.info.kind === 'agent' && !ticket ? issueNumber(msg.issue) : undefined;
         if (w && !err && issue) {
           toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
           takeIssue(c, w.floor, issue);
+        }
+        if (w && !err && ticket) {
+          const refused = w.floor.workers.setTicket(w.wid, ticket);
+          warn(c, refused);
+          if (!refused) {
+            toastFloor(w.floor, `${who} handed ${ticket} to ${w.info.name}`);
+            takeTicket(c, w.floor, ticket);
+          }
         }
         break;
       }
@@ -1420,12 +1515,13 @@ export async function startServer(cfg: Config) {
           warn(c, 'Unknown agent provider');
           break;
         }
-        const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
+        const ticket = floor.jira.on ? jiraKey(msg.ticket) : undefined;
+        const issue = !ticket && Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, msg.provider, model, effort);
+        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, msg.provider, model, effort, ticket);
         if (err) warn(c, err);
-        else toastFloor(floor, `📋 ${who} queued ${issue !== undefined ? `issue #${issue}` : 'a task'}`);
+        else toastFloor(floor, `📋 ${who} queued ${ticket ?? (issue !== undefined ? `issue #${issue}` : 'a task')}`);
         break;
       }
       case 'queue.remove': {
@@ -1518,6 +1614,90 @@ export async function startServer(cfg: Config) {
         const now = machine.limit;
         toastAll(limit !== undefined ? `⚙️ ${who} set the worker limit to ${now}` : now === undefined ? `⚙️ ${who} took the worker limit off` : `⚙️ ${who} put the worker limit back to ${now} (--max-workers)`);
         pumpQueues();
+        break;
+      }
+      case 'jira.connect': {
+        if (!meOf(c.accountId).admin) return sendTo(c, { t: 'jira.setup', step: 'connect', error: 'Only admins can connect the office to Jira' });
+        void jira.connect(str(msg.site, 300), str(msg.email, 254), str(msg.token, 2000), who).then((error) => {
+          sendTo(c, { t: 'jira.setup', step: 'connect', ok: !error, error });
+          if (error) return;
+          console.log(`  ${who} connected the office to Jira at ${jira.connection()?.site}`);
+          toastAll(`🎫 ${who} connected the office to Jira as ${jira.connection()?.name}`);
+          jiraConnectionChanged();
+        });
+        break;
+      }
+      case 'jira.disconnect': {
+        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can disconnect the office from Jira');
+        if (!jira.connection()) break;
+        jira.disconnect();
+        console.log(`  ${who} disconnected the office from Jira`);
+        toastAll(`${who} disconnected the office from Jira`);
+        jiraConnectionChanged();
+        break;
+      }
+      case 'jira.epic': {
+        const floor = here();
+        if (!floor) break;
+        if (!meOf(c.accountId).admin) return sendTo(c, { t: 'jira.setup', step: 'epic', error: "Only admins can set a floor's Jira epic" });
+        if (!str(msg.key, 40).trim()) {
+          floor.jira.clearEpic();
+          toastFloor(floor, `${who} took the Jira epic off this floor`);
+          sendTo(c, { t: 'jira.setup', step: 'epic', ok: true });
+          break;
+        }
+        const boardId = Number.isSafeInteger(msg.boardId) ? msg.boardId : undefined;
+        void floor.jira.setEpic(str(msg.key, 40), boardId, who).then((r) => {
+          if ('error' in r) return sendTo(c, { t: 'jira.setup', step: 'epic', error: r.error });
+          if ('choose' in r) return sendTo(c, { t: 'jira.setup', step: 'epic', choose: r.choose });
+          sendTo(c, { t: 'jira.setup', step: 'epic', ok: true });
+          toastFloor(floor, `🎫 ${who} put Jira epic ${r.epic.key} on this floor's issue board`);
+        });
+        break;
+      }
+      case 'jira.refresh':
+        void floorOf(c)?.jira.refresh(true);
+        break;
+      case 'jira.transition':
+      case 'jira.comment':
+      case 'jira.assign': {
+        const floor = here();
+        const key = jiraKey(msg.key) ?? str(msg.key, 40);
+        if (!floor) break;
+        const action = msg.t === 'jira.transition' ? 'transition' : msg.t === 'jira.comment' ? 'comment' : 'assign';
+        const done = (r: { error?: string; comment?: JiraComment }) => sendTo(c, { t: 'jira.done', key, action, ...r });
+        if (msg.t === 'jira.transition') {
+          void floor.jira.transition(key, str(msg.transition, 200)).then(
+            (t) => {
+              if (!t) return done({ error: `${key} can't make that move from where it is any more` });
+              done({});
+              toastFloor(floor, `🎫 ${who} moved ${key} to ${t.to}`);
+            },
+            (err: Error) => done({ error: err.message }),
+          );
+        } else if (msg.t === 'jira.comment') {
+          const body = typeof msg.body === 'string' ? msg.body.trim() : '';
+          const invalid = !body ? 'The comment is empty' : body.length > JIRA_COMMENT_MAX ? `Jira takes comments of up to ${JIRA_COMMENT_MAX} characters` : '';
+          if (invalid) {
+            done({ error: invalid });
+            break;
+          }
+          void floor.jira.comment(key, body).then(
+            (comment) => {
+              done({ comment });
+              toastFloor(floor, `💬 ${who} commented on ${key}`);
+            },
+            (err: Error) => done({ error: err.message }),
+          );
+        } else {
+          void floor.jira.assign(key).then(
+            () => {
+              done({});
+              toastFloor(floor, `🎫 ${who} assigned ${key} to ${jira.connection()?.name ?? 'the office'}`);
+            },
+            (err: Error) => done({ error: err.message }),
+          );
+        }
         break;
       }
       case 'changes.watch': {

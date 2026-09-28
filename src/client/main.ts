@@ -75,6 +75,7 @@ import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openPrompt, confirmDialog, sendHomeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
+import { routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
 import { copy, guessOs, openTeam, routeTeamMessage } from './ui/team';
@@ -1240,6 +1241,7 @@ net.onMessage((msg) => {
   routeTeamMessage(msg);
   routeAccountsMessage(msg);
   routePullMessage(msg);
+  routeJiraMessage(msg);
   routeElevatorMessage(msg);
   routeWhiteboardMessage(msg, net);
   switch (msg.t) {
@@ -1930,8 +1932,8 @@ function officeIsFull(): boolean {
   return true;
 }
 
-function hire(deskId: string, prompt?: string, worktree = false, provider?: AgentProvider, model?: string, effort?: AgentEffort, issue?: number) {
-  net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue });
+function hire(deskId: string, prompt?: string, worktree = false, provider?: AgentProvider, model?: string, effort?: AgentEffort, issue?: number, ticket?: string) {
+  net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, ticket });
   // The moment notifications start to matter: ask once (it has to come from a key press or click).
   if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
     askedToNotify = true;
@@ -2563,7 +2565,7 @@ function showJukebox() {
 }
 
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
-function sendToWorker(title: string, text: { context?: string; initial?: string }) {
+function sendToWorker(title: string, text: { context?: string; initial?: string }, ticket?: string) {
   const desk = freeDesk();
   const awake = [...store.workers.values()].filter((w) => w.kind === 'agent' && !isAsleep(w.status));
   if (!desk && !awake.length) {
@@ -2578,8 +2580,8 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     worktreeOption: !!store.project?.branch,
     providerOption: true,
     onSubmit: (prompt, to, worktree, provider, model, effort) => {
-      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt });
-      else if (desk) hire(desk, prompt, worktree, provider, model, effort);
+      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, ticket });
+      else if (desk) hire(desk, prompt, worktree, provider, model, effort, undefined, ticket);
     },
   });
 }
@@ -2589,6 +2591,8 @@ function boardActions() {
     queue: (prompt: string, title: string, issue: number, provider?: AgentProvider, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, provider, model, effort }),
     assign: (prompt: string, title: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
+    assignTicket: (prompt: string, title: string, ticket: string) => sendToWorker(`🎫 ${title}`, { initial: prompt }, ticket),
+    queueTicket: (prompt: string, title: string, ticket: string, provider?: AgentProvider, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, ticket, provider, model, effort }),
     meeting: (preset: MeetingPreset) => showMeeting(preset),
     goToDesk,
     pickUp,
