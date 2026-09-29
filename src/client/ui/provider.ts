@@ -136,6 +136,52 @@ export function choiceLabel(choice: AgentChoice): string {
   return badge ? `${PROVIDER_LABEL[choice.provider]} · ${badge}` : PROVIDER_LABEL[choice.provider];
 }
 
+/**
+ * Claude's office-wide default model and effort, from the --agent-args the office was started with
+ * (see ProjectInfo.agentCmd). Only when Claude is the office's default agent: --agent-args never
+ * apply to a worker hired onto another provider.
+ */
+export function claudeDefaults(project: ProjectInfo | null): { model?: ClaudeModel; effort?: AgentEffort } {
+  if (project?.defaultProvider !== 'claude') return {};
+  let model: ClaudeModel | undefined;
+  let effort: AgentEffort | undefined;
+  const args = project.agentCmd.split(/\s+/);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    let m: string | undefined;
+    let e: string | undefined;
+    if (arg === '--model' || arg === '-m') {
+      i++;
+      m = args[i];
+    } else if (arg.startsWith('--model=')) m = arg.slice('--model='.length);
+    else if (arg === '--effort') {
+      i++;
+      e = args[i];
+    } else if (arg.startsWith('--effort=')) e = arg.slice('--effort='.length);
+    if (m !== undefined && (CLAUDE_MODELS as readonly string[]).includes(m)) model = m as ClaudeModel;
+    if (e !== undefined && (AGENT_EFFORTS as readonly string[]).includes(e)) effort = e as AgentEffort;
+  }
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
+
+/**
+ * A worker's model badge with its provider's global default filled in when it was hired without an
+ * override (Droid's catalogue default, Claude's --agent-args): undefined only when no model is known.
+ */
+export function workerBadge(provider: AgentProvider | undefined, model: string | undefined, effort: AgentEffort | undefined, project: ProjectInfo | null): string | undefined {
+  const resolved = resolvedProvider(provider, project);
+  const fallback = resolved === 'droid' ? droidDefaults() : resolved === 'claude' ? claudeDefaults(project) : {};
+  return modelBadge(resolved, model ?? fallback.model, effort ?? fallback.effort);
+}
+
+/**
+ * The engine identifier over a worker: its model badge, or its provider when no model is known —
+ * so every agent names what it runs on, even on a default nobody picked.
+ */
+export function engineBadge(provider: AgentProvider | undefined, model: string | undefined, effort: AgentEffort | undefined, project: ProjectInfo | null): string {
+  return workerBadge(provider, model, effort, project) ?? providerLabel(provider, project);
+}
+
 /** Remembers the last Claude model/effort chosen at this picker's key (a desk, or the queue). */
 function claudeChoiceKey(kind: 'model' | 'effort', key: string): string {
   return `agent-office.claude-${kind}.${key}`;
@@ -250,25 +296,42 @@ let droidList: DroidModelOption[] | null = null;
 let droidListAt = 0;
 let droidRequest: Promise<DroidModelOption[]> | null = null;
 let droidDefault = '';
+let droidDefaultEffort: AgentEffort | undefined;
 
-function fetchDroidModels(): Promise<DroidModelOption[]> {
+function validDroidId(id: unknown): id is string {
+  return typeof id === 'string' && !!id && id.length <= MODEL_MAX && !/[\s\p{Cc}\p{Cf}]/u.test(id);
+}
+
+/** Droid's global default model and effort, from its own settings: empty until the catalogue loads. */
+export function droidDefaults(): { model?: string; effort?: AgentEffort } {
+  return { ...(droidDefault ? { model: droidDefault } : {}), ...(droidDefaultEffort ? { effort: droidDefaultEffort } : {}) };
+}
+
+export function fetchDroidModels(): Promise<DroidModelOption[]> {
   if (droidList && Date.now() - droidListAt < 60_000) return Promise.resolve(droidList);
   if (droidRequest) return droidRequest;
   droidRequest = fetch('/api/agents/droid/models', { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { models?: unknown; defaultModel?: unknown };
+      const body = (await res.json()) as { models?: unknown; defaultModel?: unknown; defaultReasoningEffort?: unknown };
       const models = Array.isArray(body.models)
         ? body.models.flatMap((m): DroidModelOption[] => {
             if (!m || typeof m !== 'object') return [];
             const { id, displayName } = m as { id?: unknown; displayName?: unknown };
-            if (typeof id !== 'string' || !id || id.length > MODEL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(id)) return [];
+            if (!validDroidId(id)) return [];
             return [{ id, displayName: typeof displayName === 'string' && displayName ? displayName : id }];
           })
         : [];
       droidList = models;
       droidListAt = Date.now();
-      droidDefault = typeof body.defaultModel === 'string' ? body.defaultModel : '';
+      const nextDefault = validDroidId(body.defaultModel) ? body.defaultModel : '';
+      const nextEffort = typeof body.defaultReasoningEffort === 'string' && (AGENT_EFFORTS as readonly string[]).includes(body.defaultReasoningEffort) ? (body.defaultReasoningEffort as AgentEffort) : undefined;
+      if (nextDefault !== droidDefault || nextEffort !== droidDefaultEffort) {
+        droidDefault = nextDefault;
+        droidDefaultEffort = nextEffort;
+        // Workers hired without an override run on this default: repaint their cards and rows now it's known.
+        store.emit('workers');
+      }
       return droidList;
     })
     .finally(() => {

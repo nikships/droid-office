@@ -100,7 +100,7 @@ import { openSettings } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, onFloorAdded, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
-import { providerLabel, rememberedChoice, resolvedProvider, modelBadge, supportedProviders, choiceForProvider, rememberProvider } from './ui/provider';
+import { providerLabel, rememberedChoice, resolvedProvider, modelBadge, engineBadge, fetchDroidModels, supportedProviders, choiceForProvider, rememberProvider } from './ui/provider';
 import { mirrorWhiteboard, openWhiteboard, routeWhiteboardMessage } from './ui/whiteboard';
 import { renderLimits } from './ui/limits';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
@@ -1446,6 +1446,8 @@ net.onMessage((msg) => {
       if (watching && store.workers.has(watching)) net.send({ t: 'changes.watch', workerId: watching });
       renderProject();
       hud.refresh();
+      // Droid's global default arrives with its catalogue: the worker cards repaint once it's known.
+      void fetchDroidModels().catch(() => {});
       // Back from a restart on another version: this page's code is stale, so load the new one.
       if (!bootVersion) bootVersion = msg.version;
       else if (msg.version !== bootVersion || restarting()) showUpgraded(msg.upgrade);
@@ -2033,8 +2035,8 @@ function syncWorkers() {
     }
     v.model.setAction(w.action);
     v.model.setPr(prBadge(w));
-    const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.model, w.effort) : undefined;
-    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
+    const engine = w.kind === 'agent' ? engineBadge(w.provider, w.model, w.effort, store.project) : undefined;
+    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: `${engine} · ${w.task.name}` } : w.task));
     const deskDef = DESK_BY_ID.get(w.deskId);
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));

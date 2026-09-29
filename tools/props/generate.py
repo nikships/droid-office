@@ -353,7 +353,17 @@ def build_materials() -> None:
 
 @prop("chair", "desk", "meeting", "loft")
 def build_chair():
-    """Task chair: five-star base on castors, gas lift, upholstered seat and back."""
+    """Task chair: five-star base on castors, gas lift, upholstered seat and back.
+
+    The backrest sits at +z, behind whoever is seated. The office places the worker at
+    z = +0.93 facing -z toward the desk, so their back - and the backrest behind it -
+    are toward +z, and +z is also the side away from the desk. A backrest on the other
+    side sits between the worker and their desk.
+
+    This is load-bearing, not cosmetic: `main.ts` turns `desk.chair` to face the desk
+    when a worker is hired, and `leaving.ts` spins the chair as they get up, so the
+    chair's origin and facing are part of how the office animates.
+    """
     parts = []
     # five-star base + castors
     for i in range(5):
@@ -372,16 +382,16 @@ def build_chair():
     # seat pan + cushion
     parts.append((attach(box("seat_shell", (0.5, 0.035, 0.48), loc=(0, 0.44, 0), bevel_w=0.02), M["plastic_dark"]), None))
     parts.append((attach(box("seat_pad", (0.48, 0.075, 0.46), loc=(0, 0.49, 0), bevel_w=0.045, bevel_seg=3), M["fabric"]), None))
-    # back rest on a stem
-    stem = box("back_stem", (0.07, 0.3, 0.05), loc=(0, 0.63, -0.21), rot=(math.radians(10), 0, 0), bevel_w=0.014)
+    # back rest on a stem, behind the sitter at +z
+    stem = box("back_stem", (0.07, 0.3, 0.05), loc=(0, 0.63, 0.21), rot=(math.radians(-10), 0, 0), bevel_w=0.014)
     parts.append((attach(stem, M["plastic_dark"]), None))
-    back = box("back_pad", (0.46, 0.52, 0.075), loc=(0, 0.9, -0.26), rot=(math.radians(-8), 0, 0), bevel_w=0.05, bevel_seg=3)
+    back = box("back_pad", (0.46, 0.52, 0.075), loc=(0, 0.9, 0.26), rot=(math.radians(8), 0, 0), bevel_w=0.05, bevel_seg=3)
     parts.append((attach(back, M["fabric"]), None))
     # armrests
     for sx in (-1, 1):
-        post = box(f"arm{sx}", (0.04, 0.17, 0.04), loc=(sx * 0.27, 0.58, -0.04), bevel_w=0.012)
+        post = box(f"arm{sx}", (0.04, 0.17, 0.04), loc=(sx * 0.27, 0.58, 0.04), bevel_w=0.012)
         parts.append((attach(post, M["plastic_dark"]), None))
-        pad = box(f"armpad{sx}", (0.06, 0.032, 0.22), loc=(sx * 0.27, 0.67, -0.02), bevel_w=0.014)
+        pad = box(f"armpad{sx}", (0.06, 0.032, 0.22), loc=(sx * 0.27, 0.67, 0.02), bevel_w=0.014)
         parts.append((attach(pad, M["rubber"]), None))
     return parts
 

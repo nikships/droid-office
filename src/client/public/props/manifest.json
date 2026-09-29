@@ -12,7 +12,7 @@
     "width": 1.166
   },
   "beanbag": {
-    "bytes": 6488,
+    "bytes": 6476,
     "depth": 1.24,
     "height": 1.415,
     "materials": 2,
@@ -48,7 +48,7 @@
     "width": 1.8
   },
   "cabinet": {
-    "bytes": 13980,
+    "bytes": 13968,
     "depth": 0.896,
     "height": 1.85,
     "materials": 6,
@@ -60,8 +60,8 @@
     "width": 0.75
   },
   "chair": {
-    "bytes": 17568,
-    "depth": 0.6691,
+    "bytes": 17588,
+    "depth": 0.6233,
     "height": 1.1575,
     "materials": 4,
     "tags": [
@@ -74,7 +74,7 @@
     "width": 0.6886
   },
   "coffee-machine": {
-    "bytes": 11584,
+    "bytes": 11588,
     "depth": 0.432,
     "height": 0.598,
     "materials": 5,
@@ -110,7 +110,7 @@
     "width": 2.21
   },
   "desk-lamp": {
-    "bytes": 7532,
+    "bytes": 7524,
     "depth": 0.1946,
     "height": 0.5866,
     "materials": 2,
@@ -170,7 +170,7 @@
     "width": 0.16
   },
   "pendant-lamp": {
-    "bytes": 8960,
+    "bytes": 8952,
     "depth": 0.8302,
     "height": 0.95,
     "materials": 4,
@@ -182,7 +182,7 @@
     "width": 0.8302
   },
   "plant": {
-    "bytes": 17608,
+    "bytes": 17488,
     "depth": 0.68,
     "height": 1.65,
     "materials": 4,
@@ -257,7 +257,7 @@
     "width": 0.45
   },
   "tree": {
-    "bytes": 5968,
+    "bytes": 6200,
     "depth": 3.0,
     "height": 5.0,
     "materials": 3,

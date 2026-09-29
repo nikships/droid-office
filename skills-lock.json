@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "threejs-webxr": {
+      "source": "full-stack-skills/threejs-skills",
+      "sourceType": "github",
+      "skillPath": "skills/threejs-webxr/SKILL.md",
+      "computedHash": "f464f127fa2513fba7bfe2a1ad25bcb70736790dae957f35d4e95904c140b69d"
+    }
+  }
+}

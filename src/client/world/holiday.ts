@@ -605,7 +605,12 @@ export class Holiday {
       const merged = mergeByMaterial(tree);
       merged.visible = false;
       p.add(merged);
-      this.plants.push({ leaves: p.children.slice(1, 4), tree: merged });
+      // `plant()` records its canopy in userData. The procedural plant has separate leaf
+      // children to hide; the generated GLB is one joined mesh, so the whole model goes.
+      this.plants.push({
+        leaves: (p.userData.canopy as THREE.Object3D[] | undefined) ?? p.children.slice(1),
+        tree: merged,
+      });
     });
     // A present on every desk.
     const deskGifts = new THREE.Group();

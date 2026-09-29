@@ -9,7 +9,7 @@
  * loadable from `tests/`.
  */
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
@@ -66,7 +66,9 @@ export function propManifest(): PropManifest {
 /** Loads the manifest. Safe to call more than once; callers await the same promise. */
 export async function loadPropManifest(): Promise<PropManifest> {
   if (manifest) return manifest;
-  const res = await fetch('/props/manifest.json');
+  // `no-store` on the server for /props/, but a hard reload should never serve a stale
+  // manifest either: it is the source of the byte counts used for cache-busting.
+  const res = await fetch('/props/manifest.json', { cache: 'no-store' });
   if (!res.ok) throw new Error(`props manifest: ${res.status} ${res.statusText}`);
   manifest = (await res.json()) as PropManifest;
   return manifest;
@@ -81,9 +83,14 @@ async function load(name: string): Promise<Entry> {
   const info = propManifest()[name];
   if (!info) throw new Error(`unknown prop "${name}" - run tools/props/generate.py`);
 
+  // The prop filenames are stable across regenerations, so a browser that already has a
+  // chair.glb would keep the old one. The manifest carries each prop's byte size, which
+  // changes whenever the geometry does, so it doubles as a cache-busting version.
+  const url = `${info.url}?v=${info.bytes}`;
+
   const job = new Promise<Entry>((resolve, reject) => {
     gltfLoader().load(
-      info.url,
+      url,
       (gltf) => {
         // The GLB is authored with its base on y=0 and its origin at the footprint
         // centre, so it drops straight onto a floor with no per-prop offset.
@@ -184,6 +191,11 @@ function install(node: THREE.Object3D, gltf: THREE.Group): void {
   });
   node.clear();
   node.add(model);
+  // `plant()` caches its canopy before the GLB lands; re-resolve it against the new
+  // children so the Christmas theme still has something to hide.
+  if (node.userData.canopyIsEverything) {
+    node.userData.canopy = node.children.filter((c) => c !== model).concat(model);
+  }
 }
 
 /**

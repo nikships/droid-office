@@ -20,10 +20,7 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, dev
 // Seed the saved profile before any script runs, so the character picker never opens.
 // The picker is a modal dialog that also swallows key events meant for the camera.
 await page.addInitScript(() => {
-  localStorage.setItem(
-    'agent-office.profile',
-    JSON.stringify({ name: 'Nik', color: '#4f86f7', look: { skin: 2, hair: 2, style: 2 } }),
-  );
+  localStorage.setItem('agent-office.profile', JSON.stringify({ name: 'Nik', color: '#4f86f7', look: { skin: 2, hair: 2, style: 2 } }));
 });
 
 const logs = [];
@@ -45,15 +42,16 @@ await page.waitForTimeout(500);
 // Give the GLBs time to fetch, decode and swap into the scene.
 await page.waitForTimeout(9000);
 
-// Turn to face the desk pods. The camera starts by the entrance looking at the atrium, so
-// walk in and pan until the desks fill the frame. Keys go to the page, not to any dialog.
-await page.locator('canvas').click({ position: { x: 800, y: 500 } }).catch(() => {});
+await page
+  .locator('canvas')
+  .click({ position: { x: 800, y: 500 } })
+  .catch(() => {});
 const hold = async (key, ms) => {
   await page.keyboard.down(key);
   await page.waitForTimeout(ms);
   await page.keyboard.up(key);
 };
-// Forward into the room.
+// Walk in from the entrance toward the desk pods.
 await hold('KeyW', 2600);
 await hold('KeyW', 2600);
 // Look around by dragging, which is how the app turns the view.
@@ -68,6 +66,34 @@ const turn = async (dx) => {
 await turn(320);
 await hold('KeyW', 1400);
 await page.waitForTimeout(600);
+
+// Stand next to a desk so a seated worker and their chair are both in frame. This is the
+// view that caught the backrest shipping on the wrong side, so keep shooting it.
+//
+// `?vrtest=1` exposes teleport/turn hooks, which beat walking blindly with W and hoping
+// the camera lands facing a desk.
+const url = new URL(page.url());
+url.searchParams.set('vrtest', '1');
+await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('canvas', { timeout: 30000 });
+await page.waitForTimeout(9000);
+
+if (await page.evaluate(() => Boolean(window.__vrtest))) {
+  // Desk pods sit at x = {-10.5, -1.5} and z = {+-3.45, +-4.55}; the chairs are 0.9
+  // further out from each desk on z, so the sitter is on the +z side of a front-row desk.
+  // Stand off the pod's corner and look across it, which puts a chair side-on.
+  const P = { x: Number(process.env.POD_X ?? -1.5), z: Number(process.env.POD_Z ?? 3.45) };
+  await page.evaluate((p) => window.__vrtest.teleport(p.x + 1.9, 0, p.z + 2.6), P);
+  await page.waitForTimeout(300);
+  // Face back toward the pod centre. `turn` is relative to the current facing, so read
+  // the facing after teleporting and aim the correction at the desk.
+  await page.evaluate((p) => {
+    const [x, , z] = window.__vrtest.pos();
+    const want = Math.atan2(p.x - x, -(p.z - z));
+    window.__vrtest.turn(want - window.__vrtest.facing());
+  }, P);
+  await page.waitForTimeout(1200);
+}
 
 const diag = await page.evaluate(() => {
   const c = document.querySelector('canvas');

@@ -5,7 +5,7 @@ import type { Voice } from '../voice';
 import type { ChatLine } from '../../shared/protocol';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { usageLabel, usageTitle } from './usage';
-import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
+import { providerLabel, providerUsageState, resolvedProvider, workerBadge } from './provider';
 import { whereabouts } from './whereabouts';
 import { DESK_BY_ID } from '../../shared/layout';
 
@@ -66,7 +66,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const usageState = w.kind === 'agent' ? providerUsageState(w.provider, store.project, w.usage) : undefined;
     const usageNote =
       usageState === 'untracked' ? ' · usage untracked' : usageState === 'waiting' && providerKind === 'opencode' ? ' · waiting for metrics' : usageState === 'waiting' && providerKind === 'codex' ? ' · waiting for first report' : '';
-    const badge = w.kind === 'agent' ? modelBadge(w.provider, w.model, w.effort) : undefined;
+    const badge = w.kind === 'agent' ? workerBadge(w.provider, w.model, w.effort, store.project) : undefined;
     const sub = [provider && `⚙️ ${provider}${badge ? ` · ${badge}` : ''}${usageNote}`, w.worktree && `🌿 ${w.worktree.branch}`, w.pr && `🔀 PR #${w.pr.number}`, w.activity || w.title || w.prompt].filter(Boolean).join(' · ');
     ul.append(
       h(

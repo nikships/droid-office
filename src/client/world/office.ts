@@ -303,6 +303,10 @@ function plant(scale = 1): THREE.Group {
   const g = new THREE.Group();
   // The GLB is the real prop once it has loaded; the spheres below are the stand-in that
   // keeps the office looking right before then, and the fallback if the fetch fails.
+  //
+  // The pot and the canopy are separate children either way, because the Christmas theme
+  // hides the canopy and swaps in a tree. On the GLB the join produced one child, so
+  // `userData.canopy` is set below and holiday.ts reads that instead of an index.
   if (!useProp(g, 'plant')) {
     g.add(mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.5, 12), toon(PALETTE.pot), 0, 0.25, 0));
     g.add(mesh(new THREE.SphereGeometry(0.42, 12, 10), toon(PALETTE.plant), 0, 0.85, 0));
@@ -310,6 +314,11 @@ function plant(scale = 1): THREE.Group {
     g.add(mesh(new THREE.SphereGeometry(0.26, 12, 10), toon(PALETTE.plant), -0.2, 1.15, -0.08));
   }
   g.scale.setScalar(scale);
+  g.userData.canopy = g.children.slice(1);
+  // The GLB arrives as one joined mesh, pot and canopy fused, so the Christmas theme
+  // has to hide the whole thing rather than one child. `install()` re-resolves the
+  // canopy against the swapped-in children when the mesh arrives.
+  g.userData.canopyIsEverything = g.children.length === 1;
   return g;
 }
 

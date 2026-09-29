@@ -715,11 +715,12 @@ export async function startServer(cfg: Config) {
         return;
       }
       // The prop GLBs and the Draco decoder. They are fetched before the session exists,
-      // and a given prop name always maps to the same bytes, so they cache for a year
-      // the same way the bundle's /assets/ files do.
+      // so they are served here rather than behind the auth check. Deliberately NOT
+      // immutable: prop filenames are stable across edits, so a regenerated chair.glb
+      // would otherwise be pinned in a browser's cache for a year. Revalidate each time.
       if (p.startsWith('/props/')) {
         const file = publicFile(p);
-        if (file) return serveFile(res, file, true);
+        if (file) return serveFile(res, file, false);
         res.writeHead(404).end();
         return;
       }
