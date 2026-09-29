@@ -611,6 +611,9 @@ const vr = new VRSession(renderer, scene, camera, {
     // Nor a way to shoot: the ball drops where you stand, and the club goes back in the bag.
     dropBall();
     golf.stop();
+    // Nor a way to answer a bleed-out dialog: the gun goes back and the worker is unharmed.
+    dropDying();
+    holsterGun(true);
     // A focused DOM field (the chat box) would take IME text the capture below can't cancel.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     syncElevatorButtons();

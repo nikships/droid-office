@@ -532,7 +532,8 @@ export class Hands {
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.
     if (this.smokeT >= 0) {
       this.smokeT += dt;
-      const d = s.walking || s.airborne ? 0 : dragCurve(this.smokeT % SMOKE_CYCLE);
+      // Not mid-aim: the hand holding the gun stays on the crosshair.
+      const d = s.walking || s.airborne || this.gun ? 0 : dragCurve(this.smokeT % SMOKE_CYCLE);
       r.position.x -= 0.2 * d;
       r.position.y += 0.02 * d;
       r.position.z += 0.3 * d;
