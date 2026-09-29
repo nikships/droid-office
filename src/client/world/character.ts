@@ -8,6 +8,7 @@ import { HIPS } from '../player';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
+import { buildGun, type GunProp } from './gun';
 import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
@@ -336,6 +337,11 @@ export class Person {
   pose: Pose = 'stand';
   private cig: THREE.Group;
   private ember: THREE.MeshToonMaterial;
+  /** The local player's third-person .44; the first-person pair lives in Hands. */
+  private gun: GunProp | null = null;
+  private gunWanted = false;
+  private gunK = 0;
+  private gunShotT = -1;
   /** Seconds into a smoke break, or -1 when not on one. */
   private smokeT = -1;
   private wispIn = 0;
@@ -794,6 +800,27 @@ export class Person {
     this.cig.visible = on;
   }
 
+  /** Draws the local avatar's third-person gun prop (not broadcast to remote peers). */
+  setGun(on: boolean) {
+    if (on === this.gunWanted) return;
+    this.gunWanted = on;
+    if (on) {
+      this.gun ??= buildGun();
+      this.gun.group.position.set(0, -0.37, 0.08);
+      // The forearm points forward (+z); turn the barrel down the arm and the grip toward the floor.
+      this.gun.group.rotation.set(Math.PI / 2, 0, 0);
+      this.armL.add(this.gun.group);
+      this.gun.group.visible = true;
+    }
+  }
+
+  /** Fires one visible third-person shot. */
+  fireGun() {
+    if (!this.gunWanted || !this.gun) return;
+    this.gunShotT = 0;
+    this.gun.muzzle.visible = true;
+  }
+
   /** A drag: up to the mouth, hold while the tip glows, back down, then blow the smoke out. */
   private smokeStep(dt: number, walking: boolean, airborne: boolean) {
     const prev = this.smokeT % SMOKE_CYCLE;
@@ -1031,6 +1058,19 @@ export class Person {
     this.body.rotation.y = this.body.rotation.z = 0;
     if (this.emoting) this.emoteStep(dt, moving || airborne ? 0 : 1 - sit);
     if (this.golf && !sit && !airborne) this.golfStep(dt);
+    this.gunK += ((this.gunWanted ? 1 : 0) - this.gunK) * Math.min(1, dt * 8);
+    if (this.gunShotT >= 0) {
+      this.gunShotT += dt;
+      if (this.gun) this.gun.muzzle.visible = this.gunShotT < 0.075;
+      if (this.gunShotT >= 0.32) this.gunShotT = -1;
+    }
+    const recoil = this.gunShotT >= 0 ? Math.sin(Math.min(1, this.gunShotT / 0.32) * Math.PI) * 0.22 : 0;
+    if (this.gun && (this.gunWanted || this.gunK > 0.02)) {
+      this.armL.rotation.x = THREE.MathUtils.lerp(this.armL.rotation.x, -1.35 + recoil, this.gunK);
+      this.armL.rotation.z = THREE.MathUtils.lerp(this.armL.rotation.z, 0.2, this.gunK);
+      this.gun.group.position.y = -0.37 + recoil * 0.12;
+      if (!this.gunWanted && this.gunK < 0.03) this.gun.group.visible = false;
+    }
   }
 }
 
@@ -1322,6 +1362,9 @@ export class Worker {
   private phase = Math.random() * Math.PI * 2;
   /** How far through its stride it is, walking in. */
   private stride = 0;
+  /** Local reversible casualty preview; never changes the server's worker/session state. */
+  private dead = false;
+  private deathT = 0;
 
   constructor(
     name: string,
@@ -1434,7 +1477,42 @@ export class Worker {
   setStatus(status: WorkerStatus, bounce: boolean) {
     this.status = status;
     this.bouncing = bounce;
-    if (!this.dancing) this.paintBulb();
+    if (!this.dancing && !this.dead) this.paintBulb();
+    this.drawBubble();
+  }
+
+  /** Turns off the local status light and hides the status card during the shot preview. */
+  die() {
+    if (this.dead) return;
+    this.dead = true;
+    this.deathT = 0;
+    this.bouncing = false;
+    this.cheerT = 0;
+    this.bounceT = 0;
+    this.bulb.emissive.set('#000000');
+    this.bulb.color.set('#34343a');
+    if (this.bubble) {
+      this.root.remove(this.bubble);
+      disposeSprite(this.bubble);
+      this.bubble = null;
+    }
+    this.bubbleKey = 'dead';
+  }
+
+  /** Restores the worker's current server-driven status and pose after a revive. */
+  revive() {
+    if (!this.dead) return;
+    this.dead = false;
+    this.deathT = 0;
+    this.body.position.set(0, 0, 0);
+    this.body.rotation.set(0, 0, 0);
+    this.body.scale.setScalar(1);
+    this.armL.rotation.set(0, 0, 0);
+    this.armR.rotation.set(0, 0, 0);
+    this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2, 0.05));
+    for (const eye of this.eyes) eye.scale.y = 1;
+    this.paintBulb();
+    this.bubbleKey = '';
     this.drawBubble();
   }
 
@@ -1533,7 +1611,7 @@ export class Worker {
   }
 
   private drawBubble() {
-    if (this.leaving) return;
+    if (this.leaving || this.dead) return;
     const { status, bouncing: bounce, task, pr } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
     // Resting cards used to be cream. They sit black with white type, like the name tag.
@@ -1568,6 +1646,7 @@ export class Worker {
   }
 
   update(dt: number, t: number) {
+    if (this.dead) return this.deadPose(dt);
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     this.cheerT = Math.max(0, this.cheerT - dt);
@@ -1643,6 +1722,23 @@ export class Worker {
       this.body.position.y += Math.abs(s) * 0.05;
       this.body.rotation.z = s * 0.1;
     }
+  }
+
+  /** Slack face and limp arms; Casualties animates the world-space tumble and fall. */
+  private deadPose(dt: number) {
+    this.deathT += dt;
+    const k = Math.min(1, dt * 8);
+    this.armL.rotation.x += (0.85 - this.armL.rotation.x) * k;
+    this.armR.rotation.x += (0.65 - this.armR.rotation.x) * k;
+    this.armL.rotation.z += (-0.55 - this.armL.rotation.z) * k;
+    this.armR.rotation.z += (0.5 - this.armR.rotation.z) * k;
+    this.body.rotation.set(0.12, 0, 0.05);
+    this.body.position.y = 0;
+    this.body.scale.setScalar(1);
+    this.feet.forEach((f, i) => (f.position.y = 0.12 + (i ? 0.02 : 0)));
+    for (const eye of this.eyes) eye.scale.y = 0.08;
+    this.bulb.emissive.set('#000000');
+    this.bulb.color.set('#34343a');
   }
 
   /** Eases toward `act`'s stance, out of whatever it was doing before. */

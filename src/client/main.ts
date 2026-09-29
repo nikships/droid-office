@@ -70,6 +70,8 @@ import { Gallery } from './world/gallery';
 import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
+import { Casualties } from './world/casualties';
+import { ImpactPuff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
@@ -81,7 +83,7 @@ import { $, h, clip, closeAllModals, closeTopModal, doingNow, modalOpen, onDoing
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
-import { openPrompt, confirmDialog, sendHomeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
+import { openPrompt, confirmDialog, sendHomeDialog, shootDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
@@ -1091,6 +1093,7 @@ me.onSmoke = (kind, at, dir) => {
   smoke.exhale(camera.localToWorld(camLocal.set(0, -0.14, -0.3)), camera.getWorldDirection(camLocal).setY(0.1).normalize());
 };
 const sound = new OfficeSound();
+let gunDrawn = false;
 sound.setVolume(settings.volume, settings.muted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
 sound.onMusicError = (text) => toast(text, 'warn');
@@ -1355,6 +1358,19 @@ const departures = new Departures(
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
+/** One local shot preview/medic sequence at a time; no worker state changes until worker.kill. */
+const casualties = new Casualties(
+  scene,
+  (x, z, y) => groundAt(office.colliders, x, z, y),
+  () => arrangeSeats(),
+  {
+    thud: (at) => sound.golf('thud', at, 5),
+    medic: (at) => sound.medicSiren(at),
+  },
+);
+const shotDead = new Set<string>();
+let activeShoot: { workerId: string; dismiss(): void } | null = null;
+const impactPuffs: ImpactPuff[] = [];
 // Workers called to a meeting, walking in from the elevator to the meeting table.
 const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
@@ -1366,6 +1382,12 @@ let upgradePhase = '';
 
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
+  if (!up && activeShoot) {
+    const workerId = activeShoot.workerId;
+    activeShoot.dismiss();
+    activeShoot = null;
+    casualties.cancel(workerId);
+  }
   if (!up && vr.active) {
     vr.clearGrab();
     setCarrying(null);
@@ -1374,6 +1396,10 @@ net.onStatus((up) => {
 net.onMessage((msg) => {
   if (msg.t === 'welcome') voice.reset();
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
+    activeShoot?.dismiss();
+    activeShoot = null;
+    casualties.clear();
+    shotDead.clear();
     departures.clear();
     arrivals.clear();
     seatedAlready = true;
@@ -2021,8 +2047,16 @@ function syncWorkers() {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
     const desk = office.desks.get(v.deskId);
+    if (activeShoot?.workerId === id) {
+      activeShoot.dismiss();
+      activeShoot = null;
+      casualties.cancel(id);
+    }
+    const shot = shotDead.delete(id) && casualties.confirmedRemoval(id, v.laptop);
     // Sent home: it packs up and walks out, and the seat shows as free once it's up (see departures).
-    if (desk && sentHome.has(id)) departures.add(v.model, v.laptop, desk);
+    if (shot) {
+      // Casualties now owns this model and laptop through the local stretcher sequence.
+    } else if (desk && sentHome.has(id)) departures.add(v.model, v.laptop, desk);
     else {
       v.model.root.removeFromParent();
       v.laptop.root.removeFromParent();
@@ -2068,7 +2102,7 @@ function meetingCard(w: WorkerInfo): WorkerTask | undefined {
  */
 function arrangeSeats() {
   // Someone sent home still counts until they get up, so a bean bag stays out under them.
-  const free = vacantSeats(store.workers.values(), (id) => departures.seated(id));
+  const free = vacantSeats(store.workers.values(), (id) => departures.seated(id) || casualties.seated(id));
   for (const [id, desk] of office.desks) desk.vacancy.visible = free.has(id);
   const appeared = office.setBeanbags(beanbagsOut((id) => !free.has(id)));
   // One came out right where you're standing (on the office floor, not down in the garage): you end up on top of it.
@@ -3563,6 +3597,13 @@ function renderHint() {
   if (hanger.active && !modalOpen()) return renderHangHint(el);
   if (climber.active && !modalOpen()) return renderClimbHint(el);
   if (golf.active && !modalOpen()) return renderGolfHint(el);
+  if (gunDrawn && !modalOpen()) {
+    if (hintKey === 'gun') return;
+    hintKey = 'gun';
+    el.replaceChildren(h('span.title', {}, 'Silver .44 Magnum'), key('Click', 'Fire'), key('7', 'Holster'));
+    el.classList.remove('hidden');
+    return;
+  }
   const withBall = holdingBall();
   if ((!target && !carrying && !withBall) || modalOpen()) {
     if (hintKey) {
@@ -3864,14 +3905,15 @@ let crossKey = '';
 const finePointer = window.matchMedia('(pointer: fine)').matches;
 function renderCrosshair() {
   const show = player.view === 'first' && !modalOpen() && !golf.active;
-  const free = show && finePointer && player.canLock && !player.locked;
-  const k = `${show}|${!!target}|${free}|${relookOnKey}`;
+  const free = show && !gunDrawn && finePointer && player.canLock && !player.locked;
+  const k = `${show}|${!!target}|${free}|${relookOnKey}|${gunDrawn}`;
   if (k === crossKey) return;
   crossKey = k;
   const el = $('crosshair');
   el.classList.toggle('hidden', !show);
   el.classList.toggle('on', !!target);
   el.classList.toggle('free', free);
+  el.classList.toggle('gun', gunDrawn);
   el.querySelector('.look-hint')!.textContent = relookOnKey ? 'Press a key or click to look around' : 'Click to look around';
 }
 
@@ -3994,6 +4036,10 @@ function officeKey(e: KeyboardEvent): boolean {
     return true;
   }
   switch (e.code) {
+    case 'Digit7':
+    case 'Numpad7':
+      if (!e.repeat) toggleGun();
+      return true;
     case 'KeyT':
     case 'Enter':
       e.preventDefault();
@@ -4168,6 +4214,110 @@ function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boole
   return pickFromRay(raycaster, slack);
 }
 
+function gunUnavailable(): boolean {
+  return !!carrying || holdingBall() || golf.active || climber.active || hanger.active || readingNow() || modalOpen() || vr.active;
+}
+
+function setGunDrawn(on: boolean) {
+  if (gunDrawn === on) return;
+  gunDrawn = on;
+  hands.holdGun(on);
+  me.setGun(on);
+  const at = { x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z };
+  if (on) sound.gunDraw(at);
+  else sound.gunHolster(at);
+  hintKey = '';
+  crossKey = '';
+}
+
+function toggleGun() {
+  if (gunDrawn) return setGunDrawn(false);
+  if (gunUnavailable()) return toast('Your hands or current activity are busy', 'warn');
+  if (casualties.busy()) return toast('Resolve the worker already on the floor first', 'warn');
+  setGunDrawn(true);
+}
+
+function workerHitId(object: THREE.Object3D): string | null {
+  for (let parent: THREE.Object3D | null = object; parent; parent = parent.parent) {
+    for (const [id, view] of workerViews) if (parent === view.model.root) return id;
+  }
+  return null;
+}
+
+function shown(object: THREE.Object3D): boolean {
+  for (let parent: THREE.Object3D | null = object; parent; parent = parent.parent) if (!parent.visible) return false;
+  return true;
+}
+
+function startWorkerShot(workerId: string) {
+  const worker = store.workers.get(workerId);
+  const view = workerViews.get(workerId);
+  const desk = view && office.desks.get(view.deskId);
+  if (!worker || !view || !desk || casualties.busy()) return;
+  if (!casualties.preview(workerId, view.model, desk)) return;
+  const worktree = worker.meeting ? undefined : worker.worktree;
+  activeShoot = {
+    workerId,
+    ...shootDialog({
+      workerId,
+      name: worker.name,
+      where: desk.def.id,
+      worktree: worktree ? { path: worktree.path, branch: worktree.branch } : undefined,
+      ask: () => net.send({ t: 'worker.worktree', workerId }),
+      onRevive: () => {
+        activeShoot = null;
+        casualties.revive(workerId);
+        toast(`${worker.name} was revived`);
+        hintKey = '';
+      },
+      onConfirm: (cleanup) => {
+        activeShoot = null;
+        shotDead.add(workerId);
+        net.send({ t: 'worker.kill', workerId, ...(cleanup ? { cleanup } : {}) });
+        toast(`Cleaning up ${worker.name}; their session stops only after the server confirms`);
+      },
+    }),
+  };
+}
+
+function fireGun(ndc: THREE.Vector2) {
+  if (!gunDrawn) return;
+  if (gunUnavailable()) {
+    setGunDrawn(false);
+    toast('The gun was holstered because your hands or activity are busy', 'warn');
+    return;
+  }
+  if (casualties.busy()) {
+    toast('Resolve the worker already on the floor first', 'warn');
+    return;
+  }
+  hands.fireGun();
+  me.fireGun();
+  sound.gunshot({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z });
+  raycaster.setFromCamera(ndc, camera);
+  raycaster.far = 80;
+  const excluded = new Set<THREE.Object3D>([me.root, ...[...remotes.values()].map((r) => r.person.root)]);
+  const roots = scene.children.filter((root) => !excluded.has(root));
+  const hits = raycaster.intersectObjects(roots, true);
+  for (const hit of hits) {
+    if (!shown(hit.object)) continue;
+    const workerId = workerHitId(hit.object);
+    if (workerId) {
+      if (store.workers.has(workerId) && !casualties.has(workerId)) startWorkerShot(workerId);
+      else impact(hit);
+      return;
+    }
+    impact(hit);
+    return;
+  }
+}
+
+function impact(hit: THREE.Intersection) {
+  const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? new THREE.Vector3(0, 1, 0);
+  impactPuffs.push(new ImpactPuff(scene, hit.point, normal));
+  sound.golf('wall', hit.point, 2.5);
+}
+
 /**
  * What a ray lands on first, whether it is within reach (plus `slack` meters), and where it hit.
  * The mouse aims the shared raycaster through the camera; VR hands its own raycasters from the
@@ -4246,6 +4396,10 @@ player.onClick = (ndc) => {
   if (hanger.active) {
     reach();
     hanger.place(ndc);
+    return;
+  }
+  if (gunDrawn) {
+    fireGun(ndc);
     return;
   }
   if (player.view === 'first') {
@@ -4556,6 +4710,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   // Presenting in the headset: the VR session steers the player instead of the keyboard, the rays
   // pick the target, and the cartoon hands and post effects sit out (the eyes are real ones).
   const inVR = vr.active;
+  if (gunDrawn && gunUnavailable()) setGunDrawn(false);
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
   const secs = now / 1000;
@@ -4670,10 +4825,11 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
+  casualties.update(dt);
   arrivals.update(dt);
   if (!upTop) updateBall(now, dt);
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...[...remotes.values()].map((r) => r.person.root.position), ...departures.positions(), ...arrivals.positions()]);
+    office.update(t, dt, [player.pos, ...[...remotes.values()].map((r) => r.person.root.position), ...departures.positions(), ...arrivals.positions(), ...casualties.positions()]);
     office.stack.update(
       dt,
       [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }, ...[...remotes.values()].map((r) => ({ x: r.person.root.position.x, y: r.person.root.position.y, z: r.person.root.position.z, grip: r.grip }))],
@@ -4683,6 +4839,12 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   }
   checkSmokeBreak(now);
   smoke.update(dt, camera);
+  for (let i = impactPuffs.length - 1; i >= 0; i--) {
+    if (!impactPuffs[i].update(dt)) {
+      impactPuffs[i].dispose();
+      impactPuffs.splice(i, 1);
+    }
+  }
   confetti.update(dt);
   hanger.update();
   sky.update(dt, t, camera);

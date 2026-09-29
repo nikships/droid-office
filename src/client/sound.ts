@@ -720,6 +720,105 @@ export class OfficeSound {
     }
   }
 
+  /** A loud, short synthesized revolver report, spatialized to the shooter's floor position. */
+  gunshot(at: Pos = this.listener) {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('gunshot');
+    const t0 = ctx.currentTime + 0.015;
+    const out = this.panner(at, 5, 0.72);
+    out.connect(this.ambience);
+    const crack = this.noise(this.buf.white);
+    const filter = biquad(ctx, 'bandpass', 1500, 0.7);
+    filter.frequency.setValueAtTime(1500, t0);
+    filter.frequency.exponentialRampToValueAtTime(360, t0 + 0.16);
+    const noiseGain = ctx.createGain();
+    envelope(noiseGain.gain, t0, [
+      [0.004, 0.85],
+      [0.055, 0.32],
+      [0.22, 0],
+    ]);
+    crack.connect(filter).connect(noiseGain).connect(out);
+    crack.start(t0);
+    crack.stop(t0 + 0.24);
+    const low = ctx.createOscillator();
+    low.type = 'triangle';
+    low.frequency.setValueAtTime(105, t0);
+    low.frequency.exponentialRampToValueAtTime(48, t0 + 0.17);
+    const lowGain = ctx.createGain();
+    envelope(lowGain.gain, t0, [
+      [0.008, 0.38],
+      [0.12, 0.12],
+      [0.24, 0],
+    ]);
+    low.connect(lowGain).connect(out);
+    low.start(t0);
+    low.stop(t0 + 0.25);
+  }
+
+  /** A small metallic slide and cylinder click as the revolver is drawn. */
+  gunDraw(at: Pos = this.listener) {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('gunDraw');
+    const out = this.panner(at, 1.8, 1.1);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.01;
+    this.play(this.buf.mouse, { when: t0, gain: 0.36, rate: 0.72, dest: out });
+    const slide = ctx.createOscillator();
+    slide.type = 'triangle';
+    slide.frequency.setValueAtTime(1150, t0 + 0.02);
+    slide.frequency.exponentialRampToValueAtTime(480, t0 + 0.11);
+    const g = ctx.createGain();
+    envelope(g.gain, t0 + 0.02, [
+      [0.008, 0.12],
+      [0.09, 0],
+    ]);
+    slide.connect(g).connect(out);
+    slide.start(t0 + 0.02);
+    slide.stop(t0 + 0.12);
+  }
+
+  /** The quieter click of the hammer lowering and the gun being holstered. */
+  gunHolster(at: Pos = this.listener) {
+    this.unlock();
+    if (!this.ctx) return;
+    this.count('gunHolster');
+    this.play(this.buf.mouse, { gain: 0.18, rate: 0.58, at, ref: 1.4, rolloff: 1.2 });
+  }
+
+  /** A brief synthesized two-tone siren when the local paramedics are dispatched. */
+  medicSiren(at: Pos) {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('medicSiren');
+    const out = this.panner(at, 2.5, 1.05);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.02;
+    const oscillator = ctx.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(620, t0);
+    oscillator.frequency.setValueAtTime(880, t0 + 0.28);
+    oscillator.frequency.setValueAtTime(620, t0 + 0.56);
+    oscillator.frequency.setValueAtTime(880, t0 + 0.84);
+    const gain = ctx.createGain();
+    envelope(gain.gain, t0, [
+      [0.05, 0.12],
+      [0.15, 0.09],
+      [0.95, 0.08],
+      [1.12, 0],
+    ]);
+    oscillator.connect(gain).connect(out);
+    oscillator.start(t0);
+    oscillator.stop(t0 + 1.15);
+  }
+
   // ---- The gong ----------------------------------------------------------------------------------
 
   /**

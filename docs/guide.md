@@ -244,6 +244,7 @@ Everything the office tells a worker by itself can be rewritten in ⚙️ Settin
 | Q | Put back the issue card you're carrying, or drop the basketball |
 | T / Enter | Chat |
 | G / 1–6 | Emote: hold G for the wheel (point and let go) or press 1–6 to wave, give a thumbs up, clap, dance, point or facepalm; everyone on your floor sees it |
+| 7 | Draw or holster the silver .44 Magnum; click to fire when it's drawn |
 | / | Search the chat and every terminal on your floor |
 | V / M | Join voice / mute |
 | Tab | The ☰ menu: every window, and what shows on screen |
@@ -251,6 +252,10 @@ Everything the office tells a worker by itself can be rewritten in ⚙️ Settin
 | Shift + Esc | Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal) |
 
 You can also click a nearby desk to interact with it, or click a worker in the Workers panel (**🤖 Workers**, top right) to open its terminal.
+
+### The .44 Magnum
+
+Press **7** to draw or holster the revolver. While it's drawn, the crosshair turns red; click to fire at the nearest worker in clear view, or holster it with **7** again. A shot only previews a worker falling: the worker's session keeps running until you choose **Confirm kill** in the cleanup dialog. Choose **Revive**—or press **Esc**—to stand them back up without stopping their session. The gun is unavailable while your hands are full or while golfing, climbing, or hanging a picture.
 
 ## One command on AWS
 

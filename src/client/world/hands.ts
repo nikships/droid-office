@@ -8,6 +8,7 @@ import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, e
 import { UNDEAD_SKIN, raggedCuff, warlockHand, witchFire } from './costumes';
 import { mesh, toon, toonUnique } from './toon';
 import { ballMesh } from './hoop';
+import { buildGun, type GunProp } from './gun';
 
 export interface HandsInput {
   yaw: number;
@@ -50,6 +51,10 @@ export class Hands {
   private skin: THREE.MeshToonMaterial;
   private right: Arm;
   private left: Arm;
+  private gun: GunProp;
+  private gunWanted = false;
+  private gunK = 0;
+  private gunShotT = -1;
   private reachT = -1;
   private mug: THREE.Group;
   private wantsMug = false;
@@ -130,6 +135,11 @@ export class Hands {
     this.thumbUp.rotation.z = 0.3;
     this.thumbUp.visible = false;
     this.right.group.add(this.thumbUp);
+    this.gun = buildGun();
+    this.gun.group.position.set(0.015, -0.005, -0.13);
+    this.gun.group.rotation.y = Math.PI;
+    this.gun.group.visible = false;
+    this.right.group.add(this.gun.group);
     // Tipped back, so you look down onto its front.
     this.holder.rotation.x = -0.35;
     this.scene.add(this.holder);
@@ -160,6 +170,20 @@ export class Hands {
   shoot() {
     this.shootT = 0;
     this.wind = 0;
+  }
+
+  /** Draws or holsters the right-hand gun with a smooth hand pose transition. */
+  holdGun(on: boolean) {
+    if (on === this.gunWanted) return;
+    this.gunWanted = on;
+    if (on) this.gun.group.visible = true;
+  }
+
+  /** Fires one round with a brief muzzle flash and wrist recoil. */
+  fireGun() {
+    if (!this.gunWanted) return;
+    this.gunShotT = 0;
+    this.gun.muzzle.visible = true;
   }
 
   /** Puts a lit cigarette in your right hand, or takes it away. */
@@ -478,6 +502,22 @@ export class Hands {
     }
     if (this.emoting) this.emoteStep(dt, l);
     if (this.costume === 'halloween') this.burn(t);
+    this.gunK += ((this.gunWanted ? 1 : 0) - this.gunK) * Math.min(1, dt * 8);
+    if (this.gunShotT >= 0) {
+      this.gunShotT += dt;
+      this.gun.muzzle.visible = this.gunShotT < 0.075;
+      if (this.gunShotT >= 0.32) this.gunShotT = -1;
+    }
+    const recoil = this.gunShotT >= 0 ? Math.sin(Math.min(1, this.gunShotT / 0.32) * Math.PI) : 0;
+    if (this.gunWanted || this.gunK > 0.02) {
+      r.position.x -= 0.11 * this.gunK;
+      r.position.y += 0.06 * this.gunK;
+      r.position.z -= 0.17 * this.gunK;
+      r.rotation.x += (0.55 + recoil * 0.24) * this.gunK;
+      r.rotation.z += 0.08 * this.gunK;
+      this.gun.group.position.y = -0.005 + recoil * 0.03;
+      if (!this.gunWanted && this.gunK < 0.03) this.gun.group.visible = false;
+    }
   }
 
   /** Moves the hands (already placed for this frame) through the emote. */
