@@ -66,7 +66,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     return m;
   });
   const glint = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.35, depthWrite: false });
-  const railGlass = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide });
+  const railGlass = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
 
   let built: THREE.Object3D[] = [];
   let mine: Collider[] = [];

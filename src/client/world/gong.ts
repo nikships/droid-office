@@ -81,7 +81,7 @@ export function buildGong(): Gong {
   group.add(mallet);
 
   // A ring of sound spreading out from the disc when it's struck.
-  const waveMat = new THREE.MeshBasicMaterial({ color: '#ffe08a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+  const waveMat = new THREE.MeshBasicMaterial({ color: '#ffe08a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
   const wave = new THREE.Mesh(new THREE.RingGeometry(R * 0.95, R * 1.08, 40), waveMat);
   wave.position.set(0, pivot.position.y - drop, 0.08);
   wave.visible = false;

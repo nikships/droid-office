@@ -630,6 +630,8 @@ class VrUi implements VrUiHandle {
     }
   };
 
+  panels = () => [this.prompt.panel, this.toast.panel, this.controls.panel, this.menu.panel, this.keyboard.panel, this.aim.panel, this.terminal.panel];
+
   update = (dt: number, head?: HeadPose | null) => {
     if (head) {
       this.headPos = head.pos;

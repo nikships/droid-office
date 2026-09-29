@@ -613,6 +613,10 @@ const vr = new VRSession(renderer, scene, camera, {
   },
   aimLabel: (it, note) => vrAimLabel(it, note, aimedSpot),
   resize: () => resize(),
+  // The roof is small and mostly moving lights; the office is where the draw calls are.
+  batchRoot: () => (upTop || trip ? null : office.group),
+  // The office only: the roof's few pickables are cheap to walk.
+  pickRoot: () => (upTop ? null : office.group),
   onEnter: () => {
     // A desktop card has no grabbing hand. Put it back before physical input takes over.
     if (carrying) putBack();

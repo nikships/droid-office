@@ -38,6 +38,39 @@ const HAZE_ABOVE = 17.5;
 /** The building, walls included: the office upstairs and the garage under it. */
 const B = { minX: FLOOR.minX - WALL_T, maxX: FLOOR.maxX + WALL_T, minZ: FLOOR.minZ - WALL_T, maxZ: FLOOR.maxZ + WALL_T } as const;
 
+/**
+ * The lamp and screen arrays live in flat Float32Arrays, `size` floats per entry. three re-sends a
+ * lit material's uniforms at every material switch, and an array of Vector4s or Colors it first
+ * copies element by element into a scratch array; a Float32Array it hands to WebGL as it is. With
+ * ~100 draws per eye in VR that copying was the frame: on Galaxy XR, 51 fps became 72.
+ */
+class Slots {
+  readonly data: Float32Array;
+  constructor(
+    count: number,
+    private readonly size: number,
+  ) {
+    this.data = new Float32Array(count * size);
+  }
+  set(i: number, x: number, y: number, z: number, w = 0): void {
+    const o = i * this.size;
+    this.data[o] = x;
+    this.data[o + 1] = y;
+    this.data[o + 2] = z;
+    if (this.size === 4) this.data[o + 3] = w;
+  }
+  setColor(i: number, c: THREE.Color, scale: number): void {
+    this.set(i, c.r * scale, c.g * scale, c.b * scale);
+  }
+}
+
+const lampSlots = new Slots(MAX_LAMPS, 4);
+const lampColorSlots = new Slots(MAX_LAMPS, 3);
+const screenSlots = new Slots(MAX_SCREENS, 4);
+const screenDirSlots = new Slots(MAX_SCREENS, 3);
+const screenColorSlots = new Slots(MAX_SCREENS, 3);
+const _lampColor = new THREE.Color();
+
 const uniforms = {
   /** Off while drawing your hands in first person, which live in a scene of their own. */
   skyOn: { value: 1 },
@@ -48,16 +81,16 @@ const uniforms = {
   skyGarage: { value: new THREE.Color(0, 0, 0) },
   skyLampCount: { value: 0 },
   /** Each lamp's position and reach, and its color × strength. */
-  skyLamps: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4()) },
-  skyLampColors: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Color()) },
+  skyLamps: { value: lampSlots.data },
+  skyLampColors: { value: lampColorSlots.data },
   /** Around all the lamps' pools, so everywhere else skips them. */
   skyLampMin: { value: new THREE.Vector3() },
   skyLampMax: { value: new THREE.Vector3() },
   /** Each laptop screen's position and reach, which way it faces, and its color × strength. */
   skyScreenCount: { value: 0 },
-  skyScreens: { value: Array.from({ length: MAX_SCREENS }, () => new THREE.Vector4()) },
-  skyScreenDirs: { value: Array.from({ length: MAX_SCREENS }, () => new THREE.Vector3()) },
-  skyScreenColors: { value: Array.from({ length: MAX_SCREENS }, () => new THREE.Color()) },
+  skyScreens: { value: screenSlots.data },
+  skyScreenDirs: { value: screenDirSlots.data },
+  skyScreenColors: { value: screenColorSlots.data },
   /** Around all the screens' pools, so everywhere else skips them. */
   skyScreenMin: { value: new THREE.Vector3() },
   skyScreenMax: { value: new THREE.Vector3() },
@@ -147,7 +180,10 @@ material.diffuseColor = mix( material.diffuseColor, vec3( 0.93, 0.96, 1.0 ), sky
 /** The lamps' light, added to what the sun and the sky give. */
 const LIGHT = /* glsl */ `
 if ( skyOn > 0.0 ) {
-  vec3 skyLight = skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) ) + skyScreensAt( vSkyWorld, skyN );
+  vec3 skyLight = skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + skyScreensAt( vSkyWorld, skyN );
+  // The lamps and the garage light only what's outside the office, so indoors (most of the view)
+  // skips their loop outright: the same picture, and on Galaxy XR 33 fps became 47.
+  if ( skyIndoor < 1.0 ) skyLight += ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) );
   reflectedLight.indirectDiffuse += skyLight * BRDF_Lambert( material.diffuseColor );
 }
 `;
@@ -571,7 +607,7 @@ export class Sky {
     const hi = uniforms.skyLampMax.value.set(-Infinity, -Infinity, -Infinity);
     this.night.lamps.slice(0, MAX_LAMPS).forEach((l, i) => {
       const y = l.ground ? l.y - drop : l.y;
-      uniforms.skyLamps.value[i].set(l.x, y, l.z, l.reach);
+      lampSlots.set(i, l.x, y, l.z, l.reach);
       lo.min(new THREE.Vector3(l.x - l.reach, y - l.reach, l.z - l.reach));
       hi.max(new THREE.Vector3(l.x + l.reach, y + l.reach, l.z + l.reach));
     });
@@ -600,9 +636,9 @@ export class Sky {
     const lo = uniforms.skyScreenMin.value.set(Infinity, Infinity, Infinity);
     const hi = uniforms.skyScreenMax.value.set(-Infinity, -Infinity, -Infinity);
     near.forEach((g, i) => {
-      uniforms.skyScreens.value[i].set(g.pos.x, g.pos.y, g.pos.z, SCREEN_REACH);
-      uniforms.skyScreenDirs.value[i].copy(g.dir);
-      uniforms.skyScreenColors.value[i].copy(C.screen).multiplyScalar(SCREEN_POWER * g.power);
+      screenSlots.set(i, g.pos.x, g.pos.y, g.pos.z, SCREEN_REACH);
+      screenDirSlots.set(i, g.dir.x, g.dir.y, g.dir.z);
+      screenColorSlots.setColor(i, C.screen, SCREEN_POWER * g.power);
       lo.x = Math.min(lo.x, g.pos.x - SCREEN_REACH);
       lo.y = Math.min(lo.y, g.pos.y - SCREEN_REACH);
       lo.z = Math.min(lo.z, g.pos.z - SCREEN_REACH);
@@ -707,7 +743,7 @@ export class Sky {
     uniforms.skyLampCount.value = this.roof ? 0 : lamps;
     for (let i = 0; i < lamps; i++) {
       const l = this.night.lamps[i];
-      uniforms.skyLampColors.value[i].set(l.color).multiplyScalar(l.power * this.lampsOn);
+      lampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
     }
     for (const b of this.night.bulbs) b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn);
     for (const m of this.night.windows) m.emissiveIntensity = this.lampsOn * 1.1;
