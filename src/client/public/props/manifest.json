@@ -1,0 +1,307 @@
+{
+  "basketball-hoop": {
+    "bytes": 7296,
+    "depth": 0.9674,
+    "height": 1.388,
+    "materials": 3,
+    "tags": [
+      "sports"
+    ],
+    "triangles": 612,
+    "url": "/props/basketball-hoop.glb",
+    "width": 1.166
+  },
+  "beanbag": {
+    "bytes": 6488,
+    "depth": 1.24,
+    "height": 1.415,
+    "materials": 2,
+    "tags": [
+      "lounge"
+    ],
+    "triangles": 976,
+    "url": "/props/beanbag.glb",
+    "width": 1.2
+  },
+  "book-stack": {
+    "bytes": 9980,
+    "depth": 0.2572,
+    "height": 0.139,
+    "materials": 4,
+    "tags": [
+      "desk"
+    ],
+    "triangles": 648,
+    "url": "/props/book-stack.glb",
+    "width": 0.2008
+  },
+  "bookshelf": {
+    "bytes": 6744,
+    "depth": 0.34,
+    "height": 2.0005,
+    "materials": 2,
+    "tags": [
+      "wall"
+    ],
+    "triangles": 940,
+    "url": "/props/bookshelf.glb",
+    "width": 1.8
+  },
+  "cabinet": {
+    "bytes": 13980,
+    "depth": 0.896,
+    "height": 1.85,
+    "materials": 6,
+    "tags": [
+      "arcade"
+    ],
+    "triangles": 1172,
+    "url": "/props/cabinet.glb",
+    "width": 0.75
+  },
+  "chair": {
+    "bytes": 17568,
+    "depth": 0.6691,
+    "height": 1.1575,
+    "materials": 4,
+    "tags": [
+      "desk",
+      "meeting",
+      "loft"
+    ],
+    "triangles": 1788,
+    "url": "/props/chair.glb",
+    "width": 0.6886
+  },
+  "coffee-machine": {
+    "bytes": 11584,
+    "depth": 0.432,
+    "height": 0.598,
+    "materials": 5,
+    "tags": [
+      "kitchen"
+    ],
+    "triangles": 1012,
+    "url": "/props/coffee-machine.glb",
+    "width": 0.458
+  },
+  "coffee-table": {
+    "bytes": 6332,
+    "depth": 0.6,
+    "height": 0.42,
+    "materials": 3,
+    "tags": [
+      "lounge"
+    ],
+    "triangles": 516,
+    "url": "/props/coffee-table.glb",
+    "width": 1.1
+  },
+  "desk": {
+    "bytes": 8776,
+    "depth": 1.11,
+    "height": 0.78,
+    "materials": 4,
+    "tags": [
+      "office"
+    ],
+    "triangles": 800,
+    "url": "/props/desk.glb",
+    "width": 2.21
+  },
+  "desk-lamp": {
+    "bytes": 7532,
+    "depth": 0.1946,
+    "height": 0.5866,
+    "materials": 2,
+    "tags": [
+      "desk"
+    ],
+    "triangles": 532,
+    "url": "/props/desk-lamp.glb",
+    "width": 0.4177
+  },
+  "fridge": {
+    "bytes": 8304,
+    "depth": 0.77,
+    "height": 1.8,
+    "materials": 4,
+    "tags": [
+      "kitchen"
+    ],
+    "triangles": 728,
+    "url": "/props/fridge.glb",
+    "width": 0.72
+  },
+  "jukebox": {
+    "bytes": 10700,
+    "depth": 0.9,
+    "height": 1.67,
+    "materials": 3,
+    "tags": [
+      "lounge"
+    ],
+    "triangles": 1252,
+    "url": "/props/jukebox.glb",
+    "width": 0.9
+  },
+  "laptop-base": {
+    "bytes": 38900,
+    "depth": 0.534,
+    "height": 0.7,
+    "materials": 3,
+    "tags": [
+      "desk"
+    ],
+    "triangles": 7952,
+    "url": "/props/laptop-base.glb",
+    "width": 0.78
+  },
+  "mug": {
+    "bytes": 5128,
+    "depth": 0.11,
+    "height": 0.1175,
+    "materials": 2,
+    "tags": [
+      "desk"
+    ],
+    "triangles": 440,
+    "url": "/props/mug.glb",
+    "width": 0.16
+  },
+  "pendant-lamp": {
+    "bytes": 8960,
+    "depth": 0.8302,
+    "height": 0.95,
+    "materials": 4,
+    "tags": [
+      "ceiling"
+    ],
+    "triangles": 608,
+    "url": "/props/pendant-lamp.glb",
+    "width": 0.8302
+  },
+  "plant": {
+    "bytes": 17608,
+    "depth": 0.68,
+    "height": 1.65,
+    "materials": 4,
+    "tags": [
+      "desk",
+      "lounge"
+    ],
+    "triangles": 2116,
+    "url": "/props/plant.glb",
+    "width": 0.8675
+  },
+  "rug": {
+    "bytes": 4776,
+    "depth": 1.7,
+    "height": 0.026,
+    "materials": 3,
+    "tags": [
+      "floor"
+    ],
+    "triangles": 252,
+    "url": "/props/rug.glb",
+    "width": 2.4
+  },
+  "sofa": {
+    "bytes": 15396,
+    "depth": 0.85,
+    "height": 0.97,
+    "materials": 4,
+    "tags": [
+      "lounge",
+      "rooftop"
+    ],
+    "triangles": 1616,
+    "url": "/props/sofa.glb",
+    "width": 1.9
+  },
+  "stool": {
+    "bytes": 7264,
+    "depth": 0.38,
+    "height": 0.7151,
+    "materials": 3,
+    "tags": [
+      "lounge",
+      "kitchen"
+    ],
+    "triangles": 548,
+    "url": "/props/stool.glb",
+    "width": 0.38
+  },
+  "street-lamp": {
+    "bytes": 5468,
+    "depth": 0.3163,
+    "height": 4.3701,
+    "materials": 2,
+    "tags": [
+      "street"
+    ],
+    "triangles": 436,
+    "url": "/props/street-lamp.glb",
+    "width": 0.7281
+  },
+  "trash-bin": {
+    "bytes": 6028,
+    "depth": 0.45,
+    "height": 0.615,
+    "materials": 2,
+    "tags": [
+      "office"
+    ],
+    "triangles": 496,
+    "url": "/props/trash-bin.glb",
+    "width": 0.45
+  },
+  "tree": {
+    "bytes": 5968,
+    "depth": 3.0,
+    "height": 5.0,
+    "materials": 3,
+    "tags": [
+      "street"
+    ],
+    "triangles": 768,
+    "url": "/props/tree.glb",
+    "width": 3.4
+  },
+  "wall-clock": {
+    "bytes": 11856,
+    "depth": 0.47,
+    "height": 0.095,
+    "materials": 5,
+    "tags": [
+      "wall"
+    ],
+    "triangles": 1088,
+    "url": "/props/wall-clock.glb",
+    "width": 0.47
+  },
+  "whiteboard": {
+    "bytes": 8792,
+    "depth": 1.16,
+    "height": 1.075,
+    "materials": 6,
+    "tags": [
+      "wall"
+    ],
+    "triangles": 608,
+    "url": "/props/whiteboard.glb",
+    "width": 1.66
+  },
+  "window-frame": {
+    "bytes": 4576,
+    "depth": 0.12,
+    "height": 1.8,
+    "materials": 1,
+    "tags": [
+      "wall"
+    ],
+    "triangles": 584,
+    "url": "/props/window-frame.glb",
+    "width": 1.5
+  }
+}

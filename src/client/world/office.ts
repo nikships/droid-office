@@ -48,6 +48,7 @@ import { deskPoint } from '../../shared/nav';
 import { FLOOR_PALETTES, type FloorPalette } from '../../shared/floors';
 import { buildGarage, buildStreet, bulb, type NightParts } from './outside';
 import { mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
+import { useProp } from './props';
 import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
@@ -300,10 +301,14 @@ function box(w: number, h: number, d: number) {
 
 function plant(scale = 1): THREE.Group {
   const g = new THREE.Group();
-  g.add(mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.5, 12), toon(PALETTE.pot), 0, 0.25, 0));
-  g.add(mesh(new THREE.SphereGeometry(0.42, 12, 10), toon(PALETTE.plant), 0, 0.85, 0));
-  g.add(mesh(new THREE.SphereGeometry(0.3, 12, 10), toon(PALETTE.plantDark), 0.22, 1.1, 0.1));
-  g.add(mesh(new THREE.SphereGeometry(0.26, 12, 10), toon(PALETTE.plant), -0.2, 1.15, -0.08));
+  // The GLB is the real prop once it has loaded; the spheres below are the stand-in that
+  // keeps the office looking right before then, and the fallback if the fetch fails.
+  if (!useProp(g, 'plant')) {
+    g.add(mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.5, 12), toon(PALETTE.pot), 0, 0.25, 0));
+    g.add(mesh(new THREE.SphereGeometry(0.42, 12, 10), toon(PALETTE.plant), 0, 0.85, 0));
+    g.add(mesh(new THREE.SphereGeometry(0.3, 12, 10), toon(PALETTE.plantDark), 0.22, 1.1, 0.1));
+    g.add(mesh(new THREE.SphereGeometry(0.26, 12, 10), toon(PALETTE.plant), -0.2, 1.15, -0.08));
+  }
   g.scale.setScalar(scale);
   return g;
 }
@@ -311,10 +316,13 @@ function plant(scale = 1): THREE.Group {
 /** A pendant lamp, its shade at 0, on a cord `cord` meters long. */
 function pendant(cord = 0.48): THREE.Group {
   const lamp = new THREE.Group();
-  const c = cord / 0.8;
-  lamp.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, c, 4), toon(PALETTE.ink), 0, c / 2, 0, false));
-  lamp.add(mesh(new THREE.ConeGeometry(0.5, 0.45, 16, 1, true), toon('#ffd166'), 0, 0, 0, false));
-  lamp.add(mesh(new THREE.SphereGeometry(0.16, 10, 8), toon('#fff7d6', { emissive: '#ffe08a' }), 0, -0.15, 0, false));
+  // The GLB carries its own cord, so it is modelled at the length the office hangs it at.
+  if (!useProp(lamp, 'pendant-lamp')) {
+    const c = cord / 0.8;
+    lamp.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, c, 4), toon(PALETTE.ink), 0, c / 2, 0, false));
+    lamp.add(mesh(new THREE.ConeGeometry(0.5, 0.45, 16, 1, true), toon('#ffd166'), 0, 0, 0, false));
+    lamp.add(mesh(new THREE.SphereGeometry(0.16, 10, 8), toon('#fff7d6', { emissive: '#ffe08a' }), 0, -0.15, 0, false));
+  }
   lamp.scale.setScalar(0.8);
   return lamp;
 }
@@ -796,17 +804,20 @@ function seatable(obj: THREE.Object3D, seatId: string, radius: number, interacta
 
 function chair(color: string): THREE.Group {
   const g = new THREE.Group();
-  const mat = toon(color);
-  g.add(mesh(roundedBox(0.62, 0.1, 0.58, 0.12), mat, 0, 0.5, 0));
-  const back = mesh(roundedBox(0.62, 0.1, 0.6, 0.12), mat, 0, 0.86, 0.27);
-  back.rotation.x = Math.PI / 2 - 0.12;
-  g.add(back);
-  g.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8), toon(PALETTE.deskLeg), 0, 0.26, 0));
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2;
-    const leg = mesh(box(0.05, 0.04, 0.32), toon(PALETTE.deskLeg), Math.sin(a) * 0.15, 0.05, Math.cos(a) * 0.15);
-    leg.rotation.y = a;
-    g.add(leg);
+  // The GLB chair is one colour for every desk; `color` still tints the stand-in below.
+  if (!useProp(g, 'chair')) {
+    const mat = toon(color);
+    g.add(mesh(roundedBox(0.62, 0.1, 0.58, 0.12), mat, 0, 0.5, 0));
+    const back = mesh(roundedBox(0.62, 0.1, 0.6, 0.12), mat, 0, 0.86, 0.27);
+    back.rotation.x = Math.PI / 2 - 0.12;
+    g.add(back);
+    g.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8), toon(PALETTE.deskLeg), 0, 0.26, 0));
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const leg = mesh(box(0.05, 0.04, 0.32), toon(PALETTE.deskLeg), Math.sin(a) * 0.15, 0.05, Math.cos(a) * 0.15);
+      leg.rotation.y = a;
+      g.add(leg);
+    }
   }
   return g;
 }
@@ -816,19 +827,30 @@ function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskVi
   group.position.set(def.x, 0, def.z);
   group.rotation.y = def.rotY;
   const { width, depth, height } = DESK_SIZE;
-  group.add(mesh(roundedBox(width - 0.06, 0.08, depth - 0.04, 0.08), toon(PALETTE.desk), 0, height - 0.04, 0));
-  const legMat = toon('#8d99ae');
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      group.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, height - 0.08, 8), legMat, sx * (width / 2 - 0.14), (height - 0.08) / 2, sz * (depth / 2 - 0.12)));
+
+  // The desk carcass, in its own group so the GLB can take its place wholesale. The
+  // modesty panel stays procedural below: `trimMat` is repainted per floor palette.
+  const carcass = new THREE.Group();
+  if (!useProp(carcass, 'desk')) {
+    carcass.add(mesh(roundedBox(width - 0.06, 0.08, depth - 0.04, 0.08), toon(PALETTE.desk), 0, height - 0.04, 0));
+    const legMat = toon('#8d99ae');
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        carcass.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, height - 0.08, 8), legMat, sx * (width / 2 - 0.14), (height - 0.08) / 2, sz * (depth / 2 - 0.12)));
+      }
     }
   }
+  group.add(carcass);
   // Modesty panel facing away from the worker
   group.add(mesh(box(width - 0.3, 0.32, 0.03), trimMat, 0, height - 0.26, -depth / 2 + 0.06));
   // Little desk decorations
   const deco = index % 3;
   if (deco === 0) {
-    const mug = mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon(PALETTE.chairs[index % 6]), width / 2 - 0.25, height + 0.06, -0.2);
+    const mug = new THREE.Group();
+    if (!useProp(mug, 'mug')) {
+      mug.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon(PALETTE.chairs[index % 6]), 0, 0.06, 0));
+    }
+    mug.position.set(width / 2 - 0.25, height, -0.2);
     group.add(mug);
   } else if (deco === 1) {
     const p = plant(0.35);
@@ -836,7 +858,9 @@ function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskVi
     group.add(p);
   } else {
     const books = new THREE.Group();
-    ['#e63946', '#457b9d', '#f4a261'].forEach((c, i) => books.add(mesh(box(0.08, 0.24, 0.18), toon(c), i * 0.09, 0.12, 0)));
+    if (!useProp(books, 'book-stack')) {
+      ['#e63946', '#457b9d', '#f4a261'].forEach((c, i) => books.add(mesh(box(0.08, 0.24, 0.18), toon(c), i * 0.09, 0.12, 0)));
+    }
     books.position.set(width / 2 - 0.35, height, -0.3);
     group.add(books);
   }
@@ -890,13 +914,15 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   group.rotation.y = def.rotY;
   const bag = new THREE.Group();
   const cloth = toon(BEANBAG_COLORS[index % BEANBAG_COLORS.length]);
-  const seat = mesh(new THREE.SphereGeometry(0.62, 20, 14), cloth, 0, 0.3, 0);
-  seat.scale.set(1, 0.52, 1);
-  bag.add(seat);
-  // Slumped up behind the worker, like a back rest.
-  const back = mesh(new THREE.SphereGeometry(0.5, 18, 12), cloth, 0, 0.6, 0.32);
-  back.scale.set(1.05, 0.95, 0.7);
-  bag.add(back);
+  if (!useProp(bag, 'beanbag')) {
+    const seat = mesh(new THREE.SphereGeometry(0.62, 20, 14), cloth, 0, 0.3, 0);
+    seat.scale.set(1, 0.52, 1);
+    bag.add(seat);
+    // Slumped up behind the worker, like a back rest.
+    const back = mesh(new THREE.SphereGeometry(0.5, 18, 12), cloth, 0, 0.6, 0.32);
+    back.scale.set(1.05, 0.95, 0.7);
+    bag.add(back);
+  }
   group.add(bag);
 
   const tray = new THREE.Group();
