@@ -20,10 +20,19 @@ test('the muzzle flash pops and fades back to nothing', () => {
   assert.equal(muzzle.lit, false);
   muzzle.fire();
   assert.equal(muzzle.lit, true);
-  muzzle.update(1 / 60);
+  muzzle.update(1 / 120);
   assert.equal(muzzle.lit, true);
+  let light = 0;
+  muzzle.group.traverse((o) => {
+    if ((o as THREE.PointLight).isPointLight) light = (o as THREE.PointLight).intensity;
+  });
+  assert.ok(light > 0, 'the flash throws light on the walls');
   muzzle.update(1);
   assert.equal(muzzle.lit, false);
+  muzzle.group.traverse((o) => {
+    if ((o as THREE.PointLight).isPointLight) light = (o as THREE.PointLight).intensity;
+  });
+  assert.equal(light, 0);
   muzzle.dispose();
 });
 
