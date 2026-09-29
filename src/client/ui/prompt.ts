@@ -1,5 +1,5 @@
 import type { AgentEffort, AgentProvider, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
-import { h, openModal } from './dom';
+import { h, openModal, type Modal } from './dom';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 
@@ -235,4 +235,136 @@ export function sendHomeDialog(opts: SendHomeOptions) {
 
 function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+export interface ShootOptions {
+  workerId: string;
+  name: string;
+  /** The desk's label. */
+  where: string;
+  /** What its own worktree is called, when it has one (no radios without it). */
+  worktree: { path: string; branch: string } | undefined;
+  /** Asks the office what the worktree holds; the answer comes back through routeWorktreeMessage. */
+  ask(): void;
+  /** The kill is confirmed with this cleanup. */
+  onConfirm(cleanup: WorktreeCleanup): void;
+  /** Back from the brink, session untouched. */
+  onRevive(): void;
+}
+
+const KILL_LABEL: Record<WorktreeCleanup, string> = {
+  all: 'Confirm kill & delete both',
+  worktree: 'Confirm kill & delete worktree',
+  keep: 'Confirm the kill',
+};
+
+/**
+ * A worker you just shot, bleeding out: confirm the kill (picking what becomes of its worktree,
+ * like sendHomeDialog) or revive it. The dialog only closes through a button; Escape revives.
+ */
+export function shootDialog(opts: ShootOptions): Modal {
+  let modal: Modal;
+  let settled = false;
+  const doRevive = () => {
+    if (settled) return;
+    settled = true;
+    modal.close();
+    opts.onRevive();
+  };
+  const doConfirm = (cleanup: WorktreeCleanup) => {
+    if (settled) return;
+    settled = true;
+    modal.close();
+    opts.onConfirm(cleanup);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    doRevive();
+  };
+  const radios = new Map<WorktreeCleanup, HTMLInputElement>();
+  let touched = false;
+  const yes = h('button.btn.danger', { type: 'submit' }, KILL_LABEL.keep);
+  const chosen = (): WorktreeCleanup => [...radios].find(([, r]) => r.checked)?.[0] ?? 'keep';
+  const pick = (c: WorktreeCleanup) => {
+    radios.get(c)!.checked = true;
+    yes.textContent = KILL_LABEL[c];
+  };
+  const revive = h('button.btn', { type: 'button' }, '💚 Revive');
+  revive.addEventListener('click', doRevive);
+  const foot = h('p', { style: 'margin:12px 0 0;font-weight:700' }, `🔫 ${opts.name} is bleeding out at ${opts.where}. Its session is still running — confirm the kill or bring it back.`);
+  let body: HTMLElement[];
+  let status: HTMLElement | null = null;
+  if (opts.worktree) {
+    const { branch, path } = opts.worktree;
+    const choices: [WorktreeCleanup, string, string][] = [
+      ['all', 'Delete the worktree and its branch', `Removes ${path} and ${branch}.`],
+      ['worktree', 'Delete the worktree, keep the branch', `${branch} stays for a pull request or a later checkout.`],
+      ['keep', 'Keep both', 'Leaves everything as it is; droid-office prune tidies up later.'],
+    ];
+    const list = h(
+      'div.choices',
+      {},
+      ...choices.map(([value, title, sub]) => {
+        const r = h('input', {
+          type: 'radio',
+          name: 'cleanup',
+          value,
+          onchange: () => {
+            touched = true;
+            yes.textContent = KILL_LABEL[chosen()];
+          },
+        }) as HTMLInputElement;
+        radios.set(value, r);
+        return h('label.choice', {}, r, h('span', {}, title, h('small', {}, sub)));
+      }),
+    );
+    status = h('p.wt-status', {}, `Checking what ${branch} holds…`);
+    body = [foot, h('p', { style: 'margin:12px 0;font-weight:700' }, `${opts.name} worked in its own worktree on 🌿 ${branch}:`), list, status];
+  } else {
+    body = [foot];
+  }
+  const form = h('form.modal', { role: 'alertdialog', 'aria-label': `Finish ${opts.name}?` }, h('header', {}, h('h2', {}, `🔫 Finish ${opts.name}?`)), h('div.body', {}, ...body), h('footer', {}, revive, yes)) as HTMLFormElement;
+  form.noValidate = true;
+  modal = openModal(form, {
+    escCloses: false,
+    backdropCloses: false,
+    closeButton: false,
+    doing: `🔫 deciding ${opts.name}'s fate`,
+    onClose: () => window.removeEventListener('keydown', onKey, true),
+  });
+  window.addEventListener('keydown', onKey, true);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    doConfirm(chosen());
+  });
+  if (opts.worktree) {
+    pick('keep');
+    void inspectWorktree(opts.workerId, opts.ask).then((s) => {
+      if (!form.isConnected || !status) return;
+      const lines: string[] = [];
+      let risky = false;
+      if (s.error) {
+        lines.push(`Couldn't check the worktree: ${s.error}.`);
+        risky = true;
+      } else {
+        if (!s.exists) lines.push('The worktree folder is already gone.');
+        if (s.dirty) {
+          lines.push(`⚠️ ${plural(s.dirty, 'uncommitted change')} in the worktree — deleting it loses them.`);
+          risky = true;
+        }
+        if (s.unpushed) {
+          lines.push(`⚠️ ${plural(s.unpushed, 'commit')} on ${opts.worktree!.branch} that no remote has — deleting the branch loses them.`);
+          risky = true;
+        } else if (s.ahead) lines.push(`${plural(s.ahead, 'commit')} on ${opts.worktree!.branch}, all pushed or merged.`);
+        if (!lines.length) lines.push('Nothing on the branch yet and a clean worktree: safe to delete.');
+      }
+      status.replaceChildren(...lines.flatMap((l, i) => (i ? [h('br'), l] : [l])));
+      status.classList.toggle('warn', risky);
+      if (!touched) pick(risky ? 'keep' : 'all');
+    });
+  }
+  setTimeout(() => revive.focus(), 30);
+  return modal;
 }

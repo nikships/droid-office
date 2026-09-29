@@ -808,6 +808,86 @@ export class OfficeSound {
     else [392, 330, 262, 196].forEach((f, i) => this.blip(out, t0 + i * 0.18, f, 0.97, 0.17, 0.14, 'triangle'));
   }
 
+  // ---- The gun -----------------------------------------------------------------------------------
+  /** The .44 going off in your hand: a white-hot crack and a chest-deep boom. */
+  gunshot() {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('gunshot');
+    const t0 = ctx.currentTime + 0.01;
+    // The crack: white noise, wide open for a blink.
+    const crack = this.noise(this.buf.white);
+    const cg = ctx.createGain();
+    envelope(cg.gain, t0, [
+      [0.015, 0.85],
+      [0.09, 0.3],
+      [0.3, 0],
+    ]);
+    crack
+      .connect(biquad(ctx, 'highpass', 900, 0.7))
+      .connect(cg)
+      .connect(this.ambience);
+    crack.start(t0);
+    crack.stop(t0 + 0.35);
+    // The boom rolling after it.
+    const boom = this.noise(this.buf.brown);
+    const bg = ctx.createGain();
+    envelope(bg.gain, t0, [
+      [0.03, 0.7],
+      [0.5, 0.25],
+      [1.1, 0],
+    ]);
+    boom
+      .connect(biquad(ctx, 'lowpass', 320, 0.8))
+      .connect(bg)
+      .connect(this.ambience);
+    boom.start(t0, rand(0, 4));
+    boom.stop(t0 + 1.2);
+    // The pressure wave in your chest.
+    this.blip(this.ambience, t0, 120, 0.35, 0.35, 0.5, 'sine');
+  }
+  /** Drawing the .44: the cylinder clicking round and the hammer going back. */
+  gunDraw() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('gun.draw');
+    const t0 = ctx.currentTime + 0.01;
+    this.play(this.buf.mouse, { when: t0, gain: 0.5, rate: rand(1.3, 1.45) });
+    this.play(this.buf.mouse, { when: t0 + 0.09, gain: 0.65, rate: rand(0.95, 1.05) });
+    this.blip(this.ambience, t0 + 0.09, 2400, 0.9, 0.05, 0.06, 'triangle');
+  }
+  /** Holstering it: leather shifting and a soft click. */
+  gunHolster() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('gun.holster');
+    const t0 = ctx.currentTime + 0.01;
+    this.play(this.buf.rustle, { when: t0, gain: 0.25, rate: rand(1.4, 1.6) });
+    this.play(this.buf.mouse, { when: t0 + 0.12, gain: 0.4, rate: rand(0.7, 0.8) });
+  }
+  /** A body hitting the floorboards at `at`. */
+  bodyThud(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('gun.thud');
+    const t0 = ctx.currentTime + 0.01;
+    this.play(pick(this.buf.steps), { at, when: t0, gain: 0.8, rate: 0.45, ref: 2 });
+    const out = this.panner(at, 2, 1.2);
+    out.connect(this.ambience);
+    this.blip(out, t0, 95, 0.5, 0.22, 0.5);
+  }
+  /** The medics on their way: a quick two-tone sting from `at`. */
+  siren(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('gun.siren');
+    const out = this.panner(at, 3, 1);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.02;
+    for (let i = 0; i < 3; i++) this.blip(out, t0 + i * 0.28, i % 2 ? 622 : 830, 1, 0.24, 0.12, 'triangle');
+  }
   // ---- Alerts ----------------------------------------------------------------------------------
 
   /** Two notes up when a worker is done, a three-note nudge when it needs input. */

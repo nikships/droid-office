@@ -6,6 +6,7 @@ import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
 import { UNDEAD_SKIN, raggedCuff, warlockHand, witchFire } from './costumes';
+import { disposeGun, magnum, MuzzleFlash } from './gun';
 import { mesh, toon, toonUnique } from './toon';
 import { ballMesh } from './hoop';
 
@@ -55,6 +56,14 @@ export class Hands {
   private wantsMug = false;
   /** A drink from the rooftop bar, held where the mug goes (and in its place). */
   private glass: { id: string; group: THREE.Group } | null = null;
+  /** A .44 Magnum in the right fist, pointed at the crosshair (see holdGun). */
+  private gun: THREE.Group | null = null;
+  private flash: MuzzleFlash | null = null;
+  /** 0 → 1 as the gun comes up on aim (or drops away as it's holstered). */
+  private gunK = 0;
+  private wantsGun = false;
+  /** Seconds into the recoil after a shot, or -1. */
+  private recoilT = -1;
   /** An issue card off the board, held low in front of you in both hands. */
   private holder = new THREE.Group();
   private card: HeldCard;
@@ -160,6 +169,35 @@ export class Hands {
   shoot() {
     this.shootT = 0;
     this.wind = 0;
+  }
+
+  /** A .44 Magnum in the right fist, coming up on aim (or dropping away as it's holstered). */
+  holdGun(on: boolean) {
+    if (on === this.wantsGun) return;
+    this.wantsGun = on;
+    if (on && !this.gun) {
+      const gun = magnum();
+      // Grip in the palm, barrel over the knuckles toward the crosshair (-z is forward here).
+      gun.rotation.y = Math.PI;
+      gun.position.set(0, 0.005, -0.02);
+      this.right.group.add(gun);
+      this.gun = gun;
+      const flash = new MuzzleFlash();
+      gun.add(flash.group);
+      this.flash = flash;
+      if (this.right.finger) this.right.finger.visible = false;
+    }
+  }
+
+  /** Fires the gun: flash at the muzzle and the fist kicking back. */
+  fireGun() {
+    if (!this.gun) return;
+    this.recoilT = 0;
+    this.flash?.fire();
+  }
+
+  get armed(): boolean {
+    return this.wantsGun;
   }
 
   /** Puts a lit cigarette in your right hand, or takes it away. */
@@ -460,6 +498,34 @@ export class Hands {
     r.rotation.z += 0.22 * k;
     this.left.group.position.y -= 0.025 * k;
     this.left.group.position.z += 0.03 * k;
+    // The gun: the right fist comes up and in, the barrel lining up under the crosshair.
+    this.gunK += ((this.wantsGun ? 1 : 0) - this.gunK) * Math.min(1, dt * 9);
+    const aim = this.gunK < 0.02 && !this.wantsGun ? 0 : this.gunK;
+    r.position.x -= 0.15 * aim;
+    r.position.y += 0.1 * aim;
+    r.position.z -= 0.06 * aim;
+    r.rotation.x += 0.25 * aim;
+    r.rotation.y += 0.14 * aim;
+    let recoil = 0;
+    if (this.recoilT >= 0) {
+      this.recoilT += dt;
+      recoil = reachCurve(this.recoilT / 0.28);
+      if (this.recoilT >= 0.28) this.recoilT = -1;
+    }
+    r.position.z += 0.07 * recoil;
+    r.rotation.x += 0.35 * recoil;
+    if (this.gun) {
+      this.gun.visible = aim > 0.02;
+      this.gun.position.y = 0.005 - 0.22 * (1 - aim);
+      if (aim === 0) {
+        disposeGun(this.gun);
+        this.flash?.dispose();
+        this.gun = null;
+        this.flash = null;
+        if (this.right.finger) this.right.finger.visible = this.costume !== 'halloween' && this.costume !== 'christmas';
+      }
+    }
+    this.flash?.update(dt);
     // The sip: the mug comes up to your mouth and tips toward you.
     const l = this.left.group;
     l.position.x += 0.17 * sip;
