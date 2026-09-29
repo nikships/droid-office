@@ -155,6 +155,8 @@ interface Casualty {
   /** Which way it tips over, and how far. */
   tip: number;
   lean: number;
+  /** Which side it sprawls out on. */
+  side: number;
   /** Where it lands on the floor. */
   floor: THREE.Vector3;
   pool: THREE.Group;
@@ -207,10 +209,14 @@ export class Casualties {
     model.root.position.copy(from);
     model.root.quaternion.copy(quat);
     model.root.scale.setScalar(scale);
-    const floor = new THREE.Vector3(from.x + Math.sin(yaw) * TUMBLE, 0, from.z + Math.cos(yaw) * TUMBLE);
+    // Sideways out of the chair, into the open: forward would put it under the desk.
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const floor = new THREE.Vector3(from.x + Math.cos(yaw) * side * TUMBLE, 0, from.z - Math.sin(yaw) * side * TUMBLE);
     floor.y = this.ground(floor.x, floor.z, from.y) - FEET;
     const pool = bloodPool();
-    pool.position.set(floor.x, floor.y + 0.012, floor.z);
+    // On top of whatever is underfoot, not at the body's origin (feet are FEET above it, and the
+    // rugs under the desks stand 0.021 proud of the floorboards).
+    pool.position.set(floor.x, floor.y + FEET + 0.03, floor.z);
     pool.rotation.y = Math.random() * Math.PI * 2;
     this.parent.add(pool);
     this.all.set(id, {
@@ -224,6 +230,7 @@ export class Casualties {
       yaw,
       tip: (Math.random() < 0.5 ? -1 : 1) * (1.35 + Math.random() * 0.25),
       lean: (Math.random() - 0.5) * 0.5,
+      side,
       floor,
       pool,
       laptop: null,
@@ -323,7 +330,7 @@ export class Casualties {
         const p = Math.min(1, c.t / FALL_TIME);
         const e = easeOut(p);
         root.position.set(THREE.MathUtils.lerp(c.from.x, c.floor.x, e), THREE.MathUtils.lerp(c.from.y, c.floor.y, e) + Math.sin(p * Math.PI) * 0.3, THREE.MathUtils.lerp(c.from.z, c.floor.z, e));
-        root.rotation.set(c.tip * e, c.yaw + c.lean * e, c.lean * 0.6 * e);
+        root.rotation.set(c.tip * e, c.yaw + (c.lean + c.side * 0.9) * e, (c.lean * 0.6 + c.side * 0.35) * e);
         if (p >= 1) this.land(c);
         return;
       }
@@ -376,7 +383,7 @@ export class Casualties {
   /** Down: it lands with a thud and starts bleeding out. */
   private land(c: Casualty) {
     c.model.root.position.copy(c.floor);
-    c.model.root.rotation.set(c.tip, c.yaw + c.lean, c.lean * 0.6);
+    c.model.root.rotation.set(c.tip, c.yaw + c.lean + c.side * 0.9, c.lean * 0.6 + c.side * 0.35);
     c.phase = 'bled';
     c.t = 0;
     this.hooks.onLand(c.floor);

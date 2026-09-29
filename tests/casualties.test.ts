@@ -82,9 +82,9 @@ test('one shot drops it out of its chair with a thud, and it bleeds out where it
   frames(Math.ceil(FALL_TIME * 60) + 2);
   assert.equal(casualties.phaseOf('w1'), 'bled');
   assert.equal(lands.length, 1, 'one thud as it lands');
-  // Out of the chair toward where it faced, down on the floorboards, tipped over.
-  assert.ok(Math.abs(model.root.position.x - 0) < 0.01);
-  assert.ok(Math.abs(model.root.position.z - (5 - 0.65)) < 0.01);
+  // Sideways out of the chair into the open (not forward under the desk), down on the floorboards, tipped over.
+  assert.ok(Math.abs(Math.abs(model.root.position.x) - 0.65) < 0.01);
+  assert.ok(Math.abs(model.root.position.z - 5) < 0.01);
   assert.ok(Math.abs(model.root.position.y - -0.07) < 0.01);
   assert.ok(Math.abs(model.root.rotation.x) > 1, 'flat on the floor');
   assert.ok(model.root.parent !== seat, 'out of its seat');
