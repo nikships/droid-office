@@ -66,6 +66,10 @@ its own layout and never loads those rules' effects.
   and the pull request rows are 44 px targets and wrap long folder names.
 - **Terminal header.** Its buttons (including the native **📎 Picture** button) keep their size and
   wrap as a group beside a wrapping title; viewer initials are 30 px.
+- **Deleted worktrees.** Home marks a lost worker **Worktree deleted** and offers **Fix worktree**,
+  which opens the desktop's original recovery dialog. Prompt, Changes and creation of a new PR
+  wait until recovery; an existing PR remains viewable. The same action stays available if the
+  worker's process is still running in its deleted directory.
 
 The installed app’s target input is Galaxy XR motion controllers only. Use the left
 controller’s Menu button to toggle the workspace, trigger for pointing/clicking, and grip for

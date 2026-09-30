@@ -390,6 +390,14 @@ controller models, enabled the unfoveated sharp-screen layer and successfully re
 90 Hz. The headset was unworn and the session remained idle; this verifies release startup
 and preserved connection data, not focused performance or visual acceptance.
 
+After integrating the incoming desktop mouse-capture and lost-worktree changes, Node 22
+checks passed again with 609 tests (84.45% lines, 80.48% functions). XR Home now labels lost
+workers and opens the existing recovery dialog. Nine browser checks passed, including repair
+access for running workers, disabled actions until recovery and access to an existing PR.
+Opening and closing recovery sent no worker mutation. The recovery dialog and its 44 px
+buttons stayed above the keyboard at both panel check sizes; no worktree was rebuilt or
+deleted by these layout checks.
+
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the
 laptop. Use focused 1–2 minute performance checks as UI and controls change. Final acceptance

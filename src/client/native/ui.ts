@@ -385,12 +385,13 @@ function buildHome(actions: HomeActions) {
   const rows = new Map<string, { li: HTMLElement; btn: HTMLElement; actions: Map<keyof NativeWorkerActions, HTMLButtonElement>; key: string }>();
   const emptyRow = h('li.empty', {}, 'No workers on this floor yet. Hire a worker here or walk up to a desk.');
   const workerRow = (w: WorkerInfo) => {
+    const lost = !!w.lost;
     const agent = w.kind === 'agent' ? providerLabel(w.provider, store.project) : 'Shell';
     const desk = DESK_BY_ID.get(w.deskId)?.label;
     const sub = [agent, desk, w.worktree && `🌿 ${w.worktree.branch}`, w.task?.name ?? w.title ?? w.activity].filter(Boolean).join(' · ');
     const repos = workerReposLine(w, store.project?.name);
-    const status = STATUS_LABEL[w.status] ?? w.status;
-    const key = [w.name, w.color, w.status, status, sub, repos].join('\n');
+    const status = lost ? 'Worktree deleted' : (STATUS_LABEL[w.status] ?? w.status);
+    const key = [w.name, w.color, w.status, w.lost?.branch, status, sub, repos].join('\n');
     let row = rows.get(w.id);
     if (!row) {
       const btn = h('button.nh-worker', { type: 'button', onclick: () => actions.openWorker(w.id) });
@@ -425,25 +426,35 @@ function buildHome(actions: HomeActions) {
     const asleep = isAsleep(w.status);
     const station = !!DESK_BY_ID.get(w.deskId)?.station;
     const prompt = row.actions.get('prompt');
-    prompt?.toggleAttribute('disabled', asleep && !station);
-    prompt?.setAttribute('title', asleep && !station ? 'Resume this worker before sending a prompt' : `Send a prompt to ${w.name}`);
-    row.actions.get('resume')?.classList.toggle('hidden', !asleep);
+    prompt?.toggleAttribute('disabled', lost || (asleep && !station));
+    prompt?.setAttribute('title', lost ? 'Fix this worktree before sending a prompt' : asleep && !station ? 'Resume this worker before sending a prompt' : `Send a prompt to ${w.name}`);
+    const resume = row.actions.get('resume');
+    if (resume) {
+      resume.classList.toggle('hidden', !asleep && !lost);
+      resume.textContent = lost ? 'Fix worktree' : 'Resume';
+      resume.title = lost ? `Choose how to restore ${w.name}'s deleted worktree` : `Resume ${w.name}`;
+    }
     const pr = row.actions.get('pullRequest');
     const multi = !!w.repos?.length;
     const prs = [w.pr, ...(w.repos ?? []).map((r) => r.pr)].filter(Boolean).length;
     pr?.classList.toggle('hidden', station || (!w.pr && !w.worktree && !multi));
-    pr?.toggleAttribute('disabled', !prs && (isBusy(w.status) || !!w.prOpening));
+    pr?.toggleAttribute('disabled', !prs && (lost || isBusy(w.status) || !!w.prOpening));
     if (pr) pr.textContent = multi ? (prs ? 'Pull requests' : 'Open pull requests') : w.pr ? 'View pull request' : 'Open pull request';
     const changes = row.actions.get('changes');
     if (changes) {
       changes.textContent = multi ? `Changes · ${w.repos!.length + 1} repos` : 'Changes';
-      changes.title = multi ? `What ${w.name} changed, a tab per repository` : `What ${w.name} changed`;
+      changes.disabled = lost;
+      changes.title = lost ? 'Fix this worktree before viewing changes' : multi ? `What ${w.name} changed, a tab per repository` : `What ${w.name} changed`;
     }
     row.li.querySelector('.nh-worker-actions')?.setAttribute('aria-label', `Actions for ${w.name}`);
     if (row.key !== key) {
       row.key = key;
-      row.btn.title = [`Open ${w.name}'s terminal · ${sub}`, repos].filter(Boolean).join('\n');
-      row.btn.replaceChildren(h('span.dot', { style: `background:${w.color}` }), h('span.nh-name', {}, w.name, h('span.sub', {}, sub), repos ? h('span.sub.nh-repos', {}, repos) : null), h('span.pill', { class: w.status }, status));
+      row.btn.title = [lost ? `Fix ${w.name}'s deleted worktree · ${sub}` : `Open ${w.name}'s terminal · ${sub}`, repos].filter(Boolean).join('\n');
+      row.btn.replaceChildren(
+        h('span.dot', { style: `background:${w.color}` }),
+        h('span.nh-name', {}, w.name, h('span.sub', {}, sub), repos ? h('span.sub.nh-repos', {}, repos) : null),
+        h('span.pill', { class: lost ? 'lost' : w.status }, status),
+      );
     }
     return row.li;
   };
