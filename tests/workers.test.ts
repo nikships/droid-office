@@ -1821,13 +1821,13 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
     new WorkerManager(f.root, f.data, f.claude, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), toast: (text) => toasts.push(text) }, ledger(f.data));
   const before = officeWith([], []);
   const hire = async (deskId: string, session: string) => {
-    const n = launches(f).length;
+    const n = launchesOf(f).length;
     const w = before.spawn(deskId, 'test', `task for ${session}`, true);
     assert.notEqual(typeof w, 'string');
     if (typeof w === 'string') throw new Error(w);
     const token = (
       await waitFor(
-        () => launches(f),
+        () => launchesOf(f),
         (x) => x.length > n,
       )
     ).at(-1)!.env.hookToken!;
@@ -1853,17 +1853,17 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
   const toasts: string[] = [];
   const after = officeWith(updates, toasts);
   t.after(() => after.shutdown());
-  const launched = launches(f).length;
+  const launched = launchesOf(f).length;
   await after.start();
   await new Promise((resolve) => setTimeout(resolve, 200));
   // Nobody started, nobody was told "could not start": both wait at their desks, marked lost.
-  assert.equal(launches(f).length, launched);
+  assert.equal(launchesOf(f).length, launched);
   assert.deepEqual(toasts, []);
   assert.deepEqual(after.get(kept.id)?.lost, { branch: 'here' });
   assert.deepEqual(after.get(gone.id)?.lost, { branch: 'gone' });
   assert.equal(after.get(kept.id)?.status, 'offline');
   assert.match(after.resume(kept.id) ?? '', /worktree .* was deleted outside droid-office/);
-  assert.equal(launches(f).length, launched);
+  assert.equal(launchesOf(f).length, launched);
 
   // Put back on its own branch, work and all, and it carries on its conversation.
   assert.deepEqual(await after.rebuild(kept.id), { rebuilt: true, note: undefined });
@@ -1871,7 +1871,7 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
   assert.ok(existsSync(path.join(keptDir, 'work.txt')));
   assert.equal(after.get(kept.id)?.lost, undefined);
   const resumed = await waitFor(
-    () => launches(f).slice(launched),
+    () => launchesOf(f).slice(launched),
     (x) => x.length > 0,
   );
   assert.ok(resumed[0].args.includes('--resume') && resumed[0].args.includes('kept-branch'));
