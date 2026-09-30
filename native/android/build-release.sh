@@ -7,6 +7,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 version_code="${2:-$(git -C "$root" rev-list --count HEAD)}"
 [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo 'VERSION_CODE must be a positive integer' >&2; exit 2; }
 : "${ANDROID_HOME:?Set ANDROID_HOME to the pinned Android SDK}"
+# Gradle rejects a runner's inherited SDK_ROOT when it differs from the selected SDK.
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+unset ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME
 : "${OFFICE_XR_KEYSTORE:?Set OFFICE_XR_KEYSTORE to the private signing keystore}"
 : "${OFFICE_XR_STORE_PASSWORD:?Set OFFICE_XR_STORE_PASSWORD}"
 : "${OFFICE_XR_KEY_ALIAS:?Set OFFICE_XR_KEY_ALIAS}"

@@ -405,7 +405,11 @@ generated stages. The scene comparison now waits for every renderer's uploads an
 to finish, with a bounded frame count and named failures. The fixed harness passed all seven
 C++ tests and both required scene/shader suites on native Linux/arm64 Mesa. All 11 registered
 checks, including Java and the NDK cross-compile, passed on macOS. The Linux container needed
-a longer host-test timeout; the next Ubuntu CI run must verify the unchanged 300-second bound.
+a longer host-test timeout. Ubuntu PR CI then passed all 11 checks, with the scene and shader
+suites finishing in 172 and 89 seconds under the unchanged 300-second bound, and compiled
+both Android variants. PR #45 merged into `main` as `602ad1a`. The first main release run
+passed those checks too, then exposed a conflicting inherited `ANDROID_SDK_ROOT` during
+signing. The release builder now normalizes both SDK variables to the selected pinned SDK.
 
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the

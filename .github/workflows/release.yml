@@ -192,6 +192,7 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           ANDROID_HOME: ${{ env.ANDROID_SDK }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK }}
           OFFICE_XR_KEYSTORE_BASE64: ${{ secrets.OFFICE_XR_KEYSTORE_BASE64 }}
           OFFICE_XR_SIGNING_LINEAGE_BASE64: ${{ secrets.OFFICE_XR_SIGNING_LINEAGE_BASE64 }}
           OFFICE_XR_STORE_PASSWORD: ${{ secrets.OFFICE_XR_STORE_PASSWORD }}

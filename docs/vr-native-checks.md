@@ -219,8 +219,12 @@ Release signing requires repository Actions secrets `OFFICE_XR_KEYSTORE_BASE64`,
 `OFFICE_XR_STORE_PASSWORD` and `OFFICE_XR_KEY_ALIAS`. `OFFICE_XR_KEY_PASSWORD` is optional
 when the key and store passwords match. `OFFICE_XR_SIGNING_LINEAGE_BASE64` optionally contains
 the public proof of signing-key rotation. The workflow decodes files only in the runner's
-private temporary directory and removes them when signing finishes. Private keys and passwords
+  private temporary directory and removes them when signing finishes. Private keys and passwords
 must never be checked in.
+
+The release builder points `ANDROID_SDK_ROOT` at the selected `ANDROID_HOME` and clears
+inherited NDK overrides. The signing step must use the same pinned SDK as the compile step;
+Gradle rejects a runner's conflicting preinstalled SDK path even when its APK was already built.
 
 Each check starts only after the previous step succeeds. A failure in the office checks
 therefore stops the native checks, and a native failure stops the job before the Publish step.
