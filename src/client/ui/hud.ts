@@ -199,8 +199,12 @@ function openNativeHelp() {
     ['Look & move', 'Look around naturally. Hold A or push the left stick forward to aim a teleport, then release to land. The right stick turns. Settings offers smooth glide and smooth turn.'],
     ['Controllers', 'Galaxy XR motion controllers are required. Aim at an object or a workspace button and press the trigger to use it. Grip grabs nearby objects and returns a held issue card; it does not open the workspace.'],
     ['Workspace', 'The left controller’s Menu button opens or hides your workspace. Back to the office closes the workspace and keyboard.'],
+    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates. The panel keyboard’s Ctrl+K also opens it outside a terminal or text field.'],
     ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
-    ['Terminal', 'Use the docked keyboard, including Ctrl, Alt, Shift and arrows. Tap a modifier twice to lock it and again to release it. Hold Backspace or an arrow to repeat. The terminal’s − and + change text size.'],
+    [
+      'Terminal',
+      'Use the docked keyboard, including Ctrl, Alt, Shift and arrows. Tap a modifier twice to lock it and again to release it. Hold Backspace or an arrow to repeat. The terminal’s − and + change text size; Picture attaches a screenshot or image from the headset.',
+    ],
     ['Issues & PRs', 'Open a board in the office or from Home. Read an issue, pick up its card, assign it to a worker or add it to the queue. PRs keep the desktop conversation, file review and confirmation actions.'],
     ['Held card', 'Aim at a desk or the queue and press the trigger to place the card. Put back in Home returns it to the board. A physical card grab uses the same shared issue.'],
     ['Floors', 'Aim at a physical floor button in the elevator and press the trigger. The Elevator tile and the floor name also open the original floor chooser.'],

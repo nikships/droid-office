@@ -255,6 +255,14 @@ body.native-xr .nh-tile {
   body.native-xr .side { width: min(340px, calc(100vw - 24px)); }
 }
 
+/* Android's separate select popup cannot receive compositor-panel controller input. */
+body.native-xr .modal.native-select { width: min(760px, calc(100vw - 48px)); }
+body.native-xr .native-select-options { display: flex; flex-direction: column; gap: 8px; }
+body.native-xr .native-select-option { display: flex; flex: none; justify-content: space-between; align-items: center; gap: 16px; width: 100%; min-height: 52px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+body.native-xr .native-select-option[aria-selected="true"] { border-color: var(--accent); }
+body.native-xr .native-select-check { flex: none; }
+body.native-xr .native-select-group { margin: 12px 0 4px; }
+
 /* Keep the original layout and gameplay alive while the workspace is closed. */
 body.native-xr.native-workspace-closed,
 body.native-xr.native-workspace-closed * {

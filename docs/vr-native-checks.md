@@ -2,7 +2,7 @@
 
 The native Galaxy XR app in `native/android` ([vr-native-android.md](vr-native-android.md))
 has two kinds of automated checks: host tests that need no headset, and the Android debug
-build. Both run in CI. Neither replaces the on-device acceptance checks in
+and release builds. Both run in CI. Neither replaces the on-device acceptance checks in
 vr-native-android.md.
 
 | Command | Needs | Checks |
@@ -10,6 +10,7 @@ vr-native-android.md.
 | `native/tests/run-host.sh` | A C++17 compiler with ASan and UBSan, `curl`, `unzip`, `glslangValidator`, Node and the repository's installed npm dependencies and Chromium | Host C++ tests, scene packet/replay/GLES suite and required shader pixel comparison |
 | `native/tests/run-host.sh --android-sdk DIR --require-java` | The above, plus JDK 17 or newer and `platforms;android-35` in `DIR` | All host checks and Java rules tests |
 | `cd native/android && ./gradlew --no-daemon :app:assembleDebug` | JDK 17 or 21, and SDK platform 35, build tools 35.0.0, NDK 27.2.12479018 and CMake 3.22.1 | The installable debug APK |
+| `cd native/android && ./gradlew --no-daemon :app:assembleRelease` | The same pinned Android toolchain | The unsigned optimized release APK |
 
 Run the commands from the repository root, except the Gradle build. None of them uses `adb`
 or a connected headset.
@@ -199,13 +200,22 @@ the existing lint, typecheck, coverage, pack and install steps, it:
    chromium`, using the browser revision selected by the existing locked npm dependency.
 4. Runs `native/tests/run-host.sh --android-sdk "$ANDROID_SDK" --require-java`, including all
    two required scene/shader suites. `ANDROID_NDK_HOME` selects the pinned NDK.
-5. Checks the Gradle wrapper jar's SHA-256 and runs `./gradlew --no-daemon :app:assembleDebug`
-   with `ANDROID_HOME` pointing at that SDK.
+5. Checks the Gradle wrapper jar's SHA-256 and compiles both `:app:assembleDebug` and
+   `:app:assembleRelease` with `ANDROID_HOME` pointing at that SDK. APK version names match
+   the desktop release, and version codes use the commit count.
+6. On `main`, signs and verifies the release APK with `native/android/build-release.sh`.
+   The Publish step attaches `droid-office-xr.apk` and its SHA-256 file alongside the desktop
+   package. Pull requests compile the unsigned release variant without access to signing keys.
 
 The job does not use the Android SDK preinstalled on the runner image. The image's NDK and
 CMake versions differ from the pinned ones, and its contents change with each image
 release. The job clears the image's `ANDROID_NDK*` variables so the build uses the pinned NDK.
-The workflow uploads and publishes no APK; the release still contains only the npm package.
+Release signing requires repository Actions secrets `OFFICE_XR_KEYSTORE_BASE64`,
+`OFFICE_XR_STORE_PASSWORD` and `OFFICE_XR_KEY_ALIAS`. `OFFICE_XR_KEY_PASSWORD` is optional
+when the key and store passwords match. `OFFICE_XR_SIGNING_LINEAGE_BASE64` optionally contains
+the public proof of signing-key rotation. The workflow decodes files only in the runner's
+private temporary directory and removes them when signing finishes. Private keys and passwords
+must never be checked in.
 
 Each check starts only after the previous step succeeds. A failure in the office checks
 therefore stops the native checks, and a native failure stops the job before the Publish step.

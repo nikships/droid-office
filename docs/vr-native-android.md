@@ -228,6 +228,29 @@ The app is `dev.droidoffice.xr`; its launcher name is **Droid Office XR**. Choos
 laptop office's address, then sign in with the normal office account or password.
 The laptop must run a build containing the native page adapter.
 
+### Release APK
+
+Releases on `main` include **droid-office-xr.apk** and **droid-office-xr.apk.sha256** alongside
+the desktop package. The release variant is optimized, has WebView debugging disabled, and
+omits the development-only depth readback. Install it with `adb install -r droid-office-xr.apk`.
+Its version name matches the desktop package; its version code increases with the commit count.
+
+For a local signed build, export the signing variables documented in `.env.example`, set
+`JAVA_HOME` and `ANDROID_HOME`, then run:
+
+```bash
+bash native/android/build-release.sh 0.1.270
+```
+
+This builds, aligns, signs and verifies the APK and writes its checksum under
+`native/android/app/build/outputs/apk/release/`. Keep signing material outside the checkout.
+The local release key and password are retained with private permissions under
+`~/.config/droid-office/xr-signing/`; the matching Actions secrets support repeatable releases.
+The public signing lineage links this machine's development certificate to the release
+certificate, allowing an upgrade without clearing the headset's app data. Other machines'
+unrelated debug certificates are not part of that lineage. See Android's
+[APK signing and rotation documentation](https://developer.android.com/tools/apksigner).
+
 For development over USB, start the laptop office on port 4600 and forward it:
 
 ```bash
@@ -343,6 +366,29 @@ and Android's existing picture chooser. An actual WebView replay uploaded an own
 PNG to the isolated server and pasted its bracketed path into the shared shell without
 executing it; the test then cleared the shell's input. The real button also launched Android's
 `PhotoPickerActivity`. Selection and return from the system picker still need validation.
+
+The final panel replay passed 11 checks on the actual Android WebView: Home's palette action,
+opening the owned shell, terminal Ctrl+K passthrough, explicit palette access with terminal
+focus, the original hire form, and the panel's single-choice fields. The fields retained
+disabled and hidden options, duplicate-value indices, exactly one input/change notification,
+cancel/focus behavior and removal of stale choices. Browser checks at 1600×1019 and 1280×720
+showed 52 px option rows above the panel keyboard without overlapping text. A separate
+controller-packet replay passed left Menu toggle/hold/release, rejected right Menu and grip
+as menu actions, and rejected legacy hand input. These are synthetic input checks.
+
+A reload retained a valid remembered standing position. A deliberately blocked test position
+returned to the elevator under the original desktop collision guard; it was not a native
+position-restoration defect. Node 22 clean install/build, lint, typecheck and coverage passed
+with 607 tests (84.32% lines, 80.52% functions).
+
+The signed release candidate `0.1.270-rc` (version code 270) upgraded the connected headset at
+02:07 device time on 2026-09-30 with `adb install -r`. The package retained its app ID and
+original first-install time, and no longer had the DEBUGGABLE flag. After launch on the same
+office origin, a separate authenticated server observer saw the original Galaxy XR profile
+and remembered floor/position without another headset sign-in. Startup loaded both Samsung
+controller models, enabled the unfoveated sharp-screen layer and successfully requested
+90 Hz. The headset was unworn and the session remained idle; this verifies release startup
+and preserved connection data, not focused performance or visual acceptance.
 
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the

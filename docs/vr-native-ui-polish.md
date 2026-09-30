@@ -31,6 +31,10 @@ its own layout and never loads those rules' effects.
   those keys.
 - **Tooltips.** Titles show in a panel tooltip at the bottom left, above the keyboard, instead
   of an operating-system tooltip. A tap shows it for 2.8 s.
+- **Dropdowns.** Single-choice fields show their options inside the compositor panel instead
+  of Android's separate popup window. Choices preserve the original field and its change
+  handlers, disabled options and groups, and keyboard focus. Cancel changes nothing. A field
+  removed or changed while its choices are open closes the stale chooser.
 - **Rows in scrolling lists.** Board cards, queue rows, search hits and the other listed rows keep
   `flex-shrink: 0` with their 48 px minimum, so a long column scrolls instead of squeezing cards
   until their titles overlap.
@@ -40,7 +44,9 @@ its own layout and never loads those rules' effects.
 - **Command palette.** Home's header has **🔎 Find anything · Ctrl+K**, and the ☰ menu's Open
   section starts with **Find anything**. Both open the desktop's own palette (`ui/palette.ts`,
   entries from main.ts), through `NativeUiOptions.openCommands` when main.ts provides it, or else
-  by pressing the palette's own shortcut. The panel keyboard's Ctrl+K opens and closes it too. The
+  by pressing the palette's own shortcut. Outside a focused terminal, the panel keyboard's Ctrl+K
+  opens and closes it too. Inside a terminal it sends the original CLI shortcut; use Home or
+  the menu's Find anything action to open the palette there. The
   panel keyboard has no ⌘, so the panel always says Ctrl+K; on a platform that reports itself as a
   Mac, `native/ui.ts` handles the panel's Ctrl+K, and elsewhere main.ts's listener already does.
   Palette rows are at least 60 px tall, titles wrap, and the palette stops above the keyboard.

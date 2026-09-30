@@ -5357,6 +5357,7 @@ if (nativeMode) {
     hireAtDesk,
     openShell,
     putBack,
+    openCommands: () => togglePalette(paletteEntries),
     workerActions: {
       prompt: (id) => {
         const worker = store.workers.get(id);

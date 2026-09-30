@@ -13,6 +13,8 @@ pw.txt
 src/client/.iwsdk/
 # Native Android build products and local SDK paths.
 native/android/.gradle/
+*.jks
+*.keystore
 native/android/**/build/
 native/android/**/.cxx/
 native/android/local.properties

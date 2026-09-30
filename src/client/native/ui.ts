@@ -34,6 +34,7 @@ import { isNativeSearch } from './mode';
 import { nativePerformanceLabel } from './performance';
 import { openNativeGraphicsSettings } from './graphics';
 import { mountNativeTooltips } from './tooltips';
+import { mountNativeSelects } from './select';
 
 export { isNativeSearch };
 
@@ -118,6 +119,7 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
   useNativeTermFont();
   noPointerLock();
   mountNativeTooltips();
+  mountNativeSelects();
   document.getElementById('chat-input')?.setAttribute('placeholder', 'Chat with the office');
 
   const listeners = new Set<(s: NativePanelState) => void>();

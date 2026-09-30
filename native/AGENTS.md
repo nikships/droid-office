@@ -41,6 +41,10 @@ of creating a second office state or a separate worker/board implementation.
   wrapper, SDK 35, NDK 27.2.12479018, CMake 3.22.1 and JDK 17 or 21. From the repository root,
   build with `native/android/gradlew -p native/android --no-daemon :app:assembleDebug`.
   The APK is `native/android/app/build/outputs/apk/debug/app-debug.apk`.
+- Releases use `native/android/build-release.sh VERSION [VERSION_CODE]`, the pinned SDK's
+  align/sign/verify tools, and private signing material outside the repository. CI builds
+  both variants, signs only on `main`, and publishes the verified APK with its checksum.
+  Preserve signing lineage and increasing version codes so updates retain headset app data.
 - Format changed C++ and Java using `native/.clang-format`. Run the affected native host
   checks and the APK build as well as the parent checks; a TypeScript build does not compile
   the Android client. Keep changing measurements in the linked evidence document.
