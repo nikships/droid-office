@@ -103,8 +103,15 @@ export interface WorkerInfo {
   /**
    * Set when the worker runs in its own git worktree (path relative to the office dir). `from` is
    * the branch the office was on when the worktree was cut, which its pull request targets.
+   * `branch` is the branch the worktree is on: the office's own office/<name>-<id> until the worker
+   * switches to one of its own (`git checkout -b fix-x`), which `made` then remembers.
    */
-  worktree?: { path: string; branch: string; base: string; from?: string };
+  worktree?: { path: string; branch: string; base: string; from?: string; made?: string };
+  /**
+   * Other floors' repositories this worker works in too, each as its own worktree inside the same
+   * workspace folder as `worktree` (see server/workers.ts). Only a worker hired into its own worktree.
+   */
+  repos?: WorkerRepo[];
   /** The pull request opened from this desk for the worktree branch (see 'worker.pr'). */
   pr?: { number: number; url: string };
   /** True while the branch is being pushed and its pull request opened. */
@@ -211,6 +218,30 @@ export interface PlanLimits {
   at: number;
 }
 
+/**
+ * One other floor's repository a worker works in (see WorkerInfo.repos): a worktree of that floor's
+ * checkout, on the same branch as the worker's own, living in the worker's workspace folder.
+ */
+export interface WorkerRepo {
+  /** The other floor. */
+  floor: string;
+  /** Its folder in the workspace. */
+  name: string;
+  /** owner/name on GitHub, or host/group/…/project on GitLab, when known. */
+  repo?: string;
+  /** That floor's checkout, on the office's machine. */
+  dir: string;
+  /** The worktree, relative to the worker's own floor (the workspace lives there). */
+  path: string;
+  branch: string;
+  /** The commit it was branched from. */
+  base: string;
+  /** The branch its pull request targets: the one that floor's checkout was on. */
+  from?: string;
+  /** Its pull request, once one is open. */
+  pr?: { number: number; url: string };
+}
+
 /** What becomes of a worker's git worktree when it is sent home. */
 export type WorktreeCleanup = 'keep' | 'worktree' | 'all';
 
@@ -226,6 +257,11 @@ export interface WorktreeState {
   unpushed: number;
   /** Set when git couldn't tell, e.g. the branch is gone. */
   error?: string;
+  /**
+   * A worker across repositories: each worktree, its own floor's first. The totals above are the sum,
+   * and `error` joins each one's. Absent for a worker in one checkout.
+   */
+  repos?: { name: string; state: WorktreeState }[];
 }
 
 /** The issue on a card someone carries around the floor (see PeerInfo.carrying). */
@@ -693,6 +729,8 @@ export interface FloorInfo {
   repo?: string;
   /** Its checkout on the office's machine. */
   dir: string;
+  /** The branch that checkout is on ('HEAD' when detached): what a worktree cut from it targets. */
+  branch?: string;
   /** Which of FLOOR_PALETTES it's painted in. */
   palette: number;
   /** The project the office was started in (`droid-office <dir>`): the office keeps its own data in its checkout. */
@@ -888,6 +926,8 @@ export function changedImageType(filePath: string): string | undefined {
 /** What a worker changed in its checkout, against the branch the office was opened on. */
 export interface ChangesState {
   workerId: string;
+  /** Another floor's repository of a worker across repositories (see WorkerInfo.repos); none for its own. */
+  repo?: string;
   /** The checkout, relative to the office dir ('' is the project folder itself, shared by everyone). */
   dir: string;
   /** Current branch of that checkout ('HEAD' when detached). */
@@ -1035,7 +1075,7 @@ export type ClientMsg =
   | { t: 'emote'; emote: EmoteId }
   | { t: 'profile'; name: string; color: string; look: Look }
   /** With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue. */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
@@ -1114,14 +1154,17 @@ export type ClientMsg =
   | { t: 'accounts.role'; accountId: string; role: AccountRole }
   /** Let the shared office password sign people in, or stop it. */
   | { t: 'accounts.shared'; on: boolean }
-  /** Follow what a worker changed (the office polls its checkout while anyone watches). */
-  | { t: 'changes.watch'; workerId: string }
-  | { t: 'changes.unwatch'; workerId: string }
-  | { t: 'changes.diff'; workerId: string; path: string }
-  | { t: 'changes.commit'; workerId: string; message: string }
+  /**
+   * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
+   * floor's repository of a worker across repositories; none follows its own.
+   */
+  | { t: 'changes.watch'; workerId: string; repo?: string }
+  | { t: 'changes.unwatch'; workerId: string; repo?: string }
+  | { t: 'changes.diff'; workerId: string; path: string; repo?: string }
+  | { t: 'changes.commit'; workerId: string; message: string; repo?: string }
   /** Without a path, throws away every uncommitted change in that checkout. */
-  | { t: 'changes.discard'; workerId: string; path?: string }
-  | { t: 'changes.pr'; workerId: string; title: string; body: string }
+  | { t: 'changes.discard'; workerId: string; path?: string; repo?: string }
+  | { t: 'changes.pr'; workerId: string; title: string; body: string; repo?: string }
   | { t: 'upgrade.check' }
   | { t: 'upgrade.start' }
   /** Read the Claude plan limits again now, instead of at the next poll. */
@@ -1282,7 +1325,7 @@ export type ServerMsg =
   | { t: 'prompts'; state: PromptsState }
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
-  | { t: 'changes.diff'; workerId: string; path: string; diff: string; truncated: boolean; error?: string }
+  | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }
   /** Sent to whoever asked for the invite. */
   | { t: 'team.invited'; github: string; name?: string; keys?: number; error?: string }
   /** Sent to admins, when asked and whenever accounts change. */

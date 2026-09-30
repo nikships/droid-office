@@ -10,13 +10,14 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'stations' | 'meetings' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'stations' | 'meetings' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   issues: 'Issues board',
   pulls: 'Pull requests board',
   queue: 'Task queue',
+  repos: '🗂️ Across repositories',
   stations: 'Board agents',
   meetings: 'Meeting room',
   office: 'Worker signs',
@@ -439,6 +440,29 @@ const DEFS = {
     vars: { findings: "Every reviewer's notes", exampleRole: "A reviewer's lens, for the example tag", output: OUTPUT_NOTE, ...PULL_WORDS, ...FORGE_VARS },
     needs: ['output'],
     text: `Read every reviewer's findings ({{findings}}). Drop the duplicates, keeping the clearest wording, and write one combined review to {{output}} in Markdown: a short summary with your verdict first, then the findings, the most serious first, each tagged with the lens it came from in bold brackets like **[{{exampleRole}}]**, with its file:line. Don't post it: the office posts it on the {{pullName}} once the file is written. ${OUTPUT}`,
+  },
+
+  // --- Across repositories ---
+  'worker.repos': {
+    group: 'repos',
+    label: 'Workspace brief',
+    used: "Written into the workspace of a worker hired across several floors' repositories, as its CLAUDE.md and AGENTS.md, which the agent reads when it starts.",
+    vars: {
+      branch: 'The branch every worktree in the workspace is on',
+      repos: "One line per repository: its folder in the workspace, its project and the branch it's cut from",
+      home: 'The project of the floor the worker was hired on (owner/name when the forge reports one)',
+    },
+    needs: ['repos'],
+    text: [
+      "You're working across several repositories at once. This folder is your workspace, not a repository itself: each folder in it is a git worktree of one of the office's projects, on the branch `{{branch}}` made for this task.",
+      '',
+      '{{repos}}',
+      '',
+      "- Make every change inside these folders. The projects' own checkouts are other people's and other workers': don't edit them, switch their branches, stash or reset them.",
+      "- cd into a project's folder before running git or its tools, read its own instructions (CLAUDE.md, AGENTS.md, README) before changing it, and install its dependencies there when you need them.",
+      '- When the task spans projects, keep them working together and test them together. Commit in each project you change.',
+      "- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}'s; in the other projects' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.",
+    ].join('\n'),
   },
 
   // --- Worker signs ---
