@@ -9,11 +9,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
 const SKIP = new Set(['node_modules', 'dist', '.iwsdk']);
 const INSTALLERS = ['install.sh', 'install.ps1'];
+const NATIVE_RELEASE = 'native/android/build-release.sh';
 
 /** Set by the office for its own workers, or by the installers for themselves: not user settings. */
 const INTERNAL = new Set(['DROID_OFFICE_HOOK_URL', 'DROID_OFFICE_HOOK_TOKEN', 'DROID_OFFICE_WORKER_ID', 'DROID_OFFICE_SESSION_ID', 'DROID_OFFICE_CLAIM_TOKEN', 'DROID_OFFICE_INSTALL_REFRESH']);
 /** The operating system's own variables, read to find the shell and programs. */
-const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC']);
+const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC', 'GROK_HOME', 'XDG_CONFIG_HOME']);
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -36,6 +37,8 @@ function namesInCode(): Map<string, string> {
     const file = path.join(ROOT, name);
     for (const m of readFileSync(file, 'utf8').matchAll(/\bDROID_OFFICE_[A-Z0-9_]+/g)) add(m[0], file);
   }
+  const nativeRelease = path.join(ROOT, NATIVE_RELEASE);
+  for (const m of readFileSync(nativeRelease, 'utf8').matchAll(/\bOFFICE_XR_[A-Z0-9_]+/g)) add(m[0], nativeRelease);
   return found;
 }
 

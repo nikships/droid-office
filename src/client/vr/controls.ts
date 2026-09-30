@@ -8,7 +8,18 @@ import { TERM_FONT } from '../fonts';
 import type { HeadPose, Rect } from './math';
 import { WorldPanel } from './panel';
 
-const DISMISS: Rect = { x: 0.31, y: 0.87, w: 0.38, h: 0.1 };
+export const DISMISS: Rect = { x: 0.31, y: 0.87, w: 0.38, h: 0.1 };
+
+/** Row layout, in fractions of the card's height (text is drawn middle-aligned on these lines). */
+export const ROW_TOP = 0.3;
+export const ROW_PITCH = 0.058;
+export const GESTURE_FONT = 0.025;
+export const DOES_FONT = 0.021;
+export const DOES_DROP = 0.027;
+export const ROWS_MAX = 8;
+/** The two footnote lines under the columns. */
+export const FOOT_Y = [0.775, 0.81] as const;
+export const FOOT_FONT = 0.024;
 
 interface GestureRow {
   gesture: string;
@@ -97,9 +108,9 @@ export class VrControls {
     this.paintColumn(ctx, w, h, '🎮 CONTROLLERS', CONTROLLERS, 0.53, 0.42);
 
     ctx.fillStyle = '#8c8c8c';
-    ctx.font = `500 ${Math.round(h * 0.026)}px ${TERM_FONT}`;
-    ctx.fillText('* left stick glides with ⚙️ glide on · aims a teleport with it off', w * 0.05, h * 0.79);
-    ctx.fillText('on a panel: tap clicks · stick or hold-drag scrolls', w * 0.05, h * 0.825);
+    ctx.font = `500 ${Math.round(h * FOOT_FONT)}px ${TERM_FONT}`;
+    ctx.fillText('* left stick glides with ⚙️ glide on · aims a teleport with it off', w * 0.05, h * FOOT_Y[0], w * 0.9);
+    ctx.fillText('on a panel: tap clicks · stick or hold-drag scrolls', w * 0.05, h * FOOT_Y[1], w * 0.9);
 
     const hot = state.hoverId === 'gotit' || state.pressedId === 'gotit';
     ctx.fillStyle = hot ? '#ff7a2e' : '#ee6018';
@@ -120,16 +131,16 @@ export class VrControls {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillText(title, w * x0, h * 0.245);
-    // Long columns tighten up so the last row lands above the footnotes.
-    const step = Math.min(0.088, 0.36 / Math.max(1, rows.length - 1));
-    rows.forEach((row, i) => {
-      const y = h * (0.32 + i * step);
+    // Each row is a gesture line and a smaller line under it. The pitch fits ROWS_MAX rows between
+    // the column title and the footnotes, with a gap between one row's second line and the next.
+    rows.slice(0, ROWS_MAX).forEach((row, i) => {
+      const y = h * (ROW_TOP + i * ROW_PITCH);
       ctx.fillStyle = '#eeeeee';
-      ctx.font = `700 ${Math.round(h * 0.026)}px ${TERM_FONT}`;
+      ctx.font = `700 ${Math.round(h * GESTURE_FONT)}px ${TERM_FONT}`;
       ctx.fillText(row.gesture, w * x0, y, w * colW);
       ctx.fillStyle = '#bdbdbd';
-      ctx.font = `500 ${Math.round(h * 0.023)}px ${TERM_FONT}`;
-      ctx.fillText(row.does, w * x0, y + h * 0.04, w * colW);
+      ctx.font = `500 ${Math.round(h * DOES_FONT)}px ${TERM_FONT}`;
+      ctx.fillText(row.does, w * x0, y + h * DOES_DROP, w * colW);
     });
   }
 

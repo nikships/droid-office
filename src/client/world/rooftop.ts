@@ -135,6 +135,7 @@ function beamMaterial(): THREE.ShaderMaterial {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
   });
   m.userData.outlineParameters = { visible: false };
   return m;
@@ -274,7 +275,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   // Round the edge: a concrete curb with glass panels on it and a steel rail on top. Nobody goes over it.
   const curb = toon('#d8d3ca');
   const steel = toon('#aeb6bf');
-  const glassMat = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  const glassMat = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
   const edges: [number, number, number, number][] = [
     [B.minX, B.maxX, B.minZ, FLOOR.minZ],
     [B.minX, B.maxX, FLOOR.maxZ, B.maxZ],

@@ -203,6 +203,9 @@ export class Laptop {
     this.texture.anisotropy = ANISOTROPY;
     this.texture.minFilter = THREE.LinearMipmapLinearFilter;
     this.screenMat = new THREE.MeshBasicMaterial({ map: this.texture, toneMapped: false });
+    // The native headset also draws this screen, from the same texture, in an unfoveated
+    // high-resolution layer (src/client/native/scene.ts `sharpText`).
+    this.screenMat.userData.nativeSharpText = true;
 
     // The procedural laptop below is the stand-in: it shows until the MacBook GLBs land
     // (see maybeSwap), the way every prop keeps a procedural version. The GLBs are

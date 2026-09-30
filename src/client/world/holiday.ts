@@ -308,7 +308,7 @@ function cobweb(x: number, z: number, map: THREE.Texture): THREE.Mesh {
   geo.setAttribute('position', new THREE.Float32BufferAttribute([x - sx * S, H, z, x, H, z - sz * S, x, H - S * 1.1, z], 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 0.5, 0], 2));
   geo.computeVertexNormals();
-  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0.75, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false }));
 }
 
 interface Bat {

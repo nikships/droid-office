@@ -24,6 +24,7 @@ on:
       - 'install.ps1'
       - '.env.example'
       - '.gitignore'
+      - 'native/**'
       - '.github/workflows/release.yml'
   pull_request:
     paths:
@@ -40,6 +41,7 @@ on:
       - 'install.ps1'
       - '.env.example'
       - '.gitignore'
+      - 'native/**'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -112,14 +114,115 @@ jobs:
           grep -qx "v${{ steps.pack.outputs.version }}" install/current
           kill -INT "$office"
 
+      # The native Galaxy XR app (docs/vr-native-checks.md). It builds with its own SDK, installed
+      # from pinned packages, rather than whatever Android SDK the runner image happens to carry.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            native/android/**/*.gradle
+            native/android/gradle.properties
+            native/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Install the pinned Android SDK
+        timeout-minutes: 20
+        env:
+          ANDROID_SDK: ${{ runner.temp }}/android-sdk
+          # Android SDK Command-line Tools 19.0 (cmdline-tools;19.0) for Linux. Later versions hand
+          # sdkmanager off to an Android CLI they download unpinned at run time.
+          CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+          CMDLINE_TOOLS_SHA256: 7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+        run: |
+          # The same packages native/android/app/build.gradle pins: compileSdk 35 (AGP 8.9's default
+          # build tools for it are 35.0.0), ndkVersion and the CMake version.
+          packages=("platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1")
+          curl --fail --location --silent --show-error --retry 3 -o "$RUNNER_TEMP/cmdline-tools.zip" "$CMDLINE_TOOLS_URL"
+          echo "$CMDLINE_TOOLS_SHA256  $RUNNER_TEMP/cmdline-tools.zip" | sha256sum --check --strict -
+          mkdir -p "$ANDROID_SDK/cmdline-tools"
+          unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools"
+          mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_SDK/cmdline-tools/latest"
+          sdkmanager="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+          log="$RUNNER_TEMP/sdkmanager.log"
+          # yes stops with SIGPIPE once sdkmanager has read enough answers; that is not a failure.
+          if ! { { yes || true; } | "$sdkmanager" --sdk_root="$ANDROID_SDK" --licenses > "$log" 2>&1 &&
+                 "$sdkmanager" --sdk_root="$ANDROID_SDK" --install "${packages[@]}" >> "$log" 2>&1; }; then
+            tail -n 80 "$log"
+            exit 1
+          fi
+          for dir in platforms/android-35 build-tools/35.0.0 ndk/27.2.12479018 cmake/3.22.1; do
+            props="$ANDROID_SDK/$dir/source.properties"
+            [ -f "$props" ] || { echo "$dir was not installed"; tail -n 80 "$log"; exit 1; }
+            echo "$dir: $(grep -m1 -E '^Pkg\.Revision *=' "$props")"
+          done
+          echo "ANDROID_SDK=$ANDROID_SDK" >> "$GITHUB_ENV"
+
+      - name: Install shader validation tools
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends glslang-tools libegl1-mesa-dev libgles2-mesa-dev
+          # playwright-core is already pinned by package-lock.json; do not fetch another npm package.
+          npx --no-install playwright-core install --with-deps chromium
+
+      - name: Native host tests
+        timeout-minutes: 15
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK }}/ndk/27.2.12479018
+        run: bash native/tests/run-host.sh --android-sdk "$ANDROID_SDK" --require-java
+
+      - name: Build the native Android app
+        timeout-minutes: 30
+        working-directory: native/android
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK }}
+        run: |
+          # The Gradle 8.13 wrapper jar; the distribution it downloads is pinned in gradle-wrapper.properties.
+          echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check --strict -
+          # The runner image points these at its own NDK; the build must use the pinned one in ANDROID_HOME.
+          unset ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME
+          sh ./gradlew --no-daemon --console=plain :app:assembleDebug :app:assembleRelease \
+            "-PofficeVersionName=${{ steps.pack.outputs.version }}" \
+            "-PofficeVersionCode=$(git rev-list --count HEAD)"
+          ls -l app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Sign the Galaxy XR release APK
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK }}
+          OFFICE_XR_KEYSTORE_BASE64: ${{ secrets.OFFICE_XR_KEYSTORE_BASE64 }}
+          OFFICE_XR_SIGNING_LINEAGE_BASE64: ${{ secrets.OFFICE_XR_SIGNING_LINEAGE_BASE64 }}
+          OFFICE_XR_STORE_PASSWORD: ${{ secrets.OFFICE_XR_STORE_PASSWORD }}
+          OFFICE_XR_KEY_PASSWORD: ${{ secrets.OFFICE_XR_KEY_PASSWORD }}
+          OFFICE_XR_KEY_ALIAS: ${{ secrets.OFFICE_XR_KEY_ALIAS }}
+        run: |
+          : "${OFFICE_XR_KEYSTORE_BASE64:?Missing the Galaxy XR release signing keystore}"
+          umask 077
+          signing="$RUNNER_TEMP/xr-signing"
+          mkdir -p "$signing"
+          trap 'rm -rf "$signing"' EXIT
+          export OFFICE_XR_KEYSTORE="$signing/release.jks"
+          printf '%s' "$OFFICE_XR_KEYSTORE_BASE64" | base64 --decode > "$OFFICE_XR_KEYSTORE"
+          if [ -n "$OFFICE_XR_SIGNING_LINEAGE_BASE64" ]; then
+            export OFFICE_XR_LINEAGE="$signing/signing.lineage"
+            printf '%s' "$OFFICE_XR_SIGNING_LINEAGE_BASE64" | base64 --decode > "$OFFICE_XR_LINEAGE"
+          fi
+          bash native/android/build-release.sh "${{ steps.pack.outputs.version }}" "$(git rev-list --count HEAD)"
+
       - name: Publish
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: v${{ steps.pack.outputs.version }}
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "$TAG is already released"
             exit 0
           fi
-          gh release create "$TAG" droid-office.tgz --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest
+          gh release create "$TAG" droid-office.tgz \
+            native/android/app/build/outputs/apk/release/droid-office-xr.apk \
+            native/android/app/build/outputs/apk/release/droid-office-xr.apk.sha256 \
+            --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest

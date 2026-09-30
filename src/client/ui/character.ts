@@ -5,6 +5,7 @@ import { AVATAR_COLORS, saveProfile, store, type Profile } from '../state';
 import { Person } from '../world/character';
 import { toonUnique } from '../world/toon';
 import { h, openModal } from './dom';
+import { isNativeSearch } from '../native/mode';
 
 /** A turntable with your character on it, drawn with its own small renderer. */
 class Preview {
@@ -19,15 +20,16 @@ class Preview {
   private dragging = false;
   private lastDrag = -Infinity;
   private hopT = -1;
+  private native = isNativeSearch(location.search);
 
   constructor(
     private canvas: HTMLCanvasElement,
     p: Profile,
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.native ? 1 : 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !this.native;
     this.effect = new OutlineEffect(this.renderer, { defaultThickness: 0.0045, defaultColor: [0.17, 0.18, 0.26] });
 
     // A neutral dark stage, so the character reads the way it does in the dark office.
@@ -75,6 +77,10 @@ class Preview {
 
     let last = performance.now();
     const frame = (now: number) => {
+      if (this.native && now - last < 1000 / 30) {
+        this.raf = requestAnimationFrame(frame);
+        return;
+      }
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       this.tick(dt, now / 1000);
@@ -113,7 +119,8 @@ class Preview {
     }
     this.person.root.position.y = y;
     this.person.update(dt, t, false, y > 0.01);
-    this.effect.render(this.scene, this.camera);
+    if (this.native) this.renderer.render(this.scene, this.camera);
+    else this.effect.render(this.scene, this.camera);
   }
 
   dispose() {

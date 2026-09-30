@@ -8,6 +8,7 @@ import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { agentFields, choiceLabel, officeChoice } from './provider';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
+import { NATIVE_SETTINGS } from '../native/panel-text';
 
 const VIEWS: [ViewMode, string, string][] = [
   ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
@@ -45,6 +46,7 @@ export function openSettings(
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
 ) {
+  const native = document.body.classList.contains('native-xr');
   const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
   const note = h('p.setting-note');
   const paint = () => {
@@ -562,9 +564,13 @@ export function openSettings(
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       card('Your character', character),
-      card('Camera view', seg, note),
-      card(
-        'VR (headset browser)',
+      native
+        ? setting(NATIVE_SETTINGS.viewTitle, 'you', h('div.seg', { role: 'group', 'aria-label': 'Camera view' }, h('span.native-fixed-choice', {}, `🥽 ${NATIVE_SETTINGS.viewMode}`)), h('p.setting-note', {}, NATIVE_SETTINGS.view))
+        : card('Camera view', seg, note),
+      setting(
+        native ? NATIVE_SETTINGS.movementTitle : 'VR (headset browser)',
+        'you',
+        ...(native ? [h('p.setting-note', { style: 'margin:0 0 10px' }, NATIVE_SETTINGS.movementControls)] : []),
         h('p.setting-note', { style: 'margin:0 0 6px' }, 'Locomotion'),
         locoRow,
         h('p.setting-note', {}, 'Teleport aims with A held (or the left stick pushed forward); gliding walks the stick. Teleport-only is the comfortable default.'),
@@ -582,7 +588,10 @@ export function openSettings(
       card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done. Voice chat isn’t affected.')),
       card('Jukebox', musicRow, h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.')),
     ],
-    notify: [card('Desktop notifications', notifyRow, notifyNote), card('Team notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus)],
+    notify: [
+      native ? card('Desktop notifications', h('p.setting-note', {}, NATIVE_SETTINGS.notify)) : card('Desktop notifications', notifyRow, notifyNote),
+      card('Team notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus),
+    ],
     building: [
       card('Holiday theme', themeRow, themeNote),
       ...(outside

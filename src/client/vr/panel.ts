@@ -114,6 +114,9 @@ export class WorldPanel {
   private pressedId: string | null = null;
   private presses = new PressTracker();
   private mat: THREE.MeshBasicMaterial;
+  /** Bumps on every repaint, so a compositor layer showing the panel knows to re-upload. */
+  paintVersion = 0;
+  private punched = false;
   private follow = false;
   private followDistance = 1.1;
   private followDrop = 0.12;
@@ -138,6 +141,38 @@ export class WorldPanel {
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.userData.panel = this;
     this.group.add(this.mesh);
+  }
+
+  /** The painted canvas: a compositor layer (vr/layers.ts) uploads it directly. */
+  get source(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  /** The panel's draw order in the world pass (setOnTop), which also orders compositor layers. */
+  get order(): number {
+    return this.mesh.renderOrder;
+  }
+
+  /**
+   * While a compositor layer shows this panel, the mesh only cuts the panel's shape out of the
+   * world pass (color and alpha scaled by 1 − texture alpha), so the layer behind shows through
+   * at the headset's full resolution and anything drawn later (ray dots) still lands on top.
+   */
+  setPunch(on: boolean) {
+    if (on === this.punched) return;
+    this.punched = on;
+    const m = this.mat;
+    if (on) {
+      m.blending = THREE.CustomBlending;
+      m.blendEquation = THREE.AddEquation;
+      m.blendSrc = THREE.ZeroFactor;
+      m.blendDst = THREE.OneMinusSrcAlphaFactor;
+      m.blendSrcAlpha = THREE.ZeroFactor;
+      m.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+    } else {
+      m.blending = THREE.NormalBlending;
+    }
+    m.needsUpdate = true;
   }
 
   get canvasW(): number {
@@ -391,6 +426,7 @@ export class WorldPanel {
     this.painter(ctx, canvas.width, canvas.height, dirty, { hoverId: this.hoverId, pressedId: this.pressedId, time: performance.now() / 1000 });
     ctx.restore();
     this.texture.needsUpdate = true;
+    this.paintVersion++;
   }
 
   update(dt: number, head?: HeadPose | null) {

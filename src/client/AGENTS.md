@@ -18,3 +18,19 @@ npx --no-install @iwsdk/cli browser run src/client/iwsdk-scripts/<script>.mjs --
 ```
 
 Stop it with `npx --no-install @iwsdk/cli dev down --workspace src/client` or by ending the `npm run dev:runtime` process.
+
+## Native Galaxy XR adapter
+
+Read [the native design and evidence](../../docs/vr-native-android.md) before changing `native/`
+or its hooks in `main.ts`; `/?native=1` keeps the original scene, gameplay, windows and server
+protocol while the installed OpenXR app draws the world. Native controller input must not
+change the desktop or WebXR control schemes. Panel layout rules and browser check sizes are
+in [vr-native-ui-polish.md](../../docs/vr-native-ui-polish.md).
+
+Use `headsetActive()` / `headsetControls()` for gameplay guards shared by WebXR and native
+XR. Desktop walking paths do not advance while native controls own the avatar; palette
+actions must follow the existing headset action path instead of waiting for desktop walking.
+
+Native single-choice dropdowns use `native/select.ts` so all choices stay on the compositor
+panel. Preserve the original select and its input/change listeners; Android's separate popup
+window cannot use the panel's forwarded controller pointer events.

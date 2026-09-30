@@ -227,9 +227,13 @@ const PALETTE = {
   exterior: '#3a3f46',
 };
 
-/** Window glass: faintly blue and see-through. */
-const GLASS = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide });
-const SHINE = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+/**
+ * Window glass: faintly blue and see-through. forceSinglePass on every transparent double-sided
+ * material: without it three draws such a mesh twice, flagging the material for a program
+ * re-check each time, and the glass alone made that about 240 re-checks a frame.
+ */
+const GLASS = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
+const SHINE = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
 
 /** A sheet of glass `w` by `h`, centered, with a couple of cartoon glints so it reads as glass. */
 function glassPane(w: number, h: number): THREE.Group {
@@ -1029,7 +1033,7 @@ export function buildOffice(): Office {
     windows: [],
     street: STREET_Y,
     clouds: toonUnique('#ffffff'),
-    wetGlass: new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, visible: false }),
+    wetGlass: new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, fog: false, visible: false }),
   };
 
   // Outside walls, with real windows you see out of and a door out.

@@ -259,7 +259,12 @@ Select, teleport and cancel request a short haptic pulse through
 actuator for XR gamepads (`xr_input_source.h`, crbug.com/955097), so Galaxy XR controllers do
 not vibrate, and no feedback depends on it.
 Chrome also ignores `XRProjectionLayer.fixedFoveation`, so three's foveation setting does
-nothing there. The framebuffer scale (0.8 while presenting) is what trims the render cost.
+nothing there. The world renders at framebuffer scale 1.0 (3712×2159 for both eyes), below
+the native 1.7, and text panels get their sharpness from compositor quad layers
+(`vr/layers.ts`). The world must stay on three's `XRProjectionLayer`: with the `layers`
+feature on, Chrome on Galaxy XR shows an `XRWebGLLayer` as solid black. Performance status,
+measurements and the Galaxy XR iteration tools are in
+[vr-galaxy-xr-handoff.md](vr-galaxy-xr-handoff.md).
 
 Hands render as the skinned generic-hand mesh (`three`'s `XRHandMeshModel`, vendored under
 `src/client/public/xr-hands/` so no CDN can break them), with three's joint spheres behind
@@ -345,7 +350,7 @@ calling VR done:
 6. Teleport arc readability, landing validation, and fade comfort.
 7. Snap- vs smooth-turn comfort, turn-speed range, glide comfort and collision at glide speed.
 8. In-headset frame rate with the full office (two eye renders × outline pass). Foveation
-   does nothing in Chrome, so the 0.8 framebuffer scale is the only render-size saving.
+   does nothing in Chrome, and the world renders at framebuffer scale 1.0.
    After leaving VR, the desktop camera's field of view and canvas size must be back to
    normal.
 9. Session edge cases: headset sleep/resume mid-session, controller disconnect/reconnect,

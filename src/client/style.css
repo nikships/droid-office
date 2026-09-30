@@ -197,6 +197,7 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .pill.done { color: var(--success); border-color: rgba(60, 207, 145, .35); }
 .pill.exited, .pill.offline { color: var(--text-secondary); }
 .pill.merged { color: #b689ef; border-color: rgba(182, 137, 239, .4); }
+.pill.lost { color: #b45309; border-color: rgba(255, 183, 3, .5); background: rgba(255, 183, 3, .15); }
 .empty { color: var(--text-secondary); font-size: 12.5px; font-weight: 500; }
 @keyframes blink { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .pill.needs_input::before { animation: none; } }
@@ -477,6 +478,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 @keyframes typing-bob { 50% { transform: translateY(-3px); } }
 .modal.term header .typed.now { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .avatar.typing { animation: none; } }
+.term-zoom-group { display: inline-flex; gap: 4px; flex: none; }
+.term-zoom { padding: 4px 8px; text-transform: none; }
 .modal.term header .cost { font: 400 11px var(--font-mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Changes window: changed files + diff at a desk */

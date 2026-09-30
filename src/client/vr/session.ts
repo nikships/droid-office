@@ -28,6 +28,10 @@ import type { InteractKind, Interactable } from '../world/office';
 import type { BoardSpot } from '../world/board-layout';
 import type { CarriedIssue, GhIssue } from '../../shared/protocol';
 import type { HeadPose } from './math';
+import { PanelLayers } from './layers';
+import { SOURCE_LAYER, StaticBatcher } from './batch';
+import { RayAccel } from './pick';
+import type { WorldPanel } from './panel';
 import { describeSessionError, requestVRSession, type VrReferenceSpace } from './support';
 import { GRAB_HOLD_MS, VRGrab, type GrabAim, type GrabHooks } from './grab';
 
@@ -69,10 +73,13 @@ const ARC_DT = 1 / 30;
 export const PINCH_HOLD_MS = 450;
 /** Both hands pinched past this long toggles the menu (hands; controllers squeeze). */
 export const MENU_HOLD_MS = 600;
-/** The XR framebuffer renders below native while presenting: stereo at headset resolution is
- * the whole perf cost (flat rendering in the same browser is fine), and 0.8² of the pixels
- * buys the frame budget back with no visible blur. Restored on session end. */
-const XR_FRAMEBUFFER_SCALE = 0.8;
+/**
+ * The XR framebuffer scale for the world. Measured on Galaxy XR (Adreno 740, Chrome 153): an
+ * empty scene holds 72 fps at 1.0 (3712×2159 for both eyes) but drops to 61 at 1.2 and 35 at
+ * the native 1.7, with the GPU 93-99% busy, so the world renders at 1.0 and the text panels
+ * get their sharpness from compositor layers instead (vr/layers.ts). Restored on session end.
+ */
+const XR_FRAMEBUFFER_SCALE = 1;
 /** Fingertips for pokes; knuckles and wrist for an open-handed pat. No aim/grip proxy poses. */
 const TOUCH_JOINTS: readonly XRHandJoint[] = [
   'index-finger-tip',
@@ -223,6 +230,10 @@ export interface VRHooks {
   aimLabel: (it: Interactable, note: GhIssue | null) => string | null;
   /** Restore the canvas after three sized it for the headset. */
   resize: () => void;
+  /** The static world to batch while presenting (vr/batch.ts); null batches nothing (the roof). */
+  batchRoot?: () => THREE.Object3D | null;
+  /** What pickFromRay tests right now (the office, or the roof), for faster ray picking (vr/pick.ts). */
+  pickRoot?: () => THREE.Object3D | null;
   /** Fired after a session starts / after it is fully torn down (for UI attach/dispose). */
   onEnter?: () => void;
   onEnd?: () => void;
@@ -443,6 +454,8 @@ export interface VRUiSink {
   setAim: (text: string | null) => void;
   /** Fires when a ray's release clicks a panel button (the session ticks the controller). */
   onPanelClick: ((rayId: number) => void) | null;
+  /** Every panel the UI owns, for compositor layers (vr/layers.ts). Without it panels stay meshes. */
+  panels?: () => readonly WorldPanel[];
 }
 
 export class VRSession {
@@ -490,10 +503,17 @@ export class VRSession {
   /** World-space UI panels, set by main.ts on session enter and cleared on end. Null on desktop. */
   private ui: VRUiSink | null = null;
   private grab: VRGrab | null;
+  private layers: PanelLayers;
+  private batcher: StaticBatcher;
+  private rayAccel = new RayAccel();
   private onSessionEnd = () => this.restore();
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, hooks: VRHooks) {
     this.renderer = renderer;
+    this.layers = new PanelLayers(renderer);
+    this.batcher = new StaticBatcher(scene);
+    // Batched originals stop drawing but still answer the session's rays (see vr/batch.ts).
+    this.raycaster.layers.enable(SOURCE_LAYER);
     this.camera = camera;
     this.hooks = hooks;
     this.grab = hooks.grab ? new VRGrab(scene, hooks.grab) : null;
@@ -575,7 +595,7 @@ export class VRSession {
     this.arc = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new Array(ARC_STEPS).fill(0).map(() => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0x7df9ff, transparent: true, opacity: 0.9 }));
     this.arc.frustumCulled = false;
     this.arc.visible = false;
-    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.26, 32), new THREE.MeshBasicMaterial({ color: 0x51ff7a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.26, 32), new THREE.MeshBasicMaterial({ color: 0x51ff7a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, forceSinglePass: true, depthTest: false }));
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.renderOrder = 9998;
     this.marker.visible = false;
@@ -643,6 +663,8 @@ export class VRSession {
     this.renderer.xr.setReferenceSpaceType(referenceSpace);
     // Both of these only take before the session starts: three warns and ignores them after.
     this.renderer.xr.setFramebufferScaleFactor(XR_FRAMEBUFFER_SCALE);
+    // three defaults to maximum foveation (blurred periphery) wherever a browser honours it.
+    this.renderer.xr.setFoveation(0);
     this.session = session;
     try {
       await this.renderer.xr.setSession(session);
@@ -656,13 +678,9 @@ export class VRSession {
     // back, which three refuses while it still thinks it's presenting.
     session.addEventListener('end', this.onSessionEnd);
     this.active = true;
-    // Stereo at headset resolution is the whole VR perf cost, so the session renders smaller
-    // (set above, before three built the framebuffer) and bakes the shadows once instead of
-    // every frame (the sun barely moves in a visit). Do not count on foveation for frame time:
-    // Chrome stores XRProjectionLayer.fixedFoveation but nothing in Blink's xr module or
-    // device/vr/openxr reads it (xr_projection_layer.cc), so three's foveation setting does
-    // nothing on Galaxy XR. The framebuffer scale is honoured (xr_webgl_binding.cc clamps it to
-    // [0.2, max(native, 1)]), which is why XR_FRAMEBUFFER_SCALE carries the frame budget.
+    // Shadows bake once instead of every frame (the sun barely moves in a visit). Chrome stores
+    // XRProjectionLayer.fixedFoveation but nothing in Blink's xr module or device/vr/openxr
+    // reads it (xr_projection_layer.cc), so foveation neither blurs nor saves time on Galaxy XR.
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.hooks.hudRefresh();
@@ -678,6 +696,9 @@ export class VRSession {
       this.session = null;
     }
     this.active = false;
+    this.layers.reset();
+    this.batcher.reset();
+    this.rayAccel.reset();
     this.fade = 'idle';
     this.fadeHold = false;
     this.fadeMesh.visible = false;
@@ -732,6 +753,7 @@ export class VRSession {
 
   /** World-space UI panels for this session (vr/attach.ts): rays route to them first. */
   setUi(ui: VRUiSink | null): void {
+    if (ui !== this.ui) this.layers.clear();
     this.ui = ui;
     // Every panel click ticks the controller that made it (keys, rows, buttons alike).
     if (ui) ui.onPanelClick = (rayId) => this.pulse(rayId, 0.2, 12);
@@ -994,6 +1016,9 @@ export class VRSession {
     if (!this.active) return;
     const { player } = this.hooks;
     this.frame++;
+    // Merged geometry casts the shadows now, and the shadow map only bakes on request in VR.
+    if (this.batcher.update(this.hooks.batchRoot?.() ?? null, performance.now())) this.renderer.shadowMap.needsUpdate = true;
+    this.rayAccel.update(this.hooks.pickRoot?.() ?? null);
     this.readHandPinches();
     const rigged = !!player.rig;
     if (rigged) {
@@ -1026,6 +1051,8 @@ export class VRSession {
       _head.dir[1] = _d.y;
       _head.dir[2] = _d.z;
       this.ui.update(dt, _head);
+      const panels = this.ui.panels?.();
+      if (panels) this.layers.update(panels, this.dolly);
       for (let i = 0; i < 2; i++) {
         if (this.rays[i]?.uiConsumed) this.ui.stickScroll(i, this.stick(i).y, dt);
       }

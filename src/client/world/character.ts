@@ -1130,6 +1130,9 @@ export interface PrBadge {
   label: string;
 }
 
+/** The chip (or bubble) of a worker whose worktree was deleted outside the office. */
+const LOST_CHIP: [string, string, string] = ['🌿 WORKTREE DELETED', '#ffb703', '#2b2d42'];
+
 /** The outline of a worker's bubble, and its pill, once it has a pull request: GitHub's open green, or the PR board's merged purple. */
 const PR_INK: Record<WorkerPr['state'], string> = { open: '#2da44e', merged: '#9d4edd' };
 
@@ -1344,6 +1347,8 @@ export class Worker {
   private task: WorkerTask | undefined;
   /** Its pull request, open or merged: its bubble is outlined (and labelled, while it rests) to match. */
   private pr: PrBadge | undefined;
+  /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
+  private lost = false;
   private nameTag: THREE.Sprite | null = null;
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
@@ -1559,6 +1564,11 @@ export class Worker {
     this.drawBubble();
   }
 
+  setLost(lost: boolean) {
+    this.lost = lost;
+    this.drawBubble();
+  }
+
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
@@ -1644,15 +1654,15 @@ export class Worker {
 
   private drawBubble() {
     if (this.leaving || this.dead) return;
-    const { status, bouncing: bounce, task, pr } = this;
+    const { status, bouncing: bounce, task, pr, lost } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
     // Resting cards used to be cream. They sit black with white type, like the name tag.
     const bg = hot ? (status === 'done' ? '#caffbf' : '#ffd6e0') : status === 'working' ? '#ffec99' : '#0a0a0a';
     const border = pr && PR_INK[pr.state];
     // Not working on or waiting for something more: its pull request in place of ready / done / asleep.
     const prLabel = pr && status !== 'working' && status !== 'needs_input' && status !== 'starting' ? pr.label : undefined;
-    const bubble = prLabel ?? (status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : '');
-    const key = `${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble}`;
+    const bubble = lost ? '🌿 worktree deleted' : (prLabel ?? (status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : ''));
+    const key = `${lost}|${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble}`;
     if (key === this.bubbleKey) return;
     this.bubbleKey = key;
     if (this.bubble) {
@@ -1662,7 +1672,7 @@ export class Worker {
     }
     this.bubbleIsCard = !!task;
     if (task) {
-      const [text, chipBg, color] = prLabel && border ? [prLabel.toUpperCase(), border, '#ffffff'] : (TASK_CHIP[status] ?? TASK_CHIP.idle);
+      const [text, chipBg, color] = lost ? LOST_CHIP : prLabel && border ? [prLabel.toUpperCase(), border, '#ffffff'] : (TASK_CHIP[status] ?? TASK_CHIP.idle);
       const dark = bg === '#0a0a0a';
       this.bubble = cardSprite({
         chip: { text, bg: chipBg, color },
@@ -1673,7 +1683,7 @@ export class Worker {
         color: dark ? '#ffffff' : undefined,
         muted: dark ? '#e6e6ee' : undefined,
       });
-    } else if (bubble) this.bubble = textSprite(bubble, { bg: '#0a0a0a', color: '#eeeeee', border: border ?? '#2f2f2f', size: 38 });
+    } else if (bubble) this.bubble = textSprite(bubble, { bg: lost ? LOST_CHIP[1] : '#0a0a0a', color: lost ? LOST_CHIP[2] : '#eeeeee', border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });
     if (this.bubble) this.root.add(this.bubble);
   }
 

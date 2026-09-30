@@ -36,6 +36,7 @@ import type { ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, Pee
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, seatHere, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
+import { loginPath } from '../shared/return-to.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES } from '../shared/drops.js';
@@ -747,7 +748,7 @@ export async function startServer(cfg: Config) {
       const session = auth.fromRequest(req);
       if (!session) {
         if (p.startsWith('/api/')) return send(res, 401, { error: 'Not logged in' });
-        res.writeHead(302, { location: '/login' }).end();
+        res.writeHead(302, { location: loginPath(url.pathname + url.search) }).end();
         return;
       }
       if (p === '/api/whoami') return send(res, 200, { ok: true, me: meOf(session.account?.id) });
@@ -1441,6 +1442,41 @@ export async function startServer(cfg: Config) {
         void w.floor.workers.inspectWorktree(w.wid).then((state) => {
           if (state) sendTo(c, { t: 'worker.worktree', workerId: w.wid, state });
         });
+        break;
+      }
+      case 'worker.rebuild': {
+        const w = worker(msg.workerId);
+        if (!w) break;
+        const { floor } = w;
+        // With `all`, every worker on the floor whose worktree was deleted, this one first.
+        const ids = [
+          w.wid,
+          ...(msg.all === true
+            ? floor.workers
+                .list()
+                .filter((x) => x.lost && x.id !== w.wid)
+                .map((x) => x.id)
+            : []),
+        ];
+        void (async () => {
+          const names: string[] = [];
+          const notes: string[] = [];
+          for (const id of ids) {
+            const info = floor.workers.get(id);
+            // Sent home meanwhile, or back already with one before it (the rest of a meeting's table).
+            if (!info || (id !== w.wid && !info.lost)) continue;
+            const r = await floor.workers.rebuild(id);
+            if (r.error) warn(c, r.error);
+            else if (!r.rebuilt) sendTo(c, { t: 'toast', text: r.note ?? `${info.name}'s worktree is already there`, level: 'info' });
+            else {
+              names.push(info.name);
+              if (r.note) notes.push(r.note);
+            }
+          }
+          if (!names.length) return;
+          const whose = names.length === 1 ? `${names[0]}'s worktree` : `the worktrees of ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+          toastFloor(floor, `🌿 ${who} rebuilt ${whose}${notes.length ? ` — ${notes.join('; ')}` : ''}`);
+        })();
         break;
       }
       case 'worker.attach': {
