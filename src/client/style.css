@@ -439,6 +439,9 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal.desk-changes header .branch { font: 400 11px var(--font-mono); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 .modal.desk-changes header .btn { padding: 4px 10px; }
 .modal.desk-changes header .close { width: 30px; padding: 0; }
+.changes-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }
+.changes-tabs .btn { padding: 3px 10px; font-size: 12px; }
+.changes-tabs .btn small { font-weight: 500; opacity: .8; }
 .changes-body { flex: 1; min-height: 0; display: flex; }
 .changes-files { width: 320px; flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--surface-raised); min-height: 0; }
 .changes-files h4 { margin: 0; padding: 8px 12px; font: 500 10px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); border-bottom: 1px solid var(--border); }
@@ -785,6 +788,19 @@ a.when:hover { text-decoration: underline; }
 .ask-context { margin-top: 12px; font-size: 13px; }
 .ask-context summary { cursor: pointer; font-weight: 600; color: var(--text-secondary); }
 .ask-context pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); background: var(--surface-hover); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+/* Hiring across repositories: the other floors' projects to take on too. */
+.repo-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0 26px; font-size: 13px; font-weight: 600; }
+.repo-picks > span { color: var(--text-secondary); margin-right: 2px; }
+.modal label.repo-pick { display: inline-flex; gap: 5px; align-items: center; margin: 0; padding: 2px 10px 2px 6px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-raised); cursor: pointer; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.modal label.repo-pick:has(input:checked) { border-color: var(--accent); background: var(--accent-muted); }
+.repo-pick input { margin: 0; accent-color: var(--accent); }
+/* O at the desk of a worker across repositories: a row per repository. */
+.repo-pulls { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.repo-pulls li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); font-weight: 600; }
+.repo-pulls li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-pulls li .name small { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.repo-pulls li .none { color: var(--text-secondary); font-weight: 500; font-size: 13px; }
+.repo-pulls li .btn { padding: 3px 10px; font-size: 12px; }
 .modal label.ask-wt { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; text-transform: none; letter-spacing: 0; cursor: pointer; }
 
 /* Markdown from GitHub (ui/markdown.ts): prose stays sentence case in the body font. */

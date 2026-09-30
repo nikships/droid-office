@@ -1464,13 +1464,10 @@ test('a worktree worker that makes its own branch is followed there: O finds the
   assert.equal(updates.at(-1)?.worktree?.branch, 'fix-x');
   // Saved, for a restarted office and for `droid-office prune`.
   const saved = JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[];
-  assert.deepEqual(
-    saved.find((w) => w.id === worker.id)?.worktree,
-    info.worktree,
-  );
+  assert.deepEqual(saved.find((w) => w.id === worker.id)?.worktree, info.worktree);
   // O at the desk: the PR it opened, not "has no commits on office/… yet".
   const pr = await workers.openPr(worker.id, 'Cody');
-  assert.deepEqual(pr, { number: 242, url: 'https://github.com/o/r/pull/242', existed: true, dirty: false });
+  assert.deepEqual(pr, { prs: [{ number: 242, url: 'https://github.com/o/r/pull/242', existed: true, dirty: false }], failed: [] });
   assert.deepEqual(workers.get(worker.id)?.pr, { number: 242, url: 'https://github.com/o/r/pull/242' });
   // Sent home: the worktree goes, with its branch and the office's (which holds nothing fix-x lacks).
   const home = await workers.kill(worker.id, 'all');
