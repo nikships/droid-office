@@ -11,7 +11,7 @@ import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep } from '../../shared/status';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
-import { TERM_FONT } from '../fonts';
+import { loadFonts, TERM_FONT } from '../fonts';
 import { providerLabel, providerUsageNote, providerUsageState, resolvedProvider } from './provider';
 import { enterKeyAction, wantsCsiEnter } from '../term-keys';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
@@ -141,6 +141,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   term.unicode.activeVersion = '11';
 
   let ready = false;
+  let opened = false;
   let lastSentSize = '';
   /**
    * Sizes the shared PTY to this window. Typing always claims it (latest typist wins); merely
@@ -148,7 +149,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
    * looking doesn't reflow the terminal under whoever is working.
    */
   const sendSize = (typing = false) => {
-    if (!ready) return;
+    if (!ready || !opened) return;
     if (!typing && (store.workers.get(workerId)?.viewers.length ?? 0) > 1) {
       const w = store.workers.get(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
@@ -389,7 +390,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     modal.close();
   });
 
-  term.open(host);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
       modal.close();
@@ -410,8 +410,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
   // Only your own keys and pastes count as typing, not the terminal answering the program's queries.
   term.onKey(sayTyping);
-  term.textarea?.addEventListener('input', sayTyping);
-  term.textarea?.addEventListener('paste', sayTyping);
 
   // Files dropped in, or a screenshot pasted, go up to the office's machine and the terminal types
   // where they are, as a terminal does with a file dragged into it: Claude Code attaches a picture.
@@ -491,8 +489,19 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     term.focus();
   });
 
-  ro.observe(host);
   refresh();
-  net.send({ t: 'worker.attach', workerId });
-  setTimeout(() => term.focus(), 50);
+  // xterm caches glyph widths when it opens. Opening after the shared font load prevents a
+  // slow first visit from retaining fallback measurements even after the icons arrive.
+  void loadFonts().then(() => {
+    if (current?.modal !== modal) return;
+    term.open(host);
+    opened = true;
+    term.textarea?.addEventListener('input', sayTyping);
+    term.textarea?.addEventListener('paste', sayTyping);
+    ro.observe(host);
+    net.send({ t: 'worker.attach', workerId });
+    setTimeout(() => {
+      if (current?.modal === modal) term.focus();
+    }, 50);
+  });
 }

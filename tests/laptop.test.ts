@@ -7,6 +7,7 @@ import path from 'node:path';
 import * as THREE from 'three';
 import { Laptop, paintScreen, type ScreenState } from '../src/client/world/laptop.js';
 import { loadPropManifest, preloadProps, propReady } from '../src/client/world/props.js';
+import { fontRevision, loadFonts } from '../src/client/fonts.js';
 
 // three's FileLoader reports progress with it; Node has none.
 if (typeof globalThis.ProgressEvent === 'undefined') {
@@ -239,4 +240,54 @@ test('a laptop swaps its stand-in for the MacBook GLBs once they are cached', as
   assert.ok(display?.isMesh, 'the lid GLB lands with its Display node');
   assert.equal(display.material, inner.screenMat, 'the live screen paints onto the GLB display');
   laptop.dispose();
+});
+
+test('an idle laptop repaints when all fonts settle, including a failed unrelated face', async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const { ctx, ops } = canvasSpy();
+  const requests: { font: string; text?: string; resolve: (faces: unknown[]) => void; reject: (error: Error) => void }[] = [];
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement: () => ({ width: 300, height: 150, getContext: () => ctx }),
+      fonts: {
+        load: (font: string, text?: string) => new Promise((resolve, reject) => requests.push({ font, text, resolve, reject })),
+      },
+    },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'document', previous);
+    else Reflect.deleteProperty(globalThis, 'document');
+  });
+  const laptop = new Laptop();
+  t.after(() => laptop.dispose());
+  const state = screen(80, 24, 5);
+  laptop.update(0.1, state, 3);
+  const painted = ops.length;
+  const revision = fontRevision();
+  const ready = loadFonts();
+  assert.equal(loadFonts(), ready, 'all terminals share one font load');
+  assert.equal(requests.length, 8);
+  assert.deepEqual(
+    requests.slice(-2).map(({ font, text }) => [font, text]),
+    [
+      ['400 16px "Droid Office Terminal Symbols"', '\ue0b0'],
+      ['700 16px "Droid Office Terminal Symbols"', '\ue0b0'],
+    ],
+  );
+  requests[0].reject(new Error('prose font unavailable'));
+  await Promise.resolve();
+  assert.equal(fontRevision(), revision, 'a failed face does not race the remaining icon loads');
+  laptop.update(0.1, state, 3);
+  assert.equal(ops.length, painted, 'an unchanged screen waits for the font load');
+  for (const request of requests.slice(1)) request.resolve([]);
+  await ready;
+  assert.equal(fontRevision(), revision + 1);
+  const inner = laptop as unknown as { paintedAt: number };
+  inner.paintedAt = -Infinity;
+  laptop.update(0.1, state, 3);
+  assert.ok(ops.length > painted, 'font completion redraws without another PTY frame');
+  const repainted = ops.length;
+  laptop.update(0.1, state, 3);
+  assert.equal(ops.length, repainted, 'it does not redraw continuously');
 });

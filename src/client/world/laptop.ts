@@ -3,7 +3,7 @@ import { ANISOTROPY } from './texture-quality';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
 import { mesh, roundedBox, toon } from './toon';
 import { propReady, useProp } from './props';
-import { TERM_FONT } from '../fonts';
+import { fontRevision, TERM_FONT } from '../fonts';
 
 /**
  * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
@@ -190,6 +190,7 @@ export class Laptop {
   private baseSwapped = false;
   private lidSwapped = false;
   private drawnVersion = -1;
+  private drawnFonts = -1;
   private paintedAt = 0;
   private openT = 0;
   private placeholder = 'booting…';
@@ -247,11 +248,13 @@ export class Laptop {
     this.maybeSwap();
     if (this.openT < 1) this.setLid(Math.min(1, this.openT + dt * 1.6));
     const version = screen ? screen.version : -1;
+    const fonts = fontRevision();
     const now = performance.now();
     const every = distance < 6 ? 150 : distance < 14 ? 600 : 2000;
-    if (version !== this.drawnVersion && (now - this.paintedAt > every || this.drawnVersion < 0)) {
+    if ((version !== this.drawnVersion || fonts !== this.drawnFonts) && (now - this.paintedAt > every || this.drawnVersion < 0)) {
       this.paintedAt = now;
       this.drawnVersion = version;
+      this.drawnFonts = fonts;
       paintScreen(this.ctx, this.canvas.width, this.canvas.height, screen, this.placeholder, 22);
       this.texture.needsUpdate = true;
     }

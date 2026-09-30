@@ -15,12 +15,13 @@
   font-style: normal;
   font-display: swap;
 }
-/* Powerline, Nerd Font icons and other PUA symbols for the terminals (oh-my-zsh, agnoster…).
-   unicode-range keeps it lazy: the browser only fetches it once such a glyph renders. */
+/* OFL-derived Nerd Font icons fitted to Geist Mono's 0.6em cells (see the bundled notice).
+   Both weights use the same icon outlines: synthetic bold must not widen them past a cell.
+   unicode-range keeps this fallback out of ordinary UI prose. */
 @font-face {
-  font-family: 'Symbols Nerd Font Mono';
-  src: url('/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
-  font-weight: 400;
+  font-family: 'Droid Office Terminal Symbols';
+  src: url('/fonts/DroidOfficeTerminalSymbols-Regular.woff2') format('woff2');
+  font-weight: 400 700;
   font-style: normal;
   font-display: swap;
   unicode-range: U+E000-F8FF, U+F0000-F0FFF;
