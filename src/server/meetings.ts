@@ -147,8 +147,8 @@ export class MeetingRoom {
     const picked: Partial<AgentChoice> = (req.provider === undefined && this.workers.officeDefault) || { provider: req.provider ?? this.workers.defaultProvider, model: req.model, effort: req.effort };
     const provider = picked.provider;
     if (!isAgentProvider(provider) || (provider === 'custom' && this.workers.defaultProvider !== 'custom')) return 'Unknown agent provider';
-    const model = provider === 'claude' || provider === 'opencode' || provider === 'droid' ? picked.model || undefined : undefined;
-    const effort = (provider === 'claude' || provider === 'droid') && isAgentEffort(picked.effort) ? picked.effort : undefined;
+    const model = provider === 'claude' || provider === 'opencode' || provider === 'droid' || provider === 'grok' || provider === 'muse' ? picked.model || undefined : undefined;
+    const effort = (provider === 'claude' || provider === 'droid' || provider === 'grok' || provider === 'muse') && isAgentEffort(picked.effort) ? picked.effort : undefined;
     const bad = validateWorkerModel('agent', provider, model) ?? validateWorkerEffort('agent', provider, effort);
     if (bad) return bad;
 

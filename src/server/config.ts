@@ -57,7 +57,7 @@ export interface RTCIceServerLike {
   credential?: string;
 }
 
-const HELP = `droid-office — a 3D office for your team and its Droid / Claude Code / OpenCode / Codex workers
+const HELP = `droid-office — a 3D office for your team and its Droid / Claude Code / OpenCode / Codex / Grok / Muse workers
 
 Usage:
   droid-office [options]
@@ -110,7 +110,7 @@ Options:
                           next start) and exit
       --agent <cmd>       Default agent command (default "droid", env DROID_OFFICE_AGENT)
       --agent-args <str>  Extra args for the configured agent, e.g. "--model opus"
-                          Workers can also select Droid, Claude Code, OpenCode or Codex in the UI
+                          Workers can also select Droid, Claude Code, OpenCode, Codex, Grok or Muse in the UI
       --tls-cert <file>   Serve HTTPS with this certificate (PEM)
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate

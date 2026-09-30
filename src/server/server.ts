@@ -12,7 +12,7 @@ import { Accounts } from './accounts.js';
 import { childEnv, resolveCommand } from './workers.js';
 import { agentProviders, configuredProvider, DROID_MODEL_MAX, OPEN_CODE_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
-import { createOpenCodeModelCatalogue } from './models.js';
+import { createGrokModelCatalogue, createOpenCodeModelCatalogue } from './models.js';
 import { Team } from './team.js';
 import { Upgrader } from './upgrade.js';
 import { Services } from './services.js';
@@ -207,6 +207,8 @@ export async function startServer(cfg: Config) {
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
   const modelCommand = configuredProvider(cfg.agentCmd) === 'opencode' ? cfg.agentCmd : 'opencode';
   const openCodeModels = createOpenCodeModelCatalogue(modelCommand.includes('/') ? path.resolve(modelCommand) : modelCommand, cfg.dir);
+  const grokCommand = configuredProvider(cfg.agentCmd) === 'grok' ? cfg.agentCmd : 'grok';
+  const grokModels = createGrokModelCatalogue(grokCommand.includes('/') ? path.resolve(grokCommand) : grokCommand, cfg.dir);
   // Droid's selectable models come from its own settings, on this machine.
   const droidModels = createDroidModelCatalogue();
 
@@ -277,7 +279,7 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(req, res, url);
-    if (req.method !== 'POST' || !['/hooks/claude', '/hooks/opencode', '/hooks/codex', '/hooks/droid'].includes(url.pathname)) return send(res, 404, { ok: false });
+    if (req.method !== 'POST' || !['/hooks/claude', '/hooks/opencode', '/hooks/codex', '/hooks/droid', '/hooks/grok', '/hooks/muse'].includes(url.pathname)) return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
       const body = await readBody(req);
@@ -290,14 +292,19 @@ export async function startServer(cfg: Config) {
     const workerId = url.searchParams.get('worker') ?? '';
     const workers = workerFloor(workerId)?.workers;
     if (!workers) return send(res, 401, {});
+    const event = url.searchParams.get('event') ?? '';
     const ok =
       url.pathname === '/hooks/opencode'
         ? workers.handleOpenCodeHook(workerId, token, payload)
         : url.pathname === '/hooks/codex'
-          ? workers.handleCodexHook(workerId, token, url.searchParams.get('event') ?? '', payload)
+          ? workers.handleCodexHook(workerId, token, event, payload)
           : url.pathname === '/hooks/droid'
-            ? workers.handleDroidHook(workerId, token, url.searchParams.get('event') ?? '', payload)
-            : workers.handleHook(workerId, token, url.searchParams.get('event') ?? '', payload);
+            ? workers.handleDroidHook(workerId, token, event, payload)
+            : url.pathname === '/hooks/grok'
+              ? workers.handleGrokHook(workerId, token, event, payload)
+              : url.pathname === '/hooks/muse'
+                ? workers.handleMuseHook(workerId, token, event, payload)
+                : workers.handleHook(workerId, token, event, payload);
     send(res, ok ? 200 : 401, {});
   });
   /**
@@ -740,6 +747,13 @@ export async function startServer(cfg: Config) {
           return send(res, 200, { models: catalogue.models, defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort });
         } catch {
           return send(res, 502, { error: 'Could not load Droid models' });
+        }
+      }
+      if (p === '/api/agents/grok/models' && req.method === 'GET') {
+        try {
+          return send(res, 200, { models: await grokModels.get() });
+        } catch {
+          return send(res, 502, { error: 'Could not load Grok models' });
         }
       }
       if (p === '/api/image' && req.method === 'GET') {
