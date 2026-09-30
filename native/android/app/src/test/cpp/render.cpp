@@ -9,6 +9,8 @@
 //   render <packets.json> <out-dir> [--size px] [--seconds s] [--look ex,ey,ez,tx,ty,tz]
 // Without --look the eyes sit at the page camera from the stream.
 #include "scene_renderer.h"
+#include "scene_shaders.h"
+#include "scene_uniforms.h"
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -678,6 +680,279 @@ int sharpChecks(SceneRenderer &r, Prepare &&prepare, CheckBindings &&checkBindin
     return failures;
 }
 
+/**
+ * Exercises generated screen shaders with actual thin glyph strokes and a one-texel checker.
+ * The office fixture's smooth gradients establish color/occlusion parity but cannot detect
+ * softened terminal strokes or a mipmap change that aliases at distance.
+ */
+void sharpSamplingChecks(const std::string &out, std::vector<std::string> &failed) {
+    using namespace office::scene;
+    auto expect = [&](bool ok, const std::string &what) {
+        std::printf("  sampling: %s %s\n", ok ? "ok  " : "FAIL", what.c_str());
+        if (!ok)
+            failed.push_back("sampling: " + what);
+    };
+    auto compile = [&](const ShaderSource &source) {
+        GLuint stages[2]{};
+        for (int i = 0; i < 2; ++i) {
+            stages[i] = glCreateShader(i ? GL_FRAGMENT_SHADER : GL_VERTEX_SHADER);
+            const char *text = (i ? source.fragment : source.vertex).c_str();
+            glShaderSource(stages[i], 1, &text, nullptr);
+            glCompileShader(stages[i]);
+            GLint status = 0;
+            glGetShaderiv(stages[i], GL_COMPILE_STATUS, &status);
+            if (!status) {
+                char log[4096]{};
+                glGetShaderInfoLog(stages[i], sizeof log, nullptr, log);
+                expect(false, std::string("shader compilation: ") + log);
+                glDeleteShader(stages[0]);
+                if (stages[1])
+                    glDeleteShader(stages[1]);
+                return GLuint(0);
+            }
+        }
+        GLuint program = glCreateProgram();
+        for (GLuint stage : stages) {
+            glAttachShader(program, stage);
+            glDeleteShader(stage);
+        }
+        glLinkProgram(program);
+        GLint status = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &status);
+        if (!status) {
+            char log[4096]{};
+            glGetProgramInfoLog(program, sizeof log, nullptr, log);
+            expect(false, std::string("program link: ") + log);
+            glDeleteProgram(program);
+            return GLuint(0);
+        }
+        glUniformBlockBinding(program, glGetUniformBlockIndex(program, "View"), kBlockView);
+        return program;
+    };
+
+    constexpr int width = 170, height = 85, sourceWidth = 256, sourceHeight = 128;
+    // "XR TEXT", 5x7 letters with two-texel stems, repeated in terminal cells on the left.
+    const uint8_t glyphs[][7] = {{17, 17, 10, 4, 10, 17, 17},  {30, 17, 17, 30, 20, 18, 17},
+                                 {0, 0, 0, 0, 0, 0, 0},        {31, 4, 4, 4, 4, 4, 4},
+                                 {31, 16, 16, 30, 16, 16, 31}, {17, 17, 10, 4, 10, 17, 17},
+                                 {31, 4, 4, 4, 4, 4, 4}};
+    std::vector<uint8_t> pixels(size_t(sourceWidth) * sourceHeight * 4, 255);
+    for (int y = 0; y < sourceHeight; ++y)
+        for (int x = 0; x < sourceWidth; ++x) {
+            const int gx = (x % 12) / 2, gy = 6 - (y % 18) / 2;
+            const bool on = x >= sourceWidth / 2
+                                ? (x + y) % 2
+                                : gx < 5 && gy >= 0 && (glyphs[(x / 12) % 7][gy] & (1 << (4 - gx)));
+            for (int c = 0; c < 3; ++c)
+                pixels[size_t(y * sourceWidth + x) * 4 + c] = on ? 255 : 0;
+        }
+    writePpm(out + "/sampling-source.ppm", pixels, sourceWidth, sourceHeight);
+
+    GLuint textures[4]{}, buffers[2]{}, vao = 0, framebuffer = 0;
+    glGenTextures(4, textures);
+    glActiveTexture(GL_TEXTURE0 + kUnitMap);
+    glBindSampler(kUnitMap, 0);
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    glTexStorage2D(GL_TEXTURE_2D, 9, GL_SRGB8_ALPHA8, sourceWidth, sourceHeight);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sourceWidth, sourceHeight, GL_RGBA, GL_UNSIGNED_BYTE,
+                    pixels.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    GLint extensions = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &extensions);
+    for (int i = 0; i < extensions; ++i)
+        if (!std::strcmp(reinterpret_cast<const char *>(glGetStringi(GL_EXTENSIONS, GLuint(i))),
+                         "GL_EXT_texture_filter_anisotropic")) {
+            GLfloat maximum = 1;
+            glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT */, &maximum);
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY_EXT */,
+                            std::min(16.0f, maximum));
+        }
+    glActiveTexture(GL_TEXTURE0 + kUnitSharpDepth);
+    glBindSampler(kUnitSharpDepth, 0);
+    const float depth[2]{1, 1}; // no foreground occluder; actual occlusion is tested above
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, 1, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RED, GL_FLOAT, depth);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, textures[2]);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R32F, 1, 1, 2);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, 1, 1, 2, GL_RED, GL_FLOAT, depth);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textures[3]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_SRGB8_ALPHA8, width, height);
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[3], 0);
+    expect(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+           "fine-text framebuffer complete");
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+
+    const float vertices[]{-1, -1, 0, 0, 0, 1, -1, 0, 1, 0, 1,  1, 0, 1, 1,
+                           -1, -1, 0, 0, 0, 1, 1,  0, 1, 1, -1, 1, 0, 0, 1};
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(2, buffers);
+    glBindBuffer(GL_ARRAY_BUFFER, buffers[0]);
+    glBufferData(GL_ARRAY_BUFFER, sizeof vertices, vertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(kAttrPosition);
+    glVertexAttribPointer(kAttrPosition, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(kAttrUv);
+    glVertexAttribPointer(kAttrUv, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+                          reinterpret_cast<const void *>(3 * sizeof(float)));
+    glVertexAttrib4f(kAttrColor, 1, 1, 1, 1);
+    ViewBlock view;
+    const Mat projection = perspective(90, 1, .05f, 320);
+    for (int i = 0; i < 2; ++i) {
+        std::copy(projection.m, projection.m + 16, view.viewProj[i].m);
+        std::copy(projection.m, projection.m + 16, view.proj[i].m);
+    }
+    view.viewport = {height, height / 2.0f, 0, 0};
+    glBindBuffer(GL_UNIFORM_BUFFER, buffers[1]);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof view, &view, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, buffers[1]);
+
+    ProgramKey key;
+    key.model = ShadeModel::Basic;
+    key.map = key.opaque = key.linearOutput = true;
+    ShaderSource reference = generateShader(key);
+    reference.fragment = R"(#version 300 es
+precision highp float;
+precision highp sampler2D;
+uniform sampler2D uMap;
+uniform float uReadAlpha;
+in vec2 vMapUv;
+out vec4 pc_fragColor;
+void main() {
+    vec4 color = texture(uMap, vMapUv);
+    pc_fragColor = vec4(color.rgb * uReadAlpha, uReadAlpha);
+}
+)";
+    GLuint programs[6]{compile(reference), compile(generateShader(key))};
+    key.sharpDepth = SharpDepth::Texture2D;
+    programs[2] = compile(generateShader(key));
+    key.opaque = false;
+    key.sharpOverlay = true;
+    programs[3] = compile(generateShader(key));
+    key.sharpDepth = SharpDepth::Array;
+    key.opaque = true;
+    key.sharpOverlay = false;
+    programs[4] = compile(generateShader(key));
+    key.opaque = false;
+    key.sharpOverlay = true;
+    programs[5] = compile(generateShader(key));
+    const bool linked = std::all_of(programs, programs + 6, [](GLuint p) { return p != 0; });
+    if (linked) {
+        auto draw = [&](GLuint program, float angle, float distance, float phase, float alpha) {
+            glUseProgram(program);
+            auto location = [&](const char *name) { return glGetUniformLocation(program, name); };
+            Mat4Std model;
+            const float radians = angle * 3.14159265f / 180;
+            model.m[0] = model.m[10] = std::cos(radians);
+            model.m[2] = -std::sin(radians);
+            model.m[8] = std::sin(radians);
+            model.m[12] = phase * 2 * distance / width;
+            model.m[14] = -distance;
+            const float uv[]{1, 0, 0, 0, 1, 0, 0, 0, 1};
+            glUniformMatrix4fv(location("uModel"), 1, GL_FALSE, model.m);
+            glUniformMatrix3fv(location("uMapTransform"), 1, GL_FALSE, uv);
+            glUniform4f(location("uColor"), 1, 1, 1, alpha);
+            glUniform1f(location("uReadAlpha"), alpha);
+            glUniform1i(location("uMap"), kUnitMap);
+            glUniform1i(location("uSharpDepth"), kUnitSharpDepth);
+            glUniform4f(location("uSharpRect"), 0, 0, 1, 1);
+            glUniform4f(location("uSharpParams"), 1.0f / width, 1.0f / height, 4, 1);
+            glUniform4f(location("uSharpBias"), .003f, .06f, 0, .001f);
+            glViewport(0, 0, width, height);
+            glDisable(GL_SCISSOR_TEST);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+            glDisable(GL_CULL_FACE);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            return readPixels(width, height);
+        };
+        auto error = [](const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
+            int maximum = 0;
+            for (size_t i = 0; i < a.size(); ++i)
+                maximum = std::max(maximum, std::abs(int(a[i]) - int(b[i])));
+            return maximum;
+        };
+        auto rms = [&](const std::vector<uint8_t> &px, int x0, int x1, int y0, int y1) {
+            double sum = 0, squares = 0, count = 0;
+            for (int y = y0; y < y1; ++y)
+                for (int x = x0; x < x1; ++x) {
+                    const double c = px[size_t(y * width + x) * 4];
+                    sum += c;
+                    squares += c * c;
+                    count++;
+                }
+            return std::sqrt(std::max(0.0, squares / count - (sum / count) * (sum / count)));
+        };
+        for (float phase : {0.0f, .25f, .75f}) {
+            const auto normal = draw(programs[0], 0, 1, phase, 1);
+            expect(error(normal, draw(programs[1], 0, 1, phase, 1)) <= 1,
+                   "world fine-text pixels retain unbiased trilinear sampling");
+            const auto transparent = draw(programs[0], 0, 1, phase, .5f);
+            const double baseline = rms(normal, 8, width / 2 - 8, 8, height - 8);
+            for (int i : {2, 4}) {
+                const auto sharp = draw(programs[i], 0, 1, phase, 1);
+                const double contrast = rms(sharp, 8, width / 2 - 8, 8, height - 8);
+                std::printf("  sampling: %s depth, phase %.2f: glyph RMS %.3f -> %.3f\n",
+                            i == 2 ? "2D" : "array", phase, baseline, contrast);
+                // Require an observable contrast gain, without assuming the same subpixel
+                // phase or anisotropic implementation on every host GL driver.
+                expect(contrast > baseline * 1.01,
+                       "slightly minified fine-text strokes retain more contrast");
+                bool opaque = true;
+                for (int y = 8; y < height - 8; ++y)
+                    for (int x = 8; x < width - 8; ++x)
+                        opaque &= sharp[size_t(y * width + x) * 4 + 3] == 255;
+                expect(opaque, "screen sampling keeps opaque screen coverage");
+                expect(error(transparent, draw(programs[i + 1], 0, 1, phase, .5f)) <= 1,
+                       "overlay fine-text pixels and premultiplied alpha remain unchanged");
+                if (phase == 0 && i == 2) {
+                    writePpm(out + "/sampling-unbiased.ppm", normal, width, height);
+                    writePpm(out + "/sampling-sharp.ppm", sharp, width, height);
+                }
+                for (const auto &pose : {std::pair<float, float>{0, 3}, {50, 2}, {65, 4}}) {
+                    const auto distant = draw(programs[i], pose.first, pose.second, phase, 1);
+                    const float radians = pose.first * 3.14159265f / 180;
+                    const int x = int(
+                        (.5f * std::cos(radians) / (pose.second + .5f * std::sin(radians)) * .5f +
+                         .5f) *
+                            width +
+                        phase);
+                    // The checker averages to a constant at these footprints. Sampling level 0
+                    // or nearest texels instead leaves a changing high-frequency pattern here.
+                    expect(rms(distant, x - 2, x + 3, height / 2 - 2, height / 2 + 3) <= 1,
+                           "oblique/distant checker retains mip filtering across pixel phases");
+                }
+            }
+        }
+    }
+    expect(glGetError() == GL_NO_ERROR, "fine-text sampling has no GL errors");
+    glUseProgram(0);
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteProgram(programs[0]);
+    for (int i = 1; i < 6; ++i)
+        if (programs[i])
+            glDeleteProgram(programs[i]);
+    glDeleteBuffers(2, buffers);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(4, textures);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1122,6 +1397,7 @@ int main(int argc, char **argv) {
           std::to_string(st.programsFailed) + " programs failed, " +
               std::to_string(st.programsCompiling) + " still compiling");
     check(!st.pendingUploads && !st.waitingState, "uploads still pending after settling");
+    sharpSamplingChecks(out, failed);
     for (const std::string &what : failed)
         std::printf("failed: %s\n", what.c_str());
     if (failed.empty())

@@ -914,8 +914,15 @@ std::string fragmentShader(const Features &f) {
         if (f.vertexColor)
             o << "\tdiffuseColor *= vColor;\n";
     } else {
-        if (f.map)
-            o << "\tdiffuseColor *= texture( uMap, vMapUv );\n";
+        if (f.map) {
+            // Keep thin terminal strokes when the sharp layer slightly minifies its canvas.
+            // A half-mip bias retains derivative-based, anisotropic mip filtering at oblique
+            // angles and distance. World draws and transparent overlays keep their sampling.
+            if (f.sharp != SharpDepth::None && !f.overlay)
+                o << "\tdiffuseColor *= texture( uMap, vMapUv, -0.5 );\n";
+            else
+                o << "\tdiffuseColor *= texture( uMap, vMapUv );\n";
+        }
         if (f.vertexColor)
             o << "\tdiffuseColor *= vColor;\n";
         if (f.alphaMap)
