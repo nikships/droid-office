@@ -127,9 +127,14 @@ class Preview {
   }
 }
 
+/** What closing the first character screen goes in as: the name typed so far, else the saved one (or Guest). */
+export function characterName(typed: string, saved: string): string {
+  return typed.trim().slice(0, 24) || saved;
+}
+
 /**
  * The character select screen: your name, skin tone, hair and shirt, with a live preview.
- * `first` is the one you see when you join, which can't be skipped.
+ * `first` is the one you see when you join: closing it goes in as whoever's picked so far.
  */
 export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const pick: Profile = { ...store.profile, look: { ...store.profile.look } };
@@ -175,7 +180,7 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const surprise = h('button.btn', { type: 'button', title: 'Random look' }, '🎲 Surprise me');
   surprise.addEventListener('click', () => change(randomLook(), AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]));
   const save = h('button.btn.primary', { type: 'submit' }, first ? 'Enter the office 🚪' : 'Save');
-  const close = first ? null : h('button.btn.close', { type: 'button', 'aria-label': 'Close' }, '✕');
+  const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: first ? 'Skip: go in with this look (Esc)' : 'Close (Esc)' }, '✕');
 
   const form = h(
     'form.modal.charsel',
@@ -204,19 +209,33 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
     h('footer', {}, surprise, h('span.grow'), save),
   ) as HTMLFormElement;
 
-  const modal = openModal(form, { escCloses: !first, backdropCloses: !first, doing: '🪞 picking a new look', onClose: () => preview.dispose() });
-  close?.addEventListener('click', () => modal.close());
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const name = input.value.trim().slice(0, 24);
-    if (!name) {
-      input.focus();
-      return;
-    }
+  let done = false;
+  const finish = (name: string) => {
+    done = true;
     store.profile = { name, color: pick.color, look: { ...pick.look } };
     saveProfile(store.profile);
     modal.close();
     onSave(store.profile);
+  };
+  const modal = openModal(form, {
+    // A stray click shouldn't skip the first one; ✕ and Esc still do.
+    backdropCloses: !first,
+    doing: '🪞 picking a new look',
+    onClose: () => {
+      preview.dispose();
+      // The office only lets you in with a character: skipping it goes in with this one, and the name you had (or Guest).
+      if (first && !done) finish(characterName(input.value, store.profile.name));
+    },
+  });
+  close.addEventListener('click', () => modal.close());
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = characterName(input.value, '');
+    if (!name) {
+      input.focus();
+      return;
+    }
+    finish(name);
   });
   if (!account) setTimeout(() => input.focus(), 30);
 }
