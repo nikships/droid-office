@@ -17,6 +17,7 @@ import './native.css';
 import { STATUS_LABEL, closeAllModals, h, modalOpen, onModalChange } from '../ui/dom';
 import { actionIcon, actionLabel, actionOffered, hudActions, onHudRender, type HudAction } from '../ui/menu';
 import { closeFloorMenu, floorMenuOpen } from '../ui/floormenu';
+import { paletteOpen } from '../ui/palette';
 import { openTerminalSink } from '../ui/terminal';
 import { useNativeTermFont } from '../ui/term-font';
 import { providerLabel } from '../ui/provider';
@@ -25,7 +26,10 @@ import { DESK_BY_ID, nextFreeSeat } from '../../shared/layout';
 import { isAsleep, isBusy } from '../../shared/status';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { CarriedIssue, WorkerInfo } from '../../shared/protocol';
+import { isTyping } from '../player';
 import { mountKeyboard, type PanelKeyboard } from './keyboard';
+import { COMMANDS_SHORTCUT, nativeCommandsKey } from './keys';
+import { workerReposLine } from './panel-text';
 import { isNativeSearch } from './mode';
 import { nativePerformanceLabel } from './performance';
 import { openNativeGraphicsSettings } from './graphics';
@@ -75,6 +79,11 @@ export interface NativeUiOptions {
   hireAtDesk?(deskId: string): void;
   openShell?(deskId: string): void;
   putBack?(): void;
+  /**
+   * Opens the desktop's command palette, or puts it away when it's open: main.ts's
+   * `togglePalette(paletteEntries)`. Without it, the panel presses the palette's own shortcut.
+   */
+  openCommands?(): void;
 }
 
 export interface NativeUi {
@@ -87,6 +96,8 @@ export interface NativeUi {
   showHome(on: boolean): void;
   keyboard: PanelKeyboard;
   toggleKeyboard(): void;
+  /** The command palette, as the Home screen's Find anything button and Ctrl+K open it. */
+  openCommands(): void;
   /** Refreshes the home status from native measurements; unavailable data stays hidden. */
   updatePerformance(metrics: unknown): void;
   setCarrying(card: CarriedIssue | null): void;
@@ -126,7 +137,7 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     return { open: homeOn || modal || floorMenu || typing, home: homeOn, modal, floorMenu, typing, keyboard: keyboard?.shown() ?? false, terminal: openTerminalSink()?.workerId ?? null, carrying };
   };
   const notify = () => {
-    decorateNativeMenu();
+    decorateNativeMenu(() => openCommands());
     const s = panelState();
     const key = JSON.stringify(s);
     if (key === lastKey) return;
@@ -149,10 +160,26 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
 
   const keyboard: PanelKeyboard = mountKeyboard({ terminal: openTerminalSink, storageKey: 'droid-office.native-keyboard', onVisibility: soon });
 
+  const mac = macPlatform();
+  const openCommands = () => {
+    if (opts.openCommands) opts.openCommands();
+    else pressPaletteShortcut(mac);
+  };
+  // The panel keyboard has Ctrl and no ⌘, so on a Mac-reported platform its Ctrl+K opens the
+  // palette here; elsewhere main.ts's own Ctrl+K listener already does, and this stays out of it.
+  window.addEventListener('keydown', (e) => {
+    if (!nativeCommandsKey(e, mac) || e.repeat) return;
+    const inPalette = paletteOpen() && !!(e.target as HTMLElement | null)?.closest?.('.modal.palette');
+    if (!inPalette && isTyping(e)) return;
+    e.preventDefault();
+    openCommands();
+  });
+
   const home = buildHome({
     openWorker: (id) => (opts.openWorker ? opts.openWorker(id) : openFromHud(id)),
     close: () => setPanelOpen(false),
     toggleKeyboard: () => keyboard.toggle(),
+    openCommands,
     workerActions: opts.workerActions,
     hireAtDesk: opts.hireAtDesk,
     openShell: opts.openShell,
@@ -209,6 +236,7 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     showHome,
     keyboard,
     toggleKeyboard: () => keyboard.toggle(),
+    openCommands,
     updatePerformance: (metrics) => home.updatePerformance(metrics),
     setCarrying(card) {
       if ((carrying?.issue ?? 0) === (card?.issue ?? 0) && (carrying?.title ?? '') === (card?.title ?? '')) return;
@@ -236,6 +264,20 @@ function noPointerLock() {
   release();
 }
 
+function macPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+}
+
+/**
+ * Without main.ts's openCommands hook: the palette's own shortcut (⌘K on a Mac-reported platform,
+ * Ctrl+K elsewhere) from the page body, so main.ts's listener toggles the same palette.
+ */
+function pressPaletteShortcut(mac: boolean) {
+  const init = { key: 'k', code: 'KeyK', ctrlKey: !mac, metaKey: mac, bubbles: true, cancelable: true };
+  document.body.dispatchEvent(new KeyboardEvent('keydown', init));
+  document.body.dispatchEvent(new KeyboardEvent('keyup', init));
+}
+
 /**
  * Opens a worker's terminal through the Workers panel's own row (main.ts wires those rows to open
  * the terminal and wake a sleeping worker). Its rows are in hiring order, like the home screen's.
@@ -255,6 +297,7 @@ interface HomeActions {
   openWorker(id: string): void;
   close(): void;
   toggleKeyboard(): void;
+  openCommands(): void;
   workerActions?: NativeWorkerActions;
   hireAtDesk?(deskId: string): void;
   openShell?(deskId: string): void;
@@ -299,12 +342,19 @@ function buildHome(actions: HomeActions) {
   hireRow.classList.toggle('hidden', !actions.hireAtDesk && !actions.openShell);
   hireBtn.classList.toggle('hidden', !actions.hireAtDesk);
   shellBtn.classList.toggle('hidden', !actions.openShell);
+  const commandsBtn = h(
+    'button.btn.nh-commands',
+    { type: 'button', title: COMMANDS_TITLE, 'aria-keyshortcuts': 'Control+K', onclick: () => actions.openCommands() },
+    h('span', { 'aria-hidden': 'true' }, '🔎'),
+    h('span', {}, 'Find anything'),
+    h('span.key', { 'aria-hidden': 'true' }, COMMANDS_SHORTCUT),
+  );
   const kbBtn = h('button.btn.nh-kb', { type: 'button', onclick: () => actions.toggleKeyboard() }, '⌨️ Keyboard');
   const closeBtn = h('button.btn.nh-close', { type: 'button', title: 'Hide the panel and go back to the office', onclick: () => actions.close() }, 'Back to the office');
   const el = h(
     'section.native-home.hidden',
     { 'aria-label': 'Home' },
-    h('header.nh-head', {}, h('div.nh-where', {}, floorName, floorMeta, performance), kbBtn, closeBtn),
+    h('header.nh-head', {}, h('div.nh-where', {}, floorName, floorMeta, performance), h('div.nh-head-actions', { role: 'group', 'aria-label': 'Panel' }, commandsBtn, kbBtn, closeBtn)),
     carried,
     h('div.nh-body', {}, h('section.nh-col.nh-workers-col', {}, h('h3', {}, h('span.no', {}, '01'), 'Workers', workersCount), hireRow, workersEl), h('section.nh-col', {}, h('h3', {}, h('span.no', {}, '02'), 'Office'), tilesEl)),
   );
@@ -336,8 +386,9 @@ function buildHome(actions: HomeActions) {
     const agent = w.kind === 'agent' ? providerLabel(w.provider, store.project) : 'Shell';
     const desk = DESK_BY_ID.get(w.deskId)?.label;
     const sub = [agent, desk, w.worktree && `🌿 ${w.worktree.branch}`, w.task?.name ?? w.title ?? w.activity].filter(Boolean).join(' · ');
+    const repos = workerReposLine(w, store.project?.name);
     const status = STATUS_LABEL[w.status] ?? w.status;
-    const key = [w.name, w.color, w.status, status, sub].join('\n');
+    const key = [w.name, w.color, w.status, status, sub, repos].join('\n');
     let row = rows.get(w.id);
     if (!row) {
       const btn = h('button.nh-worker', { type: 'button', onclick: () => actions.openWorker(w.id) });
@@ -376,14 +427,21 @@ function buildHome(actions: HomeActions) {
     prompt?.setAttribute('title', asleep && !station ? 'Resume this worker before sending a prompt' : `Send a prompt to ${w.name}`);
     row.actions.get('resume')?.classList.toggle('hidden', !asleep);
     const pr = row.actions.get('pullRequest');
-    pr?.classList.toggle('hidden', station || (!w.pr && !w.worktree));
-    pr?.toggleAttribute('disabled', !w.pr && (isBusy(w.status) || !!w.prOpening));
-    if (pr) pr.textContent = w.pr ? 'View pull request' : 'Open pull request';
+    const multi = !!w.repos?.length;
+    const prs = [w.pr, ...(w.repos ?? []).map((r) => r.pr)].filter(Boolean).length;
+    pr?.classList.toggle('hidden', station || (!w.pr && !w.worktree && !multi));
+    pr?.toggleAttribute('disabled', !prs && (isBusy(w.status) || !!w.prOpening));
+    if (pr) pr.textContent = multi ? (prs ? 'Pull requests' : 'Open pull requests') : w.pr ? 'View pull request' : 'Open pull request';
+    const changes = row.actions.get('changes');
+    if (changes) {
+      changes.textContent = multi ? `Changes · ${w.repos!.length + 1} repos` : 'Changes';
+      changes.title = multi ? `What ${w.name} changed, a tab per repository` : `What ${w.name} changed`;
+    }
     row.li.querySelector('.nh-worker-actions')?.setAttribute('aria-label', `Actions for ${w.name}`);
     if (row.key !== key) {
       row.key = key;
-      row.btn.title = `Open ${w.name}'s terminal · ${sub}`;
-      row.btn.replaceChildren(h('span.dot', { style: `background:${w.color}` }), h('span.nh-name', {}, w.name, h('span.sub', {}, sub)), h('span.pill', { class: w.status }, status));
+      row.btn.title = [`Open ${w.name}'s terminal · ${sub}`, repos].filter(Boolean).join('\n');
+      row.btn.replaceChildren(h('span.dot', { style: `background:${w.color}` }), h('span.nh-name', {}, w.name, h('span.sub', {}, sub), repos ? h('span.sub.nh-repos', {}, repos) : null), h('span.pill', { class: w.status }, status));
     }
     return row.li;
   };
@@ -446,12 +504,33 @@ const NATIVE_GRAPHICS_ACTION: HudAction = {
   run: openNativeGraphicsSettings,
 };
 
+const COMMANDS_TITLE = `Find a worker, issue, pull request, service, board, teammate or action and open it (${COMMANDS_SHORTCUT} on the panel keyboard)`;
+
 /** Adds headset choices to the original menu without replacing its shared action callbacks. */
-function decorateNativeMenu() {
+function decorateNativeMenu(openCommands: () => void) {
   const menu = document.querySelector<HTMLElement>('.hud-menu');
   if (!menu || menu.querySelector('.native-graphics-menu-entry')) return;
   const column = menu.querySelector('.menu-col:last-of-type');
   if (!column) return;
+  // First under "Open", where the desktop's rows start.
+  const open = menu.querySelector('.menu-col .menu-sec');
+  open?.after(
+    h(
+      'button.menu-item.native-commands-menu-entry',
+      {
+        type: 'button',
+        role: 'menuitem',
+        title: COMMANDS_TITLE,
+        'aria-keyshortcuts': 'Control+K',
+        onclick: () => {
+          closeAllModals();
+          openCommands();
+        },
+      },
+      h('span.mi-icon', { 'aria-hidden': 'true' }, '🔎'),
+      h('span.mi-label', {}, 'Find anything', h('small', {}, `Command palette · ${COMMANDS_SHORTCUT}`)),
+    ),
+  );
   column.append(
     h(
       'button.menu-item.native-graphics-menu-entry',

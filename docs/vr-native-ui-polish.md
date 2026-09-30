@@ -31,6 +31,35 @@ its own layout and never loads those rules' effects.
   those keys.
 - **Tooltips.** Titles show in a panel tooltip at the bottom left, above the keyboard, instead
   of an operating-system tooltip. A tap shows it for 2.8 s.
+- **Rows in scrolling lists.** Board cards, queue rows, search hits and the other listed rows keep
+  `flex-shrink: 0` with their 48 px minimum, so a long column scrolls instead of squeezing cards
+  until their titles overlap.
+
+## Desktop features on the panel
+
+- **Command palette.** Home's header has **🔎 Find anything · Ctrl+K**, and the ☰ menu's Open
+  section starts with **Find anything**. Both open the desktop's own palette (`ui/palette.ts`,
+  entries from main.ts), through `NativeUiOptions.openCommands` when main.ts provides it, or else
+  by pressing the palette's own shortcut. The panel keyboard's Ctrl+K opens and closes it too. The
+  panel keyboard has no ⌘, so the panel always says Ctrl+K; on a platform that reports itself as a
+  Mac, `native/ui.ts` handles the panel's Ctrl+K, and elsewhere main.ts's listener already does.
+  Palette rows are at least 60 px tall, titles wrap, and the palette stops above the keyboard.
+- **Settings.** The categorized sidebar stays vertical at both check sizes, with 52 px category
+  rows; the panel keyboard's arrows, Home and End move between categories. The You category shows
+  **Headset view: First person, head-tracked** as a fixed state and no first/third person choice,
+  because the installed app always renders the head-tracked view. **Headset movement** states the
+  controllers-only scheme before the locomotion choices the native controls read
+  (`settings.vr`). Notifications replaces the browser-notification switch with a note: the headset
+  app shows waiting workers on Home instead.
+- **Boards.** The title filter is 48 px with a 44 px clear button; the label picker's chips, footer
+  and Clear button follow the target and text rules.
+- **Providers and repositories.** Grok and Muse workers show their provider on Home. A worker
+  across repositories shows a line naming each repository (its own floor's first), a
+  **Changes · N repos** button, and **Pull requests** / **Open pull requests** for the per-repository
+  pull request window. The hire form's **Also work in** picks, the Changes window's repository tabs
+  and the pull request rows are 44 px targets and wrap long folder names.
+- **Terminal header.** Its buttons (including the native **📎 Picture** button) keep their size and
+  wrap as a group beside a wrapping title; viewer initials are 30 px.
 
 The installed app’s target input is Galaxy XR motion controllers only. Use the left
 controller’s Menu button to toggle the workspace, trigger for pointing/clicking, and grip for
@@ -42,9 +71,11 @@ Hand gestures and fingertip input are outside the native app’s supported schem
 Use a browser session at 1600×1019 with device scale 1.5, and at 1280×720. Open
 `/?native=1`, sign in with the panel keyboard, and walk Home, every Home tile's window, the ☰
 menu (scrolled to its end), the floor list, a shell worker's terminal with the keyboard shown and
-hidden, and text size −/+. `window.__office.nativeUi` offers `setPanelOpen`, `showHome`,
-`setCarrying`, `updatePerformance` and `keyboard.show(true)` for reaching states without the
-headset. Long content can be staged in the page's own `window.__office.store` (queue tasks,
+hidden, and text size −/+. Open the command palette from Home, from the ☰ menu and with the panel
+keyboard's Ctrl+K; type, choose with Enter and close with Esc. Walk each Settings category with the
+panel keyboard's arrows, and type into a board column's title filter. `window.__office.nativeUi`
+offers `setPanelOpen`, `showHome`, `setCarrying`, `updatePerformance`, `openCommands` and
+`keyboard.show(true)` for reaching states without the headset. Long content can be staged in the page's own `window.__office.store` (queue tasks,
 workers, the project name) followed by `store.emit(topic)`; that changes only that page.
 Look for text cut off with an ellipsis, controls under 44 px, text under 12 px and controls
 outside a scrollable area. Also confirm the desktop route `/` still looks the same.

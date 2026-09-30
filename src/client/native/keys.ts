@@ -9,6 +9,7 @@
 
 import { modifiedEnter } from '../term-keys';
 import { keyBytes, type KeyLike } from '../vr/physical-keys';
+import { isPaletteKey, type PaletteKey } from '../../shared/palette';
 
 export type { KeyLike };
 
@@ -74,6 +75,17 @@ export const KEYBOARD_ROWS: readonly (readonly KeyDef[])[] = [
 export function shiftedLabel(def: KeyDef): string {
   if (def.id.length !== 1) return def.label;
   return SHIFTED[def.id] ?? def.id.toUpperCase();
+}
+
+/** How the panel names the command palette's shortcut: its keyboard has Ctrl and no ⌘. */
+export const COMMANDS_SHORTCUT = 'Ctrl+K';
+
+/**
+ * Whether a press is the panel keyboard's Ctrl+K and the page won't open the palette for it by itself:
+ * main.ts listens for ⌘K on a Mac-reported platform and Ctrl+K everywhere else.
+ */
+export function nativeCommandsKey(e: PaletteKey, mac: boolean): boolean {
+  return mac && isPaletteKey(e, false);
 }
 
 /** The press a key makes with the latched modifiers, as a KeyboardEvent would describe it. */
