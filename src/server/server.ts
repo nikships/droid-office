@@ -1139,6 +1139,20 @@ export async function startServer(cfg: Config) {
     for (const f of floors.values()) void f.jira.connectionChanged();
   };
 
+  /**
+   * Runs `go` once a worktree made on `floor` would start from what's on the forge now (see
+   * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
+   * are still there.
+   */
+  const withFreshBase = (c: Client, floor: Floor, go: () => void) => {
+    const fetching = floor.workers.fetchBase();
+    if (!fetching) return go();
+    void fetching.then(() => {
+      if (c.out || c.ws.readyState !== WebSocket.OPEN || floors.get(floor.id) !== floor) return;
+      go();
+    });
+  };
+
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
     /** The floor `c` is on, or a note to them that they have to be on one. */
@@ -1330,11 +1344,15 @@ export async function startServer(cfg: Config) {
         }
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort);
-        const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
-        if (typeof r === 'string') warn(c, r);
-        else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
-        if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
+        const hire = () => {
+          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort);
+          const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
+          if (typeof r === 'string') warn(c, r);
+          else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
+          if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
+        };
+        if (msg.worktree === true) withFreshBase(c, floor, hire);
+        else hire();
         break;
       }
       case 'worker.resume': {
@@ -1596,7 +1614,7 @@ export async function startServer(cfg: Config) {
           model: msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1),
           effort: isAgentEffort(msg.effort) ? msg.effort : undefined,
         };
-        warn(c, floor.meetings.start(request, who));
+        withFreshBase(c, floor, () => warn(c, floor.meetings.start(request, who)));
         break;
       }
       case 'meeting.stop': {
