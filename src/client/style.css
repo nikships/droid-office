@@ -353,6 +353,31 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal textarea::placeholder, .modal input[type=text]::placeholder, .modal input[type=email]::placeholder, .modal input[type=password]::placeholder { color: var(--text-tertiary); }
 .modal textarea:focus, .modal input[type=text]:focus, .modal input[type=email]:focus, .modal input[type=password]:focus { border-color: var(--accent); }
 .modal label { font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); display: block; margin-bottom: 6px; }
+/* Settings: categories down the side, the one picked on the right, a card per setting. */
+.modal.settings { width: min(960px, 100%); height: min(760px, calc(100vh - 32px)); }
+.settings-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; overflow: auto; background: var(--bg); border-right: 1px solid var(--border); }
+.settings-tab { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; text-align: left; font: 500 13px/1.3 var(--font-sans); color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; }
+.settings-tab .icon { flex: none; width: 18px; font-size: 14px; text-align: center; }
+.settings-tab:hover { background: var(--surface-hover); color: var(--text); }
+.settings-tab.on { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text); }
+.settings-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+.settings-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 16px 18px 22px; overflow: auto; }
+.settings-head h3 { margin: 0; font: 600 14px/1.3 var(--font-sans); }
+.settings-head p { margin: 4px 0 0; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--text-secondary); }
+.setting { flex: none; padding: 12px 14px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.setting-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.setting-head h4 { margin: 0; font: 600 13px/1.3 var(--font-sans); }
+.scope { margin-left: auto; padding: 1px 7px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); color: var(--text-secondary); cursor: default; }
+.scope.you { color: var(--info); border-color: rgba(90, 169, 230, .45); }
+.scope.floor { color: var(--success); border-color: rgba(60, 207, 145, .45); }
+.scope.office { color: var(--accent); border-color: rgba(238, 96, 24, .45); }
+@media (max-width: 720px) {
+  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .settings-tab { flex: none; width: auto; white-space: nowrap; }
+  .settings-pane { padding: 12px; }
+}
 .close { width: 30px; height: 30px; padding: 0; justify-content: center; }
 /* The ✕ openModal gives a window without a header of its own. */
 .close.corner { position: absolute; top: 10px; right: 10px; z-index: 1; }

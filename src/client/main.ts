@@ -94,7 +94,7 @@ import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgr
 import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers, updateSpeaking } from './ui/hud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
-import { openSettings } from './ui/settings';
+import { openSettings, type SettingsPane } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, onFloorAdded, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
@@ -2760,7 +2760,7 @@ function showMeeting(preset?: MeetingPreset) {
 }
 
 function showJukebox() {
-  openJukebox(net, showSettings);
+  openJukebox(net, () => showSettings('sound'));
 }
 
 /** Where a file of the floor's project is on its forge, from the origin remote, or undefined without one. */
@@ -4482,7 +4482,7 @@ function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
   hanger.start();
 }
-function showSettings() {
+function showSettings(pane?: SettingsPane) {
   openSettings(
     net,
     settings,
@@ -4498,6 +4498,7 @@ function showSettings() {
     notifier,
     signOut,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
+    pane,
   );
 }
 
