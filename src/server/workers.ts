@@ -32,6 +32,7 @@ import { DroidSessionReader } from './droid-session.js';
 import { configuredProvider, isValidDroidModel, isValidGrokModel, isValidMuseModel, isValidOpenCodeModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { mergeOpenCodeConfigContent, openCodePluginSpecifier, writeOpenCodePlugin, type OpenCodeStatusEvent } from './opencode.js';
 import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
+import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
 import type { Capacity } from './machine.js';
 
@@ -261,6 +262,7 @@ export class WorkerManager {
   private host: PtyHost;
   /** Each worker's terminal on disk, so a restart doesn't wipe it (see history.ts). */
   private scrollback: ScrollbackStore;
+  private drops: DropStore;
   private saveTimer: NodeJS.Timeout;
 
   constructor(
@@ -314,8 +316,10 @@ export class WorkerManager {
     );
     this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
+    this.drops = new DropStore(dataDir);
     this.restore();
     this.scrollback.prune(new Set(this.workers.keys()));
+    this.drops.prune(new Set(this.workers.keys()));
     // A session may have ended (and written its final tally) while the office was down.
     for (const w of this.workers.values()) {
       this.scanUsage(w);
@@ -599,6 +603,11 @@ export class WorkerManager {
     for (const w of this.workers.values()) if (!w.pty) this.resume(w.info.id);
   }
 
+  /** Keeps a file dropped or pasted into a worker's terminal on this machine; where it is, for the terminal to type. */
+  drop(id: string, name: string, type: string, body: Buffer): string | undefined {
+    return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
+  }
+
   /**
    * Sends a worker home. For one with its own worktree, `cleanup` says what becomes of it; with no
    * choice given, the worktree and branch go only when they hold no work, where `landed` (its merged
@@ -620,6 +629,7 @@ export class WorkerManager {
     }
     w.term?.dispose();
     this.scrollback.remove(id);
+    this.drops.remove(id);
     if (w.info.provider === 'droid' && (w.info.model !== undefined || w.info.effort !== undefined)) {
       try {
         rmSync(path.join(this.dataDir, `droid-${id}.json`), { force: true });

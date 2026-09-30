@@ -462,8 +462,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 /* Terminal modal */
 .modal.term { width: min(1200px, 100%); height: min(820px, calc(100vh - 32px)); background: #0a0a0a; }
 .modal.term header { background: var(--surface); }
-.modal.term .term-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #0a0a0a; }
+.modal.term .term-host { position: relative; flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #0a0a0a; }
 .modal.term .term-host .xterm { height: 100%; }
+/* Files dragged over a terminal, and on their way to the office: they go in where its cursor is. */
+.modal.term.dropping .term-host::after, .modal.term.uploading .term-host::after { content: attr(data-drop); position: absolute; inset: 10px; z-index: 10; display: grid; place-items: center; padding: 16px; text-align: center; border: 3px dashed var(--accent); border-radius: 14px; background: rgba(10, 10, 10, .88); color: #fff; font-size: 18px; font-weight: 900; pointer-events: none; }
+.modal.term.uploading:not(.dropping) .term-host::after { content: '📎 Putting it in the terminal…'; }
 /* Who's in the terminal: a face per person, and a pencil on whoever's typing. */
 .viewers { display: flex; align-items: center; gap: 4px; }
 .avatar { position: relative; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border-strong); display: grid; place-items: center; flex: none; font: 600 10px var(--font-mono); color: var(--text-inverse); cursor: default; }
