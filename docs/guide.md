@@ -1,6 +1,6 @@
 # Droid Office guide
 
-A cartoon 3D office your team walks around in together. Sit a Claude Code, OpenCode, Codex or Droid worker at any empty desk, watch its terminal on the laptop in front of it, and jump into that terminal with everyone else. Issues and pull requests hang on cork boards on the wall. You can talk over voice and put your screen on the lounge TV.
+A cartoon 3D office your team walks around in together. A loading screen covers the page until the office has drawn, then it fades away. Sit a Claude Code, OpenCode, Codex or Droid worker at any empty desk, watch its terminal on the laptop in front of it, and jump into that terminal with everyone else. Issues and pull requests hang on cork boards on the wall. You can talk over voice and put your screen on the lounge TV.
 
 Every project is **a floor of the building**. Ride the elevator, pick one of the git projects you already have on the office's machine, and the office opens a new floor for it, painted its own colors. It works in your checkout right where it is: it never clones or copies a repository. Every worker, terminal, board and queue on a floor works in that project's checkout.
 

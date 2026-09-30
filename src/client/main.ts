@@ -92,6 +92,7 @@ import { copy, guessOs, openTeam, routeTeamMessage } from './ui/team';
 import { openAccounts, routeAccountsMessage } from './ui/accounts';
 import { openServices, serviceTunnel, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
+import { loadingScreen } from './ui/loading';
 import { openQueue } from './ui/queue';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers, updateSpeaking } from './ui/hud';
@@ -122,6 +123,9 @@ import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
 import { captureVrKeys } from './vr/physical-keys';
 import { probeXRSupport } from './vr/support';
+
+// Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
+const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
 const canvas = $('scene') as HTMLCanvasElement;
@@ -5003,6 +5007,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     sky.shading(true);
   }
   if (blurry) drunkVision.end(drunk, t, !reduceMotion.matches);
+  loading.drew();
 }
 
 // The loop runs through the renderer, so an immersive session can take it over; on desktop this is
@@ -5030,6 +5035,8 @@ async function whoami() {
 }
 
 guardLeaving();
+// The world is built. Come down once it has drawn, or at the cap if this page never gets that far.
+loading.until([]);
 void whoami().then(() => {
   const saved = loadProfile();
   if (saved && store.me.account) saved.name = store.me.account.name;
