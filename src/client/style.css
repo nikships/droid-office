@@ -513,6 +513,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .col-caret { font-size: 10px; color: var(--text-tertiary); }
 .col-head:hover .col-caret, .col-head[aria-expanded="true"] .col-caret { color: var(--accent); }
 .column.filtered h4 { color: var(--accent); }
+/* Each column's box for narrowing it by title. */
+.col-search { position: relative; flex-shrink: 0; background: var(--surface); border-bottom: 1px solid var(--border); padding: 6px 8px; }
+.col-search input[type=text] { font-size: 13px; padding: 5px 26px 5px 9px; }
+.col-search-clear { position: absolute; top: 50%; right: 14px; transform: translateY(-50%); border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; padding: 0 2px; }
+.col-search-clear:hover { color: var(--accent); }
 .col-active, .col-filter { background: var(--surface-raised); border-bottom: 1px solid var(--border); padding: 7px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .col-clear { margin-left: auto; border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; }
 .col-clear:hover { color: var(--accent); }
