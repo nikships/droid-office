@@ -1,8 +1,20 @@
 body.native-xr .native-graphics { width: min(860px, 100%); }
 .native-graphics h3 { margin: 22px 0 10px; font-size: 17px; }
 .native-graphics .ng-choices { flex-wrap: wrap; gap: 8px; }
-.native-graphics .ng-choices .btn { flex: 1; min-width: 140px; }
-.native-graphics .ng-fps { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
+.native-graphics .ng-choices .btn { flex: 1; min-width: 140px; white-space: normal; }
+.native-graphics .ng-resolution-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.native-graphics .ng-resolution-value { font: 600 20px/1.4 var(--font-mono); color: var(--accent); font-variant-numeric: tabular-nums; }
+.native-graphics .ng-resolution-controls { display: grid; grid-template-columns: 48px minmax(140px, 1fr) 48px; align-items: center; gap: 12px; }
+body.native-xr .native-graphics .ng-resolution-step { width: 48px; min-width: 48px; height: 48px; padding: 0; font-size: 22px; }
+.native-graphics .ng-resolution-slider { appearance: none; width: 100%; min-width: 0; height: 48px; margin: 0; background: transparent; cursor: pointer; touch-action: none; }
+.native-graphics .ng-resolution-slider::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; background: var(--border-strong); }
+.native-graphics .ng-resolution-slider::-webkit-slider-thumb { appearance: none; width: 44px; height: 44px; margin-top: -18px; border: 2px solid var(--text); border-radius: 50%; background: var(--accent); }
+.native-graphics .ng-resolution-slider::-moz-range-track { height: 8px; border-radius: 4px; background: var(--border-strong); }
+.native-graphics .ng-resolution-slider::-moz-range-thumb { width: 40px; height: 40px; border: 2px solid var(--text); border-radius: 50%; background: var(--accent); }
+.native-graphics .ng-resolution-presets { margin-top: 12px; }
+.native-graphics .ng-resolution-pixels { margin: 12px 0 0; font: 500 15px/1.5 var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.native-graphics .ng-resolution-applied { font-variant-numeric: tabular-nums; }
+body.native-xr .native-graphics label.ng-fps { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
 .native-graphics .ng-status { margin: 0 0 8px; font-size: 18px; }
 .native-graphics .warning, .native-frame-counter.warning { color: var(--danger); }
 .native-frame-counter { display: inline-flex; align-items: center; min-height: 48px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font: 500 13px/1.4 var(--font-mono); white-space: nowrap; }
