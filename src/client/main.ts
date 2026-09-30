@@ -1,7 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
-import { sameLook } from '../shared/avatar';
+import { randomLook, sameLook } from '../shared/avatar';
 import {
   BALCONY,
   BEANBAGS,
@@ -72,6 +72,8 @@ import { Gallery } from './world/gallery';
 import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
+import { Casualties } from './world/casualties';
+import { Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
@@ -79,12 +81,12 @@ import { Voice } from './voice';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, doingNow, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL, type Modal } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
-import { openPrompt, confirmDialog, sendHomeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
+import { openPrompt, confirmDialog, sendHomeDialog, shootDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
@@ -617,6 +619,9 @@ const vr = new VRSession(renderer, scene, camera, {
     // Nor a way to shoot: the ball drops where you stand, and the club goes back in the bag.
     dropBall();
     golf.stop();
+    // Nor a way to answer a bleed-out dialog: the gun goes back and the worker is unharmed.
+    dropDying();
+    holsterGun(true);
     // A focused DOM field (the chat box) would take IME text the capture below can't cancel.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     syncElevatorButtons();
@@ -1201,6 +1206,7 @@ function teeOff() {
   if (walkingTo) stopWalking();
   if (smokeBreakUntil) setSmoking(false);
   dropBall();
+  holsterGun(true);
   golf.start();
 }
 
@@ -1365,6 +1371,151 @@ const departures = new Departures(
 );
 // Workers called to a meeting, walking in from the elevator to the meeting table.
 const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
+// Workers shot with the .44 Magnum: the death scene is local to the shooter, and a confirmed
+// kill goes out as an ordinary `worker.kill` (everyone else sees the send-home walk-out).
+const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
+  spawnMedic: (name) => {
+    const m = new Person(name, '#f2f4f6', randomLook());
+    noOutline(m.root);
+    return m;
+  },
+  onLand: (at) => sound.thud(at),
+  onSiren: (at) => sound.siren(at),
+});
+/** Confirmed kills waiting on their `worker.remove`: the medics take the body, not the walk-out. */
+const shotDead = new Set<string>();
+/** The gun in your right hand (`7` draws and holsters it). */
+let gunOut = false;
+/** The worker bleeding out on the floor with its dialog open, if any. */
+let dyingId: string | null = null;
+let dyingModal: Modal | null = null;
+/** Closing the dialog without the revive toast (it went away some other way). */
+let dyingSilent = false;
+/** Dust where missed shots cracked into the walls and floor. */
+const puffs: Puff[] = [];
+
+/** `7`: the .44 Magnum out of its holster, or back in. */
+function toggleGun() {
+  if (gunOut) {
+    holsterGun();
+    return;
+  }
+  if (vr.active) return toast("The gun isn't in VR yet — hop on the desktop for that one", 'warn');
+  if (golf.active) return toast('Your hands are full: put the club back first (E)', 'warn');
+  if (climber.active) return toast('Your hands are full: both hands on the climb', 'warn');
+  if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
+  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
+  if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
+  if (holdingBall()) return toast('Your hands are full: drop the ball first (Q)', 'warn');
+  gunOut = true;
+  hands.holdGun(true);
+  me.setGun(true);
+  sound.gunDraw();
+  hintKey = 'stale';
+}
+
+/** The gun back in its holster. */
+function holsterGun(quiet = false) {
+  if (!gunOut) return;
+  gunOut = false;
+  hands.holdGun(false);
+  me.setGun(false);
+  if (!quiet) sound.gunHolster();
+  hintKey = 'stale';
+}
+
+/** A click with the gun out: fire at what's under the crosshair (or the mouse, in third person). */
+function fireGun(ndc: THREE.Vector2) {
+  hands.fireGun();
+  me.fire();
+  sound.gunshot();
+  // One shell of kick up the camera.
+  if (!reduceMotion.matches) thud = Math.max(thud, 0.4);
+  // Smoke curling off the muzzle.
+  const tip = player.view === 'first' ? hands.muzzleTip(new THREE.Vector3()) : me.muzzleTip(new THREE.Vector3());
+  if (tip) {
+    if (player.view === 'first') camera.localToWorld(tip);
+    for (let i = 0; i < 2; i++) {
+      tip.x += (Math.random() - 0.5) * 0.05;
+      tip.y += Math.random() * 0.04;
+      tip.z += (Math.random() - 0.5) * 0.05;
+      smoke.wisp(tip);
+    }
+  }
+  if (upTop) return;
+  raycaster.setFromCamera(ndc, camera);
+  const byRoot = new Map<THREE.Object3D, string>();
+  for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
+  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
+  const hits = raycaster.intersectObjects([office.group, ...byRoot.keys()], true);
+  const hit = hits[0];
+  let workerId: string | null = null;
+  if (hit) {
+    for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
+      const id = byRoot.get(o);
+      if (id !== undefined) {
+        workerId = id;
+        break;
+      }
+    }
+  }
+  // Anything solid in front blocks the shot; a miss cracks into it with dust.
+  if (!hit || workerId === null) {
+    if (hit) {
+      const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
+      const puff = new Puff(hit.point, normal);
+      scene.add(puff.group);
+      puffs.push(puff);
+      sound.impact(hit.point);
+    }
+    return;
+  }
+  const v = workerViews.get(workerId);
+  const w = store.workers.get(workerId);
+  const desk = v ? office.desks.get(v.deskId) : undefined;
+  if (!v || !w || !desk) return;
+  arrivals.forget(v.model);
+  if (!casualties.shoot(workerId, v.model, desk.seatAnchor)) return;
+  dyingId = workerId;
+  const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
+  dyingModal = shootDialog({
+    workerId,
+    name: w.name,
+    where,
+    worktree: w.worktree ?? undefined,
+    ask: () => net.send({ t: 'worker.worktree', workerId }),
+    onKill: (cleanup) => {
+      dyingId = null;
+      dyingModal = null;
+      shotDead.add(workerId);
+      net.send(cleanup ? { t: 'worker.kill', workerId, cleanup } : { t: 'worker.kill', workerId });
+      toast(`💀 ${w.name} — the medics are on their way`);
+    },
+    onRevive: () => {
+      const d = dyingId;
+      dyingId = null;
+      dyingModal = null;
+      if (d && casualties.revive(d)) {
+        // Back on its feet with a little hop.
+        workerViews.get(d)?.model.cheer(0.8);
+        if (!dyingSilent) toast(`🩹 ${w.name} is back on its feet — session untouched`);
+      }
+      dyingSilent = false;
+    },
+  });
+}
+
+/** The bleed-out dialog goes away some other way (floor switch, disconnect, the worker vanished): the worker is unharmed, quietly. */
+function dropDying() {
+  if (dyingId === null) return;
+  const d = dyingId;
+  dyingId = null;
+  const m = dyingModal;
+  dyingModal = null;
+  dyingSilent = true;
+  casualties.revive(d);
+  m?.close();
+}
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
 let seatedAlready = false;
 let firstWelcome = true;
@@ -1378,6 +1529,8 @@ net.onStatus((up) => {
     vr.clearGrab();
     setCarrying(null);
   }
+  // The office is gone: a bleed-out dialog can't confirm anything, so the worker is unharmed.
+  if (!up) dropDying();
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
@@ -1386,6 +1539,9 @@ net.onMessage((msg) => {
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
     departures.clear();
     arrivals.clear();
+    casualties.clear();
+    dropDying();
+    shotDead.clear();
     seatedAlready = true;
   }
   if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
@@ -1680,6 +1836,8 @@ store.on('floors', syncElevatorButtons);
 /** Rides the elevator to another floor (or up to the roof). From outside the car, you step in while the lights are down. */
 function ride(floorId: string) {
   if (trip || floorId === store.floor) return;
+  dropDying();
+  holsterGun(true);
   closeAllModals();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
@@ -1716,6 +1874,8 @@ function switchFloor(floorId: string) {
   // The roof isn't laid out like a floor: to and from it, it's the elevator.
   if (upTop || floorId === ROOF) return ride(floorId);
   if (trip || floorId === store.floor) return;
+  dropDying();
+  holsterGun(true);
   closeAllModals();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
@@ -1733,6 +1893,8 @@ function switchFloor(floorId: string) {
 /** Through the ceiling up the ladder, or through the floor down one: the lights dip as you pass. */
 function travel(floorId: string, how: Grip, at: Arrival) {
   if (trip) return;
+  dropDying();
+  holsterGun(true);
   trip = { floor: floorId, how, timer: window.setTimeout(tripFailed, 10_000) };
   fade(true, true);
   setTimeout(() => net.send({ t: 'floor.go', floor: floorId, at }), 170);
@@ -2125,9 +2287,22 @@ function syncWorkers() {
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
+    // Shot and bleeding out when it went (sent home from elsewhere, or it exited): the dialog
+    // closes quietly and removal proceeds as normal.
+    if (dyingId === id) dropDying();
     const desk = office.desks.get(v.deskId);
-    // Sent home: it packs up and walks out, and the seat shows as free once it's up (see departures).
-    if (desk && sentHome.has(id)) departures.add(v.model, v.laptop, desk);
+    // A confirmed kill: the medics take the body instead of the walk-out.
+    if (shotDead.has(id)) {
+      shotDead.delete(id);
+      if (desk) casualties.confirm(id, v.laptop);
+      else {
+        casualties.revive(id);
+        v.model.root.removeFromParent();
+        v.laptop.root.removeFromParent();
+        v.model.dispose();
+        v.laptop.dispose();
+      }
+    } else if (desk && sentHome.has(id)) departures.add(v.model, v.laptop, desk);
     else {
       v.model.root.removeFromParent();
       v.laptop.root.removeFromParent();
@@ -3327,6 +3502,7 @@ function takeBall() {
   if (ball.holder) return;
   reach();
   sound.ball('bounce', ball.at, 1.5);
+  holsterGun(true);
   ball.takeNow(store.you);
   ballPending++;
   net.send({ t: 'ball.take' });
@@ -3557,6 +3733,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
 
 function setCarrying(card: CarriedIssue | null) {
   if ((card?.issue ?? 0) === (carrying?.issue ?? 0)) return;
+  if (card) holsterGun(true);
   carrying = card;
   me.carry(card);
   hands.carry(card);
@@ -3834,6 +4011,7 @@ function renderHint() {
   if (hanger.active && !modalOpen()) return renderHangHint(el);
   if (climber.active && !modalOpen()) return renderClimbHint(el);
   if (golf.active && !modalOpen()) return renderGolfHint(el);
+  if (gunOut && !modalOpen()) return renderGunHint(el);
   const withBall = holdingBall();
   if ((!target && !carrying && !withBall) || modalOpen()) {
     // Still up after a redraw was asked for (hintKey cleared) just as you walked away from it, too.
@@ -4090,7 +4268,14 @@ function stationHint(deskId: string): Hint {
   };
 }
 
-/** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
+/** The gun out: fire it, or put it back. */
+function renderGunHint(el: HTMLElement) {
+  const k = 'gun';
+  if (k === hintKey) return;
+  hintKey = k;
+  el.replaceChildren(h('span.title', {}, '🔫 .44 Magnum'), key('Click', 'Fire'), key('7', 'Holster'));
+  el.classList.remove('hidden');
+}
 /** At the golf tee: how to aim and swing, or how to get back to it while the ball's out there. */
 function renderGolfHint(el: HTMLElement) {
   const title = (text: string) => h('span.title', {}, text);
@@ -4108,6 +4293,7 @@ function renderGolfHint(el: HTMLElement) {
   el.classList.remove('hidden');
 }
 
+/** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
 function renderClimbHint(el: HTMLElement) {
   const title = (text: string) => h('span.title', {}, text);
   const l = climber.ladder;
@@ -4146,12 +4332,13 @@ const finePointer = window.matchMedia('(pointer: fine)').matches;
 function renderCrosshair() {
   const show = player.view === 'first' && !modalOpen() && !golf.active;
   const free = show && finePointer && player.canLock && !player.locked;
-  const k = `${show}|${!!target}|${free}|${relookOnKey}`;
+  const k = `${show}|${!!target}|${free}|${relookOnKey}|${gunOut}`;
   if (k === crossKey) return;
   crossKey = k;
   const el = $('crosshair');
   el.classList.toggle('hidden', !show);
   el.classList.toggle('on', !!target);
+  el.classList.toggle('armed', gunOut);
   el.classList.toggle('free', free);
   el.querySelector('.look-hint')!.textContent = relookOnKey ? 'Press a key or click to look around' : 'Click to look around';
 }
@@ -4250,6 +4437,11 @@ window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     if (e.code === 'KeyE') windUp();
     else dropBall();
+    return;
+  }
+  // 7 draws and holsters the .44 Magnum (1–6 are emotes).
+  if (e.code === 'Digit7' || e.code === 'Numpad7') {
+    if (!e.repeat) toggleGun();
     return;
   }
   if (emoteKey(e)) return;
@@ -4517,6 +4709,11 @@ canvas.addEventListener('pointerleave', () => (pointer = null));
 player.onClick = (ndc) => {
   // At the tee, a click is you steadying the mouse to aim: nothing else is in reach.
   if (modalOpen() || golf.active) return;
+  // The gun out: a click fires at what's under the crosshair (or the mouse).
+  if (gunOut) {
+    fireGun(ndc);
+    return;
+  }
   if (emoteWheel.isOpen) return emoteWheel.click();
   // The ball in your hands: press to wind up, let go (or click again, with no mouse captured) to shoot.
   if (holdingBall() && !carrying) {
@@ -4866,6 +5063,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   cabinet.update(camera, dt);
   // Pulled away from the tee (sat down, off up the ladder, into the elevator, into the headset): the club goes back.
   if (golf.active && (trip || hanger.active || climber.active || player.seat || upTop || inVR)) golf.stop();
+  // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof, into the headset): it goes back.
+  if (gunOut && (trip || hanger.active || climber.active || upTop || inVR)) holsterGun(true);
   golf.update(dt);
   balls.update(dt);
   office.tee.ball.visible = golf.doing !== 'watch' && now > teeEmptyUntil;
@@ -4959,9 +5158,16 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
   arrivals.update(dt);
+  casualties.update(dt, t);
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    if (puffs[i].update(dt)) continue;
+    scene.remove(puffs[i].group);
+    puffs[i].dispose();
+    puffs.splice(i, 1);
+  }
   if (!upTop) updateBall(now, dt);
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...[...remotes.values()].map((r) => r.person.root.position), ...departures.positions(), ...arrivals.positions()]);
+    office.update(t, dt, [player.pos, ...[...remotes.values()].map((r) => r.person.root.position), ...departures.positions(), ...arrivals.positions(), ...casualties.positions()]);
     office.stack.update(
       dt,
       [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }, ...[...remotes.values()].map((r) => ({ x: r.person.root.position.x, y: r.person.root.position.y, z: r.person.root.position.z, grip: r.grip }))],
