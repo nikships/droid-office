@@ -20,8 +20,8 @@ The owner wore the installed combined APK on 2026-09-29 and reported that it loo
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.
 The source canvases are already 2048×1360 and retain that size during export. Work is now
 focused on a separate sharp screen pass, with world/controller occlusion, while preserving
-the existing world render budget. A persistent bounded 90 Hz preference is also in source
-and awaits installation. Ordinary thermal throttling is not a reason to stop or cool the app.
+the existing world render budget. A persistent bounded 90 Hz preference is installed.
+Ordinary thermal throttling is not a reason to stop or cool the app.
 The prior installed build includes native GPU hand meshes, actual Samsung controller models,
 fingertip/hover workspace input, and a fix for the hidden status Surface blocking the UI
 thread. The UI and native-input audits are ongoing. See the native client document for
@@ -30,9 +30,20 @@ installed versus pending changes and honest acceptance limits.
 The latest instruction supersedes the earlier hand-tracking criterion: **motion controllers
 are the only supported native input scheme**, and the **left controller’s Menu button** opens
 and closes the workspace. Grip must not open or close it. The controller-only migration is
-in progress; hand extension/permission removal and UI copy are in source, with input fixes
-and regression checks being completed before the next installation. WebXR keeps its existing
-controls. Prior hand-mesh implementation evidence below is historical, not a current target.
+installed: hand extensions, permission and active input/rendering were removed. All 35 native
+controller regressions pass, and the installed page passed a synthetic left-Menu/grip/right-Menu
+replay. WebXR keeps its existing controls. Prior hand-mesh implementation evidence below is
+historical, not a current target.
+
+The max-resolution laptop-screen layer is installed and displays the original live terminal.
+Resolved MSAA depth was verified on the device with no zero-depth samples or GL error. Its
+performance is still under investigation: close-view samples include missed frames and a
+later 85.6 fps window, so this layer has not passed stable-90 acceptance. The refresh preference
+and live paused-session counter are also installed. Full Node 22 checks (511 tests/coverage),
+native host checks and APK compilation passed. See the current native evidence document.
+
+After all current XR work is complete, rebase onto the latest `main` and audit the new desktop
+changes for native parity. The owner asked not to inspect that branch before then.
 
 ## Native measurements, 2026-09-29
 

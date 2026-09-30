@@ -1,0 +1,8 @@
+body.native-xr .native-graphics { width: min(860px, 100%); }
+.native-graphics h3 { margin: 22px 0 10px; font-size: 17px; }
+.native-graphics .ng-choices { flex-wrap: wrap; gap: 8px; }
+.native-graphics .ng-choices .btn { flex: 1; min-width: 140px; }
+.native-graphics .ng-fps { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
+.native-graphics .ng-status { margin: 0 0 8px; font-size: 18px; }
+.native-graphics .warning, .native-frame-counter.warning { color: var(--danger); }
+.native-frame-counter { display: inline-flex; align-items: center; min-height: 48px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font: 500 13px/1.4 var(--font-mono); white-space: nowrap; }

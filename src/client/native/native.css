@@ -1,0 +1,197 @@
+/*
+ * The office on a headset's panel (body.native-xr, see native/ui.ts). The headset app draws the
+ * office in 3D; the page shows its top bar, menu, panels and windows flat on the panel, sized for
+ * a controller ray: every control at least 44 px, text a step larger.
+ */
+:root { --native-kb-h: 0px; }
+/* The floating Keyboard button (native/keyboard.ts) sits in the bottom-right corner while the keyboard is hidden; windows and menus stop above it. */
+body.native-xr { --native-kb-toggle-h: 64px; --native-bottom: calc(var(--native-kb-h) + var(--native-kb-toggle-h)); }
+body.native-xr.native-kb-open { --native-kb-toggle-h: 0px; }
+
+/* What only makes sense over the page's own 3D view. */
+body.native-xr :is(#scene, #crosshair, #hint, #compass, #shot-meter, #fps, #caffeine, #whoosh, .emote-wheel, .emote-pop, .golf) { display: none !important; }
+body.native-xr #app { background: var(--bg); }
+body.native-xr #fade { display: none; }
+body.native-xr #hud { bottom: var(--native-kb-h); }
+
+/* ---- Bigger targets and type ---- */
+body.native-xr { font-size: 16px; }
+body.native-xr .btn { min-height: 44px; padding: 10px 16px; font-size: 13px; }
+body.native-xr .close { width: 44px; height: 44px; }
+body.native-xr .dock { gap: 8px; }
+body.native-xr .dock-btn { height: 48px; min-width: 48px; padding: 0 14px; font-size: 18px; }
+body.native-xr .dock-btn .lbl, body.native-xr .dock-btn .n { font-size: 13px; }
+body.native-xr .dock-menu { width: 48px; }
+body.native-xr .burger i { width: 20px; }
+body.native-xr .project { padding: 10px 18px; min-height: 48px; max-width: 45vw; }
+body.native-xr .project-name { font-size: 15px; }
+body.native-xr .project-meta { font-size: 12px; }
+body.native-xr .panel-x { width: 44px; height: 44px; opacity: .6; font-size: 16px; }
+body.native-xr .card-labels, body.native-xr .menu-pin { opacity: .6; }
+body.native-xr .side { top: 80px; width: 340px; max-height: calc(100% - 96px); }
+body.native-xr .side h3 { font-size: 12px; }
+body.native-xr :is(.people, .workers) li { min-height: 48px; font-size: 16px; padding: 6px 8px; }
+body.native-xr :is(.people, .workers) .sub { font-size: 12px; }
+body.native-xr .pill { font-size: 12px; padding: 5px 8px; }
+body.native-xr #waiting { min-height: 48px; font-size: 12px; }
+body.native-xr .chat { width: 440px; }
+body.native-xr #chat-log { font-size: 16px; }
+body.native-xr #chat-input { min-height: 48px; width: 260px; font-size: 16px; }
+/* Above Home, windows and the keyboard: the panel's feedback must never hide behind what caused it. Toasts take no taps. */
+body.native-xr #toasts { top: 84px; z-index: 75; width: min(900px, calc(100vw - 48px)); }
+body.native-xr .toast { max-width: 100%; font-size: 15px; padding: 12px 18px; text-align: center; overflow-wrap: anywhere; background-color: var(--surface); box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+body.native-xr .toast.warn { box-shadow: inset 0 0 0 999px rgba(242, 184, 75, .08), 0 4px 18px rgba(0,0,0,.5); }
+body.native-xr .toast.error { box-shadow: inset 0 0 0 999px rgba(239, 68, 68, .08), 0 4px 18px rgba(0,0,0,.5); }
+body.native-xr .conn { font-size: 14px; padding: 10px 18px; }
+
+/* The ☰ menu. */
+body.native-xr .hud-menu { font-size: 16px; }
+body.native-xr .menu-item { min-height: 48px; font-size: 16px; padding: 8px 12px; }
+body.native-xr .mi-icon { width: 28px; font-size: 20px; }
+body.native-xr .menu-pin { width: 48px; height: 48px; }
+body.native-xr .menu-sec { font-size: 12px; }
+body.native-xr .floor-item, body.native-xr .elevator .floor-btn { min-height: 56px; }
+
+/* Windows: above the keyboard, filling the panel, fields and choices big enough to hit. */
+body.native-xr .backdrop { bottom: var(--native-bottom); padding: 12px; }
+body.native-xr .modal { max-height: calc(100vh - var(--native-bottom) - 24px); }
+body.native-xr .modal > header { min-height: 60px; padding: 8px 16px; flex-wrap: wrap; flex: none; row-gap: 8px; }
+body.native-xr .modal > header > .close { width: 44px; min-width: 44px; height: 44px; padding: 0; flex: none; }
+body.native-xr .modal header h2 { font-size: 15px; }
+body.native-xr .modal .body { font-size: 16px; min-height: 0; }
+body.native-xr .modal > footer { padding: 10px 16px; flex-wrap: wrap; flex: none; gap: 8px; }
+body.native-xr .modal footer > a.grow { display: inline-flex; align-items: center; min-height: 44px; }
+body.native-xr .modal footer .grow { font-size: 13px; }
+body.native-xr .modal label { font-size: 13px; }
+body.native-xr .modal :is(textarea, input[type=text], input[type=email], input[type=password], input[type=number], select) { min-height: 48px; font-size: 18px; }
+body.native-xr .modal :is(input[type=checkbox], input[type=radio]) { width: 24px; height: 24px; }
+body.native-xr .modal label.choice, body.native-xr .modal label.gh-check { min-height: 48px; align-items: center; }
+body.native-xr .setting-note { font-size: 15px; }
+body.native-xr .provider-select, body.native-xr .provider-model :is(input, select) { min-height: 44px; font-size: 16px; }
+body.native-xr .seg .btn, body.native-xr .gh-tab, body.native-xr .os-tabs .btn { min-height: 44px; }
+body.native-xr .swatch { width: 44px; height: 44px; }
+body.native-xr .volume input[type=range] { height: 44px; }
+body.native-xr :is(.card, .svc-list li, .queue-list li, .search-hit, .bs-item, .changes-files li, .pd-files li, .repo) { min-height: 48px; }
+body.native-xr .card .ttl { font-size: 16px; }
+body.native-xr :is(.queue-actions, .svc-list, .team-list, .gh-card > header, .changes-diff .dh, .desk-changes header) .btn { padding: 8px 14px; }
+body.native-xr :is(.pd-tick, .pd-fold) { width: 44px; min-width: 44px; height: 44px; flex: none; }
+body.native-xr .pd-viewed { min-height: 44px; display: inline-flex; align-items: center; }
+body.native-xr .md { font-size: 17px; }
+body.native-xr :is(.diff-lines, .pd-lines) { font-size: 15px; }
+body.native-xr .help-grid { font-size: 16px; }
+body.native-xr .charsel-stage { min-height: 240px; }
+
+/* Compact desktop controls need their own targets, including those without .btn. */
+body.native-xr :is(.col-head, .col-clear, .label-pick, .card-labels, .desk-link, .prompt-item, .prompt-var, summary) { min-height: 44px; }
+body.native-xr :is(.col-clear, .label-pick, .card-labels) { min-width: 44px; padding: 8px; font-size: 12px; }
+body.native-xr .card:has(.card-labels) { padding-top: 54px; }
+body.native-xr .card-labels { opacity: 1; }
+body.native-xr .desk-link { align-items: center; padding: 8px; font-size: 12px; white-space: normal; }
+body.native-xr .card .num a { display: inline-flex; align-items: center; min-height: 44px; }
+body.native-xr :is(.card .meta, .column h4, .queue-meta, .provider-note, .provider-model-hint, .board-status, .floor-menu-head) { font-size: 13px; }
+body.native-xr :is(.gh-meta, .gh-card > header, .gh-compose-foot, .pd-fh, .changes-diff .dh) { flex-wrap: wrap; }
+body.native-xr :is(.gh-card > header b, .gh-meta code, .gh-compose-foot, .setting-note, .desk-changes footer .grow > *) { min-width: 0; overflow-wrap: anywhere; }
+body.native-xr .md :is(code, pre code) { font-size: 15px; }
+body.native-xr .gh-window.issue footer .provider-note { max-width: none; }
+body.native-xr .gh-window.issue footer .provider-choice label { font-size: 13px; }
+
+/* The keyboard changes the usable panel height; fixed menus must use the same boundary. */
+body.native-xr .hud-menu { width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - var(--native-bottom) - 88px) !important; }
+body.native-xr .floor-menu { max-height: calc(100vh - var(--native-bottom) - 96px); }
+/* Desktop shortcut letters: the panel has no office-wide key shortcuts. */
+body.native-xr .mi-key { display: none; }
+body.native-xr .svc-count { font-size: 12px; }
+body.native-xr .mi-label { white-space: normal; }
+body.native-xr .mi-label small { font-size: 12px; }
+body.native-xr .menu-foot { font-size: 13px; }
+body.native-xr .queue-limit { flex-wrap: wrap; white-space: normal; }
+body.native-xr .queue-limit .btn { min-width: 44px; flex: none; }
+body.native-xr .queue-list li { flex-wrap: wrap; }
+body.native-xr .queue-main { flex: 1 1 240px; min-width: 0; }
+body.native-xr .queue-actions { flex-wrap: wrap; margin-left: auto; gap: 6px; }
+body.native-xr :is(.queue-actions .btn, .meeting-window .btn.small) { min-width: 44px; justify-content: center; }
+/* Pickers keep their chosen value readable; the row wraps instead of squeezing them. */
+body.native-xr .queue-add .provider-select { min-width: 9em; }
+body.native-xr .queue-add :is(.provider-model.claude-model, .provider-model.droid-model) select:first-of-type { min-width: 12em; }
+body.native-xr .queue-add :is(.provider-model.claude-model, .provider-model.droid-model) select:last-of-type { min-width: 8em; }
+body.native-xr :is(.provider-select, .provider-model select) { max-width: 100%; }
+body.native-xr :is(.queue h4, .team h4, .changes-files h4, .search-group h4) { font-size: 12px; }
+body.native-xr :is(.search-status, .queue-list .pos, .term .typed) { font-size: 13px; }
+body.native-xr :is(.elevator .floor-sub, .floor-item .floor-sub) { font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
+body.native-xr .elevator .here-tag { font-size: 12px; }
+body.native-xr :is(.queue-title, .queue-meta) { white-space: normal; overflow-wrap: anywhere; }
+body.native-xr .floor-name { flex-wrap: wrap; overflow-wrap: anywhere; }
+body.native-xr .repo .nm { white-space: normal; overflow-wrap: anywhere; }
+body.native-xr :is(.floor-text, .repo > div) { min-width: 0; }
+body.native-xr .floor-stats { flex-wrap: wrap; }
+body.native-xr .native-help { width: min(980px, 100%); }
+body.native-xr .native-help .help-grid { grid-template-columns: minmax(120px, 1fr) minmax(0, 4fr); align-items: start; gap: 18px 24px; line-height: 1.5; }
+.native-tooltip { position: fixed; z-index: 80; left: 16px; right: 220px; bottom: calc(var(--native-kb-h) + 12px); width: fit-content; max-width: min(860px, calc(100vw - 236px)); padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; pointer-events: none; box-shadow: 0 4px 18px rgba(0,0,0,.4); }
+
+/* The terminal fills the panel. */
+body.native-xr .modal.term { width: 100%; height: calc(100vh - var(--native-bottom) - 24px); max-height: none; }
+body.native-xr .modal.term header { flex-wrap: wrap; row-gap: 6px; }
+body.native-xr .modal.term header h2 { flex: 1 1 280px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body.native-xr .term-zoom-group { display: inline-flex; }
+body.native-xr .term-zoom { min-width: 48px; justify-content: center; font-size: 15px; text-transform: none; }
+
+/* ---- The home screen ---- */
+.native-home {
+  position: absolute; top: 80px; left: 12px; right: 12px; bottom: 76px; z-index: 1;
+  display: flex; flex-direction: column; gap: 12px; min-height: 0;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 16px 20px;
+}
+body.native-home-on .side { display: none; }
+.nh-head { display: flex; align-items: center; gap: 12px; }
+.nh-where { flex: 1; min-width: 0; }
+.nh-floor { margin: 0; font: 600 22px/1.3 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; overflow-wrap: anywhere; }
+.nh-meta { margin: 2px 0 0; font: 400 14px/1.4 var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+.nh-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; }
+.nh-col { min-height: 0; display: flex; flex-direction: column; }
+.nh-col h3 { margin: 0 0 10px; font: 500 13px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); display: flex; gap: 8px; align-items: baseline; }
+.nh-col h3 .no { color: var(--accent); }
+.nh-col h3 .count { color: var(--text-tertiary); }
+.nh-workers { list-style: none; margin: 0; padding: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.nh-hire, .nh-worker-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.nh-hire { flex: none; margin-bottom: 10px; }
+.nh-worker-actions { margin: 6px 0 8px; }
+.nh-performance { margin: 3px 0 0; font-size: 13px; color: var(--text-secondary); }
+.nh-performance.warning { color: var(--danger); }
+.nh-carried { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: var(--radius); font-size: 14px; }
+.nh-carried span { flex: 1; min-width: 0; }
+.nh-carried .btn { flex: none; }
+.nh-workers .empty { padding: 16px; font-size: 15px; }
+.nh-worker {
+  width: 100%; min-height: 64px; display: flex; align-items: center; gap: 12px; padding: 8px 12px; text-align: left;
+  font: inherit; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
+}
+.nh-worker:hover { border-color: var(--accent); background: var(--surface-hover); }
+/* A tap always lands on the row's button, even while its insides are redrawn. */
+.nh-worker > *, .nh-tile > * { pointer-events: none; }
+.nh-worker .dot { width: 14px; height: 14px; }
+.nh-name { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+/* Up to three lines of what the worker is doing; the row's tooltip carries the rest. */
+.nh-name .sub { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; font: 400 13px/1.5 var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+.nh-worker .pill { flex: none; }
+.nh-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; overflow: auto; min-height: 0; align-content: start; }
+body.native-xr .nh-tile {
+  min-height: 88px; flex-direction: column; justify-content: center; gap: 6px; padding: 10px; position: relative;
+  white-space: normal; text-align: center;
+}
+.nh-tile .nh-icon { font-size: 28px; line-height: 1; }
+.nh-tile .nh-label { font-size: 13px; line-height: 1.25; }
+.nh-tile .svc-count { position: absolute; top: 8px; right: 8px; margin: 0; font-size: 12px; }
+.nh-tile.dim { opacity: .45; }
+.nh-tile.primary { border-color: var(--accent); color: var(--accent); }
+.nh-tile.danger { border-color: rgba(239, 68, 68, .5); color: var(--danger); }
+@media (max-width: 900px) {
+  .nh-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  body.native-xr .side { width: min(340px, calc(100vw - 24px)); }
+}
+
+/* Keep the original layout and gameplay alive while the workspace is closed. */
+body.native-xr.native-workspace-closed,
+body.native-xr.native-workspace-closed * {
+  visibility: hidden;
+  animation-play-state: paused;
+}
