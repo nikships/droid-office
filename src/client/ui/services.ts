@@ -3,7 +3,7 @@ import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
 import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './team';
 
-function serviceUrl(port: number): string {
+export function serviceUrl(port: number): string {
   // The tunnel lands on the office's own port, so it speaks whatever the office speaks.
   return `${location.protocol}//localhost:${port}`;
 }

@@ -537,6 +537,15 @@ export class GitLab implements Board {
     return found ? { number: Number(found.iid), url: found.web_url } : undefined;
   }
 
+  async pullBody(ref: PullRef, cwd: string): Promise<string> {
+    const out = await glab(['mr', 'view', String(ref.number), '--repo', this.projectUrl, '--output', 'json'], cwd);
+    return String((JSON.parse(out || '{}') as { description?: string }).description ?? '').trim();
+  }
+
+  async setPullBody(ref: PullRef, cwd: string, body: string): Promise<void> {
+    await glab(['mr', 'update', String(ref.number), '--repo', this.projectUrl, '--description', body], cwd);
+  }
+
   private async refreshIssues() {
     if (this.issues.loading) return;
     this.issues = { ...this.issues, loading: true };

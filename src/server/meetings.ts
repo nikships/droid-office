@@ -44,7 +44,8 @@ export interface MeetingWorkers {
 
 /** Git for the meeting's own worktree: made when it starts, tidied away once everyone has gone home. */
 export interface MeetingTrees {
-  create(slug: string): (Required<WorktreeRef> & { from?: string }) | string;
+  /** `note` says when commits the project has were left out of it (see Worktrees.create). */
+  create(slug: string): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string;
   inspect(wt: WorktreeRef): Promise<WorktreeState>;
   remove(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<string | undefined>;
 }
@@ -147,8 +148,8 @@ export class MeetingRoom {
     const picked: Partial<AgentChoice> = (req.provider === undefined && this.workers.officeDefault) || { provider: req.provider ?? this.workers.defaultProvider, model: req.model, effort: req.effort };
     const provider = picked.provider;
     if (!isAgentProvider(provider) || (provider === 'custom' && this.workers.defaultProvider !== 'custom')) return 'Unknown agent provider';
-    const model = provider === 'claude' || provider === 'opencode' || provider === 'droid' ? picked.model || undefined : undefined;
-    const effort = (provider === 'claude' || provider === 'droid') && isAgentEffort(picked.effort) ? picked.effort : undefined;
+    const model = provider === 'claude' || provider === 'opencode' || provider === 'droid' || provider === 'grok' || provider === 'muse' ? picked.model || undefined : undefined;
+    const effort = (provider === 'claude' || provider === 'droid' || provider === 'grok' || provider === 'muse') && isAgentEffort(picked.effort) ? picked.effort : undefined;
     const bad = validateWorkerModel('agent', provider, model) ?? validateWorkerEffort('agent', provider, effort);
     if (bad) return bad;
 
@@ -197,7 +198,9 @@ export class MeetingRoom {
     if (this.trees) {
       const made = this.trees.create(`meeting-${slug}-${id.slice(0, 4)}`);
       if (typeof made === 'string') return made;
-      worktree = made;
+      const { note, ...ref } = made;
+      worktree = ref;
+      if (note) this.events.toast(`🌿 The meeting's worktree ${note}`, 'info');
     }
     const m: Meeting = {
       id,

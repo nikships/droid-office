@@ -49,6 +49,13 @@ Tests are flat files named `tests/<name>.test.ts` using `node:test` and `node:as
 - Fix what `npm run lint` reports in code. Never add `biome-ignore` or other suppression comments, and do not turn off rules in `biome.jsonc` to pass a check.
 - Do not bypass the pre-commit hook (`.husky/pre-commit`) with `--no-verify`; fix what it reports.
 
+## Pushing and pull requests
+
+**Always push to and open pull requests (MRs) in `nikships/droid-office`. Never push to or open a pull request against the upstream `AgentSystemLabs/agent-office`.**
+
+- `nikships/droid-office` is a fork of `AgentSystemLabs/agent-office`. `gh` picks the upstream parent as the base for a fork by default, so always pass the repository explicitly: `gh pr create --repo nikships/droid-office --base main`.
+- Push only to `origin` (`github.com/nikships/agent-office.git`, which redirects to `nikships/droid-office`). Never add or push to a remote that points at `AgentSystemLabs`.
+
 ## Validation before a PR
 
 Run the checks CI runs (`.github/workflows/release.yml`, Node 22), in order, and fix any failure:

@@ -131,12 +131,20 @@ export const githubPulls: PullHost = {
     const found = (JSON.parse(out || '[]') as PullRef[])[0];
     return found ? { number: found.number, url: found.url } : undefined;
   },
+  async pullBody(ref, cwd) {
+    return (await gh(['pr', 'view', ref.url, '--json', 'body', '--jq', '.body'], cwd)).trim();
+  },
+  async setPullBody(ref, cwd, body) {
+    await gh(['pr', 'edit', ref.url, '--body', body], cwd);
+  },
 };
 
 export class GitHub implements Board {
   readonly forge = 'github' as const;
   readonly createPull = githubPulls.createPull;
   readonly findOpenPull = githubPulls.findOpenPull;
+  readonly pullBody = githubPulls.pullBody;
+  readonly setPullBody = githubPulls.setPullBody;
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: false };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: false };
   private timer?: NodeJS.Timeout;

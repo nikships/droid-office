@@ -3,6 +3,8 @@ import { isAgentEffort, isClaudeModel, type AgentProvider } from '../shared/prot
 
 export const OPEN_CODE_MODEL_MAX = 256;
 export const DROID_MODEL_MAX = 256;
+export const GROK_MODEL_MAX = 64;
+export const MUSE_MODEL_MAX = 128;
 
 /**
  * Finds the provider represented by the configured executable.  Keep this deliberately based on
@@ -18,12 +20,15 @@ export function configuredProvider(command: string): AgentProvider {
   if (base === 'opencode') return 'opencode';
   if (base === 'codex') return 'codex';
   if (base === 'droid') return 'droid';
+  if (base === 'grok') return 'grok';
+  if (base === 'muse') return 'muse';
   return 'custom';
 }
 
 /** The providers an office started with `configured` can hire: Droid first, and a custom --agent only when that's what it was started with. */
 export function agentProviders(configured: AgentProvider): AgentProvider[] {
-  return configured === 'custom' ? ['droid', 'claude', 'opencode', 'codex', 'custom'] : ['droid', 'claude', 'opencode', 'codex'];
+  const known: AgentProvider[] = ['droid', 'claude', 'opencode', 'codex', 'grok', 'muse'];
+  return configured === 'custom' ? [...known, 'custom'] : known;
 }
 
 /** OpenCode model ids are argv values, so reject anything that could be ambiguous or unsafe. */
@@ -41,20 +46,36 @@ export function isValidDroidModel(value: unknown): value is string {
   return true;
 }
 
+/** Grok model ids are argv values (`grok-4.6`), so reject anything that could be ambiguous or unsafe. */
+export function isValidGrokModel(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > GROK_MODEL_MAX) return false;
+  if (/[\s\p{Cc}\p{Cf}]/u.test(value)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
+/** Muse model ids are argv values (`muse-spark-1.3-contributor`), so reject anything ambiguous or unsafe. */
+export function isValidMuseModel(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MUSE_MODEL_MAX) return false;
+  if (/[\s\p{Cc}\p{Cf}]/u.test(value)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
 export function validateWorkerModel(kind: 'agent' | 'shell', provider: AgentProvider | undefined, model: unknown): string | undefined {
   if (model === undefined) return undefined;
   if (kind === 'shell') return 'Shell workers do not have an agent model';
   if (provider === 'claude') return isClaudeModel(model) ? undefined : 'Invalid Claude model (expected fable, opus, sonnet or haiku)';
   if (provider === 'droid') return isValidDroidModel(model) ? undefined : 'Invalid Droid model (expected a model id without whitespace)';
-  if (provider !== 'opencode') return 'Models can only be selected for Claude Code, OpenCode or Droid workers';
+  if (provider === 'grok') return isValidGrokModel(model) ? undefined : 'Invalid Grok model';
+  if (provider === 'muse') return isValidMuseModel(model) ? undefined : 'Invalid Muse model';
+  if (provider !== 'opencode') return 'Models can only be selected for Claude Code, OpenCode, Droid, Grok or Muse workers';
   if (!isValidOpenCodeModel(model)) return 'Invalid OpenCode model (expected provider/model without whitespace)';
   return undefined;
 }
 
-/** Claude Code's and Droid's `--effort`/`reasoningEffort` levels; no other provider this office launches supports one yet. */
+/** Claude Code, Droid, Grok and Muse reasoning-effort flags. */
 export function validateWorkerEffort(kind: 'agent' | 'shell', provider: AgentProvider | undefined, effort: unknown): string | undefined {
   if (effort === undefined) return undefined;
   if (kind === 'shell') return 'Shell workers do not have a reasoning effort';
-  if (provider !== 'claude' && provider !== 'droid') return 'Reasoning effort can only be selected for Claude Code or Droid workers';
+  if (provider !== 'claude' && provider !== 'droid' && provider !== 'grok' && provider !== 'muse') return 'Reasoning effort can only be selected for Claude Code, Droid, Grok or Muse workers';
   return isAgentEffort(effort) ? undefined : 'Invalid effort (expected low, medium, high, xhigh or max)';
 }

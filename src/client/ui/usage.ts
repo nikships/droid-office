@@ -171,7 +171,7 @@ export function renderUsage() {
   }
   if (codexWaiting) rows.push(h('div.row.muted', { title: 'Codex usage appears after its first root-session metrics report; subagent usage is not included.' }, 'Codex metrics waiting for first report'));
   if (untracked) {
-    rows.push(h('div.row.muted', { title: 'Droid and custom provider usage is not reported by the office.' }, 'Droid / custom usage untracked · budget and totals cover Claude Code only'));
+    rows.push(h('div.row.muted', { title: 'Droid, Grok, Muse and custom provider usage is not reported by the office.' }, 'Droid / Grok / Muse / custom usage untracked · budget and totals cover Claude Code only'));
   }
   el.replaceChildren(...rows);
 }

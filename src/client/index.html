@@ -13,6 +13,15 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- Up from the first paint until the office has drawn (see ui/loading.ts). -->
+    <div id="loading" role="status" aria-live="polite">
+      <div class="loading-card">
+        <img class="loading-mark" src="/factory-glyph.svg" width="36" height="36" alt="" />
+        <div class="loading-name">Droid Office</div>
+        <div class="loading-bar" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="loading-fill"></span></div>
+        <p class="loading-say">Loading the office</p>
+      </div>
+    </div>
     <div id="app">
       <canvas id="scene" tabindex="-1"></canvas>
       <div id="fade"></div>

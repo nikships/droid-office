@@ -67,7 +67,15 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const usageNote =
       usageState === 'untracked' ? ' · usage untracked' : usageState === 'waiting' && providerKind === 'opencode' ? ' · waiting for metrics' : usageState === 'waiting' && providerKind === 'codex' ? ' · waiting for first report' : '';
     const badge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
-    const sub = [provider && `⚙️ ${provider}${badge ? ` · ${badge}` : ''}${usageNote}`, w.worktree && `🌿 ${w.worktree.branch}`, w.pr && `🔀 PR #${w.pr.number}`, w.activity || w.title || w.prompt].filter(Boolean).join(' · ');
+    const sub = [
+      provider && `⚙️ ${provider}${badge ? ` · ${badge}` : ''}${usageNote}`,
+      w.worktree && `🌿 ${w.worktree.branch}`,
+      w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
+      w.pr && `🔀 PR #${w.pr.number}`,
+      w.activity || w.title || w.prompt,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     ul.append(
       h(
         'li',
@@ -166,6 +174,10 @@ export function openHelp() {
     ['G / 1–6', 'Emote: hold G, point at one and let go (or tap G and click one), or press 1–6: wave, thumbs up, clap, dance, point, facepalm. Everyone on your floor sees it'],
     ['7', 'Draw the .44 Magnum (or holster it); click to fire at the worker under the crosshair. One shot drops it — confirm the kill or revive it'],
     ['/', 'Search the chat and every terminal on your floor, back to before the office last restarted'],
+    [
+      typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K',
+      'Command palette: a few letters find a worker, issue, PR, service, board, teammate or action. Enter opens it, Shift+Enter walks you over first',
+    ],
     ['V / M', 'Join voice / mute'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
     ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude)'],
