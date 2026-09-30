@@ -262,8 +262,9 @@ and overlay pixels remained unchanged within one channel level. These checks do 
 native resolution/foveation transitions and focused timing measurements on the Galaxy XR.
 All twelve combined native host checks and both Android build variants passed; the release
 candidate's signature and 16 KB APK alignment were verified with the existing signing lineage.
-At final local validation, neither USB ADB nor the previously used Wi-Fi ADB endpoint exposed
-the headset, so installation and physical checks of this combined change remain pending.
+The exact published APK is now installed. Actual headset resolution/foveation transitions,
+loaded-font measurements and Android panel captures passed; the device evidence and remaining
+physical acceptance checks are recorded below.
 
 ### Refresh preference and connection boundaries
 
@@ -379,11 +380,10 @@ instead of bypassing verification.
 ## Acceptance status
 
 The latest published release is [v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
-Its matching laptop server is running, but installation of this APK remains pending because
-ADB is unavailable. The last verified headset installation is `v0.1.284`; its session,
-nearby-office picker and layout checks are recorded in
+Its exact published APK is installed, with retained app data and the matching laptop server
+running. Earlier session, nearby-office picker and layout checks are recorded in
 [published release validation](#published-release-validation-2026-09-30).
-The font, sampling and resolution changes and pending device checks are recorded in
+The font, sampling and resolution changes and actual device checks are recorded in
 [resolution and glyph release validation](#resolution-and-glyph-release-validation-2026-09-30).
 Physical terminal readability, held-card comfort, required-view performance and recovery from
 an actual runtime change to 72 Hz remain open acceptance checks. The dated measurements below
@@ -579,14 +579,37 @@ and Droid processes retained the same PIDs. An authenticated observer verified s
 version `0.1.289`, the existing Galaxy XR profile on `floor-alpha` and the same shared shell.
 The headset reconnected over Wi-Fi without another sign-in. No paid worker was resumed.
 
-USB ADB exposes no device, the previously used Wi-Fi ADB endpoint does not answer, and ADB
-discovery reports no debugging service. The running headset's office connection remains
-available over Wi-Fi; this is a debugging/installation access boundary, not an office
-connection failure. The last verified installed APK is still `v0.1.284`. Installing the
-downloaded `v0.1.289` APK, testing Recommended/Maximum and foveation Off/On transitions,
-checking actual applied pixel/mode metrics and GL errors, and a focused 1–2 minute populated
-world timing check remain pending. The owner's worn-headset review of both reported text
-issues also remains open. No new physical 90 Hz or sharpness acceptance is claimed.
+After the owner reconnected USB, `adb install -r` installed the published APK at 16:59
+device time. Pulling the installed `base.apk` reproduced the published SHA-256 exactly.
+Version/code are `0.1.289`/289, debugging remains disabled, the release certificate is
+unchanged and the original 2026-09-29 first-install timestamp is retained. Existing office
+selection and sign-in survived the update.
+
+A temporary signed diagnostic exercised the real graphics UI without typing into workers.
+Recommended On/Off allocated 1856×2160, Maximum On/Off allocated 3152×3668, and slider
+minimum On/Off allocated 1392×1620. All transitions reported the correct applied dimensions
+and foveation state, valid gaze, empty graphics error and `gl_error=0`. Original preferences
+were restored exactly (100%, More headroom, Low detail, sharp screens and FPS counter on),
+and the ordinary launch confirmed recommended-size targets. These are interaction checks,
+not steady performance acceptance: the sampled maximum windows submitted 58.68 fps with
+Balanced foveation and 45.007 fps with foveation Off while display/compositor remained 90 Hz.
+Maximum is a runtime allocation limit, not a 90 FPS preset.
+
+On the actual headset WebView, the replacement font loaded and `M`, Git and branch icons
+each measured 11.99998 px at 20 px. The worker's original 2048×1360 source canvas preserved
+the full `main` prompt and adjacent icons. A PixelCopy capture of the actual Android panel
+after terminal snapshot rendering showed the same unclipped icons and clean rows; the
+graphics panel capture had no overlapping rows or horizontal overflow. Source/panel images
+cannot establish physical in-world laptop sharpness through the headset optics.
+
+An ordinary-launch two-minute capture contained 60.125 seconds of focused five-second
+windows before Android's idle shutdown paused the session. Those windows submitted
+89.218–90.017 fps, with 18 missed predicted periods; actual refresh and compositor were 90 Hz,
+scene packets advanced, no GL errors occurred and textures were still loading (9–73 resident).
+Paused windows are excluded. No fully resident required-view timing result is claimed, and
+the sharp laptop pass was inactive in this view. The diagnostic package and its device capture
+directory were removed, then the regular app was relaunched. The owner's worn-headset review
+of both text issues, active-screen performance and actual 72 Hz recovery remain open.
 
 ### Published release validation (2026-09-30)
 

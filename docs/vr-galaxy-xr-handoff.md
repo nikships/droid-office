@@ -12,9 +12,8 @@ The native OpenXR implementation is in `native/android`. It now renders the orig
 populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
 The native work is merged into `main`, and the latest published release is
 [v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
-Its APK was downloaded and its checksum, signature, version and alignment were verified.
-Installation remains pending because USB/Wi-Fi ADB is unavailable; the last verified headset
-installation is `v0.1.284`. The matching `v0.1.289` desktop server is running detached on the
+Its exact APK is installed; pulling the installed bytes reproduced the published checksum,
+with the existing release signature and retained app data. The matching `v0.1.289` desktop server is running detached on the
 laptop. The headset reconnected over Wi-Fi, and an authenticated observer verified its
 original profile and existing shared shell in the same world. Both floor PTY hosts and their
 worker processes survived the server replacement without restarting.
@@ -28,8 +27,18 @@ At the captured runtime limits, Maximum selects approximately 169.8%, allocating
 world pixels per eye instead of stopping at the recommended 1856×2160. The menu reports
 selected/applied pixels and runtime bounds; these are render dimensions, not a physical-panel
 pixel mapping. Failed target preflight preserves the active render targets. Host and browser
-checks pass, but these changes still require installation and actual headset transitions,
-focused performance measurements and the owner's physical sharpness review.
+checks pass. Actual headset Recommended/Maximum/minimum and foveation Off/On transitions
+passed without GL errors; loaded-font widths and Android panel captures confirmed unclipped
+terminal glyphs and clean graphics rows. Maximum exceeded the frame budget (58.68 fps with
+Balanced foveation, 45.007 fps Off in sampled loading windows) despite a 90 Hz display, so it
+is not a 90 FPS preset. Original settings were restored. Fully resident required-view timing
+and the owner's physical sharpness review remain open.
+
+The next requested controller work replaces native one-press gong, ladder and pole actions
+with physical strikes and held-grip movement, adds a rear-holstered held-grip gun and a new
+shared desktop/native gun model, and separates left/right face-button and stick-click jobs.
+Right Menu is reserved for Android XR; left Menu owns the workspace and grip never navigates
+menus. Desktop and WebXR control schemes remain authoritative for their own clients.
 
 The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.
