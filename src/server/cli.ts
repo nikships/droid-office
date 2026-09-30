@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig, ensureSelfSigned } from './config.js';
 import { startServer } from './server.js';
 import { tildify } from './building.js';
+import { startDiscovery } from './discovery.js';
 
 const argv = process.argv.slice(2);
 if (argv[0] === 'prune') {
@@ -35,6 +36,7 @@ try {
   else console.error(`droid-office: ${e.message}`);
   process.exit(1);
 }
+const discovery = startDiscovery(cfg, office.server.address());
 
 const scheme = cfg.tls ? 'https' : 'http';
 const urls = new Set<string>([`${scheme}://localhost:${cfg.port}`]);
@@ -81,6 +83,7 @@ let closing = false;
 const stop = (signal: NodeJS.Signals) => {
   if (closing) process.exit(1);
   closing = true;
+  discovery.stop();
   const keep = signal === 'SIGTERM';
   console.log(keep ? '\n  closing the office — workers keep running for the next one…' : '\n  closing the office…');
   office.shutdown(keep);

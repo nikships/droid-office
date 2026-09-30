@@ -18,6 +18,8 @@ export interface Config {
   project?: string;
   host: string;
   port: number;
+  /** Advertise this office to nearby Galaxy XR apps over DNS-SD, unless bound only to loopback. */
+  discovery: boolean;
   /** Plaintext password, only when known: from --password, or generated and not yet claimed. */
   password?: string;
   passwordGenerated: boolean;
@@ -100,6 +102,8 @@ Options:
                           in the office
   -p, --port <n>          Port to listen on (default 4600, env PORT)
   -H, --host <addr>       Address to bind (default 0.0.0.0)
+      --no-discovery      Disable local-network discovery for the Galaxy XR app
+                          (also DROID_OFFICE_DISCOVERY=0; enabled by default)
       --password <pw>     Office password (env DROID_OFFICE_PASSWORD).
                           Without one, a random password is generated once and
                           saved in <dir>/.droid-office/config.json
@@ -222,6 +226,7 @@ export function loadConfig(argv: string[]): Config {
   let projects = process.env.DROID_OFFICE_PROJECTS ? path.resolve(process.env.DROID_OFFICE_PROJECTS) : '';
   let port = Number(process.env.PORT) || 4600;
   let host = '0.0.0.0';
+  let discovery = process.env.DROID_OFFICE_DISCOVERY !== '0';
   let password = process.env.DROID_OFFICE_PASSWORD || '';
   let agentCmd = process.env.DROID_OFFICE_AGENT || 'droid';
   let agentArgs: string[] = splitArgs(process.env.DROID_OFFICE_AGENT_ARGS || '');
@@ -253,6 +258,9 @@ export function loadConfig(argv: string[]): Config {
       case '-H':
       case '--host':
         host = takeValue(argv, i++, a);
+        break;
+      case '--no-discovery':
+        discovery = false;
         break;
       case '--password':
         password = takeValue(argv, i++, a);
@@ -416,6 +424,7 @@ export function loadConfig(argv: string[]): Config {
     project: project || undefined,
     host,
     port,
+    discovery,
     password: password || undefined,
     passwordGenerated,
     verifier,
