@@ -140,3 +140,18 @@ export function forgeWords(forge: Forge | undefined): ForgeWords {
 export function sameRepo(a: string | undefined, b: string | undefined): boolean {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
+
+/**
+ * Where someone coming back in lands. `floorIds` is the building's floors in arrival order.
+ * A floor that's gone (not the roof, and no longer in the building) sends them to the roof
+ * instead of the first floor. `back` means the place they asked for is still there, so the
+ * spot they were standing in can be used; otherwise they arrive by elevator.
+ */
+export function returnLanding(wanted: string | null, floorIds: readonly string[], roofId: string): { onRoof: boolean; floorId: string | undefined; back: boolean; gone: boolean } {
+  const known = wanted !== null && floorIds.includes(wanted);
+  const gone = wanted !== null && wanted !== roofId && !known;
+  const onRoof = (wanted === roofId || gone) && floorIds.length > 0;
+  const floorId = onRoof ? undefined : known ? wanted : floorIds[0];
+  const back = !gone && wanted !== null && (onRoof || floorId === wanted);
+  return { onRoof, floorId, back, gone };
+}
