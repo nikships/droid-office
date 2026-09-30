@@ -4,6 +4,7 @@ import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import { sameLook } from '../shared/avatar';
 import {
   BALCONY,
+  BEANBAGS,
   DESK_BY_ID,
   DESKS,
   ELEVATOR,
@@ -39,6 +40,7 @@ import type { AgentEffort, AgentProvider, CarriedIssue, CarriedObject, ChangesSt
 import { HeldObjectView } from './world/held-object';
 import { GRAB_REACH, type Grabbable } from './vr/grab';
 import { MEETING_PATTERNS, defaultMeetingRequest, reviewMeetingRequest } from '../shared/meetings';
+import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { Net } from './net';
 import { guardLeaving, leaveTo } from './leave';
@@ -88,7 +90,8 @@ import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, ope
 import { openAsk } from './ui/ask';
 import { copy, guessOs, openTeam, routeTeamMessage } from './ui/team';
 import { openAccounts, routeAccountsMessage } from './ui/accounts';
-import { openServices, serviceTunnel } from './ui/services';
+import { openServices, serviceTunnel, serviceUrl } from './ui/services';
+import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { openQueue } from './ui/queue';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers, updateSpeaking } from './ui/hud';
@@ -1935,6 +1938,8 @@ function sayBubble(from: string, text: string) {
 const NEAR_ENOUGH = 1.6;
 /** Who you're on your way to (clicked in the sidebar), and when to look again at where they've got to. */
 let walkingTo: { id: string; replanAt: number } | null = null;
+/** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
+let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void } | null = null;
 
 /** Walks you over to a teammate, riding the elevator first if they're on another floor. A key of yours takes over. */
 function walkTo(id: string) {
@@ -1943,6 +1948,7 @@ function walkTo(id: string) {
   if (!store.onMyFloor(p) && !p.floor) return;
   if (player.seat) standUp();
   if (golf.active) golf.stop();
+  errand = null;
   walkingTo = { id, replanAt: 0 };
   if (store.onMyFloor(p)) toast(`🚶 Walking over to ${p.name}`);
   else {
@@ -1976,6 +1982,7 @@ function vrWalkToPeer(id: string) {
 }
 function stopWalking() {
   walkingTo = null;
+  errand = null;
   player.stopWalking();
 }
 
@@ -2010,6 +2017,7 @@ function walkTick(now: number) {
 }
 
 player.onPathEnd = (why) => {
+  if (errand) return errandEnd(why);
   if (!walkingTo) return;
   if (why === 'cancelled') return void (walkingTo = null);
   const p = store.peers.get(walkingTo.id);
@@ -2022,6 +2030,36 @@ player.onPathEnd = (why) => {
     stopWalking();
   } else walkingTo.replanAt = 0;
 };
+
+/**
+ * Walks you over to `at` on this floor and does `then` when you get there. Where there's no walking
+ * to be done (up on the roof, riding the elevator, on the ladder, in the headset) it just does it.
+ * A key of yours takes over, and then it doesn't happen.
+ */
+function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }) {
+  if (upTop || trip || climber.active || vr.active) return then();
+  closeAllModals();
+  if (player.seat) standUp();
+  if (hanger.active) hanger.cancel();
+  if (golf.active) golf.stop();
+  if (walkingTo || errand) stopWalking();
+  const to = { x: at.x, y: at.y ?? 0, z: at.z };
+  const path = wayTo(player.pos, to);
+  if (!path.length) return then();
+  errand = { at, what, face, then };
+  toast(`🚶 Walking over to ${what}`);
+  player.walkPath(path);
+}
+
+function errandEnd(why: 'arrived' | 'cancelled' | 'stuck') {
+  const e = errand!;
+  errand = null;
+  if (why === 'cancelled') return;
+  if (why === 'stuck') toast(`🚧 Couldn't find a way over to ${e.what}, so here it is from where you are`, 'warn');
+  else if (e.face) arrivedAt(e.face);
+  else stopWalking();
+  e.then();
+}
 
 // ---- Workers ------------------------------------------------------------------------------------
 /** How close (meters) you stop a worker jumping, and how far you go before it starts again. */
@@ -2805,6 +2843,137 @@ function openWorkerChanges(id: string) {
 function showQueue() {
   openQueue(net, { openTerminal: openWorkerTerminal });
 }
+
+// ---- The command palette (Ctrl+K, ⌘K on a Mac) ------------------------------------------------------
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** Where you stand to use something of this kind on this floor, like the Issues board. */
+function spotOf(kind: InteractKind): Interactable | undefined {
+  return office.interactables.find((it) => it.kind === kind && !it.off);
+}
+
+/** Where you stand at a desk: behind the worker, or in front of a kiosk. Meeting chairs are the chair itself. */
+function deskSpot(desk: DeskDef): { x: number; z: number } | undefined {
+  if (desk.room) return office.interactables.find((it) => it.deskId === desk.id);
+  return deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
+}
+
+/** The free desk nearest you, for hiring from the palette. A bean bag counts once it's out. */
+function nearestFreeDesk(): DeskDef | undefined {
+  let best: DeskDef | undefined;
+  let bestD = Infinity;
+  for (const d of [...DESKS, ...BEANBAGS]) {
+    if (d.station || d.room || store.workerAtDesk(d.id)) continue;
+    if (d.beanbag && office.interactables.find((it) => it.deskId === d.id)?.off !== false) continue;
+    const dist = Math.hypot(d.x - player.pos.x, d.z - player.pos.z);
+    if (dist < bestD) {
+      best = d;
+      bestD = dist;
+    }
+  }
+  return best;
+}
+
+/** An entry that walks you over to `kind`'s spot (Shift+Enter) before doing what Enter does. */
+function atSpot(kind: InteractKind, what: string, entry: Omit<PaletteEntry, 'walk'>): PaletteEntry {
+  const it = spotOf(kind);
+  return { ...entry, walk: it ? () => walkThen(it, what, entry.open) : undefined };
+}
+
+/** Everything the palette finds, in the order it lists them before you type. */
+function paletteEntries(): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  for (const w of store.workers.values()) {
+    const desk = DESK_BY_ID.get(w.deskId);
+    const spot = desk && deskSpot(desk);
+    const open = () => openWorkerTerminal(w.id);
+    out.push({
+      icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : '🧑‍💻',
+      kind: 'Worker',
+      title: w.name,
+      detail: [w.task?.name, desk?.label, STATUS_LABEL[w.status]].filter(Boolean).join(' · '),
+      keywords: [w.title, w.worktree?.branch],
+      open,
+      walk: desk && spot ? () => walkThen(spot, `${w.name} at ${desk.label}`, open, desk) : undefined,
+    });
+  }
+
+  const free = nearestFreeDesk();
+  const hireSpot = free && deskSpot(free);
+  const hireAt = (d: DeskDef) => () => hireAtDesk(d.id);
+  out.push({
+    icon: '✨',
+    kind: 'Action',
+    title: 'Hire a worker',
+    detail: free ? `At ${free.label}, the free desk nearest you` : 'Every desk is taken',
+    keywords: ['new worker', 'spawn an agent'],
+    open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
+    walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
+  });
+  out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a worker', keywords: ['backlog', 'tasks'], open: showQueue }));
+  out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
+  if (store.invites) out.push({ icon: '👥', kind: 'Action', title: 'Invite teammates', keywords: ['team', 'add people'], open: () => openTeam(net) });
+  else if (store.me.admin) out.push({ icon: '👥', kind: 'Action', title: 'Invite people', detail: 'Accounts', keywords: ['invite teammates', 'accounts', 'team'], open: () => openAccounts(net) });
+  out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
+  out.push({ icon: '🔎', kind: 'Action', title: 'Search the chat and every terminal', keywords: ['find'], open: showSearch });
+
+  const prWord = words().pr;
+  out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
+  out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
+  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
+  out.push(atSpot('meeting', 'the meeting room', { icon: '🤝', kind: 'Board', title: 'Meeting room', keywords: ['call a meeting'], open: () => showMeeting() }));
+
+  for (const pr of store.pulls.items) {
+    out.push(
+      atSpot('pulls', `the ${prWord} board`, {
+        icon: '🔀',
+        kind: prWord,
+        title: `#${pr.number} ${pr.title}`,
+        detail: [pr.isDraft ? 'Draft' : pr.state.toLowerCase(), pr.headRefName, pr.author].join(' · '),
+        open: () => openPull(pr, net, boardActions()),
+      }),
+    );
+  }
+  for (const issue of store.issues.items) {
+    out.push(
+      atSpot('issues', 'the Issues board', {
+        icon: '📌',
+        kind: 'Issue',
+        title: `#${issue.number} ${issue.title}`,
+        detail: [issue.state.toLowerCase(), ...issue.labels.map((l) => l.name), issue.author].join(' · '),
+        open: () => openIssue(issue, net, boardActions()),
+      }),
+    );
+  }
+  for (const svc of store.services.items) {
+    const board = spotOf('services');
+    out.push({
+      icon: '🌐',
+      kind: 'Service',
+      title: svc.title || svc.command,
+      detail: [`:${svc.port}`, svc.title && svc.command, store.workers.get(svc.workerId)?.name].filter(Boolean).join(' · '),
+      keywords: [String(svc.port)],
+      open: () => window.open(serviceUrl(svc.port), '_blank', 'noopener'),
+      walk: board ? () => walkThen(board, 'the Services board', () => openServices()) : undefined,
+    });
+  }
+  for (const p of store.peers.values()) {
+    if (p.id === store.you) continue;
+    const floor = store.onMyFloor(p) ? 'On this floor' : `On the ${store.floors.find((f) => f.id === p.floor)?.name ?? 'other'} floor`;
+    out.push({ icon: '🙂', kind: 'Teammate', title: p.name, detail: floor, open: () => walkTo(p.id) });
+  }
+  return out;
+}
+
+// Ctrl+K (⌘K on a Mac), from anywhere but a text box or a terminal, where the key is theirs.
+// In the palette's own box it puts the palette away.
+window.addEventListener('keydown', (e) => {
+  if (!isPaletteKey(e, IS_MAC)) return;
+  const inPalette = paletteOpen() && !!(e.target as HTMLElement | null)?.closest?.('.modal.palette');
+  if (!inPalette && isTyping(e)) return;
+  e.preventDefault();
+  if (!e.repeat) togglePalette(paletteEntries);
+});
 
 /** The meeting room's window: how the meeting's going, or the form to call one (prefilled from an issue or a PR). */
 function showMeeting(preset?: MeetingPreset) {
