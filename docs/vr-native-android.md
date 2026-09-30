@@ -314,6 +314,13 @@ instead of bypassing verification.
 
 ## Acceptance status
 
+The current installed release is [v0.1.284](https://github.com/nikships/droid-office/releases/tag/v0.1.284).
+Its matching laptop server, preserved headset session, nearby-office picker and layout checks
+are verified in [published release validation](#published-release-validation-2026-09-30).
+Physical terminal readability, held-card comfort, required-view performance and recovery from
+an actual runtime change to 72 Hz remain open acceptance checks. The dated measurements below
+preserve earlier experiments and should not be read as the current release pointer.
+
 ### Controller-only and sharp-screen installation, 2026-09-29
 
 The combined APK was installed at 21:56 local device time, process 19601, against the isolated
@@ -460,17 +467,19 @@ signing. The release builder now normalizes both SDK variables to the selected p
 
 ### Nearby-office validation (2026-09-30)
 
-The signed connection candidate `0.1.284-rc` (version code 283) upgraded the headset without
-clearing its data. Thirteen checks operated the real Android widgets through temporary signed
+The published signed `0.1.284` APK (version code 284) upgraded the headset without clearing its
+data. Fourteen checks operated the real Android widgets through temporary signed
 instrumentation: ordinary launch reopened the saved office, Wi-Fi DNS-SD found the laptop,
 selection stopped discovery and retained the successful origin, HTTP 500 and a silent server
 returned to the picker, both failures preserved the saved office and manual draft, and sixteen
-long office rows fit without overlapping or clipped text. The silent-server watchdog fired at
+long office rows fit without overlapping or clipped text. A synthetic 1280×720 Android viewport
+also wrapped long office names and remained scrollable. The silent-server watchdog fired at
 approximately 15 seconds before any document committed. The instrumentation package was removed
 afterward; no test interface or privileged JavaScript bridge is part of the app.
 
-Captured native picker and manual-keyboard layouts were reviewed. The long-office list used
-synthetic rows in the real Android view; discovery and failure checks used live Wi-Fi services.
+Captured native picker, failure-message and manual-keyboard layouts were reviewed. The
+long-office list and compact viewport used synthetic fixtures in the real Android view;
+discovery and failure checks used live Wi-Fi services.
 This establishes Android layout and connection behavior, rather than physical controller comfort
 or compositor text sharpness. The restored headset joined the existing office under its original
 profile, floor and position alongside the existing shared shell. The laptop server runs detached
@@ -485,6 +494,40 @@ checks the current document and generation, remembers a committed successful doc
 invalid TLS without closing the office for an unrelated external image failure.
 
 ### Published release validation (2026-09-30)
+
+[v0.1.284](https://github.com/nikships/droid-office/releases/tag/v0.1.284), from `3187867`,
+publishes the matching desktop package, signed headset APK and checksum. Its
+[main CI run](https://github.com/nikships/droid-office/actions/runs/36743257188) passed 641
+desktop tests, all twelve native host checks, both Android builds, signing verification and
+publication. The published APK's SHA-256 is
+`a2ad385096bbddd30f1ac4f51358cfcad64793bde30c027cfbcaba6533839315`.
+
+The exact published APK was installed with `adb install -r` at 12:34 device time. Its installed
+bytes matched that checksum; version name/code are `0.1.284`/284, debugging is disabled and
+the original first-install time and app data are retained. The released desktop package was
+installed separately and runs detached from the agent's terminal. After an ordinary headset
+launch without a server-address override, an authenticated desktop observer saw the original
+Galaxy XR profile, remembered floor/position and existing shared shell on that `0.1.284` server
+without another headset sign-in. The fourteen on-device connection checks above used this
+published APK and matching server. The temporary instrumentation package and failure-test
+servers were removed afterward. No paid worker was resumed.
+
+Startup loaded both Samsung controller meshes, enabled the full-resolution unfoveated screen
+layer and successfully requested 90 Hz. Thirteen populated five-second windows, ending at
+12:40:55–12:41:55 device time, measured actual refresh and compositor FPS at 90, with zero
+reported compositor drops. An initial empty-world window is excluded. Submitted FPS was
+86.023–90.225; 21 predicted periods were missed in the first populated window and four later,
+for 25 in total. Following the first populated window, submitted FPS was 89.620–90.225.
+Runtime app GPU time was 8.16–9.46 ms and maximum window CPU p99 was 19.04 ms. The scene
+contained 1,713 objects, packet sequence advanced from 245 to 2,035, and no packets were
+rejected or GL errors reported. Textures continued becoming resident, from five to 60.
+
+Gaze was invalid and the sharp-screen layer submitted no draws in this stationary view,
+although its setting was enabled. This establishes a live release connection with actual
+90 Hz and the misses above. It does not establish fully resident, perfectly steady 90 FPS,
+worn-session gaze behavior, terminal readability or physical controller comfort.
+
+#### Earlier v0.1.280 measurement
 
 [v0.1.280](https://github.com/nikships/droid-office/releases/tag/v0.1.280), from `6096760`,
 publishes the desktop package, signed headset APK and checksum. Its

@@ -11,7 +11,7 @@ board and elevator interactions are the priority; further mini-game support is d
 The native OpenXR implementation is in `native/android`. It now renders the original
 populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
 The native work is merged into `main`, and the published
-[v0.1.280 release](https://github.com/nikships/droid-office/releases/tag/v0.1.280) is installed
+[v0.1.284 release](https://github.com/nikships/droid-office/releases/tag/v0.1.284) is installed
 on the headset. The installed APK's bytes match the published checksum. The matching released
 desktop server is running on the laptop, and an authenticated observer verified the headset's
 original profile, remembered floor/position and existing shared shell in the same world.
@@ -36,14 +36,27 @@ and fingertip evidence is historical and does not describe the supported native 
 The release includes XR menus/tooltips, graphics settings, a persistent FPS option, command
 palette access, panel dropdowns and keyboard, remembered position and current worker recovery
 flows. Actual WebView and browser layout/input replays passed; physical comfort and controller
-use still need review. The latest CI passed all 609 desktop tests, all 11 native host checks,
-both Android variants and signed release publication.
+use still need review. The latest [CI run](https://github.com/nikships/droid-office/actions/runs/36743257188)
+passed all 641 desktop tests, all 12 native host checks, both Android variants and signed release
+publication, from source commit `3187867`.
 
-The published APK produced a one-minute wake-and-launch capture with actual refresh and
-compositor FPS at 90, submitted FPS 89.150–90.235 and ten missed predicted periods, including
-startup. Scene packets continued advancing in the populated office. Gaze was invalid and the
+The installed app now discovers laptop servers under **Nearby offices** and automatically
+reopens the last successfully connected office on ordinary launch. Fourteen checks against the
+published APK passed on the real headset, including Wi-Fi discovery, failed-connection recovery
+and wrapped, scrollable office rows at a synthetic 1280×720 viewport.
+Reviewed Android picker and keyboard captures have no overlapping text. Start the current
+desktop server on the same Wi-Fi, select the laptop and sign in once; see
+[connection instructions](vr-native-android.md#connect-to-your-laptop). The browser QR route remains
+separate from the installed app's nearby picker.
+
+The published v0.1.284 APK produced 65 seconds of populated-world launch measurements after
+excluding an initial empty window. Actual refresh and compositor FPS were 90 throughout;
+submitted FPS was 86.023–90.225, with 25 missed predicted periods (21 in the first populated
+window and four later). The following windows measured 89.620–90.225 submitted FPS. Scene
+packets continued advancing, while textures were still loading. Gaze was invalid and the
 sharp-screen pass was inactive in that view, so this capture does not close the physical
-acceptance checks. The owner requests focused 1–2 minute checks rather than long soaks;
+acceptance checks or establish fully resident, perfectly steady 90 FPS. The owner requests
+focused 1–2 minute checks rather than long soaks;
 ordinary thermal throttling is not a reason to stop or cool the app.
 
 See [published release validation](vr-native-android.md#published-release-validation-2026-09-30)
