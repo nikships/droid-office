@@ -98,6 +98,20 @@ void packets() {
     packet["control"]["graphics"].erase("sharpScreens");
     assert(bridge.submit(packet.dump(), scene, error));
     assert(bridge.read().graphics.sharpScreens && "legacy settings keep laptop clarity enabled");
+    packet["control"]["graphics"]["renderScale"] = 1.7;
+    packet["control"]["graphics"]["foveation"] = "off";
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(close(bridge.read().graphics.renderScale, 1.7f));
+    assert(bridge.read().graphics.foveation == FoveationQuality::Off);
+    packet["control"]["graphics"]["renderScale"] = 4;
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(close(bridge.read().graphics.renderScale, 2.f));
+    packet["control"]["graphics"]["renderScale"] = .1;
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(close(bridge.read().graphics.renderScale, .75f));
+    packet["control"]["graphics"]["renderScale"] = 1;
+    packet["control"]["graphics"]["foveation"] = "balanced";
+    assert(bridge.submit(packet.dump(), scene, error));
     const auto graphicsRevision = bridge.read().revision;
     for (const auto &invalid : Json::array({"false", 0, nullptr})) {
         packet["control"]["graphics"]["sharpScreens"] = invalid;

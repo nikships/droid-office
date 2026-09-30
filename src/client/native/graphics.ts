@@ -73,7 +73,9 @@ export function openNativeGraphicsSettings(): void {
         const selected = getNativeGraphicsSettings()[key] === value;
         button.classList.toggle('on', selected);
         button.setAttribute('aria-checked', String(selected));
-        button.disabled = (key === 'foveation' && value !== 'off' && m.foveationSupported === false) || (key === 'peripheralDensity' && (getNativeGraphicsSettings().foveation === 'off' || m.foveationSupported === false));
+        button.disabled =
+          (key === 'foveation' && ((value === 'off' && typeof m.foveationSupported !== 'boolean') || (value !== 'off' && m.foveationSupported === false))) ||
+          (key === 'peripheralDensity' && (getNativeGraphicsSettings().foveation === 'off' || m.foveationSupported === false));
       }
     });
     return row;
@@ -207,8 +209,10 @@ export function openNativeGraphicsSettings(): void {
       resolution.recommended ? `Recommended: ${pixels(resolution.recommended)}` : '',
       resolution.maximum ? `Runtime limit: ${pixels(resolution.maximum)}` : '',
       previewScale === null && current.renderScale > resolution.maxScale ? `Requested ${percent(current.renderScale)}; limited to ${selectedPercent} on this headset` : '',
+      typeof m.graphicsError === 'string' && m.graphicsError ? 'This change could not be applied. The current resolution and foveation mode remain active.' : '',
     ];
     setText(resolutionApplied, resolutionDetails.filter(Boolean).join(' · '));
+    resolutionApplied.classList.toggle('warning', typeof m.graphicsError === 'string' && Boolean(m.graphicsError));
     const foveationText =
       m.foveationSupported === false
         ? 'Foveated rendering is unavailable on this headset. The world keeps full detail at the selected resolution.'

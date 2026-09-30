@@ -71,7 +71,7 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
                     throw std::runtime_error("Unsupported graphics version");
                 next.graphics.sharpScreens = graphics.value("sharpScreens", true);
                 next.graphics.renderScale =
-                    std::clamp(finite(graphics.at("renderScale"), 1), .75f, 1.f);
+                    std::clamp(finite(graphics.at("renderScale")), .75f, 2.f);
                 next.graphics.peripheralDensity =
                     std::clamp(finite(graphics.at("peripheralDensity"), 1), .25f, 1.f);
                 const auto quality = graphics.value("foveation", std::string{"balanced"});
@@ -79,6 +79,8 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
                     next.graphics.foveation = FoveationQuality::Clarity;
                 else if (quality == "performance")
                     next.graphics.foveation = FoveationQuality::Performance;
+                else if (quality == "off")
+                    next.graphics.foveation = FoveationQuality::Off;
                 else if (quality != "balanced")
                     throw std::runtime_error("Invalid foveation quality");
             }

@@ -31,6 +31,12 @@ of creating a second office state or a separate worker/board implementation.
   at the tracked gaze; invalid gaze requires a central full-resolution fallback. Follow the
   [QCOM foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt)
   when changing focal points or depth attachments.
+- World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
+  and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
+  the maximum or force default frames through maximum-size targets. Replace targets on the
+  GL thread with no acquired images, retaining the current targets if allocation fails.
+  Complete GPU image use before destroying old swapchains, including during teardown.
+  QCOM texture foveation cannot be disabled after enabling it; Off uses new unfoveated targets.
 - Validate performance with a visible, populated office and advancing scene packets, both
   workspace-open and workspace-closed, using focused 1–2 minute checks. An empty world, a frozen snapshot
   or compositor FPS alone cannot establish sustained application frame rate. Record visual

@@ -177,12 +177,12 @@ closing the workspace. Native FPS alone would have concealed this freeze.
 On 2026-09-29 the owner physically wore the headset and reported that the office looked good,
 except for pixelated worker laptop terminal screens even at the highest graphics settings.
 Those screens already use lossless 2048×1360 canvases, and the native exporter preserves that
-size. Increasing the source bitmap alone would not establish a fix. The world is rendered at
-the runtime's recommended 1856×2160 eye size, below its 3152×3682 maximum, with gaze foveation.
-A separate full-resolution, unfoveated, depth-occluded pass for nearby laptop screens is in
-progress. It must keep the original screen contents, placement and picking, and must not
-render screens through walls or the motion controllers. The pass is installed; its visual
-sampling works, but its additional performance cost has not yet met acceptance.
+size. Increasing the source bitmap alone would not establish a fix. The default world render
+uses the runtime's recommended 1856×2160 eye size, below its 3152×3682 maximum, with gaze foveation.
+A separate full-resolution, unfoveated, depth-occluded pass for nearby laptop screens is
+installed. It keeps the original screen contents, placement and picking, and must not
+render screens through walls or the motion controllers. Physical text readability and
+consistent 90 Hz in required views remain acceptance checks.
 
 The sharp pass uses the original screen geometry and lossless texture at the runtime's maximum
 eye resolution. The original world screen remains as a fallback. Only nearby, visible screens
@@ -202,6 +202,70 @@ oblique lids, a 3.5 cm foreground occluder, two depth-array layers, fade and sci
 The screen pass currently redraws transparent meshes and sprites, but not transparent points,
 lines or instances; rain or snow particles in front of a screen can therefore differ from the
 world pass. The layer also remains limited by the detail in the original source canvas.
+
+### Maximum world resolution and terminal glyphs
+
+On 2026-09-30 the owner captured two defects while wearing published `v0.1.284`: Nerd Font
+symbols collided or clipped in the workspace terminal, and the physical laptop screen looked
+blurry at the highest settings. The settings' old 100% ceiling meant recommended eye resolution,
+not the runtime maximum. The graphics panel now has a controller-operated slider, 1% step
+buttons and **Recommended** / **Maximum** presets. It reports selected and applied eye pixels,
+the recommendation and runtime bounds. At this headset's reported limits, the uniform multiplier
+reaches approximately 169.8%, or 3152×3668 per eye, within the 3152×3682 runtime limit.
+These are OpenXR render-image dimensions, not a claim of one render pixel per physical panel pixel.
+
+Resolution choices allocate matching world targets, bounded by both eye views, OpenXR system
+limits and GLES texture limits. The default does not allocate maximum-size world targets.
+Slider dragging previews the choice and applies it on release; native target changes wait
+250 ms for a stable choice. Replacement starts on the GL thread with no acquired world images.
+Each staged swapchain then acquires and waits for one image, validates the real color/depth
+attachment and tile-MSAA configuration, clears and finishes GPU work, and releases the image
+before promotion. A wait timeout or failed allocation/completeness check retains the current
+targets. GPU commands complete before old swapchains are destroyed. Scene assets, player state,
+Android Surfaces and panel resolution are retained.
+
+**Foveated rendering → Off** uses new unfoveated targets at the chosen world resolution.
+On profiles preserve the sharp gaze region with configurable peripheral density; gaze loss
+keeps the central fallback. The shader, controller and sharp-screen depth mapping use the
+actually allocated world dimensions. The runtime reports foveation availability and the applied
+mode. QCOM forbids disabling foveation on a texture after enabling it, so the Off transition
+recreates targets instead of clearing that bit on existing images.
+[QCOM texture-foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt),
+[OpenXR swapchain destruction](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrDestroySwapchain.html).
+
+The log windows adjacent to the blurry-laptop screenshot already had a resident, active
+3152×3682 unfoveated screen layer, valid gaze, 103 textures and no pending uploads. The original
+2048×1360 PNG was preserved and sharp at its source size. Its 130×31 terminal grid used a
+25.93 px source font, with a right prompt extending to column 129; the captured eye minified
+that texture by approximately 1.4–1.5×. Raising world resolution alone cannot establish a fix
+for this capture. The [terminal glyph correction](terminal-glyphs.md) fits the bundled Nerd
+Font icons to Geist Mono's 0.6em cells and waits for fonts before measuring terminals.
+The actual captured terminal grid replay now preserves `main` and its adjacent symbols;
+idle laptop canvases repaint after font loading. The original terminal content, right
+prompt, placement and picking stay authoritative. Browser replay verifies the source glyph
+correction; it does not establish worn-headset text readability.
+
+The [sharp-screen sampling check](vr-native-screen-sampling.md) adds a conservative half-mip
+bias only to original laptop textures in the separate sharp layer. It retains anisotropic
+mip filtering at oblique angles and distance; world draws and transparent overlays keep their
+existing sampling. Fine-glyph framebuffer fixtures measure a modest contrast improvement,
+with unchanged unaffected pixels and filtered distant checkers. This is a sampling correction,
+not evidence that the owner's worn-headset blur report is fully resolved.
+
+The combined Node 22 checks passed lint, typechecking and all 646 coverage tests
+(84.55% lines, 80.66% functions). Actual graphics-panel browser fixtures passed at 1600×1019
+and 1280×720, including a 300 px keyboard boundary, the exact maximum endpoint and allocation
+failure feedback, with no overlapping rows or horizontal overflow. Controller pointer targets
+remain at least 44 px. Sampling framebuffer checks passed on macOS ANGLE and Linux Mesa 25.2.8
+with ASan/UBSan: the captured minification range gained modest fine-glyph contrast while world
+and overlay pixels remained unchanged within one channel level. These checks do not replace
+native resolution/foveation transitions and focused timing measurements on the Galaxy XR.
+All twelve combined native host checks and both Android build variants passed; the release
+candidate's signature and 16 KB APK alignment were verified with the existing signing lineage.
+At final local validation, neither USB ADB nor the previously used Wi-Fi ADB endpoint exposed
+the headset, so installation and physical checks of this combined change remain pending.
+
+### Refresh preference and connection boundaries
 
 The app already requests 90 Hz at startup, session start and restored focus. A bounded,
 persistent 90 Hz preference is now in source: it polls the actual rate once per second and

@@ -6,6 +6,43 @@
 using namespace office;
 bool near(float a, float b) { return std::abs(a - b) < .00001f; }
 int main() {
+    const ResolutionLimits limits{{1856, 2160}, {3152, 3682}};
+    assert(near(maximumRenderScale(limits), 3152.f / 1856.f));
+    assert((renderSize(limits, 1) == RenderSize{1856, 2160}));
+    assert((renderSize(limits, 1.5f) == RenderSize{2784, 3240}));
+    assert((renderSize(limits, maximumRenderScale(limits)) == RenderSize{3152, 3668}));
+    assert(renderSize(limits, 5) == renderSize(limits, maximumRenderScale(limits)));
+    assert(renderSize(limits, -1) == renderSize(limits, .75f));
+    assert(renderSize(limits, std::numeric_limits<float>::quiet_NaN()) == renderSize(limits, 1));
+    const ResolutionLimits heightLimited{{2000, 2000}, {4000, 3001}};
+    assert((renderSize(heightLimited, 2) == RenderSize{3000, 3000}));
+    assert((renderSize({{100, 100}, {1000, 1000}}, 5) == RenderSize{200, 200}));
+    assert((renderSize({{8, 8}, {5, 3}}, .75f) == RenderSize{2, 2}));
+    for (int i = 75; i <= 200; ++i) {
+        const auto size = renderSize(limits, i / 100.f);
+        assert(size.width >= 2 && size.height >= 2 && size.width % 2 == 0 && size.height % 2 == 0);
+        assert(size.width <= limits.maximum.width && size.height <= limits.maximum.height);
+        assert(std::abs(float(size.width) / size.height - 1856.f / 2160.f) < .002f);
+    }
+    RenderTargetChanges changes;
+    RenderTargetRequest recommended{{renderSize(limits, 1), {}}, true};
+    RenderTargetRequest maximum{{renderSize(limits, 2), {}}, true};
+    changes.reset(recommended);
+    assert(!changes.observe(recommended, 0));
+    assert(!changes.observe(maximum, 100));
+    assert(!changes.observe(maximum, 349));
+    assert(changes.observe(maximum, 350));
+    changes.finish(maximum, true);
+    assert(!changes.observe(maximum, 900));
+    auto unfoveated = maximum;
+    unfoveated.foveated = false;
+    assert(!changes.observe(unfoveated, 1000));
+    assert(changes.observe(unfoveated, 1250));
+    changes.finish(unfoveated, false);
+    assert(!changes.observe(unfoveated, 10000) && "failed allocations must not stall every frame");
+    assert(!changes.observe(recommended, 11000));
+    assert(changes.observe(recommended, 11250));
+    changes.finish(recommended, true);
     const auto full = renderRect(1856, 2160, 1);
     assert(full.x == 0 && full.y == 0 && full.width == 1856 && full.height == 2160);
     for (float scale : {.75f, .8f, .9f}) {
@@ -31,5 +68,5 @@ int main() {
     }
     assert(foveationProfile(FoveationQuality::Balanced, true).gain == 4);
     assert(foveationProfile(FoveationQuality::Balanced, true).area == 2);
-    std::cout << "graphics viewport, gaze mapping and fallback checks passed\n";
+    std::cout << "graphics maximum resolution, viewport, gaze mapping and fallback checks passed\n";
 }

@@ -131,6 +131,11 @@ class Office {
     bool running = false;
     XrTime spaceChangeTime = 0;
     std::array<Eye, 2> eyes, sharpEyes;
+    std::array<office::ResolutionLimits, 2> worldLimits;
+    office::RenderTargetChanges targetChanges;
+    int64_t worldFormat = GL_RGBA8;
+    bool swapchainFoveation = false, worldFoveated = false;
+    std::string graphicsError;
     bool sharpScreensAvailable = false;
 #ifndef NDEBUG
     std::unique_ptr<office::DepthProbe> depthProbe;
@@ -162,6 +167,10 @@ class Office {
             scenePending.clear();
             scenePendingBytes = 0;
         }
+        // Complete image use before any teardown that destroys a runtime swapchain,
+        // including the cursor. The last frame's glFlush only submitted those commands.
+        if (context != EGL_NO_CONTEXT)
+            glFinish();
         inputRenderer.reset();
         sceneRenderer.reset();
 #ifndef NDEBUG
@@ -212,6 +221,187 @@ class Office {
             env->ExceptionClear();
             LOG("Panel producer visibility callback failed");
         }
+    }
+
+    office::RenderTargetRequest worldTargetRequest(float scale, bool foveated) const {
+        office::RenderTargetRequest request;
+        request.foveated = foveated && textureFoveation;
+        for (int i = 0; i < (multiview ? 1 : 2); ++i)
+            request.size[i] = office::renderSize(worldLimits[i], scale);
+        return request;
+    }
+
+    void attachWorldImage(const Eye &eye, uint32_t imageIndex, GLuint depth) {
+        const auto image = eye.images[imageIndex].image;
+        if (multiview && samples > 1) {
+            attachMultisampleMultiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, image, 0, samples, 0,
+                                       2);
+            attachMultisampleMultiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth, 0, samples, 0,
+                                       2);
+        } else if (multiview) {
+            attachMultiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, image, 0, 0, 2);
+            attachMultiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth, 0, 0, 2);
+        } else {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image, 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
+        }
+    }
+
+    /** Called only on the GL thread with no acquired world images. Keep old targets on failure. */
+    bool replaceWorldTargets(const office::RenderTargetRequest &request) {
+        std::array<Eye, 2> next;
+        GLuint nextDepth = 0, nextFramebuffer = 0;
+        XrSwapchain acquired = XR_NULL_HANDLE;
+        bool waited = false;
+        int nextFocalPoints = focalPoints;
+        try {
+            glActiveTexture(GL_TEXTURE0);
+            for (int i = 0; i < (multiview ? 1 : 2); ++i) {
+                auto &eye = next[i];
+                eye.width = request.size[i].width;
+                eye.height = request.size[i].height;
+                auto sc = office::structure<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
+                auto foveated = office::structure<XrSwapchainCreateInfoFoveationFB>(
+                    XR_TYPE_SWAPCHAIN_CREATE_INFO_FOVEATION_FB);
+                foveated.flags = XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB;
+                sc.next = request.foveated && swapchainFoveation ? &foveated : nullptr;
+                sc.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+                sc.format = worldFormat;
+                sc.sampleCount = 1;
+                sc.width = eye.width;
+                sc.height = eye.height;
+                sc.faceCount = 1;
+                sc.arraySize = multiview ? 2 : 1;
+                sc.mipCount = 1;
+                check(xrCreateSwapchain(session, &sc, &eye.swapchain), "create world swapchain");
+                uint32_t count = 0;
+                check(xrEnumerateSwapchainImages(eye.swapchain, 0, &count, nullptr),
+                      "world image count");
+                eye.images.resize(count, office::structure<XrSwapchainImageOpenGLESKHR>(
+                                             XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR));
+                eye.foveationDensity.assign(count, .25f);
+                check(xrEnumerateSwapchainImages(
+                          eye.swapchain, count, &count,
+                          reinterpret_cast<XrSwapchainImageBaseHeader *>(eye.images.data())),
+                      "world images");
+                if (request.foveated)
+                    for (auto image : eye.images) {
+                        const GLenum target = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+                        glBindTexture(target, image.image);
+                        GLint features = 0;
+                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_FEATURE_QUERY_QCOM,
+                                            &features);
+                        constexpr auto bits =
+                            GL_FOVEATION_ENABLE_BIT_QCOM | GL_FOVEATION_SCALED_BIN_METHOD_BIT_QCOM;
+                        if ((features & bits) != bits)
+                            throw std::runtime_error(
+                                "World texture cannot use scaled-bin foveation");
+                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_NUM_FOCAL_POINTS_QUERY_QCOM,
+                                            &nextFocalPoints);
+                        if (nextFocalPoints < 1 || nextFocalPoints > 16)
+                            throw std::runtime_error("Invalid foveation focal point count");
+                        glTexParameteri(target, GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM, bits);
+                        glTexParameterf(target, GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM, .25f);
+                    }
+            }
+            glGenTextures(1, &nextDepth);
+            const GLenum depthTarget = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+            glBindTexture(depthTarget, nextDepth);
+            if (multiview)
+                glTexStorage3D(depthTarget, 1, GL_DEPTH_COMPONENT24, next[0].width, next[0].height,
+                               2);
+            else
+                glTexStorage2D(depthTarget, 1, GL_DEPTH_COMPONENT24,
+                               std::max(next[0].width, next[1].width),
+                               std::max(next[0].height, next[1].height));
+            glTexParameteri(depthTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(depthTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(depthTarget, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+            glTexParameteri(depthTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(depthTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            const auto error = glGetError();
+            if (error != GL_NO_ERROR)
+                throw std::runtime_error("World target allocation GL error " +
+                                         std::to_string(error));
+            // Tile MSAA storage is allocated by framebuffer attachment, beyond the textures.
+            // Exercise the exact render attachment path before replacing the existing targets.
+            glGenFramebuffers(1, &nextFramebuffer);
+            for (int i = 0; i < (multiview ? 1 : 2); ++i) {
+                const auto &eye = next[i];
+                uint32_t imageIndex = 0;
+                auto acquire = office::structure<XrSwapchainImageAcquireInfo>(
+                    XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
+                check(xrAcquireSwapchainImage(eye.swapchain, &acquire, &imageIndex),
+                      "acquire staged world image");
+                acquired = eye.swapchain;
+                auto wait =
+                    office::structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
+                wait.timeout = 100'000'000;
+                const auto ready = xrWaitSwapchainImage(acquired, &wait);
+                if (ready == XR_TIMEOUT_EXPIRED)
+                    throw std::runtime_error("World target validation timed out");
+                check(ready, "wait staged world image");
+                waited = true;
+                glBindFramebuffer(GL_FRAMEBUFFER, nextFramebuffer);
+                attachWorldImage(eye, imageIndex, nextDepth);
+                const auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                if (status != GL_FRAMEBUFFER_COMPLETE)
+                    throw std::runtime_error("World target framebuffer incomplete: " +
+                                             std::to_string(status));
+                glDisable(GL_SCISSOR_TEST);
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                glDepthMask(GL_TRUE);
+                glClearColor(0, 0, 0, 1);
+                glClearDepthf(1);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glFinish();
+                const auto validationError = glGetError();
+                if (validationError != GL_NO_ERROR)
+                    throw std::runtime_error("World target validation GL error " +
+                                             std::to_string(validationError));
+                auto release = office::structure<XrSwapchainImageReleaseInfo>(
+                    XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
+                check(xrReleaseSwapchainImage(acquired, &release), "release staged world image");
+                acquired = XR_NULL_HANDLE;
+                waited = false;
+            }
+        } catch (const std::exception &error) {
+            graphicsError = error.what();
+            LOG("WORLD_TARGET_REJECTED %s", graphicsError.c_str());
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glFinish();
+            if (nextFramebuffer)
+                glDeleteFramebuffers(1, &nextFramebuffer);
+            if (acquired && waited) {
+                auto release = office::structure<XrSwapchainImageReleaseInfo>(
+                    XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
+                xrReleaseSwapchainImage(acquired, &release);
+            }
+            if (nextDepth)
+                glDeleteTextures(1, &nextDepth);
+            for (auto &eye : next)
+                if (eye.swapchain)
+                    xrDestroySwapchain(eye.swapchain);
+            return false;
+        }
+        // Validation completed prior GPU image use and released every staged image.
+        // Keep the validated framebuffer; no synchronization is added to the display loop.
+        std::swap(eyes, next);
+        std::swap(depthTexture, nextDepth);
+        std::swap(framebuffer, nextFramebuffer);
+        if (nextFramebuffer)
+            glDeleteFramebuffers(1, &nextFramebuffer);
+        if (nextDepth)
+            glDeleteTextures(1, &nextDepth);
+        for (auto &eye : next)
+            if (eye.swapchain)
+                xrDestroySwapchain(eye.swapchain);
+        worldFoveated = request.foveated;
+        focalPoints = nextFocalPoints;
+        graphicsError.clear();
+        LOG("WORLD_TARGET size=%dx%d foveated=%d", eyes[0].width, eyes[0].height, worldFoveated);
+        return true;
     }
 
     void init() {
@@ -437,60 +627,37 @@ class Office {
         if (!strstr(glExtensions, "GL_OVR_multiview_multisampled_render_to_texture") ||
             !attachMultisampleMultiview)
             samples = 1;
-        for (int i = 0; i < (multiview ? 1 : 2); i++) {
-            auto &eye = eyes[i];
-            eye.width = multiview ? std::max(views[0].recommendedImageRectWidth,
-                                             views[1].recommendedImageRectWidth)
-                                  : views[i].recommendedImageRectWidth;
-            eye.height = multiview ? std::max(views[0].recommendedImageRectHeight,
-                                              views[1].recommendedImageRectHeight)
-                                   : views[i].recommendedImageRectHeight;
-            LOG("VIEW %d recommended=%dx%d max=%dx%d samples=%d", i, eye.width, eye.height,
-                views[i].maxImageRectWidth, views[i].maxImageRectHeight,
-                views[i].recommendedSwapchainSampleCount);
-            auto sc = office::structure<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
-            auto foveated = office::structure<XrSwapchainCreateInfoFoveationFB>(
-                XR_TYPE_SWAPCHAIN_CREATE_INFO_FOVEATION_FB);
-            foveated.flags = XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB;
-            sc.next = foveation ? &foveated : nullptr;
-            sc.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-            sc.format = format;
-            sc.sampleCount = 1;
-            sc.width = eye.width;
-            sc.height = eye.height;
-            sc.faceCount = 1;
-            sc.arraySize = multiview ? 2 : 1;
-            sc.mipCount = 1;
-            check(xrCreateSwapchain(session, &sc, &eye.swapchain), "create eye swapchain");
-            check(xrEnumerateSwapchainImages(eye.swapchain, 0, &count, nullptr), "image count");
-            eye.images.resize(count, office::structure<XrSwapchainImageOpenGLESKHR>(
-                                         XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR));
-            eye.foveationDensity.assign(count, .25f);
-            check(xrEnumerateSwapchainImages(
-                      eye.swapchain, count, &count,
-                      reinterpret_cast<XrSwapchainImageBaseHeader *>(eye.images.data())),
-                  "images");
-            if (textureFoveation)
-                for (auto image : eye.images) {
-                    glBindTexture(multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, image.image);
-                    GLint features = 0;
-                    glGetTexParameteriv(multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                        GL_TEXTURE_FOVEATED_FEATURE_QUERY_QCOM, &features);
-                    glGetTexParameteriv(multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                        GL_TEXTURE_FOVEATED_NUM_FOCAL_POINTS_QUERY_QCOM,
-                                        &focalPoints);
-                    if (focalPoints < 1 || focalPoints > 16)
-                        throw std::runtime_error("Invalid foveation focal point count");
-                    glTexParameteri(multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                    GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM,
-                                    GL_FOVEATION_ENABLE_BIT_QCOM |
-                                        GL_FOVEATION_SCALED_BIN_METHOD_BIT_QCOM);
-                    glTexParameterf(multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                    GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM, .25f);
-                    LOG("FOVEATION_TEXTURE id=%u supported=%d points=%d minDensity=.25 error=%x",
-                        image.image, features, focalPoints, glGetError());
-                }
+        GLint worldMaxTexture = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &worldMaxTexture);
+        const office::ResolutionLimits commonLimits{
+            {static_cast<int>(
+                 std::max(views[0].recommendedImageRectWidth, views[1].recommendedImageRectWidth)),
+             static_cast<int>(std::max(views[0].recommendedImageRectHeight,
+                                       views[1].recommendedImageRectHeight))},
+            {static_cast<int>(std::min({views[0].maxImageRectWidth, views[1].maxImageRectWidth,
+                                        systemProperties.graphicsProperties.maxSwapchainImageWidth,
+                                        static_cast<uint32_t>(worldMaxTexture)})),
+             static_cast<int>(std::min({views[0].maxImageRectHeight, views[1].maxImageRectHeight,
+                                        systemProperties.graphicsProperties.maxSwapchainImageHeight,
+                                        static_cast<uint32_t>(worldMaxTexture)}))}};
+        if (commonLimits.recommended.width < 2 || commonLimits.recommended.height < 2 ||
+            commonLimits.maximum.width < 2 || commonLimits.maximum.height < 2)
+            throw std::runtime_error("Invalid world eye resolution limits");
+        worldLimits.fill(commonLimits);
+        worldFormat = format;
+        swapchainFoveation = foveation;
+        auto initialTargets = worldTargetRequest(1.f, true);
+        if (!replaceWorldTargets(initialTargets)) {
+            LOG("FOVEATION_UNAVAILABLE %s", graphicsError.c_str());
+            initialTargets.foveated = false;
+            if (!replaceWorldTargets(initialTargets))
+                throw std::runtime_error(graphicsError);
+            textureFoveation = nullptr;
         }
+        targetChanges.reset(initialTargets);
+        LOG("VIEW recommended=%dx%d max=%dx%d maxScale=%.6f", commonLimits.recommended.width,
+            commonLimits.recommended.height, commonLimits.maximum.width,
+            commonLimits.maximum.height, office::maximumRenderScale(commonLimits));
         if (sharpScreensAvailable) {
             GLint maxTextureSize = 0;
             glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
@@ -538,22 +705,6 @@ class Office {
                 depthProbe.reset();
 #endif
         }
-        glGenFramebuffers(1, &framebuffer);
-        glGenTextures(1, &depthTexture);
-        if (multiview) {
-            glBindTexture(GL_TEXTURE_2D_ARRAY, depthTexture);
-            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH_COMPONENT24, eyes[0].width,
-                           eyes[0].height, 2);
-        } else {
-            glBindTexture(GL_TEXTURE_2D, depthTexture);
-            glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT24, eyes[0].width, eyes[0].height);
-        }
-        const GLenum depthTarget = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-        glTexParameteri(depthTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(depthTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(depthTarget, GL_TEXTURE_COMPARE_MODE, GL_NONE);
-        glTexParameteri(depthTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(depthTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         LOG("RENDER_PATH multiview=%d samples=%d eye=%dx%d", multiview, samples, eyes[0].width,
             eyes[0].height);
         office::SceneRendererOptions sceneOptions;
@@ -724,6 +875,18 @@ class Office {
                 for (auto &hand : inputFrame.hands)
                     hand.active = false;
             auto controls = bridge.read();
+            // Slider release/presets select an actual target size. Keep the old targets until
+            // the selection settles, and create unfoveated targets for Off: QCOM texture
+            // foveation cannot be disabled once enabled on an existing texture.
+            const auto desiredTargets =
+                worldTargetRequest(controls.graphics.renderScale,
+                                   controls.graphics.foveation != office::FoveationQuality::Off);
+            if (focused && poseValid && frame.shouldRender &&
+                targetChanges.observe(desiredTargets, nowMs))
+                targetChanges.finish(desiredTargets, replaceWorldTargets(desiredTargets));
+            if (desiredTargets.size[0] == office::RenderSize{eyes[0].width, eyes[0].height} &&
+                desiredTargets.foveated == worldFoveated)
+                graphicsError.clear();
             // Only the local render snapshot is smoothed. Native tracked poses remain
             // current, and gameplay, collision, picking and server state are unchanged.
             presentation.present(
@@ -857,11 +1020,10 @@ class Office {
                         XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
                     imageWait.timeout = XR_INFINITE_DURATION;
                     check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
-                    const auto rect =
-                        office::renderRect(eye.width, eye.height, controls.graphics.renderScale);
+                    const auto rect = office::renderRect(eye.width, eye.height, 1.f);
                     const auto profile =
                         office::foveationProfile(controls.graphics.foveation, gazeValid);
-                    if (textureFoveation) {
+                    if (worldFoveated && textureFoveation) {
                         if (eye.foveationDensity[imageIndex] !=
                             controls.graphics.peripheralDensity) {
                             const GLenum target = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
@@ -900,21 +1062,7 @@ class Office {
                         }
                     }
                     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-                    if (multiview && samples > 1) {
-                        attachMultisampleMultiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                                   eye.images[imageIndex].image, 0, samples, 0, 2);
-                        attachMultisampleMultiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                                   depthTexture, 0, samples, 0, 2);
-                    } else if (multiview) {
-                        attachMultiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                        eye.images[imageIndex].image, 0, 0, 2);
-                        attachMultiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTexture, 0, 0, 2);
-                    } else {
-                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                               eye.images[imageIndex].image, 0);
-                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
-                                               depthTexture, 0);
-                    }
+                    attachWorldImage(eye, imageIndex, depthTexture);
                     auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
                     if (status != GL_FRAMEBUFFER_COMPLETE)
                         throw std::runtime_error("Projection framebuffer incomplete: " +
@@ -1020,8 +1168,7 @@ class Office {
                 pv.fov = views[i].fov;
                 pv.subImage.swapchain = eye.swapchain;
                 pv.subImage.imageArrayIndex = multiview ? i : 0;
-                const auto rect =
-                    office::renderRect(eye.width, eye.height, controls.graphics.renderScale);
+                const auto rect = office::renderRect(eye.width, eye.height, 1.f);
                 pv.subImage.imageRect.offset = {rect.x, rect.y};
                 pv.subImage.imageRect.extent = {rect.width, rect.height};
                 if (sharp) {
@@ -1105,6 +1252,16 @@ class Office {
                 frameMetrics["refreshRequests"] = refreshRequests;
                 frameMetrics["sharpScreens"] = sharp;
                 frameMetrics["sharpSetting"] = controls.graphics.sharpScreens;
+                frameMetrics["worldRecommendedWidth"] = worldLimits[0].recommended.width;
+                frameMetrics["worldRecommendedHeight"] = worldLimits[0].recommended.height;
+                frameMetrics["worldMaxWidth"] = worldLimits[0].maximum.width;
+                frameMetrics["worldMaxHeight"] = worldLimits[0].maximum.height;
+                frameMetrics["worldWidth"] = eyes[0].width;
+                frameMetrics["worldHeight"] = eyes[0].height;
+                frameMetrics["maxRenderScale"] = office::maximumRenderScale(worldLimits[0]);
+                frameMetrics["foveationSupported"] = textureFoveation != nullptr;
+                frameMetrics["foveationEnabled"] = worldFoveated;
+                frameMetrics["graphicsError"] = graphicsError;
                 if (sharp) {
                     frameMetrics["sharpWidth"] = sharpEyes[0].width;
                     frameMetrics["sharpHeight"] = sharpEyes[0].height;
