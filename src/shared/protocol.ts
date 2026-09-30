@@ -108,6 +108,12 @@ export interface WorkerInfo {
    */
   worktree?: { path: string; branch: string; base: string; from?: string; made?: string };
   /**
+   * Set while the folder it works in (its worktree, or its workspace across repositories) is gone:
+   * deleted outside the office, so it can't start there until it's rebuilt ('worker.rebuild') or sent
+   * home. `branch` says where its branch still is: in the project, only on origin, or nowhere.
+   */
+  lost?: { branch: LostBranch };
+  /**
    * Other floors' repositories this worker works in too, each as its own worktree inside the same
    * workspace folder as `worktree` (see server/workers.ts). Only a worker hired into its own worktree.
    */
@@ -137,7 +143,16 @@ export interface WorkerInfo {
   lastInput?: { by: string; at: number };
   /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
   meeting?: string;
+  /**
+   * How long it has spent working (ms), over the stretches that have ended, and when the one it's in
+   * now started (while it's working).
+   */
+  workedMs?: number;
+  workingSince?: number;
 }
+
+/** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
+export type LostBranch = 'here' | 'origin' | 'gone';
 
 /** Session usage. The persistent office ledger continues to cover Claude Code only. */
 export interface Usage {
@@ -1080,6 +1095,8 @@ export type ClientMsg =
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
   | { t: 'worker.worktree'; workerId: string }
+  /** Puts a lost worker's worktree back and starts it again (see WorkerInfo.lost); `all`: every lost worker on the floor. */
+  | { t: 'worker.rebuild'; workerId: string; all?: boolean }
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
   /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */

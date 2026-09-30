@@ -86,7 +86,7 @@ import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind 
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
-import { openPrompt, confirmDialog, sendHomeDialog, shootDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
+import { openPrompt, confirmDialog, sendHomeDialog, shootDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
@@ -2297,13 +2297,14 @@ function syncWorkers() {
     }
     v.model.setAction(w.action);
     v.model.setPr(prBadge(w));
+    v.model.setLost(!!w.lost);
     const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
     const deskDef = DESK_BY_ID.get(w.deskId);
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
-    v.laptop.setPlaceholder(w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    v.laptop.setPlaceholder(w.lost ? `🌿 ${w.name}'s worktree was deleted — press E to fix it` : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
@@ -2480,6 +2481,8 @@ function promptAtDesk(deskId: string) {
       repoOptions: repoChoices(),
       onSubmit: (text, o) => hire(deskId, text, o.worktree, o.provider, o.model, o.effort, undefined, o.repos),
     });
+  } else if (w.lost) {
+    fixLostWorktree(w);
   } else if (isAsleep(w.status)) {
     toast(`${w.name} is asleep — press R to resume first`, 'warn');
   } else if (w.kind === 'shell') {
@@ -2911,13 +2914,37 @@ function askStation(deskId: string) {
 }
 
 function resumeWorker(w: WorkerInfo) {
+  if (w.lost) return fixLostWorktree(w);
   if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved ${providerLabel(w.provider, store.project)} session — starting a fresh one`, 'warn');
   net.send({ t: 'worker.resume', workerId: w.id });
 }
 
-/** Whether a worker's branch can become a PR: it has its own worktree and isn't mid-turn. */
+/**
+ * Anything done with a worker whose worktree was deleted outside droid-office (see WorkerInfo.lost):
+ * it can't work there, so this says so and offers to put the folder back, everyone's at once when
+ * more are lost, or to send it home.
+ */
+function fixLostWorktree(w: WorkerInfo) {
+  if (!w.lost || !w.worktree) return;
+  const others = [...store.workers.values()].filter((o) => o.lost && o.id !== w.id);
+  lostWorktreeDialog({
+    name: w.name,
+    worktree: w.worktree,
+    lost: w.lost,
+    workspace: w.repos?.length ? w.worktree.path.replace(/[\\/][^\\/]*$/, '') : undefined,
+    others: others.map((o) => o.name),
+    openTerminal: isAsleep(w.status) ? undefined : () => openTerminal(net, w.id, () => openWorkerChanges(w.id)),
+    rebuild: (all) => {
+      toast(all ? `Rebuilding ${others.length + 1} worktrees…` : `Rebuilding ${w.name}'s worktree…`);
+      net.send({ t: 'worker.rebuild', workerId: w.id, all });
+    },
+    sendHome: () => killWorker(w.id),
+  });
+}
+
+/** Whether a worker's branch can become a PR: it has its own worktree, still there, and isn't mid-turn. */
 function prReady(w: WorkerInfo) {
-  return !!w.worktree && !isBusy(w.status);
+  return !!w.worktree && !w.lost && !isBusy(w.status);
 }
 
 /** O at a desk: see the worker's pull request, or push its branch and open one. */
@@ -2930,6 +2957,7 @@ function pullRequestFor(w: WorkerInfo) {
     return;
   }
   if (!w.worktree) return toast(`${w.name} works in the main checkout — only workers with their own worktree can open a PR`, 'warn');
+  if (w.lost) return fixLostWorktree(w);
   if (w.prOpening) return;
   if (!prReady(w)) return toast(`${w.name} is still ${STATUS_LABEL[w.status]} — wait until it's done`, 'warn');
   toast(`Pushing ${w.worktree.branch} and opening a pull request…`);
@@ -2945,6 +2973,7 @@ function pullRequestsFor(w: WorkerInfo) {
   const open = () => {
     const now = store.workers.get(w.id);
     if (!now || now.prOpening) return;
+    if (now.lost) return fixLostWorktree(now);
     if (!prReady(now)) return toast(`${now.name} is still ${STATUS_LABEL[now.status]} — wait until it's done`, 'warn');
     toast(`Pushing ${now.worktree?.branch ?? 'its branch'} in each of ${now.name}'s repositories and opening pull requests…`);
     net.send({ t: 'worker.pr', workerId: now.id });
@@ -3061,6 +3090,7 @@ function pointToWaiting(now: number) {
 function openWorkerTerminal(id: string, find?: TerminalFind) {
   const w = store.workers.get(id);
   if (!w) return;
+  if (w.lost) return fixLostWorktree(w);
   if (isAsleep(w.status)) resumeWorker(w);
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
@@ -3072,7 +3102,9 @@ function showSearch() {
 
 /** What the worker changed: changed files, diff, commit / discard / open a PR; `repo` for another floor's repository it works in. */
 function openWorkerChanges(id: string, repo?: string) {
-  if (!store.workers.has(id)) return;
+  const w = store.workers.get(id);
+  if (!w) return;
+  if (w.lost) return fixLostWorktree(w);
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
 
@@ -3843,6 +3875,7 @@ function onQueue(issue: number): boolean {
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
+  if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
   if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
   return '';
@@ -4233,6 +4266,12 @@ function deskHint(deskId: string): Hint {
               key('B', 'Shell'),
             ]),
       ],
+    };
+  }
+  if (w.lost && w.worktree) {
+    return {
+      k: `lost|${w.id}|${w.lost.branch}`,
+      parts: [h('span.title', {}, `${w.name} · 🌿 worktree deleted`), aside('deleted outside droid-office'), key('E', 'Fix it'), key('X', 'Send home')],
     };
   }
   const doing = w.activity ? clip(w.activity, 48) : '';
