@@ -2,6 +2,7 @@ import type { Net } from '../net';
 import { store, type Settings, type ViewMode } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import type { ThemePick, WebhookKind } from '../../shared/protocol';
+import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
 import { THEME_PICKS } from '../../shared/theme';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
@@ -17,8 +18,33 @@ const THEME_LABEL: Record<ThemePick, string> = { auto: 'By the calendar', hallow
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
-/** `outside` describes the sky over the office (see describeSky), once the server has said. */
-export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, onSignOut: () => void, outside?: { now: string; live: boolean }) {
+export type { SettingsPane };
+
+/** One setting: its name and who it's for, then whatever sets it. */
+const setting = (title: string, scope: SettingsScope | null, ...body: Node[]) =>
+  h('div.setting', {}, h('div.setting-head', {}, h('h4', {}, title), scope && h('span.scope', { class: scope, title: SETTINGS_SCOPE[scope][1] }, SETTINGS_SCOPE[scope][0])), ...body);
+
+/** A card from SETTINGS_CARDS, so a setting can't show up without a category and a scope. */
+const card = (title: SettingsCardTitle, ...body: Node[]) => {
+  const meta = SETTINGS_CARDS.find((c) => c.title === title)!;
+  return setting(title, meta.scope, ...body);
+};
+
+/** Where Settings was last, so it opens there again. */
+let lastPane: SettingsPane = 'you';
+
+/** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
+export function openSettings(
+  net: Net,
+  settings: Settings,
+  onChange: (s: Settings) => void,
+  onCharacter: () => void,
+  previewSound: () => void,
+  notifier: DesktopNotifier,
+  onSignOut: () => void,
+  outside?: { now: string; live: boolean },
+  first?: SettingsPane,
+) {
   const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
   const note = h('p.setting-note');
   const paint = () => {
@@ -430,6 +456,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   let jiraBusy: '' | 'connect' | 'epic' = '';
   let jiraError = '';
   let epicError = '';
+  /** The epic's own card, hidden until the office is connected and you're on a floor. */
+  let epicCard: HTMLElement | null = null;
   const paintJira = () => {
     const { connection, epic } = store.jira;
     const admin = store.me.admin;
@@ -448,6 +476,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
           ? 'Connect the office to Jira Cloud: a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. A read-only token (scope read:jira-work) is enough, since the office only reads. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.'
           : 'The office isn’t connected to Jira. An admin can connect it.';
     const showEpic = !!connection && onFloor;
+    epicCard?.classList.toggle('hidden', !showEpic);
     epicRow.classList.toggle('hidden', !admin || !showEpic);
     epicActions.classList.toggle('hidden', !admin || !showEpic || !epic);
     epicSave.disabled = jiraBusy === 'epic';
@@ -528,89 +557,101 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const signOut = h('button.btn', { type: 'button' }, 'Sign out');
   signOut.addEventListener('click', onSignOut);
   const character = h('button.btn', { type: 'button' }, account ? 'Change your look' : 'Change your look & name');
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h(
-    'div.modal',
-    { role: 'dialog', 'aria-label': 'Settings' },
-    h('header', {}, h('h2', {}, 'Settings'), close),
-    h(
-      'div.body',
-      {},
-      h('label', {}, 'Camera view'),
-      seg,
-      note,
-      h('label', { style: 'margin-top:18px' }, 'VR (headset browser)'),
-      h('p.setting-note', { style: 'margin:0 0 6px' }, 'Locomotion'),
-      locoRow,
-      h('p.setting-note', {}, 'Teleport aims with A held (or the left stick pushed forward); gliding walks the stick. Teleport-only is the comfortable default.'),
-      h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Turning (right stick)'),
-      turnRow,
-      speedRow,
-      h('p.setting-note', {}, 'Snap turn steps 45° per push; smooth turn spins at the speed above.'),
-      h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Teleport fade'),
-      fadeRow,
-      h('p.setting-note', {}, 'A blink through black as you land, or a straight cut when it’s off.'),
-      h('label', { style: 'margin-top:18px' }, 'Office sounds'),
-      soundRow,
-      h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done. Voice chat isn’t affected.'),
-      h('label', { style: 'margin-top:18px' }, 'Jukebox'),
-      musicRow,
-      h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.'),
+  epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
+  paintJira();
+  const panes: Record<SettingsPane, Node[]> = {
+    you: [
+      card('Your character', character),
+      card('Camera view', seg, note),
+      card(
+        'VR (headset browser)',
+        h('p.setting-note', { style: 'margin:0 0 6px' }, 'Locomotion'),
+        locoRow,
+        h('p.setting-note', {}, 'Teleport aims with A held (or the left stick pushed forward); gliding walks the stick. Teleport-only is the comfortable default.'),
+        h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Turning (right stick)'),
+        turnRow,
+        speedRow,
+        h('p.setting-note', {}, 'Snap turn steps 45° per push; smooth turn spins at the speed above.'),
+        h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Teleport fade'),
+        fadeRow,
+        h('p.setting-note', {}, 'A blink through black as you land, or a straight cut when it’s off.'),
+      ),
+      card('Signed in', h('div.volume', {}, signOut), h('p.setting-note', {}, account ? `As ${account.name}, with your own account (${account.role}).` : 'With the shared office password.')),
+    ],
+    sound: [
+      card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done. Voice chat isn’t affected.')),
+      card('Jukebox', musicRow, h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.')),
+    ],
+    notify: [card('Desktop notifications', notifyRow, notifyNote), card('Team notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus)],
+    building: [
+      card('Holiday theme', themeRow, themeNote),
       ...(outside
         ? [
-            h('label', { style: 'margin-top:18px' }, 'Outside'),
-            h('p.outside-now', {}, outside.now),
-            h(
-              'p.setting-note',
-              {},
-              outside.live
-                ? 'Everyone sees the same sky: the office’s clock and the live weather where it is.'
-                : 'Everyone sees the same sky: the office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.',
+            card(
+              'Outside',
+              h('p.outside-now', {}, outside.now),
+              h(
+                'p.setting-note',
+                {},
+                outside.live
+                  ? 'Everyone sees the same sky: the office’s clock and the live weather where it is.'
+                  : 'Everyone sees the same sky: the office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.',
+              ),
             ),
           ]
         : []),
-      h('label', { style: 'margin-top:18px' }, 'Holiday theme'),
-      themeRow,
-      themeNote,
-      h('label', { style: 'margin-top:18px' }, 'Desktop notifications'),
-      notifyRow,
-      notifyNote,
-      h('label', { style: 'margin-top:18px' }, 'Team notifications (Slack / Discord)'),
-      h('div.webhook', {}, hookInput, hookSave),
-      hookActions,
-      hookStatus,
-      h('label', { style: 'margin-top:18px' }, 'Default worker'),
-      agentNow,
-      agent.element,
-      agentActions,
-      agentNote,
-      h('label', { style: 'margin-top:18px' }, 'Prompts'),
-      promptsOpen,
-      promptsNote,
-      h('label', { style: 'margin-top:18px' }, 'Worker limit'),
-      limitRow,
-      limitNote,
-      h('label', { style: 'margin-top:18px' }, 'Workers whose pull request merged'),
-      leaveRow,
-      leaveNote,
-      h('label', { style: 'margin-top:18px' }, 'Jira'),
-      jiraForm,
-      jiraActions,
-      jiraNote,
-      epicRow,
-      epicActions,
-      epicNote,
-      h('label', { style: 'margin-top:18px' }, 'Workspace folder'),
-      dirRow,
-      dirActions,
-      dirNote,
-      h('label', { style: 'margin-top:18px' }, 'Your character'),
-      character,
-      h('label', { style: 'margin-top:18px' }, 'Signed in'),
-      h('div.volume', {}, signOut),
-      h('p.setting-note', {}, account ? `As ${account.name}, with your own account (${account.role}).` : 'With the shared office password.'),
-    ),
-  );
+      card('Jira', jiraForm, jiraActions, jiraNote),
+      epicCard,
+      card('Workspace folder', dirRow, dirActions, dirNote),
+    ],
+    workers: [card('Default worker', agentNow, agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
+  };
+
+  // The categories down the side, the one picked on the right. On a phone the row is across the top.
+  const nav = h('nav.settings-nav', { role: 'tablist', 'aria-label': 'Settings' });
+  const tabs = new Map<SettingsPane, HTMLButtonElement>();
+  const bodies = new Map<SettingsPane, HTMLElement>();
+  for (const p of SETTINGS_PANES) {
+    const tab = h(
+      'button.settings-tab',
+      { type: 'button', role: 'tab', id: `settings-tab-${p.id}`, 'aria-controls': `settings-pane-${p.id}`, onclick: () => show(p.id) },
+      h('span.icon', { 'aria-hidden': 'true' }, p.icon),
+      h('span', {}, p.label),
+    ) as HTMLButtonElement;
+    tabs.set(p.id, tab);
+    nav.append(tab);
+    bodies.set(
+      p.id,
+      h('section.settings-pane', { role: 'tabpanel', id: `settings-pane-${p.id}`, 'aria-labelledby': `settings-tab-${p.id}` }, h('div.settings-head', {}, h('h3', {}, `${p.icon} ${p.label}`), h('p', {}, p.blurb)), ...panes[p.id]),
+    );
+  }
+  const show = (id: SettingsPane) => {
+    lastPane = id;
+    for (const [t, tab] of tabs) {
+      tab.classList.toggle('on', t === id);
+      tab.setAttribute('aria-selected', String(t === id));
+      tab.tabIndex = t === id ? 0 : -1;
+    }
+    for (const [t, body] of bodies) body.classList.toggle('hidden', t !== id);
+    const pane = bodies.get(id)!;
+    pane.scrollTop = 0;
+    // On a phone the categories are a row across the top that scrolls sideways.
+    tabs.get(id)!.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  nav.addEventListener('keydown', (e) => {
+    const next = settingsPaneAfter(lastPane, e.key);
+    if (!next) return;
+    e.preventDefault();
+    show(next);
+    tabs.get(next)!.focus();
+  });
+  const wide = window.matchMedia('(min-width: 721px)');
+  const orient = () => nav.setAttribute('aria-orientation', wide.matches ? 'vertical' : 'horizontal');
+  orient();
+  wide.addEventListener('change', orient);
+
+  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const el = h('div.modal.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.settings-body', {}, nav, ...bodies.values()));
   const offNotify = store.on('notify', paintHook);
   const offTheme = store.on('theme', paintTheme);
   const offLeave = store.on('leaveOnMerge', paintLeave);
@@ -621,6 +662,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {
+      wide.removeEventListener('change', orient);
       offNotify();
       offTheme();
       offLeave();
@@ -630,6 +672,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       offPrompts.forEach((off) => off());
     },
   });
+  show(first ?? lastPane);
   close.addEventListener('click', () => modal.close());
   character.addEventListener('click', () => {
     modal.close();

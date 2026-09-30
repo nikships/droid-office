@@ -1,5 +1,5 @@
 import type { CarriedObject, ClientMsg, ServerMsg } from '../shared/protocol';
-import { lastFloor, store, type Profile } from './state';
+import { lastFloor, spotParams, store, type Profile, type Spot } from './state';
 import { leaveTo } from './leave';
 
 type Handler = (msg: ServerMsg) => void;
@@ -14,7 +14,11 @@ export class Net {
   private restartExpected = false;
   up = false;
 
-  constructor(private profile: () => Profile) {}
+  constructor(
+    private profile: () => Profile,
+    /** Where you are (or were, before this page), to be put back in the same spot. */
+    private where: () => Spot | null,
+  ) {}
 
   onMessage(h: Handler) {
     this.handlers.push(h);
@@ -28,9 +32,11 @@ export class Net {
     const { name, color, look } = this.profile();
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const q = new URLSearchParams({ name, color, skin: String(look.skin), hair: String(look.hair), style: String(look.style) });
-    // Back to the floor you were on (after a reload or a restart).
+    // Back to the floor you were on (after a reload or a restart), in the spot you were in there.
     const floor = store.floor ?? lastFloor();
     if (floor) q.set('floor', floor);
+    const at = spotParams(floor, this.where());
+    if (at) for (const [k, v] of Object.entries(at)) q.set(k, v);
     const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
     this.ws = ws;
     ws.onopen = () => {

@@ -38,7 +38,7 @@ import { DESK_BY_ID, elevatorSpot, seatHere, streetBelow } from '../shared/layou
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
-import { MAX_FLOORS, forgeWords } from '../shared/floors.js';
+import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
@@ -179,6 +179,12 @@ function arrivalSpot(at: unknown): { x: number; y: number; z: number; rotY: numb
   const clamp = (v: unknown, lo: number, hi: number) => Math.min(hi, Math.max(lo, num(v)));
   // Down on the street from a floor high up, the street is a long way down.
   return { x: clamp(a.x, -60, 60), y: clamp(a.y, streetBelow(MAX_FLOORS - 1), 10), z: clamp(a.z, -60, 60), rotY: num(a.rotY) };
+}
+/** The spot someone coming back in says they were standing in (see Net.connect), if they say. */
+function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
+  const n = (k: string) => (q.get(k) ? Number(q.get(k)) : NaN);
+  const [x, y, z, rotY] = ['x', 'y', 'z', 'rotY'].map(n);
+  return Number.isFinite(x) && Number.isFinite(z) ? arrivalSpot({ x, y, z, rotY }) : undefined;
 }
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -556,9 +562,6 @@ export async function startServer(cfg: Config) {
   const screensOf = (c: Client, floor: Floor | undefined) => {
     for (const { workerId, frame } of floor?.workers.fullScreens() ?? []) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
-  /** Where someone arriving goes: the floor they asked for, else the first one there is. */
-  const arrivalFloor = (wanted: string | null): Floor | undefined => (wanted && floors.get(wanted)) || floors.values().next().value;
-
   const images = new ImageProxy();
 
   const upgrader = new Upgrader(
@@ -923,12 +926,14 @@ export async function startServer(cfg: Config) {
 
   const onConnection = (ws: WebSocket, url: URL, session: Session) => {
     const id = randomBytes(5).toString('hex');
-    // Back where they were before a reload or a restart, else the first floor. Everyone arrives by elevator.
+    // Back on the floor they were on before a reload, a restart or closing the tab, else the first floor.
     const wanted = url.searchParams.get('floor');
-    // Up on the roof, as long as there's a building under it.
-    const onRoof = wanted === ROOF && floors.size > 0;
-    const floor = onRoof ? undefined : arrivalFloor(wanted);
-    const spot = elevatorSpot();
+    // A floor that's gone since (taken off the building, or its checkout deleted) sends them up to the roof.
+    const landing = returnLanding(wanted, [...floors.keys()], ROOF);
+    const onRoof = landing.onRoof;
+    const floor = landing.floorId ? floors.get(landing.floorId) : undefined;
+    // Back where they were standing on it too; anywhere else, they arrive by elevator.
+    const spot = (landing.back && spotFrom(url.searchParams)) || { ...elevatorSpot(), y: 0, rotY: 0 };
     const account = session.account;
     // An account's name is its own; on the shared password people pick one.
     const name = account?.name ?? (str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`);
@@ -959,10 +964,10 @@ export async function startServer(cfg: Config) {
         color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7',
         look: sanitizeLook({ skin: intParam('skin'), hair: intParam('hair'), style: intParam('style') }, lookFromSeed(id)),
         x: spot.x,
-        y: 0,
+        y: spot.y,
         z: spot.z,
-        // Facing out through the doors.
-        rotY: 0,
+        // The way they were facing, or out through the elevator's doors.
+        rotY: spot.rotY,
         moving: false,
         voice: false,
         muted: true,

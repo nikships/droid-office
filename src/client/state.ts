@@ -169,6 +169,47 @@ function rememberFloor(id: string | null) {
   }
 }
 
+const SPOT_KEY = 'droid-office.spot';
+
+/** Where you were standing, on which floor (or the roof), to be back there when you come back in. */
+export interface Spot {
+  floor: string;
+  /** What that floor was called, to say so if it's gone by then. */
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  facing: number;
+}
+
+/** The spot you were last in, if this browser has one. */
+export function lastSpot(): Spot | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(SPOT_KEY) ?? 'null');
+    const finite = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+    if (s && typeof s.floor === 'string' && s.floor && finite(s.x) && finite(s.y) && finite(s.z) && finite(s.facing)) {
+      return { floor: s.floor, name: typeof s.name === 'string' ? s.name : '', x: s.x, y: s.y, z: s.z, facing: s.facing };
+    }
+  } catch {
+    // storage blocked
+  }
+  return null;
+}
+
+export function rememberSpot(s: Spot) {
+  try {
+    localStorage.setItem(SPOT_KEY, JSON.stringify(s));
+  } catch {
+    // storage blocked
+  }
+}
+
+/** Query fields for coming back to `at` on `floor`. Nothing unless the remembered spot is on that floor. */
+export function spotParams(floor: string | null, at: Spot | null): { x: string; y: string; z: string; rotY: string } | null {
+  if (!floor || at?.floor !== floor) return null;
+  return { x: at.x.toFixed(2), y: at.y.toFixed(2), z: at.z.toFixed(2), rotY: at.facing.toFixed(3) };
+}
+
 export function loadSettings(): Settings {
   const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [], vr: { ...VR_DEFAULTS } };
   try {
