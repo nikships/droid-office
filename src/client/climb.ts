@@ -32,6 +32,17 @@ const TWIRL = 1.15;
 /** Swinging off a pole onto a floor it goes on down through: how long, and how far out from it you end up (past the railing). */
 const SWING_OFF = 0.55;
 const OFF_POLE = POLE.rail + 0.4;
+/**
+ * Held with real hands: the most one pull (or one tick's queued pulls) moves you up or down the ladder,
+ * and the most one turn (or one tick's queued turns) takes you round a pole. Anything past that is a
+ * tracking glitch, not a hand, and is clipped rather than flinging you through the building.
+ */
+const MAX_PULL = 0.35;
+const MAX_PENDING_PULL = 0.6;
+const MAX_TURN = Math.PI / 3;
+const MAX_PENDING_TURN = Math.PI / 2;
+/** Moves smaller than this, in meters or radians, are a still hand's tremor. */
+const STILL = 1e-4;
 
 /** Where you arrive on the other floor: the same spot in the office, on the other side of the ceiling. */
 export interface Arrival {
@@ -64,6 +75,12 @@ type State =
       /** Stepping off: seconds in, from where, and which way you end up facing. */
       off: { t: number; x: number; y: number; yaw: number; toYaw: number; facing: number } | null;
       bonked: boolean;
+      /** Held with real hands: moved only by pullLadder, never by keys or the stick. */
+      physical: boolean;
+      /** Tracking dropped out for a moment: hold still where you are. */
+      paused: boolean;
+      /** Signed meters pulled since the last tick, applied once on the next one. */
+      pending: number;
     }
   | {
       kind: 'pole';
@@ -76,9 +93,34 @@ type State =
       from: { x: number; y: number; z: number };
       /** Come down through the ceiling onto the floor below: the next stop is the mat, or off the pole beside its hole. */
       through: boolean;
-      /** Swinging off: where round the pole you started from. */
-      offFrom?: number;
+      /**
+       * Swinging off: round the pole from a0 to a1, out from r0 to r1, at height y, and whether it's a
+       * landing (off a slide, onto a floor) or just letting go of a twirl.
+       */
+      off: { a0: number; a1: number; r0: number; r1: number; y: number; land: boolean } | null;
+      /** Held with real hands: no canned spin, no camera moves, and round the pole only by turnPole. */
+      physical: boolean;
+      paused: boolean;
+      /** Let go of a physical slide: you fall the rest of the way and step off, still on the rig. */
+      released: boolean;
+      /** Signed radians turned round the pole since the last tick, applied once on the next one. */
+      turn: number;
     };
+
+type LadderState = Extract<State, { kind: 'ladder' }>;
+type PoleState = Extract<State, { kind: 'pole' }>;
+
+function finite(n: unknown): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+}
+
+function wrap(a: number): number {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
+function ease(x: number): number {
+  return x * x * (3 - 2 * x);
+}
 
 export class Climber {
   private state: State | null = null;
@@ -98,6 +140,11 @@ export class Climber {
     return this.state?.kind ?? null;
   }
 
+  /** Held with real hands (grabLadder/slide/twirl with `physical`), rather than keys, the stick or a canned move. */
+  get physical(): boolean {
+    return !!this.state?.physical;
+  }
+
   /** On the ladder, and where: how far up it you are, which way you can go, and whether you're between floors. */
   get ladder(): { y: number; waiting: boolean; auto: boolean } | null {
     const s = this.state;
@@ -110,14 +157,17 @@ export class Climber {
     return s?.kind === 'pole' ? (s.stage === 'twirl' ? 'twirl' : 'slide') : null;
   }
 
-  /** Takes hold of the ladder, from the floor in front of it or wherever you are up it. */
-  grabLadder() {
+  /**
+   * Takes hold of the ladder, from the floor in front of it or wherever you are up it. With `physical`
+   * only pullLadder moves you, and your head is left where it's looking.
+   */
+  grabLadder(physical = false) {
     if (this.state) return;
     const p = this.player;
     p.pos.y = THREE.MathUtils.clamp(p.pos.y, 0, LADDER_TOP);
-    this.state = { kind: 'ladder', auto: 0, waiting: false, rung: Math.round(p.pos.y / 0.3), off: null, bonked: false };
+    this.state = { kind: 'ladder', auto: 0, waiting: false, rung: Math.round(p.pos.y / 0.3), off: null, bonked: false, physical, paused: false, pending: 0 };
     p.facing = -Math.PI / 2;
-    if (p.view === 'first') {
+    if (p.view === 'first' && !physical) {
       // Face the rungs, looking up them.
       p.camYaw = Math.PI / 2;
       p.lookPitch = 0.45;
@@ -127,25 +177,117 @@ export class Climber {
     this.hooks.sound('grab');
   }
 
-  /** Grabs the pole and slides down it, through its hole to the floor below. */
-  slide(spot: PoleSpot) {
+  /**
+   * Grabs the pole and slides down it, through its hole to the floor below. With `physical` you slide
+   * while you hold on, round the pole only as far as turnPole takes you, and on down through each
+   * floor until letGoPhysical, when you swing off at the next one.
+   */
+  slide(spot: PoleSpot, physical = false) {
     if (this.state) return;
     const p = this.player;
     const angle = Math.atan2(p.pos.x - spot.x, p.pos.z - spot.z);
-    this.state = { kind: 'pole', spot, stage: 'hop', angle, v: 0, t: 0, from: { x: p.pos.x, y: p.pos.y, z: p.pos.z }, through: false };
+    this.state = this.poleState(spot, 'hop', angle, physical);
     p.moving = false;
     p.rig = (dt) => this.poleStep(dt);
     this.hooks.sound('grab');
   }
 
-  /** Swings once round a pole that goes nowhere from here (the bottom floor's). */
-  twirl(spot: PoleSpot) {
+  /**
+   * Swings once round a pole that goes nowhere from here (the bottom floor's). With `physical` you go
+   * round it only as far as turnPole takes you, until letGoPhysical steps you off it.
+   */
+  twirl(spot: PoleSpot, physical = false) {
     if (this.state) return;
     const p = this.player;
     const angle = Math.atan2(p.pos.x - spot.x, p.pos.z - spot.z);
-    this.state = { kind: 'pole', spot, stage: 'twirl', angle, v: 0, t: 0, from: { x: p.pos.x, y: p.pos.y, z: p.pos.z }, through: false };
+    this.state = this.poleState(spot, 'twirl', angle, physical);
+    if (physical) p.moving = false;
     p.rig = (dt) => this.poleStep(dt);
-    this.hooks.sound('twirl');
+    this.hooks.sound(physical ? 'grab' : 'twirl');
+  }
+
+  /**
+   * Hands on a physical ladder moved you this far: positive up, negative down, in meters. It's
+   * applied once, on the next tick; several pulls before then add up. Ignored (false) unless you're
+   * climbing a physical ladder by hand: not paused, not between floors, not carried on or stepping off.
+   */
+  pullLadder(signedMeters: number): boolean {
+    const s = this.state;
+    if (s?.kind !== 'ladder' || !s.physical || s.paused || s.waiting || s.auto || s.off) return false;
+    const d = THREE.MathUtils.clamp(finite(signedMeters), -MAX_PULL, MAX_PULL);
+    if (Math.abs(d) < STILL) return false;
+    s.pending = THREE.MathUtils.clamp(s.pending + d, -MAX_PENDING_PULL, MAX_PENDING_PULL);
+    return true;
+  }
+
+  /**
+   * Hands on a physical pole took you this far round it, in radians: positive raises your angle round
+   * it (atan2(dx, dz) from the pole, like PoleSpot.open). Applied once, on the next tick; several
+   * turns before then add up. Ignored (false) unless you're holding a physical pole, not paused, and
+   * not in the dark between floors or swinging off.
+   */
+  turnPole(signedRadians: number): boolean {
+    const s = this.state;
+    if (s?.kind !== 'pole' || !s.physical || s.paused || s.released) return false;
+    if (s.stage !== 'hop' && s.stage !== 'slide' && s.stage !== 'twirl') return false;
+    const d = THREE.MathUtils.clamp(finite(signedRadians), -MAX_TURN, MAX_TURN);
+    if (Math.abs(d) < STILL) return false;
+    s.turn = THREE.MathUtils.clamp(s.turn + d, -MAX_PENDING_TURN, MAX_PENDING_TURN);
+    return true;
+  }
+
+  /**
+   * Tracking dropped out for a moment (true) or came back (false). While paused, a physical ladder or
+   * pole holds you still where you are and never sets off for another floor; what was queued is
+   * dropped. Carrying on after a floor change, and stepping or swinging off, still finish.
+   */
+  pausePhysical(paused: boolean) {
+    const s = this.state;
+    if (!s?.physical) return;
+    s.paused = paused === true;
+    if (!s.paused) return;
+    if (s.kind === 'ladder') s.pending = 0;
+    else s.turn = 0;
+  }
+
+  /**
+   * Hands off a physical ladder or pole. The ladder: off at the floor, drop from up it, back up
+   * through the hatch and off if you're under the floor, and anything already under way (between
+   * floors, carrying on, stepping off) finishes by itself. The pole: a twirl steps off it; a slide
+   * carries on down to the next floor and swings you off there (or lands you on the mat).
+   */
+  letGoPhysical() {
+    const s = this.state;
+    if (!s?.physical) return;
+    s.paused = false;
+    if (s.kind === 'ladder') {
+      s.pending = 0;
+      if (s.waiting || s.auto || s.off) return;
+      const p = this.player;
+      if (p.pos.y < -0.05) {
+        // Down the hatch: nothing to land on but the next floor, so back up onto this one.
+        s.auto = 1;
+        return;
+      }
+      if (p.pos.y < 0.4) {
+        this.stepOff(s);
+        return;
+      }
+      p.pos.x = LADDER.x + 0.3;
+      this.release('ladder', false);
+      return;
+    }
+    s.turn = 0;
+    if (s.stage === 'twirl') {
+      const p = this.player;
+      const r = Math.hypot(p.pos.x - s.spot.x, p.pos.z - s.spot.z);
+      const r0 = Math.hypot(s.from.x - s.spot.x, s.from.z - s.spot.z);
+      s.off = { a0: s.angle, a1: s.angle, r0: r, r1: Math.max(r0, POLE.grip + 0.3), y: s.from.y, land: false };
+      s.stage = 'off';
+      s.t = 0;
+      return;
+    }
+    if (s.stage !== 'off') s.released = true;
   }
 
   /** E on the ladder: off it at the floor, or let go and drop from wherever you are. */
@@ -175,11 +317,13 @@ export class Climber {
       s.waiting = false;
       s.auto = way;
       s.rung = Math.round(p.pos.y / 0.3);
+      s.pending = 0;
     } else if (s.kind === 'pole' && s.stage === 'wait') {
       p.pos.y += STOREY;
       s.stage = 'slide';
       s.through = true;
       s.v = Math.min(s.v, SLIDE_IN);
+      s.turn = 0;
     }
   }
 
@@ -193,6 +337,25 @@ export class Climber {
     this.release(s.kind, false);
   }
 
+  private poleState(spot: PoleSpot, stage: 'hop' | 'twirl', angle: number, physical: boolean): State {
+    const p = this.player;
+    return {
+      kind: 'pole',
+      spot,
+      stage,
+      angle,
+      v: 0,
+      t: 0,
+      from: { x: p.pos.x, y: p.pos.y, z: p.pos.z },
+      through: false,
+      off: null,
+      physical,
+      paused: false,
+      released: false,
+      turn: 0,
+    };
+  }
+
   private release(how: Grip, landed: boolean) {
     this.state = null;
     this.rush = 0;
@@ -203,7 +366,7 @@ export class Climber {
     this.hooks.done(how, landed);
   }
 
-  private stepOff(s: Extract<State, { kind: 'ladder' }>) {
+  private stepOff(s: LadderState) {
     const p = this.player;
     // Back off the ladder and turn round to the room.
     const toYaw = -Math.PI / 2;
@@ -211,6 +374,7 @@ export class Climber {
     yaw = toYaw + Math.atan2(Math.sin(yaw - toYaw), Math.cos(yaw - toYaw));
     s.off = { t: 0, x: p.pos.x, y: p.pos.y, yaw, toYaw, facing: Math.PI / 2 };
     s.auto = 0;
+    s.pending = 0;
   }
 
   private ladderStep(dt: number) {
@@ -222,10 +386,10 @@ export class Climber {
       const k = Math.min(1, s.off.t / STEP_OFF);
       const e = k * k * (3 - 2 * k);
       p.pos.x = THREE.MathUtils.lerp(s.off.x, OFF_X, e);
-      p.pos.y = THREE.MathUtils.lerp(s.off.y, 0, e) + Math.sin(Math.PI * k) * 0.12;
+      p.pos.y = THREE.MathUtils.lerp(s.off.y, 0, e) + (s.physical ? 0 : Math.sin(Math.PI * k) * 0.12);
       p.pos.z += (LADDER.z - p.pos.z) * Math.min(1, dt * 12);
       p.facing = THREE.MathUtils.lerp(-Math.PI / 2, s.off.facing, e);
-      if (p.view === 'first') {
+      if (p.view === 'first' && !s.physical) {
         p.camYaw = THREE.MathUtils.lerp(s.off.yaw, s.off.toYaw, e);
         p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
       }
@@ -240,7 +404,7 @@ export class Climber {
     p.pos.x += (LADDER.x - p.pos.x) * Math.min(1, dt * 12);
     p.pos.z += (LADDER.z - p.pos.z) * Math.min(1, dt * 12);
     p.facing = -Math.PI / 2;
-    if (!s.auto && !s.waiting && p.pos.y >= 0 && p.holding('Space')) {
+    if (!s.physical && !s.auto && !s.waiting && p.pos.y >= 0 && p.holding('Space')) {
       // Jump off, back from the wall.
       p.pos.x = LADDER.x + 0.3;
       this.release('ladder', false);
@@ -248,12 +412,19 @@ export class Climber {
       return;
     }
     let dir = 0;
+    let dy = 0;
     if (s.waiting) dir = 0;
     else if (s.auto) dir = s.auto;
-    else dir = (p.holding('KeyW', 'ArrowUp') ? 1 : 0) - (p.holding('KeyS', 'ArrowDown') ? 1 : 0);
+    else if (s.physical) {
+      // What your hands pulled since the last tick, once: a still (or lost) hand holds you where you are.
+      dy = s.paused ? 0 : s.pending;
+      s.pending = 0;
+      dir = Math.sign(dy);
+    } else dir = (p.holding('KeyW', 'ArrowUp') ? 1 : 0) - (p.holding('KeyS', 'ArrowDown') ? 1 : 0);
+    if (!dy) dy = dir * CLIMB * dt;
     const up = this.hooks.floorThere(1);
     const down = this.hooks.floorThere(-1);
-    let y = p.pos.y + dir * CLIMB * dt;
+    let y = p.pos.y + dy;
     // At the floor: off, unless you're on your way down through it.
     if (dir < 0 && y <= 0 && p.pos.y >= 0 && (s.auto === -1 || !down)) {
       p.pos.y = 0;
@@ -279,7 +450,8 @@ export class Climber {
     }
     p.pos.y = y;
     p.moving = dir !== 0 && !s.waiting;
-    p.walkPhase += Math.abs(dir) * dt * 7;
+    if (s.physical && !s.auto) p.walkPhase += (Math.abs(dy) / CLIMB) * 7;
+    else p.walkPhase += Math.abs(dir) * dt * 7;
     const rung = Math.round(y / 0.3);
     if (rung !== s.rung) {
       s.rung = rung;
@@ -287,11 +459,24 @@ export class Climber {
     }
   }
 
-  private go(s: Extract<State, { kind: 'ladder' }>, way: Way, y: number) {
+  private go(s: LadderState, way: Way, y: number) {
     if (s.waiting) return;
     s.waiting = true;
+    s.pending = 0;
     const p = this.player;
     this.hooks.travel(way, 'ladder', { x: p.pos.x, y: y + (way > 0 ? -STOREY : STOREY), z: p.pos.z, rotY: p.facing });
+  }
+
+  private place(s: PoleState, r: number) {
+    const p = this.player;
+    p.pos.x = s.spot.x + Math.sin(s.angle) * r;
+    p.pos.z = s.spot.z + Math.cos(s.angle) * r;
+  }
+
+  /** A physical pole's queued turn, taken once. */
+  private takeTurn(s: PoleState) {
+    s.angle = wrap(s.angle + s.turn);
+    s.turn = 0;
   }
 
   private poleStep(dt: number) {
@@ -299,18 +484,32 @@ export class Climber {
     if (s?.kind !== 'pole') return;
     const p = this.player;
     const { spot } = s;
+    // Held by hands that tracking has lost for a moment: stay put, and don't set off anywhere. Once the
+    // floor below has come (through), the slide onto it carries on by itself.
+    const frozen = s.physical && s.paused && !s.released && (s.stage === 'hop' || s.stage === 'twirl' || (s.stage === 'slide' && !s.through));
+    if (frozen) {
+      p.moving = false;
+      return;
+    }
     s.t += dt;
-    const place = (r: number) => {
-      p.pos.x = spot.x + Math.sin(s.angle) * r;
-      p.pos.z = spot.z + Math.cos(s.angle) * r;
-    };
+    if (s.stage === 'twirl' && s.physical) {
+      // Round the pole only as your hands take you, in close to it at the height you grabbed it.
+      this.takeTurn(s);
+      const r = Math.hypot(p.pos.x - spot.x, p.pos.z - spot.z);
+      const want = POLE.grip + 0.1;
+      this.place(s, Math.max(POLE.grip, r + (want - r) * Math.min(1, dt * 10)));
+      p.pos.y = s.from.y;
+      this.face(s, dt, 0);
+      p.moving = false;
+      return;
+    }
     if (s.stage === 'twirl') {
       const k = Math.min(1, s.t / TWIRL);
       s.angle += dt * ((Math.PI * 2) / TWIRL) * Math.sin(Math.PI * k) * 1.57;
       const r = THREE.MathUtils.lerp(Math.hypot(s.from.x - spot.x, s.from.z - spot.z), POLE.grip + 0.1, Math.sin(Math.PI * k));
-      place(Math.max(r, POLE.grip));
+      this.place(s, Math.max(r, POLE.grip));
       p.pos.y = s.from.y + Math.sin(Math.PI * k) * 0.5;
-      this.face(s.angle, dt, 0.1);
+      this.face(s, dt, 0.1);
       p.moving = false;
       if (k >= 1) {
         p.pos.y = s.from.y;
@@ -319,12 +518,13 @@ export class Climber {
       return;
     }
     if (s.stage === 'hop') {
-      // A hop onto the pole: in to it, and up a little.
+      // A hop onto the pole: in to it, and up a little (held by hand: in to it, no hop).
+      if (s.physical) this.takeTurn(s);
       const k = Math.min(1, s.t / 0.28);
       const r0 = Math.hypot(s.from.x - spot.x, s.from.z - spot.z);
-      place(THREE.MathUtils.lerp(r0, POLE.grip, k));
-      p.pos.y = s.from.y + Math.sin(Math.PI * k * 0.5) * 0.35;
-      this.face(s.angle, dt, 0);
+      this.place(s, THREE.MathUtils.lerp(r0, POLE.grip, k));
+      p.pos.y = s.from.y + (s.physical ? 0 : Math.sin(Math.PI * k * 0.5) * 0.35);
+      this.face(s, dt, 0);
       if (k >= 1) {
         s.stage = 'slide';
         this.hooks.sound('slide');
@@ -333,23 +533,24 @@ export class Climber {
     }
     if (s.stage === 'wait') {
       // In the dark under the floor, holding on, while the floor below comes.
-      this.face(s.angle, dt, -0.4);
+      s.turn = 0;
+      this.face(s, dt, -0.4);
       return;
     }
     if (s.stage === 'off') {
+      const o = s.off;
+      if (!o) return;
       // Round to the railing's gap, then out through it onto the floor with a little hop.
       const k = Math.min(1, s.t / SWING_OFF);
-      const ease = (x: number) => x * x * (3 - 2 * x);
       const turn = ease(Math.min(1, k / 0.6));
       const out = ease(Math.max(0, (k - 0.4) / 0.6));
-      const a0 = s.offFrom ?? s.angle;
-      s.angle = a0 + Math.atan2(Math.sin(spot.open - a0), Math.cos(spot.open - a0)) * turn;
-      place(THREE.MathUtils.lerp(POLE.grip, OFF_POLE, out));
-      p.pos.y = Math.sin(Math.PI * k) * 0.25;
+      s.angle = o.a0 + Math.atan2(Math.sin(o.a1 - o.a0), Math.cos(o.a1 - o.a0)) * turn;
+      this.place(s, THREE.MathUtils.lerp(o.r0, o.r1, out));
+      p.pos.y = o.y + (s.physical ? 0 : Math.sin(Math.PI * k) * 0.25);
       // From facing round the pole to facing out, away from it.
       const along = s.angle + Math.PI / 2;
-      p.facing = along + Math.atan2(Math.sin(spot.open - along), Math.cos(spot.open - along)) * out;
-      if (p.view === 'first') {
+      p.facing = along + Math.atan2(Math.sin(o.a1 - along), Math.cos(o.a1 - along)) * out;
+      if (p.view === 'first' && !s.physical) {
         const yaw = p.facing - Math.PI;
         p.camYaw += Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw)) * Math.min(1, dt * 10);
         p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
@@ -357,36 +558,54 @@ export class Climber {
       p.moving = out > 0 && k < 1;
       this.rush = Math.max(0, this.rush - dt * 4);
       if (k >= 1) {
-        p.pos.y = 0;
-        this.hooks.sound('land', s.v);
-        this.release('pole', true);
+        p.pos.y = o.y;
+        if (o.land) this.hooks.sound('land', s.v);
+        this.release('pole', o.land);
       }
       return;
     }
     // Down you go, faster and faster, spinning round the pole; squeeze to slow down near the bottom.
-    const braking = s.through && p.pos.y < 1;
+    // Held by hand, you go round only as your hands take you, and on down through a floor with another below.
+    const held = s.physical && !s.released;
+    const braking = s.through && p.pos.y < 1 && (!held || !this.hooks.floorThere(-1));
     if (braking) s.v = Math.max(2, s.v - 26 * dt);
     else s.v = Math.min(SLIDE_MAX, s.v + SLIDE_G * dt);
-    s.angle += dt * (1.6 + s.v * 0.55);
-    place(POLE.grip);
+    if (s.physical) {
+      if (held) this.takeTurn(s);
+      else s.turn = 0;
+    } else s.angle += dt * (1.6 + s.v * 0.55);
+    this.place(s, POLE.grip);
     p.pos.y -= s.v * dt;
     this.rush = Math.min(1, s.v / SLIDE_MAX);
-    this.face(s.angle, dt, braking ? -0.12 : -0.4);
+    this.face(s, dt, braking ? -0.12 : -0.4);
     p.moving = false;
     p.walkPhase += dt * 4;
     if (p.pos.y <= POLE_BOTTOM && !s.through) {
       p.pos.y = POLE_BOTTOM;
       s.stage = 'wait';
+      s.turn = 0;
       this.hooks.travel(-1, 'pole', { x: p.pos.x, y: POLE_BOTTOM + STOREY, z: p.pos.z, rotY: p.facing });
       return;
     }
     if (p.pos.y <= 0 && s.through) {
+      if (held && this.hooks.floorThere(-1)) {
+        if (s.paused) {
+          // Hands lost for a moment: hang on at this floor rather than set off for the next one.
+          p.pos.y = 0;
+          s.v = 0;
+          this.rush = 0;
+          return;
+        }
+        // Still holding on: on down through this floor's hole to the next one.
+        s.through = false;
+        return;
+      }
       p.pos.y = 0;
       if (this.hooks.floorThere(-1)) {
         // No mat here: the pole goes on down through a hole in this floor. Off it, beside the hole.
         s.stage = 'off';
         s.t = 0;
-        s.offFrom = s.angle;
+        s.off = { a0: s.angle, a1: spot.open, r0: POLE.grip, r1: OFF_POLE, y: 0, land: true };
         return;
       }
       const speed = s.v;
@@ -399,13 +618,14 @@ export class Climber {
 
   /**
    * Swinging round the pole: you face the way you're going, the pole on your left. In first person
-   * you look a little toward it (so it's in view, hands on it) and down a little.
+   * you look a little toward it (so it's in view, hands on it) and down a little. Held by hand, only
+   * the body turns: your head looks wherever it does.
    */
-  private face(angle: number, dt: number, pitch: number) {
+  private face(s: PoleState, dt: number, pitch: number) {
     const p = this.player;
-    const facing = angle + Math.PI / 2;
+    const facing = s.angle + Math.PI / 2;
     p.facing = facing;
-    if (p.view !== 'first') return;
+    if (p.view !== 'first' || s.physical) return;
     const yaw = facing + 1.25 - Math.PI;
     const d = Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw));
     p.camYaw += d * Math.min(1, dt * 10);
