@@ -1,6 +1,84 @@
 # Galaxy XR performance handoff
 
-## Goal
+## Current acceptance criteria
+
+The owner has superseded the original WebXR performance target. The target is now an
+installable Galaxy XR client with sustained **90 Hz**, sharp text, eye-tracked foveation,
+Galaxy XR motion controllers. It must connect to the laptop's existing
+office server and use the same first-person world as desktop players. Worker, terminal,
+board and elevator interactions are the priority; further mini-game support is deferred.
+
+The native OpenXR implementation is in `native/android`. It now renders the original
+populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
+The optimized build has produced 90 Hz with live scene updates over Wi-Fi to the laptop
+server. The owner accepts the current performance baseline and requests focused 1–2 minute
+checks as the interface and controls change. Remaining work prioritizes XR menus, tooltips
+and layout, Galaxy XR controller visuals, graphics settings and persistent
+FPS feedback, plus visual/input validation of the core office interactions.
+
+The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
+with one concrete defect: worker laptop terminal screens remained pixelated at high settings.
+The source canvases are already 2048×1360 and retain that size during export. Work is now
+focused on a separate sharp screen pass, with world/controller occlusion, while preserving
+the existing world render budget. A persistent bounded 90 Hz preference is also in source
+and awaits installation. Ordinary thermal throttling is not a reason to stop or cool the app.
+The prior installed build includes native GPU hand meshes, actual Samsung controller models,
+fingertip/hover workspace input, and a fix for the hidden status Surface blocking the UI
+thread. The UI and native-input audits are ongoing. See the native client document for
+installed versus pending changes and honest acceptance limits.
+
+The latest instruction supersedes the earlier hand-tracking criterion: **motion controllers
+are the only supported native input scheme**, and the **left controller’s Menu button** opens
+and closes the workspace. Grip must not open or close it. The controller-only migration is
+in progress; hand extension/permission removal and UI copy are in source, with input fixes
+and regression checks being completed before the next installation. WebXR keeps its existing
+controls. Prior hand-mesh implementation evidence below is historical, not a current target.
+
+## Native measurements, 2026-09-29
+
+The original native display foundation held approximately 90 submitted fps with 90
+compositor fps and no measured missed periods, but it contained no office geometry.
+Those readings establish the display path only.
+
+The first populated-office build was compiled without native optimization. It suffered
+shader/upload startup stalls up to 451 ms, then ran below 90 submitted fps. The runtime
+changed its refresh rate from 90 to 72 Hz about 55 seconds after the world started loading.
+After all 103 textures were resident, scene GPU time was approximately 5.9 ms and runtime
+app GPU time approximately 8.7 ms. Thermal throttling was observed, but several costs and
+settings changed together; the run does not isolate the cause of the refresh-rate change.
+
+A subsequent experiment reduced GPU cost by strengthening foveation, but detaching the
+closed workspace's virtual-display Surface stopped page updates. It rendered a stale
+office snapshot, so that run is excluded from acceptance. The Surface remains attached;
+the closed workspace now hides its DOM and pauses CSS animations instead.
+
+The optimized APK uses `-O2`, eye-tracked foveation gain 4, fovea area 2 and minimum pixel
+density 0.25, updating every supported focal point. It connected through the original
+authentication and profile flow to the isolated laptop server at `http://192.168.1.26:4761`.
+In the recorded closed-workspace windows from 18:39:18 to 18:39:48 (device log time), submitted
+fps was 90.005–90.018, actual refresh and compositor fps were 90, and missed predicted periods
+were zero. Runtime app GPU time was 6.31–6.50 ms; CPU p99 was 3.46–6.23 ms. Scene packet
+sequence continued rising at approximately 29 updates per second. The world contained
+1,741 objects and drew 134 color calls in the sampled view, plus 64 shadow calls on shadow
+update frames. A headset screenshot showed the office, desks, chairs, boards, signs and
+night lighting. This is live populated-world evidence, not the empty foundation result.
+
+A later check from 18:53:15 to 18:55:10 measured 90.003–90.019 submitted fps at actual
+90 Hz, zero missed predicted periods and no pending uploads or rejected packets. All 105
+textures were resident across 1,770 objects; scene sequence advanced from 26,641 to 30,032.
+Runtime app GPU time was 6.50–6.87 ms and maximum window CPU p99 was 5.77 ms. This is the
+baseline for focused 1–2 minute checks after interface, control or graphics-setting changes.
+
+The renderer currently reports a `GlassDark` material approximation: clearcoat is represented
+by roughness. Scene export errors are empty. Other views, invalid-gaze fallback, sharp-text
+review and physical hand/controller use remain visual/input checks. See
+[the native client document](vr-native-android.md#acceptance-status) for the current scope,
+build instructions and measurement definitions.
+
+Everything below records the earlier WebXR investigation. Its 72 fps target and suggestions
+to remove parts of the world are historical, and do not describe the current acceptance criteria.
+
+## Original WebXR goal
 
 VR in the office on the Samsung Galaxy XR must be excellent:
 
@@ -230,7 +308,10 @@ What this says:
    not yet known how much of that is inherent, and a native OpenXR app would be a useful
    comparison.
 
-## Next steps, in order
+## Historical WebXR follow-ups
+
+These proposed follow-ups belonged to the original 72 Hz browser investigation. The native
+client and current priorities above supersede this plan.
 
 1. **Rule Chrome in or out first.** Measure a bare WebXR page (projection layer, clear only,
    no quad layers, then add each back) with `abgpu.sh`. If that alone is ~9 ms at scale 1.0,
@@ -239,7 +320,7 @@ What this says:
 2. **Test the LRZ theory directly.** Make the two punch-out meshes and the signs not write
    depth (or draw them last), then re-measure every opaque cost. If it holds, the fix is
    cheap: no depth-writing blends anywhere in the VR pass.
-3. **Drop the heavy parts in VR** (allowed by the owner). Measured candidates:
+3. **Drop the heavy parts in VR** (within the original scope). Measured candidates:
    - MSAA to 2× (−3.5 ms) or 0 (−4.4 ms), with quad layers carrying text sharpness.
    - The outside (−2 ms): street, neighbour buildings, clouds, tower. Could be a skybox.
    - Transparent decor (−4.2 ms for all of it): the window glass and shine layers could go opaque or disappear in VR.
@@ -247,4 +328,4 @@ What this says:
    - Only the current floor loaded, with a loading screen on floor change.
 4. **Then the CPU** (it becomes the limit near 72): hover picking (+7 fps when off),
    `matrixAutoUpdate` for the static office (+5.5), the batcher's per-frame checks (+2.6).
-5. Verify 72 fps sustained after 10+ minutes hot, with `px.py` on every screenshot.
+5. Verify the visible populated world at the original 72 fps target, with `px.py` on screenshots.

@@ -121,7 +121,11 @@ import { whereabouts } from './ui/whereabouts';
 import { wayTo } from './walkto';
 import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/meeting';
 import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
-import { VRSession } from './vr/session';
+import { VRSession, type VRHooks } from './vr/session';
+import { NativeControls } from './native/controls';
+import { NativeScene } from './native/scene';
+import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
+import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
 import { captureVrKeys } from './vr/physical-keys';
@@ -131,13 +135,23 @@ import { probeXRSupport } from './vr/support';
 const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
+const nativeMode = isNativeMode();
+let nativeControls: NativeControls | null = null;
+let nativeScene: NativeScene | null = null;
+let nativeUi: NativeUi | null = null;
+function headsetActive() {
+  return vr.active || nativeControls?.active === true;
+}
+function headsetControls() {
+  return nativeControls?.active ? nativeControls : vr;
+}
 const canvas = $('scene') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !nativeMode, powerPreference: 'high-performance' });
 // On from boot so an immersive session can take over the loop; every XR branch in the renderer is
 // gated on isPresenting, so the desktop picture is unchanged.
-renderer.xr.enabled = true;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+renderer.xr.enabled = !nativeMode;
+renderer.setPixelRatio(nativeMode ? 1 : Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = !nativeMode;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const effect = new OutlineEffect(renderer, { defaultThickness: 0.0032, defaultColor: [0.17, 0.18, 0.26] });
@@ -387,7 +401,7 @@ const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
-player.view = settings.view;
+player.view = nativeMode ? 'first' : settings.view;
 // WebXR in the headset browser: the session owns the rig, the rays and locomotion, and drives the
 // same interact dispatch as the keyboard (vr/session.ts). Idle on desktop: no rays, no loop cost,
 // and the Enter VR button stays hidden where XR is unavailable.
@@ -573,7 +587,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
   }
   use(it, 'E', note, spot);
 }
-const vr = new VRSession(renderer, scene, camera, {
+const vrHooks: VRHooks = {
   player,
   settings,
   useE: vrUseE,
@@ -597,6 +611,7 @@ const vr = new VRSession(renderer, scene, camera, {
       net.carry(state);
       me.carry(item?.pose ? null : carrying);
       vrUi?.setCarrying(carrying);
+      nativeUi?.setCarrying(carrying);
     },
     ground: (point) => Math.max(player.street, player.groundBelow(point.x, point.z, point.y)),
   },
@@ -766,7 +781,8 @@ const vr = new VRSession(renderer, scene, camera, {
     vrUi?.dispose();
     vrUi = null;
   },
-});
+};
+const vr = new VRSession(renderer, scene, camera, vrHooks);
 // A physical keyboard while presenting types into the VR prompt or terminal, and no desktop
 // keybind sees it. Registered at module load, so it's ahead of every later window listener.
 captureVrKeys(window, { active: () => vr.active, onBytes: (bytes, key) => vrUi?.physicalKey(bytes, key) });
@@ -1529,8 +1545,8 @@ let upgradePhase = '';
 
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
-  if (!up && vr.active) {
-    vr.clearGrab();
+  if (!up && headsetActive()) {
+    headsetControls().clearGrab();
     setCarrying(null);
   }
   // The office is gone: a bleed-out dialog can't confirm anything, so the worker is unharmed.
@@ -1615,7 +1631,7 @@ net.onMessage((msg) => {
       break;
     }
     case 'floor.enter':
-      vr.clearGrab();
+      headsetControls().clearGrab();
       // Not a trip of yours: the floor you were on was taken off the building, and the elevator took you away.
       if (!trip) takenAway();
       // The card belongs to the board downstairs (or up): the office already put it back there.
@@ -1807,9 +1823,9 @@ function fade(on: boolean, quick = false) {
   $('fade').classList.toggle('on', on);
   // The DOM overlay is invisible in the headset: the session fades its own quad (trips hold
   // the black until the far side arrives; teleports fade straight back on their own).
-  if (vr.active) {
-    if (on) vr.fadeOut();
-    else vr.fadeIn();
+  if (headsetActive()) {
+    if (on) headsetControls().fadeOut();
+    else headsetControls().fadeIn();
   }
 }
 
@@ -1831,8 +1847,8 @@ function lift() {
 function syncElevatorButtons() {
   for (const elevator of [office.elevator, roof?.elevator]) {
     if (!elevator) continue;
-    elevator.setVR(vr.active);
-    if (vr.active) elevator.setFloors(store.floors, store.floor);
+    elevator.setVR(headsetActive());
+    if (headsetActive()) elevator.setFloors(store.floors, store.floor);
   }
 }
 store.on('floors', syncElevatorButtons);
@@ -1912,7 +1928,7 @@ function tripFailed() {
   fade(false);
   if (t.how === 'elevator') lift().setOpen(!!store.floor);
   if (t.how === 'ladder' || t.how === 'pole') climber.abort();
-  player.enabled = !modalOpen() && !vr.active;
+  player.enabled = !modalOpen() && !headsetActive();
 }
 
 /** Arrived in a spot that's a pole's hole on this floor: step out of it, the way in. */
@@ -1987,22 +2003,22 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
     // Nowhere to go yet: the doors stay shut until there's a floor, and the panel says how to add one.
     office.elevator.setOpen(false);
     fade(false);
-    player.enabled = !modalOpen() && !vr.active;
+    player.enabled = !modalOpen() && !headsetActive();
     showElevator();
     return;
   }
   fade(false);
   // The rig rebases itself onto the new spot (followHead); face where the avatar faces.
-  if (vr.active) vr.faceAvatar();
+  if (headsetActive()) headsetControls().faceAvatar();
   if (how === 'back') {
     // The doors stand open, the way the last one out left them.
     lift().setOpen(true);
-    player.enabled = !modalOpen() && !vr.active;
+    player.enabled = !modalOpen() && !headsetActive();
     if (!upTop) unstick();
     return;
   }
   if (how !== 'elevator') {
-    player.enabled = !modalOpen() && !vr.active;
+    player.enabled = !modalOpen() && !headsetActive();
     if (how === 'switch') unstick();
     else climber.arrived();
     return;
@@ -2010,7 +2026,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   setTimeout(() => {
     lift().setOpen(true);
     sound.ding('done');
-    player.enabled = !modalOpen() && !vr.active;
+    player.enabled = !modalOpen() && !headsetActive();
   }, 450);
 }
 
@@ -2114,6 +2130,7 @@ let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z:
 
 /** Walks you over to a teammate, riding the elevator first if they're on another floor. A key of yours takes over. */
 function walkTo(id: string) {
+  if (nativeControls?.active) return vrWalkToPeer(id);
   const p = store.peers.get(id);
   if (!p || id === store.you) return;
   if (!store.onMyFloor(p) && !p.floor) return;
@@ -2145,7 +2162,7 @@ function vrWalkToPeer(id: string) {
     const g = player.groundBelow(x, z, at.y + 1);
     if (!Number.isFinite(g) || Math.abs(g - player.pos.y) > 8 || player.blockedAt(x, z, g)) continue;
     if (player.seat) standUp();
-    vr.teleportTo(new THREE.Vector3(x, g, z));
+    headsetControls().teleportTo(new THREE.Vector3(x, g, z));
     toast(`🚶 Over to ${p.name}`);
     return;
   }
@@ -2950,6 +2967,7 @@ function goToDesk(deskId: string) {
   if (!desk) return;
   closeAllModals();
   standAt(desk);
+  if (headsetActive()) headsetControls().faceAvatar();
   const w = store.workerAtDesk(deskId);
   toast(w ? `You're at ${desk.label}, ${w.name}'s desk` : `You're at ${desk.label}`);
 }
@@ -2988,7 +3006,7 @@ function goToNextWaiting() {
   }
   closeAllModals();
   standAt(desk);
-  if (vr.active) vr.faceAvatar();
+  if (headsetActive()) headsetControls().faceAvatar();
   const waiting = waitingInOrder(store.workers.values());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
   nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
@@ -3742,6 +3760,8 @@ function setCarrying(card: CarriedIssue | null) {
   me.carry(card);
   hands.carry(card);
   net.carry(card);
+  nativeControls?.syncCarrying();
+  nativeUi?.setCarrying(card);
   carriedOff = [...offBoard()].join(',');
   renderIssuesBoard();
   hintKey = '';
@@ -4569,7 +4589,7 @@ onDoingChange(() => sendDoing());
  */
 let relookOnKey = false;
 onModalChange((open) => {
-  player.enabled = !open && !vr.active;
+  player.enabled = !open && !headsetActive();
   player.clearKeys();
   sendDoing();
   // Reading off the bookshelf: an open book in your hands, and your character's.
@@ -4594,7 +4614,7 @@ onModalChange((open) => {
 
 /** Once the last window is closed, the game has the keyboard again and, in first person, the mouse. */
 function backToGame() {
-  if (modalOpen()) return;
+  if (nativeMode || modalOpen()) return;
   if (!isTyping()) canvas.focus({ preventScroll: true });
   if (!player.canLock || player.hasMouse) return;
   // The browser lets a page re-capture the mouse it let go of itself (see yieldMouse), even on Esc
@@ -4904,8 +4924,8 @@ const hud = mountHud(
       icon: () => (vr.active ? '⏻' : '🕶️'),
       label: () => (vr.active ? 'Exit VR' : 'Enter VR'),
       section: 'Together',
-      shown: () => vr.available || xrInsecure,
-      status: () => vr.available || xrInsecure,
+      shown: () => !nativeMode && (vr.available || xrInsecure),
+      status: () => !nativeMode && (vr.available || xrInsecure),
       chip: () => (vr.active ? 'In VR' : 'Enter VR'),
       on: () => vr.active,
       blocked: noXr,
@@ -4954,11 +4974,12 @@ const hud = mountHud(
 // Whether this browser can do immersive VR: when it can, the Enter VR button joins the top bar.
 // Insecure origins keep a dimmed button that says why (see noXr), so the headset browser that
 // opened the http:// address learns the fix instead of finding nothing.
-void probeXRSupport().then((availability) => {
-  vr.available = availability === 'supported';
-  xrInsecure = availability === 'insecure';
-  if (vr.available || xrInsecure) hud.refresh();
-});
+if (!nativeMode)
+  void probeXRSupport().then((availability) => {
+    vr.available = availability === 'supported';
+    xrInsecure = availability === 'insecure';
+    if (vr.available || xrInsecure) hud.refresh();
+  });
 /** F: hang a picture on a wall of this floor. There are no walls for them up on the roof. */
 function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
@@ -4971,7 +4992,7 @@ function showSettings(pane?: SettingsPane) {
     (s) => {
       Object.assign(settings, s);
       saveSettings(settings);
-      player.setView(settings.view);
+      player.setView(nativeMode ? 'first' : settings.view);
       sound.setVolume(settings.volume, settings.muted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
     },
@@ -5000,6 +5021,10 @@ function editProfile() {
 function resize() {
   // Presenting, three owns the canvas size (the headset's framebuffer, per eye); hands off.
   if (renderer.xr.isPresenting) return;
+  if (nativeMode) {
+    renderer.setSize(1, 1, false);
+    return;
+  }
   const w = window.innerWidth;
   const hgt = window.innerHeight;
   renderer.setSize(w, hgt, false);
@@ -5039,7 +5064,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   const now = performance.now();
   // Presenting in the headset: the VR session steers the player instead of the keyboard, the rays
   // pick the target, and the cartoon hands and post effects sit out (the eyes are real ones).
-  const inVR = vr.active;
+  const inVR = headsetActive();
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
   const secs = now / 1000;
@@ -5054,10 +5079,12 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   renderCaffeine(caffeine, secs);
   // Drinks from the rooftop bar: a glass in hand, and the world swaying.
   const drunk = drinking(now);
-  vr.sway = inVR ? player.drunk : 0;
+  vr.sway = vr.active ? player.drunk : 0;
+  if (nativeControls) nativeControls.sway = nativeControls.active ? player.drunk : 0;
 
   walkTick(now);
-  if (inVR) vr.update(dt);
+  if (nativeControls?.active) nativeControls.update(dt);
+  else if (vr.active) vr.update(dt);
   else player.update(dt);
   // Walked into a pole's hole: you grab the pole on your way down it. (In VR the keys are
   // off all session, so the headset counts as having the controls here.)
@@ -5095,7 +5122,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   whoosh.style.opacity = rush > 0.02 ? String(rush * 0.85) : '0';
 
   // Your ears are in your head, facing wherever the camera looks.
-  if (inVR) vr.lookDir(lookDir);
+  if (inVR) headsetControls().lookDir(lookDir);
   else camera.getWorldDirection(lookDir);
   sound.update({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z, fx: lookDir.x, fz: lookDir.z });
 
@@ -5248,7 +5275,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   drunkVisionOn = blurry;
   // VR renders plain into the XR framebuffer; on desktop the effect renders both passes itself,
   // exactly as before.
-  if (inVR) renderer.render(scene, camera);
+  if (nativeMode) nativeScene?.capture();
+  else if (vr.active) renderer.render(scene, camera);
   else effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
@@ -5267,8 +5295,74 @@ function frame(ts?: number, xrFrame?: XRFrame) {
 
 // The loop runs through the renderer, so an immersive session can take it over; on desktop this is
 // the same rAF timestamp every frame, and XR start/stop swaps the driver by itself.
+let loopStarted = false;
 function startLoop() {
-  renderer.setAnimationLoop(frame);
+  if (loopStarted) return;
+  loopStarted = true;
+  if (nativeMode) {
+    nativeControls?.start();
+    syncElevatorButtons();
+    // The native host advances gameplay with each input batch. OpenXR owns the display loop.
+  } else renderer.setAnimationLoop(frame);
+}
+
+// Native keeps the original scene, interact dispatch, windows and Net instance.
+if (nativeMode) {
+  nativeUi = initNativeUi({
+    openWorker: openWorkerTerminal,
+    hireAtDesk,
+    openShell,
+    putBack,
+    workerActions: {
+      prompt: (id) => {
+        const worker = store.workers.get(id);
+        if (!worker) return;
+        if (DESK_BY_ID.get(worker.deskId)?.station) askStation(worker.deskId);
+        else promptAtDesk(worker.deskId);
+      },
+      resume: (id) => {
+        const worker = store.workers.get(id);
+        if (worker) resumeWorker(worker);
+      },
+      changes: openWorkerChanges,
+      pullRequest: (id) => {
+        const worker = store.workers.get(id);
+        if (worker) pullRequestFor(worker);
+      },
+      sendHome: killWorker,
+    },
+  });
+  nativeControls = new NativeControls(scene, camera, {
+    ...vrHooks,
+    useE: vrUseE,
+    togglePanel: () => nativeUi?.togglePanel(),
+    setCarrying: (card) => nativeUi?.setCarrying(card),
+  });
+  nativeScene = new NativeScene(scene, camera);
+  (window as any).officeNative = {
+    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean }) => {
+      if (events?.sceneReset) nativeScene?.reset();
+      if (events?.resetInput) nativeControls?.reset();
+      if (events?.recenter) nativeControls?.rebase();
+      nativeControls?.consume(frames);
+      if (loopStarted) frame(performance.now());
+      (window as any).officeNative.metrics = metrics;
+      nativeUi?.updatePerformance(metrics);
+      updateNativeGraphicsMetrics(metrics);
+      const control = nativeControls?.state();
+      const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
+      return {
+        scene: events?.sceneReady === false ? null : nativeScene?.drain(),
+        control: control ? { ...control, graphics: getNativeGraphicsSettings() } : control,
+        panel: { ...nativeUi?.panelState(), status: { aim: nativeGraphicsAim(control?.aim ?? ''), message } },
+      };
+    },
+    reset: () => nativeScene?.reset(),
+    recenter: () => nativeControls?.recenter(),
+    report: () => nativeScene?.report(),
+    controls: nativeControls,
+    ui: nativeUi,
+  };
 }
 
 // ---- Boot ------------------------------------------------------------------------------------------
@@ -5350,6 +5444,9 @@ void whoami().then(() => {
   emoteWheel,
   emote,
   vr,
+  native: nativeControls,
+  nativeScene,
+  nativeUi,
   ball,
 };
 (window as any).__voice = voice;

@@ -477,6 +477,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 @keyframes typing-bob { 50% { transform: translateY(-3px); } }
 .modal.term header .typed.now { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .avatar.typing { animation: none; } }
+.term-zoom-group { display: inline-flex; gap: 4px; flex: none; }
+.term-zoom { padding: 4px 8px; text-transform: none; }
 .modal.term header .cost { font: 400 11px var(--font-mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Changes window: changed files + diff at a desk */

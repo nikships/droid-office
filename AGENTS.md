@@ -11,6 +11,7 @@ Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing 
 | `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, meetings, floors |
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene), `vr/` (WebXR), `iwsdk-scripts/` (IWSDK emulator scripts) |
+| `native/android/` | Installed Galaxy XR OpenXR client; renderer and Android host instructions in `native/AGENTS.md` |
 | `bin/droid-office.js` | Published CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
 | `tests/` | `node:test` suites run through `tsx` |

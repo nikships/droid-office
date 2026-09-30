@@ -1,4 +1,13 @@
-export {}; // a module, so its names don't clash with the other pages' scripts
+import { RETURN_PARAM, safeReturnTo } from '../shared/return-to';
+import { mountKeyboard } from './native/keyboard';
+import { isNativePath } from './native/mode';
+
+const next = safeReturnTo(new URLSearchParams(location.search).get(RETURN_PARAM));
+// Signing in on a headset's panel: its own keyboard, since there may be no other.
+if (isNativePath(next)) {
+  document.body.classList.add('native-xr');
+  mountKeyboard({ storageKey: 'droid-office.native-keyboard' }).show(true);
+}
 
 const form = document.getElementById('form') as HTMLFormElement;
 const nameRow = document.getElementById('name-row') as HTMLLabelElement;
@@ -46,7 +55,7 @@ form.addEventListener('submit', async (e) => {
       } catch {
         // storage blocked
       }
-      location.href = '/';
+      location.href = next;
       return;
     }
     const body = await res.json().catch(() => ({}));

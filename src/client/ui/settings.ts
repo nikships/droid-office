@@ -45,6 +45,7 @@ export function openSettings(
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
 ) {
+  const native = document.body.classList.contains('native-xr');
   const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
   const note = h('p.setting-note');
   const paint = () => {
@@ -562,9 +563,10 @@ export function openSettings(
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       card('Your character', character),
-      card('Camera view', seg, note),
-      card(
-        'VR (headset browser)',
+      native ? setting('Headset view', 'you', h('p.setting-note', {}, 'First person: your head movement controls the view. You share the same office, workers and boards with people on the desktop.')) : card('Camera view', seg, note),
+      setting(
+        native ? 'Headset movement' : 'VR (headset browser)',
+        'you',
         h('p.setting-note', { style: 'margin:0 0 6px' }, 'Locomotion'),
         locoRow,
         h('p.setting-note', {}, 'Teleport aims with A held (or the left stick pushed forward); gliding walks the stick. Teleport-only is the comfortable default.'),

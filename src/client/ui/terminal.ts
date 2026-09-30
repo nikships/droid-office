@@ -14,6 +14,7 @@ import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { TERM_FONT } from '../fonts';
 import { providerLabel, providerUsageNote, providerUsageState, resolvedProvider } from './provider';
 import { enterKeyAction, wantsCsiEnter } from '../term-keys';
+import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
 export interface TerminalFind {
@@ -40,6 +41,21 @@ function initials(name: string): string {
   return first(words[0]) + (words.length > 1 ? first(words[words.length - 1]) : '') || '?';
 }
 
+/** The open terminal as something to type into from outside xterm (the headset panel's keyboard). */
+export interface TerminalSink {
+  workerId: string;
+  /** Whether its program takes CSI u for Ctrl+Enter and Shift+Enter (see term-keys.ts). */
+  csiEnter(): boolean;
+  /** Whether its program has switched the cursor keys to application mode (DECCKM). */
+  appCursor(): boolean;
+  /** Types these bytes, as if from this window's keyboard. */
+  input(data: string): void;
+  /** Whether a key typed on this page now would land in it: it has focus, or nothing does. */
+  holdsKeys(): boolean;
+  /** Leaves the terminal, like Shift+Esc. */
+  close(): void;
+}
+
 /** Sends a file dropped or pasted into a worker's terminal to the office; where the office keeps it. */
 async function uploadDrop(workerId: string, f: File): Promise<string> {
   const name = f.name || 'That file';
@@ -51,7 +67,12 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
   return r.path;
 }
 
-let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;
+let current: { workerId: string; modal: Modal; find(f: TerminalFind): void; sink: TerminalSink } | null = null;
+
+/** The terminal window that's open, if any. */
+export function openTerminalSink(): TerminalSink | null {
+  return current?.sink ?? null;
+}
 /** Whether we've said, this page load, that Esc now goes to the terminal and how to leave instead. */
 let escHinted = false;
 const listeners = new Set<(msg: ServerMsg) => void>();
@@ -89,14 +110,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     '🧠 Models',
   );
   const typed = h('span.typed', {});
+  const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
+  const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
+  const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, viewers, typed, modelsBtn, onChanges ? changesBtn : null, closeBtn), host);
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, viewers, typed, zoom, modelsBtn, onChanges ? changesBtn : null, closeBtn), host);
 
   const term = new Terminal({
     fontFamily: TERM_FONT,
-    fontSize: 14,
+    fontSize: termFontSize(),
     lineHeight: 1.1,
     theme: TERM_THEME,
     cursorBlink: true,
@@ -304,6 +328,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       listeners.delete(onMsg);
       unsub();
       unsubPeers();
+      offFont();
       clearInterval(typingTimer);
       ro.disconnect();
       net.send({ t: 'worker.detach', workerId });
@@ -311,6 +336,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (current?.modal === modal) current = null;
     },
   });
+  const csiEnter = () => {
+    const w = store.workers.get(workerId);
+    return wantsCsiEnter(w?.kind, w && resolvedProvider(w.provider, store.project));
+  };
   current = {
     workerId,
     modal,
@@ -318,7 +347,39 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (ready) jumpTo(f);
       else pendingFind = f;
     },
+    sink: {
+      workerId,
+      csiEnter,
+      appCursor: () => term.modes.applicationCursorKeysMode,
+      // Through xterm, so it goes out exactly like a key typed into the window (onData below).
+      input: (data) => {
+        term.input(data);
+        sayTyping();
+      },
+      holdsKeys: () => {
+        const active = document.activeElement;
+        return !active || active === document.body || host.contains(active);
+      },
+      close: () => modal.close(),
+    },
   };
+  const paintZoom = (px: number) => {
+    smaller.toggleAttribute('disabled', px <= TERM_FONT_MIN);
+    bigger.toggleAttribute('disabled', px >= TERM_FONT_MAX);
+    zoom.title = `Text size ${px} px`;
+  };
+  paintZoom(termFontSize());
+  const offFont = onTermFontSize((px) => {
+    term.options.fontSize = px;
+    paintZoom(px);
+    sendSize();
+  });
+  const zoomBy = (dir: 1 | -1) => {
+    setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
+    term.focus();
+  };
+  smaller.addEventListener('click', () => zoomBy(-1));
+  bigger.addEventListener('click', () => zoomBy(1));
   closeBtn.addEventListener('click', () => modal.close());
   changesBtn.addEventListener('click', () => {
     onChanges?.();
@@ -331,8 +392,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       modal.close();
       return false;
     }
-    const w = store.workers.get(workerId);
-    const enter = enterKeyAction(wantsCsiEnter(w?.kind, w && resolvedProvider(w.provider, store.project)), e);
+    const enter = enterKeyAction(csiEnter(), e);
     if (enter.do === 'default') return true;
     if (enter.do === 'send') {
       e.preventDefault();

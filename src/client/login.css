@@ -58,4 +58,8 @@ a { color: var(--accent); font-weight: 600; text-decoration: none; }
 a:hover { color: var(--accent-hover); text-decoration: underline; }
 label + label { margin-top: 12px; }
 .note { text-align: left; color: var(--text-secondary); font-size: 13px; margin: 8px 0 0; }
+/* On a headset's panel: room for its keyboard at the bottom, and bigger fields. */
+body.native-xr { padding-bottom: calc(var(--native-kb-h, 0px) + 16px); align-content: start; }
+body.native-xr .card { width: min(560px, 100%); }
+body.native-xr input, body.native-xr button[type=submit] { min-height: 56px; font-size: 20px; }
 .role { display: inline-block; background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 2px; padding: 1px 8px; font: 500 11px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }

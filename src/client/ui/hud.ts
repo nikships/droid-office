@@ -138,6 +138,10 @@ export function renderChat() {
 }
 
 export function openHelp() {
+  if (document.body.classList.contains('native-xr')) {
+    openNativeHelp();
+    return;
+  }
   const rows: [string, string][] = [
     ['W A S D', 'Walk (hold Shift to run)'],
     ['Space', 'Jump'],
@@ -186,6 +190,29 @@ export function openHelp() {
   ];
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h('div.modal', { role: 'dialog', 'aria-label': 'Controls' }, h('header', {}, h('h2', {}, 'Controls'), close), h('div.body', {}, h('div.help-grid', {}, ...rows.flatMap(([k, v]) => [h('span.key', {}, k), h('span', {}, v)]))));
+  const modal = openModal(el);
+  close.addEventListener('click', () => modal.close());
+}
+
+function openNativeHelp() {
+  const rows: [string, string][] = [
+    ['Look & move', 'Look around naturally. Hold A or push the left stick forward to aim a teleport, then release to land. The right stick turns. Settings offers smooth glide and smooth turn.'],
+    ['Controllers', 'Galaxy XR motion controllers are required. Aim at an object or a workspace button and press the trigger to use it. Grip grabs nearby objects and returns a held issue card; it does not open the workspace.'],
+    ['Workspace', 'The left controller’s Menu button opens or hides your workspace. Back to the office closes the workspace and keyboard.'],
+    ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
+    ['Terminal', 'Use the docked keyboard, including Ctrl, Alt, Shift and arrows. Tap a modifier twice to lock it and again to release it. Hold Backspace or an arrow to repeat. The terminal’s − and + change text size.'],
+    ['Issues & PRs', 'Open a board in the office or from Home. Read an issue, pick up its card, assign it to a worker or add it to the queue. PRs keep the desktop conversation, file review and confirmation actions.'],
+    ['Held card', 'Aim at a desk or the queue and press the trigger to place the card. Put back in Home returns it to the board. A physical card grab uses the same shared issue.'],
+    ['Floors', 'Aim at a physical floor button in the elevator and press the trigger. The Elevator tile and the floor name also open the original floor chooser.'],
+    ['Graphics', 'Graphics & performance controls foveation, world resolution, peripheral detail and the persistent FPS counter. The app requests 90 Hz; delayed office updates or a lower rate are shown explicitly.'],
+  ];
+  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const el = h(
+    'section.modal.native-help',
+    { role: 'dialog', 'aria-label': 'Headset controls' },
+    h('header', {}, h('h2', {}, 'Headset controls'), close),
+    h('div.body', {}, h('div.help-grid', {}, ...rows.flatMap(([label, description]) => [h('strong', {}, label), h('span', {}, description)]))),
+  );
   const modal = openModal(el);
   close.addEventListener('click', () => modal.close());
 }
