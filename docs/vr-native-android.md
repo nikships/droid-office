@@ -411,6 +411,39 @@ both Android variants. PR #45 merged into `main` as `602ad1a`. The first main re
 passed those checks too, then exposed a conflicting inherited `ANDROID_SDK_ROOT` during
 signing. The release builder now normalizes both SDK variables to the selected pinned SDK.
 
+### Published release validation (2026-09-30)
+
+[v0.1.280](https://github.com/nikships/droid-office/releases/tag/v0.1.280), from `6096760`,
+publishes the desktop package, signed headset APK and checksum. Its
+[main CI run](https://github.com/nikships/droid-office/actions/runs/36681471280) passed the
+609 desktop tests, all 11 native host checks, both Android builds, signing verification and
+publication. The published APK's SHA-256 is
+`9db8a2fe0efc5fa3c4ce985a7dffaecaaea49e2de22d3fa81837018ba6496d18`.
+
+The exact published APK was installed with `adb install -r` at 03:15 device time. Its installed
+bytes matched that checksum, version name/code were `0.1.280`/280, debugging was disabled,
+and the app ID and original first-install time were retained. The matching released desktop
+package was installed separately and started on the laptop with the existing integration
+projects. After waking and launching the headset, an authenticated desktop observer saw the
+original Galaxy XR profile, remembered floor/position and existing shared shell on that
+`0.1.280` server without another headset sign-in. No paid worker was resumed by the check.
+
+Startup loaded both Samsung controller meshes, enabled the full-resolution unfoveated screen
+layer and successfully requested 90 Hz. A wake-and-launch check then produced 12 focused
+five-second windows ending at 03:25:20–03:26:15 device time. Actual refresh and compositor FPS
+were 90 throughout, with zero reported compositor drops. Submitted FPS was 89.150–90.235;
+the windows recorded ten missed predicted periods in total, including startup. Runtime app
+GPU time was 7.12–8.73 ms and maximum window CPU p99 was 12.43 ms. The scene contained 1,713
+objects, and packet sequence advanced from 250 to 1,757 without rejected packets or GL errors.
+Textures continued becoming resident during this check, from seven to 59.
+
+Gaze was invalid throughout, and the sharp-screen layer submitted no draws in this view,
+although its setting was enabled. This establishes a live populated release connection at
+90 Hz, with the measured misses above; it does not establish final worn-session performance,
+sharp-screen alignment/readability or physical controller behavior. Those acceptance checks
+remain open. Completed worker panes, browser sessions and temporary Docker resources were
+cleaned up; the paired laptop server and headset app remain available for the next review.
+
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the
 laptop. Use focused 1–2 minute performance checks as UI and controls change. Final acceptance

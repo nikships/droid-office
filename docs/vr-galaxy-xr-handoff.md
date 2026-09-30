@@ -10,48 +10,44 @@ board and elevator interactions are the priority; further mini-game support is d
 
 The native OpenXR implementation is in `native/android`. It now renders the original
 populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
-The optimized build has produced 90 Hz with live scene updates over Wi-Fi to the laptop
-server. The owner accepts the current performance baseline and requests focused 1–2 minute
-checks as the interface and controls change. Remaining work prioritizes XR menus, tooltips
-and layout, Galaxy XR controller visuals, graphics settings and persistent
-FPS feedback, plus visual/input validation of the core office interactions.
+The native work is merged into `main`, and the published
+[v0.1.280 release](https://github.com/nikships/droid-office/releases/tag/v0.1.280) is installed
+on the headset. The installed APK's bytes match the published checksum. The matching released
+desktop server is running on the laptop, and an authenticated observer verified the headset's
+original profile, remembered floor/position and existing shared shell in the same world.
 
 The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.
-The source canvases are already 2048×1360 and retain that size during export. Work is now
-focused on a separate sharp screen pass, with world/controller occlusion, while preserving
-the existing world render budget. A persistent bounded 90 Hz preference is installed.
-Ordinary thermal throttling is not a reason to stop or cool the app.
-The prior installed build includes native GPU hand meshes, actual Samsung controller models,
-fingertip/hover workspace input, and a fix for the hidden status Surface blocking the UI
-thread. The UI and native-input audits are ongoing. See the native client document for
-installed versus pending changes and honest acceptance limits.
+The source canvases retain their 2048×1360 resolution. The release includes a cropped,
+full-resolution unfoveated laptop-screen pass with world/controller depth occlusion, alongside
+the foveated world render. Its host checks and device depth probe passed. The crop was
+installed and measured: a later enabled window reached 89.82 fps with no missed predicted
+periods, but its first activation missed frames. Physical crop alignment, terminal readability
+and consistent 90 Hz in required views remain acceptance checks.
 
 The latest instruction supersedes the earlier hand-tracking criterion: **motion controllers
 are the only supported native input scheme**, and the **left controller’s Menu button** opens
 and closes the workspace. Grip must not open or close it. The controller-only migration is
-installed: hand extensions, permission and active input/rendering were removed. All 35 native
-controller regressions pass, and the installed page passed a synthetic left-Menu/grip/right-Menu
-replay. WebXR keeps its existing controls. Prior hand-mesh implementation evidence below is
-historical, not a current target.
+installed with actual Samsung controller meshes; hand extensions, permission and active
+input/rendering were removed. Native controller regressions and actual-page synthetic
+left-Menu/grip/right-Menu replay passed. WebXR keeps its existing controls. Earlier hand-mesh
+and fingertip evidence is historical and does not describe the supported native controls.
 
-The max-resolution laptop-screen layer is installed and displays the original live terminal.
-Resolved MSAA depth was verified on the device with no zero-depth samples or GL error. Its
-performance is still under investigation: close-view samples include missed frames and a
-later 85.6 fps window, so this layer has not passed stable-90 acceptance. The refresh preference
-and live paused-session counter are also installed. Full Node 22 checks (511 tests/coverage),
-native host checks and APK compilation passed. See the current native evidence document.
+The release includes XR menus/tooltips, graphics settings, a persistent FPS option, command
+palette access, panel dropdowns and keyboard, remembered position and current worker recovery
+flows. Actual WebView and browser layout/input replays passed; physical comfort and controller
+use still need review. The latest CI passed all 609 desktop tests, all 11 native host checks,
+both Android variants and signed release publication.
 
-On 2026-09-30 the owner requested an immediate commit, push and rebase instead of waiting for
-the remaining XR work. All native changes were committed and pushed, the remote branch's
-desktop merge was integrated, and the branch was rebased onto `origin/main` at `5ac10be`.
-Conflicts retained the full native implementation alongside the new desktop features. The
-next pass audits command-palette access, categorized settings, board filters, remembered
-locations and worker actions for native parity. New minigame controls remain out of scope.
+The published APK produced a one-minute wake-and-launch capture with actual refresh and
+compositor FPS at 90, submitted FPS 89.150–90.235 and ten missed predicted periods, including
+startup. Scene packets continued advancing in the populated office. Gaze was invalid and the
+sharp-screen pass was inactive in that view, so this capture does not close the physical
+acceptance checks. The owner requests focused 1–2 minute checks rather than long soaks;
+ordinary thermal throttling is not a reason to stop or cool the app.
 
-The sharp-screen crop optimization has passed all registered native host checks and APK
-compilation. It preserves screen resolution and depth occlusion while presenting only the
-screen's projected region. It has not yet been installed or measured on the headset.
+See [published release validation](vr-native-android.md#published-release-validation-2026-09-30)
+and [acceptance status](vr-native-android.md#acceptance-status) for current evidence and limits.
 
 ## Native measurements, 2026-09-29
 
