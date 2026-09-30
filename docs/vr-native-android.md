@@ -299,8 +299,20 @@ Read-only Android settings inspection also reported `user_refresh_rate=90`; the 
 runtime refresh was 90 Hz throughout the comparison. Recovery from an actual subsequent
 runtime switch to 72 Hz still needs device evidence; the bounded retry policy has host tests.
 
-The owner queued a rebase onto the latest `main` and an audit of new desktop features **after**
-the current XR work is complete. Do not inspect or fetch that branch early.
+On 2026-09-30 the owner superseded the earlier deferred-rebase instruction and requested an
+immediate commit, push and rebase. All native changes were published, the remote desktop
+merge was integrated, and the branch was rebased onto `origin/main` at `5ac10be`. Conflict
+resolution retained the complete native implementations instead of temporary desktop-build
+stubs. The desktop parity audit now includes command-palette access, categorized settings,
+board filtering, remembered locations and worker actions; new minigame controls stay deferred.
+
+The pending crop optimization selects projected screen vertex bounds once per frame, preserves
+the full-resolution viewport and depth mapping, and submits a matching cropped OpenXR image
+rectangle and field of view. It clears a guarded region and discards unused world depth. Host
+pixel checks match the prior full-image layer, including occlusion, oblique screens, separate
+eye crops and stale-plan rejection. All 11 registered host checks and APK compilation passed;
+Android XR's cropped projection behavior and the actual performance saving still need device
+validation. The installed APK remains the preceding full-image sharp-screen version.
 
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the

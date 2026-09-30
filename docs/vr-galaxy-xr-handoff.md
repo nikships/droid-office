@@ -42,8 +42,16 @@ later 85.6 fps window, so this layer has not passed stable-90 acceptance. The re
 and live paused-session counter are also installed. Full Node 22 checks (511 tests/coverage),
 native host checks and APK compilation passed. See the current native evidence document.
 
-After all current XR work is complete, rebase onto the latest `main` and audit the new desktop
-changes for native parity. The owner asked not to inspect that branch before then.
+On 2026-09-30 the owner requested an immediate commit, push and rebase instead of waiting for
+the remaining XR work. All native changes were committed and pushed, the remote branch's
+desktop merge was integrated, and the branch was rebased onto `origin/main` at `5ac10be`.
+Conflicts retained the full native implementation alongside the new desktop features. The
+next pass audits command-palette access, categorized settings, board filters, remembered
+locations and worker actions for native parity. New minigame controls remain out of scope.
+
+The sharp-screen crop optimization has passed all registered native host checks and APK
+compilation. It preserves screen resolution and depth occlusion while presenting only the
+screen's projected region. It has not yet been installed or measured on the headset.
 
 ## Native measurements, 2026-09-29
 
