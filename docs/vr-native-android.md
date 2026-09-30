@@ -378,9 +378,13 @@ instead of bypassing verification.
 
 ## Acceptance status
 
-The current installed release is [v0.1.284](https://github.com/nikships/droid-office/releases/tag/v0.1.284).
-Its matching laptop server, preserved headset session, nearby-office picker and layout checks
-are verified in [published release validation](#published-release-validation-2026-09-30).
+The latest published release is [v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
+Its matching laptop server is running, but installation of this APK remains pending because
+ADB is unavailable. The last verified headset installation is `v0.1.284`; its session,
+nearby-office picker and layout checks are recorded in
+[published release validation](#published-release-validation-2026-09-30).
+The font, sampling and resolution changes and pending device checks are recorded in
+[resolution and glyph release validation](#resolution-and-glyph-release-validation-2026-09-30).
 Physical terminal readability, held-card comfort, required-view performance and recovery from
 an actual runtime change to 72 Hz remain open acceptance checks. The dated measurements below
 preserve earlier experiments and should not be read as the current release pointer.
@@ -556,6 +560,33 @@ Java checks passed with 638 WebView-service checks and 96 discovery checks. Both
 compiled and the local release APK's signing verification passed. Navigation failure handling
 checks the current document and generation, remembers a committed successful document, and cancels
 invalid TLS without closing the office for an unrelated external image failure.
+
+### Resolution and glyph release validation (2026-09-30)
+
+[v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289), from `733d7d3`,
+publishes the combined terminal-font correction, sharp-screen sampling and actual world
+resolution/foveation controls. Its [CI run](https://github.com/nikships/droid-office/actions/runs/36774073302)
+passed all 646 desktop tests, all twelve native host checks, the packed-release installer
+smoke test, both Android builds, signing and publication. The exact published APK was
+downloaded and verified: version `0.1.289`, code 289, debugging disabled, 16 KB alignment
+and the existing release certificate/lineage. Its SHA-256 is
+`57c71e6cd487cc1df0b9beb8013ff875c81e17c210a7026cb1d5bced68b0aefc`.
+The desktop package and HTTP-served replacement font match the checked-in font checksum.
+
+The matching published desktop package is installed and runs detached on port 4761.
+SIGTERM replaced only the preceding server; both floor PTY hosts and their existing shell
+and Droid processes retained the same PIDs. An authenticated observer verified server
+version `0.1.289`, the existing Galaxy XR profile on `floor-alpha` and the same shared shell.
+The headset reconnected over Wi-Fi without another sign-in. No paid worker was resumed.
+
+USB ADB exposes no device, the previously used Wi-Fi ADB endpoint does not answer, and ADB
+discovery reports no debugging service. The running headset's office connection remains
+available over Wi-Fi; this is a debugging/installation access boundary, not an office
+connection failure. The last verified installed APK is still `v0.1.284`. Installing the
+downloaded `v0.1.289` APK, testing Recommended/Maximum and foveation Off/On transitions,
+checking actual applied pixel/mode metrics and GL errors, and a focused 1–2 minute populated
+world timing check remain pending. The owner's worn-headset review of both reported text
+issues also remains open. No new physical 90 Hz or sharpness acceptance is claimed.
 
 ### Published release validation (2026-09-30)
 

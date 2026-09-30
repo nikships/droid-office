@@ -10,11 +10,26 @@ board and elevator interactions are the priority; further mini-game support is d
 
 The native OpenXR implementation is in `native/android`. It now renders the original
 populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
-The native work is merged into `main`, and the published
-[v0.1.284 release](https://github.com/nikships/droid-office/releases/tag/v0.1.284) is installed
-on the headset. The installed APK's bytes match the published checksum. The matching released
-desktop server is running on the laptop, and an authenticated observer verified the headset's
-original profile, remembered floor/position and existing shared shell in the same world.
+The native work is merged into `main`, and the latest published release is
+[v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
+Its APK was downloaded and its checksum, signature, version and alignment were verified.
+Installation remains pending because USB/Wi-Fi ADB is unavailable; the last verified headset
+installation is `v0.1.284`. The matching `v0.1.289` desktop server is running detached on the
+laptop. The headset reconnected over Wi-Fi, and an authenticated observer verified its
+original profile and existing shared shell in the same world. Both floor PTY hosts and their
+worker processes survived the server replacement without restarting.
+
+The two worn-headset screenshots from 2026-09-30 identified terminal glyph clipping and
+blurry in-world laptop text. The new release fits Nerd Font icons to the shared monospace
+cells, waits for loaded terminal fonts and repaints idle laptops. Its sharp-screen sampler
+retains more fine-stroke contrast while preserving mip/anisotropic filtering. Graphics now
+offers a world-resolution slider, 1% steps, Recommended/Maximum presets and foveation Off.
+At the captured runtime limits, Maximum selects approximately 169.8%, allocating 3152×3668
+world pixels per eye instead of stopping at the recommended 1856×2160. The menu reports
+selected/applied pixels and runtime bounds; these are render dimensions, not a physical-panel
+pixel mapping. Failed target preflight preserves the active render targets. Host and browser
+checks pass, but these changes still require installation and actual headset transitions,
+focused performance measurements and the owner's physical sharpness review.
 
 The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.
@@ -36,9 +51,9 @@ and fingertip evidence is historical and does not describe the supported native 
 The release includes XR menus/tooltips, graphics settings, a persistent FPS option, command
 palette access, panel dropdowns and keyboard, remembered position and current worker recovery
 flows. Actual WebView and browser layout/input replays passed; physical comfort and controller
-use still need review. The latest [CI run](https://github.com/nikships/droid-office/actions/runs/36743257188)
-passed all 641 desktop tests, all 12 native host checks, both Android variants and signed release
-publication, from source commit `3187867`.
+use still need review. The latest [CI run](https://github.com/nikships/droid-office/actions/runs/36774073302)
+passed all 646 desktop tests, all 12 native host checks, both Android variants and signed release
+publication, from source commit `733d7d3`.
 
 The installed app now discovers laptop servers under **Nearby offices** and automatically
 reopens the last successfully connected office on ordinary launch. Fourteen checks against the
@@ -59,7 +74,8 @@ acceptance checks or establish fully resident, perfectly steady 90 FPS. The owne
 focused 1–2 minute checks rather than long soaks;
 ordinary thermal throttling is not a reason to stop or cool the app.
 
-See [published release validation](vr-native-android.md#published-release-validation-2026-09-30)
+See [resolution and glyph release validation](vr-native-android.md#resolution-and-glyph-release-validation-2026-09-30),
+[published v0.1.284 validation](vr-native-android.md#published-release-validation-2026-09-30)
 and [acceptance status](vr-native-android.md#acceptance-status) for current evidence and limits.
 
 ## Native measurements, 2026-09-29
