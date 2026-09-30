@@ -227,11 +227,13 @@ Layer analyze(std::vector<uint8_t> px, int w, int h) {
  */
 template <typename Prepare, typename CheckBindings>
 int sharpChecks(SceneRenderer &r, Prepare &&prepare, CheckBindings &&checkBindings, int high,
-                const std::string &out) {
+                const std::string &out, std::vector<std::string> &failed) {
     int failures = 0;
     auto expect = [&](bool ok, const std::string &what) {
         std::printf("  sharp: %s %s\n", ok ? "ok  " : "FAIL", what.c_str());
         failures += !ok;
+        if (!ok)
+            failed.push_back("sharp: " + what);
     };
     const int n = high / 2, off = 40, big = n + 2 * off;
     const float uv[4] = {float(off) / big, float(off) / big, float(n) / big, float(n) / big};
@@ -683,6 +685,9 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "usage: render <packets.json> <out-dir> [--size px] [--seconds s]\n");
         return 2;
     }
+    // The renderer logs to stderr; line-buffered stdout keeps each check line whole in the
+    // captured log.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::string out = argv[2];
     int size = 768;
     double settle = 4.0;
@@ -835,7 +840,16 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "initialize failed: %s\n", mono.lastError().c_str());
         return 1;
     }
-    int failures = 0, bindingFailures = 0;
+    int bindingFailures = 0;
+    // Every failed check is named here and listed again at the end, so a truncated log still
+    // says which ones failed.
+    std::vector<std::string> failed;
+    auto check = [&](bool ok, const std::string &what) {
+        if (ok)
+            return;
+        std::printf("FAIL: %s\n", what.c_str());
+        failed.push_back(what);
+    };
     auto checkBindings = [&](const char *what, const Bindings &want) {
         Bindings got = Bindings::now();
         if (got == want)
@@ -937,9 +951,7 @@ int main(int argc, char **argv) {
     std::printf("streamed %zu packets in %.2f s over %d frames (worst frame %.1f ms incl. "
                 "glFinish, worst prepareFrame %.2f ms), rejected %zu\n",
                 packets.size(), loadS, frames, worstFrame, maxPrepare, rejected);
-    // Hold still so static batches form, as a few seconds after load on the headset.
-    auto s0 = std::chrono::steady_clock::now();
-    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count() < settle) {
+    auto stillFrame = [&]() {
         mono.tick();
         implicit.tick();
         if (mv)
@@ -953,7 +965,49 @@ int main(int argc, char **argv) {
         if (mv)
             drawMultiview();
         glFinish();
+    };
+    // Hold still so static batches form, as a few seconds after load on the headset.
+    auto s0 = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count() < settle) {
+        stillFrame();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    // The renderers share one context and budget their uploads and links per prepareFrame, so
+    // one that prepares behind queued GPU work loads fewer bytes per frame. The images are
+    // compared only once each has drawn the whole stream: a state, every texture and program,
+    // and nothing queued.
+    struct Renderer {
+        const char *name;
+        SceneRenderer *r;
+    };
+    std::vector<Renderer> renderers = {{"mono", &mono}, {"implicit", &implicit}};
+    if (mv)
+        renderers.push_back({"multiview", mv.get()});
+    auto loaded = [](const SceneStats &s) {
+        return s.stateSerial && !s.pendingUploads && !s.waitingState && !s.programsCompiling &&
+               !s.queuedTextureOps && !s.queuedBytes;
+    };
+    auto allLoaded = [&]() {
+        for (const Renderer &x : renderers)
+            if (!loaded(x.r->stats()))
+                return false;
+        return true;
+    };
+    const int maxLoadFrames = 3000;
+    int loadFrames = 0;
+    for (; loadFrames < maxLoadFrames && !allLoaded(); loadFrames++)
+        stillFrame();
+    std::printf("all renderers loaded after %d more frames (limit %d)\n", loadFrames,
+                maxLoadFrames);
+    for (const Renderer &x : renderers) {
+        SceneStats s = x.r->stats();
+        check(loaded(s), std::string(x.name) + " did not finish loading: state " +
+                             std::to_string(s.stateSerial) + ", pending uploads " +
+                             std::to_string(s.pendingUploads) + ", newer state waiting " +
+                             std::to_string(int(s.waitingState)) + ", compiling " +
+                             std::to_string(s.programsCompiling) + ", queued ops " +
+                             std::to_string(s.queuedTextureOps) + ", queued bytes " +
+                             std::to_string(s.queuedBytes));
     }
     std::printf("first state drawn at frame %d (%.2f s); prepareFrame over 3 ms in %d of %d frames "
                 "(budget %.1f ms, worst %.2f ms)\n",
@@ -983,28 +1037,18 @@ int main(int argc, char **argv) {
                 monoMs / timed, stereoMs / timed, mv ? mvMs / timed : 0.0);
 
     GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        std::printf("FAIL: GL error 0x%x\n", err);
-        failures++;
-    }
+    char hex[16];
+    std::snprintf(hex, sizeof hex, "0x%x", err);
+    check(err == GL_NO_ERROR, std::string("GL error ") + hex);
     // Both renderers allocated their shadow map inside a checked call.
-    if (shadowAllocChecked < 2) {
-        std::printf("FAIL: the shadow map was not first drawn inside a checked call (%llu of 2)\n",
-                    (unsigned long long)shadowAllocChecked);
-        failures++;
-    }
-    if (bindingFailures)
-        failures++;
+    check(shadowAllocChecked >= 2, "the shadow map was not first drawn inside a checked call (" +
+                                       std::to_string(shadowAllocChecked) + " of 2)");
     std::printf("binding checks: %s (%d failed)\n", bindingFailures ? "FAIL" : "ok",
                 bindingFailures);
-    for (SceneRenderer *r : {&mono, &implicit, mv.get()}) {
-        if (!r)
-            continue;
-        if (!r->lastError().empty()) {
-            std::printf("FAIL: renderer error: %s\n", r->lastError().c_str());
-            failures++;
-        }
-    }
+    check(bindingFailures == 0, "prepareFrame or render changed the caller's bindings");
+    for (SceneRenderer *r : {&mono, &implicit, mv.get()})
+        if (r)
+            check(r->lastError().empty(), "renderer error: " + r->lastError());
 
     drawMono();
     glFinish();
@@ -1027,14 +1071,10 @@ int main(int argc, char **argv) {
     coverage(monoPx, lit, colors);
     std::printf("mono image: %.1f%% non-black pixels, %d distinct colors (4-bit)\n", lit * 100,
                 colors);
-    if (lit < 0.5 || colors < 64) {
-        std::printf("FAIL: the mono image looks empty\n");
-        failures++;
-    }
+    check(lit >= 0.5 && colors >= 64, "the mono image looks empty");
     Diff ml = compare(monoPx, left);
     std::printf("mono vs stereo left: mean %.3f, %.3f%% pixels > 8\n", ml.mean, ml.over8 * 100);
-    if (ml.over8 > 0.001)
-        failures++;
+    check(ml.over8 <= 0.001, "mono and stereo left differ in more than 0.1% of pixels");
     drawImplicit();
     glFinish();
     printStats("implicit", implicit.stats());
@@ -1042,8 +1082,7 @@ int main(int argc, char **argv) {
     Diff im = compare(monoPx, readPixels(size, size));
     std::printf("mono vs implicit prepare: mean %.3f, %.3f%% pixels > 8\n", im.mean,
                 im.over8 * 100);
-    if (im.over8 > 0.001)
-        failures++;
+    check(im.over8 <= 0.001, "mono and implicit prepare differ in more than 0.1% of pixels");
     Diff lr = compare(left, right);
     std::printf("stereo left vs right (6.4 cm apart): mean %.3f, %.2f%% pixels > 8\n", lr.mean,
                 lr.over8 * 100);
@@ -1064,36 +1103,32 @@ int main(int argc, char **argv) {
         std::printf(
             "stereo vs multiview: left mean %.3f (%.3f%% > 8), right mean %.3f (%.3f%% > 8)\n",
             a.mean, a.over8 * 100, b.mean, b.over8 * 100);
-        if (a.over8 > 0.002 || b.over8 > 0.002) {
-            std::printf("FAIL: multiview differs from the two-pass stereo\n");
-            failures++;
-        }
+        check(a.over8 <= 0.002 && b.over8 <= 0.002, "multiview differs from the two-pass stereo");
     }
     int bindingFailuresBefore = bindingFailures;
-    failures += sharpChecks(mono, prepare, checkBindings, size, out);
-    if (bindingFailures > bindingFailuresBefore) {
-        std::printf("FAIL: the screen layer changed the caller's bindings\n");
-        failures++;
-    }
+    sharpChecks(mono, prepare, checkBindings, size, out, failed);
+    check(bindingFailures == bindingFailuresBefore,
+          "the screen layer changed the caller's bindings");
     SceneStats st = mono.stats();
     std::printf("packets applied %llu, rejected %llu, commits %llu, last apply %.2f ms, queued "
                 "%llu bytes\n",
                 (unsigned long long)st.packetsApplied, (unsigned long long)st.packetsRejected,
                 (unsigned long long)st.commits, double(st.applyMs),
                 (unsigned long long)st.queuedBytes);
-    if (st.packetsRejected || rejected)
-        failures++;
-    if (st.programsFailed || st.programsCompiling) {
-        std::printf("FAIL: %u programs failed, %u still compiling\n", st.programsFailed,
-                    st.programsCompiling);
-        failures++;
-    }
-    if (st.pendingUploads || st.waitingState) {
-        std::printf("FAIL: uploads still pending after settling\n");
-        failures++;
-    }
-    std::printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
+    check(!st.packetsRejected && !rejected,
+          "packets rejected: " + std::to_string(st.packetsRejected) + " by the renderer, " +
+              std::to_string(rejected) + " at enqueue");
+    check(!st.programsFailed && !st.programsCompiling,
+          std::to_string(st.programsFailed) + " programs failed, " +
+              std::to_string(st.programsCompiling) + " still compiling");
+    check(!st.pendingUploads && !st.waitingState, "uploads still pending after settling");
+    for (const std::string &what : failed)
+        std::printf("failed: %s\n", what.c_str());
+    if (failed.empty())
+        std::printf("OK\n");
+    else
+        std::printf("FAILED (%zu)\n", failed.size());
     mv.reset();
     // mono is destroyed with the context current (end of scope) before EGL teardown below.
-    return failures ? 1 : 0;
+    return failed.empty() ? 0 : 1;
 }
