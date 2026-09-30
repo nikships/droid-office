@@ -398,6 +398,15 @@ Opening and closing recovery sent no worker mutation. The recovery dialog and it
 buttons stayed above the keyboard at both panel check sizes; no worktree was rebuilt or
 deleted by these layout checks.
 
+The Linux CI harness failures were reproduced and corrected without changing production C++,
+sanitizer flags or pixel thresholds. A strict shader block tokenizer replaced the libstdc++ 13
+regex path that failed compilation under `-Werror`; old and new parsing agreed on all 2,684
+generated stages. The scene comparison now waits for every renderer's uploads and compilation
+to finish, with a bounded frame count and named failures. The fixed harness passed all seven
+C++ tests and both required scene/shader suites on native Linux/arm64 Mesa. All 11 registered
+checks, including Java and the NDK cross-compile, passed on macOS. The Linux container needed
+a longer host-test timeout; the next Ubuntu CI run must verify the unchanged 300-second bound.
+
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the
 laptop. Use focused 1–2 minute performance checks as UI and controls change. Final acceptance

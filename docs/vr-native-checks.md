@@ -59,11 +59,16 @@ Two registered suites are required on every host run:
   checks packet/model rules and replay, and renders it through the production GLES renderer.
   Mono, two-pass stereo and implicit preparation must agree; framebuffer, viewport and scissor
   bindings must survive first-time shadow allocation. Multiview comparison runs when the host
-  driver exposes it. The fixture uses placeholder gradients for DOM canvas images; actual
+  driver exposes it. Before comparing pixels, every renderer must have drawn a state with
+  no pending uploads, waiting state, shader compilation or queued texture work, within a
+  bounded frame count. Each failed check is named again in the final summary. The fixture
+  uses placeholder gradients for DOM canvas images; actual
   text and material pixels are compared in the browser shader suite.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts, validates and links every generated
   stage with glslang, and compares seven material cases against the original three.js code.
+  Its strict block parser and contract checks self-test malformed declarations before reading
+  the generated programs; malformed text must fail rather than be skipped.
 
 The shader suite accepts `CXX`, the suite output directory and sanitizer flags just like the
 other suites. It also cross-compiles the generator when the pinned NDK is present at
