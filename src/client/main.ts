@@ -2225,7 +2225,7 @@ player.onPathEnd = (why) => {
  * A key of yours takes over, and then it doesn't happen.
  */
 function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }) {
-  if (upTop || trip || climber.active || vr.active) return then();
+  if (upTop || trip || climber.active || headsetActive()) return then();
   closeAllModals();
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();

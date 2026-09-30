@@ -312,7 +312,37 @@ rectangle and field of view. It clears a guarded region and discards unused worl
 pixel checks match the prior full-image layer, including occlusion, oblique screens, separate
 eye crops and stale-plan rejection. All 11 registered host checks and APK compilation passed;
 Android XR's cropped projection behavior and the actual performance saving still need device
-validation. The installed APK remains the preceding full-image sharp-screen version.
+validation beyond the measurements below.
+
+### Rebased build and crop comparison, 2026-09-30
+
+The branch was pushed at `5ec0718`, with a clean tree after conflict resolution. Node 22 clean
+install, lint, typecheck and coverage passed: 599 tests, 84.31% lines, 80.49% functions. The
+rebased environment check retains Grok and Muse's existing configuration-variable handling.
+The cropped APK was rebuilt and installed at approximately 00:22 local time, process 19475.
+After the interruption the owned test server was restarted on port 4761; the original shell
+and office state remained available.
+
+A focused 45-second sharp off/on/off/on comparison used Balanced, 100% world resolution and
+0.25 peripheral detail at the same laptop view. All snapshots reported actual refresh 90 Hz,
+advancing scene sequences (3,446 to 4,322), no queued uploads and six sharp draws when enabled.
+Off/on/off/on runtime GPU times were 7.66/12.72/7.94/8.85 ms. The first enabled window dropped
+to 83.02 fps with 34 missed periods; it followed the one-shot debug depth probe (254 covered,
+zero zero-depth samples, GL error zero). That timing association does not prove the probe was
+the cause. The final enabled window reported 89.82 fps and zero missed periods. Its submitted
+screen rectangles covered 3.55 million pixels across both eyes, with a 5.50 million-pixel clear
+region, versus the original full image's 23.21 million pixels. The steady sample suggests
+less overhead, but the first activation and runtime crop alignment remain open checks.
+
+An actual-page synthetic palette replay exposed a native-only integration bug: Shift-selecting
+the owned shell closed the palette but never opened the terminal because desktop walking was
+disabled. Replacing the `vr.active` guard with `headsetActive()` follows the original WebXR
+immediate-action behavior. Replaying the same action opened the original shell terminal; no
+terminal input was sent. The native terminal Picture button reuses the desktop upload path
+and Android's existing picture chooser. An actual WebView replay uploaded an owned 68-byte
+PNG to the isolated server and pasted its bracketed path into the shared shell without
+executing it; the test then cleared the shell's input. The real button also launched Android's
+`PhotoPickerActivity`. Selection and return from the system picker still need validation.
 
 The APK now draws the original populated office on the real Galaxy XR. The optimized build
 has produced 90 Hz windows with advancing scene packets while connected over Wi-Fi to the
