@@ -138,11 +138,23 @@ confirmation.
 The controller-only workspace uses controller rays, trigger press, drag,
 hover and stick scrolling through the original Android pointer path. Tracking loss cancels contact.
 Host replay checks cover these transitions; a replay does not establish physical comfort.
-The 35 controller regression tests pass, including grip/menu mapping, ignored hand packets,
+The 37 controller regression tests pass, including grip/menu mapping, ignored hand packets,
 button latches on reconnect, a 400 ms tracking-loss grace period for carried objects, and
 cancellation of a stick teleport when its controller disappears. Mutation checks showed that
 restoring each reported bug makes its regression fail. Focus loss still returns a carried card
 immediately. Carried object poses still travel through the 30 Hz scene stream.
+
+Held board cards keep the original card geometry and text, with a 28 cm width, positioned
+5 cm above and 6 cm forward of the controller grip. Their text face points back along the
+controller's grip axis toward the holder in a neutral forward-pointing pose. The card follows
+wrist pitch, yaw and roll; it does not rotate itself toward the headset. Both physical near
+grabs and ray/window pickups use the same grip-relative placement. The carry message sends
+the grip's world pose so peers apply that placement once. A post-release review found and
+fixed ray/window pickups sending the already-offset card pose, which placed peers' copies
+another 5 cm up and 6 cm forward. Both new left/right regressions failed before the fix and
+passed after it, comparing owner and peer positions and rotations across wrist poses.
+These checks establish transform consistency. Readability at a comfortable holding angle,
+controller occlusion and the feel of the 30 Hz held-object stream still need physical review.
 
 | Controller action | Office behavior |
 | --- | --- |

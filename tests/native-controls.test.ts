@@ -8,6 +8,7 @@ import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import type { GrabHooks, Grabbable } from '../src/client/vr/grab.js';
 import { SNAP_ANGLE } from '../src/client/vr/session.js';
+import { HeldObjectView } from '../src/client/world/held-object.js';
 import type { Collider, Interactable } from '../src/client/world/office.js';
 import { FLOOR, SLAB } from '../src/shared/layout.js';
 import type { CarriedIssue, CarriedObject } from '../src/shared/protocol.js';
@@ -600,11 +601,38 @@ test('a ray pickup attaches the original issue card to its selecting hand and pu
   assert.ok((cardMesh.material as THREE.MeshToonMaterial[])[4].map instanceof THREE.CanvasTexture, 'reuses the original card text texture');
   const state = r.sent.at(-1);
   assert.equal(state?.pose?.hand, 'left');
-  assert.deepEqual(state?.pose?.position, visual.getWorldPosition(new THREE.Vector3()).toArray());
+  assert.deepEqual(state?.pose?.position, visual.parent!.getWorldPosition(new THREE.Vector3()).toArray());
   assert.match(r.controls.state().aim ?? '', /Holding #42.*Shared issue card/);
   r.tick(r.frame({ left: controller({ grip: pose(-0.3, 1.1, -0.4) }), right: controller() }));
   assert.equal(r.visual(), visual, 'a hand update moves the same card instead of allocating another');
 });
+
+for (const hand of ['left', 'right'] as const) {
+  test(`ray-picked ${hand} cards match their peer's position and wrist orientation`, (t) => {
+    const r = carriedRig(t);
+    const peer = new HeldObjectView();
+    t.after(() => peer.dispose());
+    r.tick(r.frame({ [hand]: controller({ trigger: 1 }), [hand === 'left' ? 'right' : 'left']: controller() }));
+    const local = r.visual()!.children[0];
+    for (const [pitch, yaw, roll] of [
+      [0, 0, 0],
+      [0.6, -0.8, 1.1],
+      [-0.4, 1.2, -0.7],
+    ]) {
+      const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll));
+      r.advance(60);
+      r.tick(r.frame({ [hand]: controller({ grip: pose(-0.25, 1.35, -0.45, rotation.toArray()) }), [hand === 'left' ? 'right' : 'left']: controller() }));
+      const carried = r.sent.at(-1)!;
+      assert.equal(carried.pose?.hand, hand);
+      peer.pose(carried);
+      const remote = peer.root.getObjectByProperty('isMesh', true)!;
+      assert.ok(remote.getWorldPosition(new THREE.Vector3()).distanceTo(local.getWorldPosition(new THREE.Vector3())) < 1e-9, 'the peer applies the grip offset exactly once');
+      const localRotation = local.getWorldQuaternion(new THREE.Quaternion());
+      assert.ok(remote.getWorldQuaternion(new THREE.Quaternion()).angleTo(localRotation) < 1e-7, 'peers see the same readable face and wrist roll');
+      assert.ok(localRotation.angleTo(r.visual()!.parent!.getWorldQuaternion(new THREE.Quaternion())) < 1e-7, 'the card stays rigidly attached to its owning grip');
+    }
+  });
+}
 
 test('window pickup chooses a tracked controller, swaps one visual, and clears it on original placement or Put back', (t) => {
   const r = carriedRig(t);
