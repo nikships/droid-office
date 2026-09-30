@@ -236,9 +236,44 @@ adb install -r native/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Set `ANDROID_HOME` and `JAVA_HOME` for the installed SDK and supported JDK if needed.
-The app is `dev.droidoffice.xr`; its launcher name is **Droid Office XR**. Choose the
-laptop office's address, then sign in with the normal office account or password.
+The app is `dev.droidoffice.xr`; its launcher name is **Droid Office XR**. Select the
+laptop under **Nearby offices**, then sign in with the normal office account or password.
 The laptop must run a build containing the native page adapter.
+
+### Connect to your laptop
+
+1. Start the current Droid Office server on your laptop: `droid-office /path/to/project`.
+   Its normal default listens on the LAN at port 4600. Keep the laptop awake and use the same
+   Wi-Fi network on the laptop and headset.
+2. Open **Droid Office XR** on the headset. Under **Nearby offices**, point at your laptop
+   and press the controller trigger. The picker includes the laptop name and server address.
+3. Sign in with the server's existing office password or account. The installed app retains
+   the normal office session and player profile.
+
+After a successful page load, the app saves that office and automatically opens it on its next
+ordinary launch. **Change office** returns to the picker, and **Reconnect to last office** retries
+the saved address. A failed or offline connection returns to the picker without replacing that
+saved office. If the laptop's IP changes, select its newly discovered address; a new origin may
+require signing in again.
+
+**Enter an office address** reveals the controller keyboard for a manual connection, for example
+`http://192.168.1.26:4600`. Use your laptop's actual LAN address and port. This also works with older
+servers or networks that block discovery. **Search again** restarts a nearby scan. A server bound
+only to `127.0.0.1` is reachable through the USB forwarding setup below, rather than through Wi-Fi.
+Nearby connections use the resolved LAN IP. For HTTPS with a certificate issued to a hostname,
+enter that hostname manually unless the certificate also covers the displayed IP; certificate
+validation stays enabled.
+
+The laptop advertises `_droidoffice._tcp.` using DNS-SD; the headset uses
+[Android network service discovery](https://developer.android.com/develop/connectivity/wifi/use-nsd).
+The announcement contains a display name, address and port, with TXT `v=1` and `scheme=http|https`.
+Passwords, session tokens, project paths and worker details are absent. Discovery stops on
+connection, app pause, hidden XR session and destruction; callbacks and resolutions are bounded
+and run outside the rendering loop. The picker scrolls, and its manual keyboard stays collapsed
+until requested. `--no-discovery` or `DROID_OFFICE_DISCOVERY=0` disables the laptop advertisement.
+
+The existing `npm run vr` QR code opens the browser WebXR route. It does not launch or pair the
+installed app; the native app's nearby picker avoids the need for camera scanning.
 
 ### Release APK
 
@@ -422,6 +457,32 @@ suites finishing in 172 and 89 seconds under the unchanged 300-second bound, and
 both Android variants. PR #45 merged into `main` as `602ad1a`. The first main release run
 passed those checks too, then exposed a conflicting inherited `ANDROID_SDK_ROOT` during
 signing. The release builder now normalizes both SDK variables to the selected pinned SDK.
+
+### Nearby-office validation (2026-09-30)
+
+The signed connection candidate `0.1.284-rc` (version code 283) upgraded the headset without
+clearing its data. Thirteen checks operated the real Android widgets through temporary signed
+instrumentation: ordinary launch reopened the saved office, Wi-Fi DNS-SD found the laptop,
+selection stopped discovery and retained the successful origin, HTTP 500 and a silent server
+returned to the picker, both failures preserved the saved office and manual draft, and sixteen
+long office rows fit without overlapping or clipped text. The silent-server watchdog fired at
+approximately 15 seconds before any document committed. The instrumentation package was removed
+afterward; no test interface or privileged JavaScript bridge is part of the app.
+
+Captured native picker and manual-keyboard layouts were reviewed. The long-office list used
+synthetic rows in the real Android view; discovery and failure checks used live Wi-Fi services.
+This establishes Android layout and connection behavior, rather than physical controller comfort
+or compositor text sharpness. The restored headset joined the existing office under its original
+profile, floor and position alongside the existing shared shell. The laptop server runs detached
+from the agent's terminal so closing that pane no longer stops the office.
+
+Node 22 clean install/build, lint, typecheck and coverage passed with 641 tests (84.49% lines,
+80.56% functions); packed release installation, CLI startup and native sign-in redirect passed.
+All twelve registered native host checks passed; after the final navigation guards, the affected
+Java checks passed with 638 WebView-service checks and 96 discovery checks. Both Android variants
+compiled and the local release APK's signing verification passed. Navigation failure handling
+checks the current document and generation, remembers a committed successful document, and cancels
+invalid TLS without closing the office for an unrelated external image failure.
 
 ### Published release validation (2026-09-30)
 

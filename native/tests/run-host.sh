@@ -60,6 +60,7 @@ JAVA_PACKAGE=dev.droidoffice.xr
 JAVA_TESTS=(
   "NativeStatusPanelRulesTest|NativeStatusPanel"
   "OfficeWebServicesRulesTest|OfficeWebServices"
+  "OfficeDiscoveryRulesTest|OfficeDiscovery"
 )
 JAVA_TEST_DIRS=(hosttest app/src/test/java)
 # Required suite scripts, relative to the repository root, run under the suite contract in

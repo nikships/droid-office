@@ -20,16 +20,24 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
+import android.view.View;
 import android.view.WindowManager;
+import android.webkit.SslErrorHandler;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -66,7 +74,22 @@ public final class OfficeActivity extends Activity {
     private LinearLayout dialogBox;
     private TextView feedback;
     private OfficeWebServices services;
+    private OfficeDiscovery discovery;
+    private LinearLayout nearbyOffices;
+    private TextView discoveryStatus;
+    private final Map<String, Button> nearbyButtons = new HashMap<>();
     private String serverOrigin;
+    private String officeName;
+    private String documentUrl;
+    private String failedDocumentUrl;
+    private String manualDraft;
+    private Runnable connectionTimeout;
+    private boolean choosingOffice;
+    private boolean activityResumed;
+    private boolean awaitingOffice;
+    private boolean documentCommitted;
+    private boolean manualAddressOpen;
+    private boolean lastAttemptManual;
     private long pointerDownTime;
     private volatile boolean destroyed;
     private volatile boolean producersStopped = true;
@@ -119,6 +142,10 @@ public final class OfficeActivity extends Activity {
         super.onCreate(state);
         services = new OfficeWebServices(
             this, () -> serverOrigin, this::showFeedback, this::showWebDialog);
+        discovery = new OfficeDiscovery(this, handler, this::showNearbyOffices, message -> {
+            if (choosingOffice && discoveryStatus != null)
+                discoveryStatus.setText(message);
+        });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         TextView text = new TextView(this);
         text.setText("Opening Droid Office XR… Use Galaxy XR motion controllers to continue.");
@@ -143,6 +170,30 @@ public final class OfficeActivity extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         if (!services.onActivityResult(request, result, data))
             super.onActivityResult(request, result, data);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        activityResumed = true;
+        startDiscovery();
+    }
+
+    @Override
+    protected void onPause() {
+        activityResumed = false;
+        if (discovery != null)
+            discovery.stop();
+        super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String address = intent.getStringExtra("server_url");
+        if (panelRoot != null && address != null)
+            connect(address);
     }
 
     /** The runtime's BufferQueue is the display target. No CPU readback or texture copying. */
@@ -183,6 +234,11 @@ public final class OfficeActivity extends Activity {
             String launchUrl = getIntent().getStringExtra("server_url");
             if (launchUrl != null)
                 connect(launchUrl);
+            else {
+                String saved = getPreferences(MODE_PRIVATE).getString("server", null);
+                if (OfficeWebServices.Rules.origin(saved) != null)
+                    connect(saved, getPreferences(MODE_PRIVATE).getString("server_name", null));
+            }
         });
     }
 
@@ -216,55 +272,164 @@ public final class OfficeActivity extends Activity {
     }
 
     private void showConnection() {
+        stopConnectionTimeout();
+        awaitingOffice = false;
+        choosingOffice = true;
+        discovery.stop();
         resetPage();
         if (web != null) {
             services.detach();
             web.destroy();
             web = null;
         }
+        serverOrigin = null;
         panelRoot.removeAllViews();
         Context context = panelPresentation.getContext();
         LinearLayout form = new LinearLayout(context);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(72, 60, 72, 60);
+        form.setPadding(60, 40, 60, 40);
         TextView title = new TextView(context);
         title.setText("Droid Office");
-        title.setTextSize(36);
+        title.setTextSize(32);
         title.setTextColor(Color.WHITE);
         TextView description = new TextView(context);
-        description.setText("Use Galaxy XR motion controllers. Point and press the trigger to " +
-                            "select.\n\nConnect to the office running on your "
-                            +
-                            "computer.\nPair a Bluetooth keyboard for comfortable terminal work.");
-        description.setTextSize(22);
+        description.setText("Start Droid Office on your laptop, then select it below. "
+                            + "Use the same Wi-Fi. You'll sign in with the office password.");
+        description.setTextSize(20);
         description.setTextColor(Color.LTGRAY);
-        description.setPadding(0, 24, 0, 32);
+        description.setPadding(0, 16, 0, 20);
+        form.addView(title);
+        form.addView(description);
+        feedback = new TextView(context);
+        feedback.setTextColor(Color.rgb(255, 209, 128));
+        feedback.setTextSize(20);
+        feedback.setPadding(0, 0, 0, 12);
+        feedback.setVisibility(View.GONE);
+        form.addView(feedback);
+
+        String saved = getPreferences(MODE_PRIVATE).getString("server", null);
+        if (OfficeWebServices.Rules.origin(saved) != null) {
+            Button previous = new Button(context);
+            previous.setAllCaps(false);
+            previous.setText("Reconnect to last office\n" +
+                             getPreferences(MODE_PRIVATE).getString("server_name", saved));
+            previous.setTextSize(20);
+            previous.setMinHeight(88);
+            previous.setOnClickListener(
+                v -> connect(saved, getPreferences(MODE_PRIVATE).getString("server_name", null)));
+            form.addView(previous);
+        }
+        LinearLayout nearbyHeader = new LinearLayout(context);
+        TextView nearbyTitle = new TextView(context);
+        nearbyTitle.setText("Nearby offices");
+        nearbyTitle.setTextColor(Color.WHITE);
+        nearbyTitle.setTextSize(24);
+        nearbyTitle.setPadding(0, 16, 16, 12);
+        nearbyHeader.addView(nearbyTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        Button refresh = new Button(context);
+        refresh.setAllCaps(false);
+        refresh.setText("Search again");
+        refresh.setTextSize(18);
+        refresh.setOnClickListener(v -> {
+            discovery.stop();
+            startDiscovery();
+        });
+        nearbyHeader.addView(refresh);
+        form.addView(nearbyHeader);
+        discoveryStatus = new TextView(context);
+        discoveryStatus.setTextColor(Color.LTGRAY);
+        discoveryStatus.setTextSize(18);
+        discoveryStatus.setPadding(0, 0, 0, 12);
+        form.addView(discoveryStatus);
+        nearbyOffices = new LinearLayout(context);
+        nearbyOffices.setOrientation(LinearLayout.VERTICAL);
+        nearbyButtons.clear();
+        form.addView(nearbyOffices);
+
+        LinearLayout manual = new LinearLayout(context);
+        manual.setOrientation(LinearLayout.VERTICAL);
+        manual.setVisibility(manualAddressOpen ? View.VISIBLE : View.GONE);
+        Button manualToggle = new Button(context);
+        manualToggle.setAllCaps(false);
+        manualToggle.setText(manualAddressOpen ? "Hide address keyboard"
+                                               : "Enter an office address");
+        manualToggle.setTextSize(20);
+        manualToggle.setMinHeight(64);
+        manualToggle.setOnClickListener(v -> {
+            boolean open = manual.getVisibility() != View.VISIBLE;
+            manualAddressOpen = open;
+            manual.setVisibility(open ? View.VISIBLE : View.GONE);
+            manualToggle.setText(open ? "Hide address keyboard" : "Enter an office address");
+        });
+        form.addView(manualToggle);
         EditText address = new EditText(context);
         address.setSingleLine(true);
         address.setTextSize(22);
         address.setTextColor(Color.WHITE);
         address.setHint("https://your-computer:4600");
         address.setHintTextColor(Color.GRAY);
-        address.setText(getPreferences(MODE_PRIVATE).getString("server", "http://"));
+        address.setText(manualDraft == null ? (saved == null ? "http://" : saved) : manualDraft);
         address.setShowSoftInputOnFocus(false);
         Button connect = new Button(context);
+        connect.setAllCaps(false);
         connect.setText("Connect to office");
         connect.setTextSize(20);
-        connect.setOnClickListener(v -> connect(address.getText().toString()));
-        form.addView(title);
-        form.addView(description);
-        form.addView(address);
-        form.addView(connect);
-        feedback = new TextView(context);
-        feedback.setTextColor(Color.LTGRAY);
-        feedback.setTextSize(20);
-        form.addView(feedback);
-        addAddressKeyboard(form, address);
-        panelRoot.addView(form);
+        connect.setOnClickListener(v -> {
+            manualDraft = address.getText().toString();
+            connect(manualDraft, null, true);
+        });
+        manual.addView(address);
+        manual.addView(connect);
+        addAddressKeyboard(manual, address);
+        form.addView(manual);
+        TextView controls = new TextView(context);
+        controls.setText(
+            "Point with a motion controller and press the trigger to select. "
+            + "Use its thumbstick to scroll. Pair a Bluetooth keyboard for terminal work.");
+        controls.setTextColor(Color.LTGRAY);
+        controls.setTextSize(18);
+        controls.setPadding(0, 16, 0, 0);
+        form.addView(controls);
+        ScrollView scroll = new ScrollView(context);
+        scroll.setFillViewport(true);
+        scroll.addView(form);
+        panelRoot.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
+        startDiscovery();
+    }
+
+    private void startDiscovery() {
+        if (!destroyed && activityResumed && sessionVisible && choosingOffice && discovery != null)
+            discovery.start();
+    }
+
+    private void showNearbyOffices(List<OfficeDiscovery.Office> offices) {
+        if (!choosingOffice || destroyed || nearbyOffices == null)
+            return;
+        Map<String, Button> remaining = new HashMap<>(nearbyButtons);
+        for (OfficeDiscovery.Office office : offices) {
+            Button button = nearbyButtons.get(office.key);
+            remaining.remove(office.key);
+            if (button == null) {
+                button = new Button(nearbyOffices.getContext());
+                button.setAllCaps(false);
+                button.setTextSize(20);
+                button.setMinHeight(88);
+                nearbyButtons.put(office.key, button);
+                nearbyOffices.addView(button, new LinearLayout.LayoutParams(-1, -2));
+            }
+            button.setText(office.name + "\n" + office.origin);
+            button.setOnClickListener(v -> connect(office.origin, office.name));
+        }
+        for (Map.Entry<String, Button> lost : remaining.entrySet()) {
+            nearbyOffices.removeView(lost.getValue());
+            nearbyButtons.remove(lost.getKey());
+        }
     }
 
     private void resetPage() {
         navigationGeneration++;
+        documentUrl = null;
+        documentCommitted = false;
         handler.removeCallbacks(poll);
         pollPending = false;
         removeWebDialog();
@@ -304,45 +469,49 @@ public final class OfficeActivity extends Activity {
     }
 
     private boolean sameOrigin(Uri target) {
-        if (serverOrigin == null || target.getScheme() == null || target.getHost() == null)
-            return false;
-        Uri origin = Uri.parse(serverOrigin);
-        int targetPort = target.getPort() < 0 ? ("https".equals(target.getScheme()) ? 443 : 80)
-                                              : target.getPort();
-        int originPort = origin.getPort() < 0 ? ("https".equals(origin.getScheme()) ? 443 : 80)
-                                              : origin.getPort();
-        return origin.getScheme().equalsIgnoreCase(target.getScheme()) &&
-            origin.getHost().equalsIgnoreCase(target.getHost()) && originPort == targetPort;
+        return OfficeWebServices.Rules.sameOrigin(serverOrigin, target.toString());
     }
 
-    private void connect(String address) {
-        Uri uri = Uri.parse(address.trim());
-        if (!("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) ||
-            uri.getHost() == null || uri.getUserInfo() != null) {
+    private void connect(String address) { connect(address, null); }
+
+    private void connect(String address, String name) { connect(address, name, false); }
+
+    private void connect(String address, String name, boolean manual) {
+        String origin = OfficeWebServices.Rules.origin(address == null ? null : address.trim());
+        if (origin == null) {
             showFeedback("Enter an http:// or https:// office address without a username or "
                          + "password in the URL.");
             return;
         }
-        serverOrigin = uri.buildUpon().path("").query(null).fragment(null).build().toString();
+        stopConnectionTimeout();
+        lastAttemptManual = manual;
+        choosingOffice = false;
+        discovery.stop();
+        nearbyButtons.clear();
+        nearbyOffices = null;
+        discoveryStatus = null;
+        serverOrigin = origin;
+        Log.i("OfficeXR", "Connecting to office " + serverOrigin);
+        officeName = name == null ? origin : OfficeDiscovery.Rules.name(name);
         resetPage();
         if (web != null) {
             services.detach();
             web.destroy();
         }
-        getPreferences(MODE_PRIVATE).edit().putString("server", serverOrigin).apply();
         panelRoot.removeAllViews();
         Context context = panelPresentation.getContext();
         LinearLayout toolbar = new LinearLayout(context);
         Button connection = new Button(context);
+        connection.setAllCaps(false);
         connection.setText("Change office");
         connection.setOnClickListener(v -> showConnection());
         TextView addressLabel = new TextView(context);
-        addressLabel.setText(uri.getAuthority());
+        addressLabel.setText(officeName);
         addressLabel.setTextColor(Color.LTGRAY);
         addressLabel.setTextSize(16);
         addressLabel.setPadding(24, 16, 24, 16);
         toolbar.addView(connection);
-        toolbar.addView(addressLabel);
+        toolbar.addView(addressLabel, new LinearLayout.LayoutParams(0, -2, 1));
         panelRoot.addView(toolbar);
         feedback = new TextView(context);
         feedback.setTextColor(Color.LTGRAY);
@@ -365,8 +534,12 @@ public final class OfficeActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (view != web || OfficeWebServices.Rules.sameDocument(failedDocumentUrl, url))
+                    return;
                 services.onPageStarted(view);
                 resetPage();
+                failedDocumentUrl = null;
+                beginOfficeLoad(view, url);
             }
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -378,20 +551,135 @@ public final class OfficeActivity extends Activity {
                 if (request.isForMainFrame() &&
                     ("/".equals(target.getPath()) || "/index.html".equals(target.getPath())) &&
                     !"1".equals(target.getQueryParameter("native"))) {
-                    view.loadUrl(serverOrigin + "/?native=1");
+                    loadOfficePage(view, serverOrigin + "/?native=1");
                     return true;
+                }
+                if (request.isForMainFrame() &&
+                    !OfficeWebServices.Rules.sameDocument(documentUrl, target.toString())) {
+                    resetPage();
+                    failedDocumentUrl = null;
+                    beginOfficeLoad(view, target.toString());
                 }
                 return false;
             }
             @Override
             public void onPageFinished(WebView view, String url) {
+                if (!currentDocument(view, url))
+                    return;
+                officePageLoaded(view, url);
                 handler.removeCallbacks(poll);
                 if (!pollPending)
                     handler.post(poll);
             }
+
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                if (!currentDocument(view, url))
+                    return;
+                documentCommitted = true;
+                officePageLoaded(view, url);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                if (request.isForMainFrame())
+                    connectionFailed(view, request.getUrl().toString(),
+                                     "Could not reach that office. Start the server on "
+                                         +
+                                         "your laptop, then select it below or check its address.");
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            WebResourceResponse response) {
+                if (request.isForMainFrame())
+                    connectionFailed(view, request.getUrl().toString(),
+                                     "The office returned an error (" + response.getStatusCode() +
+                                         "). Check that its server is running, then retry.");
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler ssl,
+                                           android.net.http.SslError error) {
+                ssl.cancel();
+                // This callback includes external images. A failed image must not close
+                // a healthy office; a pending document on the selected origin may fail.
+                if (awaitingOffice &&
+                    OfficeWebServices.Rules.sameOrigin(serverOrigin, error.getUrl()))
+                    connectionFailed(view, error.getUrl(),
+                                     "The office's HTTPS certificate could not be verified. "
+                                         + "Use an address with a trusted certificate.");
+            }
         });
         panelRoot.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
-        web.loadUrl(serverOrigin + "/?native=1");
+        loadOfficePage(web, serverOrigin + "/?native=1");
+    }
+
+    private void loadOfficePage(WebView view, String url) {
+        resetPage();
+        failedDocumentUrl = null;
+        // A server may accept TCP without sending headers. Start the watchdog before
+        // loadUrl: Chromium can delay onPageStarted until the document commits.
+        beginOfficeLoad(view, url);
+        view.loadUrl(url);
+    }
+
+    private void beginOfficeLoad(WebView view, String url) {
+        documentUrl = url;
+        awaitingOffice = true;
+        stopConnectionTimeout();
+        showFeedback("Connecting to " + officeName + "…");
+        connectionTimeout = ()
+            -> connectionFailed(
+                view, url,
+                "The office did not respond. Make sure it is running on your laptop "
+                    + "and both devices use the same Wi-Fi.");
+        handler.postDelayed(connectionTimeout, 15000);
+    }
+
+    private void stopConnectionTimeout() {
+        if (connectionTimeout != null) {
+            handler.removeCallbacks(connectionTimeout);
+            connectionTimeout = null;
+        }
+    }
+
+    private boolean currentDocument(WebView view, String url) {
+        return !destroyed && view == web && OfficeWebServices.Rules.sameOrigin(serverOrigin, url) &&
+            OfficeWebServices.Rules.sameDocument(documentUrl, url);
+    }
+
+    private void officePageLoaded(WebView view, String url) {
+        if (!currentDocument(view, url) || !awaitingOffice || !documentCommitted ||
+            !OfficeWebServices.Rules.sameDocument(documentUrl, view.getUrl()))
+            return;
+        awaitingOffice = false;
+        stopConnectionTimeout();
+        Log.i("OfficeXR", "Office page loaded " + serverOrigin);
+        getPreferences(MODE_PRIVATE)
+            .edit()
+            .putString("server", serverOrigin)
+            .putString("server_name", officeName)
+            .apply();
+        feedback.setVisibility(View.GONE);
+    }
+
+    private void connectionFailed(WebView view, String url, String message) {
+        if (!currentDocument(view, url))
+            return;
+        int generation = navigationGeneration;
+        failedDocumentUrl = url;
+        awaitingOffice = false;
+        stopConnectionTimeout();
+        // Leave the WebView callback before destroying its view and rebuilding the picker.
+        handler.post(() -> {
+            if (destroyed || web != view || generation != navigationGeneration)
+                return;
+            manualAddressOpen = lastAttemptManual;
+            showConnection();
+            showFeedback(message);
+        });
     }
 
     // Stop the Surface producer before xrEndSession, as required by the Android
@@ -406,6 +694,10 @@ public final class OfficeActivity extends Activity {
                 return;
             }
             sessionVisible = visible;
+            if (visible)
+                startDiscovery();
+            else if (discovery != null)
+                discovery.stop();
             if (panelDisplay != null)
                 panelDisplay.setSurface(visible ? panelSurface : null);
             if (statusPanel != null)
@@ -580,6 +872,7 @@ public final class OfficeActivity extends Activity {
     @Override
     public void onDestroy() {
         destroyed = true;
+        discovery.stop();
         handler.removeCallbacksAndMessages(null);
         services.close();
         if (statusPanel != null)

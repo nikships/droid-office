@@ -37,6 +37,10 @@ of creating a second office state or a separate worker/board implementation.
   approximations and synthetic input replays separately from physical headset checks.
 - Keep connection, authentication and network behavior on the selected office origin.
   Do not bypass TLS certificate validation or add a privileged JavaScript interface.
+- Nearby-office discovery uses `_droidoffice._tcp.` with versioned, secret-free TXT data.
+  Keep discovery and bounded resolution off the display loop; stop it while connected,
+  paused, hidden or destroyed, and reject callbacks from earlier discovery cycles.
+  Remember an office only after a successful page load; preserve the saved choice on failure.
 - Pin downloaded native dependencies and their checksums. Use the checked-in Gradle
   wrapper, SDK 35, NDK 27.2.12479018, CMake 3.22.1 and JDK 17 or 21. From the repository root,
   build with `native/android/gradlew -p native/android --no-daemon :app:assembleDebug`.

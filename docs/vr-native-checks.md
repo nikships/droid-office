@@ -92,12 +92,17 @@ The tests use `-std=c++17 -Wall -Wextra -Werror=return-type`, as the Android bui
 the script always undefines `NDEBUG`. A sanitizer report, a failed assertion or a nonzero exit
 fails the test.
 
-With `--android-sdk DIR`, the script also compiles `NativeStatusPanelRulesTest` and
-`OfficeWebServicesRulesTest` (in `native/android/hosttest`) against
+With `--android-sdk DIR`, the script also compiles `NativeStatusPanelRulesTest`,
+`OfficeWebServicesRulesTest` and `OfficeDiscoveryRulesTest` (in `native/android/hosttest`) against
 `DIR/platforms/android-35/android.jar`. It then runs them on a plain JVM without
 `android.jar`. The `Rules` classes must therefore make no Android calls, because the
 `android.jar` stubs would not be there to answer them. `JAVA_HOME` selects the JDK;
 otherwise `javac` and `java` come from `PATH`.
+
+The discovery rules check the versioned DNS-SD TXT contract, HTTP/HTTPS and port validation,
+IPv4 preference and IPv6 formatting, unsuitable addresses and display names. The catalog checks
+bounded discovery, serialized resolutions, network identities, lost services, failed resolutions,
+and callbacks from a previous picker session. The full runner registers twelve checks.
 
 Without `--android-sdk`, the summary lists the Java tests as `NOT RUN`. With
 `--require-java`, a missing `--android-sdk` is an error rather than a smaller run. CI passes

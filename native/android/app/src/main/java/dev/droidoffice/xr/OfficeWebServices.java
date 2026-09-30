@@ -121,8 +121,8 @@ public final class OfficeWebServices extends WebChromeClient {
         final int generation;
         final int code;
 
-        PendingFiles(ValueCallback<Uri[]> callback, String[] types, boolean multiple,
-                     String origin, int generation, int code) {
+        PendingFiles(ValueCallback<Uri[]> callback, String[] types, boolean multiple, String origin,
+                     int generation, int code) {
             this.callback = callback;
             this.types = types;
             this.multiple = multiple;
@@ -162,9 +162,7 @@ public final class OfficeWebServices extends WebChromeClient {
         settings.setGeolocationEnabled(false);
     }
 
-    public static boolean ownsRequestCode(int code) {
-        return Rules.ownsRequestCode(code);
-    }
+    public static boolean ownsRequestCode(int code) { return Rules.ownsRequestCode(code); }
 
     /** Serves {@code view} from now on; whatever the previous page had pending is cancelled. */
     public void attach(WebView view) {
@@ -194,9 +192,7 @@ public final class OfficeWebServices extends WebChromeClient {
     }
 
     /** Call for each deliberate user action: pointer up, key up, a controller UI button. */
-    public void noteUserInput() {
-        lastUserInput = SystemClock.uptimeMillis();
-    }
+    public void noteUserInput() { lastUserInput = SystemClock.uptimeMillis(); }
 
     /**
      * Call first in WebViewClient.shouldOverrideUrlLoading. Returns false only for the office's
@@ -264,7 +260,8 @@ public final class OfficeWebServices extends WebChromeClient {
                 accepted.add(uri);
         }
         if (accepted.size() < picked.size())
-            tell(accepted.isEmpty() ? "That file isn't a picture." : "Only the pictures were added.");
+            tell(accepted.isEmpty() ? "That file isn't a picture."
+                                    : "Only the pictures were added.");
         pending.callback.onReceiveValue(accepted.isEmpty() ? null : accepted.toArray(new Uri[0]));
         return true;
     }
@@ -317,10 +314,10 @@ public final class OfficeWebServices extends WebChromeClient {
             return true;
         }
         int mode = params.getMode();
-        String[] types = mode == FileChooserParams.MODE_OPEN ||
-                                 mode == FileChooserParams.MODE_OPEN_MULTIPLE
-                             ? Rules.pictureTypes(params.getAcceptTypes())
-                             : null;
+        String[] types =
+            mode == FileChooserParams.MODE_OPEN || mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                ? Rules.pictureTypes(params.getAcceptTypes())
+                : null;
         if (types == null) {
             callback.onReceiveValue(null);
             tell("Only pictures can be chosen in the headset.");
@@ -492,7 +489,8 @@ public final class OfficeWebServices extends WebChromeClient {
     private boolean pageDialog(WebView view, String url, String message, boolean question,
                                JsResult result) {
         String office = officeOrigin.get();
-        if (closed || view != web || !Rules.sameOrigin(office, url) || !pageIsOffice(view, office)) {
+        if (closed || view != web || !Rules.sameOrigin(office, url) ||
+            !pageIsOffice(view, office)) {
             result.cancel();
             return true;
         }
@@ -722,17 +720,28 @@ public final class OfficeWebServices extends WebChromeClient {
             return a != null && a.equals(origin(url));
         }
 
+        /** Finished/failed callbacks for an aborted navigation must not complete its successor. */
+        static boolean sameDocument(String expected, String callback) {
+            if (expected == null || callback == null || expected.length() > MAX_URL ||
+                callback.length() > MAX_URL)
+                return false;
+            int a = expected.indexOf('#');
+            int b = callback.indexOf('#');
+            int length = a < 0 ? expected.length() : a;
+            return length == (b < 0 ? callback.length() : b) &&
+                expected.regionMatches(0, callback, 0, length);
+        }
+
         /**
          * The office loads its own URLs. A user's click on an http(s) link in the page opens in
          * the system browser. Redirects, script navigations and subframes leaving the office are
          * blocked.
          */
-        static Navigation navigation(String office, String url, boolean mainFrame,
-                                     boolean gesture, boolean redirect) {
+        static Navigation navigation(String office, String url, boolean mainFrame, boolean gesture,
+                                     boolean redirect) {
             if (sameOrigin(office, url))
                 return Navigation.OFFICE;
-            if (origin(office) == null || origin(url) == null || !mainFrame || !gesture ||
-                redirect)
+            if (origin(office) == null || origin(url) == null || !mainFrame || !gesture || redirect)
                 return Navigation.BLOCK;
             return Navigation.EXTERNAL;
         }

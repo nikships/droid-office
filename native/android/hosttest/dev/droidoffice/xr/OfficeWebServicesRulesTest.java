@@ -25,6 +25,7 @@ public final class OfficeWebServicesRulesTest {
     public static void main(String[] args) {
         origins();
         sameOrigin();
+        sameDocument();
         navigation();
         resources();
         input();
@@ -90,6 +91,21 @@ public final class OfficeWebServicesRulesTest {
         check(!Rules.sameOrigin("about:blank", "about:blank"));
     }
 
+    private static void sameDocument() {
+        String nativePage = "http://office.local:4600/?native=1";
+        check(Rules.sameDocument(nativePage, nativePage));
+        check(Rules.sameDocument(nativePage + "#old", nativePage + "#new"));
+        check(!Rules.sameDocument(nativePage, "http://office.local:4600/"));
+        check(!Rules.sameDocument(nativePage,
+                                  "http://office.local:4600/login?next=%2F%3Fnative%3D1"));
+        check(!Rules.sameDocument(nativePage, "http://office.local:4600/?native=0"));
+        check(!Rules.sameDocument(nativePage, "http://other.local:4600/?native=1"));
+        check(!Rules.sameDocument(null, nativePage));
+        check(!Rules.sameDocument(nativePage, null));
+        check(!Rules.sameDocument(null, null));
+        check(!Rules.sameDocument("x".repeat(Rules.MAX_URL + 1), nativePage));
+    }
+
     private static void navigation() {
         String office = "https://office.local:4600";
         String pr = "https://github.com/o/r/pull/1";
@@ -112,8 +128,7 @@ public final class OfficeWebServicesRulesTest {
     }
 
     private static void resources() {
-        equal("[" + AUDIO + "]",
-              Arrays.toString(Rules.grantableResources(new String[] {AUDIO})));
+        equal("[" + AUDIO + "]", Arrays.toString(Rules.grantableResources(new String[] {AUDIO})));
         equal("[" + AUDIO + "]",
               Arrays.toString(Rules.grantableResources(new String[] {VIDEO, AUDIO, MIDI})));
         equal(0, Rules.grantableResources(new String[] {VIDEO}).length);
