@@ -217,7 +217,7 @@ noOutline(holiday.group);
 // ---- Board agents -------------------------------------------------------------------------------
 /**
  * What each board agent is for: its board's icon, what it offers on the card over its head, and an
- * example ask. The headset app shows the offer on its counter display only once you talk to it.
+ * example ask. The headset app shows the offer on its kiosk's screen only once you talk to it.
  */
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
@@ -243,7 +243,7 @@ const idleAgents = STATIONS.map((def) => {
 /**
  * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
  * there, what it is and how it's doing, printed where it sits instead of floating over its head. A
- * kiosk's is its counter display.
+ * kiosk's is the screen set into its front.
  */
 const plates = new Map<string, Nameplate>();
 
@@ -260,7 +260,7 @@ function plateAt(deskId: string): Nameplate | null {
   return plate ?? null;
 }
 
-/** A board agent waiting at its kiosk has the counter display, and gives it up while someone's hired there. */
+/** A board agent waiting at its kiosk has the kiosk's screen, and gives it up while someone's hired there. */
 function seatIdleAgents() {
   if (floatingTags) return;
   for (const a of idleAgents) a.model.setPlate(a.view.vacancy.visible ? plateAt(a.view.def.id) : null);
@@ -268,7 +268,7 @@ function seatIdleAgents() {
 
 /**
  * The kiosk whose agent you've started talking to, in the headset app. Nothing says what a board
- * agent is for until then: its counter display shows its pitch (STATION_INFO) from your hello until
+ * agent is for until then: its kiosk's screen shows its pitch (STATION_INFO) from your hello until
  * you ask it something or walk away.
  */
 let talkingTo: string | null = null;
@@ -281,7 +281,7 @@ function agentAt(deskId: string): Worker | undefined {
   return (w && workerViews.get(w.id)?.model) || idleAgents.find((a) => a.view.def.id === deskId)?.model;
 }
 
-/** Hello at a kiosk: its agent looks up with a little hop, and its counter display shows its pitch. */
+/** Hello at a kiosk: its agent looks up with a little hop, and the kiosk's screen shows its pitch. */
 function startTalking(deskId: string) {
   const kind = DESK_BY_ID.get(deskId)?.station;
   const plate = plateAt(deskId);
@@ -293,7 +293,7 @@ function startTalking(deskId: string) {
   agentAt(deskId)?.cheer(0.6);
 }
 
-/** The counter display goes back to the agent's nameplate. */
+/** The kiosk's screen goes back to the agent's nameplate. */
 function stopTalking() {
   if (!talkingTo) return;
   plates.get(talkingTo)?.pitch(null);

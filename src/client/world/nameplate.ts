@@ -5,11 +5,12 @@ import { ANISOTROPY } from './texture-quality';
 import { mesh, roundedBox, toon, wrapText } from './toon';
 
 /**
- * Nameplates: in the headset app (`/?native=1`, see native/mode.ts floatingTagsShown) nobody floats
- * text over their head. A worker's name, engine and state are printed on its seat instead: a
- * three-sided sign standing on its desk, a plate on the back of its meeting chair or bean bag, or
- * the counter display of a board agent's kiosk. A lamp on the plate glows in its status color,
- * breathing while it works and blinking while it waits on you, like the bulb on its antenna.
+ * Nameplates: in the headset app (`/?native=1`, see native/mode.ts floatingTagsShown) nothing
+ * floats over anyone's head, not even the bulb on a worker's antenna. A worker's name, engine and
+ * state are printed on its seat instead: a three-sided sign standing on its desk, a plate on the
+ * back of its meeting chair or bean bag, or the screen set into the front of a board agent's kiosk.
+ * A status lamp on the seat, a lit dome in a dark collar, glows in its status color, breathing while
+ * it works and blinking while it waits on you.
  */
 
 /** How a seat carries its nameplate (DeskView.plate). The plate's face looks along the anchor's +z. */
@@ -18,12 +19,17 @@ export interface PlateMount {
   /**
    * `prism`: a three-sided sign standing on a desk, one face toward the chair and the other two
    * angled to the front corners, so it reads from behind the worker and from the aisle beside it.
-   * `panel`: one flat face (a chair back, a bean bag, a kiosk's counter display), centered on the anchor.
+   * `panel`: one flat face in a bezel (a chair back, a bean bag, the screen in a kiosk's front), centered on the anchor.
    */
   shape: 'prism' | 'panel';
   /** One face, in meters. */
   width: number;
   height: number;
+  /**
+   * Where its status lamp stands, in the anchor's space, domed up its +y, and the dome's radius in
+   * meters. By default it stands on top of a prism, or on the top edge of a panel's bezel.
+   */
+  lamp?: { at: readonly [number, number, number]; radius: number };
 }
 
 /** Steady; breathing while it works; blinking while it waits on you. */
@@ -35,8 +41,8 @@ export interface PlateText {
   name: string;
   /** What it is: its engine ("Claude Code · Opus 4.1 · High"), "Shell", or a kiosk agent's board ("Issues board", then its model once hired); '' for none. */
   role: string;
-  /** Its state as a pill: text, pill color, ink. */
-  chip: readonly [string, string, string];
+  /** Its state, as its status light reads: a word ("READY", "PR #12 MERGED") and its color. */
+  state: readonly [string, string];
   /** What it's on, on one line; '' for nothing. */
   line: string;
   /** Its own color, down the plate's left edge. */
@@ -46,7 +52,7 @@ export interface PlateText {
   pulse: LampPulse;
 }
 
-/** A board agent's pitch, shown on its counter display only once you start talking to it. */
+/** A board agent's pitch, shown on its kiosk's screen only once you start talking to it. */
 export interface PlatePitch {
   /** Who's talking: "📌 Issues agent". */
   heading: string;
@@ -63,6 +69,14 @@ const PAPER = '#f4f4f6';
 const MUTED = '#a6a9b8';
 /** How long one blink of a lamp calling for you takes, on and off, in seconds. */
 const BLINK = 0.6;
+
+/** A status label without its emoji: "💬 READY" reads "READY" on a nameplate, beside its colored light. */
+export function plainLabel(label: string): string {
+  return label
+    .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /** One face's text, laid out on a `w` by `h` canvas. */
 export function paintPlate(ctx: CanvasRenderingContext2D, w: number, h: number, text: PlateText | null, pitch: PlatePitch | null) {
@@ -112,9 +126,9 @@ export function paintPlate(ctx: CanvasRenderingContext2D, w: number, h: number, 
   if (!text) return;
   const namePx = h * 0.3;
   const rolePx = h * 0.13;
-  const chipPx = h * 0.12;
-  const chipH = h * 0.2;
-  const rows = text.role ? namePx + rolePx * 1.3 + chipH : namePx + chipH;
+  const statePx = h * 0.15;
+  const stateH = h * 0.2;
+  const rows = text.role ? namePx + rolePx * 1.3 + stateH : namePx + stateH;
   const gap = (h - 2 * pad - rows) / (text.role ? 2 : 1);
   let y = pad + namePx / 2;
   line(text.name, namePx, 800, PAPER, y, maxW, x, namePx * 0.6);
@@ -123,16 +137,19 @@ export function paintPlate(ctx: CanvasRenderingContext2D, w: number, h: number, 
     line(text.role, rolePx, 600, MUTED, y + rolePx * 0.6);
     y += rolePx * 1.3 + gap;
   }
-  // The state pill, then what it's on.
-  const [label, bg, ink] = text.chip;
-  ctx.font = `800 ${chipPx}px ${SANS}`;
-  const chipW = Math.min(maxW, ctx.measureText(label).width + chipPx * 1.6);
+  // Its state as a device's status light reads, a lit dot and a word in its color, then what it's on.
+  const [word, color] = text.state;
+  const mid = y + stateH / 2;
+  const dot = statePx * 0.38;
   ctx.beginPath();
-  ctx.roundRect(x, y, chipW, chipH, chipH / 2);
-  ctx.fillStyle = bg;
+  ctx.arc(x + dot, mid, dot, 0, Math.PI * 2);
+  ctx.fillStyle = color;
   ctx.fill();
-  line(label, chipPx, 800, ink, y + chipH / 2 + chipPx * 0.05, chipW - chipPx * 1.2, x + chipPx * 0.6);
-  if (text.line) line(text.line, rolePx, 600, '#e6e6ee', y + chipH / 2, maxW - chipW - pad, x + chipW + pad * 0.8);
+  const wordX = x + dot * 2 + statePx * 0.45;
+  ctx.font = `800 ${statePx}px ${SANS}`;
+  const wordW = Math.min(maxW - (wordX - x), ctx.measureText(word).width);
+  line(word, statePx, 800, color, mid + statePx * 0.05, wordW, wordX);
+  if (text.line) line(text.line, rolePx, 600, '#e6e6ee', mid, maxW - (wordX - x) - wordW - pad, wordX + wordW + pad * 0.8);
 }
 
 /** Geometry every nameplate of a size shares (the native scene uploads each once). */
@@ -150,10 +167,9 @@ export class Nameplate {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly texture: THREE.CanvasTexture;
   private readonly face: THREE.MeshBasicMaterial;
+  /** The status lamp's lit dome. */
   private readonly lamp: THREE.Mesh;
   private readonly lampMat: THREE.MeshBasicMaterial;
-  /** The lamp's radius, in meters. */
-  private readonly lampSize: number;
   /** Whoever's text it shows (a worker, or the board agent waiting at a kiosk): only it may change or clear it. */
   private owner: unknown = null;
   private text: PlateText | null = null;
@@ -162,7 +178,7 @@ export class Nameplate {
   private drawnFonts = -1;
   private t = 0;
 
-  constructor(mount: Pick<PlateMount, 'shape' | 'width' | 'height'>) {
+  constructor(mount: Omit<PlateMount, 'anchor'>) {
     const { shape, width, height } = mount;
     this.canvas = document.createElement('canvas');
     this.canvas.width = Math.round(width * PX_PER_M);
@@ -175,7 +191,9 @@ export class Nameplate {
     this.lampMat = new THREE.MeshBasicMaterial({ color: '#2b2d42', toneMapped: false });
     const body = toon('#23252e');
     const faceGeo = geometry(`face|${width}|${height}`, () => new THREE.PlaneGeometry(width, height));
-    const lampGeo = geometry('lamp', () => new THREE.SphereGeometry(1, 14, 10));
+    /** Where the lamp stands and how big its dome is (meters), unless the mount says. */
+    let lampAt: readonly [number, number, number];
+    let radius: number;
     if (shape === 'prism') {
       // Three faces round a dark block: one toward +z, the others 120° either side of it.
       const tall = height + 0.02;
@@ -196,9 +214,8 @@ export class Nameplate {
         side.add(plate);
         this.root.add(side);
       }
-      this.lampSize = 0.026;
-      this.lamp = new THREE.Mesh(lampGeo, this.lampMat);
-      this.lamp.position.set(0, tall + 0.022, 0);
+      lampAt = [0, tall, 0];
+      radius = 0.03;
     } else {
       const bezel = mesh(
         geometry(`bezel|${width}|${height}`, () => roundedBox(width + 0.03, 0.018, height + 0.03, 0.012)),
@@ -213,13 +230,29 @@ export class Nameplate {
       const plate = new THREE.Mesh(faceGeo, this.face);
       plate.position.z = 0.0105;
       this.root.add(plate);
-      // On the bezel's top corner, as big as the plate is tall allows: a kiosk's shows across the room.
-      this.lampSize = Math.max(0.016, height * 0.1);
-      this.lamp = new THREE.Mesh(lampGeo, this.lampMat);
-      this.lamp.position.set(width / 2 - this.lampSize, height / 2 + this.lampSize, 0.006);
+      // Standing on the bezel's top edge, toward its corner.
+      radius = Math.max(0.016, height * 0.1);
+      lampAt = [width / 2 - radius * 1.6, height / 2 + 0.015, 0];
     }
-    this.lamp.scale.setScalar(this.lampSize);
-    this.root.add(this.lamp);
+    // A lit dome in a dark collar, standing where the mount says.
+    const lamp = new THREE.Group();
+    lamp.position.set(...(mount.lamp?.at ?? lampAt));
+    lamp.scale.setScalar(mount.lamp?.radius ?? radius);
+    const collar = mesh(
+      geometry('lamp-collar', () => new THREE.CylinderGeometry(1.3, 1.45, 0.55, 18)),
+      body,
+      0,
+      0.275,
+      0,
+      false,
+    );
+    this.lamp = new THREE.Mesh(
+      geometry('lamp-dome', () => new THREE.SphereGeometry(1, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2)),
+      this.lampMat,
+    );
+    this.lamp.position.y = 0.55;
+    lamp.add(collar, this.lamp);
+    this.root.add(lamp);
     this.root.visible = false;
   }
 
@@ -263,7 +296,7 @@ export class Nameplate {
     this.t += dt;
     const pulse = this.text?.lamp ? this.text.pulse : 'steady';
     this.lamp.visible = pulse !== 'call' || this.t % BLINK < BLINK * 0.6;
-    this.lamp.scale.setScalar(pulse === 'busy' ? this.lampSize * (1 + 0.22 * Math.sin(this.t * 5)) : this.lampSize);
+    this.lamp.scale.setScalar(pulse === 'busy' ? 1 + 0.22 * Math.sin(this.t * 5) : 1);
   }
 
   private paint(force = false) {

@@ -11,7 +11,7 @@ import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWo
 import { Muzzle, disposeGun, magnum } from './gun';
 import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
 import { floatingTagsShown } from '../native/mode';
-import { disposeBadge, nameBadge, type LampPulse, type Nameplate, type PlateText } from './nameplate';
+import { disposeBadge, nameBadge, plainLabel, type LampPulse, type Nameplate, type PlateText } from './nameplate';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -1340,7 +1340,8 @@ export function workerPlate(w: WorkerPlateState): PlateText {
   const calling = w.status === 'needs_input' || (w.status === 'done' && w.bounce);
   const pulse: LampPulse = calling ? 'call' : w.status === 'working' || w.status === 'starting' ? 'busy' : 'steady';
   const lamp = w.out ? null : w.lost ? LOST_CHIP[1] : (STATUS_BULB[w.status] ?? STATUS_BULB.starting);
-  return { name: w.name, role: w.role, chip: cardChip(w.status, w.pr, w.lost), line: w.task?.name ?? '', color: w.color, lamp, pulse };
+  const [label, color] = cardChip(w.status, w.pr, w.lost);
+  return { name: w.name, role: w.role, state: [plainLabel(label), color], line: w.task?.name ?? '', color: w.color, lamp, pulse };
 }
 
 /**
@@ -1543,8 +1544,11 @@ const HOP = 0.5;
 export class Worker {
   readonly root = new THREE.Group();
   private body = new THREE.Group();
-  private bulb: THREE.MeshToonMaterial;
-  private bulbMesh: THREE.Mesh;
+  /**
+   * The bulb on its antenna, lit in its status color so you can tell from across the room. Null in
+   * the headset app, where nothing sticks up over its head: its seat's nameplate lamp does that.
+   */
+  private bulb: { mat: THREE.MeshToonMaterial; mesh: THREE.Mesh } | null = null;
   private armL: THREE.Object3D;
   private armR: THREE.Object3D;
   private bubble: THREE.Sprite | null = null;
@@ -1612,7 +1616,10 @@ export class Worker {
   constructor(
     name: string,
     private color: string,
-    /** Its name tag, status bubble, task card and farewell float over its head (floatingTagsShown); else only its seat's nameplate says them. */
+    /**
+     * Its name tag, status bubble, task card and farewell float over its head, and the bulb on its
+     * antenna shows its status (floatingTagsShown); else only its seat's nameplate says them all.
+     */
     private readonly tags = floatingTagsShown(),
   ) {
     const skin = (this.skin = toonUnique(color));
@@ -1633,17 +1640,20 @@ export class Worker {
       this.eyes.push(eye, pupil);
       this.pupils.push(pupil);
     }
-    // Headset: band + mic
+    // Headset: band + mic. The band runs front to back, under the antenna; with no antenna (the
+    // headset app), it runs over the top from ear cup to ear cup instead of down its face.
     const band = mesh(new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI), toon('#2b2d42'), 0, 0.72, 0, false);
-    band.rotation.y = Math.PI / 2;
+    if (tags) band.rotation.y = Math.PI / 2;
     this.body.add(band);
     for (const sx of [-1, 1]) this.body.add(mesh(new THREE.SphereGeometry(0.07, 10, 8), toon('#2b2d42'), sx * 0.29, 0.72, 0, false));
     // Antenna with status bulb
-    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon('#2b2d42'), 0, 1.07, 0, false));
-    this.bulb = toonUnique(STATUS_BULB.starting);
-    this.bulb.emissive = new THREE.Color(STATUS_BULB.starting).multiplyScalar(0.6);
-    this.bulbMesh = mesh(new THREE.SphereGeometry(0.075, 12, 10), this.bulb, 0, 1.2, 0, false);
-    this.body.add(this.bulbMesh);
+    if (tags) {
+      this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon('#2b2d42'), 0, 1.07, 0, false));
+      const mat = toonUnique(STATUS_BULB.starting);
+      mat.emissive = new THREE.Color(STATUS_BULB.starting).multiplyScalar(0.6);
+      this.bulb = { mat, mesh: mesh(new THREE.SphereGeometry(0.075, 12, 10), mat, 0, 1.2, 0, false) };
+      this.body.add(this.bulb.mesh);
+    }
 
     const arm = (x: number) => {
       const pivot = new THREE.Group();
@@ -1737,8 +1747,19 @@ export class Worker {
 
   private paintBulb() {
     const c = STATUS_BULB[this.status] ?? '#8c8c8c';
-    this.bulb.color.set(c);
-    this.bulb.emissive.set(c).multiplyScalar(0.7);
+    this.bulb?.mat.color.set(c);
+    this.bulb?.mat.emissive.set(c).multiplyScalar(0.7);
+  }
+
+  /** Light out: shot, or on its way home. */
+  private bulbOut() {
+    this.bulb?.mat.color.set(STATUS_BULB.exited);
+    this.bulb?.mat.emissive.set('#000000');
+  }
+
+  /** The bulb's size, 1 at rest. */
+  private bulbScale(scale: number) {
+    this.bulb?.mesh.scale.setScalar(scale);
   }
 
   /** Jumps for joy, arms up, for a few seconds. */
@@ -1821,8 +1842,7 @@ export class Worker {
     this.armR.position.set(0.3, 0.55, 0.05);
     this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2, 0.05));
     for (const p of this.pupils) p.position.y = 0.7;
-    this.bulb.color.set(STATUS_BULB.exited);
-    this.bulb.emissive.set('#000000');
+    this.bulbOut();
     if (this.bubble) {
       this.root.remove(this.bubble);
       disposeSprite(this.bubble);
@@ -1875,8 +1895,7 @@ export class Worker {
     this.armL.position.set(-0.3, 0.55, 0.05);
     this.armR.position.set(0.3, 0.55, 0.05);
     this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2, 0.05));
-    this.bulb.color.set(STATUS_BULB.exited);
-    this.bulb.emissive.set('#000000');
+    this.bulbOut();
     if (this.bubble) {
       this.root.remove(this.bubble);
       disposeSprite(this.bubble);
@@ -1995,7 +2014,7 @@ export class Worker {
     this.body.rotation.z = isAsleep(this.status) ? Math.sin(t * 1.5) * 0.08 : s.roll;
     this.props(dt, t);
     this.blink(dt, s.lid);
-    this.bulbMesh.scale.setScalar(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
+    this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + (hopping ? this.body.position.y : 0);
     // Walking in to a meeting: the same waddle as on the way out, without the box.
@@ -2087,7 +2106,7 @@ export class Worker {
     this.body.rotation.x += (0.15 - this.body.rotation.x) * Math.min(1, dt * 4);
     this.body.rotation.y += -this.body.rotation.y * k;
     this.body.scale.setScalar(1);
-    this.bulbMesh.scale.setScalar(1);
+    this.bulbScale(1);
     this.blink(dt);
     if (this.bubble) this.bubble.position.y = 1.95 + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55;
@@ -2166,9 +2185,11 @@ export class Worker {
       f.position.z = 0.05;
     });
     // Its light flashes through the colors like a disco ball.
-    this.bulb.color.setHSL((t * 1.3) % 1, 1, 0.5);
-    this.bulb.emissive.copy(this.bulb.color).multiplyScalar(0.5);
-    this.bulbMesh.scale.setScalar(1 + Math.abs(Math.sin(t * 12)) * 0.3);
+    if (this.bulb) {
+      this.bulb.mat.color.setHSL((t * 1.3) % 1, 1, 0.5);
+      this.bulb.mat.emissive.copy(this.bulb.mat.color).multiplyScalar(0.5);
+    }
+    this.bulbScale(1 + Math.abs(Math.sin(t * 12)) * 0.3);
     this.blink(dt);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + lift + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + lift;
@@ -2183,7 +2204,7 @@ export class Worker {
     this.body.scale.setScalar(1);
     for (const a of [this.armL, this.armR]) a.rotation.z = 0;
     for (const f of this.feet) f.position.set(f.position.x, 0.2, 0.05);
-    this.bulbMesh.scale.setScalar(1);
+    this.bulbScale(1);
     this.paintBulb();
   }
 

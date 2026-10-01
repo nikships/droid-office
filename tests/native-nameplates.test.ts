@@ -1,6 +1,7 @@
-// The headset app floats no name, state or pitch over anyone: a worker's name, engine and state are
-// printed on its seat's nameplate with a status lamp, a teammate wears a name badge, and a board
-// agent's kiosk shows only its nameplate until you greet it. Desktop and WebXR keep their tags.
+// The headset app floats no name, state, light or pitch over anyone: a worker wears no antenna, its
+// name, engine and state are printed on its seat's nameplate with a status lamp, a teammate wears a
+// name badge, and a board agent's kiosk shows only its nameplate, on a screen set into its front,
+// until you greet it. Desktop and WebXR keep their tags.
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -8,6 +9,7 @@ import { floatingTagsShown, worldNotice } from '../src/client/native/mode.js';
 import { Nameplate, paintPlate, type PlateText } from '../src/client/world/nameplate.js';
 import { Person, Worker, workerPlate, type WorkerPlateState } from '../src/client/world/character.js';
 import { buildOffice } from '../src/client/world/office.js';
+import { KIOSK } from '../src/shared/layout.js';
 
 /** Stands in for any canvas member the painters reach for: callable, and every member is itself. */
 const anything: unknown = new Proxy(() => {}, { get: (_t, key) => (key === Symbol.toPrimitive ? () => 0 : key === 'then' ? undefined : anything), apply: () => anything });
@@ -42,6 +44,32 @@ function sprites(root: THREE.Object3D): THREE.Sprite[] {
   return out;
 }
 
+/** How high (meters, in its own space) anything a worker wears or carries reaches: its own sprites aside. */
+function topOf(worker: Worker): number {
+  worker.root.updateMatrixWorld(true);
+  let top = -Infinity;
+  worker.root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    let shown = true;
+    for (let p: THREE.Object3D | null = o; p && p !== worker.root; p = p.parent) shown &&= p.visible;
+    if (!m.isMesh || !shown) return;
+    m.geometry.computeBoundingBox();
+    top = Math.max(top, m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld).max.y);
+  });
+  return top;
+}
+
+/** The lit dome of a nameplate's status lamp: the one half sphere under its root. */
+function lampOf(plate: Nameplate): THREE.Mesh {
+  const domes: THREE.Mesh[] = [];
+  plate.root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && m.geometry instanceof THREE.SphereGeometry) domes.push(m);
+  });
+  assert.equal(domes.length, 1);
+  return domes[0];
+}
+
 const RESTING: WorkerPlateState = { name: 'Pixel 🐚', role: 'Shell', color: '#8d99ae', status: 'idle', bounce: false, lost: false, out: false };
 
 test('characters wear floating tags on the desktop and in WebXR, never in the headset app', () => {
@@ -63,26 +91,26 @@ test("a board's problem says what is wrong in the headset app, never what to typ
   assert.equal(worldNotice('Bad credentials'), 'Bad credentials');
 });
 
-test("a worker's nameplate shows what its tags would: name, engine, state pill, task and lamp", () => {
-  assert.deepEqual(workerPlate(RESTING), { name: 'Pixel 🐚', role: 'Shell', chip: ['💬 READY', '#5aa9e6', '#2b2d42'], line: '', color: '#8d99ae', lamp: '#5aa9e6', pulse: 'steady' });
+test("a worker's nameplate shows what its tags would: name, engine, state, task and lamp", () => {
+  assert.deepEqual(workerPlate(RESTING), { name: 'Pixel 🐚', role: 'Shell', state: ['READY', '#5aa9e6'], line: '', color: '#8d99ae', lamp: '#5aa9e6', pulse: 'steady' });
   const working = workerPlate({ ...RESTING, status: 'working', task: { name: 'Fix the login page', summary: 'Reading the form' } });
-  assert.equal(working.chip[0], '⌨️ WORKING');
+  assert.deepEqual(working.state, ['WORKING', '#f2b84b'], 'a word in its status color, as a status light reads, not a pill');
   assert.equal(working.line, 'Fix the login page');
   assert.equal(working.pulse, 'busy', 'its lamp breathes while it works');
   assert.equal(workerPlate({ ...RESTING, status: 'needs_input' }).pulse, 'call', 'and blinks while it waits on you');
   assert.equal(workerPlate({ ...RESTING, status: 'done', bounce: true }).pulse, 'call');
   assert.equal(workerPlate({ ...RESTING, status: 'done' }).pulse, 'steady', 'once someone has looked, a finished one rests');
   assert.equal(workerPlate({ ...RESTING, out: true }).lamp, null, 'shot or leaving: the lamp is out');
-  assert.deepEqual(workerPlate({ ...RESTING, lost: true }).chip, ['🌿 WORKTREE DELETED', '#ffb703', '#2b2d42']);
-  assert.equal(workerPlate({ ...RESTING, pr: { state: 'merged', label: '🎉 PR #12 merged' } }).chip[0], '🎉 PR #12 MERGED');
-  assert.equal(workerPlate({ ...RESTING, status: 'working', pr: { state: 'open', label: 'PR #12' } }).chip[0], '⌨️ WORKING', 'working comes before its PR');
+  assert.deepEqual(workerPlate({ ...RESTING, lost: true }).state, ['WORKTREE DELETED', '#ffb703']);
+  assert.deepEqual(workerPlate({ ...RESTING, pr: { state: 'merged', label: '🎉 PR #12 merged' } }).state, ['PR #12 MERGED', '#9d4edd']);
+  assert.equal(workerPlate({ ...RESTING, status: 'working', pr: { state: 'open', label: 'PR #12' } }).state[0], 'WORKING', 'working comes before its PR');
 });
 
 test('a nameplate paints its name and state, and a pitch only once it has one', (t) => {
   const drawn = page(t, '?native=1');
   const text: PlateText = { ...workerPlate({ ...RESTING, name: 'Issues agent', role: 'Issues board' }) };
   paintPlate(document.createElement('canvas').getContext('2d')!, 900, 360, text, null);
-  assert.deepEqual(drawn, ['Issues agent', 'Issues board', '💬 READY']);
+  assert.deepEqual(drawn, ['Issues agent', 'Issues board', 'READY']);
   assert.equal(
     drawn.some((s) => /ask me/i.test(s)),
     false,
@@ -101,18 +129,19 @@ test('in the headset app a worker floats nothing over its head; its seat namepla
   pixel.setTask({ name: 'Fix the login page', summary: 'Reading the form' });
   pixel.setPr({ state: 'open', label: 'PR #12' });
   assert.deepEqual(sprites(pixel.root), [], 'no name tag, bubble or task card');
+  assert.ok(topOf(pixel) < 1.1, `no antenna or bulb sticks up over its headset band (top ${topOf(pixel).toFixed(2)} m)`);
   assert.equal(plate.root.visible, false, 'a seat nobody has sat in shows no plate');
 
   pixel.setPlate(plate);
   assert.equal(plate.root.visible, true);
   assert.deepEqual(
-    { name: plate.showing.text?.name, role: plate.showing.text?.role, chip: plate.showing.text?.chip[0], line: plate.showing.text?.line, pulse: plate.showing.text?.pulse },
-    { name: 'Pixel 🐚', role: 'Shell', chip: '⌨️ WORKING', line: 'Fix the login page', pulse: 'busy' },
+    { name: plate.showing.text?.name, role: plate.showing.text?.role, state: plate.showing.text?.state[0], line: plate.showing.text?.line, pulse: plate.showing.text?.pulse },
+    { name: 'Pixel 🐚', role: 'Shell', state: 'WORKING', line: 'Fix the login page', pulse: 'busy' },
   );
   pixel.setStatus('needs_input', true);
   assert.equal(plate.showing.text?.pulse, 'call');
   pixel.die();
-  assert.equal(plate.showing.text?.lamp, null, 'shot: the lamp goes out with its antenna bulb');
+  assert.equal(plate.showing.text?.lamp, null, 'shot: the lamp goes out');
   pixel.revive();
   assert.equal(plate.showing.text?.lamp, '#ef4444');
   pixel.leave('Bye!');
@@ -124,12 +153,12 @@ test('in the headset app a worker floats nothing over its head; its seat namepla
 
 test("a kiosk's display passes from the agent waiting there to the one hired there and back", (t) => {
   page(t, '?native=1');
-  const display = new Nameplate({ shape: 'panel', width: 0.6, height: 0.24 });
+  const display = new Nameplate({ shape: 'panel', width: 0.48, height: 0.24 });
   const waiting = new Worker('Issues agent', '#ef476f');
   waiting.setStatus('idle', false);
   waiting.setRole('Issues board');
   waiting.setPlate(display);
-  assert.equal(display.showing.text?.chip[0], '💬 READY');
+  assert.equal(display.showing.text?.state[0], 'READY');
 
   // Greeted: its pitch, until you walk off or ask it something.
   display.pitch({ heading: '📌 Issues agent', title: 'Ask me about issues', body: 'I file, find, triage, label and close them' });
@@ -145,20 +174,21 @@ test("a kiosk's display passes from the agent waiting there to the one hired the
   assert.equal(display.root.visible, true, 'the agent waiting there letting go does not blank the hired one');
   assert.equal(display.showing.text?.role, 'Issues board · Opus 4.1 · High');
   waiting.setStatus('idle', false);
-  assert.equal(display.showing.text?.chip[0], '⌨️ WORKING', 'only whoever claimed it last can change it');
+  assert.equal(display.showing.text?.state[0], 'WORKING', 'only whoever claimed it last can change it');
 
   hired.setPlate(null);
   assert.equal(display.root.visible, false);
   waiting.setPlate(display);
-  assert.equal(display.showing.text?.chip[0], '💬 READY');
+  assert.equal(display.showing.text?.state[0], 'READY');
 });
 
-test('on the desktop a worker still wears its name tag and status card, and fills no nameplate', (t) => {
+test('on the desktop a worker still wears its name tag, status card and antenna bulb, and fills no nameplate', (t) => {
   page(t, '');
   const pixel = new Worker('Pixel 🐚', '#8d99ae');
   pixel.setStatus('working', false);
   pixel.setTask({ name: 'Fix the login page', summary: 'Reading the form' });
   assert.equal(sprites(pixel.root).length, 2, 'its name tag and its task card');
+  assert.ok(topOf(pixel) > 1.2, 'the bulb on its antenna shows its status across the room');
 });
 
 test('in the headset app a teammate wears a name badge on their shirt, not a tag over their head', (t) => {
@@ -222,4 +252,25 @@ test('the headset office paints no kiosk sign and mounts a nameplate on every se
   }
   assert.equal(office.desks.get('station-issues')?.plate.shape, 'panel');
   assert.equal(office.desks.get('desk-1')?.plate.shape, 'prism');
+});
+
+test("a kiosk's nameplate is a screen set into its front, with its lamp standing on the counter", (t) => {
+  page(t, '?native=1');
+  const office = buildOffice();
+  for (const id of ['station-issues', 'station-pulls', 'station-queue']) {
+    const kiosk = office.desks.get(id)!;
+    const plate = new Nameplate(kiosk.plate);
+    kiosk.plate.anchor.add(plate.root);
+    kiosk.group.updateMatrixWorld(true);
+    const local = (o: THREE.Object3D) => kiosk.group.worldToLocal(o.getWorldPosition(new THREE.Vector3()));
+    const screen = local(kiosk.plate.anchor);
+    const facing = new THREE.Vector3(0, 0, 1).transformDirection(kiosk.plate.anchor.matrixWorld).applyQuaternion(kiosk.group.getWorldQuaternion(new THREE.Quaternion()).invert());
+    assert.ok(screen.y + kiosk.plate.height / 2 < KIOSK.height - 0.1, `${id}: the screen sits below the counter, not standing on it (top ${(screen.y + kiosk.plate.height / 2).toFixed(2)} m)`);
+    assert.ok(screen.z < -(KIOSK.depth - 0.12) / 2 && screen.z > -KIOSK.depth / 2, `${id}: in the kiosk's front face, under the counter's lip`);
+    assert.ok(facing.z < -0.99, `${id}: facing out of the front, toward whoever walks up`);
+    assert.ok(kiosk.plate.width <= KIOSK.width - 0.16 - 2 * 0.06 - 0.03, `${id}: the screen and its bezel fit the front's flat face`);
+    const lamp = local(lampOf(plate));
+    assert.ok(Math.abs(lamp.y - KIOSK.height) < 0.03, `${id}: the lamp stands on the counter (${lamp.y.toFixed(3)} m)`);
+    assert.ok(lamp.z < 0 && lamp.z > -KIOSK.depth / 2 && Math.abs(lamp.x) < KIOSK.width / 2 - 0.05, `${id}: on the counter's front, not over the agent standing behind it`);
+  }
 });

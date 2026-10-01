@@ -967,8 +967,8 @@ function buildKiosk(def: DeskDef): DeskView {
   group.add(mesh(roundedBox(width - 0.16, height - 0.1, depth - 0.12, 0.06), color, 0, (height - 0.1) / 2 + 0.04, 0));
   group.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.05), toon(PALETTE.ink), 0, 0.03, 0));
   group.add(mesh(roundedBox(width, 0.06, depth, 0.05), toon(PALETTE.desk), 0, height - 0.03, 0));
-  // The "Ask me" sign is the agent's pitch, which the headset app keeps to the counter display
-  // until you start talking to it.
+  // The "Ask me" sign is the agent's pitch, which the headset app keeps to its screen (below) until
+  // you start talking to it.
   if (floatingTagsShown()) {
     const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
     sign.scale.multiplyScalar(0.62);
@@ -976,17 +976,17 @@ function buildKiosk(def: DeskDef): DeskView {
     sign.rotation.y = Math.PI;
     group.add(sign);
   }
-  // A display standing on the counter, tipped back toward whoever walks up: the agent's nameplate,
-  // and its pitch once you start talking to it.
-  const display = new THREE.Object3D();
-  display.position.set(0, height + 0.08, -0.04);
-  display.rotation.y = Math.PI;
+  // The headset app's nameplate is a screen set into the kiosk's front, where the desktop's sign
+  // hangs, facing whoever walks up: the agent's name, board and state, and its pitch once you start
+  // talking to it. Its status lamp stands on the counter's front corner, to your right.
+  const front = -(depth - 0.12) / 2 - 0.0095;
+  const screenY = 0.27;
   const plateAnchor = new THREE.Object3D();
-  plateAnchor.rotation.x = -0.95;
-  display.add(plateAnchor);
-  // The headset app's display rests on a block on the counter, hidden under it from the front.
-  if (!floatingTagsShown()) display.add(mesh(box(0.4, 0.07, 0.1), toon('#23252e'), 0, -0.045, -0.05));
-  group.add(display);
+  plateAnchor.position.set(0, screenY, front);
+  plateAnchor.rotation.y = Math.PI;
+  group.add(plateAnchor);
+  // In the screen's space (turned to face the front): x and z run the other way.
+  const lamp = { at: [width / 2 - 0.09, height - screenY, front + depth / 2 - 0.1] as const, radius: 0.035 };
 
   // No laptop: its lid would hide the agent's face from whoever walks up, and its screen would face
   // the wall. The agent's terminal is a key press away (O).
@@ -1010,7 +1010,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.6, height: 0.24 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.48, height: 0.24, lamp } };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */

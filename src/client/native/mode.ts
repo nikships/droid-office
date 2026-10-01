@@ -30,12 +30,13 @@ export function withControlHint(text: string, hint: string): string {
 
 /**
  * Whether characters wear floating billboards: the name pill over a head and the line under it,
- * the status bubble or task card over a worker, the "Ask me" pitch at a board agent's kiosk and the
- * farewell over a worker walking out. Desktop and WebXR keep them. The headset app (`/?native=1`)
- * floats no name, state or pitch over anyone, as in Half-Life: Alyx: a worker's name, engine and
- * state are printed on its seat's nameplate (world/nameplate.ts), whose lamp, the worker's antenna
- * bulb and its body show how it's doing; a teammate wears a name badge; and a board agent's pitch
- * lights its counter display only once you greet it.
+ * the status bubble or task card over a worker, the bulb on its antenna, the "Ask me" pitch at a
+ * board agent's kiosk and the farewell over a worker walking out. Desktop and WebXR keep them. The
+ * headset app (`/?native=1`) floats no name, state, light or pitch over anyone, as in Half-Life:
+ * Alyx: a worker wears no antenna, and its name, engine and state are printed on its seat's
+ * nameplate (world/nameplate.ts), whose status lamp and the worker's body show how it's doing; a
+ * teammate wears a name badge; and a board agent's pitch lights the screen in its kiosk's front
+ * only once you greet it.
  */
 export function floatingTagsShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
   return !isNativeSearch(search);
