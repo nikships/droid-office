@@ -78,7 +78,8 @@ struct Program {
     ShaderSource src; // until the link starts
     GLint uModel = -1, uNormalMatrix = -1, uColor = -1, uEmissive = -1, uAlphaTest = -1;
     GLint uMapTransform = -1, uAlphaMapTransform = -1, uEmissiveMapTransform = -1;
-    GLint uReceiveShadow = -1, uPointSize = -1, uSpriteCenter = -1, uSpriteRotation = -1;
+    GLint uReceiveShadow = -1, uPointSize = -1, uPointQuad = -1, uSpriteCenter = -1,
+          uSpriteRotation = -1;
     GLint uMetalRough = -1, uSpecular = -1, uLightViewProj = -1;
     GLint uSky[5] = {-1, -1, -1, -1, -1};
     GLint uSharpRect = -1, uSharpParams = -1, uSharpBias = -1;
@@ -517,6 +518,7 @@ struct SceneRenderer::Impl {
         p.uEmissiveMapTransform = loc("uEmissiveMapTransform");
         p.uReceiveShadow = loc("uReceiveShadow");
         p.uPointSize = loc("uPointSize");
+        p.uPointQuad = loc("uPointQuad");
         p.uSpriteCenter = loc("uSpriteCenter");
         p.uSpriteRotation = loc("uSpriteRotation");
         p.uMetalRough = loc("uMetalRough");
@@ -742,10 +744,23 @@ struct SceneRenderer::Impl {
         gl.vao = ~0u;
     }
 
+    /**
+     * Points drawn as quads: one instance per point (its vertex attributes advance per instance)
+     * and four strip vertices per instance from gl_VertexID (scene_shaders.cpp). Indexed points
+     * stay GL points; ES 3.0 cannot index instance attributes.
+     */
+    static bool pointQuads(const DrawItem &it) {
+        return it.mode == DrawMode::Points && !it.indices;
+    }
+
     GLuint vao(const DrawItem &it) {
         uint64_t iv = it.indices ? it.indices->serial : 0,
                  in = it.instances ? it.instances->serial : 0;
+        const bool quads = pointQuads(it);
         uint64_t key = mix64(mix64(mix64(it.vertices->serial, iv), in), it.useVertexColor);
+        // A quad array starts at the draw's first point, since instanced draws cannot.
+        if (quads)
+            key = mix64(mix64(key, 0x9e3779b97f4a7c15ull), it.first);
         auto found = vaos.find(key);
         if (found != vaos.end())
             return found->second.id;
@@ -753,6 +768,22 @@ struct SceneRenderer::Impl {
         glGenVertexArrays(1, &v);
         glBindVertexArray(v);
         glBindBuffer(GL_ARRAY_BUFFER, buffers.at(it.vertices->serial).id);
+        if (quads) {
+            const size_t base = size_t(it.first) * kVertexStride;
+            glEnableVertexAttribArray(kAttrPosition);
+            glVertexAttribPointer(kAttrPosition, 3, GL_FLOAT, GL_FALSE, kVertexStride,
+                                  offset(base + kOffsetPosition));
+            glVertexAttribDivisor(kAttrPosition, 1);
+            if (it.useVertexColor) {
+                glEnableVertexAttribArray(kAttrColor);
+                glVertexAttribPointer(kAttrColor, 4, GL_HALF_FLOAT, GL_FALSE, kVertexStride,
+                                      offset(base + kOffsetColor));
+                glVertexAttribDivisor(kAttrColor, 1);
+            }
+            vaos[key] = {v, it.vertices->serial, iv, in};
+            gl.vao = v;
+            return v;
+        }
         glEnableVertexAttribArray(kAttrPosition);
         glVertexAttribPointer(kAttrPosition, 3, GL_FLOAT, GL_FALSE, kVertexStride,
                               offset(kOffsetPosition));
@@ -1165,6 +1196,12 @@ struct SceneRenderer::Impl {
             break;
         }
         GLsizei instances = it.instances ? GLsizei(it.instances->count) : 1;
+        if (pointQuads(it)) {
+            glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, GLsizei(it.count));
+            stats.drawCalls++;
+            stats.points += it.count;
+            return;
+        }
         if (it.indices) {
             GLenum type = it.indices->wide ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
             const void *at = offset(size_t(it.first) * (it.indices->wide ? 4 : 2));
@@ -1233,6 +1270,8 @@ struct SceneRenderer::Impl {
             glUniform1f(p.uReceiveShadow, it.receiveShadow ? 1.0f : 0.0f);
         if (p.uPointSize >= 0)
             glUniform1f(p.uPointSize, m.pointSize * options.pointPixelScale);
+        if (p.uPointQuad >= 0)
+            glUniform1i(p.uPointQuad, pointQuads(it) ? 1 : 0);
         if (p.uSpriteCenter >= 0)
             glUniform2fv(p.uSpriteCenter, 1, it.spriteCenter);
         if (p.uSpriteRotation >= 0)

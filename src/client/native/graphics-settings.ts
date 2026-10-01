@@ -6,13 +6,23 @@ export const MAX_NATIVE_RENDER_SCALE = 2;
 export interface NativeGraphicsSettings {
   v: 1;
   renderScale: number;
+  /** Off renders the world without foveation; the others are a runtime level, eye-tracked when available. Each choice creates new world targets. */
   foveation: NativeFoveation;
-  peripheralDensity: number;
   fps: boolean;
   sharpScreens: boolean;
+  /** Diagnostic tint of the world's measured shading density. Never restored from storage. */
+  foveationDebug: boolean;
 }
 
-export const DEFAULT_NATIVE_GRAPHICS: Readonly<NativeGraphicsSettings> = { v: 1, renderScale: 1, foveation: 'balanced', peripheralDensity: 0.25, fps: false, sharpScreens: true };
+export const DEFAULT_NATIVE_GRAPHICS: Readonly<NativeGraphicsSettings> = { v: 1, renderScale: 1, foveation: 'balanced', fps: false, sharpScreens: true, foveationDebug: false };
+
+/** Native APKs up to v0.1.301 reject graphics without this field; later ones ignore it. */
+const LEGACY_PERIPHERAL_DENSITY = 0.25;
+
+/** The graphics object in the native control packet. */
+export function nativeGraphicsPacket(settings: NativeGraphicsSettings): NativeGraphicsSettings & { peripheralDensity: number } {
+  return { ...settings, peripheralDensity: LEGACY_PERIPHERAL_DENSITY };
+}
 
 /** Stored settings may come from an older app or an interrupted write. */
 export function readNativeGraphics(value: unknown): NativeGraphicsSettings {
@@ -22,10 +32,30 @@ export function readNativeGraphics(value: unknown): NativeGraphicsSettings {
     v: 1,
     renderScale: bounded('renderScale', MIN_NATIVE_RENDER_SCALE, MAX_NATIVE_RENDER_SCALE, 1),
     foveation: m.foveation === 'off' || m.foveation === 'clarity' || m.foveation === 'performance' ? m.foveation : 'balanced',
-    peripheralDensity: bounded('peripheralDensity', 0.25, 1, 0.25),
     fps: m.fps === true,
     sharpScreens: m.sharpScreens !== false,
+    foveationDebug: m.foveationDebug === true,
   };
+}
+
+const FOVEATION_LEVELS: Record<string, string> = { none: 'Off', low: 'Low', medium: 'Medium', high: 'High' };
+
+/** The foveation the native renderer has bound to its world targets, from its metrics; null before the first report. */
+export function nativeFoveationStatus(metrics: unknown): string | null {
+  const m = metrics && typeof metrics === 'object' ? (metrics as Record<string, unknown>) : {};
+  const f = m.foveation && typeof m.foveation === 'object' ? (m.foveation as Record<string, unknown>) : null;
+  if (!f || typeof f.level !== 'string') return typeof m.foveationEnabled === 'boolean' ? `Currently applied: ${m.foveationEnabled ? 'On' : 'Off'}.` : null;
+  const pending = f.pending === true ? ' Applying your choice…' : '';
+  const fallback = typeof f.fallback === 'string' && f.fallback ? ` Fallback: ${f.fallback}.` : '';
+  // "none" is targets without foveation: Off, or a fallback when a level was chosen. Older APKs reported that fallback as "unfoveated".
+  const unavailable = f.level === 'unfoveated' || (f.level === 'none' && typeof f.setting === 'string' && f.setting !== 'off' && !pending);
+  if (unavailable) return `Currently applied: full detail everywhere (no runtime foveation).${fallback}`;
+  if (f.level === 'none') return `Currently applied: Off (full detail everywhere).${pending}`;
+  const level = FOVEATION_LEVELS[f.level] ?? f.level;
+  const tracked = f.eyeTracked === true ? 'follows your eyes' : 'fixed at the centre';
+  // Filtered targets rebuild the lower-detail areas smoothly instead of in the driver's blocks; older APKs do not report it.
+  const smoothed = f.filtered === true ? ', smoothed periphery' : '';
+  return `Currently applied: ${level} runtime level, ${tracked}${smoothed}.${fallback}${pending}`;
 }
 
 export interface NativeEyeSize {

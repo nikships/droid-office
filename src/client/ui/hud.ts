@@ -208,7 +208,7 @@ function openNativeHelp() {
     ['Issues & PRs', 'Open a board in the office or from Home. Read an issue, pick up its card, assign it to a worker or add it to the queue. PRs keep the desktop conversation, file review and confirmation actions.'],
     ['Held card', 'Aim at a desk or the queue and press the trigger to place the card. Put back in Home returns it to the board. A physical card grab uses the same shared issue.'],
     ['Floors', 'Aim at a physical floor button in the elevator and press the trigger. The Elevator tile and the floor name also open the original floor chooser.'],
-    ['Graphics', 'Graphics & performance controls foveation, world resolution, peripheral detail and the persistent FPS counter. The app requests 90 Hz; delayed office updates or a lower rate are shown explicitly.'],
+    ['Graphics', 'Graphics & performance controls foveation, world resolution, the rendering-detail view and the persistent FPS counter. The app requests 90 Hz; delayed office updates or a lower rate are shown explicitly.'],
   ];
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h(

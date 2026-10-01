@@ -48,6 +48,7 @@ CPP_TESTS=(
   "xr_performance|tests/xr_performance_test.cpp|android/app/src/main/cpp/xr_performance.cpp"
   "rig_presentation|tests/rig_presentation_test.cpp|"
   "graphics_controls|tests/graphics_controls_test.cpp|"
+  "foveation|tests/foveation_test.cpp|"
   "refresh_policy|tests/refresh_policy_test.cpp|"
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
