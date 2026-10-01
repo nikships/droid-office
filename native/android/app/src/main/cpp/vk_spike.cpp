@@ -2,6 +2,7 @@
 #include "frame_metrics.h"
 #include "json.hpp"
 #include "log_record.h"
+#include "status_layout.h"
 #include "vk_spike_gpu.h"
 #include "vk_spike_logic.h"
 #include "xr_input.h"
@@ -408,14 +409,17 @@ void Spike::createSurfaceLayers() {
             env->ExceptionClear();
             throw std::runtime_error("onPanelSurface failed");
         }
-        info.width = 1024;
-        info.height = 192;
+        // The office's status Surface (status_layout.h): a message column and a counter column,
+        // each composited as its own quad.
+        info.width = office::status::kWidth;
+        info.height = office::status::kHeight;
         jobject statusSurface = nullptr;
         check(create(session, &info, &statusSwapchain, &statusSurface), "status surface swapchain");
         cls = env->GetObjectClass(activity);
-        env->CallVoidMethod(activity,
-                            env->GetMethodID(cls, "onStatusSurface", "(Landroid/view/Surface;II)V"),
-                            statusSurface, 1024, 192);
+        env->CallVoidMethod(
+            activity, env->GetMethodID(cls, "onStatusSurface", "(Landroid/view/Surface;IIII)V"),
+            statusSurface, office::status::kWidth, office::status::kHeight,
+            office::status::kMessageWidth, office::status::kCounterLeft);
         env->DeleteLocalRef(cls);
         env->DeleteLocalRef(statusSurface);
         if (env->ExceptionCheck()) {
@@ -1061,10 +1065,18 @@ void Spike::loop() {
         statusLayer.space = viewSpace;
         statusLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         statusLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-        statusLayer.pose = {{0, 0, 0, 1}, {0, -.4f, -1.4f}};
-        statusLayer.size = {.9f, .16875f};
+        statusLayer.pose = office::status::kMessagePose;
+        statusLayer.size = office::status::kMessageSize;
         statusLayer.subImage.swapchain = statusSwapchain;
-        statusLayer.subImage.imageRect.extent = {1024, 192};
+        statusLayer.subImage.imageRect = {
+            {0, 0}, {office::status::kMessageWidth, office::status::kHeight}};
+        // The spike's settings line (the packet's "aim") is drawn in the counter column.
+        auto statusCounter = statusLayer;
+        statusCounter.pose = office::status::counterPose();
+        statusCounter.size = office::status::kCounterSize;
+        statusCounter.subImage.imageRect = {
+            {office::status::kCounterLeft, 0},
+            {office::status::kCounterWidth, office::status::kHeight}};
         std::vector<const XrCompositionLayerBaseHeader *> layers;
         if (valid) {
             layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&projection));
@@ -1073,8 +1085,10 @@ void Spike::loop() {
         }
         // As the GLES office: drain the status BufferQueue until the UI thread acknowledges that
         // its producer stopped, even while the world is invalid.
-        if (statusSwapchain && host.statusProducerVisible->load())
+        if (statusSwapchain && host.statusProducerVisible->load()) {
             layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&statusLayer));
+            layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&statusCounter));
+        }
         auto end = structure<XrFrameEndInfo>(XR_TYPE_FRAME_END_INFO);
         end.displayTime = frame.predictedDisplayTime;
         end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;

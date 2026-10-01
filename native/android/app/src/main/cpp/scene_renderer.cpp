@@ -1532,7 +1532,7 @@ struct SceneRenderer::Impl final : SceneResidency {
     }
 
     void draw(const SceneEye *eyes, int count, int heightPx,
-              const std::function<void(int)> &bindEye) {
+              const std::function<void(int)> &bindEye, SceneDrawSet set) {
         if (autoPrepare || !prepared)
             prepareFrame();
         auto t0 = Clock::now();
@@ -1546,7 +1546,7 @@ struct SceneRenderer::Impl final : SceneResidency {
         const RenderState *s = current.get();
         if (s) {
             writeViewUbos(eyes, count, heightPx, multiviewPass);
-            frame.buildLists(*s, eyes, count, multiviewPass, *this);
+            frame.buildLists(*s, eyes, count, multiviewPass, *this, set);
             stats.attachedPlaced = frame.attachedPlaced();
             stats.culledItems = frame.culledItems();
         }
@@ -1558,7 +1558,7 @@ struct SceneRenderer::Impl final : SceneResidency {
             }
             if (s && !multiviewPass)
                 glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, viewUbo[ring][e]);
-            if (options.clear)
+            if (options.clear && set != SceneDrawSet::Attached)
                 clearTarget(s);
             if (!s)
                 continue;
@@ -2022,15 +2022,23 @@ void SceneRenderer::setControllerPoses(const SceneControllerPoses &poses) {
         impl_->setControllerPoses(poses);
 }
 
-void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx) {
+unsigned SceneRenderer::attachedHands() const {
+    return impl_->initialized ? impl_->frame.attachedHands() : 0;
+}
+
+size_t SceneRenderer::attachedBounds(float (*out)[4], size_t max) const {
+    return impl_->initialized ? impl_->frame.attachedBounds(out, max) : 0;
+}
+
+void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(&eye, 1, viewportHeightPx, {});
+        impl_->draw(&eye, 1, viewportHeightPx, {}, set);
 }
 
 void SceneRenderer::renderStereo(const SceneEye eyes[2], int viewportHeightPx,
-                                 const std::function<void(int eye)> &bindEye) {
+                                 const std::function<void(int eye)> &bindEye, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(eyes, 2, viewportHeightPx, bindEye);
+        impl_->draw(eyes, 2, viewportHeightPx, bindEye, set);
 }
 
 bool SceneRenderer::hasSharpScreens() const { return impl_->hasSharpAnywhere(); }

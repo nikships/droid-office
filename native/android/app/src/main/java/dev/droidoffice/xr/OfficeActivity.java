@@ -59,6 +59,7 @@ public final class OfficeActivity extends Activity {
     private native void nativeReset();
     private native void nativeOverlay(boolean visible);
     private native void nativeStatusVisible(boolean visible);
+    private native void nativeCapturePuppet(boolean hostDebug);
     private native void nativeSelectRenderer(String options);
     /** Intent extras of the debug-only Vulkan foveation spike, passed through as key=value. */
     private static final String[] VULKAN_SPIKE_EXTRAS = {
@@ -107,6 +108,11 @@ public final class OfficeActivity extends Activity {
     // instead of the office. It never loads or connects to an office.
     private boolean vulkanSpike;
 
+    // Debuggable builds let the page's debug-only shot staging run (native/stage.ts);
+    // a release build never enables it.
+    private static final String HOST_FLAGS =
+        BuildConfig.DEBUG ? "{\"debuggable\":true}" : "{\"debuggable\":false}";
+
     // There is no privileged JavaScript interface. The host pulls bounded scene data
     // only from the chosen office origin, then parses it away from the render thread.
     private final Runnable poll = new Runnable() {
@@ -124,7 +130,7 @@ public final class OfficeActivity extends Activity {
             String samples = nativeReadInput();
             web.evaluateJavascript(
                 "window.officeNative ? window.officeNative.frame(" + samples + "," +
-                    nativeReadMetrics() + "," + nativeReadEvents() + ") : null",
+                    nativeReadMetrics() + "," + nativeReadEvents() + "," + HOST_FLAGS + ") : null",
                 result -> {
                     if (destroyed || generation != navigationGeneration)
                         return;
@@ -149,6 +155,9 @@ public final class OfficeActivity extends Activity {
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Debug builds only: the page may stage synthetic controllers for headless captures.
+        // Native also requires its own debug build; release builds ignore the puppet entirely.
+        nativeCapturePuppet(BuildConfig.DEBUG);
         services = new OfficeWebServices(
             this, () -> serverOrigin, this::showFeedback, this::showWebDialog);
         discovery = new OfficeDiscovery(this, handler, this::showNearbyOffices, message -> {
@@ -157,7 +166,7 @@ public final class OfficeActivity extends Activity {
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         TextView text = new TextView(this);
-        text.setText("Opening Droid Office XR… Use Galaxy XR motion controllers to continue.");
+        text.setText("Opening Droid Office XR…");
         setContentView(text);
         vulkanSpike =
             BuildConfig.DEBUG && "vulkan-spike".equals(getIntent().getStringExtra("xr_renderer"));
@@ -281,15 +290,11 @@ public final class OfficeActivity extends Activity {
         text.setPadding(60, 50, 60, 50);
         text.setTextSize(26);
         text.setTextColor(Color.WHITE);
+        // The headset app names no controls (tests/native-hints.test.ts); the spike's controller
+        // modes are listed in docs/vr-native-android.md.
         text.setText("Vulkan foveation spike (debug build)\n\n"
                      + "This panel is an Android Surface layer over the Vulkan session. "
                      + "No office is loaded.\n\n"
-                     + "Right trigger: foveation level\n"
-                     + "Right A: offsets eye / none / sweep\n"
-                     + "Right B: density overlay\n"
-                     + "Left trigger: eye-tracked or fixed profile\n"
-                     + "Left X: status card    Left Y: centre axis flip\n"
-                     + "Left menu: this panel\n\n"
                      + "Overlay: green 1 px, yellow 2 px, orange 4 px, red 8 px, magenta larger "
                      + "fragments. White cross: the density map's centre (the eye's optical "
                      + "axis plus the applied offset).");
@@ -297,14 +302,19 @@ public final class OfficeActivity extends Activity {
         panelRoot.addView(text);
     }
 
-    public void onStatusSurface(Surface surface, int width, int height) {
+    /**
+     * The renderer shows [0, messageWidth) as the toast and [counterLeft, width) as the FPS
+     * counter.
+     */
+    public void onStatusSurface(Surface surface, int width, int height, int messageWidth,
+                                int counterLeft) {
         runOnUiThread(() -> {
             if (destroyed) {
                 surface.release();
                 return;
             }
             statusSurface = surface;
-            statusPanel = new NativeStatusPanel(surface, width, height);
+            statusPanel = new NativeStatusPanel(surface, width, height, messageWidth, counterLeft);
             statusPanel.setVisible(sessionVisible && statusLayerVisible);
             nativeStatusVisible(sessionVisible && statusLayerVisible);
         });
@@ -319,6 +329,8 @@ public final class OfficeActivity extends Activity {
             nativeStatusVisible(sessionVisible && visible);
             try {
                 JSONObject status = new JSONObject(packet);
+                // "aim" keeps its name across app and office versions; it carries only the FPS
+                // counter now, never an aim label or control hint.
                 statusPanel.setText(status.optString("aim"), status.optString("message"));
             } catch (JSONException invalid) {
                 Log.w("OfficeXR", "Invalid status packet");
@@ -437,14 +449,6 @@ public final class OfficeActivity extends Activity {
         manual.addView(connect);
         addAddressKeyboard(manual, address);
         form.addView(manual);
-        TextView controls = new TextView(context);
-        controls.setText(
-            "Point with a motion controller and press the trigger to select. "
-            + "Use its thumbstick to scroll. Pair a Bluetooth keyboard for terminal work.");
-        controls.setTextColor(Color.LTGRAY);
-        controls.setTextSize(18);
-        controls.setPadding(0, 16, 0, 0);
-        form.addView(controls);
         ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
         scroll.addView(form);

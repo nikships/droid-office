@@ -178,6 +178,61 @@ void attachments() {
     assert(planner.attachedPlaced() == 0 && planner.opaque().empty());
 }
 
+/** The workspace underlay's split passes (SceneDrawSet) and the hands holding something. */
+void drawSets() {
+    auto m = material(1, false);
+    auto s = std::make_shared<RenderState>();
+    s->serial = 9;
+    s->items.push_back(item(1, 0, 0, -4, m));        // world, seen
+    s->items.push_back(item(2, 0, 0, 4, m));         // world, behind the eye
+    auto gun = item(3, 0, 0, -1, m);                 // in the right hand
+    gun.attachment = 1;
+    gun.sphere.c = {0, 0, 0};
+    s->items.push_back(gun);
+    auto card = item(4, 0, 0, -1, m);                // in the left hand while squeezed
+    card.attachment = 0;
+    card.gripHeld = true;
+    card.sphere.c = {0, 0, 0};
+    s->items.push_back(card);
+    s->attachedItems = 2;
+
+    FakeResidency gpu;
+    SceneFramePlanner planner({});
+    const SceneEye eye = eyeAtOrigin();
+    planner.beginFrame();
+    assert(planner.attachedHands() == 0);
+    SceneControllerPoses poses;
+    poses.valid[0] = poses.valid[1] = true;
+    poses.grip[0][14] = poses.grip[1][14] = -2;
+    planner.setControllerPoses(poses, s.get());
+    // The card is not squeezed: only the right hand holds something.
+    assert(planner.attachedHands() == 2u);
+    float bounds[4][4];
+    assert(planner.attachedBounds(bounds, 4) == 1 && std::fabs(bounds[0][2] + 2) < 1e-6f &&
+           std::fabs(bounds[0][3] - .25f) < 1e-6f);
+    assert(planner.attachedBounds(bounds, 0) == 0);
+
+    // World: every item but the attached ones; its culls exclude them; attachedPlaced is kept.
+    planner.buildLists(*s, &eye, 1, false, gpu, SceneDrawSet::World);
+    assert(planner.opaque().size() == 1 && planner.opaque()[0].item->id == 1);
+    assert(planner.culledItems() == 1 && planner.attachedPlaced() == 0);
+    // Attached: only the placed ones, adding its culls (the unsqueezed card) to the world's.
+    planner.buildLists(*s, &eye, 1, false, gpu, SceneDrawSet::Attached);
+    assert(planner.opaque().size() == 1 && planner.opaque()[0].item->id == 3);
+    assert(planner.attachedPlaced() == 1 && planner.culledItems() == 2);
+    // All: both, as one pass.
+    planner.buildLists(*s, &eye, 1, false, gpu);
+    assert(planner.opaque().size() == 2 && planner.culledItems() == 2);
+
+    poses.held[0] = true;
+    planner.setControllerPoses(poses, s.get());
+    assert(planner.attachedHands() == 3u && planner.attachedBounds(bounds, 4) == 2);
+    // A new frame forgets the hands and the culls.
+    planner.beginFrame();
+    assert(planner.attachedHands() == 0 && planner.attachedBounds(bounds, 4) == 0);
+    assert(planner.culledItems() == 0);
+}
+
 void screenLayer() {
     auto screenMaterial = material(1, false);
     auto s = std::make_shared<RenderState>();
@@ -253,6 +308,7 @@ int main() {
     budget();
     worldLists();
     attachments();
+    drawSets();
     screenLayer();
     rects();
     std::cout << "scene frame planner tests passed\n";

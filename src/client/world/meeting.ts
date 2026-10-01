@@ -3,6 +3,7 @@ import { ANISOTROPY } from './texture-quality';
 import { MEETING_PATTERNS, meetingSummary } from '../../shared/meetings';
 import { fmtCost, fmtTokens, type Meeting, type MeetingState } from '../../shared/protocol';
 import { SANS, MONO } from '../fonts';
+import { controlHintsShown } from '../native/mode';
 
 const INK = '#eeeeee';
 const MUTED = '#8c8c8c';
@@ -80,7 +81,7 @@ export class MeetingBoardTexture {
       g.fillText('🤝 The meeting room is free', W / 2, H / 2 - 10);
       g.font = `500 34px ${SANS}`;
       g.fillStyle = MUTED;
-      g.fillText('Press E at the table to call a meeting: whatever it writes shows up here.', W / 2, H / 2 + 50);
+      if (controlHintsShown()) g.fillText('Press E at the table to call a meeting: whatever it writes shows up here.', W / 2, H / 2 + 50);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;
@@ -178,7 +179,7 @@ export class MeetingSignTexture {
     g.fillText(label, pad, 53);
     if (!m) {
       const y = lines('🤝 Meeting room', `700 46px ${SANS}`, '#eeeeee', 160, 2, 58);
-      lines('Press E at the table to call a meeting: a debate, lead & team, map-reduce, red / blue or a review panel.', `500 30px ${SANS}`, '#c9c9c9', y + 30, 8, 42);
+      if (controlHintsShown()) lines('Press E at the table to call a meeting: a debate, lead & team, map-reduce, red / blue or a review panel.', `500 30px ${SANS}`, '#c9c9c9', y + 30, 8, 42);
       this.texture.needsUpdate = true;
       return;
     }

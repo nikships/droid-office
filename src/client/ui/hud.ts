@@ -8,6 +8,7 @@ import { usageLabel, usageTitle } from './usage';
 import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
 import { whereabouts } from './whereabouts';
 import { DESK_BY_ID } from '../../shared/layout';
+import { controlHintsShown } from '../native/mode';
 import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
 
 /** What the people list last showed, so it's only drawn again when something in it changed. */
@@ -87,7 +88,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
       ),
     );
   }
-  if (!workers.length) ul.append(h('li.empty', {}, 'Walk up to a desk and press E to hire one'));
+  if (!workers.length) ul.append(h('li.empty', {}, controlHintsShown() ? 'Walk up to a desk and press E to hire one' : 'Walk up to a desk to hire one'));
   // The count is the workers hired onto desks and bean bags (and a meeting's table): the board agents
   // standing at the Issues, PR and queue kiosks are listed but aren't counted.
   const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
@@ -199,11 +200,11 @@ function openNativeHelp() {
   const rows: readonly (readonly [string, string])[] = [
     ['Controllers', 'Galaxy XR motion controllers are required. Look around naturally; the headset tracks your head directly.'],
     ...NATIVE_CONTROL_ROWS,
-    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates. The panel keyboard’s Ctrl+K also opens it outside a terminal or text field.'],
+    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates.'],
     ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
     [
       'Terminal',
-      'Use the docked keyboard, including Ctrl, Alt, Shift and arrows. Tap a modifier twice to lock it and again to release it. Hold Backspace or an arrow to repeat. The terminal’s − and + change text size; Picture attaches a screenshot or image from the headset.',
+      'Type on a keyboard paired to the headset: its keys go to the open terminal or the field you chose. There is no on-screen keyboard. The terminal’s − and + change text size; Picture attaches a screenshot or image from the headset.',
     ],
     ['Issues & PRs', 'Open a board in the office or from Home. Read an issue, pick up its card, assign it to a worker or add it to the queue. PRs keep the desktop conversation, file review and confirmation actions.'],
     ['Held card', 'Aim at a desk or the queue and press the trigger to place the card. Put back in Home returns it to the board. A physical card grab uses the same shared issue.'],

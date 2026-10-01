@@ -55,6 +55,7 @@ void packets() {
     assert(state.active && !state.panelOpen && close(state.fade, .5f));
     assert(state.presentationEpoch == 23 && state.receivedNs > 0);
     assert(state.statusVisible && Json::parse(state.status)["aim"] == "Open worker 🧑‍💻");
+    assert(state.statusCounter && state.statusMessage);
     for (unsigned char ch : state.status)
         assert(ch < 128);
     assert(state.hands[0].holding && !state.hands[0].valid && state.hands[1].valid &&
@@ -77,6 +78,21 @@ void packets() {
     state = bridge.read();
     assert(Json::parse(state.status)["message"] == std::string(4095, 'x'));
     assert(Json::parse(scene)["seq"] == 2);
+    // The counter and the toast are composited as separate layers, so each is flagged.
+    const auto validStatus = packet["panel"]["status"];
+    packet["panel"]["status"] = {{"aim", "90.0 fps · 90 Hz"}, {"message", ""}};
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    state = bridge.read();
+    assert(state.statusVisible && state.statusCounter && !state.statusMessage);
+    packet["panel"]["status"] = {{"aim", ""}, {"message", "Pixel is ready"}};
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    state = bridge.read();
+    assert(state.statusVisible && !state.statusCounter && state.statusMessage);
+    packet["panel"]["status"] = {{"aim", ""}, {"message", ""}};
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    state = bridge.read();
+    assert(!state.statusVisible && !state.statusCounter && !state.statusMessage);
+    packet["panel"]["status"] = validStatus;
     const auto beforeEpochErrors = bridge.read().revision;
     for (const auto &invalid : Json::array({-1, 4294967296ULL, .5, "1", true, nullptr})) {
         packet["control"]["presentationEpoch"] = invalid;

@@ -22,6 +22,7 @@ public final class NativeStatusPanelRulesTest {
         clipping();
         cleaning();
         layout();
+        columns();
         timing();
         System.out.println("NativeStatusPanelRulesTest: " + checks + " checks passed");
     }
@@ -70,6 +71,37 @@ public final class NativeStatusPanelRulesTest {
         equal(20, Rules.contentTop(192, 20, 400));
         equal(76, Rules.contentTop(192, 20, 40));
         equal(96, Rules.contentTop(192, 20, 0));
+        // A short toast gets a small card centered in its column, not a full-width bar.
+        float[] counter = Rules.card(1024, 192, 20, 1.5f, 199.4f, 33);
+        equal(240f, counter[2] - counter[0]);
+        equal(73f, counter[3] - counter[1]);
+        equal(512f, (counter[0] + counter[2]) / 2);
+        equal(96f, (counter[1] + counter[3]) / 2);
+        // The text, placed by contentTop, sits one padding inside the card, to the half pixel.
+        check(Math.abs(Rules.contentTop(192, 20, 33) - (counter[1] + 20)) <= 0.5f);
+        // Text as wide or tall as the buffer fills it, less the inset, and never more.
+        float[] full = Rules.card(1024, 192, 20, 1.5f, 5000f, 400);
+        equal(1.5f, full[0]);
+        equal(1.5f, full[1]);
+        equal(1022.5f, full[2]);
+        equal(190.5f, full[3]);
+        float[] none = Rules.card(1024, 192, 20, 1.5f, -3f, -1);
+        equal(40f, none[2] - none[0]);
+        equal(40f, none[3] - none[1]);
+    }
+
+    private static void columns() {
+        // The renderer's split (status_layout.h): toast [0, 1024), gutter, counter [1040, 1536).
+        check(Rules.columnsFit(1536, 192, 1024, 1040, 20, 12));
+        check(Rules.columnsFit(1536, 192, 1024, 1024, 20, 12));
+        // Overlapping columns, a counter column with no room inside its padding, a toast column
+        // narrower than its padding, and a buffer too short for either are refused.
+        check(!Rules.columnsFit(1536, 192, 1024, 1000, 20, 12));
+        check(!Rules.columnsFit(1536, 192, 1024, 1512, 20, 12));
+        check(!Rules.columnsFit(1536, 192, 40, 1040, 20, 12));
+        check(!Rules.columnsFit(1536, 40, 1024, 1040, 20, 12));
+        // The counter line sits in the middle of its column's height.
+        equal(80, Rules.contentTop(192, 12, 32));
     }
 
     private static void timing() {

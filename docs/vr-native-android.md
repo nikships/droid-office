@@ -255,8 +255,51 @@ The original desktop windows, including terminals, are displayed through a 2400�
 Surface compositor layer. This preserves text resolution independently of world foveation.
 Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
-The headset UI includes a controller-operated keyboard, larger targets and adjustable terminal text.
-A smaller compositor panel carries interaction hints and feedback when the workspace closes.
+The headset UI has larger targets and adjustable terminal text, and no on-screen keyboard: a
+keyboard paired to the headset types into the open terminal or the focused field, because
+`OfficeActivity.dispatchKeyEvent` forwards its keys to the page. Only the sign-in page docks a
+controller keyboard, for the office password (`src/client/login.ts`).
+Every launch and page reload starts in the office with the workspace closed. Nothing opens Home
+by itself; the left controller's Menu button does (`native/ui.ts`, `tests/native-launch.test.ts`).
+Before the office page sends its first packet, the panel shows the app's own connection screen,
+and that packet closes it.
+With the workspace closed, one small Android Surface shows only the FPS counter, when that
+Graphics setting is on, and each toast while it lasts. The renderer shows its two columns as
+separate head-locked quads (`status_layout.h`). A toast sits in a card fitted to its text,
+1.4 m ahead and about 16 degrees below the line of sight. The counter has no card: it is faint
+text, 0.7 degrees tall (Android XR's 14 dp minimum), facing the eyes from the lower-left edge of
+the view. It starts about 31 degrees left of the line of sight, on a line 27 degrees below it,
+so it never lands on the face of a worker the player looks at. It hides while a tracked
+controller is in front of it, so no text is drawn across the player's hand, and returns 0.3 s
+after the hand moves away. The native page names no controls:
+no aim labels, carry, climbing or gun hints, "press E" toasts, key legends or world signs
+(`controlHintsShown` in `src/client/native/mode.ts`). Boards state only what is so: the empty
+Services board says that no web servers are running, without the desktop line on how it fills,
+and the DroidProxy refresh key on the machine monitor carries only its ↻ glyph. The Controls
+window, opened on purpose, still lists the controller roles. Desktop and WebXR keep their hints.
+No name, status bubble, task card, light or pitch floats over a character either
+(`floatingTagsShown`): a worker wears no antenna or status bulb, and its headset band runs from
+ear cup to ear cup. A worker's name, engine, state and task are printed on its seat's nameplate
+(`src/client/world/nameplate.ts`): a three-sided sign on its desk, a plate on the back of its
+bean bag or meeting chair, or a screen set into the front of a board agent's kiosk. Its state
+reads like a device's status light, a colored dot and a word ("READY"). A status lamp on the
+seat, a lit dome in a dark collar, glows in the worker's status color, breathing while it works
+and blinking while it waits on someone: on top of the desk sign, on the plate's top edge, or on
+the kiosk counter's front corner. A teammate wears a name badge on their shirt. A kiosk has no
+"Ask me" sign: its screen shows the agent's name, its board and its state. The first trigger pull
+at the kiosk greets the agent, which looks up while the screen says what it does; the screen goes
+back to the nameplate once you ask it something or walk away, and the next pull opens the ask
+form.
+A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
+While the workspace is open, its layer is composited beneath the world layer, which shows it
+through a hole so the player's controllers, rays and held gun stay in front of it, and the toast
+card fades while a hand is in front of it (see
+[Hands in front of compositor panels](vr-native-controller-interactions.md#hands-in-front-of-compositor-panels)).
+While the panel is beneath the world layer, the foveation filter pass is left out
+(`filterFrame` in `foveation.h`): it keeps its density codes in the world image's alpha and
+submits opaque pixels, which would cover the panel, so those frames submit the foveated world
+image as drawn, with the driver's blocky periphery and the same GPU savings, until the workspace
+closes.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.
@@ -309,7 +352,9 @@ controller fallback. Both profiles bind the physical Menu action on the left con
 
 A real UI freeze was traced to the hidden status panel's Canvas producer filling an unconsumed
 BufferQueue and blocking Android's UI thread. The installed fix stops that producer while its
-quad is hidden and keeps consuming the quad until the UI thread acknowledges shutdown. The
+quads are hidden and keeps consuming the Surface until the UI thread acknowledges shutdown. While
+the producer runs, at least one status quad is submitted: the toast column, transparent without a
+toast, does that alone while the counter is off or covered and while the workspace is open. The
 WebView's scene packets and control heartbeat then continued advancing while opening and
 closing the workspace. Native FPS alone would have concealed this freeze.
 
@@ -448,7 +493,8 @@ A density overlay colours each fragment by its `gl_FragSizeEXT` area: green 1 px
 4, red 8, magenta larger. A white cross marks the map's centre: the eye's optical axis (from its
 asymmetric field of view, not the image centre) plus the applied offset. The
 Android Surface workspace panel and status card are still created in the Vulkan session; the
-panel shows the controls and the status card shows the live eye state.
+panel describes the overlay (it names no controls, as nothing in the headset app does) and the
+status card shows the live eye state.
 
 Start it (the app must be stopped first, because the activity is `singleTask`):
 
@@ -592,6 +638,80 @@ that interface, and both devices must be able to reach it. Voice requires a secu
 origin: localhost for USB, or HTTPS for Wi-Fi. The app trusts system CAs and CAs explicitly
 installed by the device owner, so a development certificate can use normal Android trust
 instead of bypassing verification.
+
+### Debug shot staging
+
+A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
+each `officeNative.frame` call; a release build passes `false`. Only then do the page's
+`window.__office.stageTarget(options)`, `allowTargets(ids)`, `stageShot(options)`,
+`stageRevive(options)` and `dismissTarget(worker)` do anything; otherwise they resolve
+`{ ok: false }`. They are for headset captures over the WebView DevTools socket, and change no
+normal gameplay.
+
+**Every shot is real.** A hit sends `worker.shoot`, which starts the server's 30-second revival
+window; when it runs out the worker is dismissed and its owned worktrees and branches deleted.
+`stageShot` and `dismissTarget` therefore go by a list of **worker ids, never by name**
+(`TargetAllowlist` in `src/client/native/stage.ts`): the practice targets this page hired with
+`stageTarget`, and the ids a capture harness lists from its own target list with `allowTargets`.
+A listed worker must still be a plain shell (no agent, no worktree, no other repositories, no
+meeting). The office names a `worker.spawn` with `target: true` `Target <n>`
+(`src/shared/targets.ts`), but that name only tells the office's answer to the hire apart on the
+floor; it never lets anything be shot. A capture goes:
+
+```js
+const t = await __office.stageTarget();            // { ok, worker: 'Target 1 🐚', workerId, desk, clearance }
+__office.allowTargets(['93e35222c41a']);           // or list a harness's target ids: { ok, targets }
+await __office.stageShot({ worker: t.workerId });  // or the capture puppet's draw and trigger
+await __office.stageRevive({ worker: t.workerId }); // or releaseShot(), well inside the window
+await __office.dismissTarget(t.workerId);          // { ok, gone: true }; off the list again
+```
+
+`stageTarget` hires one at `desk` (a free desk or bean bag), or by default at the free desk
+farthest from every other worker on the floor (the nearest of equally clear ones), so a bore aimed
+at it crosses nobody else; `clearance` is the meters to the nearest other worker. It resolves once
+the target sits there, or with the office's refusal (`timeoutMs`, `8000`), and lists its id.
+`dismissTarget` sends home only a listed target, and refuses one lying shot inside its revival
+window: revive it first.
+
+`stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
+raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
+local fall, `worker.shoot` and effects therefore run the code a held controller drives. The head
+remains the headset's own; the rig is turned and placed so the worker is in front of it. The
+staged gun is drawn at its scripted world pose, because no real grip is under it. Without
+`angle` or `pitch`, the first approach whose line of fire reaches the worker before anything else
+is used. Options:
+
+| Option | Meaning (default) |
+| --- | --- |
+| `worker` | Id or name of a worker on this floor, in any case (`target 1` finds `Target 1 🐚`); its id must be listed |
+| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides) |
+| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line) |
+| `reach` | Meters from the headset back from the gun's fist (`0.42`) |
+| `height` | Aim point in meters up a seated worker's own body (`0.62`) |
+| `hand` | `'right'` or `'left'` (`'right'`) |
+| `freezeMs` | Stop advancing gameplay this long after the shot, holding that frame (none) |
+| `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
+| `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
+
+It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`
+when `worker.shoot` went out, or `'hit'` for a worker already down), `solid`, `distance`,
+`angle`, `pitch`, `muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. A worker
+already down is refused.
+
+`stageRevive` scripts the other hand (`left` by default) reaching a worker lying on the floor and
+pulling the trigger, the use action, through `NativePhysical.useAtBody`: with `how: 'touch'`
+(default) the rig stands half a meter off its chest on the open floor beside it and the hand
+comes down onto it; with `how: 'point'` it stands `distance` (`1.4`) meters back and points at
+it from waist height. Options: `worker`, `hand`, `how`, `distance`, `holdMs` (`1200`), `freezeMs`
+(after the trigger) and `timeoutMs`. It resolves once the hand is handed back (or once frozen)
+with `roused` (the use action landed: it stirred and `worker.revive` went out) and `revived` (the
+server confirmed and it is getting back up). A worker past its window is refused.
+
+`__office.releaseShot()` unfreezes, hands the controller back (a staged gun goes away; a gun
+held in the other hand stays) and asks the server to revive the staged worker if it is still
+down within its window; pass `false` to leave it down. A freeze releases itself after 15 seconds,
+well inside the window.
 
 ## Acceptance status
 

@@ -1,5 +1,6 @@
 import { h, openModal, type Modal } from '../ui/dom';
 import { DEFAULT_NATIVE_GRAPHICS, MIN_NATIVE_RENDER_SCALE, nativeFoveationStatus, nativeWorldResolution, readNativeGraphics, stepNativeRenderScale, type NativeEyeSize, type NativeGraphicsSettings } from './graphics-settings';
+import { calibrateNativeHeight, nativeEyeHeightNow, nativeHeight, setNativeHeight } from './height';
 import { nativeFpsCounter, nativePerformanceLabel } from './performance';
 import './graphics.css';
 
@@ -55,12 +56,6 @@ export function updateNativeGraphicsMetrics(next: unknown) {
     if (counter.textContent !== reading.text) counter.textContent = reading.text;
   }
   repaint?.();
-}
-
-/** The closed-workspace compositor hint includes the same measured counter. */
-export function nativeGraphicsAim(aim: string): string {
-  if (!getNativeGraphicsSettings().fps) return aim;
-  return [nativeFpsCounter(metrics).text, aim].filter(Boolean).join(' · ');
 }
 
 export function openNativeGraphicsSettings(): void {
@@ -147,9 +142,52 @@ export function openNativeGraphicsSettings(): void {
   controls.push(() => {
     foveationDebug.checked = getNativeGraphicsSettings().foveationDebug;
   });
+  const heightValue = h('span.ng-resolution-value');
+  const heightNow = h('p.setting-note');
+  const stepHeight = (cm: number) => {
+    setNativeHeight({ heightCm: nativeHeight().heightCm + cm });
+    repaint?.();
+  };
+  const lessHeight = h('button.btn.ng-resolution-step', { type: 'button', 'aria-label': 'Decrease your height by 1 cm', onclick: () => stepHeight(-1) }, '−');
+  const moreHeight = h('button.btn.ng-resolution-step', { type: 'button', 'aria-label': 'Increase your height by 1 cm', onclick: () => stepHeight(1) }, '+');
+  const calibrate = h(
+    'button.btn',
+    {
+      type: 'button',
+      onclick: () => {
+        calibrateNativeHeight();
+        repaint?.();
+      },
+    },
+    'Calibrate: I am standing up straight',
+  );
+  const headsetFloor = h(
+    'button.btn',
+    {
+      type: 'button',
+      onclick: () => {
+        setNativeHeight({ floorOffset: 0 });
+        repaint?.();
+      },
+    },
+    "Use the headset's floor",
+  );
+  controls.push(() => {
+    const { heightCm, floorOffset } = nativeHeight();
+    const text = `${heightCm} cm`;
+    if (heightValue.textContent !== text) heightValue.textContent = text;
+    const eyes = nativeEyeHeightNow();
+    const now = eyes === null ? 'Your eyes are not tracked right now.' : `Your eyes are ${eyes.toFixed(2)} m above the floor${Math.abs(floorOffset) >= 0.01 ? `; the headset's floor is corrected by ${floorOffset.toFixed(2)} m` : ''}.`;
+    if (heightNow.textContent !== now) heightNow.textContent = now;
+  });
   const body = h(
     'div.body',
     {},
+    h('h3.ng-resolution-heading', {}, 'Your height', heightValue),
+    h('div.ng-resolution-controls', {}, lessHeight, moreHeight),
+    h('div.seg.ng-choices.ng-resolution-presets', { 'aria-label': 'Height calibration' }, calibrate, headsetFloor),
+    heightNow,
+    h('p.setting-note', {}, 'Set your height, stand up straight and press Calibrate if the office looks too tall or too short. It stays set on this headset.'),
     status,
     details,
     h('h3.ng-resolution-heading', { id: 'ng-resolution-label' }, 'World resolution', resolutionValue),
@@ -177,7 +215,11 @@ export function openNativeGraphicsSettings(): void {
     h('p.setting-note', {}, 'Keeps nearby terminal screens at full resolution independently of world detail. Turning this off saves GPU time and uses the normal world rendering.'),
     h('p.setting-note', {}, 'Balanced foveation and recommended resolution are the defaults.'),
     h('label.choice.ng-fps', {}, fps, h('span', {}, 'Always show the FPS counter')),
-    h('p.setting-note', {}, 'The counter uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.'),
+    h(
+      'p.setting-note',
+      {},
+      'The counter sits small and faint at the lower-left edge of your view, and steps aside while a controller is in front of it. It uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.',
+    ),
   );
   const el = h(
     'section.modal.native-graphics',

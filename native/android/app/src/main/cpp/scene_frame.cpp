@@ -85,6 +85,8 @@ SharpView sharpView(const SceneEye &e) {
 
 void SceneFramePlanner::beginFrame() {
     grips_.valid[0] = grips_.valid[1] = grips_.held[0] = grips_.held[1] = false;
+    heldHands_ = 0;
+    culledItems_ = 0;
 }
 
 void SceneFramePlanner::syncAttachments(const RenderState &s) {
@@ -118,19 +120,42 @@ void SceneFramePlanner::setControllerPoses(const SceneControllerPoses &poses,
         grips_.held[h] = grips_.valid[h] && poses.held[h];
         std::copy(poses.grip[h], poses.grip[h] + 16, grips_.grip[h]);
     }
+    heldHands_ = 0;
     if (const RenderState *s = drawn) {
         if (placedSerial_ != s->serial)
             syncAttachments(*s);
         else
             compose(*s);
+        for (const DrawItem &it : placed_)
+            if (placedAt(it))
+                heldHands_ |= 1u << it.attachment;
     }
+}
+
+size_t SceneFramePlanner::attachedBounds(float (*out)[4], size_t max) const {
+    if (!heldHands_)
+        return 0;
+    size_t count = 0;
+    for (const DrawItem &it : placed_) {
+        if (count >= max)
+            break;
+        if (!placedAt(it) || it.sphere.empty() || it.sphere.infinite())
+            continue;
+        out[count][0] = it.sphere.c.x;
+        out[count][1] = it.sphere.c.y;
+        out[count][2] = it.sphere.c.z;
+        out[count][3] = it.sphere.r;
+        count++;
+    }
+    return count;
 }
 
 // ---- The world pass
 // ------------------------------------------------------------------------------
 
 void SceneFramePlanner::buildLists(const RenderState &s, const SceneEye *eyes, int count,
-                                   bool multiviewPass, SceneResidency &residency) {
+                                   bool multiviewPass, SceneResidency &residency,
+                                   SceneDrawSet set) {
     opaque_.clear();
     transparent_.clear();
     Frustum fr[2];
@@ -138,18 +163,25 @@ void SceneFramePlanner::buildLists(const RenderState &s, const SceneEye *eyes, i
     for (int i = 0; i < count; i++)
         fr[i] = Frustum::fromViewProj(multiply(toMat(eyes[i].projection), toMat(eyes[i].view)));
     syncAttachments(s);
-    size_t attached = 0;
-    attachedPlaced_ = 0;
+    size_t attached = 0, considered = 0;
+    if (set != SceneDrawSet::World)
+        attachedPlaced_ = 0;
     for (const DrawItem &source : s.items) {
         const DrawItem *drawn = &source;
         if (source.attachment >= 0) {
             drawn = &placed_[attached++];
+            if (set == SceneDrawSet::World)
+                continue;
+            considered++;
             // Without this frame's tracked grip there is no pose to draw it at: never a stale
             // one. A grip-held item drops on the display frame its squeeze is released.
-            if (!grips_.valid[source.attachment] ||
-                (source.gripHeld && !grips_.held[source.attachment]))
+            if (!placedAt(source))
                 continue;
             attachedPlaced_++;
+        } else if (set == SceneDrawSet::Attached) {
+            continue;
+        } else {
+            considered++;
         }
         const DrawItem &it = *drawn;
         bool seen = false;
@@ -190,7 +222,9 @@ void SceneFramePlanner::buildLists(const RenderState &s, const SceneEye *eyes, i
                              return a.z > b.z;
                          return x.id < y.id;
                      });
-    culledItems_ = uint32_t(s.items.size() - opaque_.size() - transparent_.size());
+    // The attached pass follows a world pass of the same frame and adds its own culls.
+    const auto culled = uint32_t(considered - opaque_.size() - transparent_.size());
+    culledItems_ = set == SceneDrawSet::Attached ? culledItems_ + culled : culled;
 }
 
 // ---- The screen layer

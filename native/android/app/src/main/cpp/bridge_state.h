@@ -1,7 +1,9 @@
 #pragma once
+#include "capture_puppet.h"
 #include "graphics_controls.h"
 #include "xr_math.h"
 #include <array>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -26,13 +28,16 @@ struct ControlState {
     bool teleportValid = false;
     std::vector<Haptic> haptics;
     std::string status = "{\"aim\":\"\",\"message\":\"\"}";
-    bool statusVisible = false;
+    // statusVisible: either part has text. The counter and toast are composited separately.
+    bool statusVisible = false, statusCounter = false, statusMessage = false;
     uint64_t revision = 0;
     // These are presentation metadata, never player/server state. The receipt clock is
     // native steady_clock, assigned atomically with the validated snapshot.
     uint32_t presentationEpoch = 0;
     int64_t receivedNs = 0;
     GraphicsControls graphics;
+    // Debug builds only (capture_puppet.h); always inactive unless allowPuppet(true) was called.
+    PuppetState puppet;
 };
 /**
  * The graphics settings the native host keeps between launches, so the first world targets match
@@ -58,10 +63,16 @@ class BridgeState {
     GraphicsControls graphics();
     /** True once after a page changed what storedGraphics keeps; graphics receives the settings. */
     bool takeStoredGraphics(GraphicsControls &graphics);
+    /**
+     * Debug builds only: read the page's capture puppet from control packets. Release builds
+     * (no OFFICE_CAPTURE_PUPPET) ignore the request, and the field is never parsed.
+     */
+    void allowPuppet(bool allowed);
 
   private:
     std::mutex mutex;
     ControlState state;
     bool graphicsReceived = false, storedChanged = false;
+    std::atomic<bool> puppetAllowed{false};
 };
 } // namespace office

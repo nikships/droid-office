@@ -1,4 +1,4 @@
-/* The headset panel's docked keyboard (native/keyboard.ts). Loaded by the office page and the sign-in page, so it brings its own fallbacks for the tokens. */
+/* The sign-in page's docked keyboard on the headset panel (native/keyboard.ts). It brings its own fallbacks for the tokens. */
 .native-kb {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 70;
   display: none; flex-direction: column; gap: 8px;

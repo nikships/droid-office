@@ -29,6 +29,17 @@ struct SceneControllerPoses {
     bool held[2] = {false, false};
 };
 
+/**
+ * Which items a render call draws. While the workspace panel is composited beneath the world
+ * layer (office_xr.cpp), the world is drawn first, the panel's hole is cut into it, and the
+ * controller-attached objects are drawn after the hole, so a held gun stays in front of the panel.
+ */
+enum class SceneDrawSet : uint8_t {
+    All,      // every item; clears first with options.clear
+    World,    // every item but the controller-attached ones; clears first with options.clear
+    Attached, // only the controller-attached items, over what is there: never clears
+};
+
 struct SceneEye {         // column-major, OpenGL clip conventions
     float view[16];       // world -> eye
     float projection[16]; // eye -> clip
@@ -299,19 +310,39 @@ class SceneFramePlanner {
     void setControllerPoses(const SceneControllerPoses &poses, const scene::RenderState *drawn);
     /** Copies the drawn state's attached items once per state, then recomposes them per frame. */
     void syncAttachments(const scene::RenderState &s);
+    /** An attached item has a pose this frame: its grip is valid and, if grip-held, squeezed. */
+    bool placedAt(const scene::DrawItem &it) const {
+        return it.attachment >= 0 && grips_.valid[it.attachment] &&
+               (!it.gripHeld || grips_.held[it.attachment]);
+    }
+    /**
+     * A bit per hand (1 left, 2 right) holding an attached object that this frame's
+     * setControllerPoses placed (SceneRenderer::attachedHands). 0 before it in a frame.
+     */
+    unsigned attachedHands() const { return heldHands_; }
+    /**
+     * The scene-world bounding spheres (x, y, z, radius) of the attached items this frame's
+     * setControllerPoses placed, up to `max` of them, finite ones only; returns how many.
+     */
+    size_t attachedBounds(float (*out)[4], size_t max) const;
 
     // ---- The world pass
     /**
      * Culls against every eye and sorts as three's render lists do (painterSortStable and
      * reversePainterSortStable): opaque by group order, render order, material, near to far, id;
      * transparent by group order, render order, far to near, id. Depth is the bounding-sphere
-     * center in eye 0's clip space, as three projects the bounding-sphere center.
+     * center in eye 0's clip space, as three projects the bounding-sphere center. `set` picks the
+     * world, the controller-attached items or both (SceneDrawSet).
      */
     void buildLists(const scene::RenderState &s, const SceneEye *eyes, int count,
-                    bool multiviewPass, SceneResidency &residency);
+                    bool multiviewPass, SceneResidency &residency,
+                    SceneDrawSet set = SceneDrawSet::All);
     const std::vector<SceneDraw> &opaque() const { return opaque_; }
     const std::vector<SceneDraw> &transparent() const { return transparent_; }
-    /** Of the last buildLists: items culled, and attached items placed at a valid grip. */
+    /**
+     * Of the last buildLists: items culled (an Attached pass adds its culls to the World pass
+     * before it), and attached items placed at a valid grip (a World pass keeps the count).
+     */
     uint32_t culledItems() const { return culledItems_; }
     uint32_t attachedPlaced() const { return attachedPlaced_; }
 
@@ -370,6 +401,7 @@ class SceneFramePlanner {
     std::vector<scene::DrawItem> placed_;
     uint64_t placedSerial_ = 0;
     SceneControllerPoses grips_; // valid[h] only between setControllerPoses and the next frame
+    unsigned heldHands_ = 0;     // attachedHands(): a bit per hand with an attached item placed
 };
 
 } // namespace office

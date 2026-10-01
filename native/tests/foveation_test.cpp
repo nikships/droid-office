@@ -322,6 +322,14 @@ void filter() {
     }
 }
 
+void underlay() {
+    // The filter pass would overwrite the world alpha that shows the workspace panel beneath it.
+    assert(filterFrame(true, false));
+    assert(!filterFrame(true, true));
+    assert(!filterFrame(false, false));
+    assert(!filterFrame(false, true));
+}
+
 void overlay() {
     assert(densityBand(1.f) == 0 && densityBand(1.2f) == 0);
     assert(densityBand(2.f) == 1 && densityBand(-2.f) == 1);
@@ -379,6 +387,7 @@ int main() {
     samples();
     filterDegrade();
     filter();
+    underlay();
     overlay();
     std::cout << "runtime foveation targets, fallbacks, eye-tracked results, filter and overlay "
                  "checks passed\n";

@@ -19,18 +19,17 @@ its own layout and never loads those rules' effects.
   (agent, desk, branch, task) shows up to three lines; the row's tooltip carries the full text.
   Queue titles and meta wrap. Model and effort pickers keep minimum widths so the chosen value
   stays readable; the row wraps instead.
-- **Bottom boundary.** `--native-bottom` is the keyboard's height when it shows, or the
-  floating **Keyboard** button's 64 px strip when it's hidden. Windows, the ☰ menu, the floor
-  list and the terminal stop above it, so that button never covers their last row or scrollbar.
-- **Feedback on top.** Toasts stack above Home, windows and the keyboard (`z-index: 75`),
-  wrap at up to 900 px, and take no taps. The desktop layers are unchanged.
+- **No on-screen keyboard.** The office page docks no keyboard and remembers none: a keyboard
+  paired to the headset types into the open terminal or the focused field. Windows, the ☰ menu,
+  the floor list and the terminal use the panel's full height. Only the sign-in page docks a
+  controller keyboard (`native/keyboard.ts`), for the office password.
+- **Feedback on top.** Toasts stack above Home and windows (`z-index: 75`), wrap at up to
+  900 px, and take no taps. The desktop layers are unchanged.
 - **Desktop-only hints.** The ☰ menu hides shortcut letters. The chat placeholder and the
-  chat panel's description drop "T". Tooltips remove office-wide shortcut letters, desk keys
-  and "(Tab)" (on the panel keyboard, Tab moves focus), and say "press the controller trigger"
-  for "press E". The terminal's Shift+Esc and Ctrl+] hints stay, because the panel keyboard has
-  those keys.
-- **Tooltips.** Titles show in a panel tooltip at the bottom left, above the keyboard, instead
-  of an operating-system tooltip. A tap shows it for 2.8 s.
+  chat panel's description drop "T". Tooltips say what a control does and never which key or
+  button does it (`nativeTooltipText`).
+- **Tooltips.** Titles show in a panel tooltip at the bottom left instead of an
+  operating-system tooltip. A tap shows it for 2.8 s.
 - **Dropdowns.** Single-choice fields show their options inside the compositor panel instead
   of Android's separate popup window. Choices preserve the original field and its change
   handlers, disabled options and groups, and keyboard focus. Cancel changes nothing. A field
@@ -41,17 +40,12 @@ its own layout and never loads those rules' effects.
 
 ## Desktop features on the panel
 
-- **Command palette.** Home's header has **🔎 Find anything · Ctrl+K**, and the ☰ menu's Open
+- **Command palette.** Home's header has **🔎 Find anything**, and the ☰ menu's Open
   section starts with **Find anything**. Both open the desktop's own palette (`ui/palette.ts`,
   entries from main.ts), through `NativeUiOptions.openCommands` when main.ts provides it, or else
-  by pressing the palette's own shortcut. Outside a focused terminal, the panel keyboard's Ctrl+K
-  opens and closes it too. Inside a terminal it sends the original CLI shortcut; use Home or
-  the menu's Find anything action to open the palette there. The
-  panel keyboard has no ⌘, so the panel always says Ctrl+K; on a platform that reports itself as a
-  Mac, `native/ui.ts` handles the panel's Ctrl+K, and elsewhere main.ts's listener already does.
-  Palette rows are at least 60 px tall, titles wrap, and the palette stops above the keyboard.
+  by pressing the palette's own shortcut. Palette rows are at least 60 px tall and titles wrap.
 - **Settings.** The categorized sidebar stays vertical at both check sizes, with 52 px category
-  rows; the panel keyboard's arrows, Home and End move between categories. The You category shows
+  rows. The You category shows
   **Headset view: First person, head-tracked** as a fixed state and no first/third person choice,
   because the installed app always renders the head-tracked view. **Headset movement** states the
   controllers-only scheme before the locomotion choices the native controls read
@@ -73,19 +67,22 @@ its own layout and never loads those rules' effects.
 
 The installed app’s target input is Galaxy XR motion controllers only. Use the left
 controller’s Menu button to toggle the workspace, trigger for pointing/clicking, and grip for
-grabbing/returning cards. The panel keyboard is operated with the controller ray and trigger.
-Hand gestures and fingertip input are outside the native app’s supported scheme.
+grabbing/returning cards. The workspace starts closed on every launch and reload. Text goes in
+from a keyboard paired to the headset; the sign-in page's keyboard is operated with the
+controller ray and trigger. Hand gestures and fingertip input are outside the native app’s
+supported scheme.
 
 ## Checking the panel
 
 Use a browser session at 1600×1019 with device scale 1.5, and at 1280×720. Open
-`/?native=1`, sign in with the panel keyboard, and walk Home, every Home tile's window, the ☰
-menu (scrolled to its end), the floor list, a shell worker's terminal with the keyboard shown and
-hidden, and text size −/+. Open the command palette from Home, from the ☰ menu and with the panel
-keyboard's Ctrl+K; type, choose with Enter and close with Esc. Walk each Settings category with the
-panel keyboard's arrows, and type into a board column's title filter. `window.__office.nativeUi`
-offers `setPanelOpen`, `showHome`, `setCarrying`, `updatePerformance`, `openCommands` and
-`keyboard.show(true)` for reaching states without the headset. Long content can be staged in the page's own `window.__office.store` (queue tasks,
+`/?native=1`, sign in with the panel keyboard, and check that the office page arrives with the
+workspace closed and no keyboard. Then walk Home, every Home tile's window, the ☰
+menu (scrolled to its end), the floor list, a shell worker's terminal, and text size −/+. Open
+the command palette from Home and from the ☰ menu; type, choose with Enter and close with Esc
+on the browser's own keyboard, standing in for one paired to the headset. Walk each Settings
+category, and type into a board column's title filter. `window.__office.nativeUi`
+offers `setPanelOpen`, `showHome`, `setCarrying`, `updatePerformance` and `openCommands` for
+reaching states without the headset. Long content can be staged in the page's own `window.__office.store` (queue tasks,
 workers, the project name) followed by `store.emit(topic)`; that changes only that page.
 Look for text cut off with an ellipsis, controls under 44 px, text under 12 px and controls
 outside a scrollable area. Also confirm the desktop route `/` still looks the same.

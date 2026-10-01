@@ -13,6 +13,8 @@
 #include "foveation_filter.h"
 #include "foveation_overlay.h"
 #include "input_renderer.h"
+#include "layer_occlusion.h"
+#include "panel_cutout.h"
 #include "scene_renderer.h"
 #include "xr_call.h"
 #include "xr_math.h"
@@ -111,6 +113,7 @@ class GlesWorld final : public office::WorldRenderer {
     std::unique_ptr<office::DepthProbe> depthProbe;
 #endif
     std::unique_ptr<office::InputRenderer> inputRenderer;
+    std::unique_ptr<office::PanelCutout> panelCutout;
     std::unique_ptr<office::CursorSwapchain> cursor;
     std::unique_ptr<office::SceneRenderer> sceneRenderer;
 
@@ -606,7 +609,8 @@ class GlesWorld final : public office::WorldRenderer {
                 instance, "xrGetFoveationEyeTrackedStateMETA");
             fovea.metaEyeTracked = getFoveationState != nullptr;
         }
-        // World + sharp screens + workspace + two pointers + the status shutdown handshake.
+        // World + sharp screens + workspace + two pointers + the status shutdown handshake,
+        // which uses one status column while the workspace is open (status_layout.h).
         sharpScreensAvailable = systemProperties.graphicsProperties.maxLayerCount >= 6;
         LOG("LAYER_CAPACITY max=%u sharpScreens=%d",
             systemProperties.graphicsProperties.maxLayerCount, sharpScreensAvailable);
@@ -823,6 +827,8 @@ class GlesWorld final : public office::WorldRenderer {
                                   AAssetManager_fromJava(env, assets));
         env->DeleteLocalRef(assets);
         env->DeleteLocalRef(assetClass);
+        panelCutout = std::make_unique<office::PanelCutout>();
+        panelCutout->initialize(multiview);
         cursor = std::make_unique<office::CursorSwapchain>();
         cursor->initialize(session, format);
     }
@@ -915,6 +921,22 @@ class GlesWorld final : public office::WorldRenderer {
             sceneRenderer->setControllerPoses(
                 office::attachmentPoses(inputFrame, controls.rig, attachmentFrame));
         }
+        // A held gun takes the controller's place in the hand: its model is not drawn there.
+        const unsigned heldHands = valid ? sceneRenderer->attachedHands() : 0;
+        inputRenderer->hideControllers(heldHands);
+        // The workspace panel goes beneath the world layer, which then shows it through a
+        // hole and keeps the player's controllers, rays and held gun in front of it.
+        const bool panelUnder = frame.panelUnder;
+        float cutViews[2][16]{}, cutCorners[4][3]{};
+        if (panelUnder) {
+            const auto corners = office::panelCutoutCorners(
+                panelPose, office::kPanelWidth, office::kPanelHeight, office::kPanelCutoutInset);
+            for (int c = 0; c < 4; c++) {
+                cutCorners[c][0] = corners[c].x;
+                cutCorners[c][1] = corners[c].y;
+                cutCorners[c][2] = corners[c].z;
+            }
+        }
         office::SharpScreenPlan sharpPlan;
         bool sharp = valid && sharpScreensAvailable && controls.graphics.sharpScreens &&
                      controls.fade < .999f;
@@ -925,23 +947,30 @@ class GlesWorld final : public office::WorldRenderer {
             sharp =
                 sceneRenderer->planSharpScreens(worldViews, widths, heights, multiview, sharpPlan);
         }
+        // Filtered targets: the world is drawn into the foveated swapchain, and the submitted
+        // image is the filter pass's output. Otherwise both are the submitted image. While the
+        // workspace panel is beneath the world layer the filter is left out (filterFrame) and
+        // the foveated image is submitted as drawn, keeping the panel's hole in its alpha.
+        const bool boundFiltered = boundTargets.foveation.filtered;
+        const bool filtered = office::filterFrame(boundFiltered, panelUnder);
+        const bool submitFoveated = boundFiltered && !filtered;
         if (valid)
             for (int pass = 0; pass < (multiview ? 1 : 2); pass++) {
                 auto &eye = eyes[pass];
-                // Filtered: the world is drawn into the foveated swapchain, and the submitted
-                // image is the filter pass's output. Otherwise both are the submitted image.
-                const bool filtered = boundTargets.foveation.filtered;
-                auto &renderEye = filtered ? foveatedEyes[pass] : eye;
+                auto &renderEye = boundFiltered ? foveatedEyes[pass] : eye;
                 uint32_t imageIndex = 0, renderIndex = 0;
                 auto acquire = office::structure<XrSwapchainImageAcquireInfo>(
                     XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
-                check(xrAcquireSwapchainImage(eye.swapchain, &acquire, &imageIndex), "acquire eye");
                 auto imageWait =
                     office::structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
                 imageWait.timeout = XR_INFINITE_DURATION;
-                check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
+                if (!submitFoveated) {
+                    check(xrAcquireSwapchainImage(eye.swapchain, &acquire, &imageIndex),
+                          "acquire eye");
+                    check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
+                }
                 renderIndex = imageIndex;
-                if (filtered) {
+                if (boundFiltered) {
                     check(xrAcquireSwapchainImage(renderEye.swapchain, &acquire, &renderIndex),
                           "acquire foveated eye");
                     check(xrWaitSwapchainImage(renderEye.swapchain, &imageWait),
@@ -993,12 +1022,29 @@ class GlesWorld final : public office::WorldRenderer {
                     throw std::runtime_error("Projection framebuffer incomplete: " +
                                              std::to_string(status));
                 glViewport(rect.x, rect.y, rect.width, rect.height);
-                if (multiview)
-                    sceneRenderer->renderStereo(worldViews, rect.height);
-                else
-                    sceneRenderer->render(worldViews[pass], rect.height);
-                inputRenderer->render(localViews[pass], localViews[multiview ? 1 : pass],
-                                      controls.fade);
+                auto drawScene = [&](office::SceneDrawSet set) {
+                    if (multiview)
+                        sceneRenderer->renderStereo(worldViews, rect.height, {}, set);
+                    else
+                        sceneRenderer->render(worldViews[pass], rect.height, set);
+                };
+                if (panelUnder) {
+                    // The world, the panel's hole over it (whatever was nearer), then what
+                    // the player holds and the controllers, depth-tested against the panel.
+                    std::copy(localViews[pass].begin(), localViews[pass].end(), cutViews[0]);
+                    const auto &other = localViews[multiview ? 1 : pass];
+                    std::copy(other.begin(), other.end(), cutViews[1]);
+                    drawScene(office::SceneDrawSet::World);
+                    panelCutout->punch(cutViews, cutCorners);
+                    drawScene(office::SceneDrawSet::Attached);
+                } else {
+                    drawScene(office::SceneDrawSet::All);
+                }
+                inputRenderer->render(localViews[pass], localViews[multiview ? 1 : pass]);
+                // The screen layer composites over the world layer: no screen over the panel.
+                if (panelUnder && sharp)
+                    panelCutout->seal(cutViews, cutCorners);
+                inputRenderer->renderFade(controls.fade);
                 // Diagnostic: drawn last into the foveated target, so its fragments run at
                 // the runtime's actual density for this frame.
                 if (controls.graphics.foveationDebug && foveationOverlay)
@@ -1086,14 +1132,14 @@ class GlesWorld final : public office::WorldRenderer {
                     LOG("FOVEATION_TEXTURE image=%u level=%s eyeTracked=%d filtered=%d "
                         "bits=%d minDensity=%.3f focalPoints=%d gl_error=%x",
                         renderIndex, office::foveationLevelName(boundTargets.foveation),
-                        boundTargets.foveation.eyeTracked, filtered, textureBits, textureMinDensity,
-                        textureFocalPoints, probeError);
+                        boundTargets.foveation.eyeTracked, boundFiltered, textureBits,
+                        textureMinDensity, textureFocalPoints, probeError);
                     ++imagesProbed;
                     if (probeError == GL_NO_ERROR && textureBits == 0)
                         ++imagesUnfoveated;
                     // No OpenXR text says a runtime foveates a swapchain that is never
                     // submitted. If none of them was, the next targets submit it directly.
-                    if (filtered && imagesProbed == imageUses.size() &&
+                    if (boundFiltered && imagesProbed == imageUses.size() &&
                         imagesUnfoveated == imagesProbed &&
                         foveation.filterFailed(boundTargets.foveation,
                                                "filtered swapchain not foveated"))
@@ -1136,13 +1182,14 @@ class GlesWorld final : public office::WorldRenderer {
                 glFlush();
                 auto release = office::structure<XrSwapchainImageReleaseInfo>(
                     XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
-                if (filtered)
+                if (boundFiltered)
                     check(xrReleaseSwapchainImage(renderEye.swapchain, &release),
                           "release foveated eye");
-                check(xrReleaseSwapchainImage(eye.swapchain, &release), "release eye");
+                if (!submitFoveated)
+                    check(xrReleaseSwapchainImage(eye.swapchain, &release), "release eye");
             }
         for (int i = 0; i < 2; i++) {
-            auto &eye = eyes[multiview ? 0 : i];
+            auto &eye = (submitFoveated ? foveatedEyes : eyes)[multiview ? 0 : i];
             auto &pv = projectionViews[i];
             pv = office::structure<XrCompositionLayerProjectionView>(
                 XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
@@ -1183,6 +1230,12 @@ class GlesWorld final : public office::WorldRenderer {
 
     XrCompositionLayerQuad cursorLayer(XrSpace space, XrPosef pose) const override {
         return cursor->layer(space, pose);
+    }
+
+    unsigned attachedHands() const override { return sceneRenderer->attachedHands(); }
+
+    size_t attachedBounds(float (*out)[4], size_t max) const override {
+        return sceneRenderer->attachedBounds(out, max);
     }
 
     // ---- WorldRenderer: metrics ---------------------------------------------------------------
@@ -1236,6 +1289,7 @@ class GlesWorld final : public office::WorldRenderer {
         inputRenderer.reset();
         foveationOverlay.reset();
         foveationFilter.reset();
+        panelCutout.reset();
         sceneRenderer.reset();
 #ifndef NDEBUG
         depthProbe.reset();

@@ -74,6 +74,22 @@ covers, using `CXX` (default `c++`), and runs it:
 - `native/tests/log_record_test.cpp` covers `log_record.h`: metrics lines fit Android's
   1023-byte log record with every key `harness/metrics.sh` reads, rounding fractions before
   shortening the longest strings, never splitting a UTF-8 character.
+- `native/tests/controller_attachment_test.cpp` for the header-only `controller_attachment.h`:
+  grip-attached objects, their validity rules and per-item placement.
+- `native/tests/status_layout_test.cpp` for the header-only `status_layout.h`: the status
+  Surface's toast and FPS counter columns, the counter's lower-left placement and text size,
+  the controller cover test and which status layers a frame composites.
+- `native/tests/layer_occlusion_test.cpp`: the workspace panel's hole in the world layer
+  against `panelHit`, and when the status card yields to a controller or held object in front
+  of it, with its fade timing.
+- `native/tests/capture_puppet_test.cpp` with `bridge_state.cpp`, compiled twice: as
+  `capture_puppet_debug` with `-DOFFICE_CAPTURE_PUPPET=1` (the debug APK) and as
+  `capture_puppet_release` without it (the release APK). The release run proves the bridge never
+  reads the debug capture puppet and the display-frame merge never applies it, even when the
+  Java host asks; the debug run checks the BuildConfig.DEBUG gate, the puppet parser and
+  malformed-input isolation. Both check the merge: untracked slots only, freshness (a 495 ms
+  page stall keeps the puppet and its gun), focus, head and heading spaces, and attachments at
+  the puppet grip.
 
 Three registered suites are required on every host run:
 
@@ -85,7 +101,11 @@ Three registered suites are required on every host run:
   no pending uploads, waiting state, shader compilation or queued texture work, within a
   bounded frame count. Each failed check is named again in the final summary. The fixture
   uses placeholder gradients for DOM canvas images; actual
-  text and material pixels are compared in the browser shader suite.
+  text and material pixels are compared in the browser shader suite. It also builds
+  `panel_cutout.cpp` and draws a frame with the workspace panel beneath the world layer, as the
+  display loop does (World pass, `PanelCutout::punch`, Attached pass, `seal`), and checks the
+  hole, a gun held in front of and behind the panel, `attachedHands`/`attachedBounds` and the
+  GL state the cutout leaves.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts (including points drawn as quads),
   validates and links every generated stage, the foveation diagnostic view and the foveation
@@ -134,7 +154,7 @@ otherwise `javac` and `java` come from `PATH`.
 The discovery rules check the versioned DNS-SD TXT contract, HTTP/HTTPS and port validation,
 IPv4 preference and IPv6 formatting, unsuitable addresses and display names. The catalog checks
 bounded discovery, serialized resolutions, network identities, lost services, failed resolutions,
-and callbacks from a previous picker session. The full runner registers twelve checks.
+and callbacks from a previous picker session. The full runner registers fourteen checks.
 
 Without `--android-sdk`, the summary lists the Java tests as `NOT RUN`. With
 `--require-java`, a missing `--android-sdk` is an error rather than a smaller run. CI passes

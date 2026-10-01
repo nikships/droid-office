@@ -40,6 +40,9 @@ struct WorldFrame {
     XrPosef panelPose{};
     bool focused = false, poseValid = false, shouldRender = false;
     bool valid = false; // shouldRender && poseValid: the world layer is submitted
+    // valid && controls->panelOpen: the workspace panel is composited beneath the world layer,
+    // so the world image shows it through a hole (panel_cutout.h) with the hands in front.
+    bool panelUnder = false;
 };
 
 class WorldRenderer {
@@ -91,6 +94,13 @@ class WorldRenderer {
                         std::array<XrCompositionLayerProjectionView, 2> &sharp) = 0;
     /** The panel cursor's quad layer at `pose`. */
     virtual XrCompositionLayerQuad cursorLayer(XrSpace space, XrPosef pose) const = 0;
+    /**
+     * After a valid render: a bit per hand (1 left, 2 right) holding an attached object this frame
+     * (SceneRenderer::attachedHands), and the scene-world bounding spheres of those objects
+     * (SceneRenderer::attachedBounds), for the status card's cover test.
+     */
+    virtual unsigned attachedHands() const = 0;
+    virtual size_t attachedBounds(float (*out)[4], size_t max) const = 0;
 
     // ---- A metrics window (every 5 s) -----------------------------------------------------------
     /** Its FRAME_METRICS keys: the world size and limits, the bound foveation, the screen layer. */
