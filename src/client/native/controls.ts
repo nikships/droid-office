@@ -29,6 +29,7 @@ import { VRGrab, type GrabAim, type GrabHooks } from '../vr/grab';
 import { RayAccel } from '../vr/pick';
 import { SnapTurn, sampleParabola, xrRayDirection, yawForFacing } from '../vr/session';
 import { LOST_MS, MAX_QUEUE, type NativeHand, type NativeInputFrame, type Pose7, SQUEEZE_OFF, SQUEEZE_ON, STALE_MS, TRIGGER_OFF, TRIGGER_ON, pressLatch, readFrame, webStick } from './input';
+import { nativeFloorOffset, registerNativeHeadHeight } from './height';
 import { applyGravity, findLanding, placeAvatar, rigFor, snapGround, stepToward } from './locomotion';
 import { NativePhysical, type NativePhysicalHooks } from './physical';
 
@@ -216,6 +217,7 @@ export class NativeControls {
     this.grab = hooks.grab ? new VRGrab(scene, hooks.grab) : null;
     this.hands = [this.slot(0), this.slot(1)];
     this.physical = hooks.physical ? new NativePhysical(scene, [this.hands[0].grip, this.hands[1].grip], hooks.physical, (hand, strength, ms) => this.pulse(hand, strength, ms)) : null;
+    registerNativeHeadHeight(() => (this.on && this.headSeen && this.headTracked ? this.headLocal.y : null));
     this.carriedRoot.name = 'native-carried-issue';
     this.carriedRoot.position.set(0, 0.05, -0.06);
     this.rig.visible = false;
@@ -259,6 +261,7 @@ export class NativeControls {
     const viewFacing = player.view === 'first' ? player.facing : player.camYaw + Math.PI;
     player.facing = viewFacing;
     this.origin.copy(player.pos);
+    this.origin.y -= nativeFloorOffset();
     this.yaw = yawForFacing(viewFacing);
     this.lastAvatar.copy(player.pos);
     this.needsRebase = true;
@@ -456,6 +459,7 @@ export class NativeControls {
     if (!this.on) return;
     this.jumpPresentation();
     this.yaw = rigFor(this.headLocal, this.headQuat, this.hooks.player.pos, this.hooks.player.facing, this.origin);
+    this.origin.y -= nativeFloorOffset();
     this.lastAvatar.copy(this.hooks.player.pos);
     this.placeRig();
   }
@@ -1051,7 +1055,8 @@ export class NativeControls {
         if (player.grounded) snapGround(player);
       }
     }
-    this.origin.y = player.pos.y;
+    // The player's height setting corrects a headset floor that sits above the real one.
+    this.origin.y = player.pos.y - nativeFloorOffset();
     const t = performance.now() / 1000;
     const d = this.sway;
     this.rig.rotation.z = d > 0 ? d * (0.07 * Math.sin(t * 0.9) + 0.025 * Math.sin(t * 2.3 + 1)) : 0;
