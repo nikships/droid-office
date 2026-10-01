@@ -22,9 +22,13 @@ struct AttachmentFrame {
 
 /**
  * Longest a control snapshot may go unrefreshed and still hold an attachment. The page sends
- * about every 33 ms; a stalled page must not keep an object that it may already have dropped.
+ * about every 33 ms, but on the headset its packets regularly arrive 250-500 ms apart while it
+ * works, and a held gun must not blink out of the hand while the page catches up. Dropping does
+ * not wait for the page: a grip-held object hides on the display frame its squeeze is released
+ * (held), tracking loss hides it at once, and a navigating page resets the controls. Only a page
+ * that stopped answering for this long loses what it attached.
  */
-constexpr int64_t kAttachmentStaleNs = 250'000'000;
+constexpr int64_t kAttachmentStaleNs = 1'500'000'000;
 
 /**
  * Squeeze at or above this holds a grip-held attachment: the page's SQUEEZE_OFF, below which its

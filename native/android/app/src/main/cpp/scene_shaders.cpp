@@ -208,6 +208,13 @@ vec3 F_Schlick( const in vec3 f0, const in float f90, const in float dotVH ) {
 	float fresnel = exp2( ( - 5.55473 * dotVH - 6.98316 ) * dotVH );
 	return f0 * ( 1.0 - fresnel ) + ( f90 * fresnel );
 }
+// Full-resolution pixels between neighbouring invocations, (1, 1) unless foveated.
+// GL_QCOM_texture_foveated issue 4: in a scaled bin gl_FragCoord is scaled to full-resolution
+// positions while dFdx and dFdy get no corrective scaling. Derivative-based shading divides by
+// this, so it matches across bins of different density instead of changing at their edges.
+vec2 foveatedStep() {
+	return max( abs( vec2( dFdx( gl_FragCoord.x ), dFdy( gl_FragCoord.y ) ) ), vec2( 1.0 ) );
+}
 )";
 
 // three's colorspace_pars_fragment.
@@ -350,7 +357,8 @@ vec3 getGradientIrradiance( vec3 normal, vec3 lightDirection ) {
 #ifdef USE_GRADIENTMAP
 	return vec3( texture( uGradientMap, coord ).r );
 #else
-	vec2 fw = fwidth( coord ) * 0.5;
+	vec2 fovStep = foveatedStep();
+	vec2 fw = ( abs( dFdx( coord ) ) / fovStep.x + abs( dFdy( coord ) ) / fovStep.y ) * 0.5;
 	return mix( vec3( 0.7 ), vec3( 1.0 ), smoothstep( 0.7 - fw.x, 0.7 + fw.x, coord.x ) );
 #endif
 }
@@ -529,7 +537,7 @@ std::string vertexShader(const Features &f) {
     if (f.emissiveMap)
         o << "uniform mat3 uEmissiveMapTransform;\n";
     if (f.points)
-        o << "uniform float uPointSize;\n";
+        o << "uniform float uPointSize;\nuniform int uPointQuad;\n";
     if (f.sprite)
         o << "uniform vec2 uSpriteCenter;\nuniform float uSpriteRotation;\n";
 
@@ -561,6 +569,8 @@ std::string vertexShader(const Features &f) {
         o << "out float vAlong;\n";
     if (f.dome)
         o << "out vec3 vDir;\n";
+    if (f.points)
+        o << "out vec2 vPointCoord;\n";
     if (f.sharp != SharpDepth::None)
         o << "out float vSharpDist;\nflat out vec2 vSharpProj;\nflat out int vSharpView;\n";
 
@@ -632,9 +642,26 @@ std::string vertexShader(const Features &f) {
     if (f.dome)
         o << "\tvDir = aPosition;\n";
     if (f.points) {
-        o << "\tgl_PointSize = uPointSize;\n";
+        o << "\tfloat pointSize = uPointSize;\n";
         if (f.sizeAttenuation)
-            o << "\tgl_PointSize *= ( uView.viewport.y / - mvPosition.z );\n";
+            o << "\tpointSize *= ( uView.viewport.y / - mvPosition.z );\n";
+        // A point is drawn as the square GL would rasterize for it, a quad from one instance per
+        // point. GL_QCOM_texture_foveated issue 4: gl_PointSize gets "no corrective scaling" in a
+        // foveated scaled bin, so GL points change size and drop out from bin to bin.
+        // https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt
+        // uPointQuad 0 (indexed points) keeps GL points; vPointCoord.x < 0 then selects
+        // gl_PointCoord. Half the size in NDC is size / height in pixels vertically; x follows
+        // the projection's aspect, which is the eye image's for square pixels.
+        o << "\tgl_PointSize = pointSize;\n"
+             "\tvPointCoord = vec2( - 1.0 );\n"
+             "\tif ( uPointQuad != 0 ) {\n"
+             "\t\tvec2 corner = vec2( float( gl_VertexID & 1 ), float( ( gl_VertexID >> 1 ) & 1 "
+             ") ) * 2.0 - 1.0;\n"
+             "\t\tfloat halfNdc = max( pointSize, 1.0 ) / uView.viewport.x;\n"
+             "\t\tgl_Position.xy += corner * vec2( uView.proj[ viewIndex ][ 0 ][ 0 ] / "
+             "uView.proj[ viewIndex ][ 1 ][ 1 ], 1.0 ) * ( halfNdc * gl_Position.w );\n"
+             "\t\tvPointCoord = vec2( corner.x, - corner.y ) * 0.5 + 0.5;\n"
+             "\t}\n";
     }
     if (f.shadows) {
         // three's shadowmap_vertex: offset along the world normal, before any gl_FrontFacing flip.
@@ -810,6 +837,8 @@ std::string fragmentShader(const Features &f) {
         o << "in float vAlong;\n";
     if (f.dome)
         o << "in vec3 vDir;\n";
+    if (f.points)
+        o << "in vec2 vPointCoord;\n";
 
     o << "uniform vec4 uColor;\n";
     if (f.map)
@@ -903,9 +932,11 @@ std::string fragmentShader(const Features &f) {
              "\tvec3 totalEmissiveRadiance = uEmissive;\n";
     }
     if (f.points) {
-        // three's map_particle_fragment: one uv from gl_PointCoord for both maps.
+        // three's map_particle_fragment: one uv from gl_PointCoord for both maps; a point drawn
+        // as a quad carries the same coordinate in vPointCoord.
         if (f.map || f.alphaMap)
-            o << "\tvec2 uv = ( uMapTransform * vec3( gl_PointCoord.x, 1.0 - gl_PointCoord.y, 1 ) "
+            o << "\tvec2 pointCoord = vPointCoord.x < 0.0 ? gl_PointCoord : vPointCoord;\n"
+                 "\tvec2 uv = ( uMapTransform * vec3( pointCoord.x, 1.0 - pointCoord.y, 1 ) "
                  ").xy;\n";
         if (f.map)
             o << "\tdiffuseColor *= texture( uMap, uv );\n";
@@ -972,8 +1003,9 @@ std::string fragmentShader(const Features &f) {
                  "\tmaterial.metalness = metalnessFactor;\n"
               << (f.viewNormal ? "\tvec3 nonPerturbedNormal = normalize( vViewNormal );\n"
                                : "\tvec3 nonPerturbedNormal = normal;\n")
-              << "\tvec3 dxy = max( abs( dFdx( nonPerturbedNormal ) ), abs( dFdy( "
-                 "nonPerturbedNormal ) ) );\n"
+              << "\tvec2 fovStep = foveatedStep();\n"
+                 "\tvec3 dxy = max( abs( dFdx( nonPerturbedNormal ) ) / fovStep.x, abs( dFdy( "
+                 "nonPerturbedNormal ) ) / fovStep.y );\n"
                  "\tfloat geometryRoughness = max( max( dxy.x, dxy.y ), dxy.z );\n"
                  "\tmaterial.roughness = max( roughnessFactor, 0.0525 );\n"
                  "\tmaterial.roughness += geometryRoughness;\n"

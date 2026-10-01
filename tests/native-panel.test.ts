@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KEYBOARD_ROWS, codeOf, editText, insertText, pressOf, shiftedLabel, terminalBytes, type KeyLike, type Modifier, type TextState } from '../src/client/native/keys.js';
+import { KEYBOARD_ROWS, codeOf, editText, insertText, pressOf, shiftedLabel, type KeyLike, type Modifier, type TextState } from '../src/client/native/keys.js';
 import { isNativePath, isNativeSearch } from '../src/client/native/mode.js';
-import { CTRL_ENTER, SHIFT_ENTER } from '../src/client/term-keys.js';
 import { TERM_FONT_DESKTOP, TERM_FONT_MAX, TERM_FONT_MIN, TERM_FONT_NATIVE, clampTermFont, onTermFontSize, setTermFontSize, stepTermFont, termFontSize, useNativeTermFont } from '../src/client/ui/term-font.js';
 import { RETURN_PARAM, loginPath, safeReturnTo } from '../src/shared/return-to.js';
 
@@ -119,7 +118,7 @@ test('terminal text size clamps, steps and defaults per mode', (t) => {
 
 // ---- Keys ----
 
-test('the keyboard has every key a terminal needs', () => {
+test('the sign-in keyboard has the full key set, its modifiers and Hide', () => {
   const ids = new Set(KEYBOARD_ROWS.flat().map((k) => k.id));
   for (const id of ['Escape', 'Tab', 'Enter', 'Backspace', 'Delete', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'mod:ctrl', 'mod:alt', 'mod:shift', 'hide']) {
     assert.ok(ids.has(id), id);
@@ -148,35 +147,6 @@ test('codes match what a physical keyboard reports', () => {
   assert.equal(codeOf('?'), 'Slash');
   assert.equal(codeOf('Enter'), 'Enter');
   assert.equal(codeOf('ArrowUp'), 'ArrowUp');
-});
-
-test('terminal bytes are what a physical keyboard sends', () => {
-  assert.equal(terminalBytes(key('a'), false), 'a');
-  assert.equal(terminalBytes(key('A', { shiftKey: true }), false), 'A');
-  assert.equal(terminalBytes(key('c', { ctrlKey: true }), false), '\x03');
-  assert.equal(terminalBytes(key('d', { ctrlKey: true }), false), '\x04');
-  assert.equal(terminalBytes(key('Enter'), false), '\r');
-  assert.equal(terminalBytes(key('Escape'), false), '\x1b');
-  assert.equal(terminalBytes(key('Tab'), false), '\t');
-  assert.equal(terminalBytes(key('Backspace'), false), '\x7f');
-  assert.equal(terminalBytes(key('ArrowUp'), false), '\x1b[A');
-  assert.equal(terminalBytes(key('ArrowLeft'), false), '\x1b[D');
-  assert.equal(terminalBytes(key('b', { altKey: true }), false), '\x1bb');
-  // Droid workers bind Ctrl+Enter and Shift+Enter to CSI u; others get plain Enter.
-  assert.equal(terminalBytes(key('Enter', { ctrlKey: true }), true), CTRL_ENTER);
-  assert.equal(terminalBytes(key('Enter', { shiftKey: true }), true), SHIFT_ENTER);
-  assert.equal(terminalBytes(key('Enter', { shiftKey: true }), false), '\r');
-});
-
-test('application cursor mode sends SS3 cursor keys, as xterm does', () => {
-  assert.equal(terminalBytes(key('ArrowUp'), false, true), '\x1bOA');
-  assert.equal(terminalBytes(key('ArrowLeft'), false, true), '\x1bOD');
-  assert.equal(terminalBytes(key('Home'), false, true), '\x1bOH');
-  assert.equal(terminalBytes(key('End'), false, true), '\x1bOF');
-  // Modified cursor keys and everything else are the same in both modes.
-  assert.equal(terminalBytes(key('ArrowLeft', { ctrlKey: true }), false, true), '\x1b[1;5D');
-  assert.equal(terminalBytes(key('Delete'), false, true), '\x1b[3~');
-  assert.equal(terminalBytes(key('a'), false, true), 'a');
 });
 
 // ---- Text editing ----

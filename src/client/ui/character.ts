@@ -5,7 +5,7 @@ import { AVATAR_COLORS, saveProfile, store, type Profile } from '../state';
 import { Person } from '../world/character';
 import { toonUnique } from '../world/toon';
 import { h, openModal } from './dom';
-import { isNativeSearch } from '../native/mode';
+import { controlHintsShown, isNativeSearch } from '../native/mode';
 
 /** A turntable with your character on it, drawn with its own small renderer. */
 class Preview {
@@ -196,7 +196,7 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
     h(
       'div.body',
       {},
-      h('div.charsel-stage', {}, canvas, h('span.tip', {}, 'Drag to spin')),
+      h('div.charsel-stage', {}, canvas, controlHintsShown() ? h('span.tip', {}, 'Drag to spin') : null),
       h(
         'div.charsel-opts',
         {},

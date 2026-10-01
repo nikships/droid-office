@@ -1,7 +1,9 @@
-// Writes the GLSL for every meaningful ProgramKey into a directory (name.vert, name.frag) for
-// glslangValidator, and checks what can be checked without a GL context: the keys' bits() are
-// unique, generation is deterministic, the std140 blocks match scene_uniforms.h member for member,
-// and the stages keep the contract (attribute locations, no gl_ViewID_OVR in fragment shaders).
+// Writes the GLSL for every meaningful ProgramKey, the foveation overlay and the foveation filter
+// passes into a directory
+// (name.vert, name.frag) for glslangValidator, and checks what can be checked without a GL context:
+// the keys' bits() are unique, generation is deterministic, the std140 blocks match
+// scene_uniforms.h member for member, and the stages keep the contract (attribute locations, no
+// gl_ViewID_OVR in fragment shaders).
 //
 //   dump <out-dir>     exit status 0 when every check passes
 #include <algorithm>
@@ -12,8 +14,11 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "foveation_filter_shader.h"
+#include "foveation_overlay_shader.h"
 #include "scene_shaders.h"
 #include "scene_uniforms.h"
 
@@ -646,6 +651,51 @@ int main(int argc, char **argv) {
             fail(prog + ": screen layer never applies its depth test");
     }
 
-    std::printf("programs %d (from %zu keys)\n", programs, keys.size());
+    // The foveation diagnostic view is not a scene program. Its stages go through the same
+    // glslangValidator compile and link steps in check.sh.
+    for (bool multiview : {true, false}) {
+        const auto s = office::foveationOverlayShader(multiview);
+        const std::string prog =
+            multiview ? "foveation_overlay.multiview" : "foveation_overlay.single";
+        if (s.fragment.find("gl_ViewID_OVR") != std::string::npos)
+            fail(prog + ": fragment stage uses gl_ViewID_OVR");
+        std::ofstream(dir + "/" + prog + ".vert") << s.vertex;
+        std::ofstream(dir + "/" + prog + ".frag") << s.fragment;
+    }
+
+    // The foveation filter's two passes share one vertex stage; each is written as a program.
+    for (bool multiview : {true, false}) {
+        const auto s = office::foveationFilterShaders(multiview);
+        const std::string view = multiview ? "multiview" : "single";
+        for (const auto &[name, fragment] :
+             {std::pair<std::string, std::string>{"foveation_density", s.densityFragment},
+              {"foveation_resolve", s.resolveFragment}}) {
+            const std::string prog = name + "." + view;
+            if (fragment.find("gl_ViewID_OVR") != std::string::npos)
+                fail(prog + ": fragment stage uses gl_ViewID_OVR");
+            std::ofstream(dir + "/" + prog + ".vert") << s.vertex;
+            std::ofstream(dir + "/" + prog + ".frag") << fragment;
+        }
+    }
+
+    // Points are quads in the world pass (QCOM_texture_foveated issue 4 leaves gl_PointSize
+    // unscaled in foveated bins), with GL points kept for indexed draws.
+    for (const ProgramKey &k : keys) {
+        if (k.model != ShadeModel::Points)
+            continue;
+        const ShaderSource s = generateShader(k);
+        const std::string prog = programName(k);
+        if (s.vertex.find("if ( uPointQuad != 0 )") == std::string::npos ||
+            s.vertex.find("gl_VertexID") == std::string::npos)
+            fail(prog + ": points are not drawn as quads");
+        if (s.fragment.find("gl_PointCoord") != std::string::npos &&
+            s.fragment.find("vPointCoord.x < 0.0 ? gl_PointCoord : vPointCoord") ==
+                std::string::npos)
+            fail(prog + ": a quad point reads gl_PointCoord");
+    }
+
+    std::printf("programs %d (from %zu keys), 2 foveation overlay programs and 4 foveation "
+                "filter programs\n",
+                programs, keys.size());
     return failures ? 1 : 0;
 }

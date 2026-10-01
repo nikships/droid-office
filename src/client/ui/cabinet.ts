@@ -6,6 +6,7 @@ import type { WorkerInfo } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, toast, type Modal } from './dom';
+import { controlHintsShown } from '../native/mode';
 import { ScreenZoom } from './arcade';
 import { Blocks, H, W, paintScreen, type ScreenView } from './blocks';
 
@@ -365,7 +366,8 @@ export class Cabinet {
       return { frame: store.cabinetFrame, player: c.player.name, scores: c.scores, mine: c.player.game, note: 'Back in a moment', prompt: store.cabinetFrame ? undefined : `▶ ${c.player.name.toUpperCase()}`, t };
     }
     const left = this.leftAt !== null;
-    return { frame: null, scores: c.scores, mine: g?.id, prompt: left ? 'PRESS E TO CARRY ON' : 'PRESS E TO PLAY', t };
+    const prompt = !controlHintsShown() ? undefined : left ? 'PRESS E TO CARRY ON' : 'PRESS E TO PLAY';
+    return { frame: null, scores: c.scores, mine: g?.id, prompt, t };
   }
 
   /** Draws the screen up close while you play or watch, and on the cabinet otherwise (the close one covers it). */

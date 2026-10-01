@@ -49,7 +49,8 @@ import org.json.JSONObject;
 /** Android owns the lifecycle; the native thread owns the OpenXR frame loop. */
 public final class OfficeActivity extends Activity {
     static { System.loadLibrary("office_xr"); }
-    private native void nativeStart();
+    /** filesDir keeps the page's graphics settings between launches for the first world targets. */
+    private native void nativeStart(String filesDir);
     private native void nativeStop();
     private native String nativeReadInput();
     private native String nativeReadMetrics();
@@ -58,6 +59,7 @@ public final class OfficeActivity extends Activity {
     private native void nativeReset();
     private native void nativeOverlay(boolean visible);
     private native void nativeStatusVisible(boolean visible);
+    private native void nativeCapturePuppet(boolean hostDebug);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService bridge = Executors.newSingleThreadExecutor(
         task -> new Thread(() -> {
@@ -98,6 +100,11 @@ public final class OfficeActivity extends Activity {
     private boolean pollPending;
     private volatile int navigationGeneration;
 
+    // Debuggable builds let the page's debug-only shot staging run (native/stage.ts);
+    // a release build never enables it.
+    private static final String HOST_FLAGS =
+        BuildConfig.DEBUG ? "{\"debuggable\":true}" : "{\"debuggable\":false}";
+
     // There is no privileged JavaScript interface. The host pulls bounded scene data
     // only from the chosen office origin, then parses it away from the render thread.
     private final Runnable poll = new Runnable() {
@@ -115,7 +122,7 @@ public final class OfficeActivity extends Activity {
             String samples = nativeReadInput();
             web.evaluateJavascript(
                 "window.officeNative ? window.officeNative.frame(" + samples + "," +
-                    nativeReadMetrics() + "," + nativeReadEvents() + ") : null",
+                    nativeReadMetrics() + "," + nativeReadEvents() + "," + HOST_FLAGS + ") : null",
                 result -> {
                     if (destroyed || generation != navigationGeneration)
                         return;
@@ -140,6 +147,9 @@ public final class OfficeActivity extends Activity {
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Debug builds only: the page may stage synthetic controllers for headless captures.
+        // Native also requires its own debug build; release builds ignore the puppet entirely.
+        nativeCapturePuppet(BuildConfig.DEBUG);
         services = new OfficeWebServices(
             this, () -> serverOrigin, this::showFeedback, this::showWebDialog);
         discovery = new OfficeDiscovery(this, handler, this::showNearbyOffices, message -> {
@@ -148,13 +158,13 @@ public final class OfficeActivity extends Activity {
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         TextView text = new TextView(this);
-        text.setText("Opening Droid Office XR… Use Galaxy XR motion controllers to continue.");
+        text.setText("Opening Droid Office XR…");
         setContentView(text);
         if (checkSelfPermission("android.permission.EYE_TRACKING_FINE") !=
             PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] {"android.permission.EYE_TRACKING_FINE"}, 1);
         } else
-            nativeStart();
+            nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override
@@ -163,7 +173,7 @@ public final class OfficeActivity extends Activity {
         if (services.onRequestPermissionsResult(request, permissions, results))
             return;
         if (request == 1)
-            nativeStart();
+            nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override
@@ -242,14 +252,19 @@ public final class OfficeActivity extends Activity {
         });
     }
 
-    public void onStatusSurface(Surface surface, int width, int height) {
+    /**
+     * The renderer shows [0, messageWidth) as the toast and [counterLeft, width) as the FPS
+     * counter.
+     */
+    public void onStatusSurface(Surface surface, int width, int height, int messageWidth,
+                                int counterLeft) {
         runOnUiThread(() -> {
             if (destroyed) {
                 surface.release();
                 return;
             }
             statusSurface = surface;
-            statusPanel = new NativeStatusPanel(surface, width, height);
+            statusPanel = new NativeStatusPanel(surface, width, height, messageWidth, counterLeft);
             statusPanel.setVisible(sessionVisible && statusLayerVisible);
             nativeStatusVisible(sessionVisible && statusLayerVisible);
         });
@@ -264,6 +279,8 @@ public final class OfficeActivity extends Activity {
             nativeStatusVisible(sessionVisible && visible);
             try {
                 JSONObject status = new JSONObject(packet);
+                // "aim" keeps its name across app and office versions; it carries only the FPS
+                // counter now, never an aim label or control hint.
                 statusPanel.setText(status.optString("aim"), status.optString("message"));
             } catch (JSONException invalid) {
                 Log.w("OfficeXR", "Invalid status packet");
@@ -382,14 +399,6 @@ public final class OfficeActivity extends Activity {
         manual.addView(connect);
         addAddressKeyboard(manual, address);
         form.addView(manual);
-        TextView controls = new TextView(context);
-        controls.setText(
-            "Point with a motion controller and press the trigger to select. "
-            + "Use its thumbstick to scroll. Pair a Bluetooth keyboard for terminal work.");
-        controls.setTextColor(Color.LTGRAY);
-        controls.setTextSize(18);
-        controls.setPadding(0, 16, 0, 0);
-        form.addView(controls);
         ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
         scroll.addView(form);

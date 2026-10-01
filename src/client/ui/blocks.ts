@@ -486,7 +486,7 @@ function paintGame(g: CanvasRenderingContext2D, f: CabinetFrame, v: ScreenView) 
   }
 }
 
-/** Nobody's playing: the title, the high scores and a blinking "press E". */
+/** Nobody's playing: the title, the high scores and the blinking prompt, when there is one. */
 function paintAttract(g: CanvasRenderingContext2D, v: ScreenView) {
   g.textAlign = 'center';
   g.font = `900 76px ${FONT}`;
@@ -509,10 +509,10 @@ function paintAttract(g: CanvasRenderingContext2D, v: ScreenView) {
     g.font = `800 22px ${FONT}`;
     g.fillText('No scores yet. Be the first!', W / 2, 300);
   }
-  if (Math.floor(v.t * 1.6) % 2 === 0) {
+  if (v.prompt && Math.floor(v.t * 1.6) % 2 === 0) {
     g.fillStyle = '#ffd166';
     g.font = `900 30px ${FONT}`;
-    g.fillText(v.prompt ?? 'PRESS E TO PLAY', W / 2, 562);
+    g.fillText(v.prompt, W / 2, 562);
   }
 }
 

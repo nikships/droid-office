@@ -1,21 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KeyActivations, PanelClipboard, sameTextSelection, type TextClipboard } from '../src/client/native/keyboard-actions.js';
-import { pressOf, terminalBytes } from '../src/client/native/keys.js';
+import { pressOf } from '../src/client/native/keys.js';
 
-const terminal = () => {
-  const bytes: string[] = [];
-  const keys = new KeyActivations((id) => {
-    const data = terminalBytes(pressOf(id, new Set()), false);
-    if (data !== null) bytes.push(data);
-  });
-  return { keys, bytes };
+/** The presses a sign-in field would receive, as the keyboard types them. */
+const field = () => {
+  const typed: string[] = [];
+  const keys = new KeyActivations((id) => typed.push(pressOf(id, new Set()).key));
+  return { keys, typed };
 };
 
-test('a held pointer release types each shell character and Enter once, regardless of hold duration', (t) => {
+test('a held pointer release types each character and Enter once, regardless of hold duration', (t) => {
   let now = 0;
   t.mock.method(performance, 'now', () => now);
-  const { keys, bytes } = terminal();
+  const { keys, typed } = field();
   for (const [id, hold] of [
     ['a', 50],
     ['b', 800],
@@ -25,17 +23,17 @@ test('a held pointer release types each shell character and Enter once, regardle
     now += hold;
     keys.click(id, 1);
   }
-  assert.deepEqual(bytes, ['a', 'b', '\r']);
+  assert.deepEqual(typed, ['a', 'b', 'Enter']);
 });
 
 test('keyboard, assistive technology and programmatic click activation still type', () => {
-  const { keys, bytes } = terminal();
+  const { keys, typed } = field();
   keys.click('x', 0);
   keys.click('Enter', 0);
   keys.pointerDown('y');
   keys.click('y', 2);
   keys.click('z', 0);
-  assert.deepEqual(bytes, ['x', '\r', 'y', 'z']);
+  assert.deepEqual(typed, ['x', 'Enter', 'y', 'z']);
 });
 
 test('Cut keeps text until the system clipboard confirms writing it', async () => {

@@ -75,6 +75,17 @@ struct SceneControllerPoses {
     bool held[2] = {false, false};
 };
 
+/**
+ * Which items a render call draws. While the workspace panel is composited beneath the world
+ * layer (office_xr.cpp), the world is drawn first, the panel's hole is cut into it, and the
+ * controller-attached objects are drawn after the hole, so a held gun stays in front of the panel.
+ */
+enum class SceneDrawSet : uint8_t {
+    All,      // every item; clears first with options.clear
+    World,    // every item but the controller-attached ones; clears first with options.clear
+    Attached, // only the controller-attached items, over what is there: never clears
+};
+
 struct SceneEye {         // column-major, OpenGL clip conventions
     float view[16];       // world -> eye
     float projection[16]; // eye -> clip
@@ -260,20 +271,35 @@ class SceneRenderer {
      * treated as invalid.
      */
     void setControllerPoses(const SceneControllerPoses &poses);
+    /**
+     * A bit per hand (1 left, 2 right) holding an attached object that this frame's
+     * setControllerPoses placed: its grip is valid and, for a gripHeld object, squeezed. The object
+     * then takes the controller's place in the hand, so the controller model is not drawn there.
+     * 0 before setControllerPoses in a frame.
+     */
+    unsigned attachedHands() const;
+    /**
+     * The scene-world bounding spheres (x, y, z, radius) of the attached items this frame's
+     * setControllerPoses placed, up to `max` of them, finite ones only; returns how many it wrote.
+     * The display loop uses them to keep compositor quads from covering what the player holds.
+     */
+    size_t attachedBounds(float (*out)[4], size_t max) const;
     // render/renderStereo draw into the bound draw framebuffer and viewport, and leave: no program
     // or vertex array bound, GL_ARRAY_BUFFER 0, blend/cull/polygon offset off, depth test on with
     // LEQUAL and writes on, full color mask, front face CCW, active texture unit 0. Texture units
     // 0-4 and uniform buffer bindings 0-2 are left bound to the renderer's objects. With
-    // options.clear they clear color (the scene background) and depth first. Several calls after
-    // one prepareFrame (the two eyes without multiview) draw the same state and add up in stats.
+    // options.clear they clear color (the scene background) and depth first, except for
+    // SceneDrawSet::Attached. Several calls after one prepareFrame (the two eyes without
+    // multiview, or a World and an Attached pass) draw the same state and add up in stats.
     /** One view (single-view programs). */
-    void render(const SceneEye &eye, int viewportHeightPx);
+    void render(const SceneEye &eye, int viewportHeightPx, SceneDrawSet set = SceneDrawSet::All);
     /**
      * Both eyes. Multiview: one pass into the bound 2-layer framebuffer, bindEye is not called.
      * Otherwise bindEye(0), draw eye 0, bindEye(1), draw eye 1, from the same scene snapshot.
      */
     void renderStereo(const SceneEye eyes[2], int viewportHeightPx,
-                      const std::function<void(int eye)> &bindEye = {});
+                      const std::function<void(int eye)> &bindEye = {},
+                      SceneDrawSet set = SceneDrawSet::All);
 
     // ---- GL thread: the high-resolution laptop screen layer -------------------------------------
     // Laptop screens (materials the page tags sharpText) are drawn a second time, from the same

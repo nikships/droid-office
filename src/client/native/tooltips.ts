@@ -1,13 +1,18 @@
-/** Help stays inside the compositor panel rather than in an operating-system tooltip. */
+/**
+ * Help stays inside the compositor panel rather than in an operating-system tooltip. It says what
+ * a control does, never which key or button does it (native/mode.ts controlHintsShown): desktop
+ * shortcut letters, key combinations and "press E" clauses are left out.
+ */
 export function nativeTooltipText(element: Element): string {
   const title = element.getAttribute('title')?.trim();
   if (!title) return '';
   return (
     title
-      .replace(/press E\b/gi, 'press the controller trigger')
-      .replace(/\(Q\)/g, '(Put back)')
-      // Office-wide shortcut letters and desk keys are desktop-only; the panel keyboard's Tab moves focus instead.
-      .replace(/\s*\((?:Tab|[A-Z/](?: at the desk)?)\)/g, '')
+      // "(M)", "(C at the desk)", "(Tab)", "(Esc)", "(Shift+Esc or Ctrl+])".
+      .replace(/\s*\((?:[A-Z/](?: at the desk)?|[^()]*\b(?:Tab|Esc|Shift|Ctrl)\b[^()]*)\)/g, '')
+      // "· Esc goes to the terminal", ", and press E there".
+      .replace(/\s*·\s*Esc\b[^·]*/g, '')
+      .replace(/,?\s*(?:and\s+)?press E\b[^.·;]*/gi, '')
       .trim()
       .slice(0, 500)
   );
@@ -35,7 +40,7 @@ export function mountNativeTooltips(): void {
   const show = (event: Event, temporary = false) => {
     const next = (event.target as Element | null)?.closest<HTMLElement>('[title]');
     const text = next ? nativeTooltipText(next) : '';
-    if (!next || !text || next.closest('.native-kb') || next.getClientRects().length === 0) return hide();
+    if (!next || !text || next.getClientRects().length === 0) return hide();
     if (next !== target) {
       hide();
       target = next;

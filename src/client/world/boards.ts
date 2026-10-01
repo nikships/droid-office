@@ -5,6 +5,7 @@ import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, Work
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
+import { controlHintsShown, worldNotice } from '../native/mode';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
@@ -162,7 +163,7 @@ export class BoardTexture {
       return;
     }
     if (!open.length) {
-      this.centerNote(state.error ? `⚠️ ${state.error}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
+      this.centerNote(state.error ? `⚠️ ${worldNotice(state.error)}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
       this.texture.needsUpdate = true;
       return;
     }
@@ -281,14 +282,14 @@ export class BoardTexture {
     g.textBaseline = 'middle';
     g.fillStyle = '#8c8c8c';
     g.font = `500 20px ${MONO}`;
-    g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
+    if (controlHintsShown()) g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
   }
 
   /** The Jira tab: the epic's tickets in To Do, In Progress and Done, like the board window's. */
   private drawJira(jira: JiraBoardState, top: number) {
-    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
+    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${worldNotice(jira.error)}`, top);
     if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top);
     const g = this.ctx;
     const cols = ticketColumns(jira.items);
@@ -391,10 +392,12 @@ export class ServicesBoardTexture {
       g.textAlign = 'center';
       g.fillStyle = '#eeeeee';
       g.font = `700 44px ${MONO}`;
-      g.fillText('No web servers running', W / 2, H / 2 - 20);
+      // The headset app's board states only what is so; the line on how it fills is desktop help.
+      const help = controlHintsShown();
+      g.fillText('No web servers running', W / 2, help ? H / 2 - 20 : H / 2 + 14);
       g.fillStyle = 'rgba(140, 140, 140, .9)';
       g.font = `500 28px ${SANS}`;
-      g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
+      if (help) g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;
@@ -515,7 +518,8 @@ export class QueueBoardTexture {
       g.fillText('Nothing queued', W / 2, H / 2 - 10);
       g.fillStyle = '#8c8c8c';
       g.font = `500 28px ${SANS}`;
-      g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
+      // How to fill it is the desktop's to say; the headset app's board only says it's empty.
+      if (controlHintsShown()) g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;

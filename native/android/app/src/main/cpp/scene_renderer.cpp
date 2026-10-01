@@ -78,7 +78,8 @@ struct Program {
     ShaderSource src; // until the link starts
     GLint uModel = -1, uNormalMatrix = -1, uColor = -1, uEmissive = -1, uAlphaTest = -1;
     GLint uMapTransform = -1, uAlphaMapTransform = -1, uEmissiveMapTransform = -1;
-    GLint uReceiveShadow = -1, uPointSize = -1, uSpriteCenter = -1, uSpriteRotation = -1;
+    GLint uReceiveShadow = -1, uPointSize = -1, uPointQuad = -1, uSpriteCenter = -1,
+          uSpriteRotation = -1;
     GLint uMetalRough = -1, uSpecular = -1, uLightViewProj = -1;
     GLint uSky[5] = {-1, -1, -1, -1, -1};
     GLint uSharpRect = -1, uSharpParams = -1, uSharpBias = -1;
@@ -241,6 +242,7 @@ struct SceneRenderer::Impl {
     std::vector<DrawItem> placed;
     uint64_t placedSerial = 0;
     SceneControllerPoses grips; // valid[h] only between setControllerPoses and the next frame
+    unsigned heldHands = 0;     // attachedHands(): a bit per hand with an attached item placed
     SceneStats stats;
 
     explicit Impl(const SceneRendererOptions &o) : options(o), model(modelOptions(o)) {}
@@ -517,6 +519,7 @@ struct SceneRenderer::Impl {
         p.uEmissiveMapTransform = loc("uEmissiveMapTransform");
         p.uReceiveShadow = loc("uReceiveShadow");
         p.uPointSize = loc("uPointSize");
+        p.uPointQuad = loc("uPointQuad");
         p.uSpriteCenter = loc("uSpriteCenter");
         p.uSpriteRotation = loc("uSpriteRotation");
         p.uMetalRough = loc("uMetalRough");
@@ -742,10 +745,23 @@ struct SceneRenderer::Impl {
         gl.vao = ~0u;
     }
 
+    /**
+     * Points drawn as quads: one instance per point (its vertex attributes advance per instance)
+     * and four strip vertices per instance from gl_VertexID (scene_shaders.cpp). Indexed points
+     * stay GL points; ES 3.0 cannot index instance attributes.
+     */
+    static bool pointQuads(const DrawItem &it) {
+        return it.mode == DrawMode::Points && !it.indices;
+    }
+
     GLuint vao(const DrawItem &it) {
         uint64_t iv = it.indices ? it.indices->serial : 0,
                  in = it.instances ? it.instances->serial : 0;
+        const bool quads = pointQuads(it);
         uint64_t key = mix64(mix64(mix64(it.vertices->serial, iv), in), it.useVertexColor);
+        // A quad array starts at the draw's first point, since instanced draws cannot.
+        if (quads)
+            key = mix64(mix64(key, 0x9e3779b97f4a7c15ull), it.first);
         auto found = vaos.find(key);
         if (found != vaos.end())
             return found->second.id;
@@ -753,6 +769,22 @@ struct SceneRenderer::Impl {
         glGenVertexArrays(1, &v);
         glBindVertexArray(v);
         glBindBuffer(GL_ARRAY_BUFFER, buffers.at(it.vertices->serial).id);
+        if (quads) {
+            const size_t base = size_t(it.first) * kVertexStride;
+            glEnableVertexAttribArray(kAttrPosition);
+            glVertexAttribPointer(kAttrPosition, 3, GL_FLOAT, GL_FALSE, kVertexStride,
+                                  offset(base + kOffsetPosition));
+            glVertexAttribDivisor(kAttrPosition, 1);
+            if (it.useVertexColor) {
+                glEnableVertexAttribArray(kAttrColor);
+                glVertexAttribPointer(kAttrColor, 4, GL_HALF_FLOAT, GL_FALSE, kVertexStride,
+                                      offset(base + kOffsetColor));
+                glVertexAttribDivisor(kAttrColor, 1);
+            }
+            vaos[key] = {v, it.vertices->serial, iv, in};
+            gl.vao = v;
+            return v;
+        }
         glEnableVertexAttribArray(kAttrPosition);
         glVertexAttribPointer(kAttrPosition, 3, GL_FLOAT, GL_FALSE, kVertexStride,
                               offset(kOffsetPosition));
@@ -1165,6 +1197,12 @@ struct SceneRenderer::Impl {
             break;
         }
         GLsizei instances = it.instances ? GLsizei(it.instances->count) : 1;
+        if (pointQuads(it)) {
+            glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, GLsizei(it.count));
+            stats.drawCalls++;
+            stats.points += it.count;
+            return;
+        }
         if (it.indices) {
             GLenum type = it.indices->wide ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
             const void *at = offset(size_t(it.first) * (it.indices->wide ? 4 : 2));
@@ -1233,6 +1271,8 @@ struct SceneRenderer::Impl {
             glUniform1f(p.uReceiveShadow, it.receiveShadow ? 1.0f : 0.0f);
         if (p.uPointSize >= 0)
             glUniform1f(p.uPointSize, m.pointSize * options.pointPixelScale);
+        if (p.uPointQuad >= 0)
+            glUniform1i(p.uPointQuad, pointQuads(it) ? 1 : 0);
         if (p.uSpriteCenter >= 0)
             glUniform2fv(p.uSpriteCenter, 1, it.spriteCenter);
         if (p.uSpriteRotation >= 0)
@@ -1390,12 +1430,22 @@ struct SceneRenderer::Impl {
             grips.held[h] = grips.valid[h] && poses.held[h];
             std::copy(poses.grip[h], poses.grip[h] + 16, grips.grip[h]);
         }
+        heldHands = 0;
         if (const RenderState *s = current.get()) {
             if (placedSerial != s->serial)
                 syncAttachments(*s);
             else
                 compose(*s);
+            for (const DrawItem &it : placed)
+                if (placedAt(it))
+                    heldHands |= 1u << it.attachment;
         }
+    }
+
+    /** An attached item has a pose this frame: its grip is valid and, if grip-held, squeezed. */
+    bool placedAt(const DrawItem &it) const {
+        return it.attachment >= 0 && grips.valid[it.attachment] &&
+               (!it.gripHeld || grips.held[it.attachment]);
     }
 
     /**
@@ -1404,7 +1454,8 @@ struct SceneRenderer::Impl {
      * transparent by group order, render order, far to near, id. Depth is the bounding-sphere
      * center in eye 0's clip space, as three projects the bounding-sphere center.
      */
-    void buildLists(const RenderState &s, const SceneEye *eyes, int count, bool multiviewPass) {
+    void buildLists(const RenderState &s, const SceneEye *eyes, int count, bool multiviewPass,
+                    SceneDrawSet set) {
         opaque.clear();
         transparent.clear();
         Frustum fr[2];
@@ -1412,18 +1463,25 @@ struct SceneRenderer::Impl {
         for (int i = 0; i < count; i++)
             fr[i] = Frustum::fromViewProj(multiply(toMat(eyes[i].projection), toMat(eyes[i].view)));
         syncAttachments(s);
-        size_t attached = 0;
-        stats.attachedPlaced = 0;
+        size_t attached = 0, considered = 0;
+        if (set != SceneDrawSet::World)
+            stats.attachedPlaced = 0;
         for (const DrawItem &source : s.items) {
             const DrawItem *drawn = &source;
             if (source.attachment >= 0) {
                 drawn = &placed[attached++];
+                if (set == SceneDrawSet::World)
+                    continue;
+                considered++;
                 // Without this frame's tracked grip there is no pose to draw it at: never a stale
                 // one. A grip-held item drops on the display frame its squeeze is released.
-                if (!grips.valid[source.attachment] ||
-                    (source.gripHeld && !grips.held[source.attachment]))
+                if (!placedAt(source))
                     continue;
                 stats.attachedPlaced++;
+            } else if (set == SceneDrawSet::Attached) {
+                continue;
+            } else {
+                considered++;
             }
             const DrawItem &it = *drawn;
             bool seen = false;
@@ -1463,7 +1521,9 @@ struct SceneRenderer::Impl {
                 return a.z > b.z;
             return x.id < y.id;
         });
-        stats.culledItems = uint32_t(s.items.size() - opaque.size() - transparent.size());
+        // The attached pass follows a world pass of the same frame and adds its own culls.
+        const auto culled = uint32_t(considered - opaque.size() - transparent.size());
+        stats.culledItems = set == SceneDrawSet::Attached ? stats.culledItems + culled : culled;
     }
 
     /**
@@ -1612,6 +1672,7 @@ struct SceneRenderer::Impl {
         frameNumber++;
         // Grips are valid for one display frame only.
         grips.valid[0] = grips.valid[1] = grips.held[0] = grips.held[1] = false;
+        heldHands = 0;
         prepareMs = drawMs = 0;
         stats.drawCalls = stats.shadowDrawCalls = stats.triangles = stats.points = stats.lines =
             stats.culledItems = 0;
@@ -1678,7 +1739,7 @@ struct SceneRenderer::Impl {
     }
 
     void draw(const SceneEye *eyes, int count, int heightPx,
-              const std::function<void(int)> &bindEye) {
+              const std::function<void(int)> &bindEye, SceneDrawSet set) {
         if (autoPrepare || !prepared)
             prepareFrame();
         auto t0 = Clock::now();
@@ -1692,7 +1753,7 @@ struct SceneRenderer::Impl {
         const RenderState *s = current.get();
         if (s) {
             writeViewUbos(eyes, count, heightPx, multiviewPass);
-            buildLists(*s, eyes, count, multiviewPass);
+            buildLists(*s, eyes, count, multiviewPass, set);
         }
         int passes = multiviewPass ? 1 : count;
         for (int e = 0; e < passes; e++) {
@@ -1702,7 +1763,7 @@ struct SceneRenderer::Impl {
             }
             if (s && !multiviewPass)
                 glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, viewUbo[ring][e]);
-            if (options.clear)
+            if (options.clear && set != SceneDrawSet::Attached)
                 clearTarget(s);
             if (!s)
                 continue;
@@ -2499,15 +2560,35 @@ void SceneRenderer::setControllerPoses(const SceneControllerPoses &poses) {
         impl_->setControllerPoses(poses);
 }
 
-void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx) {
+unsigned SceneRenderer::attachedHands() const { return impl_->initialized ? impl_->heldHands : 0; }
+
+size_t SceneRenderer::attachedBounds(float (*out)[4], size_t max) const {
+    if (!impl_->initialized || !impl_->heldHands)
+        return 0;
+    size_t count = 0;
+    for (const DrawItem &it : impl_->placed) {
+        if (count >= max)
+            break;
+        if (!impl_->placedAt(it) || it.sphere.empty() || it.sphere.infinite())
+            continue;
+        out[count][0] = it.sphere.c.x;
+        out[count][1] = it.sphere.c.y;
+        out[count][2] = it.sphere.c.z;
+        out[count][3] = it.sphere.r;
+        count++;
+    }
+    return count;
+}
+
+void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(&eye, 1, viewportHeightPx, {});
+        impl_->draw(&eye, 1, viewportHeightPx, {}, set);
 }
 
 void SceneRenderer::renderStereo(const SceneEye eyes[2], int viewportHeightPx,
-                                 const std::function<void(int eye)> &bindEye) {
+                                 const std::function<void(int eye)> &bindEye, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(eyes, 2, viewportHeightPx, bindEye);
+        impl_->draw(eyes, 2, viewportHeightPx, bindEye, set);
 }
 
 bool SceneRenderer::hasSharpScreens() const { return impl_->hasSharpAnywhere(); }

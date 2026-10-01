@@ -8,6 +8,8 @@
 // must stay bound too.
 //   render <packets.json> <out-dir> [--size px] [--seconds s] [--look ex,ey,ez,tx,ty,tz]
 // Without --look the eyes sit at the page camera from the stream.
+#include "layer_occlusion.h"
+#include "panel_cutout.h"
 #include "scene_renderer.h"
 #include "scene_shaders.h"
 #include "scene_uniforms.h"
@@ -1222,6 +1224,221 @@ void attachmentChecks(std::vector<std::string> &failed) {
     glDeleteRenderbuffers(1, &depth);
 }
 
+/**
+ * The workspace panel beneath the world layer (panel_cutout.h), drawn the way office_xr.cpp
+ * draws a frame with it open: SceneDrawSet::World, PanelCutout::punch, SceneDrawSet::Attached,
+ * PanelCutout::seal. Inside the panel's hole the world is transparent black, also where it is
+ * nearer than the panel; an object held in front of the panel is opaque there, one behind it is
+ * not; outside the hole everything is opaque and unchanged. attachedHands reports the hands whose
+ * attached object is placed. Single view (the multiview program differs only in its view index).
+ */
+void panelUnderlayChecks(std::vector<std::string> &failed) {
+    auto expect = [&](bool ok, const std::string &what) {
+        std::printf("  panel underlay: %s %s\n", ok ? "ok  " : "FAIL", what.c_str());
+        if (!ok)
+            failed.push_back("panel underlay: " + what);
+    };
+    constexpr int size = 64;
+    GLuint color = 0, depth = 0, fbo = 0;
+    glGenRenderbuffers(1, &color);
+    glBindRenderbuffer(GL_RENDERBUFFER, color);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, size, size);
+    glGenRenderbuffers(1, &depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, size, size);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+
+    SceneRendererOptions options;
+    options.srgbFramebuffer = false;
+    options.shadows = false;
+    options.checkGlErrors = true;
+    auto r = std::make_unique<SceneRenderer>(options);
+    if (!r->initialize()) {
+        expect(false, "initialize: " + r->lastError());
+        return;
+    }
+    PanelCutout cutout;
+    try {
+        cutout.initialize(false);
+    } catch (const std::exception &e) {
+        expect(false, std::string("cutout initialize: ") + e.what());
+        return;
+    }
+    // A 0.2 m square facing +Z; objects scale it.
+    const float quad[18] = {-.1f, -.1f, 0, .1f, -.1f, 0, .1f,  .1f, 0,
+                            -.1f, -.1f, 0, .1f, .1f,  0, -.1f, .1f, 0};
+    const json data = json::object({{"d", base64(quad, sizeof quad)}});
+    const json geometry = json::object({{"id", 1},
+                                        {"rev", 0},
+                                        {"count", 6},
+                                        {"attrs", {{"position", {{"n", 3}, {"data", data}}}}},
+                                        {"groups", json::array()},
+                                        {"range", {0, -1}},
+                                        {"sphere", {0, 0, 0, .15}}});
+    const json materials = json::array(
+        {json::object({{"id", 1}, {"type", "basic"}, {"color", {1, 0, 0}}, {"opacity", 1}}),
+         json::object({{"id", 2}, {"type", "basic"}, {"color", {0, 1, 0}}, {"opacity", 1}})});
+    // Green: a world object 1 m away, nearer than the panel, half inside the panel's hole.
+    // Red: a gun held on the left grip.
+    json world = {{"id", 12},
+                  {"kind", "mesh"},
+                  {"geo", 1},
+                  {"mat", 2},
+                  {"m", {3, 0, 0, 0, 3, 0, 0, 0, 3, -.35f, 0, -1}}};
+    json gun = {{"id", 20},
+                {"kind", "mesh"},
+                {"geo", 1},
+                {"mat", 1},
+                {"hand", 0},
+                {"gripHeld", true},
+                {"m", {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}}};
+    json p = {{"v", 1},
+              {"seq", 1},
+              {"commit", true},
+              {"reset", true},
+              {"geometries", json::array({geometry})},
+              {"materials", materials},
+              {"objects", json::array({world, gun})}};
+    expect(r->enqueue(std::move(p)), "the packet is accepted");
+
+    SceneEye eye;
+    const Mat proj = perspective(60, 1, .05f, 100);
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    std::memcpy(eye.view, identity, sizeof identity);
+    std::memcpy(eye.projection, proj.m, sizeof proj.m);
+    float views[2][16];
+    std::memcpy(views[0], proj.m, sizeof proj.m); // the view is the identity
+    std::memcpy(views[1], proj.m, sizeof proj.m);
+    // A 1 x 1 m panel 1.5 m ahead: its hole spans pixels 14..50 of 64 both ways.
+    const auto c = panelCutoutCorners({{0, 0, 0, 1}, {0, 0, -1.5f}}, 1, 1, 0);
+    float corners[4][3];
+    for (int i = 0; i < 4; i++) {
+        corners[i][0] = c[size_t(i)].x;
+        corners[i][1] = c[size_t(i)].y;
+        corners[i][2] = c[size_t(i)].z;
+    }
+    auto grip = [](float x, float z, bool squeezed) {
+        SceneControllerPoses g;
+        const float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, z, 1};
+        std::copy(m, m + 16, g.grip[0]);
+        g.valid[0] = true;
+        g.held[0] = squeezed;
+        return g;
+    };
+    std::vector<uint8_t> px;
+    auto at = [&](int x, int y) { return &px[size_t(y * size + x) * 4]; };
+    auto is = [&](int x, int y, int red, int green, int blue, int alpha) {
+        const uint8_t *q = at(x, y);
+        auto near = [](int a, int b) { return std::abs(a - b) <= 2; };
+        return near(q[0], red) && near(q[1], green) && near(q[2], blue) && near(q[3], alpha);
+    };
+    // One display frame with the panel open; `seal` before the attached pass to test the seal.
+    auto frame = [&](const SceneControllerPoses &poses, bool sealFirst) {
+        r->tick();
+        r->prepareFrame();
+        r->setControllerPoses(poses);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, size, size);
+        r->render(eye, size, SceneDrawSet::World);
+        cutout.punch(views, corners);
+        if (sealFirst)
+            cutout.seal(views, corners);
+        r->render(eye, size, SceneDrawSet::Attached);
+        glFinish();
+        px = readPixels(size, size);
+    };
+    const auto front = grip(.3f, -1, true);
+    for (int i = 0; i < 600; i++) {
+        frame(front, false);
+        const SceneStats st = r->stats();
+        if (st.stateSerial && !st.pendingUploads && !st.waitingState && !st.programsCompiling &&
+            !st.queuedTextureOps && !st.queuedBytes)
+            break;
+    }
+    frame(front, false);
+    expect(r->attachedHands() == 1, "the squeezed left grip holds the gun");
+    float bounds[4][4] = {};
+    expect(r->attachedBounds(bounds, 4) == 1 && std::abs(bounds[0][0] - .3f) < 1e-4f &&
+               std::abs(bounds[0][1]) < 1e-4f && std::abs(bounds[0][2] + 1) < 1e-4f &&
+               std::abs(bounds[0][3] - .15f) < 1e-4f,
+           "attachedBounds gives the held gun's sphere at its grip");
+    expect(r->attachedBounds(bounds, 0) == 0, "attachedBounds writes no more than asked");
+    expect(is(4, 4, 0, 0, 0, 255) && is(60, 60, 0, 0, 0, 255),
+           "outside the hole the background stays opaque");
+    expect(is(6, 32, 0, 255, 0, 255), "outside the hole the world stays opaque and unchanged");
+    expect(is(22, 32, 0, 0, 0, 0), "inside the hole a world object nearer than the panel is cut");
+    expect(is(36, 20, 0, 0, 0, 0), "inside the hole the background is cut");
+    expect(is(45, 32, 255, 0, 0, 255), "a gun held in front of the panel stays opaque over it");
+    expect(is(52, 32, 255, 0, 0, 255), "the gun beside the panel is drawn as before");
+
+    // Behind the panel (2 m away), the held gun is hidden by the panel's depth.
+    frame(grip(.3f, -2, true), false);
+    expect(is(40, 32, 0, 0, 0, 0), "a gun behind the panel stays hidden behind it");
+
+    // Released (gripHeld): nothing in the hand, nothing drawn in the hole.
+    frame(grip(.3f, -1, false), false);
+    expect(r->attachedHands() == 0 && r->attachedBounds(bounds, 4) == 0,
+           "a released gun is not in the hand");
+    expect(is(45, 32, 0, 0, 0, 0), "a released gun is not drawn");
+    SceneControllerPoses lost = front;
+    lost.valid[0] = false;
+    frame(lost, false);
+    expect(r->attachedHands() == 0, "a lost grip holds nothing");
+
+    // The seal: the hole's depth becomes the near plane, so nothing drawn after it shows there
+    // (the screen layer tests against this depth), and its color is untouched.
+    frame(front, true);
+    expect(is(45, 32, 0, 0, 0, 0) && is(22, 32, 0, 0, 0, 0),
+           "after the seal nothing draws inside the hole");
+    expect(is(52, 32, 255, 0, 0, 255) && is(6, 32, 0, 255, 0, 255),
+           "the seal leaves everything outside the hole as it was");
+
+    // The world pass alone has no gun; the attached pass alone keeps what is there.
+    r->tick();
+    r->prepareFrame();
+    r->setControllerPoses(front);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    r->render(eye, size, SceneDrawSet::World);
+    glFinish();
+    px = readPixels(size, size);
+    expect(is(45, 32, 0, 0, 0, 255) && is(22, 32, 0, 255, 0, 255),
+           "SceneDrawSet::World draws the world without the attached gun");
+    glClearColor(0, 0, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    r->render(eye, size, SceneDrawSet::Attached);
+    glFinish();
+    px = readPixels(size, size);
+    expect(is(45, 32, 255, 0, 0, 255) && is(22, 32, 0, 0, 255, 255),
+           "SceneDrawSet::Attached draws only the gun and never clears");
+    expect(r->stats().attachedPlaced == 1, "the attached pass counts the placed gun");
+
+    // Both calls leave the documented state.
+    GLint func = 0, program = 1, array = 1;
+    GLboolean mask[4] = {}, depthWrite = GL_FALSE;
+    GLfloat range[2] = {};
+    cutout.punch(views, corners);
+    cutout.seal(views, corners);
+    glGetIntegerv(GL_DEPTH_FUNC, &func);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &array);
+    glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    glGetFloatv(GL_DEPTH_RANGE, range);
+    expect(func == GL_LEQUAL && depthWrite && glIsEnabled(GL_DEPTH_TEST) &&
+               !glIsEnabled(GL_BLEND) && mask[0] && mask[1] && mask[2] && mask[3] &&
+               range[0] == 0 && range[1] == 1 && program == 0 && array == 0,
+           "punch and seal leave depth LEQUAL with writes, no blend, full mask, range 0..1");
+    expect(r->lastError().empty(), "renderer error: " + r->lastError());
+    expect(glGetError() == GL_NO_ERROR, "no GL error");
+    r.reset();
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteRenderbuffers(1, &color);
+    glDeleteRenderbuffers(1, &depth);
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         std::fprintf(stderr, "usage: render <packets.json> <out-dir> [--size px] [--seconds s]\n");
@@ -1666,6 +1883,7 @@ int main(int argc, char **argv) {
     check(!st.pendingUploads && !st.waitingState, "uploads still pending after settling");
     sharpSamplingChecks(out, failed);
     attachmentChecks(failed);
+    panelUnderlayChecks(failed);
     for (const std::string &what : failed)
         std::printf("failed: %s\n", what.c_str());
     if (failed.empty())

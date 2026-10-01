@@ -22,7 +22,6 @@ export const NATIVE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
   ['Y · left', 'Open or close Find anything.'],
   ['A · right', 'Jump in the office.'],
   ['B · right', 'Go back in the workspace. In the office, return a held issue card.'],
-  ['Right stick click', 'Show or hide the keyboard while the workspace is open.'],
   ['Triggers', 'Point and click in the workspace, use desks and elevator buttons, or place a held card.'],
   ['Grips', 'Hold nearby objects. Grip does not navigate menus or return cards.'],
   ['Merge gong', 'Strike the brass disc with either controller. Pull away before striking again.'],

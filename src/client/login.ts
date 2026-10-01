@@ -6,7 +6,7 @@ const next = safeReturnTo(new URLSearchParams(location.search).get(RETURN_PARAM)
 // Signing in on a headset's panel: its own keyboard, since there may be no other.
 if (isNativePath(next)) {
   document.body.classList.add('native-xr');
-  mountKeyboard({ storageKey: 'droid-office.native-keyboard' }).show(true);
+  mountKeyboard();
 }
 
 const form = document.getElementById('form') as HTMLFormElement;

@@ -4,6 +4,7 @@ import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
+import { withControlHint } from '../native/mode';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
@@ -321,7 +322,7 @@ export function openElevator(opts: ElevatorOptions): void {
     { role: 'dialog', 'aria-label': 'Elevator' },
     h('header', {}, h('h2', {}, setup ? 'Welcome to Droid Office' : 'Elevator'), close),
     h('div.body', {}, intro, floorsEl, addEl),
-    h('footer', {}, h('span.grow', {}, setup ? 'Your office, one floor per project · Esc to look around first' : 'Pick a floor · Esc to stay here'), addBtn),
+    h('footer', {}, h('span.grow', {}, setup ? withControlHint('Your office, one floor per project', ' · Esc to look around first') : withControlHint('Pick a floor', ' · Esc to stay here')), addBtn),
   );
   const unsubs = [
     store.on('floors', () => (renderFloors(), renderAdd())),
