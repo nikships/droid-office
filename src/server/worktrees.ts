@@ -29,6 +29,12 @@ export interface WorktreeRef {
   made?: string;
 }
 
+export interface WorktreeOwnership {
+  branch: string;
+  existing: string[];
+  createdAt: number;
+}
+
 export interface ListedWorktree {
   /** Relative to the project dir. */
   path: string;
@@ -243,6 +249,17 @@ export class Worktrees {
     );
   }
 
+  /** Recorded before the agent starts, so same-second reflogs cannot make a pre-existing branch its own. */
+  ownership(branch: string): WorktreeOwnership {
+    return {
+      branch,
+      existing: this.gitSync(['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
+        .split('\n')
+        .filter((b) => b && b !== branch),
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+  }
+
   /**
    * Whether `from` was renamed to `branch` (`git branch -m`), going by the reflog that moved with it.
    * Only the rename line counts. "Created from" and a deleted branch are not a rename: git can't say
@@ -322,6 +339,69 @@ export class Worktrees {
         if (made) await this.git(['branch', '-D', made]).catch(() => undefined);
       }
       return undefined;
+    } catch (err) {
+      return gitError(err);
+    }
+  }
+
+  /** Gun dismissal: discard owned work, never a project checkout or a branch that predates this worker. */
+  async dismiss(wt: WorktreeRef, home = this.dir, ownership?: WorktreeOwnership): Promise<string | undefined> {
+    try {
+      if (!wt.path) throw new Error('the worker has no owned worktree folder');
+      const abs = path.resolve(this.dir, wt.path);
+      if (!within(path.join(real(home), WORKTREES_DIR), real(abs))) throw new Error('refusing to delete a worktree outside the owning office');
+      if (existsSync(abs) && real(path.resolve(abs, await this.git(['rev-parse', '--git-common-dir'], abs))) !== this.commonDir()) throw new Error('the worktree belongs to a different repository');
+      const original = ownership?.branch ?? wt.made ?? wt.branch;
+      const branches = new Set<string>();
+      if (original.startsWith(BRANCH_PREFIX)) branches.add(original);
+      const candidates = new Set([wt.branch]);
+      if (existsSync(abs)) {
+        const live = await this.branchOf(wt);
+        if (live) candidates.add(live);
+        // Includes earlier branches the worker created and left behind, not just the active one.
+        const log = await this.git(['reflog', 'show', '--format=%gs', 'HEAD'], abs);
+        for (const line of log.split('\n')) {
+          const checkout = /^checkout: moving from (\S+) to (\S+)$/.exec(line);
+          if (checkout) {
+            candidates.add(checkout[1]);
+            candidates.add(checkout[2]);
+          }
+        }
+      }
+      for (const branch of candidates) {
+        if (branch === this.currentBranch() || ownership?.existing.includes(branch) || !(await this.hasBranch(branch))) continue;
+        if (await this.renamedTo(original, branch)) branches.add(branch);
+        else if (ownership) {
+          const createdAt = await this.createdAt(branch);
+          if (createdAt !== undefined && createdAt >= ownership.createdAt) branches.add(branch);
+        } else if (branch !== original && (await this.madeSince(branch, original))) {
+          // Old state has no branch inventory: ties cannot prove that a branch wasn't already there.
+          const [createdAt, originalAt] = await Promise.all([this.createdAt(branch), this.createdAt(original)]);
+          if (createdAt !== undefined && originalAt !== undefined && createdAt > originalAt) branches.add(branch);
+        }
+      }
+      branches.delete(this.currentBranch() ?? '');
+      // Unlike ordinary send-home, this does not consult dirty/unpushed or wouldLose protections.
+      if (existsSync(abs)) {
+        try {
+          await this.git(['worktree', 'remove', '--force', '--force', abs]);
+        } catch (err) {
+          // Across repositories this folder is inside the owning office, not this repository's office.
+          if (!within(path.join(real(home), WORKTREES_DIR), real(abs))) throw err;
+          await rm(abs, { recursive: true, force: true });
+        }
+      }
+      await this.git(['worktree', 'prune']);
+      const errors: string[] = [];
+      for (const branch of branches) {
+        if (!(await this.hasBranch(branch))) continue;
+        try {
+          await this.git(['branch', '-D', branch]);
+        } catch (err) {
+          errors.push(`${branch}: ${gitError(err)}`);
+        }
+      }
+      return errors.length ? errors.join('; ') : undefined;
     } catch (err) {
       return gitError(err);
     }

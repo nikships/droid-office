@@ -76,6 +76,9 @@ export interface WorkerTask {
   summary: string;
 }
 
+/** How long a shot worker can be revived before dismissal and worktree cleanup. */
+export const WORKER_REVIVE_MS = 30_000;
+
 export interface WorkerInfo {
   id: string;
   /** 'agent' runs the selected provider; 'shell' is a plain shared login shell. */
@@ -93,6 +96,8 @@ export interface WorkerInfo {
   name: string;
   color: string;
   status: WorkerStatus;
+  /** Shot: the server's revival deadline (ms since epoch); the session runs until then. */
+  downedUntil?: number;
   /** True once someone opened the terminal after the last done / needs_input. */
   acked: boolean;
   /** When it last went to done or needs_input (ms), so N goes to whoever has waited longest first. */
@@ -1093,6 +1098,10 @@ export type ClientMsg =
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
+  /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
+  | { t: 'worker.shoot'; workerId: string }
+  /** Revives a nearby shot worker before its deadline, without restarting its session. */
+  | { t: 'worker.revive'; workerId: string }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
   | { t: 'worker.worktree'; workerId: string }
   /** Puts a lost worker's worktree back and starts it again (see WorkerInfo.lost); `all`: every lost worker on the floor. */

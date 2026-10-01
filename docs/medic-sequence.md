@@ -1,10 +1,13 @@
 # Medic collection sequence
 
 The casualty presentation is shared by the desktop scene and the installed native client.
-`src/client/world/casualties.ts` handles only local visuals and sound callbacks. A shot does
-not stop a worker or its PTY. The existing kill dialog sends `worker.kill` only after explicit
-confirmation, and the collection starts when that worker's removal arrives. Revive restores
-an unconfirmed worker to its seat with its session untouched.
+`src/client/world/casualties.ts` handles visuals and sound callbacks. `worker.shoot` starts a
+server-owned, persisted 30-second revival deadline without stopping the worker or its PTY.
+There is no confirmation dialog: walking within 2.4 metres of the body and pressing E sends
+`worker.revive`, restoring it to its seat with its session untouched. If the deadline expires,
+the server dismisses the worker and deletes its owned worktrees and branches, even with
+uncommitted or unpublished work. Collection starts when that worker's removal arrives.
+Every client on the floor renders the downed state and the medic sequence.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
 turning into the fallen worker's orientation. They approach its torso rather than its foot
@@ -38,8 +41,8 @@ hand contact over six fall/yaw combinations and complete carry routes, planted b
 continuous position/rotation/world scale across loading and attachment, private fade material
 ownership, revive/clear behavior, helper reset/disposal, and native scene conformance.
 The exporter accepts the medic scene without errors or unsupported features and sends no
-new geometry buffers during pickup. The original casualty tests still cover shot/dialog,
-sound and laptop lifecycle behavior.
+new geometry buffers during pickup. The original casualty tests still cover shooting, nearby
+revival, sound and laptop lifecycle behavior.
 
 A standalone browser fixture was reviewed and recorded without connecting to an office,
 starting workers, or sending terminal input. This checks appearance and choreography.

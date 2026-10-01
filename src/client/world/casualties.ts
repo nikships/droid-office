@@ -4,15 +4,15 @@ import { nearestWalkable, route, type Pt } from '../../shared/nav';
 import type { MedicPose } from './character';
 
 /**
- * Workers shot with the .44 Magnum. Nothing here goes to the server: the death scene is local to
- * the shooter, and the confirmed kill goes out as an ordinary `worker.kill`.
+ * Workers shot with the .44 Magnum. The server owns their revival deadlines; this class renders
+ * the shared downed state and the medic pickup after dismissal.
  *
  * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
- * pool spreads under it while its session keeps running (see shoot). From there either Revive
- * stands it back up in its seat with its session untouched, or confirming the kill calls in two
+ * pool spreads under it while its session keeps running (see shoot). Pressing E nearby
+ * stands it back up in its seat with its session untouched, or expiry calls in two
  * paramedics with a stretcher (see confirm): they walk in from the elevator, lower and open the scoop
  * stretcher, support and settle the body, close the bed and lift together, then carry it back to the elevator and fade, and the laptop shuts and
- * shrinks as on a send-home. Other clients just see the send-home walk-out.
+ * shrinks as on a send-home. Every client on the floor sees the same lifecycle.
  *
  * No DOM or WebGL at import time, so tests can load this in Node.
  */
@@ -50,7 +50,7 @@ const TUMBLE = 0.65;
 /** Where the medics come from: out of the elevator, on every floor. */
 const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
 
-/** Falling, bled out waiting on the dialog, medics on the way, loading, carrying out, gone. */
+/** Falling, bled out waiting for revival, medics on the way, loading, carrying out, gone. */
 export type CasualtyPhase = 'fall' | 'bled' | 'fetch' | 'load' | 'carry' | 'fade';
 
 /** What a casualty needs of a worker's model (see world/character.ts Worker). */
@@ -221,10 +221,25 @@ export class Casualties {
     private hooks: CasualtyHooks,
   ) {}
 
-  /** Whether `id` is down on the floor waiting on the bleed-out dialog. */
+  /** Whether `id` is down on the floor and can still be revived. */
   dying(id: string): boolean {
     const c = this.all.get(id);
     return !!c && (c.phase === 'fall' || c.phase === 'bled');
+  }
+
+  /** The closest revivable body within walking reach, on this storey. */
+  nearby(at: { x: number; y: number; z: number }, radius = 2.4): string | null {
+    let nearest: string | null = null;
+    let distance = radius;
+    for (const [id, c] of this.all) {
+      if (!this.dying(id) || Math.abs(c.floor.y + FEET - at.y) > 1.5) continue;
+      const d = Math.hypot(c.floor.x - at.x, c.floor.z - at.z);
+      if (d < distance) {
+        nearest = id;
+        distance = d;
+      }
+    }
+    return nearest;
   }
 
   /** The phase `id` is in, if it has a scene running. */

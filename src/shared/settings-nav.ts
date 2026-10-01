@@ -8,7 +8,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and how you’re signed in.' },
   { id: 'sound', icon: '🔊', label: 'Sound & voice', blurb: 'How loud the office is for you.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
-  { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, and where the elevator looks for projects.' },
+  { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, where the elevator looks for projects, and local source reload.' },
   { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home and what the office tells them.' },
 ];
 
@@ -34,6 +34,7 @@ export const SETTINGS_CARDS = [
   { pane: 'building', title: 'Jira', scope: 'office' },
   { pane: 'building', title: "This floor's Jira epic", scope: 'floor' },
   { pane: 'building', title: 'Workspace folder', scope: 'office' },
+  { pane: 'building', title: 'Source hot reload', scope: 'office' },
   { pane: 'workers', title: 'Default worker', scope: 'office' },
   { pane: 'workers', title: 'Prompts', scope: 'office' },
   { pane: 'workers', title: 'Worker limit', scope: 'office' },
