@@ -28,12 +28,17 @@ of creating a second office state or a separate worker/board implementation.
   block the UI thread and freeze gameplay while native FPS remains high.
 - Motion controllers are the native app's only supported input scheme. Do not request hand
   tracking permissions or enable hand tracking/mesh extensions. The left controller's Menu
-  button toggles the workspace; the right Menu button belongs to Android XR. Grip holds objects
+  button toggles APK-native settings; Office workspace opens the shared office tools. The right
+  Menu button belongs to Android XR. Grip holds objects
   and never navigates the workspace. Keep WebXR controls unchanged.
   Read [the physical interaction contract](../docs/vr-native-controller-interactions.md) before
   changing button roles, climbing or weapon input. Physical gestures require a tracked grip,
   never an aim-pose fallback. Reanchor after tracking/reference changes; climb from native-space
   hand deltas, without feeding rig movement back into the next pull.
+- Keep graphics settings APK-owned: Android UI updates the native snapshot directly and persists
+  it off the display/UI threads. Page graphics must not overwrite host choices. Preserve legacy
+  APK compatibility and read-only page mirrors. Shared office windows/terminals use the compositor
+  workspace; never reject all modals or redirect a visible terminal's keyboard into the world.
 - Controller geometry uploads once. Animate buttons from current native poses/input without
   bridge round trips; tracking loss must cancel interactions and suppress stale presses.
 - Check extensions, function pointers and supported modes at runtime. Treat a 90 Hz request

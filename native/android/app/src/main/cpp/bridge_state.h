@@ -41,12 +41,34 @@ struct ControlState {
 };
 /**
  * The graphics settings the native host keeps between launches, so the first world targets match
- * the page's stored choice: render scale and foveation only. The diagnostic view and the
- * sharp-screen choice wait for the page.
+ * the stored choice: render scale, foveation and the FPS counter. The diagnostic view and the
+ * sharp-screen choice are never stored.
  */
 std::string storedGraphics(const GraphicsControls &graphics);
-/** False, leaving graphics unchanged, for a missing, corrupted or unsupported copy. */
+/**
+ * False, leaving graphics unchanged, for a missing, corrupted or unsupported copy. Older copies
+ * without "fps" restore it as off; older foveation names (clarity, balanced, performance) map to
+ * low, medium and high.
+ */
 bool restoreGraphics(const std::string &text, GraphicsControls &graphics);
+/**
+ * The host's settings as the page mirrors them (nativeReadEvents "graphics"), version 1:
+ * {v, renderScale, foveation: off|low|medium|high, fps, sharpScreens, foveationDebug}.
+ */
+std::string graphicsEvent(const GraphicsControls &graphics);
+/** off, low, medium, high, and the older clarity, balanced, performance. False otherwise. */
+bool foveationFromName(const std::string &name, FoveationQuality &quality);
+/** What a graphics-owning host accepts: scale in [0.75, 2], no sharp screens or diagnostic. */
+GraphicsControls hostGraphics(GraphicsControls graphics);
+/** The closed-workspace FPS counter from the pulled metrics (nativeReadMetrics). */
+std::string fpsCounterText(const std::string &metrics);
+/**
+ * What the APK's settings view shows (nativeReadGraphicsStatus): the host's graphics, the
+ * renderer's recommended, maximum and applied eye sizes, the size the choice selects, the exact
+ * maximum multiplier, the bound foveation, whether new targets are still pending, the target
+ * error and the counter text. Unknown values are null until the renderer has reported them.
+ */
+std::string graphicsStatus(const GraphicsControls &graphics, const std::string &metrics);
 
 /** Parsing happens on the bridge worker. The render thread only copies a small snapshot. */
 class BridgeState {
@@ -58,11 +80,28 @@ class BridgeState {
      * does not replace the world targets with defaults and back.
      */
     void reset();
-    /** Graphics to use until a page sends some, such as the last launch's (storedGraphics). */
+    /**
+     * Graphics to use until a page (or, when the host owns them, the host) sets some, such as the
+     * last launch's (storedGraphics).
+     */
     void seedGraphics(const GraphicsControls &graphics);
     GraphicsControls graphics();
-    /** True once after a page changed what storedGraphics keeps; graphics receives the settings. */
+    /**
+     * True once after a page or the host changed what storedGraphics keeps; graphics receives the
+     * settings.
+     */
     bool takeStoredGraphics(GraphicsControls &graphics);
+    /**
+     * From now on the native host owns graphics: control packets' "graphics" is ignored without
+     * being parsed, so a stale or older page can neither overwrite nor reject anything, and the
+     * page's FPS counter text is replaced by the host's (setCounter) when graphics.fps is on.
+     */
+    void ownGraphics();
+    bool ownsGraphics();
+    /** The host's choice (hostGraphics), applied at once. Ignored unless ownGraphics was called. */
+    bool setGraphics(const GraphicsControls &graphics);
+    /** The host's FPS counter text, shown in the status counter while graphics.fps is on. */
+    void setCounter(const std::string &text);
     /**
      * Debug builds only: read the page's capture puppet from control packets. Release builds
      * (no OFFICE_CAPTURE_PUPPET) ignore the request, and the field is never parsed.
@@ -70,9 +109,12 @@ class BridgeState {
     void allowPuppet(bool allowed);
 
   private:
+    /** Under the lock: target's status from the page's toast and the page's or host's counter. */
+    void composeStatus(ControlState &target) const;
     std::mutex mutex;
     ControlState state;
-    bool graphicsReceived = false, storedChanged = false;
+    bool graphicsReceived = false, storedChanged = false, hostOwned = false;
+    std::string pageCounter, pageMessage, hostCounter = "Measuring FPS…";
     std::atomic<bool> puppetAllowed{false};
 };
 } // namespace office

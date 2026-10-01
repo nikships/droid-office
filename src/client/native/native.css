@@ -1,11 +1,47 @@
 /*
  * The office page in the headset app (body.native-xr, see native/ui.ts). The app draws the office in
- * 3D and shows no workspace, so the page paints nothing: its layout, state and gameplay stay alive
- * for the world, with every element hidden and every animation paused.
+ * 3D. Office windows and navigation are drawn only while their compositor workspace is open.
  */
 body.native-xr :is(#scene, #crosshair, #hint, #compass, #shot-meter, #fps, #caffeine, #whoosh, #fade, .emote-wheel, .emote-pop, .golf) { display: none !important; }
-body.native-xr,
-body.native-xr * {
+body.native-xr:not(.native-workspace-open),
+body.native-xr:not(.native-workspace-open) * {
   visibility: hidden;
   animation-play-state: paused;
 }
+body.native-xr.native-workspace-open { background: #0f141c; }
+body.native-xr { font-size: 16px; }
+body.native-xr .btn { min-height: 44px; padding: 10px 16px; font-size: 13px; }
+body.native-xr .close { min-width: 44px; min-height: 44px; }
+body.native-xr :is(.dock-btn, .project, .menu-item, .floor-item, .elevator .floor-btn) { min-height: 48px; }
+body.native-xr :is(.menu-pin, .panel-x, .card-labels, .filter-clear) { min-width: 44px; min-height: 44px; }
+body.native-xr .modal {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 96px);
+}
+body.native-xr :is(input:not([type="checkbox"]):not([type="radio"]), select) { min-height: 44px; font-size: 15px; }
+body.native-xr :is(.card, .queue-item, .palette-row, .repo-pulls li) { flex-shrink: 0; min-height: 48px; }
+body.native-xr :is(.term header, .provider-choice, .gh-meta, .changes-tabs) { flex-wrap: wrap; gap: 8px; }
+body.native-xr :is(.term header h2, .queue-title, .palette-title, .setting-note, .project-name) { white-space: normal; overflow-wrap: anywhere; }
+body.native-xr :is(.setting-note, .menu-sec, .queue-meta, .project-meta, .typed, .palette-kind) { font-size: 12px; }
+body.native-xr .hud-menu { width: min(720px, calc(100vw - 48px)); max-height: calc(100vh - 128px); }
+body.native-xr .mi-key { display: none; }
+body.native-xr .menu-pin { opacity: .6; }
+body.native-xr .menu-item { font-size: 16px; }
+body.native-xr .modal.term { width: calc(100vw - 48px); height: calc(100vh - 96px); }
+body.native-xr .term header .btn { flex-shrink: 0; }
+body.native-xr .term header h2 { flex: 1 1 240px; min-width: 0; }
+body.native-xr #toasts { z-index: 75; width: min(900px, calc(100vw - 48px)); }
+body.native-xr .toast { max-width: 100%; font-size: 15px; overflow-wrap: anywhere; }
+body.native-xr .native-workspace-close {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10000;
+}
+body.native-xr .native-select-choices {
+  display: grid;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+body.native-xr .native-select-choices .btn { min-height: 48px; }

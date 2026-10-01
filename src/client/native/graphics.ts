@@ -41,6 +41,13 @@ export function nativeGraphicsMetrics(): unknown {
 export function updateNativeGraphicsMetrics(next: unknown) {
   metrics = next;
 }
+/** Read-only mirror of APK-owned settings. Never writes the selected office's browser preferences. */
+export function syncNativeGraphicsSettings(next: unknown) {
+  const updated = readNativeGraphics(next);
+  if (JSON.stringify(updated) === JSON.stringify(getNativeGraphicsSettings())) return;
+  settings = updated;
+  for (const fn of listeners) fn();
+}
 
 /** Hears every settings change; returns the unlisten. */
 export function onNativeGraphicsChange(fn: () => void): () => void {

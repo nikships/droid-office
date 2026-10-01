@@ -1,19 +1,15 @@
 /**
  * The office page in the headset app (`/?native=1`). The app draws the office in 3D around the
- * player, and, as the owner decided, shows no workspace: the desktop's top bar, menus and windows
- * never appear in the headset. Every in-world action plays out in the world (main.ts nativeUse), the
- * left controller's Menu button opens the small settings menu that floats where it was opened, and an
- * empty desk's hire menu floats at that desk (native/menus.ts). Keys from a keyboard paired to the
- * headset type into the laptop or kiosk you are at (native/typing.ts).
- *
- * initNativeUi hides the page itself and refuses every window (ui/dom.ts setModalGate), so nothing
- * an event, a server message or a stray key does can raise the workspace panel or block the world
- * behind an unseen window. panelState() reports the panel closed to the headset app, always.
+ * player; office windows use the original DOM and terminal on its compositor workspace. APK-owned
+ * graphics settings are separate from this page. A paired keyboard goes to a visible workspace
+ * field or terminal, or to the laptop/kiosk in the world when the workspace is closed.
  */
 
 import './native.css';
-import { closeAllModals, refusedModals, setModalGate } from '../ui/dom';
+import { closeAllModals, closeTopModal, h, modalOpen, onModalChange, refusedModals, setModalGate } from '../ui/dom';
 import { closeFloorMenu, floorMenuOpen } from '../ui/floormenu';
+import { openTerminalFor } from '../ui/terminal';
+import { installNativeSelects } from './select';
 import type { CarriedIssue } from '../../shared/protocol';
 import { isNativeSearch } from './mode';
 
@@ -25,17 +21,15 @@ export function isNativeMode(): boolean {
 }
 
 /**
- * What the headset app's workspace panel shows: nothing, ever, on the office page. The shape stays
- * the one the native bridge and the capture harness read.
+ * What the headset app's compositor workspace shows. Its producer is stopped when nothing is open.
  */
 export interface NativePanelState {
-  /** Whether the panel has something to show: always false. */
-  open: false;
-  home: false;
-  modal: false;
-  floorMenu: false;
-  typing: false;
-  terminal: null;
+  open: boolean;
+  home: boolean;
+  modal: boolean;
+  floorMenu: boolean;
+  typing: boolean;
+  terminal: string | null;
   /** The original shared board card carried by this player. */
   carrying: CarriedIssue | null;
 }
@@ -44,10 +38,15 @@ export interface NativeUi {
   panelState(): NativePanelState;
   /** Hears every change of panelState; returns the unlisten. */
   onPanelChange(fn: (state: NativePanelState) => void): () => void;
-  /** The workspace never opens; false also clears anything the page left behind (a floor list, a focused field). */
+  /** Shows the office navigation, or closes the workspace and its windows. */
   setPanelOpen(open: boolean): void;
+  /** APK-owned settings block world input but do not open the page's workspace. */
+  setNativeSettingsOpen(open: boolean): void;
+  blocked(): boolean;
+  /** Goes back one window, floor list or workspace step. */
+  back(): boolean;
   setCarrying(card: CarriedIssue | null): void;
-  /** How many windows were refused since the page loaded (none ever shows in the headset). */
+  /** Diagnostic count of windows refused by a modal gate. */
   refused(): number;
 }
 
@@ -59,20 +58,37 @@ export function initNativeUi(): NativeUi {
   document.documentElement.classList.add('native-xr');
   document.body.classList.add('native-xr');
   noPointerLock();
-  // No window opens in the headset app: it would sit unseen on a panel nobody shows and hold the world still.
-  setModalGate(() => false);
-  closeAllModals();
+  setModalGate(null);
+  installNativeSelects();
 
   const listeners = new Set<(s: NativePanelState) => void>();
+  let home = false;
+  let nativeSettings = false;
   let carrying: CarriedIssue | null = null;
-  const panelState = (): NativePanelState => ({ open: false, home: false, modal: false, floorMenu: false, typing: false, terminal: null, carrying });
+  const panelState = (): NativePanelState => {
+    const modal = modalOpen();
+    const floorMenu = floorMenuOpen();
+    const field = document.activeElement as HTMLElement | null;
+    const typing = !!field && (field.matches('input, textarea, select') || field.isContentEditable);
+    return { open: home || modal || floorMenu, home, modal, floorMenu, typing, terminal: openTerminalFor(), carrying };
+  };
   const notify = () => {
     const s = panelState();
+    document.body.classList.toggle('native-workspace-open', s.open);
     for (const fn of listeners) fn(s);
   };
+  onModalChange(notify);
+  document.addEventListener('focusin', notify);
+  document.addEventListener('focusout', notify);
+  const close = h('button.btn.native-workspace-close', { type: 'button', 'aria-label': 'Close workspace', onclick: () => instance?.setPanelOpen(false) }, 'Close workspace');
+  document.body.append(close);
 
   instance = {
-    panelState,
+    panelState: () => {
+      const state = panelState();
+      document.body.classList.toggle('native-workspace-open', state.open);
+      return state;
+    },
     onPanelChange(fn) {
       listeners.add(fn);
       return () => {
@@ -80,10 +96,28 @@ export function initNativeUi(): NativeUi {
       };
     },
     setPanelOpen(open) {
-      if (open) return;
-      closeAllModals();
-      if (floorMenuOpen()) closeFloorMenu();
-      (document.activeElement as HTMLElement | null)?.blur?.();
+      home = open;
+      if (!open) {
+        closeAllModals();
+        closeFloorMenu();
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }
+      notify();
+    },
+    setNativeSettingsOpen(open) {
+      nativeSettings = open;
+    },
+    blocked: () => nativeSettings || panelState().open,
+    back() {
+      if (closeTopModal()) return true;
+      if (floorMenuOpen()) {
+        closeFloorMenu();
+        notify();
+        return true;
+      }
+      if (!home) return false;
+      instance!.setPanelOpen(false);
+      return true;
     },
     setCarrying(card) {
       if ((carrying?.issue ?? 0) === (card?.issue ?? 0) && (carrying?.title ?? '') === (card?.title ?? '')) return;

@@ -1,6 +1,7 @@
 #include "bridge_state.h"
 #include "frame_metrics.h"
 #include "json.hpp"
+#include "native_settings.h"
 #include "panel_pointer.h"
 #include <cassert>
 #include <cmath>
@@ -136,6 +137,10 @@ void packets() {
         packet["control"]["graphics"]["foveation"] = quality;
         assert(bridge.submit(packet.dump(), scene, error));
     }
+    for (const auto &quality : {"low", "high", "off", "medium"}) {
+        packet["control"]["graphics"]["foveation"] = quality;
+        assert(bridge.submit(packet.dump(), scene, error));
+    }
     assert(bridge.read().graphics.foveation == FoveationQuality::Balanced);
     // Current pages no longer send peripheralDensity; older pages still do.
     packet["control"]["graphics"].erase("peripheralDensity");
@@ -189,7 +194,7 @@ void packets() {
     assert(bridge.read().graphics.foveation == FoveationQuality::Off);
 }
 void storedSettings() {
-    // The settings kept between launches: render scale and foveation only.
+    // The settings kept between launches: render scale, foveation and the FPS counter.
     GraphicsControls page;
     page.renderScale = 1.16f;
     page.foveation = FoveationQuality::Off;
@@ -200,11 +205,18 @@ void storedSettings() {
     assert(restoreGraphics(text, restored));
     assert(close(restored.renderScale, 1.16f) && restored.foveation == FoveationQuality::Off);
     assert(restored.sharpScreens && !restored.foveationDebug && "only targets are restored");
-    for (const auto *quality : {"clarity", "performance", "balanced", "off"}) {
+    for (const auto *quality : {"low", "high", "medium", "off"}) {
         GraphicsControls value;
         assert(restoreGraphics(Json{{"v", 1}, {"renderScale", 1}, {"foveation", quality}}.dump(),
                                value));
         assert(Json::parse(storedGraphics(value))["foveation"] == quality);
+    }
+    const Json oldNames = {{"clarity", "low"}, {"balanced", "medium"}, {"performance", "high"}};
+    for (const auto &[oldName, level] : oldNames.items()) {
+        GraphicsControls value;
+        assert(restoreGraphics(Json{{"v", 1}, {"renderScale", 1}, {"foveation", oldName}}.dump(),
+                               value));
+        assert(Json::parse(storedGraphics(value))["foveation"] == level);
     }
     for (const auto &broken :
          {std::string(""), std::string("{"), std::string("null"), std::string("[]"),
@@ -242,7 +254,7 @@ void storedSettings() {
     packet["control"]["graphics"]["foveationDebug"] = true;
     packet["control"]["graphics"]["sharpScreens"] = false;
     assert(bridge.submit(packet.dump(), scene, error));
-    assert(!bridge.takeStoredGraphics(changed) && "only render scale and foveation are kept");
+    assert(!bridge.takeStoredGraphics(changed) && "the diagnostic and sharp screens are not kept");
     packet["control"]["graphics"]["foveation"] = "performance";
     assert(bridge.submit(packet.dump(), scene, error));
     assert(bridge.takeStoredGraphics(changed) &&
@@ -254,6 +266,229 @@ void storedSettings() {
            "a stored copy never replaces settings a page sent");
     bridge.reset();
     assert(bridge.graphics().foveation == FoveationQuality::Performance);
+
+    // The FPS counter is stored too; copies from before it existed restore it as off.
+    GraphicsControls counter;
+    counter.fps = true;
+    assert(restoreGraphics(storedGraphics(counter), restored) && restored.fps);
+    assert(restoreGraphics(Json{{"v", 1}, {"renderScale", 1.2}, {"foveation", "clarity"}}.dump(),
+                           restored));
+    assert(!restored.fps && restored.foveation == FoveationQuality::Clarity &&
+           Json::parse(storedGraphics(restored))["foveation"] == "low" &&
+           "a legacy copy migrates to the runtime names when it is next written");
+}
+Json controlPacket(const Json &graphics) {
+    Json packet = {
+        {"control",
+         {{"v", 1},
+          {"active", true},
+          {"fade", 0},
+          {"matrix", transform({{0, 0, 0, 1}, {0, 0, 0}})},
+          {"hands", Json::array({Json::object(), Json::object()})}}},
+        {"panel", {{"open", false}, {"status", {{"aim", "60.0 fps"}, {"message", ""}}}}}};
+    if (!graphics.is_null())
+        packet["control"]["graphics"] = graphics;
+    return packet;
+}
+void hostAuthority() {
+    BridgeState bridge;
+    std::string scene, error;
+    GraphicsControls stored;
+    stored.renderScale = 1.35f;
+    stored.foveation = FoveationQuality::Off;
+    stored.fps = true;
+    stored.sharpScreens = true;
+    bridge.ownGraphics();
+    bridge.seedGraphics(stored);
+    assert(bridge.ownsGraphics());
+    auto g = bridge.graphics();
+    assert(close(g.renderScale, 1.35f) && g.foveation == FoveationQuality::Off && g.fps);
+    assert(!g.sharpScreens && !g.foveationDebug && "the Vulkan host claims no sharp-screen pass");
+    GraphicsControls taken;
+    assert(!bridge.takeStoredGraphics(taken) && "restoring is not a change");
+
+    // A stale or older page's graphics never overwrite the host's, and cannot reject a packet.
+    const Json stale = {{"v", 1},
+                        {"renderScale", .8},
+                        {"foveation", "performance"},
+                        {"fps", false},
+                        {"sharpScreens", true},
+                        {"foveationDebug", true},
+                        {"peripheralDensity", .25}};
+    assert(bridge.submit(controlPacket(stale).dump(), scene, error) && error.empty());
+    g = bridge.read().graphics;
+    assert(close(g.renderScale, 1.35f) && g.foveation == FoveationQuality::Off && g.fps &&
+           !g.foveationDebug);
+    assert(!bridge.takeStoredGraphics(taken) && "page graphics are never stored");
+    assert(bridge.submit(controlPacket(Json{{"v", 9}, {"foveation", "maximum"}}).dump(), scene,
+                         error) &&
+           error.empty() && "invalid page graphics are ignored, not parsed");
+    assert(bridge.submit(controlPacket(nullptr).dump(), scene, error) &&
+           "modern pages omit graphics");
+
+    // The host's choice applies at once, with no packet in between, and is stored once.
+    GraphicsControls chosen = bridge.graphics();
+    chosen.renderScale = 1.6f;
+    chosen.foveation = FoveationQuality::Performance;
+    chosen.sharpScreens = true;
+    chosen.foveationDebug = true;
+    assert(bridge.setGraphics(chosen));
+    g = bridge.graphics();
+    assert(close(g.renderScale, 1.6f) && g.foveation == FoveationQuality::Performance);
+    assert(!g.sharpScreens && !g.foveationDebug);
+    assert(bridge.takeStoredGraphics(taken) && close(taken.renderScale, 1.6f));
+    assert(!bridge.takeStoredGraphics(taken));
+    assert(bridge.setGraphics(chosen) && !bridge.takeStoredGraphics(taken) &&
+           "an unchanged choice is not written again");
+    chosen.renderScale = 9;
+    assert(bridge.setGraphics(chosen) && close(bridge.graphics().renderScale, 2.f));
+    chosen.renderScale = std::nanf("");
+    assert(bridge.setGraphics(chosen) && close(bridge.graphics().renderScale, 1.f));
+    chosen.renderScale = 1.6f;
+    assert(bridge.setGraphics(chosen));
+    assert(bridge.submit(controlPacket(stale).dump(), scene, error));
+    assert(bridge.read().graphics.foveation == FoveationQuality::Performance &&
+           "a packet parsed before or after a host change cannot undo it");
+    bridge.reset();
+    assert(bridge.graphics().foveation == FoveationQuality::Performance && "reloads keep it");
+    GraphicsControls older;
+    older.foveation = FoveationQuality::Clarity;
+    bridge.seedGraphics(older);
+    assert(bridge.graphics().foveation == FoveationQuality::Performance &&
+           "a late stored copy never replaces a choice made since");
+
+    // The mirror the page reads: canonical version-one names.
+    const auto event = Json::parse(graphicsEvent(bridge.graphics()));
+    assert(event == (Json{{"v", 1},
+                          {"renderScale", event["renderScale"]},
+                          {"foveation", "high"},
+                          {"fps", g.fps},
+                          {"sharpScreens", false},
+                          {"foveationDebug", false}}));
+    assert(close(event["renderScale"].get<float>(), 1.6f));
+
+    // A host that does not own graphics refuses host changes (older behaviour stays).
+    BridgeState page;
+    assert(!page.setGraphics(chosen) && !page.ownsGraphics());
+}
+void hostCounter() {
+    BridgeState bridge;
+    std::string scene, error;
+    bridge.ownGraphics();
+    GraphicsControls g = bridge.graphics();
+    g.fps = false;
+    assert(bridge.setGraphics(g));
+    Json packet = controlPacket(nullptr);
+    packet["panel"]["status"] = {{"aim", "page counter"}, {"message", "Pixel is ready"}};
+    assert(bridge.submit(packet.dump(), scene, error));
+    auto state = bridge.read();
+    assert(Json::parse(state.status)["aim"] == "" && state.statusMessage && !state.statusCounter &&
+           "the page's counter text is ignored on a host-owned host");
+    g.fps = true;
+    assert(bridge.setGraphics(g));
+    bridge.setCounter("90.0 fps · 90 Hz");
+    state = bridge.read();
+    assert(Json::parse(state.status)["aim"] == "90.0 fps · 90 Hz" && state.statusCounter);
+    assert(Json::parse(state.status)["message"] == "Pixel is ready" && "the toast is kept");
+    packet["panel"]["status"] = {{"aim", ""}, {"message", ""}};
+    assert(bridge.submit(packet.dump(), scene, error));
+    state = bridge.read();
+    assert(state.statusCounter && !state.statusMessage && state.statusVisible);
+    bridge.reset();
+    state = bridge.read();
+    assert(state.statusCounter && !state.statusMessage && "the counter survives a page reload");
+
+    assert(fpsCounterText("{}") == "Measuring FPS…");
+    assert(fpsCounterText("not json") == "Measuring FPS…");
+    assert(fpsCounterText(R"({"fps":89.96,"refresh":90.0})") == "90.0 fps · 90 Hz");
+    assert(fpsCounterText(R"({"fps":72.2,"refresh":90,"controlAgeMs":1500})") ==
+           "72.2 fps · 90 Hz · Office delayed");
+    assert(fpsCounterText(R"({"fps":90,"focused":false})") == "Session paused");
+    assert(fpsCounterText(R"({"fps":null,"refresh":null,"controlAgeMs":null})") ==
+           "Measuring FPS…");
+}
+void settingsStatus() {
+    GraphicsControls g;
+    g.renderScale = 1.5f;
+    g.foveation = FoveationQuality::Performance;
+    auto s = Json::parse(graphicsStatus(g, "{}"));
+    assert(s["recommended"].is_null() && s["maximum"].is_null() && s["applied"].is_null());
+    assert(s["selected"].is_null() && s["maxRenderScale"].is_null() && s["pending"] == true);
+    assert(s["graphics"]["foveation"] == "high" && s["counter"] == "Measuring FPS…");
+    // A runtime maximum that is not a whole 5% stop: 3000 / 2064 = 1.4535 of recommended.
+    const Json metrics = {{"worldRecommendedWidth", 2064},
+                          {"worldRecommendedHeight", 2208},
+                          {"worldMaxWidth", 3000},
+                          {"worldMaxHeight", 4000},
+                          {"worldWidth", 2064},
+                          {"worldHeight", 2208},
+                          {"foveationLevel", "medium"},
+                          {"foveationEnabled", true},
+                          {"graphicsError", ""},
+                          {"fps", 90},
+                          {"refresh", 90}};
+    s = Json::parse(graphicsStatus(g, metrics.dump()));
+    assert(close(s["maxRenderScale"].get<float>(), 3000.f / 2064));
+    ResolutionLimits limits{{2064, 2208}, {3000, 4000}};
+    const auto selected = renderSize(limits, g.renderScale);
+    assert(s["selected"] == (Json{{"width", selected.width}, {"height", selected.height}}));
+    assert(selected.width <= 3000 && "the selection is bounded by the runtime maximum");
+    assert(s["applied"] == (Json{{"width", 2064}, {"height", 2208}}));
+    assert(s["appliedFoveation"] == "medium" && s["pending"] == true &&
+           "the applied targets are reported, not the selection");
+    auto bound = metrics;
+    bound["worldWidth"] = selected.width;
+    bound["worldHeight"] = selected.height;
+    bound["foveationLevel"] = "high";
+    s = Json::parse(graphicsStatus(g, bound.dump()));
+    assert(s["pending"] == false && s["appliedFoveation"] == "high");
+    g.foveation = FoveationQuality::Off;
+    bound["foveationLevel"] = "off";
+    bound["foveationEnabled"] = false;
+    s = Json::parse(graphicsStatus(g, bound.dump()));
+    assert(s["appliedFoveation"] == "off" && s["pending"] == false);
+    bound["graphicsError"] = "Could not allocate the world targets";
+    s = Json::parse(graphicsStatus(g, bound.dump()));
+    assert(s["error"] == "Could not allocate the world targets");
+    s = Json::parse(graphicsStatus(g, "broken"));
+    assert(s["recommended"].is_null() && s["graphics"]["v"] == 1);
+}
+void settingsButton() {
+    SettingsMenuButton button;
+    assert(!button.step(true, true) && "held when tracking starts: wait for release");
+    assert(!button.step(true, true));
+    assert(!button.step(true, false));
+    assert(button.step(true, true) && "fresh press");
+    assert(!button.step(true, true) && "holding is one press");
+    assert(!button.step(true, false));
+    assert(button.step(true, true));
+    assert(!button.step(false, true) && "tracking lost while held");
+    assert(!button.step(true, true) && "a stale press is not replayed");
+    assert(!button.step(true, false));
+    assert(!button.step(false, false));
+    assert(!button.step(true, true) && "returning tracking must see a release first");
+    assert(!button.step(true, false));
+    assert(button.step(true, true));
+}
+void workspacePanel() {
+    WorkspacePanel panel;
+    assert(!panel.step(false, false, false, false, 0));
+    assert(panel.step(false, false, true, false, 10) && "settings open the quad without the page");
+    assert(panel.step(false, true, false, false, 20) && "Android dialogs open it");
+    assert(panel.step(true, false, true, false, 30) && "settings over an open workspace");
+    assert(panel.step(true, false, false, false, 40) && "closing settings returns to it");
+    assert(!panel.step(false, false, false, false, 50) && "closing settings alone closes it");
+    assert(panel.step(false, false, true, false, 60));
+    assert(panel.step(false, false, false, true, 70) && "Office workspace holds the quad");
+    assert(panel.step(false, false, false, false, 500) && "until the page answers");
+    assert(panel.step(true, false, false, false, 600) && "the page's workspace takes over");
+    assert(!panel.step(false, false, false, false, 700) && "and its close is honoured");
+    assert(panel.step(false, false, false, true, 800));
+    assert(panel.step(false, false, false, false, 1800));
+    assert(!panel.step(false, false, false, false, 1801) &&
+           "a page that never answers releases the quad");
+    assert(panel.step(false, false, false, true, 5000));
+    assert(!panel.step(false, false, false, false, 4000) && "a clock step back releases it");
 }
 void pointerEvents() {
     PanelPointer pointer;
@@ -328,6 +563,11 @@ int main() {
     math();
     packets();
     storedSettings();
+    hostAuthority();
+    hostCounter();
+    settingsStatus();
+    settingsButton();
+    workspacePanel();
     pointerEvents();
     hoverEvents();
     assert(FrameMetrics::percentile({3, 1, 4, 2}, .5) == 3);

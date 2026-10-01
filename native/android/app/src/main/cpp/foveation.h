@@ -60,10 +60,9 @@ inline bool filterFrame(bool filteredTargets, bool panelUnderlay, bool imageFove
 }
 
 /**
- * The app's mapping of its quality names to XrFoveationLevelFB, an app policy rather than a
- * documented table. HIGH is "lower periphery visual fidelity, higher performance" and LOW
- * "higher periphery visual fidelity, lower performance" (registry enum comments). Godot uses the
- * same order. Off is not a profile: its world swapchains are created without foveation support.
+ * The runtime's Low, Medium and High profiles. Internal enum names retain the old wire mapping.
+ * HIGH is "lower periphery visual fidelity, higher performance" and LOW "higher periphery visual
+ * fidelity, lower performance" (registry enum comments). Off creates unfoveated world targets.
  */
 inline XrFoveationLevelFB foveationLevel(FoveationQuality quality) {
     switch (quality) {
@@ -82,14 +81,14 @@ inline XrFoveationLevelFB foveationLevel(FoveationQuality quality) {
 inline const char *foveationQualityName(FoveationQuality quality) {
     switch (quality) {
     case FoveationQuality::Clarity:
-        return "clarity";
+        return "low";
     case FoveationQuality::Performance:
-        return "performance";
+        return "high";
     case FoveationQuality::Off:
         return "off";
     case FoveationQuality::Balanced:
     default:
-        return "balanced";
+        return "medium";
     }
 }
 

@@ -129,7 +129,7 @@ test('the settings menu sets your height, calibrates the floor, and changes grap
   assert.ok(!layoutMenu(settingsModel(hooks), 0.42, 0.42).targets.some((t) => t.id === 'floor:calibrate'), 'no calibration while the head is untracked');
 
   run(settingsModel(hooks), 'foveation:inc');
-  assert.equal(state.graphics.foveation, 'clarity');
+  assert.equal(state.graphics.foveation, 'high');
   run(settingsModel(hooks), 'foveation:inc');
   assert.equal(state.graphics.foveation, 'off', 'the levels cycle round');
   run(settingsModel(hooks), 'sharp');
@@ -139,6 +139,27 @@ test('the settings menu sets your height, calibrates the floor, and changes grap
   state.metrics.foveationSupported = false;
   const fov = rows().find((r) => r.id === 'foveation');
   assert.ok(fov?.kind === 'value' && fov.value === 'Off' && !fov.dec && !fov.inc, 'without runtime foveation there is only Off');
+});
+
+test('foveation presents the runtime profiles directly in Off, Low, Medium, High order', () => {
+  const { state, hooks } = settingsHooks();
+  state.graphics.foveation = 'off';
+  for (const [level, label] of [
+    ['off', 'Off'],
+    ['low', 'Low'],
+    ['medium', 'Medium'],
+    ['high', 'High'],
+  ] as const) {
+    const model = settingsModel(hooks);
+    const row = model.rows.find((r) => r.id === 'foveation');
+    assert.equal(state.graphics.foveation, level);
+    assert.ok(row?.kind === 'value');
+    assert.equal(row.value, label);
+    run(model, 'foveation:inc');
+  }
+  assert.equal(state.graphics.foveation, 'off');
+  run(settingsModel(hooks), 'foveation:dec');
+  assert.equal(state.graphics.foveation, 'high');
 });
 
 test('world detail steps in 5% stops, up to the exact runtime limit', () => {

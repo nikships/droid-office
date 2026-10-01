@@ -15,11 +15,11 @@ export function workerReposLine(w: Pick<WorkerInfo, 'repos'>, ownName: string | 
 
 /** Fixed roles for the installed app; WebXR retains its own control scheme. */
 export const NATIVE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
-  ['Left Menu', 'Open or put away the settings menu, where you stand. The right Menu button belongs to Android XR.'],
+  ['Left Menu', 'Open or put away the app’s native settings. Office workspace opens the shared terminals and office tools. The right Menu button belongs to Android XR.'],
   ['Left stick', 'Move when Smooth movement is enabled. Hold the stick click to sprint.'],
   ['Right stick', 'Left/right turns. Push forward to aim a teleport; release to travel. Works with Smooth movement too.'],
   ['X · left', 'Go to the next waiting worker.'],
-  ['Y · left', 'Nothing yet.'],
+  ['Y · left', 'Open or close Find anything.'],
   ['A · right', 'Jump in the office.'],
   ['B · right', 'Put away an open menu, or return a held issue card.'],
   ['Triggers', 'Use desks, kiosks and elevator buttons, press menu rows, or place a held card. At an empty desk, open its hire menu.'],
@@ -40,6 +40,6 @@ export const NATIVE_SETTINGS = {
   view: 'The headset draws the office around you and your head movement is the camera. There is no third-person or mouse-look mode here; those are desktop views. Everyone on the desktop shares the same office, workers and boards with you.',
   movementTitle: 'Headset movement',
   movementControls:
-    'Motion controllers only. The left controller’s Menu button opens and closes the settings menu where you stand; the right Menu button belongs to Android XR. Left stick moves (click to sprint), right stick turns or aims a teleport. X goes to a waiting worker; A jumps; B puts a menu away. Triggers use what they point at; grip holds objects. A keyboard paired to the headset types into the laptop you are at. See Controls for climbing, the pole and the gun.',
+    'Motion controllers only. The left controller’s Menu button opens the app’s native settings; Office workspace opens the shared terminals and tools. The right Menu button belongs to Android XR. Left stick moves (click to sprint), right stick turns or aims a teleport. X goes to a waiting worker; Y opens Find anything; A jumps; B goes back. Triggers use what they point at; grip holds objects. A keyboard paired to the headset types into the open terminal or field, or the laptop you are at when the workspace is closed. See Controls for climbing, the pole and the gun.',
   notify: 'The headset app does not show system notifications. A worker waiting on someone blinks the lamp on its desk’s nameplate.',
 } as const;

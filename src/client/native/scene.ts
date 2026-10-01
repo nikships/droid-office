@@ -1,5 +1,5 @@
 /**
- * Streams the page's live three.js scene to the headset's native GLES renderer.
+ * Streams the page's live three.js scene to the headset's native renderer.
  *
  * The page keeps running the office as it always does (its scene graph, gameplay, raycasting); in
  * native mode it just stops drawing. `capture()` walks the scene at the gameplay rate and records
@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
+import { NativeImageEncoder, type ImageEncoder } from './image-encoder';
 import {
   affine12,
   type Bin,
@@ -49,8 +50,7 @@ import {
   type Wrap,
 } from './wire';
 
-/** Encodes an image source for the wire. Tests inject their own; the default uses the DOM. */
-export type ImageEncoder = (source: unknown, width: number, height: number, opaque: boolean) => Promise<{ fmt: TextureFormat; bytes: Uint8Array }>;
+export { domImageEncoder, type ImageEncoder } from './image-encoder';
 
 export interface NativeSceneOptions {
   /** Base64 characters per blob part. */
@@ -537,29 +537,6 @@ function sourceSize(src: unknown): { w: number; h: number } | null {
   return w > 0 && h > 0 ? { w, h } : null;
 }
 
-/** Canvas, image, bitmap or video to PNG (JPEG for opaque video) through the DOM. */
-export const domImageEncoder: ImageEncoder = async (source, width, height, opaque) => {
-  const g = globalThis as Record<string, unknown>;
-  const type = opaque ? 'image/jpeg' : 'image/png';
-  let blob: Blob | null = null;
-  const isCanvas = typeof g.HTMLCanvasElement === 'function' && source instanceof (g.HTMLCanvasElement as typeof HTMLCanvasElement);
-  const isOffscreen = typeof g.OffscreenCanvas === 'function' && source instanceof (g.OffscreenCanvas as typeof OffscreenCanvas);
-  if (isOffscreen) blob = await (source as OffscreenCanvas).convertToBlob({ type, quality: 0.92 });
-  else {
-    let canvas: HTMLCanvasElement;
-    if (isCanvas) canvas = source as HTMLCanvasElement;
-    else {
-      canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d')!.drawImage(source as CanvasImageSource, 0, 0, width, height);
-    }
-    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.92));
-  }
-  if (!blob) throw new Error(`could not encode a ${width}x${height} texture`);
-  return { fmt: opaque ? 'jpeg' : 'png', bytes: new Uint8Array(await blob.arrayBuffer()) };
-};
-
 /**
  * world/sky.ts adds its lighting to every material through Material.prototype.onBeforeCompile and
  * keeps the uniforms to itself. Running that hook on a stand-in shader hands over the very uniform
@@ -645,6 +622,7 @@ export class NativeScene {
   private readonly maxEncodes: number;
   private readonly shadows: boolean;
   private readonly encode: ImageEncoder;
+  private readonly imageEncoder: NativeImageEncoder | null;
   private readonly now: () => number;
 
   private readonly ids = new WeakMap<object, number>();
@@ -712,7 +690,8 @@ export class NativeScene {
     this.videoIntervalMs = options.videoIntervalMs ?? 1000;
     this.maxEncodes = options.maxEncodes ?? 3;
     this.shadows = options.shadows ?? true;
-    this.encode = options.encodeImage ?? domImageEncoder;
+    this.imageEncoder = options.encodeImage ? null : new NativeImageEncoder();
+    this.encode = options.encodeImage ?? this.imageEncoder!.encode;
     this.now = options.now ?? (() => performance.now());
   }
 
@@ -776,6 +755,7 @@ export class NativeScene {
 
   dispose(): void {
     this.disposed = true;
+    this.imageEncoder?.dispose();
     this.objects.clear();
     this.geometries.clear();
     this.materials.clear();
@@ -1364,6 +1344,7 @@ export class NativeScene {
         this.acceptPixels(s, { ...out, w: size.w, h: size.h });
       })
       .catch((err: unknown) => {
+        if (this.textures.get(s.id) !== s || this.disposed) return;
         s.retryAt = this.now() + Math.max(100, this.textureIntervalMs);
         this.error(`texture ${s.id}: ${err instanceof Error ? err.message : String(err)}`);
       })
@@ -1612,8 +1593,7 @@ export class NativeScene {
   }
 
   private textureItem(s: TexState, parts: BlobPart[]): TextureItem {
-    const t = s.tex;
-    const item: TextureItem = { id: s.id, rev: t.version, w: s.pixels?.w ?? 0, h: s.pixels?.h ?? 0, ...s.sampler };
+    const item: TextureItem = { id: s.id, rev: s.encodedVersion, w: s.pixels?.w ?? 0, h: s.pixels?.h ?? 0, ...s.sampler };
     if (s.pixelsQueued && s.pixels) {
       item.fmt = s.pixels.fmt;
       item.data = this.bin(s.pixels.bytes, parts);

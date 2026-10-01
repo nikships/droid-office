@@ -26,7 +26,7 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 
 | Control | Native action |
 | --- | --- |
-| Left Menu | Open or hide the workspace |
+| Left Menu | Open or hide APK-native settings; Office workspace opens the shared office tools |
 | Right Menu | Android XR system function; never bound by the app |
 | Left stick | Smooth movement, when enabled |
 | Left stick click, held | Sprint during smooth movement |
@@ -35,7 +35,7 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 | X, left primary | Go to the next waiting worker |
 | Y, left secondary | Open/close Find anything |
 | A, right primary | Jump in the office |
-| B, right secondary | Go back one workspace step; return a carried card when in the office |
+| B, right secondary | Go back one workspace/settings step; return a carried card when in the office |
 | Either trigger | Pointer selection, shared world actions, use a held object, or fire a held gun |
 | Either grip | Grab/hold/release a nearby object, ladder, pole, back-holstered gun or a shot worker on the floor |
 

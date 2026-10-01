@@ -1,4 +1,4 @@
-export type NativeFoveation = 'off' | 'balanced' | 'clarity' | 'performance';
+export type NativeFoveation = 'off' | 'low' | 'medium' | 'high';
 
 export const MIN_NATIVE_RENDER_SCALE = 0.75;
 export const MAX_NATIVE_RENDER_SCALE = 2;
@@ -6,7 +6,7 @@ export const MAX_NATIVE_RENDER_SCALE = 2;
 export interface NativeGraphicsSettings {
   v: 1;
   renderScale: number;
-  /** Off renders the world without foveation; the others are a fixed runtime level (the GLES renderer has no eye-tracked foveation). Each choice creates new world targets. */
+  /** Off disables foveation; Low, Medium and High select the matching eye-tracked runtime profile. Each choice creates new world targets. */
   foveation: NativeFoveation;
   fps: boolean;
   sharpScreens: boolean;
@@ -14,14 +14,17 @@ export interface NativeGraphicsSettings {
   foveationDebug: boolean;
 }
 
-export const DEFAULT_NATIVE_GRAPHICS: Readonly<NativeGraphicsSettings> = { v: 1, renderScale: 1, foveation: 'balanced', fps: false, sharpScreens: true, foveationDebug: false };
+export const DEFAULT_NATIVE_GRAPHICS: Readonly<NativeGraphicsSettings> = { v: 1, renderScale: 1, foveation: 'medium', fps: false, sharpScreens: true, foveationDebug: false };
 
 /** Native APKs up to v0.1.301 reject graphics without this field; later ones ignore it. */
 const LEGACY_PERIPHERAL_DENSITY = 0.25;
 
+/** Version-one wire spellings remain compatible with installed APKs; storage and menus use runtime names. */
+const WIRE_FOVEATION = { off: 'off', low: 'clarity', medium: 'balanced', high: 'performance' } as const;
+
 /** The graphics object in the native control packet. */
-export function nativeGraphicsPacket(settings: NativeGraphicsSettings): NativeGraphicsSettings & { peripheralDensity: number } {
-  return { ...settings, peripheralDensity: LEGACY_PERIPHERAL_DENSITY };
+export function nativeGraphicsPacket(settings: NativeGraphicsSettings): Omit<NativeGraphicsSettings, 'foveation'> & { foveation: (typeof WIRE_FOVEATION)[NativeFoveation]; peripheralDensity: number } {
+  return { ...settings, foveation: WIRE_FOVEATION[settings.foveation], peripheralDensity: LEGACY_PERIPHERAL_DENSITY };
 }
 
 /** Stored settings may come from an older app or an interrupted write. */
@@ -31,14 +34,14 @@ export function readNativeGraphics(value: unknown): NativeGraphicsSettings {
   return {
     v: 1,
     renderScale: bounded('renderScale', MIN_NATIVE_RENDER_SCALE, MAX_NATIVE_RENDER_SCALE, 1),
-    foveation: m.foveation === 'off' || m.foveation === 'clarity' || m.foveation === 'performance' ? m.foveation : 'balanced',
+    foveation: m.foveation === 'off' ? 'off' : m.foveation === 'low' || m.foveation === 'clarity' ? 'low' : m.foveation === 'high' || m.foveation === 'performance' ? 'high' : 'medium',
     fps: m.fps === true,
     sharpScreens: m.sharpScreens !== false,
     foveationDebug: m.foveationDebug === true,
   };
 }
 
-const FOVEATION_LEVELS: Record<string, string> = { none: 'Off', low: 'Low', medium: 'Medium', high: 'High' };
+const FOVEATION_LEVELS: Record<string, string> = { none: 'Off', low: 'Low', medium: 'Medium', high: 'High', clarity: 'Low', balanced: 'Medium', performance: 'High' };
 
 /** The foveation the native renderer has bound to its world targets, from its metrics; null before the first report. */
 export function nativeFoveationStatus(metrics: unknown): string | null {

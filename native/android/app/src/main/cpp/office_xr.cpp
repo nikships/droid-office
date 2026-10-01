@@ -5,6 +5,7 @@
 #include "json.hpp"
 #include "layer_occlusion.h"
 #include "log_record.h"
+#include "native_settings.h"
 #include "panel_pointer.h"
 #include "refresh_policy.h"
 #include "rig_presentation.h"
@@ -53,6 +54,10 @@ std::thread renderThread;
 std::atomic<bool> stopping{false};
 std::atomic<bool> focused{false}, rebaseRequested{false};
 std::atomic<bool> overlayOpen{false};
+// The APK's settings view (NativeSettingsView.java). The left Menu edge toggles it on the display
+// thread; the view's own buttons close it from the UI thread. settingsHandoff: the view closed to
+// show the page's workspace, so the quad stays up until the page reports it open.
+std::atomic<bool> settingsOpen{false}, settingsHandoff{false};
 // Debug builds only: capturePuppetEnabled(BuildConfig.DEBUG) from the Java host.
 std::atomic<bool> puppetEnabled{false};
 // Keep consuming the status BufferQueue until the UI thread acknowledges that its producer
@@ -94,10 +99,14 @@ bool readStoredGraphics(office::GraphicsControls &graphics) {
     return office::restoreGraphics(text.str(), graphics);
 }
 
-/** Bridge worker only, after a page changed its settings; never on the display loop. */
-void storeGraphics(const office::GraphicsControls &graphics) {
+/**
+ * Bridge or settings-store worker only, never the display loop. Taking and writing under one
+ * lock keeps the file in the order the settings changed, whichever thread writes.
+ */
+void persistGraphics() {
     std::lock_guard<std::mutex> lock(graphicsStoreMutex);
-    if (graphicsStorePath.empty())
+    office::GraphicsControls graphics;
+    if (graphicsStorePath.empty() || !bridge.takeStoredGraphics(graphics))
         return;
     const auto staged = graphicsStorePath + ".tmp";
     {
@@ -130,6 +139,23 @@ void controlHeartbeatMetrics(nlohmann::json &metrics) {
     metrics["controlAgeMs"] = std::clamp((now - received) / 1e6, 0., 60000.);
 }
 
+/** The metrics the page pulls, with the live focus, heartbeat and refresh rate. */
+std::string currentMetrics() {
+    nlohmann::json metrics;
+    {
+        std::lock_guard<std::mutex> lock(metricsMutex);
+        metrics = nlohmann::json::parse(latestMetrics);
+    }
+    // Focus is live: a sleeping headset has no new frame report to replace its last FPS.
+    metrics["focused"] = focused.load();
+    // Fresh age and observed refresh reveal stalls or downgrades between frame reports.
+    controlHeartbeatMetrics(metrics);
+    const float refresh = observedRefreshRate.load();
+    if (refresh > 0)
+        metrics["refresh"] = refresh;
+    return metrics.dump(-1, ' ', true);
+}
+
 using office::xr::check;
 using office::xr::function;
 using office::xr::optionalFunction;
@@ -153,6 +179,8 @@ class Office {
     bool panelPlaced = false;
     bool previousPanelOpen = true;
     office::PanelPointer pointer;
+    office::SettingsMenuButton settingsButton;
+    office::WorkspacePanel workspacePanel;
     std::array<XrPosef, 2> cursorPose{};
     std::array<bool, 2> cursorVisible{};
     float scrollTime = 0;
@@ -178,14 +206,13 @@ class Office {
         office::WorldHost host;
         host.env = e;
         host.activity = a;
+        // The stored copy was seeded when the display thread started (nativeStart), before the
+        // settings view could open, so a choice made since then is already in the bridge.
         host.startGraphics = [] {
-            office::GraphicsControls stored;
-            const bool restored = readStoredGraphics(stored);
-            if (restored)
-                bridge.seedGraphics(stored);
             const auto startGraphics = bridge.graphics();
-            LOG("GRAPHICS_START stored=%d renderScale=%.3f foveation=%s", restored,
-                startGraphics.renderScale, office::foveationQualityName(startGraphics.foveation));
+            LOG("GRAPHICS_START owner=host renderScale=%.3f foveation=%s fps=%d",
+                startGraphics.renderScale, office::foveationQualityName(startGraphics.foveation),
+                startGraphics.fps);
             return startGraphics;
         };
         host.editMetrics = [](const std::function<void(nlohmann::json &)> &edit) {
@@ -596,6 +623,24 @@ class Office {
                     LOG("CAPTURE_PUPPET hands=%u (synthetic input)", driven);
                 }
             }
+            // The left Menu button opens and closes the APK's settings view here, without the
+            // page. Its samples (below) never carry the button, so no page toggles anything too.
+            if (settingsButton.step(inputFrame.hands[0].active, inputFrame.hands[0].menu)) {
+                const bool open = !settingsOpen.load();
+                settingsOpen = open;
+                if (open)
+                    settingsHandoff = false;
+                input->haptic(0);
+                LOG("NATIVE_SETTINGS open=%d source=left_menu", open);
+                jclass cls = env->GetObjectClass(activity);
+                env->CallVoidMethod(activity, env->GetMethodID(cls, "onNativeSettings", "(Z)V"),
+                                    static_cast<jboolean>(open));
+                env->DeleteLocalRef(cls);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    LOG("Native settings callback failed");
+                }
+            }
             // Slider release/presets select new world targets once they settle, only with no
             // image acquired (WorldRenderer::updateTargets).
             renderer->updateTargets(controls.graphics, nowMs,
@@ -606,7 +651,12 @@ class Office {
                 controls,
                 std::chrono::duration<double, std::milli>(Clock::now().time_since_epoch()).count(),
                 focused && poseValid && frame.shouldRender);
-            controls.panelOpen = controls.panelOpen || overlayOpen;
+            // settingsOpen before the handoff: nativeCloseSettings writes them in the other order,
+            // so no frame sees the settings closed without the handoff that keeps the quad up.
+            const bool settingsShown = settingsOpen.load();
+            const bool handoff = settingsHandoff.exchange(false);
+            controls.panelOpen =
+                workspacePanel.step(controls.panelOpen, overlayOpen, settingsShown, handoff, nowMs);
             bool showStatus = controls.active && !controls.panelOpen && controls.statusVisible &&
                               frame.shouldRender && poseValid;
             if (controls.status != previousStatus || showStatus != previousStatusVisible) {
@@ -680,6 +730,9 @@ class Office {
                 if (inputFrames.size() >= 90)
                     inputFrames.erase(inputFrames.begin());
                 inputFrames.push_back(inputFrame);
+                // The native settings own the left Menu button; the drawn controller still
+                // animates it from inputFrame.
+                inputFrames.back().hands[0].menu = false;
             }
             // XR_EXT_eye_gaze_interaction: an interaction pose that only feeds the metrics. World
             // foveation is fixed and never follows it (foveation.h).
@@ -875,9 +928,16 @@ class Office {
                                                {"seq", stats.sceneSeq},
                                                {"stateSerial", stats.stateSerial}};
                 combined["scene"] = sceneMetrics;
+                std::string published = combined.dump(-1, ' ', true);
+                // The closed-workspace counter comes from the host, with the page's toast.
+                nlohmann::json counter = {{"fps", combined["fps"]},
+                                          {"refresh", combined["refresh"]},
+                                          {"focused", combined["focused"]},
+                                          {"controlAgeMs", combined["controlAgeMs"]}};
+                bridge.setCounter(office::fpsCounterText(counter.dump()));
                 {
                     std::lock_guard<std::mutex> lock(metricsMutex);
-                    latestMetrics = combined.dump(-1, ' ', true);
+                    latestMetrics = std::move(published);
                 }
                 LOG("FRAME_METRICS %s%s", report.c_str(), suffix.c_str());
                 LOG("FOVEATION_METRICS %s",
@@ -926,10 +986,15 @@ extern "C" JNIEXPORT void JNICALL Java_dev_droidoffice_xr_OfficeActivity_nativeS
     }
     env->GetJavaVM(&vm);
     jobject global = env->NewGlobalRef(activity);
+    // This APK's own settings view owns graphics (HOST_FLAGS nativeSettings): pages only mirror
+    // them from nativeReadEvents, and their control packets' graphics are ignored.
+    bridge.ownGraphics();
     stopping = false;
     focused = false;
     rebaseRequested = false;
     overlayOpen = false;
+    settingsOpen = false;
+    settingsHandoff = false;
     statusProducerVisible = false;
     resetControlHeartbeat();
     observedRefreshRate = 0;
@@ -952,6 +1017,13 @@ extern "C" JNIEXPORT void JNICALL Java_dev_droidoffice_xr_OfficeActivity_nativeS
             LOG("Display thread priority could not be set");
         }
         std::string ended = "The headset session ended";
+        {
+            office::GraphicsControls stored;
+            const bool restored = readStoredGraphics(stored);
+            if (restored)
+                bridge.seedGraphics(stored);
+            LOG("GRAPHICS_STORED restored=%d", restored);
+        }
         try {
 #ifdef OFFICE_VULKAN_SPIKE
             if (!renderer.empty()) {
@@ -1031,20 +1103,59 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeReadInput(JNIEnv *env, jobject) {
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_droidoffice_xr_OfficeActivity_nativeReadMetrics(JNIEnv *env, jobject) {
-    nlohmann::json metrics;
-    {
-        std::lock_guard<std::mutex> lock(metricsMutex);
-        metrics = nlohmann::json::parse(latestMetrics);
-    }
-    // Focus is live: a sleeping headset has no new frame report to replace its last FPS.
-    metrics["focused"] = focused.load();
-    // Fresh age and observed refresh reveal stalls or downgrades between frame reports.
-    controlHeartbeatMetrics(metrics);
-    const float refresh = observedRefreshRate.load();
-    if (refresh > 0)
-        metrics["refresh"] = refresh;
-    const auto report = metrics.dump(-1, ' ', true);
+    const auto report = currentMetrics();
     return env->NewStringUTF(report.c_str());
+}
+
+// ---- The APK's settings view (NativeSettingsView.java), UI thread ----------------------------
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeReadGraphicsStatus(JNIEnv *env, jobject) {
+    const auto status = office::graphicsStatus(bridge.graphics(), currentMetrics());
+    return env->NewStringUTF(status.c_str());
+}
+
+/** Applies at once; the renderer replaces targets once the choice has been stable for 250 ms. */
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_droidoffice_xr_OfficeActivity_nativeSetGraphics(
+    JNIEnv *env, jobject, jfloat renderScale, jstring foveation, jboolean fps) {
+    auto graphics = bridge.graphics();
+    std::string name;
+    if (const char *text = foveation ? env->GetStringUTFChars(foveation, nullptr) : nullptr) {
+        name = text;
+        env->ReleaseStringUTFChars(foveation, text);
+    }
+    if (!std::isfinite(renderScale) || !office::foveationFromName(name, graphics.foveation))
+        return JNI_FALSE;
+    graphics.renderScale = renderScale;
+    graphics.fps = fps;
+    if (!bridge.setGraphics(graphics))
+        return JNI_FALSE;
+    const auto applied = bridge.graphics();
+    LOG("NATIVE_GRAPHICS renderScale=%.3f foveation=%s fps=%d", applied.renderScale,
+        office::foveationQualityName(applied.foveation), applied.fps);
+    return JNI_TRUE;
+}
+
+/** Writes a changed choice to files/native-graphics.json. The bridge worker calls it. */
+extern "C" JNIEXPORT void JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativePersistGraphics(JNIEnv *, jobject) {
+    persistGraphics();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeSettingsOpen(JNIEnv *, jobject) {
+    return settingsOpen.load();
+}
+
+/** The view's own Close or Office workspace button. workspace: hold the quad for the page. */
+extern "C" JNIEXPORT void JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeCloseSettings(JNIEnv *, jobject, jboolean workspace) {
+    if (!settingsOpen.load())
+        return;
+    if (workspace)
+        settingsHandoff = true;
+    settingsOpen = false;
+    LOG("NATIVE_SETTINGS open=0 source=%s", workspace ? "workspace" : "close");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -1056,11 +1167,14 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeReadEvents(JNIEnv *env, jobject) {
         if (sceneResetNeeded)
             sceneReset = sceneResetNeeded();
     }
+    // graphics and nativeSettingsOpen are read-only mirrors of the host's settings view.
     const std::string events =
         std::string("{\"resetInput\":") + (focused ? "false" : "true") +
         ",\"recenter\":" + (rebaseRequested.exchange(false) ? "true" : "false") +
         ",\"sceneReady\":" + (sceneReady ? "true" : "false") +
         ",\"sceneReset\":" + (sceneReset ? "true" : "false") +
+        ",\"graphics\":" + office::graphicsEvent(bridge.graphics()) +
+        ",\"nativeSettingsOpen\":" + (settingsOpen ? "true" : "false") +
         (puppetEnabled ? ",\"puppet\":true}" : "}");
     return env->NewStringUTF(events.c_str());
 }
@@ -1101,9 +1215,7 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeSubmit(JNIEnv *env, jobject, jbyteA
         lastControlReceiptNs = received;
         ++controlHeartbeats;
     }
-    office::GraphicsControls graphics;
-    if (bridge.takeStoredGraphics(graphics))
-        storeGraphics(graphics);
+    persistGraphics();
     if (!error.empty())
         LOG("BRIDGE_ERROR %s", error.c_str());
     if (!scene.empty() || validControl) {

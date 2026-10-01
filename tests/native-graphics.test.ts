@@ -10,11 +10,11 @@ test('missing, corrupted and legacy graphics storage uses the tested defaults', 
 });
 
 test('graphics changes remain bounded and do not alter the display refresh request', () => {
-  assert.deepEqual(readNativeGraphics({ renderScale: 0.1, peripheralDensity: 2, foveation: 'clarity', fps: true }), { v: 1, renderScale: 0.75, foveation: 'clarity', fps: true, sharpScreens: true, foveationDebug: false });
+  assert.deepEqual(readNativeGraphics({ renderScale: 0.1, peripheralDensity: 2, foveation: 'clarity', fps: true }), { v: 1, renderScale: 0.75, foveation: 'low', fps: true, sharpScreens: true, foveationDebug: false });
   assert.deepEqual(readNativeGraphics({ renderScale: 3, peripheralDensity: -1, foveation: 'performance', fps: false, sharpScreens: false, foveationDebug: true }), {
     v: 1,
     renderScale: 2,
-    foveation: 'performance',
+    foveation: 'high',
     fps: false,
     sharpScreens: false,
     foveationDebug: true,
@@ -27,8 +27,21 @@ test('legacy recommended settings stay at 100% and higher resolution with foveat
   assert.equal(readNativeGraphics({ v: 1, renderScale: 1 }).renderScale, 1);
   const next = { ...DEFAULT_NATIVE_GRAPHICS, renderScale: 1.65, foveation: 'off' };
   assert.deepEqual(readNativeGraphics(JSON.parse(JSON.stringify(next))), next);
-  for (const foveation of ['off', 'performance', 'balanced', 'clarity']) assert.equal(readNativeGraphics({ foveation }).foveation, foveation);
+  for (const foveation of ['off', 'low', 'medium', 'high']) assert.equal(readNativeGraphics({ foveation }).foveation, foveation);
   for (const renderScale of [undefined, '1.7', Number.NaN, Infinity]) assert.equal(readNativeGraphics({ renderScale }).renderScale, 1);
+});
+
+test('legacy profile names migrate to the runtime names without changing the selected level', () => {
+  for (const [legacy, level] of [
+    ['clarity', 'low'],
+    ['balanced', 'medium'],
+    ['performance', 'high'],
+  ] as const) {
+    const settings = readNativeGraphics({ ...DEFAULT_NATIVE_GRAPHICS, foveation: legacy });
+    assert.equal(settings.foveation, level);
+    assert.equal(readNativeGraphics(JSON.parse(JSON.stringify(settings))).foveation, level);
+    assert.equal(nativeGraphicsPacket(settings).foveation, legacy, 'older installed APKs still accept version-one packets');
+  }
 });
 
 const galaxyResolution = {
@@ -105,6 +118,7 @@ test('the applied foveation reads the runtime profile the headset reports', () =
   assert.equal(nativeFoveationStatus({ foveation: { level: 'none', setting: 'off', fallback: '' } }), 'Currently applied: Off (full detail everywhere).');
   assert.equal(nativeFoveationStatus({ foveation: { level: 'unfoveated' } }), 'Currently applied: full detail everywhere (no runtime foveation).');
   assert.equal(nativeFoveationStatus({ foveation: 'broken', foveationEnabled: false }), 'Currently applied: Off.');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'performance', eyeTracked: true } }), 'Currently applied: High runtime level, follows your eyes.');
 });
 
 test('the menu reports the bound targets while a new foveation choice is still being applied', () => {

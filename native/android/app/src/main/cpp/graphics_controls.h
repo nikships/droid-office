@@ -11,6 +11,8 @@ struct GraphicsControls {
     bool sharpScreens = true;
     // Diagnostic: tint the world by its measured shading density (foveation_overlay.h).
     bool foveationDebug = false;
+    // The closed-workspace FPS counter. Only a host that owns graphics composes it natively.
+    bool fps = false;
 };
 struct RenderRect {
     int x = 0, y = 0, width = 0, height = 0;

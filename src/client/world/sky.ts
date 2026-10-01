@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Theme, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
+import { lampHalosShown } from '../native/mode';
 import type { NightParts } from './outside';
 
 /*
@@ -524,24 +525,26 @@ export class Sky {
     scene.add(this.dome);
 
     // Halos round the bulbs at night, one set of points per size (and per floor or street).
-    const halo = blobTexture(0.25);
-    const bySize = new Map<string, { size: number; ground: boolean; pos: number[]; col: number[] }>();
-    for (const h of night.halos) {
-      const key = `${h.size}|${!!h.ground}`;
-      let set = bySize.get(key);
-      if (!set) bySize.set(key, (set = { size: h.size, ground: !!h.ground, pos: [], col: [] }));
-      set.pos.push(h.at.x, h.at.y, h.at.z);
-      const c = new THREE.Color(h.color);
-      set.col.push(c.r, c.g, c.b);
-    }
-    for (const { size, ground, pos, col } of bySize.values()) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-      const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: halo, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
-      p.visible = false;
-      this.halos.push(p);
-      (ground ? this.groundHalos : scene).add(p);
+    if (lampHalosShown()) {
+      const halo = blobTexture(0.25);
+      const bySize = new Map<string, { size: number; ground: boolean; pos: number[]; col: number[] }>();
+      for (const h of night.halos) {
+        const key = `${h.size}|${!!h.ground}`;
+        let set = bySize.get(key);
+        if (!set) bySize.set(key, (set = { size: h.size, ground: !!h.ground, pos: [], col: [] }));
+        set.pos.push(h.at.x, h.at.y, h.at.z);
+        const c = new THREE.Color(h.color);
+        set.col.push(c.r, c.g, c.b);
+      }
+      for (const { size, ground, pos, col } of bySize.values()) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: halo, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+        p.visible = false;
+        this.halos.push(p);
+        (ground ? this.groundHalos : scene).add(p);
+      }
     }
     scene.add(this.groundHalos);
 

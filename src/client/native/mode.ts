@@ -54,6 +54,11 @@ export function signsPrinted(search: string = typeof location === 'undefined' ? 
   return isNativeSearch(search);
 }
 
+/** Native lamps keep their meshes and actual lighting, without camera-facing additive bulb halos. */
+export function lampHalosShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
+  return !isNativeSearch(search);
+}
+
 /**
  * What a sign in the world says about a problem: all of `text` wherever control hints are shown.
  * In the headset app, only what is wrong: its first sentence, up to any dash, without asides in

@@ -280,7 +280,7 @@ test('scripts send every step at least once, in order, on the page clock', async
   assert.ok(api.state().active, 'the last pose stays staged');
 });
 
-test('a step moves poses over time, buttons change at once, and checks can stop a script', async () => {
+test('a step moves poses over time, buttons change at once, and checks can stop a script', async (t) => {
   const { puppet, api, clock } = puppetWith();
   api.set({ right: { grip: [0, -0.2, -0.3], aimAt: [0, -0.2, -2] } });
   const done = api.script([
@@ -313,7 +313,9 @@ test('a step moves poses over time, buttons change at once, and checks can stop 
   const cancelled = api.script([{ at: 1000, right: { trigger: 1 } }]);
   api.set({ right: { grip: [0, 0, -0.3] } });
   assert.deepEqual([(await cancelled).ok, (await cancelled).reason], [false, 'cancelled']);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const timedOut = api.script([{ at: 10, right: { trigger: 1 } }], { timeoutMs: 5 });
+  t.mock.timers.tick(5);
   assert.deepEqual([(await timedOut).ok, (await timedOut).reason], [false, 'timeout'], 'no packets: the host stopped polling');
 
   assert.throws(() => api.script([]), /at least one step/);

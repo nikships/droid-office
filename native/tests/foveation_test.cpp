@@ -31,7 +31,9 @@ void levels() {
     assert(foveationLevel(FoveationQuality::Balanced) == XR_FOVEATION_LEVEL_MEDIUM_FB);
     assert(foveationLevel(FoveationQuality::Performance) == XR_FOVEATION_LEVEL_HIGH_FB);
     assert(!strcmp(foveationQualityName(FoveationQuality::Off), "off"));
-    assert(!strcmp(foveationQualityName(FoveationQuality::Balanced), "balanced"));
+    assert(!strcmp(foveationQualityName(FoveationQuality::Balanced), "medium"));
+    assert(!strcmp(foveationQualityName(FoveationQuality::Clarity), "low"));
+    assert(!strcmp(foveationQualityName(FoveationQuality::Performance), "high"));
     TargetFoveation target;
     assert(!target.foveated() && !strcmp(foveationLevelName(target), "none"));
     target.level = XR_FOVEATION_LEVEL_HIGH_FB;

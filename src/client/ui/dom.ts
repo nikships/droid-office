@@ -82,8 +82,7 @@ export function setDoing(modal: Modal, doing: string | undefined) {
 }
 
 /**
- * Whether a window may open at all. The headset app (native/ui.ts) refuses every one: it shows no
- * workspace, so a window would only sit unseen and block the world. Null lets every window open.
+ * Whether a window may open at all. Null lets every window open, including on the native workspace.
  */
 let modalGate: ((content: HTMLElement) => boolean) | null = null;
 let refused = 0;

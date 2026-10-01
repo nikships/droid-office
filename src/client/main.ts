@@ -135,7 +135,7 @@ import { calibrateNativeHeight, nativeEyeHeightNow, nativeFloorOffset, nativeHei
 import { modifiedEnter, wantsCsiEnter } from './term-keys';
 import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
 import { Nameplate } from './world/nameplate';
-import { getNativeGraphicsSettings, nativeGraphicsMetrics, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { getNativeGraphicsSettings, nativeGraphicsMetrics, setNativeGraphicsSettings, syncNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
 import { nativeGraphicsPacket } from './native/graphics-settings';
 import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
@@ -700,7 +700,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     if (!trip && lift().pressFloor(it.floorId)) ride(it.floorId);
     return;
   }
-  // The headset app has no workspace: what the trigger does plays out in the world (or nothing does).
+  // Native physical actions stay in the world; office windows use the compositor workspace.
   if (nativeMode) return nativeUseE(it, note, spot);
   if (vrUi) {
     // The same issue preset as desktop, in a world-space prompt.
@@ -770,13 +770,12 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
 }
 /**
  * The trigger on something in the world, in the headset app (native/world-use.ts): it does its job in
- * the world, or nothing. It never opens a window or the workspace; the hire menu that floats at an
- * empty desk is the one menu it opens.
+ * the world, or uses the shared office action on the compositor workspace.
  */
 function nativeUseE(it: Interactable, note: GhIssue | null, spot: BoardSpot | null) {
   const w = it.deskId ? store.workerAtDesk(it.deskId) : undefined;
   const def = it.deskId ? DESK_BY_ID.get(it.deskId) : undefined;
-  const use = nativeUse(it.kind, {
+  const action = nativeUse(it.kind, {
     carrying: !!carrying,
     worker: w ? { asleep: isAsleep(w.status), lost: !!w.lost, downed: w.downedUntil !== undefined } : null,
     room: !!def?.room,
@@ -784,18 +783,22 @@ function nativeUseE(it: Interactable, note: GhIssue | null, spot: BoardSpot | nu
     spot: it.kind === 'issues' && spot ? (spot.kind === 'tab' ? 'tab' : 'ticket') : null,
     seated: !!it.seatId && player.seat?.seatId === it.seatId,
   });
-  switch (use.do) {
+  switch (action.do) {
     case 'hire-menu':
       if (it.deskId) nativeMenus?.openHire(it.deskId);
       return;
-    case 'laptop':
-      if (w) nativeTyping?.use({ kind: 'laptop', workerId: w.id });
+    case 'terminal':
+      nativeTyping?.clear();
+      if (w) openWorkerTerminal(w.id);
       return;
-    case 'wake':
-      if (w) resumeWorker(w);
+    case 'workspace':
+      use(it, 'E', note, spot);
       return;
     case 'talk':
-      if (it.deskId && talkingTo !== it.deskId) startTalking(it.deskId);
+      if (it.deskId) {
+        if (talkingTo !== it.deskId) startTalking(it.deskId);
+        else askStation(it.deskId);
+      }
       return;
     case 'card':
       if (carrying) dropCard(it, carrying, physicalCarry?.pose ? null : note);
@@ -5713,7 +5716,7 @@ function startLoop() {
 
 // Native keeps the original scene, interact dispatch, windows and Net instance.
 if (nativeMode) {
-  // No workspace in the headset app: no window opens, and the page itself shows nothing (native/ui.ts).
+  // Office windows share the existing compositor workspace; graphics settings belong to the APK.
   nativeUi = initNativeUi();
   const headNow = () => (nativeControls?.active ? { pos: camera.getWorldPosition(new THREE.Vector3()), dir: nativeControls.lookDir(new THREE.Vector3()) } : null);
   /** A floor correction moves you up or down in the world: the open settings menu comes along, so it stays in front of you. */
@@ -5824,12 +5827,15 @@ if (nativeMode) {
     const t = typing.linked;
     if (up && t?.kind === 'laptop') net.send({ t: 'worker.attach', workerId: t.workerId });
   });
-  // A keyboard paired to the headset types into the world, and no office shortcut ever sees its keys.
-  captureVrKeys(window, { active: () => nativeControls?.active === true, onBytes: (bytes, key) => void typing.key(bytes, key) });
+  // Visible workspace fields/xterm receive their own keys; otherwise type into the world laptop.
+  captureVrKeys(window, { active: () => nativeControls?.active === true && !nativeUi?.blocked(), onBytes: (bytes, key) => void typing.key(bytes, key) });
   nativeControls = new NativeControls(scene, camera, {
     ...vrHooks,
     useE: vrUseE,
-    togglePanel: () => menus.toggleSettings(),
+    togglePanel: () => nativeUi?.setPanelOpen(!nativeUi.panelState().open),
+    panelOpen: () => nativeUi?.blocked() === true,
+    back: () => nativeUi?.back(),
+    openCommands: () => togglePalette(paletteEntries),
     menus,
     physical: {
       player,
@@ -5922,7 +5928,17 @@ if (nativeMode) {
   );
   nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
   (window as any).officeNative = {
-    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean }, host?: { debuggable?: boolean }) => {
+    frame: (
+      frames: unknown[],
+      metrics?: unknown,
+      events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean; graphics?: unknown; nativeSettingsOpen?: boolean },
+      host?: { debuggable?: boolean; nativeSettings?: boolean },
+    ) => {
+      if (host?.nativeSettings === true) {
+        if (events?.graphics) syncNativeGraphicsSettings(events.graphics);
+        nativeUi?.setNativeSettingsOpen(events?.nativeSettingsOpen === true);
+        if (nativeMenus?.open === 'settings') nativeMenus.close(true);
+      }
       // Only a debuggable Android build says so (OfficeActivity passes BuildConfig.DEBUG).
       if (shotStage) shotStage.debuggable = host?.debuggable === true;
       if (targetStage) targetStage.debuggable = host?.debuggable === true;
@@ -5945,7 +5961,7 @@ if (nativeMode) {
       const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
-        control: control ? { ...control, graphics: nativeGraphicsPacket(getNativeGraphicsSettings()), ...(puppet ? { puppet } : {}) } : control,
+        control: control ? { ...control, ...(host?.nativeSettings === true ? {} : { graphics: nativeGraphicsPacket(getNativeGraphicsSettings()) }), ...(puppet ? { puppet } : {}) } : control,
         panel: { ...nativeUi?.panelState(), status: nativeStatus(metrics, getNativeGraphicsSettings().fps, message) },
       };
     },
@@ -5953,6 +5969,18 @@ if (nativeMode) {
     recenter: () => nativeControls?.recenter(),
     // Headset checks switch foveation levels and the density view from devtools.
     graphics: { get: getNativeGraphicsSettings, set: setNativeGraphicsSettings },
+    height: {
+      get: () => ({ heightCm: nativeHeight().heightCm, floorOffset: nativeFloorOffset(), eyes: nativeEyeHeightNow() }),
+      set: (heightCm: number) => {
+        if (Number.isFinite(heightCm)) keepMenu(() => setNativeHeight({ heightCm }));
+      },
+      calibrate: () => {
+        let ok = false;
+        keepMenu(() => (ok = calibrateNativeHeight().ok));
+        return ok;
+      },
+      resetFloor: () => keepMenu(() => setNativeHeight({ floorOffset: 0 })),
+    },
     report: () => nativeScene?.report(),
     controls: nativeControls,
     ui: nativeUi,

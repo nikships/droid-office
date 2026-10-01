@@ -71,6 +71,7 @@ CPP_TESTS=(
 JAVA_PACKAGE=dev.droidoffice.xr
 JAVA_TESTS=(
   "NativeStatusPanelRulesTest|NativeStatusPanel"
+  "NativeSettingsRulesTest|NativeSettingsView"
   "OfficeWebServicesRulesTest|OfficeWebServices"
   "OfficeDiscoveryRulesTest|OfficeDiscovery"
 )

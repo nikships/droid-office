@@ -96,8 +96,8 @@ const HIRE_FORWARD = 0.14;
 const LEAVE_SLACK = 1.4;
 const LEAVE_MIN = 2.2;
 
-const FOVEATIONS: readonly NativeFoveation[] = ['off', 'performance', 'balanced', 'clarity'];
-export const FOVEATION_LABEL: Record<NativeFoveation, string> = { off: 'Off', performance: 'More headroom', balanced: 'Balanced', clarity: 'Wider sharp area' };
+const FOVEATIONS: readonly NativeFoveation[] = ['off', 'low', 'medium', 'high'];
+export const FOVEATION_LABEL: Record<NativeFoveation, string> = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High' };
 
 const SETTINGS_ROWS: MenuRow['kind'][] = ['value', 'buttons', 'note', 'value', 'value', 'toggle', 'toggle', 'note'];
 const HIRE_ROWS: MenuRow['kind'][] = ['value', 'toggle', 'note', 'buttons'];

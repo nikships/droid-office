@@ -5,8 +5,9 @@ to run the existing Node office server. Both the normal desktop client and the h
 use its existing authentication, WebSocket protocol, workers, terminals, boards and floor
 state. The headset uses the same first-person world and shared objects. Galaxy XR motion controllers
 are now the only supported native control scheme; this supersedes the earlier hand-tracking
-requirement. The left controller’s Menu button toggles the workspace. Grip must not open or
-close it. Dated installation and device results are recorded below.
+requirement. The left controller’s Menu button opens the APK-native settings. Its Office workspace
+button opens shared office tools; using an occupied desk opens that worker's terminal. Grip must
+not open or close panels. Dated installation and device results are recorded below.
 
 ## Current Vulkan renderer
 
@@ -33,6 +34,26 @@ system support are errors, not reasons to select a different renderer or fixed p
 See the [Android XR extension reference](https://developer.android.com/develop/xr/openxr/extensions)
 and the [OpenXR foveation specification](https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#XR_FB_foveation_vulkan).
 
+Settings exposes the runtime profiles directly, in increasing order:
+
+| Foveation setting | Runtime profile |
+| --- | --- |
+| Off | World swapchains without foveation support |
+| Low | `XR_FOVEATION_LEVEL_LOW_FB` |
+| Medium (default) | `XR_FOVEATION_LEVEL_MEDIUM_FB` |
+| High | `XR_FOVEATION_LEVEL_HIGH_FB` |
+
+The selected world resolution remains the eye-image size for every profile. The runtime chooses
+the full-density gaze region and peripheral density; these levels do not specify a percentage or
+expose a separate peripheral-resolution setting
+([profile parameters](https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#XR_FB_foveation_configuration)).
+Saved page settings and new native metrics use `off`, `low`, `medium` and `high`. Older saved
+names migrate one-to-one (`clarity` → `low`, `balanced` → `medium`, `performance` → `high`).
+Older APKs still receive version-one control packets with the older wire spellings. Hosts reporting
+`nativeSettings: true` own their graphics choices; their control packets omit page graphics and the
+page only mirrors the native values. The native host accepts both stored spellings and uses the
+runtime names.
+
 GPU timestamp pools reserve both views at each boundary. This avoids the observed Mesa
 lavapipe crash when multiview query expansion outlives a render pass, while retaining GPU
 timing in the host and headset renderers.
@@ -44,6 +65,37 @@ remain part of the world draw. The historical GLES sharp-layer measurements belo
 be presented as Vulkan capability or acceptance. Required checks remain populated-office
 rendering, physical controller/panel behavior, eye-following foveation, laptop readability
 and focused 1–2 minute timing runs with scene packets advancing.
+
+Native lamps have no camera-facing additive bulb halos. `world/sky.ts` does not create their
+point geometry, materials or halo texture on `/?native=1`; the physical bulbs, emissive
+materials and room-lighting uniforms remain unchanged. Desktop and WebXR retain the original
+halos. This removes the ceiling-lamp glow that appeared to turn with head movement without
+removing the lamps' actual lighting.
+
+## APK settings and shared office UI
+
+Graphics settings belong to the APK, not the office server or its WebView. Android controls on the
+compositor Surface update the native graphics snapshot directly and retain the settings in private
+app storage. The renderer applies target changes on its display thread; a page reload, slow page or
+stale page control packet cannot replace the selected native values. UI values and target application
+are separate: changing a choice updates the control immediately, while native metrics report the
+actually bound target/profile.
+
+The local WebView retains the original office actions, authentication and server protocol.
+Terminals, boards, task queue, meetings, changes, recovery dialogs and other office windows open on
+the compositor workspace; native mode does not reject all modals or force its panel closed. A
+trigger at an occupied desk opens the shared terminal, including its wake/recovery path. A paired
+keyboard reaches the visible terminal or field instead of being redirected to a world laptop.
+Single-choice dropdowns keep their choices inside the compositor Surface, preserving their original
+input/change handlers. Physical grabs, climbing, the gong and gun remain native world actions.
+Desktop-camera games (golf, basketball and the arcade) still need headset-specific controls.
+
+World-space canvas images, including the hire menu and laptop screens, use a per-scene worker to
+encode immutable ImageBitmap snapshots as compressed PNG/JPEG. Encoding and blob reads stay off the
+WebView's window event loop; image bytes transfer back without copying. The bounded encode queue,
+first-pixel priority, round-robin redraw fairness and packet backpressure remain in place. A worker
+failure releases pending jobs; the immediate compressed fallback does not wait for window canvas
+idle callbacks. Revisions describe the encoded snapshot, not a newer canvas repaint.
 
 ## Why the browser was struggling
 
@@ -248,11 +300,10 @@ only when advertised
    Derivative-based shading (the Standard material's geometry roughness, the toon fallback ramp)
    divides by the measured step, so it matches across bins.
 
-The page keeps the settings in its storage, which the native renderer only sees once the page
-has loaded. The native host therefore keeps the page's last render scale and foveation in
-`files/native-graphics.json` in the app's private storage and creates the first world targets
-with them, so a stored Off starts without foveation instead of being replaced after the page
-loads. A page reload keeps the current settings until the new page sends its own.
+In these builds the page owned the settings and the native host mirrored them into
+`files/native-graphics.json`. The installed APK owns them instead, as described in
+[APK settings and shared office UI](#apk-settings-and-shared-office-ui); it still creates the
+first world targets from that file, so a stored Off starts without foveation.
 
 | Setting | World targets |
 | --- | --- |
@@ -794,9 +845,52 @@ well inside the window.
 
 ## Acceptance status
 
+### APK-native settings, 2026-10-01
+
+The data-preserving `0.1.304-native-ui` update (version code 304), signed with the release
+lineage, and its browser build were tested on the SM-I610. A temporary instrumentation package
+opened the APK settings view and clicked its own Android buttons on the UI thread. Off, Low,
+Medium, High, one world-detail step down and the FPS toggle each changed the native snapshot in
+6–33 ms. After each foveation choice the renderer created new world targets within about 0.4 s:
+Off without a density map, each level with one, and native metrics then reported the matching
+eye-tracked profile. The world-detail step reallocated 2504 × 2916 targets as 2412 × 2808 per
+eye. No graphics errors were logged.
+
+An FPS choice made in the view survived a full process restart: the new process logged
+`GRAPHICS_STORED restored=1` and `GRAPHICS_START owner=host … fps=1` before the page loaded. With
+the page loaded, `officeNative.graphics.set()` from the page changed no native setting and created
+no targets, and the page's read-only mirror returned to the native values within 3 s. The
+instrumentation package was removed afterwards; the settings were left at 135%, High and FPS
+counter on.
+
+This check bypassed the physical left Menu edge and controller pointer events. Opening the view
+with the controller, switching to Office workspace, terminal use while the view is closed, FPS
+counter readability and sustained frame rate with the view open still need a worn, focused
+headset check.
+
+Lint, client/server typechecking, all 876 tests, the client build, 17 native host C++ tests,
+4 Java host test classes (57 checks) and both APK variants passed. The macOS host run did not
+run the Linux Mesa renderer suite.
+
+### Runtime profiles and lamp halos, 2026-10-01
+
+The data-preserving `0.1.303-runtime-profiles` update (version code 303) and its browser
+build were tested on the SM-I610. The Settings menu cycled Off → Low → Medium → High; native
+metrics reported `none` for Off, then the matching eye-tracked `low`, `medium` and `high`
+profiles, without graphics errors. Every choice retained the selected 150% target size,
+2784 × 3240 per eye. The test retained the original High choice. The live page reported zero lamp
+halos and no scene-export errors; native metrics showed 1,719 scene objects, advancing packets,
+zero rejected packets and zero failed programs. This verifies profile binding and halo
+omission, not a physical visual-comfort or sustained-90-FPS acceptance run.
+
+Lint, client/server typechecking, all 871 tests with coverage, the client/server build,
+native host checks and both APK variants passed. The macOS host run did not run the Linux
+Mesa renderer suite; its Vulkan shader checks passed. Lamp tests cover unchanged desktop
+and WebXR halos, retained native bulb emission and room lighting, and camera movement.
+
 ### Vulkan office validation, 2026-10-01
 
-The locally signed `0.1.302-vulkan-dev` debug APK (version code 302) is installed with retained
+The locally signed `0.1.302-vulkan-dev` debug APK (version code 302) was tested with retained
 app data. Its signature and 16 KB alignment use the existing release key and signing lineage.
 The installed office renderer initializes on the Adreno 740 with a two-eye multiview pass,
 4× MSAA, runtime density images and fragment-density-map offsets. Focused device logs report

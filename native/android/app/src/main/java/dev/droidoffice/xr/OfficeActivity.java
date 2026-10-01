@@ -31,6 +31,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -61,6 +62,12 @@ public final class OfficeActivity extends Activity {
     private native void nativeStatusVisible(boolean visible);
     private native void nativeCapturePuppet(boolean hostDebug);
     private native void nativeSelectRenderer(String options);
+    // The APK's settings view (NativeSettingsView). The host owns graphics; pages mirror them.
+    private native String nativeReadGraphicsStatus();
+    private native boolean nativeSetGraphics(float renderScale, String foveation, boolean fps);
+    private native void nativePersistGraphics();
+    private native boolean nativeSettingsOpen();
+    private native void nativeCloseSettings(boolean workspace);
     /** Intent extras of the debug-only Vulkan foveation spike, passed through as key=value. */
     private static final String[] VULKAN_SPIKE_EXTRAS = {
         "vk_msaa",      "vk_offsets",          "vk_level", "vk_overlay", "vk_fixed",
@@ -77,7 +84,11 @@ public final class OfficeActivity extends Activity {
     private Surface statusSurface;
     private NativeStatusPanel statusPanel;
     private WebView web;
+    // panelFrame holds the office page's panelRoot and, above it, the APK's settings view, so
+    // opening the settings never removes the page, its WebView or its terminals.
+    private FrameLayout panelFrame;
     private LinearLayout panelRoot;
+    private NativeSettingsView settingsView;
     private LinearLayout dialogBox;
     private TextView feedback;
     private OfficeWebServices services;
@@ -109,9 +120,11 @@ public final class OfficeActivity extends Activity {
     private boolean vulkanSpike;
 
     // Debuggable builds let the page's debug-only shot staging run (native/stage.ts);
-    // a release build never enables it.
-    private static final String HOST_FLAGS =
-        BuildConfig.DEBUG ? "{\"debuggable\":true}" : "{\"debuggable\":false}";
+    // a release build never enables it. nativeSettings: this APK owns the graphics settings and
+    // the left Menu button; the page mirrors nativeReadEvents' graphics and nativeSettingsOpen.
+    private static final String HOST_FLAGS = BuildConfig.DEBUG
+                                                 ? "{\"debuggable\":true,\"nativeSettings\":true}"
+                                                 : "{\"debuggable\":false,\"nativeSettings\":true}";
 
     // There is no privileged JavaScript interface. The host pulls bounded scene data
     // only from the chosen office origin, then parses it away from the render thread.
@@ -261,10 +274,19 @@ public final class OfficeActivity extends Activity {
             if (panelDisplay == null)
                 throw new IllegalStateException("The office workspace display could not start");
             panelPresentation = new Presentation(this, panelDisplay.getDisplay());
+            panelFrame = new FrameLayout(panelPresentation.getContext());
             panelRoot = new LinearLayout(panelPresentation.getContext());
             panelRoot.setOrientation(LinearLayout.VERTICAL);
             panelRoot.setBackgroundColor(Color.rgb(15, 20, 28));
-            panelPresentation.setContentView(panelRoot);
+            panelFrame.addView(panelRoot, new FrameLayout.LayoutParams(-1, -1));
+            if (!vulkanSpike) {
+                settingsView =
+                    new NativeSettingsView(panelPresentation.getContext(), handler, settingsHost());
+                panelFrame.addView(settingsView.view(), new FrameLayout.LayoutParams(-1, -1));
+                // The left Menu may have opened the settings before this Surface existed.
+                settingsView.setOpen(nativeSettingsOpen());
+            }
+            panelPresentation.setContentView(panelFrame);
             panelPresentation.getWindow().setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
             panelPresentation.show();
@@ -282,6 +304,73 @@ public final class OfficeActivity extends Activity {
                     connect(saved, getPreferences(MODE_PRIVATE).getString("server_name", null));
             }
         });
+    }
+
+    /**
+     * The display thread's left Menu edge toggled the settings. The native flag is authoritative,
+     * so a queued callback can never reopen a view its own Close button already closed.
+     */
+    public void onNativeSettings(boolean open) {
+        runOnUiThread(() -> {
+            if (destroyed || settingsView == null)
+                return;
+            settingsView.setOpen(nativeSettingsOpen());
+        });
+    }
+
+    private void closeSettings(boolean workspace) {
+        nativeCloseSettings(workspace);
+        if (settingsView != null)
+            settingsView.setOpen(false);
+        if (workspace)
+            runOnPage(NativeSettingsView.Rules.WORKSPACE_SCRIPT, result -> {});
+    }
+
+    /** Runs script on the loaded office page only; result receives null otherwise. */
+    private void runOnPage(String script, Consumer<String> result) {
+        if (destroyed || web == null || !documentCommitted || awaitingOffice ||
+            !sameOrigin(Uri.parse(web.getUrl() == null ? "" : web.getUrl()))) {
+            result.accept(null);
+            return;
+        }
+        WebView target = web;
+        int generation = navigationGeneration;
+        target.evaluateJavascript(script, value -> {
+            boolean current = !destroyed && web == target && generation == navigationGeneration;
+            result.accept(current && value != null && !"null".equals(value) ? value : null);
+        });
+    }
+
+    private NativeSettingsView.Host settingsHost() {
+        return new NativeSettingsView.Host() {
+            @Override
+            public String readStatus() {
+                return destroyed ? null : nativeReadGraphicsStatus();
+            }
+
+            @Override
+            public boolean setGraphics(float renderScale, String foveation, boolean fps) {
+                if (destroyed || !nativeSetGraphics(renderScale, foveation, fps))
+                    return false;
+                // The file write stays off the UI and display threads.
+                try {
+                    bridge.execute(() -> nativePersistGraphics());
+                } catch (java.util.concurrent.RejectedExecutionException stopped) {
+                    Log.w("OfficeXR", "Graphics settings not saved: the app is closing");
+                }
+                return true;
+            }
+
+            @Override
+            public void close(boolean workspace) {
+                closeSettings(workspace);
+            }
+
+            @Override
+            public void page(String script, Consumer<String> result) {
+                runOnPage(script, result);
+            }
+        };
     }
 
     /** The spike's workspace Surface shows only its controls, to prove the layer composites. */
@@ -783,7 +872,7 @@ public final class OfficeActivity extends Activity {
     /** Called by the render thread only for input transitions, never for every rendered pixel. */
     public void onPointer(int action, float x, float y) {
         runOnUiThread(() -> {
-            if (destroyed || panelRoot == null)
+            if (destroyed || panelFrame == null)
                 return;
             if (action == MotionEvent.ACTION_HOVER_ENTER ||
                 action == MotionEvent.ACTION_HOVER_MOVE ||
@@ -799,7 +888,7 @@ public final class OfficeActivity extends Activity {
                     time, time, action, 1, new MotionEvent.PointerProperties[] {properties},
                     new MotionEvent.PointerCoords[] {coords}, 0, 0, 1, 1, 0, 0,
                     InputDevice.SOURCE_MOUSE, 0);
-                panelRoot.dispatchGenericMotionEvent(event);
+                panelFrame.dispatchGenericMotionEvent(event);
                 event.recycle();
                 return;
             }
@@ -809,14 +898,14 @@ public final class OfficeActivity extends Activity {
             if (action == MotionEvent.ACTION_DOWN)
                 pointerDownTime = time;
             MotionEvent event = MotionEvent.obtain(pointerDownTime, time, action, x, y, 0);
-            panelRoot.dispatchTouchEvent(event);
+            panelFrame.dispatchTouchEvent(event);
             event.recycle();
         });
     }
 
     public void onScroll(float x, float y, float horizontal, float vertical) {
         runOnUiThread(() -> {
-            if (destroyed || panelRoot == null)
+            if (destroyed || panelFrame == null)
                 return;
             MotionEvent.PointerProperties properties = new MotionEvent.PointerProperties();
             properties.id = 0;
@@ -832,7 +921,7 @@ public final class OfficeActivity extends Activity {
                                    new MotionEvent.PointerProperties[] {properties},
                                    new MotionEvent.PointerCoords[] {coords}, 0, 0, 1, 1, 0, 0,
                                    android.view.InputDevice.SOURCE_MOUSE, 0);
-            panelRoot.dispatchGenericMotionEvent(event);
+            panelFrame.dispatchGenericMotionEvent(event);
             event.recycle();
         });
     }
@@ -841,9 +930,16 @@ public final class OfficeActivity extends Activity {
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (services != null && event.getAction() == KeyEvent.ACTION_UP)
             services.noteUserInput();
-        if (web != null && event.getKeyCode() != KeyEvent.KEYCODE_BACK &&
+        // A paired keyboard never types into a terminal hidden behind the settings view.
+        boolean settings = settingsView != null && settingsView.isOpen();
+        if (!settings && web != null && event.getKeyCode() != KeyEvent.KEYCODE_BACK &&
             web.dispatchKeyEvent(event))
             return true;
+        if (settings && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP)
+                closeSettings(false);
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
 
@@ -868,6 +964,9 @@ public final class OfficeActivity extends Activity {
             answer.accept(false);
             return;
         }
+        // A page dialog waits for an answer; it must not stay hidden behind the settings.
+        if (settingsView != null && settingsView.isOpen())
+            closeSettings(false);
         Context context = panelRoot.getContext();
         dialogBox = new LinearLayout(context);
         dialogBox.setOrientation(LinearLayout.VERTICAL);
@@ -906,6 +1005,8 @@ public final class OfficeActivity extends Activity {
             text.setText("Droid Office XR\n\n" + message);
             text.setTextSize(22);
             text.setPadding(48, 48, 48, 48);
+            if (settingsView != null && settingsView.isOpen())
+                closeSettings(false);
             if (panelRoot != null) {
                 panelRoot.removeAllViews();
                 panelRoot.addView(text);

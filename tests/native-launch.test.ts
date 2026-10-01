@@ -1,7 +1,5 @@
-// The headset app starts in the office, the way Half-Life: Alyx starts in its world, and it never
-// shows the workspace (the owner's decision): no window, Home, menu or field ever opens on its panel,
-// whatever happens. The left Menu button opens the settings menu that floats where you stand, and the
-// office page has no on-screen keyboard (a keyboard paired to the headset types into the world).
+// The headset app starts in the office. Its compositor workspace opens for shared office windows,
+// terminals and navigation, while APK-owned graphics settings remain independent of the page.
 // Desktop and WebXR are untouched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,30 +19,24 @@ function sources(dir: string): string[] {
 const files = sources(ROOT).map((path) => ({ path: relative(ROOT, path), src: readFileSync(path, 'utf8') }));
 const file = (path: string) => files.find((f) => f.path === path)?.src ?? assert.fail(`missing ${path}`);
 
-test('the headset page reports the workspace panel closed, always, and refuses every window', () => {
+test('the headset page opens the workspace for office windows and does not refuse them', () => {
   const ui = file('native/ui.ts');
-  assert.match(ui, /open: false, home: false, modal: false, floorMenu: false, typing: false, terminal: null, carrying/, 'panelState is closed whatever the page holds');
-  assert.match(ui, /setModalGate\(\(\) => false\)/, 'initNativeUi refuses every window');
-  assert.doesNotMatch(ui, /showHome|buildHome|openNativeGraphicsSettings|togglePanel|openCommands/, 'no Home, graphics window or palette is left to open');
-  assert.match(ui, /setPanelOpen\(open\) \{\n\s*if \(open\) return;/, 'asking to open the panel does nothing');
+  assert.match(ui, /open: home \|\| modal \|\| floorMenu/);
+  assert.match(ui, /setModalGate\(null\)/);
+  assert.match(ui, /terminal: openTerminalFor\(\)/);
+  assert.match(ui, /setPanelOpen\(open\) \{\n\s*home = open;/);
+  assert.match(ui, /nativeSettings \|\| panelState\(\)\.open/, 'native settings also suppress world input');
 });
 
-test('the headset page paints nothing: every element hidden and every animation paused', () => {
+test('the closed workspace paints nothing, while an open workspace shows its actual content', () => {
   const css = file('native/native.css');
-  assert.match(css, /body\.native-xr,\nbody\.native-xr \* \{\n {2}visibility: hidden;\n {2}animation-play-state: paused;\n\}/);
+  assert.match(css, /body\.native-xr:not\(\.native-workspace-open\)/);
+  assert.match(css, /visibility: hidden/);
+  assert.match(css, /body\.native-xr\.native-workspace-open \{ background:/);
 });
 
-test('only the left controller’s Menu button opens a menu on its own, and it is the floating settings menu', () => {
-  const opens: string[] = [];
-  for (const { path, src } of files) {
-    // Where the settings menu itself is defined.
-    if (path === 'native/menus.ts') continue;
-    for (const m of src.matchAll(/\b(?:setPanelOpen\(\s*true|showHome\(\s*true|togglePanel\(\)|toggleSettings\(\)|openSettings\(\))/g)) opens.push(`${path}: ${m[0]}`);
-  }
-  // main.ts hands the settings toggle to the controls as togglePanel; the controls call it from the
-  // left Menu press; the debug hook can open it for captures.
-  assert.deepEqual(opens.sort(), ['main.ts: openSettings()', 'main.ts: toggleSettings()', 'native/controls.ts: togglePanel()'].sort());
-  assert.match(file('main.ts'), /togglePanel: \(\) => menus\.toggleSettings\(\),/);
+test('legacy hosts can toggle the workspace, and right Menu stays reserved for Android XR', () => {
+  assert.match(file('main.ts'), /togglePanel: \(\) => nativeUi\?\.setPanelOpen\(!nativeUi\.panelState\(\)\.open\),/);
   const controls = file('native/controls.ts');
   assert.match(controls, /if \(pad\.menu && !s\.wasMenu\) \{\n\s*this\.hooks\.togglePanel\(\);/);
 });

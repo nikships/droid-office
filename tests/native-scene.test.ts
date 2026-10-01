@@ -741,6 +741,7 @@ test('texture updates during an encode retain latest pixels and sampler settings
   drainAll(native);
   texture.image = last;
   texture.needsUpdate = true;
+  const latestVersion = texture.version;
   texture.flipY = false;
   texture.magFilter = THREE.NearestFilter;
   pending.shift()!(new Uint8Array([1]));
@@ -748,13 +749,15 @@ test('texture updates during an encode retain latest pixels and sampler settings
   tick(1);
   native.capture();
   assert.deepEqual(starts, [first, last]);
-  drainAll(native);
+  const earlier = drainAll(native).flatMap((p) => p.textures ?? [])[0];
+  assert.equal(earlier.rev, latestVersion - 1, 'the revision belongs to the encoded snapshot, not a newer canvas');
   pending.shift()!(new Uint8Array([2]));
   await flush();
   native.capture();
   const packets = drainAll(native);
   const item = packets.flatMap((p) => p.textures ?? [])[0];
   assert.equal(item.w, 8);
+  assert.equal(item.rev, latestVersion);
   assert.equal(item.flipY, false);
   assert.equal(item.mag, 'nearest');
   assert.deepEqual(binBytes(item.data!, packets), new Uint8Array([2]));

@@ -161,7 +161,7 @@ class VulkanWorld final : public WorldRenderer {
     }
     nlohmann::json currentFoveation() const {
         return {{"setting", foveationQualityName(bound.foveation)},
-                {"level", foveationQualityName(bound.foveation)},
+                {"level", activeFoveation() ? foveationQualityName(bound.foveation) : "none"},
                 {"mode", activeFoveation() ? "eye-tracked" : "off"},
                 {"eyeTracked", activeFoveation()},
                 {"eyeTrackedAvailable", true},
@@ -360,6 +360,12 @@ class VulkanWorld final : public WorldRenderer {
         m["renderer"] = "vulkan";
         m["worldWidth"] = width;
         m["worldHeight"] = height;
+        // limits[0] is the left eye's recommendation, bounded by both eyes' runtime maximum and
+        // the Vulkan image limit; renderSize allocates from exactly these.
+        m["worldRecommendedWidth"] = limits[0].recommended.width;
+        m["worldRecommendedHeight"] = limits[0].recommended.height;
+        m["worldMaxWidth"] = limits[0].maximum.width;
+        m["worldMaxHeight"] = limits[0].maximum.height;
         m["maxRenderScale"] = maximumRenderScale(limits[0]);
         m["foveationSupported"] = true;
         m["foveationEnabled"] = activeFoveation();
