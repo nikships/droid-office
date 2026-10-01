@@ -275,10 +275,11 @@ While the workspace is open, its layer is composited beneath the world layer, wh
 through a hole so the player's controllers, rays and held gun stay in front of it, and the toast
 card fades while a hand is in front of it (see
 [Hands in front of compositor panels](vr-native-controller-interactions.md#hands-in-front-of-compositor-panels)).
-While the panel is beneath the world layer, filtered foveation is set aside for those frames: the
-filter pass keeps its density codes in the world image's alpha and submits opaque pixels, which
-would cover the panel, so the world is drawn straight into the submitted, unfoveated image until
-the workspace closes.
+While the panel is beneath the world layer, the foveation filter pass is left out
+(`filterFrame` in `foveation.h`): it keeps its density codes in the world image's alpha and
+submits opaque pixels, which would cover the panel, so those frames submit the foveated world
+image as drawn, with the driver's blocky periphery and the same GPU savings, until the workspace
+closes.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.

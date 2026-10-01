@@ -1561,34 +1561,37 @@ class Office {
                 sharp = sceneRenderer->planSharpScreens(worldViews, widths, heights, multiview,
                                                         sharpPlan);
             }
+            // Filtered targets: the world is drawn into the foveated swapchain, and the submitted
+            // image is the filter pass's output. Otherwise both are the submitted image. While the
+            // workspace panel is beneath the world layer the filter is left out (filterFrame) and
+            // the foveated image is submitted as drawn, keeping the panel's hole in its alpha.
+            const bool boundFiltered = boundTargets.foveation.filtered;
+            const bool filtered = office::filterFrame(boundFiltered, panelUnder);
+            const bool submitFoveated = boundFiltered && !filtered;
             if (valid)
                 for (int pass = 0; pass < (multiview ? 1 : 2); pass++) {
                     auto &eye = eyes[pass];
-                    // Filtered: the world is drawn into the foveated swapchain, and the submitted
-                    // image is the filter pass's output. Otherwise both are the submitted image.
-                    // Never while the workspace panel is beneath the world layer (filterFrame).
-                    const bool filtered =
-                        office::filterFrame(boundTargets.foveation.filtered, panelUnder);
-                    const bool boundRenderEye = filtered == boundTargets.foveation.filtered;
-                    auto &renderEye = filtered ? foveatedEyes[pass] : eye;
+                    auto &renderEye = boundFiltered ? foveatedEyes[pass] : eye;
                     uint32_t imageIndex = 0, renderIndex = 0;
                     auto acquire = office::structure<XrSwapchainImageAcquireInfo>(
                         XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
-                    check(xrAcquireSwapchainImage(eye.swapchain, &acquire, &imageIndex),
-                          "acquire eye");
                     auto imageWait = office::structure<XrSwapchainImageWaitInfo>(
                         XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
                     imageWait.timeout = XR_INFINITE_DURATION;
-                    check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
+                    if (!submitFoveated) {
+                        check(xrAcquireSwapchainImage(eye.swapchain, &acquire, &imageIndex),
+                              "acquire eye");
+                        check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
+                    }
                     renderIndex = imageIndex;
-                    if (filtered) {
+                    if (boundFiltered) {
                         check(xrAcquireSwapchainImage(renderEye.swapchain, &acquire, &renderIndex),
                               "acquire foveated eye");
                         check(xrWaitSwapchainImage(renderEye.swapchain, &imageWait),
                               "wait foveated eye");
                     }
                     const auto rect = office::renderRect(eye.width, eye.height, 1.f);
-                    if (boundRenderEye && boundTargets.foveation.eyeTracked && foveationProfile) {
+                    if (boundTargets.foveation.eyeTracked && foveationProfile) {
                         // "xrUpdateSwapchainFB should be called right before the
                         // xrGetFoveationEyeTrackedStateMETA function in order to (1) request a
                         // foveation pattern update by the runtime" (XR_META_foveation_eye_tracked).
@@ -1724,8 +1727,7 @@ class Office {
                         foveationFilter->resolve(renderEye.images[renderIndex].image);
                         glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     }
-                    if (boundRenderEye && renderIndex < imageUses.size() &&
-                        imageUses[renderIndex] < 2 &&
+                    if (renderIndex < imageUses.size() && imageUses[renderIndex] < 2 &&
                         ++imageUses[renderIndex] == 2) {
                         // Read-only: did the runtime enable QCOM foveation on this GLES image?
                         // GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM and _MIN_PIXEL_DENSITY_QCOM are
@@ -1745,14 +1747,14 @@ class Office {
                         LOG("FOVEATION_TEXTURE image=%u level=%s eyeTracked=%d filtered=%d "
                             "bits=%d minDensity=%.3f focalPoints=%d gl_error=%x",
                             renderIndex, office::foveationLevelName(boundTargets.foveation),
-                            boundTargets.foveation.eyeTracked, filtered, textureBits,
+                            boundTargets.foveation.eyeTracked, boundFiltered, textureBits,
                             textureMinDensity, textureFocalPoints, probeError);
                         ++imagesProbed;
                         if (probeError == GL_NO_ERROR && textureBits == 0)
                             ++imagesUnfoveated;
                         // No OpenXR text says a runtime foveates a swapchain that is never
                         // submitted. If none of them was, the next targets submit it directly.
-                        if (filtered && imagesProbed == imageUses.size() &&
+                        if (boundFiltered && imagesProbed == imageUses.size() &&
                             imagesUnfoveated == imagesProbed &&
                             foveation.filterFailed(boundTargets.foveation,
                                                    "filtered swapchain not foveated"))
@@ -1798,13 +1800,14 @@ class Office {
                     glFlush();
                     auto release = office::structure<XrSwapchainImageReleaseInfo>(
                         XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
-                    if (filtered)
+                    if (boundFiltered)
                         check(xrReleaseSwapchainImage(renderEye.swapchain, &release),
                               "release foveated eye");
-                    check(xrReleaseSwapchainImage(eye.swapchain, &release), "release eye");
+                    if (!submitFoveated)
+                        check(xrReleaseSwapchainImage(eye.swapchain, &release), "release eye");
                 }
             for (int i = 0; i < 2; i++) {
-                auto &eye = eyes[multiview ? 0 : i];
+                auto &eye = (submitFoveated ? foveatedEyes : eyes)[multiview ? 0 : i];
                 auto &pv = projectionViews[i];
                 pv = office::structure<XrCompositionLayerProjectionView>(
                     XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
