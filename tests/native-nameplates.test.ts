@@ -1,15 +1,20 @@
 // The headset app floats no name, state, light or pitch over anyone: a worker wears no antenna, its
-// name, engine and state are printed on its seat's nameplate with a status lamp, a teammate wears a
+// name and engine are engraved on a brass plate on a wooden block on its desk (or on its chair's
+// back) beside a status lamp, its laptop's title bar says its state and task, a teammate wears a
 // name badge, and a board agent's kiosk shows only its nameplate, on a screen set into its front,
-// until you greet it. Desktop and WebXR keep their tags.
+// until you greet it. Its signs are printed plates on boards, fixed to walls and shelves. Desktop
+// and WebXR keep their tags and labels.
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { floatingTagsShown, worldNotice } from '../src/client/native/mode.js';
-import { Nameplate, paintPlate, type PlateText } from '../src/client/world/nameplate.js';
+import { Nameplate, paintEngraved, paintPlate, type PlateText } from '../src/client/world/nameplate.js';
 import { Person, Worker, workerPlate, type WorkerPlateState } from '../src/client/world/character.js';
 import { buildOffice } from '../src/client/world/office.js';
-import { KIOSK } from '../src/shared/layout.js';
+import { buildBookshelf } from '../src/client/world/bookshelf.js';
+import { Laptop } from '../src/client/world/laptop.js';
+import { plainLabel, textPlane } from '../src/client/world/toon.js';
+import { BOOKSHELF, DESK_SIZE, KIOSK } from '../src/shared/layout.js';
 
 /** Stands in for any canvas member the painters reach for: callable, and every member is itself. */
 const anything: unknown = new Proxy(() => {}, { get: (_t, key) => (key === Symbol.toPrimitive ? () => 0 : key === 'then' ? undefined : anything), apply: () => anything });
@@ -122,7 +127,7 @@ test('a nameplate paints its name and state, and a pitch only once it has one', 
 
 test('in the headset app a worker floats nothing over its head; its seat nameplate carries it all', (t) => {
   page(t, '?native=1');
-  const plate = new Nameplate({ shape: 'prism', width: 0.36, height: 0.2 });
+  const plate = new Nameplate({ shape: 'block', width: 0.3, height: 0.11 });
   const pixel = new Worker('Pixel 🐚', '#8d99ae');
   pixel.setRole('Shell');
   pixel.setStatus('working', false);
@@ -153,7 +158,7 @@ test('in the headset app a worker floats nothing over its head; its seat namepla
 
 test("a kiosk's display passes from the agent waiting there to the one hired there and back", (t) => {
   page(t, '?native=1');
-  const display = new Nameplate({ shape: 'panel', width: 0.48, height: 0.24 });
+  const display = new Nameplate({ shape: 'screen', width: 0.48, height: 0.24 });
   const waiting = new Worker('Issues agent', '#ef476f');
   waiting.setStatus('idle', false);
   waiting.setRole('Issues board');
@@ -248,10 +253,11 @@ test('the headset office paints no kiosk sign and mounts a nameplate on every se
     let mounted = false;
     for (let o: THREE.Object3D | null = desk.plate.anchor; o; o = o.parent) if (o === desk.group) mounted = true;
     assert.ok(mounted, `${id}: its nameplate hangs on the seat itself`);
-    assert.ok(desk.plate.width > 0.3 && desk.plate.height >= 0.16, `${id}: big enough to read`);
+    assert.ok(desk.plate.width >= 0.3 && desk.plate.height >= 0.11, `${id}: big enough to read`);
   }
-  assert.equal(office.desks.get('station-issues')?.plate.shape, 'panel');
-  assert.equal(office.desks.get('desk-1')?.plate.shape, 'prism');
+  assert.equal(office.desks.get('station-issues')?.plate.shape, 'screen');
+  assert.equal(office.desks.get('desk-1')?.plate.shape, 'block');
+  assert.equal(office.desks.get('beanbag-1')?.plate.shape, 'plate');
 });
 
 test("a kiosk's nameplate is a screen set into its front, with its lamp standing on the counter", (t) => {
@@ -273,4 +279,231 @@ test("a kiosk's nameplate is a screen set into its front, with its lamp standing
     assert.ok(Math.abs(lamp.y - KIOSK.height) < 0.03, `${id}: the lamp stands on the counter (${lamp.y.toFixed(3)} m)`);
     assert.ok(lamp.z < 0 && lamp.z > -KIOSK.depth / 2 && Math.abs(lamp.x) < KIOSK.width / 2 - 0.05, `${id}: on the counter's front, not over the agent standing behind it`);
   }
+});
+
+/** `root`'s world-space bounds, counting only what's shown (its own `visible` and its parents'). */
+function shownBounds(root: THREE.Object3D, skip: (o: THREE.Object3D) => boolean = () => false): THREE.Box3 {
+  root.updateWorldMatrix(true, true);
+  const box = new THREE.Box3();
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || skip(m)) return;
+    for (let p: THREE.Object3D | null = m; p; p = p.parent) if (!p.visible) return;
+    m.geometry.computeBoundingBox();
+    box.union(m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld));
+  });
+  return box;
+}
+
+test("a desk's nameplate is a wooden name block lying on the desk, beside the laptop, with its lamp on the desk", (t) => {
+  page(t, '?native=1');
+  const office = buildOffice();
+  for (const id of ['desk-1', 'desk-4', 'desk-16']) {
+    const desk = office.desks.get(id)!;
+    const plate = new Nameplate(desk.plate);
+    desk.plate.anchor.add(plate.root);
+    const worker = new Worker('Byte 🐚', '#8d99ae');
+    worker.setRole('Shell');
+    worker.setStatus('idle', false);
+    worker.setPlate(plate);
+    const laptop = new Laptop();
+    desk.laptopAnchor.add(laptop.root);
+    // In the desk's own space, so its turn doesn't matter.
+    const inDesk = (box: THREE.Box3) => box.applyMatrix4(desk.group.matrixWorld.clone().invert());
+    const block = inDesk(shownBounds(plate.root));
+    const lamp = inDesk(shownBounds(lampOf(plate)));
+    const top = DESK_SIZE.height;
+    assert.ok(Math.abs(block.min.y - top) < 0.003, `${id}: it rests on the desk, not over it (foot ${(block.min.y - top).toFixed(3)} m)`);
+    assert.ok(block.max.y - top < 0.15, `${id}: a desk object's height, not a card standing up (${(block.max.y - top).toFixed(2)} m)`);
+    const half = { x: (DESK_SIZE.width - 0.06) / 2, z: (DESK_SIZE.depth - 0.04) / 2 };
+    assert.ok(block.min.x > -half.x && block.max.x < half.x && block.min.z > -half.z && block.max.z < half.z, `${id}: all of it on the desk top`);
+    assert.ok(lamp.min.y > top + 0.005 && lamp.min.y < top + 0.03, `${id}: the lamp's dome sits in its collar on the desk`);
+    const computer = inDesk(shownBounds(laptop.root));
+    assert.ok(!computer.intersectsBox(block), `${id}: clear of the laptop`);
+  }
+});
+
+test('an engraved plate is lit by the room and says who sits there without emoji; its lamp shows how it is doing', (t) => {
+  const drawn = page(t, '?native=1');
+  paintEngraved(document.createElement('canvas').getContext('2d')!, 720, 264, workerPlate(RESTING));
+  assert.deepEqual(drawn, ['Pixel', 'Shell'], 'its name and engine, and no state word: a plate does not change its words');
+
+  drawn.length = 0;
+  const plate = new Nameplate({ shape: 'block', width: 0.3, height: 0.11 });
+  const faces: THREE.Mesh[] = [];
+  plate.root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && m.geometry instanceof THREE.PlaneGeometry) faces.push(m);
+  });
+  assert.equal(faces.length, 2, 'a plate on each sloped face of the block');
+  for (const face of faces) {
+    const mat = face.material as THREE.MeshToonMaterial;
+    assert.ok(mat.isMeshToonMaterial && mat.map, 'brass lit by the room like the desk, not a screen that lights itself');
+    assert.ok(mat.emissiveIntensity < 0.5, 'with only a little light of its own');
+  }
+  assert.deepEqual(sprites(plate.root), []);
+  const pixel = new Worker('Pixel 🐚', '#8d99ae');
+  pixel.setRole('Shell');
+  pixel.setStatus('idle', false);
+  pixel.setPlate(plate);
+  const lamp = lampOf(plate).material as THREE.MeshBasicMaterial;
+  assert.equal(`#${lamp.color.getHexString()}`, '#5aa9e6', 'its lamp in its status color');
+  drawn.length = 0;
+  pixel.setStatus('working', false);
+  pixel.setTask({ name: 'Fix the login page', summary: 'Reading the form' });
+  assert.deepEqual(drawn, [], 'the plate keeps its words while the worker gets busy');
+  assert.equal(`#${lamp.color.getHexString()}`, '#f2b84b');
+  assert.equal(plate.showing.text?.pulse, 'busy');
+});
+
+test("in the headset app a worker's laptop screen has a title bar with its name, engine, state and task", (t) => {
+  const drawn = page(t, '?native=1');
+  const pixel = new Worker('Pixel 🐚', '#8d99ae');
+  pixel.setRole('Shell');
+  pixel.setStatus('working', false);
+  pixel.setTask({ name: 'Fix the login page', summary: 'Reading the form' });
+  const laptop = new Laptop();
+  drawn.length = 0;
+  laptop.setTitle(pixel.plateText);
+  laptop.update(0.016, undefined, 1);
+  for (const s of ['Pixel 🐚', 'Shell', 'WORKING', 'Fix the login page']) assert.ok(drawn.includes(s), `${s} in ${drawn.join(' | ')}`);
+  assert.ok(drawn.includes('booting…'), 'and the terminal (here its placeholder) below the bar');
+  drawn.length = 0;
+  laptop.setTitle(pixel.plateText);
+  laptop.update(0.016, undefined, 1);
+  assert.deepEqual(drawn, [], 'the same title paints nothing new');
+});
+
+test('on the desktop a laptop screen has no title bar: its worker wears its tags', (t) => {
+  const drawn = page(t, '');
+  const pixel = new Worker('Pixel 🐚', '#8d99ae');
+  pixel.setStatus('working', false);
+  assert.equal(pixel.plateText, null);
+  const laptop = new Laptop();
+  drawn.length = 0;
+  laptop.setTitle(pixel.plateText);
+  laptop.update(0.016, undefined, 1);
+  assert.equal(drawn.includes('WORKING'), false);
+});
+
+test('in the headset app a sign is a printed plate on a board, without emoji, lit by the room', (t) => {
+  const drawn = page(t, '?native=1');
+  const sign = textPlane('🪜 ⬆ floor-beta', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 44 });
+  assert.deepEqual(drawn, ['↑ floor-beta'], 'its words and a plain arrow');
+  assert.ok((sign.material as THREE.MeshToonMaterial).isMeshToonMaterial, 'lit by the room like the wall it is on');
+  assert.equal(sign.material.transparent, false, 'a whole plate, not a pill with see-through corners');
+  const board = sign.getObjectByName('sign-board') as THREE.Mesh<THREE.BoxGeometry>;
+  assert.ok(board, 'a board behind the face');
+  board.updateMatrix();
+  board.geometry.computeBoundingBox();
+  const back = board.geometry.boundingBox!.clone().applyMatrix4(board.matrix);
+  const { width, height } = sign.geometry.parameters;
+  assert.ok(back.max.z < 0 && back.min.z < -0.025, 'reaching back to the wall behind it');
+  assert.ok(back.max.x - back.min.x > width && back.max.y - back.min.y > height, 'its edge showing round the face');
+  let freed = false;
+  board.geometry.addEventListener('dispose', () => (freed = true));
+  sign.geometry.dispose();
+  assert.ok(freed, "disposing the sign's face frees its board too");
+
+  assert.equal(plainLabel('📚 Docs'), 'Docs');
+  assert.equal(plainLabel('🚒 ⬇ floor-alpha'), '↓ floor-alpha');
+  const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', glow: 1 });
+  assert.equal((exit.material as THREE.MeshToonMaterial).emissiveIntensity, 1, 'an exit sign is lit from inside');
+});
+
+test('on the desktop a sign stays a flat glowing label, emoji and all', (t) => {
+  const drawn = page(t, '');
+  const sign = textPlane('🪜 ⬆ floor-beta', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 44 });
+  assert.deepEqual(drawn, ['🪜 ⬆ floor-beta']);
+  assert.ok((sign.material as THREE.MeshBasicMaterial).isMeshBasicMaterial);
+  assert.equal(sign.children.length, 0);
+});
+
+test("the Docs sign is a board standing on the bookshelf's crown in the headset app, over it on the desktop", (t) => {
+  page(t, '?native=1');
+  const { group } = buildBookshelf();
+  const signs: THREE.Object3D[] = [];
+  group.traverse((o) => o.getObjectByName('sign-board')?.parent === o && signs.push(o));
+  assert.equal(signs.length, 1);
+  const box = shownBounds(signs[0]);
+  const crown = BOOKSHELF.height + 0.07;
+  assert.ok(Math.abs(box.min.y - crown) < 0.002, `standing on the crown, not over it (${(box.min.y - crown).toFixed(3)} m)`);
+  // It stands against the south wall facing into the room (-z): its crown's front is 0.035 m past the case's.
+  const front = BOOKSHELF.z - BOOKSHELF.depth / 2 - 0.035;
+  assert.ok(Math.abs(box.min.z - front) < 0.002, `its face over the crown's front edge (${box.min.z.toFixed(3)} against ${front.toFixed(3)})`);
+
+  page(t, '');
+  const desktop = buildBookshelf().group;
+  let floating = 0;
+  desktop.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && m.geometry instanceof THREE.PlaneGeometry) floating = shownBounds(m).min.y;
+  });
+  assert.ok(floating > crown + 0.05, 'the desktop sign is unchanged, over the crown');
+});
+
+test('the headset office prints no emoji on its signs', (t) => {
+  const drawn = page(t, '?native=1');
+  const office = buildOffice();
+  office.stack.set({ index: 0, count: 2, up: 'floor-beta' });
+  const signs = drawn.filter((s) => /\p{Extended_Pictographic}/u.test(s));
+  assert.deepEqual(signs, []);
+  assert.ok(drawn.includes('↑ floor-beta'), 'the ladder sign says where it goes');
+});
+
+/** Whether `o` is drawn: it and every parent visible, with a material that draws. */
+function drawn(o: THREE.Object3D): boolean {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false;
+  const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+  return !!m && (Array.isArray(m) ? m : [m]).some((x) => x.visible && x.colorWrite && x.opacity > 0.05);
+}
+
+test('in the headset app every sign is fixed to something: a wall, shelf, beam, post or rail behind it, or the top it stands on', (t) => {
+  page(t, '?native=1');
+  const office = buildOffice();
+  // A middle floor: the ladder's signs up and down, and the fire pole's sign down.
+  office.stack.set({ index: 1, count: 3, up: 'floor-gamma', down: 'floor-alpha' });
+  office.group.updateMatrixWorld(true);
+  const signs: THREE.Mesh[] = [];
+  const solid: THREE.Mesh[] = [];
+  office.group.traverse((o) => {
+    if (o.getObjectByName('sign-board')?.parent === o) signs.push(o as THREE.Mesh);
+    else if ((o as THREE.Mesh).isMesh && o.name !== 'sign-board' && drawn(o)) solid.push(o as THREE.Mesh);
+  });
+  assert.ok(signs.filter(drawn).length >= 14, `the office's signs (${signs.filter(drawn).length})`);
+  const ray = new THREE.Raycaster();
+  const loose: string[] = [];
+  for (const sign of signs.filter(drawn)) {
+    const board = sign.getObjectByName('sign-board') as THREE.Mesh<THREE.BoxGeometry>;
+    const { width, height, depth } = board.geometry.parameters;
+    const scale = board.getWorldScale(new THREE.Vector3());
+    board.geometry.computeBoundingBox();
+    const near = board.geometry.boundingBox!.clone().applyMatrix4(board.matrixWorld).expandByScalar(0.03);
+    const around = solid.filter((m) => {
+      m.geometry.computeBoundingBox();
+      return m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld).intersectsBox(near);
+    });
+    /** Whether anything else is within `reach` meters of `from` (board space) along `dir`. */
+    const touches = (from: THREE.Vector3, dir: THREE.Vector3, reach: number) => {
+      ray.set(board.localToWorld(from), dir.transformDirection(board.matrixWorld));
+      ray.far = reach;
+      return ray.intersectObjects(around, false).length > 0;
+    };
+    // Every 4 cm across the board: from just in front of the face, back through the board to 1.5 cm
+    // past its back; and from inside its foot, 1 cm down.
+    const cols = Math.max(2, Math.ceil((width * scale.x) / 0.04));
+    const rows = Math.max(2, Math.ceil((height * scale.y) / 0.04));
+    let fixed = false;
+    for (let i = 0; i <= cols && !fixed; i++) {
+      const x = (i / cols - 0.5) * width * 0.98;
+      fixed = touches(new THREE.Vector3(x, -height / 2 + 0.005, 0), new THREE.Vector3(0, -1, 0), 0.005 * scale.y + 0.01);
+      for (let j = 0; j <= rows && !fixed; j++) {
+        const y = (j / rows - 0.5) * height * 0.98;
+        fixed = touches(new THREE.Vector3(x, y, depth / 2 + 0.01), new THREE.Vector3(0, 0, -1), (depth + 0.01) * scale.z + 0.015);
+      }
+    }
+    const at = sign.getWorldPosition(new THREE.Vector3());
+    if (!fixed) loose.push(`${at.x.toFixed(2)}, ${at.y.toFixed(2)}, ${at.z.toFixed(2)}`);
+  }
+  assert.deepEqual(loose, [], 'no sign hangs in the air');
 });

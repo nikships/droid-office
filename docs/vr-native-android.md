@@ -138,17 +138,30 @@ and the DroidProxy refresh key on the machine monitor carries only its ↻ glyph
 window, opened on purpose, still lists the controller roles. Desktop and WebXR keep their hints.
 No name, status bubble, task card, light or pitch floats over a character either
 (`floatingTagsShown`): a worker wears no antenna or status bulb, and its headset band runs from
-ear cup to ear cup. A worker's name, engine, state and task are printed on its seat's nameplate
-(`src/client/world/nameplate.ts`): a three-sided sign on its desk, a plate on the back of its
-bean bag or meeting chair, or a screen set into the front of a board agent's kiosk. Its state
-reads like a device's status light, a colored dot and a word ("READY"). A status lamp on the
-seat, a lit dome in a dark collar, glows in the worker's status color, breathing while it works
-and blinking while it waits on someone: on top of the desk sign, on the plate's top edge, or on
-the kiosk counter's front corner. A teammate wears a name badge on their shirt. A kiosk has no
-"Ask me" sign: its screen shows the agent's name, its board and its state. The first trigger pull
+ear cup to ear cup. A worker's name and engine are engraved on its seat's nameplate
+(`src/client/world/nameplate.ts`), lit by the room like the desk or chair it is on: a brass
+plate on each sloped face of a wooden name block lying on its desk (one toward the chair and the
+aisle behind it, one toward the desk's front), or a brass plate on the back of its bean bag or
+meeting chair. A status lamp beside it, a lit dome in a steel collar, glows in the worker's status
+color, breathing while it works and blinking while it waits on someone: on the desk in front of
+the block's end, on the plate's top edge, or on the kiosk counter's front corner. The title bar
+across the top of its laptop's screen says the rest, as a terminal window's does: its name and
+engine on the left, and what it's on and its state, a colored dot and a word ("READY"), on the
+right (`Laptop.setTitle` in `src/client/world/laptop.ts`). A teammate wears a name badge on their
+shirt. A board agent's kiosk has a screen set into its front instead, and no "Ask me" sign: its
+screen shows the agent's name, its board and its state. The first trigger pull
 at the kiosk greets the agent, which looks up while the screen says what it does; the screen goes
 back to the nameplate once you ask it something or walk away, and the next pull opens the ask
 form.
+The office's signs are printed objects too (`signsPrinted`, `textPlane` in
+`src/client/world/toon.ts`): each is a plate on a board fixed to a wall, a shelf, a beam, a post or
+a rail, its face lit by the room with a little light of its own so it reads in the dark, its
+board's steel or wooden edge showing round it, and its words without emoji ("↑ floor-beta" on the
+wall beside the ladder). None hangs in the air: the boards' titles sit flat on the wall over them,
+the bookshelf's "Docs" board stands on the shelf's crown, the fire pole's sign is strapped under its
+railing's top bar, and the golf hole's sign spans both its posts (`tests/native-nameplates.test.ts`
+casts rays behind and under every sign). An exit sign stays lit from inside. Desktop and WebXR keep
+their flat glowing labels.
 A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).

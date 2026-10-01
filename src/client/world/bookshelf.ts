@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { BOOKSHELF, FLOOR } from '../../shared/layout';
+import { signsPrinted } from '../native/mode';
 import { mergeByMaterial, mesh, textPlane, toon } from './toon';
 import type { Collider, Interactable } from './office';
 
 // The bookshelf against the south wall: a tall wooden case, five shelves packed with books of every
 // size and color (a few leaning over, a stack lying flat, a plant and a globe among them), and a
-// "Docs" sign along its top. E at it opens the project's Markdown to read (ui/bookshelf.ts).
+// "Docs" sign along its top: over the crown, or in the headset app a board standing on the crown,
+// its face flush with the crown's front. E at it opens the project's Markdown to read (ui/bookshelf.ts).
 
 export interface BookshelfModel {
   group: THREE.Group;
@@ -105,8 +107,14 @@ export function buildBookshelf(): BookshelfModel {
   group.add(mergeByMaterial(parts));
 
   // A sign along the crown.
-  const sign = textPlane('📚 Docs', { size: 40, bg: '#fffaf3' });
-  sign.position.set(0, H + 0.3, 0.02);
+  const sign = textPlane('📚 Docs', { size: 40, bg: '#fffaf3', board: '#7f5539' });
+  if (signsPrinted()) {
+    // Its board stands on the crown (the top of the case is H + 0.07 up), its face over the crown's front edge.
+    sign.scale.setScalar(0.6);
+    sign.updateMatrixWorld(true);
+    const board = new THREE.Box3().setFromObject(sign);
+    sign.position.set(0, H + 0.07 - board.min.y, 0.01 + (D + 0.05) / 2 - board.max.z);
+  } else sign.position.set(0, H + 0.3, 0.02);
   group.add(sign);
 
   // Built facing +z; it stands against the south wall facing into the room (-z).

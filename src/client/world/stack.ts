@@ -2,7 +2,13 @@ import * as THREE from 'three';
 import { FLOOR, LADDER, POLE, POLES, SLAB, WALL_HEIGHT, WALL_T, WINDOWS, type PoleSpot } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
-import { mesh, textPlane, toon } from './toon';
+import { signsPrinted } from '../native/mode';
+import { SIGN_BACK, mesh, textPlane, toon } from './toon';
+
+/** A fire pole's railing: how high its top bar is, and how thick its bars and the caps on its posts are (meters). */
+const RAIL_TOP = 1.02;
+const RAIL_BAR = 0.035;
+const RAIL_CAP = 0.07;
 
 // The floors above and below this one: the ceiling (and the hatches and holes in it and in the floor),
 // the ladder up the west wall, and the fire poles. Every floor is built from the same office, so
@@ -328,10 +334,9 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     // Going down: a railing round three sides of the hole, red with brass caps, open on the fourth.
     const down = new THREE.Group();
     const half = POLE.rail;
-    const railTop = 1.02;
     const post = (x: number, z: number) => {
-      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, railTop, 10), red, x, railTop / 2, z, false));
-      down.add(mesh(new THREE.SphereGeometry(0.07, 10, 8), brass, x, railTop + 0.03, z, false));
+      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), red, x, RAIL_TOP / 2, z, false));
+      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), brass, x, RAIL_TOP + 0.03, z, false));
     };
     // The sides, as [dx0, dz0, dx1, dz1] from the pole, turned so the open one faces `open`.
     const c = Math.round(Math.cos(spot.open));
@@ -346,8 +351,8 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       const [x0, z0] = turn(ax, az);
       const [x1, z1] = turn(bx, bz);
       const len = Math.hypot(x1 - x0, z1 - z0);
-      for (const y of [railTop, railTop * 0.55]) {
-        const bar = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 8), y === railTop ? brass : red, (x0 + x1) / 2, y, (z0 + z1) / 2, false);
+      for (const y of [RAIL_TOP, RAIL_TOP * 0.55]) {
+        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? brass : red, (x0 + x1) / 2, y, (z0 + z1) / 2, false);
         bar.rotation.z = Math.PI / 2;
         bar.rotation.y = -Math.atan2(z1 - z0, x1 - x0);
         down.add(bar);
@@ -526,11 +531,23 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
           // Hung on the rail across from the way in, facing it, beside the pole rather than behind it.
           const sign = textPlane(text, { bg: '#0a0a0a', color: '#ef4444', size: 40, border: '#2f2f2f' });
           sign.scale.multiplyScalar(0.6);
-          const back = POLE.rail + 0.06;
-          const side = POLE.rail * 0.5;
+          let back = POLE.rail + 0.06;
+          let side = POLE.rail * 0.5;
+          let y = 0.72;
+          if (signsPrinted()) {
+            // In the headset app a board strapped flat to the inside of the far rail's top bar,
+            // hanging under it, between the pole and the corner post's cap.
+            const { width, height } = sign.geometry.parameters;
+            const room = POLE.rail - RAIL_CAP - POLE.radius - 0.06;
+            sign.scale.setScalar(Math.min(0.6, room / width));
+            const k = sign.scale.x;
+            back = POLE.rail - RAIL_BAR - SIGN_BACK * k + 0.002;
+            side = POLE.radius + 0.03 + (width * k) / 2;
+            y = RAIL_TOP + 0.02 - (height * k) / 2;
+          }
           const c = Math.cos(p.spot.open);
           const sn = Math.sin(p.spot.open);
-          sign.position.set(p.spot.x - sn * back + c * side, 0.72, p.spot.z - c * back - sn * side);
+          sign.position.set(p.spot.x - sn * back + c * side, y, p.spot.z - c * back - sn * side);
           sign.rotation.y = p.spot.open;
           p.sign = sign;
           p.group.add(sign);

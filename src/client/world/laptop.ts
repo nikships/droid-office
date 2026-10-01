@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
-import { mesh, roundedBox, toon } from './toon';
+import { mesh, roundedBox, toon, wrapText } from './toon';
 import { propReady, useProp } from './props';
-import { fontRevision, TERM_FONT } from '../fonts';
+import { fontRevision, SANS, TERM_FONT } from '../fonts';
+import { fillGlyphText, measureGlyphText, withGlyph } from './glyph';
+import type { PlateText } from './nameplate';
 
 /**
  * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
@@ -168,6 +170,49 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
   }
 }
 
+/** How tall the headset app's title bar across the top of a laptop's screen is, as a fraction of the screen (see Laptop.setTitle). */
+const TITLE_BAR = 0.065;
+const TITLE_BG = '#16181f';
+const TITLE_INK = '#eeeeee';
+const TITLE_MUTED = '#8f93a6';
+
+/**
+ * A terminal window's title bar across the top `h` pixels of a `w` wide screen, in the headset app:
+ * who works at it and what it is on the left, and on the right what it's on and its state, a lit dot
+ * and a word in its status color.
+ */
+export function paintTitleBar(ctx: CanvasRenderingContext2D, w: number, h: number, text: PlateText) {
+  ctx.fillStyle = TITLE_BG;
+  ctx.fillRect(0, 0, w, h);
+  const pad = h * 0.45;
+  const px = h * 0.56;
+  const mid = h * 0.54;
+  ctx.textBaseline = 'middle';
+  const fit = (s: string, weight: number, color: string, x: number, width: number, align: CanvasTextAlign) => {
+    if (width <= px) return 0;
+    ctx.textAlign = align;
+    ctx.font = `${weight} ${px}px ${SANS}`;
+    const line = wrapText(ctx, withGlyph(s), width, 1, px)[0] ?? '';
+    ctx.fillStyle = color;
+    fillGlyphText(ctx, line, x, mid, px);
+    return measureGlyphText(ctx, line, px);
+  };
+  // The right side first: its state always shows, and what it's on gets what's left of the half.
+  const [word, color] = text.state;
+  const wordW = fit(word, 800, color, w - pad, w / 2 - pad, 'right');
+  const dot = px * 0.34;
+  const dotX = w - pad - wordW - px * 0.45 - dot;
+  ctx.beginPath();
+  ctx.arc(dotX, mid, dot, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  const right = dotX - dot - pad;
+  if (text.line) fit(text.line, 600, TITLE_MUTED, right, right - w / 2, 'right');
+  const nameW = fit(text.name, 800, TITLE_INK, pad, w / 2 - 2 * pad, 'left');
+  if (text.role) fit(text.role, 600, TITLE_MUTED, pad + nameW + px * 0.7, w / 2 - 2 * pad - nameW - px * 0.7, 'left');
+  ctx.textAlign = 'left';
+}
+
 /** The lit screen in lid space, nearly edge to edge on the 0.78 x 0.5 lid. */
 const SCREEN_W = 0.775;
 const SCREEN_H = 0.495;
@@ -194,6 +239,9 @@ export class Laptop {
   private paintedAt = 0;
   private openT = 0;
   private placeholder = 'booting…';
+  /** The headset app's title bar (see setTitle), and what it last said. */
+  private title: PlateText | null = null;
+  private titleKey = '';
 
   constructor() {
     this.canvas.width = 2048;
@@ -243,6 +291,20 @@ export class Laptop {
     this.drawnVersion = -2;
   }
 
+  /**
+   * In the headset app, where nothing floats over a worker, a title bar across the top of its screen
+   * says who works here and how it's doing, as a terminal window's does (paintTitleBar): its name and
+   * engine, what it's on and its state. null for none, as on the desktop and in WebXR.
+   */
+  setTitle(text: PlateText | null) {
+    if (text === this.title) return;
+    this.title = text;
+    const key = text ? JSON.stringify([text.name, text.role, text.state, text.line]) : '';
+    if (key === this.titleKey) return;
+    this.titleKey = key;
+    this.drawnVersion = -2;
+  }
+
   /** `distance` to the camera throttles repaints: far-away laptops refresh rarely. */
   update(dt: number, screen: ScreenState | undefined, distance = 0) {
     this.maybeSwap();
@@ -255,7 +317,16 @@ export class Laptop {
       this.paintedAt = now;
       this.drawnVersion = version;
       this.drawnFonts = fonts;
-      paintScreen(this.ctx, this.canvas.width, this.canvas.height, screen, this.placeholder, 22);
+      const { width, height } = this.canvas;
+      if (this.title) {
+        // The terminal under the title bar.
+        const bar = Math.round(height * TITLE_BAR);
+        this.ctx.save();
+        this.ctx.translate(0, bar);
+        paintScreen(this.ctx, width, height - bar, screen, this.placeholder, 22);
+        this.ctx.restore();
+        paintTitleBar(this.ctx, width, bar, this.title);
+      } else paintScreen(this.ctx, width, height, screen, this.placeholder, 22);
       this.texture.needsUpdate = true;
     }
   }

@@ -139,7 +139,7 @@ const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
 const nativeMode = isNativeMode();
-/** Names, status bubbles and pitches float over characters; the headset app prints them on seats' nameplates instead (see plateAt). */
+/** Names, status bubbles and pitches float over characters; the headset app puts them on seats' nameplates and laptops instead (see plateAt). */
 const floatingTags = floatingTagsShown();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
@@ -242,8 +242,8 @@ const idleAgents = STATIONS.map((def) => {
 // ---- Nameplates (the headset app) ----------------------------------------------------------------
 /**
  * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
- * there, what it is and how it's doing, printed where it sits instead of floating over its head. A
- * kiosk's is the screen set into its front.
+ * there and what it is, engraved where it sits instead of floating over its head, with a status lamp
+ * for how it's doing (its laptop's title bar says the rest). A kiosk's is the screen set into its front.
  */
 const plates = new Map<string, Nameplate>();
 
@@ -5334,6 +5334,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     v.model.update(dt, t);
     // A board agent's kiosk has no laptop to paint (see buildKiosk).
     if (desk.station) continue;
+    // In the headset app its screen's title bar says who it is and how it's doing (null elsewhere).
+    v.laptop.setTitle(v.model.plateText);
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
     glow.power = v.laptop.glow(glow.pos, glow.dir);

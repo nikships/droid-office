@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SANS } from '../fonts';
+import { signsPrinted } from '../native/mode';
 import { fillGlyphText, measureGlyphText as measure, withGlyph } from './glyph';
 import { ANISOTROPY, LABEL_SCALE } from './texture-quality';
 
@@ -68,8 +69,59 @@ export function roundedBox(w: number, h: number, d: number, r = 0.06): THREE.Buf
   return geo;
 }
 
-type TextOpts = { color?: string; bg?: string; size?: number; border?: string };
+type TextOpts = {
+  color?: string;
+  bg?: string;
+  size?: number;
+  border?: string;
+  /** A printed sign's own light in the headset app (see printedMaterial): PRINT_GLOW unless it's lit from inside, as an EXIT sign is. */
+  glow?: number;
+  /** A printed sign's board color in the headset app: by default its face's color, toward brushed steel. */
+  board?: string;
+};
 const TEXT_SCALE = 0.0055;
+
+/**
+ * A label's words without emoji, as a printed sign or plate says them: "💬 READY" reads "READY",
+ * and "🪜 ⬆ floor-beta" reads "↑ floor-beta", its arrow kept as a plain one.
+ */
+export function plainLabel(label: string): string {
+  return label
+    .replace(/\u2B06\uFE0F?/gu, '\u2191')
+    .replace(/\u2B07\uFE0F?/gu, '\u2193')
+    .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** How much of its own light a printed sign gives off in the dark office, on top of the light that falls on it: enough to read it, not a glow. */
+export const PRINT_GLOW = 0.32;
+
+/**
+ * What a printed sign or plate is drawn with in the headset app: a toon surface lit by the room
+ * like the wall or desk it's fixed to, giving off `glow` of its own print so it still reads in the
+ * dark office without shining like a screen. `cutout` keeps only the print (ink on a surface).
+ */
+export function printedMaterial(map: THREE.Texture, glow = PRINT_GLOW, cutout = false): THREE.MeshToonMaterial {
+  const m = new THREE.MeshToonMaterial({ map, gradientMap: gradientMap(), emissive: '#ffffff', emissiveMap: map, emissiveIntensity: glow });
+  if (cutout) {
+    m.transparent = true;
+    m.alphaTest = 0.05;
+  }
+  return m;
+}
+
+/** A printed sign's board in the headset app, before the sign is scaled: how thick it is, and how far its edge shows round the face (meters). */
+const BOARD_DEPTH = 0.03;
+const BOARD_RIM = 0.018;
+/**
+ * How far behind its face a printed sign's board reaches in the headset app, in meters before the
+ * sign is scaled: a sign fixed flat to a wall or a bar has its face this far (times its scale) out from it.
+ */
+export const SIGN_BACK = BOARD_DEPTH + 0.002;
+/** The brushed steel a sign's board leans toward, and how much light of its own its edge gives off, so it shows round the face in the dark. */
+const BOARD_STEEL = new THREE.Color('#8d99ae');
+const BOARD_GLOW = 0.16;
 
 /** Every text label drawn so far, so they can be repainted once the bundled fonts finish loading. */
 const textLabels = new Set<() => void>();
@@ -79,8 +131,12 @@ export function redrawText(): void {
   for (const redraw of textLabels) redraw();
 }
 
-/** A near-square text label drawn to a texture; `w`/`h` are the canvas size in pixels. */
-function textTexture(text: string, opts: TextOpts) {
+/**
+ * A near-square text label drawn to a texture; `w`/`h` are the canvas size in pixels. A `printed`
+ * sign's face fills the whole canvas, framed by a fine line just inside its edge, where a label
+ * is a rounded pill.
+ */
+function textTexture(text: string, opts: TextOpts, printed = false) {
   const size = opts.size ?? 48;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
@@ -97,7 +153,13 @@ function textTexture(text: string, opts: TextOpts) {
     ctx.setTransform(LABEL_SCALE, 0, 0, LABEL_SCALE, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.font = font;
-    if (opts.bg) {
+    if (opts.bg && printed) {
+      ctx.fillStyle = opts.bg;
+      ctx.fillRect(0, 0, w, h);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = opts.border ?? '#0a0a0a';
+      ctx.strokeRect(7, 7, w - 14, h - 14);
+    } else if (opts.bg) {
       ctx.fillStyle = opts.bg;
       ctx.beginPath();
       ctx.roundRect(3, 3, w - 6, h - 6, 8);
@@ -128,11 +190,28 @@ export function textSprite(text: string, opts: TextOpts = {}): THREE.Sprite {
   return sprite;
 }
 
-/** A flat text sign facing +Z, for mounting on a wall (a sprite would swing into the wall). */
-export function textPlane(text: string, opts: TextOpts = {}): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
-  const { tex, w, h } = textTexture(text, opts);
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 });
-  return new THREE.Mesh(new THREE.PlaneGeometry(w * TEXT_SCALE, h * TEXT_SCALE), mat);
+/**
+ * A flat text sign facing +Z, for mounting on a wall (a sprite would swing into the wall). In the
+ * headset app (signsPrinted) it is a printed sign: its face lit by the room (printedMaterial), its
+ * words without emoji (plainLabel), and, when it has a background, a board behind it whose edge
+ * shows round the face and reaches back BOARD_DEPTH, to the wall it's mounted on. Disposing the
+ * face's geometry disposes the board's.
+ */
+export function textPlane(text: string, opts: TextOpts = {}): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial | THREE.MeshToonMaterial> {
+  const printed = signsPrinted();
+  const { tex, w, h } = textTexture(printed ? plainLabel(text) : text, opts, printed);
+  const face = new THREE.PlaneGeometry(w * TEXT_SCALE, h * TEXT_SCALE);
+  if (!printed) return new THREE.Mesh(face, new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 }));
+  const sign = new THREE.Mesh(face, printedMaterial(tex, opts.glow ?? PRINT_GLOW, !opts.bg));
+  if (opts.bg) {
+    const board = new THREE.BoxGeometry(w * TEXT_SCALE + 2 * BOARD_RIM, h * TEXT_SCALE + 2 * BOARD_RIM, BOARD_DEPTH);
+    const color = opts.board ?? `#${new THREE.Color(opts.bg).lerp(BOARD_STEEL, 0.5).getHexString()}`;
+    const back = mesh(board, toon(color, { emissive: `#${new THREE.Color(color).multiplyScalar(BOARD_GLOW).getHexString()}` }), 0, 0, BOARD_DEPTH / 2 - SIGN_BACK, false);
+    back.name = 'sign-board';
+    sign.add(back);
+    face.addEventListener('dispose', () => board.dispose());
+  }
+  return sign;
 }
 
 export interface CardOpts {
