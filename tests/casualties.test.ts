@@ -104,7 +104,7 @@ test('revive stands it back up in its seat with nothing disposed', () => {
   assert.deepEqual([model.root.rotation.x, model.root.rotation.y, model.root.rotation.z], [0, 0, 0]);
 });
 
-test('a confirmed kill walks the medics in, loads the body over ~1.5s and carries it out', () => {
+test('a confirmed kill walks the medics in, supports and loads the body, then carries it out', () => {
   const { seat, medics, sirens, casualties, model, frames } = rig();
   assert.equal(casualties.confirm('nobody', new LaptopStub()), false);
   casualties.shoot('w1', model, seat);
@@ -127,10 +127,10 @@ test('a confirmed kill walks the medics in, loads the body over ~1.5s and carrie
     medics.every((m) => m.moved > 0),
     'both medics walked in',
   );
-  // ...load the body for ~1.5s, the pool draining as it lifts...
-  frames(Math.ceil(1.4 * 60));
-  assert.equal(casualties.phaseOf('w1'), 'load', 'still loading at 1.4s');
-  frames(Math.ceil(0.3 * 60));
+  // The team takes time to stabilize the patient before lifting together.
+  frames(Math.ceil((LOAD_TIME - 0.4) * 60));
+  assert.equal(casualties.phaseOf('w1'), 'load', 'the pickup has several deliberate beats');
+  frames(Math.ceil(0.5 * 60));
   assert.equal(casualties.phaseOf('w1'), 'carry');
   assert.equal(model.root.parent?.type, 'Group', 'the body rides the stretcher');
   // ...carry it back to the elevator and fade, laptop and all.
@@ -179,7 +179,7 @@ test('clear ends every scene: the dying go back in their seats, the collected ar
 
 test('the blood pool geometry is shared and the constants sanity-check', () => {
   assert.ok(FALL_TIME > 0 && FALL_TIME < 2);
-  assert.ok(Math.abs(LOAD_TIME - 1.5) < 1e-9, 'loading takes ~1.5s');
+  assert.ok(LOAD_TIME > 3 && LOAD_TIME < 8, 'time for a supported pickup');
   assert.ok(BLEED_TIME > LOAD_TIME, 'still spreading when the medics arrive');
   assert.ok(POOL_R > 0.5 && POOL_R < 1.5);
   assert.ok(FADE_TIME > 0 && FADE_TIME < 2);

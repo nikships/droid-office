@@ -13,6 +13,73 @@ import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from '.
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
+/** Medic hands in the character's root space; feet stay planted while it crouches. */
+export interface MedicPose {
+  readonly left: THREE.Vector3;
+  readonly right: THREE.Vector3;
+  readonly crouch: number;
+  readonly stride: number;
+}
+
+/** A two-piece limb, created only for medics. Its endpoint is the actual hand/boot mesh. */
+class MedicLimb {
+  private readonly direction = new THREE.Vector3();
+  private readonly bend = new THREE.Vector3();
+  private readonly elbow = new THREE.Vector3();
+  private readonly upperMesh: THREE.Mesh;
+  private readonly originalPosition: THREE.Vector3;
+  private readonly originalScale: THREE.Vector3;
+  readonly lower = new THREE.Group();
+
+  constructor(
+    private readonly upper: THREE.Object3D,
+    readonly endpoint: THREE.Object3D,
+    private readonly a: number,
+    private readonly b: number,
+    originalLength: number,
+    geometry: THREE.BufferGeometry,
+  ) {
+    this.upperMesh = upper.children[0] as THREE.Mesh;
+    this.originalPosition = this.upperMesh.position.clone();
+    this.originalScale = this.upperMesh.scale.clone();
+    this.upperMesh.scale.y = a / originalLength;
+    this.upperMesh.position.y = -a / 2;
+    const material = Array.isArray(this.upperMesh.material) ? this.upperMesh.material[0] : this.upperMesh.material;
+    const lowerMesh = mesh(geometry, material, 0, -b / 2, 0, false);
+    this.lower.add(lowerMesh, endpoint);
+    endpoint.position.set(0, -b, 0);
+    upper.parent!.add(this.lower);
+  }
+
+  /** The bend direction picks the elbow/knee plane, without changing the contact point. */
+  pose(target: THREE.Vector3, bendX: number, bendZ: number) {
+    const d = this.direction.subVectors(target, this.upper.position).length();
+    this.direction.multiplyScalar(1 / Math.max(1e-6, d));
+    const reach = THREE.MathUtils.clamp(d, Math.abs(this.a - this.b) + 0.001, this.a + this.b - 0.001);
+    const along = (reach * reach + this.a * this.a - this.b * this.b) / (2 * reach);
+    this.bend.set(bendX, 0, bendZ).addScaledVector(this.direction, -this.direction.dot(this.bend)).normalize();
+    this.elbow
+      .copy(this.upper.position)
+      .addScaledVector(this.direction, along)
+      .addScaledVector(this.bend, Math.sqrt(Math.max(0, this.a * this.a - along * along)));
+    this.upper.quaternion.setFromUnitVectors(DOWN, this.bend.subVectors(this.elbow, this.upper.position).normalize());
+    this.lower.position.copy(this.elbow);
+    this.lower.quaternion.setFromUnitVectors(DOWN, this.bend.copy(this.upper.position).addScaledVector(this.direction, reach).sub(this.elbow).normalize());
+  }
+
+  restore(hand: boolean) {
+    this.upperMesh.position.copy(this.originalPosition);
+    this.upperMesh.scale.copy(this.originalScale);
+    this.upper.rotation.set(0, 0, 0);
+    if (hand) {
+      this.upper.add(this.endpoint);
+      this.endpoint.position.set(0, -0.38, 0);
+      this.endpoint.name = '';
+    }
+    this.lower.removeFromParent();
+  }
+}
+
 /** Voice loudness (RMS) above which someone counts as speaking. */
 const SPEAKING = 0.04;
 
@@ -371,6 +438,7 @@ export class Person {
    * (0–1), and seconds into the shot's recoil, or -1.
    */
   private gun: { prop: THREE.Group; muzzle: Muzzle; draw: number; fireT: number } | null = null;
+  private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
   constructor(name: string, color: string, look: Look) {
     this.look = { ...look };
@@ -944,10 +1012,78 @@ export class Person {
 
   /** Takes it out of the scene and frees its sprites (its materials are shared). */
   dispose() {
+    this.medicPose(null);
     this.root.removeFromParent();
     if (this.label) disposeSprite(this.label);
     if (this.doing) disposeSprite(this.doing);
     this.endEmote();
+  }
+
+  /** Overrides ordinary animation for a medic carrying a stretcher. Null restores normal limbs. */
+  medicPose(pose: MedicPose | null) {
+    if (!pose) {
+      if (!this.medicRig) return;
+      this.medicRig.limbs.forEach((limb, i) => limb.restore(i < 2));
+      for (const item of this.medicRig.uniform) item.removeFromParent();
+      for (const geometry of this.medicRig.geometries) geometry.dispose();
+      if (this.label) this.label.visible = this.medicRig.labelVisible;
+      this.medicRig = null;
+      this.body.position.set(0, 0, 0);
+      this.body.rotation.set(0, 0, 0);
+      this.head.rotation.set(0, 0, 0);
+      return;
+    }
+    if (!this.medicRig) {
+      const forearm = new THREE.CapsuleGeometry(0.075, 0.14, 3, 8);
+      const shin = new THREE.CapsuleGeometry(0.09, 0.04, 3, 8);
+      const boot = new THREE.BoxGeometry(0.16, 0.09, 0.23);
+      const patch = new THREE.BoxGeometry(1, 1, 1);
+      const cap = new THREE.CylinderGeometry(0.34, 0.35, 0.12, 12);
+      const limbs: MedicLimb[] = [];
+      for (const [i, arm] of [this.armL, this.armR].entries()) {
+        const hand = arm.children[1];
+        hand.name = i ? 'medic-right-hand' : 'medic-left-hand';
+        limbs.push(new MedicLimb(arm, hand, 0.29, 0.29, 0.4, forearm));
+      }
+      for (const [i, leg] of [this.legL, this.legR].entries()) {
+        const foot = mesh(boot, toon('#202936'), 0, 0, 0, false);
+        foot.name = i ? 'medic-right-foot' : 'medic-left-foot';
+        limbs.push(new MedicLimb(leg, foot, 0.22, 0.22, 0.42, shin));
+      }
+      const hat = mesh(cap, this.shirt, 0, 0.39, 0, false);
+      this.head.add(hat);
+      const uniform: THREE.Object3D[] = [hat];
+      for (const [w, h] of [
+        [0.16, 0.045],
+        [0.045, 0.16],
+      ]) {
+        const cross = mesh(patch, toon('#d84a45'), 0, 0.77, 0.265, false);
+        cross.scale.set(w, h, 0.015);
+        this.body.add(cross);
+        uniform.push(cross);
+      }
+      this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.label?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
+    }
+    const rig = this.medicRig;
+    if (this.label) this.label.visible = false;
+    this.body.position.set(0, -0.24 * pose.crouch, 0);
+    this.body.rotation.set(0.4 * pose.crouch, 0, 0);
+    rig.inverse.copy(this.body.quaternion).invert();
+    rig.target.copy(pose.left).sub(this.body.position).applyQuaternion(rig.inverse);
+    rig.limbs[0].pose(rig.target, -1, 0.2);
+    rig.target.copy(pose.right).sub(this.body.position).applyQuaternion(rig.inverse);
+    rig.limbs[1].pose(rig.target, 1, 0.2);
+    for (let i = 0; i < 2; i++) {
+      const step = Math.sin(pose.stride + i * Math.PI) * (1 - pose.crouch);
+      rig.target
+        .set(i ? 0.13 : -0.13, 0.115 + Math.max(0, step) * 0.055, step * 0.12)
+        .sub(this.body.position)
+        .applyQuaternion(rig.inverse);
+      const limb = rig.limbs[i + 2];
+      limb.pose(rig.target, 0, 1);
+      limb.endpoint.quaternion.copy(limb.lower.quaternion).invert().multiply(rig.inverse);
+    }
+    this.head.rotation.set(0.15 * pose.crouch, 0, 0);
   }
 
   /** A .44 Magnum in the right fist, or back in its holster. The arm swings up to aim as it draws. */

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ELEVATOR, ELEVATOR_FRONT } from '../../shared/layout';
 import { nearestWalkable, route, type Pt } from '../../shared/nav';
+import type { MedicPose } from './character';
 
 /**
  * Workers shot with the .44 Magnum. Nothing here goes to the server: the death scene is local to
@@ -9,8 +10,8 @@ import { nearestWalkable, route, type Pt } from '../../shared/nav';
  * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
  * pool spreads under it while its session keeps running (see shoot). From there either Revive
  * stands it back up in its seat with its session untouched, or confirming the kill calls in two
- * paramedics with a stretcher (see confirm): they walk in from the elevator, load the body (~1.5s,
- * the pool draining as it lifts), carry it back to the elevator and fade, and the laptop shuts and
+ * paramedics with a stretcher (see confirm): they walk in from the elevator, lower and open the scoop
+ * stretcher, support and settle the body, close the bed and lift together, then carry it back to the elevator and fade, and the laptop shuts and
  * shrinks as on a send-home. Other clients just see the send-home walk-out.
  *
  * No DOM or WebGL at import time, so tests can load this in Node.
@@ -22,20 +23,27 @@ export const FALL_TIME = 0.75;
 export const BLEED_TIME = 6;
 /** How wide the blood pool gets, in meters. */
 export const POOL_R = 0.9;
-/** Seconds lifting the body onto the stretcher, the pool draining as it goes. */
-export const LOAD_TIME = 1.5;
+/** Seconds lowering, stabilizing, loading and lifting together. */
+export const LOAD_TIME = 4.8;
 /** How fast the medics walk the stretcher in and out, in m/s. */
-export const MEDIC_PACE = 3;
+export const MEDIC_PACE = 1.6;
 /** Seconds fading away at the elevator with the body. */
 export const FADE_TIME = 0.7;
-/** Seconds for the team's pop-in at the elevator. */
-const TEAM_IN = 0.35;
+/** Seconds for the team to appear at full size at the elevator. */
+const TEAM_IN = 0.65;
 /** Seconds for a shut laptop to shrink away. */
 const LAPTOP_GONE = 0.3;
 /** A worker's feet are this far above its origin. */
 const FEET = 0.07;
 /** How high the stretcher's bed is. */
 const BED_Y = 0.72;
+const LOW_BED = 0.16;
+const HANDLE_Z = 1.04;
+const MEDIC_Z = 1.3;
+const LOWER_END = 0.85;
+const SUPPORT_END = 1.8;
+const SETTLE_END = 2.9;
+const LIFT_END = 4.3;
 /** How far out of its seat the shot worker lands. */
 const TUMBLE = 0.65;
 
@@ -61,6 +69,8 @@ export interface Medic {
   readonly root: THREE.Group;
   update(dt: number, t: number, moving: boolean, airborne: boolean): void;
   dispose(): void;
+  /** Optional articulated contact pose, applied after ordinary character animation. */
+  medicPose?(pose: MedicPose | null): void;
 }
 
 /** What a casualty needs of a laptop (see world/laptop.ts Laptop). */
@@ -106,37 +116,62 @@ function bloodPool(): THREE.Group {
   return pool;
 }
 
-/** A stretcher: an orange canvas with a red cross on it, on poles, carried at BED_Y. */
-function stretcher(): THREE.Group {
-  const g = new THREE.Group();
-  const pole = new THREE.MeshToonMaterial({ color: '#ced4da' });
-  const canvas = new THREE.MeshToonMaterial({ color: '#e36414' });
-  for (const s of [-1, 1]) {
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.9, 8).rotateX(Math.PI / 2), pole);
-    p.position.set(s * 0.32, BED_Y, 0);
-    g.add(p);
-  }
-  const bed = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.04, 1.5), canvas);
-  bed.position.y = BED_Y;
-  g.add(bed);
-  const cross = new THREE.MeshToonMaterial({ color: '#e63946' });
-  for (const [w, d] of [
-    [0.3, 0.1],
-    [0.1, 0.3],
-  ]) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(w, 0.045, d), cross);
-    bar.position.y = BED_Y;
-    g.add(bar);
-  }
-  return g;
+/** A split scoop bed with padded head support and handles the medics can actually hold. */
+function stretcher(): { root: THREE.Group; halves: THREE.Group[]; geometries: THREE.BufferGeometry[] } {
+  const root = new THREE.Group();
+  root.name = 'medic-stretcher';
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const pole = new THREE.CylinderGeometry(0.025, 0.025, 2.18, 8).rotateX(Math.PI / 2);
+  const steel = new THREE.MeshToonMaterial({ color: '#ced9df' });
+  const canvas = new THREE.MeshToonMaterial({ color: '#ed833b' });
+  const cushion = new THREE.MeshToonMaterial({ color: '#163b50' });
+  const halves = [-1, 1].map((side) => {
+    const half = new THREE.Group();
+    half.name = side < 0 ? 'stretcher-left' : 'stretcher-right';
+    const rail = new THREE.Mesh(pole, steel);
+    rail.position.x = side * 0.35;
+    half.add(rail);
+    const bed = new THREE.Mesh(box, canvas);
+    bed.scale.set(0.34, 0.055, 1.65);
+    bed.position.x = side * 0.17;
+    bed.castShadow = bed.receiveShadow = true;
+    half.add(bed);
+    const pad = new THREE.Mesh(box, cushion);
+    pad.scale.set(0.32, 0.07, 0.3);
+    pad.position.set(side * 0.17, 0.055, -0.38);
+    pad.receiveShadow = true;
+    half.add(pad);
+    root.add(half);
+    return half;
+  });
+  root.position.y = BED_Y;
+  return { root, halves, geometries: [box, pole] };
 }
 
 interface Team {
   group: THREE.Group;
   medics: Medic[];
+  bed: ReturnType<typeof stretcher>;
+  /** Only private material copies fade; character and worker materials may be shared elsewhere. */
+  materials: Map<THREE.Material, THREE.Material>;
   way: Pt[];
   next: number;
   heading: number;
+  pickupHeading: number;
+  speed: number;
+  moving: boolean;
+  stride: number;
+  left: THREE.Vector3;
+  right: THREE.Vector3;
+  pose: { left: THREE.Vector3; right: THREE.Vector3; crouch: number; stride: number };
+  pickupAt: THREE.Vector3;
+  withdrawal: THREE.Vector3;
+  bodyFrom: THREE.Vector3;
+  bodyRotation: THREE.Quaternion;
+  bodyTo: THREE.Vector3;
+  bodyTargetRotation: THREE.Quaternion;
+  scratch: THREE.Vector3;
+  inverse: THREE.Quaternion;
 }
 
 interface Casualty {
@@ -170,6 +205,11 @@ interface Casualty {
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const easeOut = (p: number) => 1 - (1 - p) * (1 - p);
+const smooth = (p: number) => {
+  const u = THREE.MathUtils.clamp(p, 0, 1);
+  return u * u * (3 - 2 * u);
+};
+const SUPINE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
 export class Casualties {
   private all = new Map<string, Casualty>();
@@ -256,7 +296,7 @@ export class Casualties {
 
   /**
    * Confirms the kill: two paramedics walk in from the elevator with a stretcher, load the body
-   * (~1.5s, the pool draining as it lifts), carry it back to the elevator and fade. The laptop
+   * with a supported scoop pickup, carry it back to the elevator and fade. The laptop
    * shuts and shrinks as on a send-home. False when there's no body to collect.
    */
   confirm(id: string, laptop: CasualtyLaptop): boolean {
@@ -268,18 +308,58 @@ export class Casualties {
     c.phase = 'fetch';
     c.t = 0;
     const group = new THREE.Group();
+    group.name = 'medic-team';
     const medics = [this.hooks.spawnMedic('🚑 Medic'), this.hooks.spawnMedic('🚑 Medic')];
-    medics[0].root.position.set(0, 0, 0.95);
-    medics[1].root.position.set(0, 0, -0.95);
-    medics[1].root.rotation.y = Math.PI;
-    group.add(medics[0].root, medics[1].root, stretcher());
-    group.scale.setScalar(0.01);
+    const bed = stretcher();
+    const left = new THREE.Vector3(-0.35, BED_Y, 0.26);
+    const right = new THREE.Vector3(0.35, BED_Y, 0.26);
+    const pose = { left, right, crouch: 0, stride: 0 };
+    medics.forEach((medic, i) => {
+      medic.root.position.set(0, 0, i ? -MEDIC_Z : MEDIC_Z);
+      medic.root.rotation.y = i ? 0 : Math.PI;
+      medic.medicPose?.(pose);
+      group.add(medic.root);
+    });
+    group.add(bed.root);
     this.parent.add(group);
-    const body: Pt = [c.floor.x, c.floor.z];
+    // The worker origin is at its feet. Approach the torso center, not the chair-side origin.
+    const torso = c.model.root.localToWorld(new THREE.Vector3(0, 0.55, 0));
+    const body: Pt = [torso.x, torso.z];
     const way = route(MEDIC_FROM, nearestWalkable(body));
     way.push(body);
     group.position.set(way[0][0], this.ground(way[0][0], way[0][1], c.floor.y) - FEET, way[0][1]);
-    c.team = { group, medics, way, next: 1, heading: 0 };
+    const heading = way.length > 1 ? Math.atan2(way[1][0] - way[0][0], way[1][1] - way[0][1]) : c.yaw;
+    group.rotation.y = heading;
+    const team: Team = {
+      group,
+      medics,
+      bed,
+      materials: new Map(),
+      way,
+      next: 1,
+      heading,
+      pickupHeading: Math.atan2(c.floor.x - torso.x, c.floor.z - torso.z),
+      speed: 0,
+      moving: false,
+      stride: 0,
+      left,
+      right,
+      pose,
+      pickupAt: new THREE.Vector3(),
+      withdrawal: new THREE.Vector3(c.floor.x - c.from.x, 0, c.floor.z - c.from.z).normalize().multiplyScalar(0.55),
+      bodyFrom: new THREE.Vector3(),
+      bodyRotation: new THREE.Quaternion(),
+      bodyTo: new THREE.Vector3(),
+      bodyTargetRotation: new THREE.Quaternion(),
+      scratch: new THREE.Vector3(),
+      inverse: new THREE.Quaternion(),
+    };
+    c.team = team;
+    this.copyMaterials(team, group);
+    this.opacity(team, 0);
+    c.model.root.traverse((object) => {
+      if ((object as THREE.Sprite).isSprite) object.visible = false;
+    });
     this.hooks.onSiren(group.position);
     return true;
   }
@@ -288,8 +368,7 @@ export class Casualties {
   clear() {
     for (const c of this.all.values()) {
       if (c.owned) {
-        c.model.root.removeFromParent();
-        c.model.dispose();
+        this.dropModel(c);
       } else this.reseat(c);
       this.dropTeam(c);
       this.dropPool(c);
@@ -306,17 +385,16 @@ export class Casualties {
   }
 
   update(dt: number, t: number) {
-    for (const [id, c] of [...this.all]) {
+    for (const [id, c] of this.all) {
       this.step(c, dt);
       c.model.update(dt, t);
-      if (c.team) for (const m of c.team.medics) m.update(dt, t, c.phase === 'fetch' || c.phase === 'carry', false);
+      if (c.team) this.poseTeam(c, dt, t);
       if (c.laptop && !this.closeLaptop(c, dt)) c.laptop = null;
       if (c.phase === 'fade' && c.t >= FADE_TIME) {
         this.dropTeam(c);
         this.dropPool(c);
         this.dropLaptop(c);
-        c.model.root.removeFromParent();
-        c.model.dispose();
+        this.dropModel(c);
         this.all.delete(id);
       }
     }
@@ -340,28 +418,56 @@ export class Casualties {
         return;
       case 'fetch': {
         const team = c.team!;
-        team.group.scale.setScalar(Math.max(0.01, Math.min(1, c.t / TEAM_IN)));
-        if (this.walk(team, dt)) {
+        this.opacity(team, smooth(c.t / TEAM_IN));
+        if (this.walk(team, dt, team.pickupHeading)) {
           c.phase = 'load';
           c.t = 0;
+          team.pickupAt.copy(team.group.position);
+          team.bodyFrom.copy(root.position);
+          team.bodyRotation.copy(root.quaternion);
+          team.bodyTargetRotation.copy(team.group.quaternion).multiply(SUPINE);
+          team.scratch.set(0, LOW_BED + 0.31 * root.scale.x, 0.58 * root.scale.x);
+          team.group.localToWorld(team.scratch);
+          team.bodyTo.copy(team.scratch);
+          team.moving = false;
         }
         return;
       }
       case 'load': {
-        // Up onto the stretcher, turning to lie along it, the pool draining as it lifts.
-        const p = Math.min(1, c.t / LOAD_TIME);
-        const e = p * p * (3 - 2 * p);
         const team = c.team!;
-        const bed = team.group.localToWorld(new THREE.Vector3(0, BED_Y + 0.05, 0));
-        root.position.lerpVectors(c.floor, bed, e);
-        root.rotation.y = c.yaw + wrap(team.heading - c.yaw) * e;
-        c.pool.scale.setScalar(Math.max(0.001, POOL_R * (1 - e)));
-        if (p < 1) return;
-        team.group.add(root);
-        root.position.set(0, BED_Y + 0.05, 0);
+        const lower = smooth(c.t / LOWER_END);
+        const settle = smooth((c.t - LOWER_END) / (SETTLE_END - LOWER_END));
+        const lift = smooth((c.t - SETTLE_END) / (LIFT_END - SETTLE_END));
+        // Split the scoop around the body while lowering. Support it before closing the bed.
+        const open = lower * (1 - smooth((c.t - SUPPORT_END) / (SETTLE_END - SUPPORT_END)));
+        team.bed.halves[0].position.x = -open * 0.2;
+        team.bed.halves[1].position.x = open * 0.2;
+        team.bed.root.position.y = THREE.MathUtils.lerp(BED_Y, LOW_BED, lower) + (BED_Y - LOW_BED) * lift;
+        if (root.parent !== team.group) {
+          root.position.lerpVectors(team.bodyFrom, team.bodyTo, settle);
+          root.position.y += (BED_Y - LOW_BED) * lift;
+          root.quaternion.slerpQuaternions(team.bodyRotation, team.bodyTargetRotation, settle);
+          if (settle >= 1) {
+            // Keep the body fixed to its support during the shared rise and withdrawal.
+            team.group.attach(root);
+            this.copyMaterials(team, root);
+          }
+        }
+        if (root.parent === team.group) root.position.y = team.bed.root.position.y + 0.31 * root.scale.x;
+        const withdraw = smooth((c.t - LIFT_END) / (LOAD_TIME - LIFT_END));
+        const x = team.pickupAt.x + team.withdrawal.x * withdraw;
+        const z = team.pickupAt.z + team.withdrawal.z * withdraw;
+        const move = Math.hypot(x - team.group.position.x, z - team.group.position.z);
+        team.group.position.x = x;
+        team.group.position.z = z;
+        team.moving = move > 1e-5;
+        team.stride += move * 7;
+        c.pool.scale.setScalar(Math.max(0.001, Math.max(0.05, POOL_R * easeOut(c.bleed)) * (1 - settle)));
+        if (c.t < LOAD_TIME) return;
         const here: Pt = [team.group.position.x, team.group.position.z];
         team.way = [here, ...route(nearestWalkable(here), MEDIC_FROM)];
         team.next = 1;
+        team.speed = 0;
         c.phase = 'carry';
         c.t = 0;
         return;
@@ -372,11 +478,9 @@ export class Casualties {
           c.t = 0;
         }
         return;
-      case 'fade': {
-        const p = Math.min(1, c.t / FADE_TIME);
-        c.team!.group.scale.setScalar(Math.max(0.001, 1 - p * p));
+      case 'fade':
+        this.opacity(c.team!, 1 - smooth(c.t / FADE_TIME));
         return;
-      }
     }
   }
 
@@ -389,31 +493,110 @@ export class Casualties {
     this.hooks.onLand(c.floor);
   }
 
-  /** Walks a team along its way; true once it's there. */
-  private walk(team: Team, dt: number): boolean {
+  /** Slows for corners and arrival, turns before stepping, and accelerates without a lurch. */
+  private walk(team: Team, dt: number, arrivalHeading?: number): boolean {
     const pos = team.group.position;
-    let move = MEDIC_PACE * dt;
-    while (move > 0 && team.next < team.way.length) {
-      const [x, z] = team.way[team.next];
-      const dx = x - pos.x;
-      const dz = z - pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 1e-4) team.heading = Math.atan2(dx, dz);
-      if (d <= move) {
-        pos.x = x;
-        pos.z = z;
-        move -= d;
-        team.next++;
-      } else {
-        pos.x += (dx / d) * move;
-        pos.z += (dz / d) * move;
-        move = 0;
-      }
+    while (team.next < team.way.length && Math.hypot(team.way[team.next][0] - pos.x, team.way[team.next][1] - pos.z) < 0.015) team.next++;
+    if (team.next >= team.way.length) {
+      team.speed = 0;
+      team.moving = false;
+      if (arrivalHeading === undefined) return true;
+      const turn = wrap(arrivalHeading - team.group.rotation.y);
+      team.group.rotation.y += THREE.MathUtils.clamp(turn, -dt * 1.6, dt * 1.6);
+      return Math.abs(turn) < 0.01;
     }
+    const [x, z] = team.way[team.next];
+    const dx = x - pos.x;
+    const dz = z - pos.z;
+    const distance = Math.hypot(dx, dz);
+    team.heading = Math.atan2(dx, dz);
+    const turn = wrap(team.heading - team.group.rotation.y);
+    team.group.rotation.y += THREE.MathUtils.clamp(turn, -dt * 1.6, dt * 1.6);
+    const target = MEDIC_PACE * Math.max(0, 1 - Math.abs(turn) / 1.2) * Math.min(1, Math.sqrt(distance / 0.7));
+    team.speed += THREE.MathUtils.clamp(target - team.speed, -dt * 3.5, dt * 2.4);
+    const move = Math.min(distance, team.speed * dt);
+    pos.x += (dx / distance) * move;
+    pos.z += (dz / distance) * move;
     const g = this.ground(pos.x, pos.z, pos.y + FEET) - FEET;
     pos.y += (g - pos.y) * Math.min(1, dt * 14);
-    team.group.rotation.y += wrap(team.heading - team.group.rotation.y) * Math.min(1, dt * 8);
-    return team.next >= team.way.length;
+    team.moving = move > 1e-5;
+    team.stride += move * 7;
+    return false;
+  }
+
+  /** Hands change between handles and support points; the endpoint meshes follow those targets. */
+  private poseTeam(c: Casualty, dt: number, t: number) {
+    const team = c.team!;
+    const loading = c.phase === 'load';
+    const lower = loading ? smooth(c.t / LOWER_END) : 0;
+    const lift = loading ? smooth((c.t - SETTLE_END) / (LIFT_END - SETTLE_END)) : 1;
+    const support = loading ? smooth((c.t - LOWER_END * 0.65) / 0.45) * (1 - smooth((c.t - SUPPORT_END) / (SETTLE_END - SUPPORT_END))) : 0;
+    const crouch = lower * (1 - lift);
+    // The same tiny vertical movement carries stretcher, body and both hands; feet remain on the floor.
+    const bob = team.moving ? Math.sin(team.stride * 2) * 0.012 : 0;
+    if (!loading || c.t > LIFT_END) team.bed.root.position.y = BED_Y + bob;
+    if (c.model.root.parent === team.group) c.model.root.position.y = team.bed.root.position.y + 0.31 * c.model.root.scale.x;
+    team.group.updateWorldMatrix(true, false);
+    c.model.root.updateWorldMatrix(true, false);
+    for (let i = 0; i < team.medics.length; i++) {
+      const medic = team.medics[i];
+      const end = i ? -1 : 1;
+      medic.root.position.z = end * (MEDIC_Z - support * 0.27);
+      medic.root.updateWorldMatrix(true, false);
+      medic.update(dt, t, team.moving, false);
+      team.inverse.copy(medic.root.quaternion).invert();
+      for (let hand = 0; hand < 2; hand++) {
+        const side = hand ? 1 : -1;
+        const target = hand ? team.right : team.left;
+        // Handles are expressed in the team frame, support points in the worker's own frame.
+        target.set(side * (0.35 + Math.abs(team.bed.halves[0].position.x)), team.bed.root.position.y, end * HANDLE_Z);
+        if (support) {
+          team.scratch.set(0, i ? 1.02 : 0.12, 0);
+          c.model.root.localToWorld(team.scratch);
+          team.scratch.y = Math.max(team.scratch.y - 0.13, c.floor.y + FEET + 0.09);
+          team.group.worldToLocal(team.scratch);
+          team.scratch.x += side * 0.23;
+          target.lerp(team.scratch, support);
+        }
+        target.sub(medic.root.position).applyQuaternion(team.inverse);
+      }
+      // Facing inward means the front medic walks backwards, maintaining sight of the patient.
+      if (!i) {
+        team.scratch.copy(team.left);
+        team.left.copy(team.right);
+        team.right.copy(team.scratch);
+      }
+      team.pose.crouch = crouch;
+      team.pose.stride = team.moving ? team.stride : 0;
+      medic.medicPose?.(team.pose);
+    }
+  }
+
+  private copyMaterials(team: Team, root: THREE.Object3D) {
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const clone = (original: THREE.Material) => {
+        let material = team.materials.get(original);
+        if (!material) {
+          material = original.clone();
+          team.materials.set(original, material);
+        }
+        return material;
+      };
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(clone) : clone(mesh.material);
+    });
+  }
+
+  private opacity(team: Team, value: number) {
+    for (const [original, material] of team.materials) {
+      material.opacity = original.opacity * value;
+      const transparent = original.transparent || value < 1;
+      if (material.transparent !== transparent) {
+        material.transparent = transparent;
+        material.needsUpdate = true;
+      }
+    }
   }
 
   /** Shuts the laptop and shrinks it away; false once it's gone. */
@@ -442,11 +625,34 @@ export class Casualties {
     if (!team) return;
     c.team = null;
     team.group.removeFromParent();
-    // Meshes only: a sprite's geometry is three.js's own shared one, and the medics free their own sprites.
-    team.group.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose();
+    // Medic helpers free their own geometry. Keep the worker's geometry out of team cleanup.
+    const geometry = new Set(team.bed.geometries);
+    for (const medic of team.medics) {
+      medic.medicPose?.(null);
+      medic.dispose();
+      medic.root.traverse((object) => {
+        if ((object as THREE.Mesh).isMesh) geometry.add((object as THREE.Mesh).geometry);
+      });
+    }
+    for (const item of geometry) item.dispose();
+    for (const material of team.materials.values()) material.dispose();
+    // Stretcher materials were created for this team, unlike shared character materials.
+    const bedMaterials = new Set<THREE.Material>();
+    team.bed.root.traverse((object) => {
+      const material = (object as THREE.Mesh).material;
+      if (material && !Array.isArray(material)) bedMaterials.add(material);
     });
-    for (const m of team.medics) m.dispose();
+    for (const [original, material] of team.materials) if (bedMaterials.has(material)) original.dispose();
+  }
+
+  private dropModel(c: Casualty) {
+    c.model.root.removeFromParent();
+    const geometry = new Set<THREE.BufferGeometry>();
+    c.model.root.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) geometry.add((object as THREE.Mesh).geometry);
+    });
+    c.model.dispose();
+    for (const item of geometry) item.dispose();
   }
 
   private dropPool(c: Casualty) {
