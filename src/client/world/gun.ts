@@ -14,6 +14,25 @@ export const GUN_LEN = 0.34;
 /** How high the barrel sits above the origin. */
 const BORE_Y = 0.086;
 
+/** The closest rendered solid struck by a bullet; only registered workers can be targets. */
+export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
+  for (const hit of ray.intersectObjects([office, ...workers.keys()], true)) {
+    // Raycaster includes hidden descendants and material-invisible meshes. Name tags, light
+    // points and other billboards are presentation, rather than solid bullet blockers.
+    if (!(hit.object instanceof THREE.Mesh)) continue;
+    const material = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
+    if (!material?.visible || material.opacity <= 0) continue;
+    let shown = true;
+    let workerId: string | null = null;
+    for (let object: THREE.Object3D | null = hit.object; object; object = object.parent) {
+      if (!object.visible) shown = false;
+      workerId ??= workers.get(object) ?? null;
+    }
+    if (shown) return { hit, workerId };
+  }
+  return null;
+}
+
 /** A beveled side silhouette: coordinates are [forward Z, up Y], thickness runs along X. */
 function profile(points: readonly (readonly [number, number])[], width: number, bevel = 0.001, holes: readonly (readonly (readonly [number, number])[])[] = []): THREE.BufferGeometry {
   const shape = new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y)));

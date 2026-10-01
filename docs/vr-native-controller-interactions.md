@@ -80,7 +80,8 @@ The runtime defines aim as the controller's pointing direction, distinct from gr
 [controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
 Shots start at the transformed
 model muzzle and reuse desktop solid occlusion, local casualty effects and explicit worker
-confirmation. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
+confirmation. Shot picking ignores hidden scene subtrees, invisible materials, name sprites
+and glow points; visible furniture and glass still block shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.
 The native app does not draw the gun through the desktop `7` shortcut.
@@ -109,6 +110,10 @@ laptop server. This APK's bytes differ from the CI-published artifact; their sou
 identity match. The owner is reviewing the controls. Their first gun capture exposed an upward
 barrel caused by treating grip and aim orientations as identical; aim-relative attachment
 regressions now cover both hands, wrist pitch/yaw/roll, handle position and shot alignment.
+A second wearer capture showed muzzle smoke without a worker reaction. The shared raycast
+now filters invisible blockers and UI billboards, with regressions for hidden workers and
+real furniture/glass occlusion. Native shots also set the ray camera for sprite intersection
+and record the chosen solid locally for diagnosis. This fix still needs wearer confirmation.
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic
 replay or browser render establishes physical headset ergonomics or worn-view sharpness.

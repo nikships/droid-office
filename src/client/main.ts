@@ -73,7 +73,7 @@ import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
-import { Puff } from './world/gun';
+import { gunHit, Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
@@ -1473,6 +1473,7 @@ function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
   sound.gunshot();
   smoke.wisp(origin);
   raycaster.set(origin, direction);
+  raycaster.camera = camera;
   raycaster.near = 0;
   raycaster.far = Infinity;
   resolveGunShot();
@@ -1483,18 +1484,11 @@ function resolveGunShot() {
   const byRoot = new Map<THREE.Object3D, string>();
   for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
   // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
-  const hits = raycaster.intersectObjects([office.group, ...byRoot.keys()], true);
-  const hit = hits[0];
-  let workerId: string | null = null;
-  if (hit) {
-    for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
-      const id = byRoot.get(o);
-      if (id !== undefined) {
-        workerId = id;
-        break;
-      }
-    }
-  }
+  const result = gunHit(raycaster, office.group, byRoot);
+  const hit = result?.hit;
+  const workerId = result?.workerId ?? null;
+  if (nativeMode)
+    console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, solid: hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null, distance: hit ? Math.round(hit.distance * 1000) / 1000 : null })}`);
   // Anything solid in front blocks the shot; a miss cracks into it with dust.
   if (!hit || workerId === null) {
     if (hit) {
