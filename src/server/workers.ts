@@ -10,8 +10,8 @@ import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import type { AgentChoice, AgentEffort, AgentProvider, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
-import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeRef, type WorktreeState } from './worktrees.js';
+import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
+import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
@@ -218,6 +218,9 @@ interface Worker {
   fresh?: { readonly line: number };
   /** Its lost worktree is being put back (see rebuild): the folder coming back mustn't wake it before that's done. */
   rebuilding?: boolean;
+  downedTimer?: NodeJS.Timeout;
+  /** Branches present at hire time, per repository; never included in gun dismissal. */
+  worktreeOwnership?: Record<string, WorktreeOwnership>;
 }
 
 export interface WorkerEvents {
@@ -320,6 +323,7 @@ export class WorkerManager {
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
     this.restore();
+    for (const w of this.workers.values()) if (w.info.downedUntil !== undefined) this.scheduleDismissal(w);
     this.scrollback.prune(new Set(this.workers.keys()));
     this.drops.prune(new Set(this.workers.keys()));
     // A session may have ended (and written its final tally) while the office was down.
@@ -349,10 +353,20 @@ export class WorkerManager {
     await this.host.connect();
     await Promise.all(
       [...this.workers.values()].map(async (w) => {
+        if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
+          this.dismiss(w);
+          return;
+        }
         const saved = w.saved;
         w.saved = undefined;
         const adopted = saved && (await this.host.attach(saved.ptyId));
-        if (adopted) this.adopt(w, adopted, saved);
+        if (adopted) {
+          if (this.workers.get(w.info.id) !== w || this.closing) adopted.pty.kill();
+          else if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
+            w.pty = adopted.pty;
+            this.dismiss(w);
+          } else this.adopt(w, adopted, saved);
+        }
       }),
     );
     // Terminals nobody saved a claim on (their worker was sent home as the office went down).
@@ -491,6 +505,7 @@ export class WorkerManager {
       meeting: meeting?.id,
     };
     const w = newWorker(info, newTracker());
+    if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
     // A board agent is told what it's there for ahead of its first request (which is what shows).
@@ -573,6 +588,10 @@ export class WorkerManager {
   resume(id: string, prompt?: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
+    if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
+      this.dismiss(w);
+      return 'This worker can no longer be revived';
+    }
     if (w.pty) return 'Worker is already running';
     if (this.checkLost(w, true)) return lostMessage(w.info);
     clockWork(w.info, 'starting');
@@ -629,6 +648,61 @@ export class WorkerManager {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
+  /** Down a worker without interrupting its session. Repeated shots never extend the grace period. */
+  shoot(id: string): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    if (this.closing) return 'The office is closing';
+    if (w.info.downedUntil !== undefined) {
+      if (w.info.downedUntil <= Date.now()) this.dismiss(w);
+      return undefined;
+    }
+    w.info.downedUntil = Date.now() + WORKER_REVIVE_MS;
+    this.persist();
+    this.emitUpdate(w);
+    this.scheduleDismissal(w);
+    return undefined;
+  }
+
+  revive(id: string): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    if (this.closing) return 'The office is closing';
+    if (w.info.downedUntil === undefined) return undefined;
+    if (w.info.downedUntil <= Date.now()) {
+      this.dismiss(w);
+      return 'This worker can no longer be revived';
+    }
+    clearTimeout(w.downedTimer);
+    w.downedTimer = undefined;
+    w.info.downedUntil = undefined;
+    this.persist();
+    this.emitUpdate(w);
+    return undefined;
+  }
+
+  private scheduleDismissal(w: Worker) {
+    clearTimeout(w.downedTimer);
+    w.downedTimer = setTimeout(
+      () => {
+        if (this.closing || this.workers.get(w.info.id) !== w || w.info.downedUntil === undefined) return;
+        if (w.info.downedUntil > Date.now()) this.scheduleDismissal(w);
+        else this.dismiss(w);
+      },
+      Math.max(0, (w.info.downedUntil ?? Date.now()) - Date.now()),
+    );
+  }
+
+  private dismiss(w: Worker) {
+    void this.kill(w.info.id).then(
+      ({ note, error }) => {
+        if (note) this.events.toast(note, 'info');
+        if (error) this.events.toast(error, 'warn');
+      },
+      (err: Error) => this.events.toast(`Couldn't dismiss ${w.info.name}: ${err.message}`, 'warn'),
+    );
+  }
+
   /**
    * Sends a worker home. For one with its own worktree, `cleanup` says what becomes of it; with no
    * choice given, the worktree and branch go only when they hold no work, where `landed` (its merged
@@ -638,9 +712,12 @@ export class WorkerManager {
   async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>): Promise<{ note?: string; error?: string }> {
     const w = this.workers.get(id);
     if (!w) return {};
+    if (w.info.downedUntil !== undefined && w.info.downedUntil > Date.now()) return { error: 'This worker is downed — revive them or wait until the revival window expires' };
+    const shot = w.info.downedUntil !== undefined;
     this.workers.delete(id);
     this.namer.forget(id);
     clearTimeout(w.scanTimer);
+    clearTimeout(w.downedTimer);
     const proc = w.pty;
     w.pty = undefined; // so the exit handler knows this worker is gone and stays quiet
     try {
@@ -662,6 +739,7 @@ export class WorkerManager {
     this.persist();
     // A meeting's worktree is everyone at the table's: the meeting tidies it away once they've all gone.
     if (!w.info.worktree || w.info.meeting) return {};
+    if (shot) return this.dismissWorktrees(w);
     // On the branch its work is on, should it have switched since it last came to rest.
     const wt = await this.current(w.info.worktree);
     const name = w.info.name;
@@ -694,6 +772,30 @@ export class WorkerManager {
     if (error) return { error: `Couldn't delete ${name}'s worktree: ${error}` };
     if (cleanup === 'worktree') return { note: `Deleted ${name}'s worktree${kept || ` and kept branch ${wt.branch}`}` };
     return { note: `Deleted ${name}'s worktree and branch ${gone.branch}${kept && `,${kept}`}` };
+  }
+
+  private async dismissWorktrees(w: Worker): Promise<{ note?: string; error?: string }> {
+    let trees: ReturnType<WorkerManager['treesOf']>;
+    try {
+      trees = this.treesOf(w.info);
+    } catch (err) {
+      return { error: `Couldn't delete ${w.info.name}'s worktrees: ${(err as Error).message}` };
+    }
+    const errors = (
+      await Promise.all(
+        trees.map(async (t) => {
+          try {
+            const error = await t.trees.dismiss(t.ref, this.dir, w.worktreeOwnership?.[t.dir]);
+            return error && `${t.name}: ${error}`;
+          } catch (err) {
+            return `${t.name}: ${(err as Error).message}`;
+          }
+        }),
+      )
+    ).filter((e): e is string => !!e);
+    if (errors.length) return { error: `Couldn't delete all of ${w.info.name}'s worktrees: ${errors.join('; ')}` };
+    if (w.info.repos?.length) clearWorkspace(path.join(this.dir, workspaceOf(w.info)!));
+    return { note: `Deleted ${w.info.name}'s worktrees and owned branches` };
   }
 
   /** Sending home a worker across repositories: what `kill` does with a worktree, for each of its worktrees, and then its workspace. */
@@ -1607,6 +1709,7 @@ export class WorkerManager {
     clearInterval(this.saveTimer);
     for (const w of this.workers.values()) {
       clearTimeout(w.scanTimer);
+      clearTimeout(w.downedTimer);
       this.scanUsage(w);
       // Before the process goes, so the next office shows what it was doing, not how it was stopped.
       if (w.unsaved) this.saveScrollback(w);
@@ -1628,6 +1731,10 @@ export class WorkerManager {
 
   private launch(w: Worker, prompt: string | undefined, resumeSessionId: string | undefined) {
     const { info } = w;
+    if (info.downedUntil !== undefined && info.downedUntil <= Date.now()) {
+      this.dismiss(w);
+      return;
+    }
     // Its folder was deleted meanwhile: it waits, marked lost, for someone to rebuild it or send it home.
     if (this.checkLost(w)) {
       clockWork(info, 'exited');
@@ -2160,7 +2267,7 @@ process.stdin.on('end', () => {
   }
 
   private persist() {
-    const saved = [...this.workers.values()].map(({ info, tracker, codexTranscript, hookToken, pty, bootBlocked, interrupted }) => ({
+    const saved = [...this.workers.values()].map(({ info, tracker, codexTranscript, hookToken, pty, bootBlocked, interrupted, worktreeOwnership }) => ({
       id: info.id,
       kind: info.kind,
       provider: info.provider,
@@ -2171,8 +2278,10 @@ process.stdin.on('end', () => {
       color: info.color,
       createdBy: info.createdBy,
       createdAt: info.createdAt,
+      downedUntil: info.downedUntil,
       prompt: info.prompt,
       worktree: info.worktree,
+      worktreeOwnership,
       repos: info.repos,
       title: info.title,
       sessionId: info.sessionId,
@@ -2199,7 +2308,14 @@ process.stdin.on('end', () => {
   private restore() {
     if (!existsSync(this.statePath)) return;
     try {
-      const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as (Partial<WorkerInfo> & { tracker?: unknown; codexTranscript?: unknown; hookToken?: unknown; pty?: any; midTurn?: unknown })[];
+      const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as (Partial<WorkerInfo> & {
+        tracker?: unknown;
+        codexTranscript?: unknown;
+        hookToken?: unknown;
+        pty?: any;
+        midTurn?: unknown;
+        worktreeOwnership?: Record<string, WorktreeOwnership>;
+      })[];
       for (const s of saved) {
         if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
         const tracker = restoreTracker(s.tracker);
@@ -2224,6 +2340,7 @@ process.stdin.on('end', () => {
           acked: true,
           createdBy: s.createdBy ?? '?',
           createdAt: s.createdAt ?? Date.now(),
+          downedUntil: typeof s.downedUntil === 'number' && Number.isFinite(s.downedUntil) ? s.downedUntil : undefined,
           prompt: s.prompt,
           worktree: s.worktree,
           repos: s.worktree ? validRepos(s.repos) : undefined,
@@ -2240,6 +2357,7 @@ process.stdin.on('end', () => {
           meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
         };
         const w = newWorker(info, tracker, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
+        w.worktreeOwnership = s.worktreeOwnership;
         if (provider === 'codex' && typeof s.codexTranscript === 'string') w.codexTranscript = s.codexTranscript;
         w.screenDirty = false;
         if (typeof s.pty?.id === 'string') {

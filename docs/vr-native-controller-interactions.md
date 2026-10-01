@@ -79,8 +79,10 @@ while keeping the handle at the grip origin. The live display-frame grip still p
 The runtime defines aim as the controller's pointing direction, distinct from grip; see the
 [controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
 Shots start at the transformed
-model muzzle and reuse desktop solid occlusion, local casualty effects and explicit worker
-confirmation. Shot picking ignores hidden scene subtrees, invisible materials, name sprites
+model muzzle and reuse desktop solid occlusion and shared casualty effects. Downed workers
+can be revived through the nearby use action within 30 seconds; otherwise the medics collect
+them and their owned worktrees and branches are deleted without a confirmation menu.
+Shot picking ignores hidden scene subtrees, invisible materials, name sprites
 and glow points; visible furniture and glass still block shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.

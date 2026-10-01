@@ -104,6 +104,36 @@ test('revive stands it back up in its seat with nothing disposed', () => {
   assert.deepEqual([model.root.rotation.x, model.root.rotation.y, model.root.rotation.z], [0, 0, 0]);
 });
 
+test('revival targets a nearby fallen worker, not a distant body or a different storey', () => {
+  const { seat, casualties, model, frames } = rig();
+  casualties.shoot('w1', model, seat);
+  frames(60);
+  const at = model.root.position;
+  assert.equal(casualties.nearby({ x: at.x, y: 0, z: at.z }), 'w1');
+  assert.equal(casualties.nearby({ x: at.x + 2.3, y: 0, z: at.z }), 'w1');
+  assert.equal(casualties.nearby({ x: at.x + 2.5, y: 0, z: at.z }), null);
+  assert.equal(casualties.nearby({ x: at.x, y: 4, z: at.z }), null);
+  casualties.revive('w1');
+  assert.equal(casualties.nearby({ x: at.x, y: 0, z: at.z }), null);
+});
+
+test('revival picks the nearest casualty and excludes bodies already being collected', () => {
+  const { parent, seat, casualties, model, frames } = rig();
+  const seat2 = new THREE.Group();
+  seat2.position.set(4, 0.4, 5);
+  parent.add(seat2);
+  const model2 = new Model();
+  seat2.add(model2.root);
+  casualties.shoot('w1', model, seat);
+  casualties.shoot('w2', model2, seat2);
+  frames(60);
+  const at = model2.root.position.clone();
+  assert.equal(casualties.nearby(at), 'w2');
+  casualties.confirm('w2', new LaptopStub());
+  assert.equal(casualties.nearby(at), null);
+  assert.equal(casualties.nearby(model.root.position), 'w1');
+});
+
 test('a confirmed kill walks the medics in, supports and loads the body, then carries it out', () => {
   const { seat, medics, sirens, casualties, model, frames } = rig();
   assert.equal(casualties.confirm('nobody', new LaptopStub()), false);
@@ -112,7 +142,7 @@ test('a confirmed kill walks the medics in, supports and loads the body, then ca
   const laptop = new LaptopStub();
   assert.equal(casualties.confirm('w1', laptop), true);
   assert.equal(casualties.confirm('w1', laptop), false, 'one team per body');
-  assert.equal(casualties.dying('w1'), false, 'no longer waiting on the dialog');
+  assert.equal(casualties.dying('w1'), false, 'no longer available for revival');
   assert.equal(casualties.revive('w1'), false, 'too late to revive');
   assert.equal(medics.length, 2);
   assert.equal(sirens.length, 1);
