@@ -236,6 +236,8 @@ interface ObjState {
   geo: number;
   mat: number | number[];
   m: Float32Array;
+  /** Controller the object is attached to (m is then grip-relative), or -1 for a world object. */
+  hand: -1 | 0 | 1;
   visible: boolean;
   sent: boolean;
   sentVisible: boolean;
@@ -457,6 +459,24 @@ function materialType(m: THREE.Material): MaterialType | null {
   return null;
 }
 
+/** A subtree drawn on a controller grip: its matrices are sent relative to the grip's world matrix. */
+interface Attachment {
+  hand: 0 | 1;
+  /** The tagged object; its parent is the grip. */
+  root: THREE.Object3D;
+}
+
+/**
+ * The `userData.nativeControllerAttachment` tag's hand: `{ hand: 0 | 1 }` on an object whose parent
+ * is that controller's grip group. Anything else is not an attachment.
+ */
+function attachmentHand(o: THREE.Object3D): 0 | 1 | null | undefined {
+  const tag = (o.userData as Record<string, unknown> | undefined)?.nativeControllerAttachment;
+  if (tag === undefined || tag === null) return undefined;
+  const hand = (tag as { hand?: unknown }).hand;
+  return hand === 0 || hand === 1 ? hand : null;
+}
+
 /** world/laptop.ts's tag for its terminal screen material; other canvas textures are not tagged. */
 function sharpTextTag(m: THREE.Material): boolean {
   return m.userData?.nativeSharpText === true;
@@ -670,6 +690,9 @@ export class NativeScene {
   private readonly scratchV = new THREE.Vector3();
   private readonly scratchW = new THREE.Vector3();
   private readonly scratchM = new THREE.Matrix4();
+  private readonly scratchRelative = new THREE.Matrix4();
+  /** Attachment records reused across captures (one per tagged subtree in a capture). */
+  private readonly attachments: Attachment[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -772,21 +795,34 @@ export class NativeScene {
     const seenTex = new Set<number>();
     const lights: THREE.Light[] = [];
     const layers = this.camera.layers;
+    let attached = 0;
 
-    const visit = (o: THREE.Object3D, parentVisible: boolean) => {
+    const visit = (o: THREE.Object3D, parentVisible: boolean, inherited: Attachment | null) => {
       const visible = parentVisible && o.visible;
       const a = o as THREE.Object3D & Record<string, unknown>;
+      const hand = attachmentHand(o);
+      let attachment = inherited;
+      if (hand !== undefined) {
+        // An invalid tag is ignored: the subtree keeps the placement it would have without it.
+        const grip = o.parent;
+        if (hand !== null && grip && !(grip as THREE.Scene).isScene) {
+          const record = (this.attachments[attached++] ??= { hand, root: o });
+          record.hand = hand;
+          record.root = o;
+          attachment = record;
+        } else this.note('object', this.idOf(o, 'object'), 'nativeControllerAttachment needs { hand: 0 | 1 } on a child of a controller grip', o.name);
+      }
       if (a.isLight) {
         if (visible && o.layers.test(layers)) lights.push(o as THREE.Light);
       } else if (a.isSkinnedMesh || a.isBatchedMesh || a.isLOD) {
         this.note('object', this.idOf(o, 'object'), a.isSkinnedMesh ? 'SkinnedMesh is not drawn natively' : a.isBatchedMesh ? 'BatchedMesh is not drawn natively' : 'LOD levels are not switched natively', o.name);
       } else {
         const kind = kindOf(o);
-        if (kind) this.captureObject(o as Drawable, kind, visible && o.layers.test(layers), seenObj, seenGeo, seenMat, seenTex);
+        if (kind) this.captureObject(o as Drawable, kind, visible && o.layers.test(layers), attachment, seenObj, seenGeo, seenMat, seenTex);
       }
-      for (const c of o.children) visit(c, visible);
+      for (const c of o.children) visit(c, visible, attachment);
     };
-    visit(scene, true);
+    visit(scene, true, null);
 
     this.sweep(seenObj, seenGeo, seenMat, seenTex);
     this.captureEnv(lights);
@@ -795,8 +831,12 @@ export class NativeScene {
     this.stats.captureMs = this.now() - t0;
   }
 
-  private captureObject(o: Drawable, kind: ObjectKind, visible: boolean, seenObj: Set<number>, seenGeo: Set<number>, seenMat: Set<number>, seenTex: Set<number>): void {
+  private captureObject(o: Drawable, kind: ObjectKind, visible: boolean, attachment: Attachment | null, seenObj: Set<number>, seenGeo: Set<number>, seenMat: Set<number>, seenTex: Set<number>): void {
     const id = this.idOf(o, 'object');
+    const hand = attachment ? attachment.hand : -1;
+    // The page's matrixWorld stays authoritative for collision and picking; only the wire copy is
+    // relative. Local matrices from the tag down are exact, so grip motion never changes them.
+    const matrix = attachment ? this.gripRelative(o, attachment.root) : o.matrixWorld.elements;
     seenObj.add(id);
     const geometry = o.geometry as THREE.BufferGeometry;
     if (!geometry?.attributes?.position) {
@@ -831,6 +871,7 @@ export class NativeScene {
         geo,
         mat,
         m: new Float32Array(12),
+        hand,
         visible,
         sent: false,
         sentVisible: visible,
@@ -848,7 +889,7 @@ export class NativeScene {
         instanceColor: null,
         instanceColorVersion: -1,
       };
-      affine12(o.matrixWorld.elements, s.m);
+      affine12(matrix, s.m);
       this.objects.set(id, s);
       this.dirtyObj.add(id);
       this.removeQueue.objects.delete(id);
@@ -864,8 +905,12 @@ export class NativeScene {
         s.cull !== o.frustumCulled ||
         s.centerX !== centerX ||
         s.centerY !== centerY ||
-        s.name !== o.name
+        s.name !== o.name ||
+        s.hand !== hand
       ) {
+        // A new hand changes what `m` means, so the whole object goes out with its new matrix.
+        if (s.hand !== hand) affine12(matrix, s.m);
+        s.hand = hand;
         s.kind = kind;
         s.geo = geo;
         s.mat = mat;
@@ -879,8 +924,8 @@ export class NativeScene {
         s.name = o.name;
         this.dirtyObj.add(id);
       }
-      if (!sameAffine(o.matrixWorld.elements, s.m)) {
-        affine12(o.matrixWorld.elements, s.m);
+      if (!sameAffine(matrix, s.m)) {
+        affine12(matrix, s.m);
         if (s.sent) this.dirtyXf.add(id);
       }
       if (s.visible !== visible) {
@@ -905,6 +950,16 @@ export class NativeScene {
         if (s.sent && !this.dirtyObj.has(id)) this.dirtyInst.add(id);
       }
     }
+  }
+
+  /** root.matrix * ... * o.matrix: `o` relative to the grip that parents `root`. */
+  private gripRelative(o: THREE.Object3D, root: THREE.Object3D): THREE.Matrix4['elements'] {
+    const m = this.scratchRelative.copy(o.matrix);
+    for (let p = o; p !== root && p.parent; ) {
+      p = p.parent;
+      m.premultiply(p.matrix);
+    }
+    return m.elements;
   }
 
   private geometrySource(g: THREE.BufferGeometry): GeoSource {
@@ -1530,6 +1585,7 @@ export class NativeScene {
       visible: s.visible,
       m: Array.from(s.m),
     };
+    if (s.hand !== -1) item.hand = s.hand;
     item.order[0] = groupOrderOf(o);
     if (s.kind === 'sprite') {
       const c = (o as THREE.Sprite).center;

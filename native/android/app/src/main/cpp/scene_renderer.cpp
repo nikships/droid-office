@@ -236,6 +236,11 @@ struct SceneRenderer::Impl {
     // The lists of the latest planSharpScreens, valid for that frame and state only.
     uint64_t sharpPlanToken = 0, sharpPlanFrame = 0;
     std::shared_ptr<const RenderState> sharpPlanState;
+    // Controller-attached items of the drawn state, in item order: copies whose matrices and
+    // sphere are recomposed from the grips each frame (the copies are made once per state).
+    std::vector<DrawItem> placed;
+    uint64_t placedSerial = 0;
+    SceneControllerPoses grips; // valid[h] only between setControllerPoses and the next frame
     SceneStats stats;
 
     explicit Impl(const SceneRendererOptions &o) : options(o), model(modelOptions(o)) {}
@@ -1354,6 +1359,44 @@ struct SceneRenderer::Impl {
         glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, viewUbo[ring][0]);
     }
 
+    /** Copies the drawn state's attached items once per state, then recomposes them per frame. */
+    void syncAttachments(const RenderState &s) {
+        if (placedSerial == s.serial)
+            return;
+        placed.clear();
+        placed.reserve(s.attachedItems);
+        for (const DrawItem &it : s.items)
+            if (it.attachment >= 0)
+                placed.push_back(it);
+        placedSerial = s.serial;
+        compose(s);
+    }
+
+    /** Places every attached item at its valid grip (matrices only). */
+    void compose(const RenderState &s) {
+        size_t k = 0;
+        for (const DrawItem &it : s.items) {
+            if (it.attachment < 0)
+                continue;
+            if (grips.valid[it.attachment])
+                placeAttachment(it, grips.grip[it.attachment], placed[k]);
+            k++;
+        }
+    }
+
+    void setControllerPoses(const SceneControllerPoses &poses) {
+        for (int h = 0; h < 2; h++) {
+            grips.valid[h] = poses.valid[h] && rigidPose(poses.grip[h]);
+            std::copy(poses.grip[h], poses.grip[h] + 16, grips.grip[h]);
+        }
+        if (const RenderState *s = current.get()) {
+            if (placedSerial != s->serial)
+                syncAttachments(*s);
+            else
+                compose(*s);
+        }
+    }
+
     /**
      * Culls against every eye and sorts as three's render lists do (painterSortStable and
      * reversePainterSortStable): opaque by group order, render order, material, near to far, id;
@@ -1367,7 +1410,20 @@ struct SceneRenderer::Impl {
         Mat4 vp0 = multiply(toMat(eyes[0].projection), toMat(eyes[0].view));
         for (int i = 0; i < count; i++)
             fr[i] = Frustum::fromViewProj(multiply(toMat(eyes[i].projection), toMat(eyes[i].view)));
-        for (const DrawItem &it : s.items) {
+        syncAttachments(s);
+        size_t attached = 0;
+        stats.attachedPlaced = 0;
+        for (const DrawItem &source : s.items) {
+            const DrawItem *drawn = &source;
+            if (source.attachment >= 0) {
+                drawn = &placed[attached++];
+                // Without this frame's tracked grip there is no pose to draw it at: never a stale
+                // one.
+                if (!grips.valid[source.attachment])
+                    continue;
+                stats.attachedPlaced++;
+            }
+            const DrawItem &it = *drawn;
             bool seen = false;
             for (int i = 0; i < count && !seen; i++)
                 seen = fr[i].intersects(it.sphere);
@@ -1430,6 +1486,8 @@ struct SceneRenderer::Impl {
             return;
         current = std::move(pending);
         pending.reset();
+        // Before sweep: the previous state's attached copies must not keep its buffers alive.
+        syncAttachments(*current);
         sweep();
         // Vertex arrays now, so the eye passes only look them up.
         for (const DrawItem &it : current->items)
@@ -1550,6 +1608,8 @@ struct SceneRenderer::Impl {
             }
         }
         frameNumber++;
+        // Grips are valid for one display frame only.
+        grips.valid[0] = grips.valid[1] = false;
         prepareMs = drawMs = 0;
         stats.drawCalls = stats.shadowDrawCalls = stats.triangles = stats.points = stats.lines =
             stats.culledItems = 0;
@@ -2222,6 +2282,7 @@ struct SceneRenderer::Impl {
             stats.unsupported = s->unsupported;
             stats.stateSerial = s->serial;
             stats.sharpItems = s->sharpItems;
+            stats.attachedItems = s->attachedItems;
         }
         stats.textures = uint32_t(textures.size());
         stats.programs = uint32_t(programs.size());
@@ -2429,6 +2490,11 @@ void SceneRenderer::prepareFrame() {
         return;
     impl_->autoPrepare = false;
     impl_->prepareFrame();
+}
+
+void SceneRenderer::setControllerPoses(const SceneControllerPoses &poses) {
+    if (impl_->initialized)
+        impl_->setControllerPoses(poses);
 }
 
 void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx) {

@@ -136,24 +136,11 @@ void mat3Of(const std::array<float, 9> &a, float *out) {
     std::memcpy(out, a.data(), 9 * sizeof(float));
 }
 
-/** Inverse transpose of an affine matrix's 3x3 part (column-major out), and whether it mirrors. */
-bool normalMatrix(const float *a, float *out) {
-    float m00 = a[0], m10 = a[1], m20 = a[2], m01 = a[3], m11 = a[4], m21 = a[5], m02 = a[6],
-          m12 = a[7], m22 = a[8];
-    float c00 = m11 * m22 - m21 * m12, c01 = m20 * m12 - m10 * m22, c02 = m10 * m21 - m20 * m11;
-    float det = m00 * c00 + m01 * c01 + m02 * c02;
-    float k = det != 0 ? 1.0f / det : 0.0f;
-    // (M^-1)^T = cofactor(M) / det
-    out[0] = c00 * k;
-    out[1] = c01 * k;
-    out[2] = c02 * k;
-    out[3] = (m21 * m02 - m01 * m22) * k;
-    out[4] = (m00 * m22 - m20 * m02) * k;
-    out[5] = (m20 * m01 - m00 * m21) * k;
-    out[6] = (m01 * m12 - m11 * m02) * k;
-    out[7] = (m10 * m02 - m00 * m12) * k;
-    out[8] = (m00 * m11 - m10 * m01) * k;
-    return det < 0;
+bool finite12(const float *m) {
+    for (int i = 0; i < 12; i++)
+        if (!std::isfinite(m[i]))
+            return false;
+    return true;
 }
 
 template <class T> void put(std::vector<uint8_t> &out, size_t offset, const T &v) {
@@ -207,6 +194,8 @@ struct SceneModel::Obj {
     bool matArray = false;
     int32_t groupOrder = 0, renderOrder = 0;
     bool cast = false, recv = false, cull = true, visible = true;
+    /** The wire's hand: m is relative to that controller's grip (never batched), else -1. */
+    int8_t hand = -1;
     float m[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
     float center[2] = {0.5f, 0.5f};
     uint32_t instCount = 0;
@@ -712,6 +701,14 @@ void SceneModel::applyObject(const json &j, double now) {
     o.visible = flag(j, "visible", true);
     auto m = vecN<12>(j, "m", {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0});
     std::copy(m.begin(), m.end(), o.m);
+    o.hand = -1;
+    if (auto h = j.find("hand"); h != j.end() && !h->is_null()) {
+        if (!h->is_number_integer() || (h->get<int64_t>() != 0 && h->get<int64_t>() != 1))
+            throw PacketError("object " + std::to_string(id) + " has a hand other than 0 or 1");
+        o.hand = int8_t(h->get<int64_t>());
+        if (!finite12(o.m))
+            throw PacketError("attached object " + std::to_string(id) + " has a non-finite matrix");
+    }
     auto c = vecN<2>(j, "center", {0.5f, 0.5f});
     o.center[0] = c[0];
     o.center[1] = c[1];
@@ -977,7 +974,8 @@ void SceneModel::evict(Obj &o) {
 }
 
 bool SceneModel::eligible(const Obj &o, double now) const {
-    if (o.kind != ObjKind::Mesh || !o.visible || !o.batches.empty())
+    // A static batch bakes world positions; an attached object moves with its grip every frame.
+    if (o.kind != ObjKind::Mesh || !o.visible || !o.batches.empty() || o.hand >= 0)
         return false;
     if (now - o.since < o.settle)
         return false;
@@ -1456,7 +1454,10 @@ void SceneModel::addItems(RenderState &state, Obj &o) {
             it.mirrored = mirrored && (o.kind == ObjKind::Mesh || o.kind == ObjKind::Instanced);
             it.useVertexColor = ms->vertexColors && g.hasColor;
             it.receiveShadow = o.recv;
-            it.castShadow = o.cast;
+            // The shadow map redraws only when a caster changes; a grip-held object would redraw
+            // it every display frame.
+            it.castShadow = o.cast && o.hand < 0;
+            it.attachment = o.hand;
             it.sphere = sphere;
             it.groupOrder = o.groupOrder;
             it.renderOrder = o.renderOrder;
@@ -1466,12 +1467,14 @@ void SceneModel::addItems(RenderState &state, Obj &o) {
             it.spriteCenter[1] = o.center[1];
             it.key = programKey(*ms, drawSide);
             it.sharpText = sharpScreenMaterial(*ms) && it.mode == DrawMode::Triangles &&
-                           !it.instances && o.kind == ObjKind::Mesh;
+                           !it.instances && o.kind == ObjKind::Mesh && o.hand < 0;
             it.sharpOverlay = sharpOverlayMaterial(*ms) && it.mode == DrawMode::Triangles &&
                               !it.instances &&
-                              (o.kind == ObjKind::Mesh || o.kind == ObjKind::Sprite);
+                              (o.kind == ObjKind::Mesh || o.kind == ObjKind::Sprite) && o.hand < 0;
             if (it.sharpText)
                 state.sharpItems++;
+            if (it.attachment >= 0)
+                state.attachedItems++;
             ProgramKey d;
             d.model = ShadeModel::Depth;
             d.alphaTest = ms->alphaTest > 0;
@@ -1550,7 +1553,7 @@ std::shared_ptr<const RenderState> SceneModel::build() {
         s.dynamicObjects++;
         size_t before = s.items.size();
         addItems(s, o);
-        if (o.cast)
+        if (o.cast && o.hand < 0)
             for (size_t i = before; i < s.items.size(); i++) {
                 const DrawItem &it = s.items[i];
                 shadowHash = mix64(shadowHash, it.vertices->serial);

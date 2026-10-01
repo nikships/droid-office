@@ -184,8 +184,17 @@ export interface ObjectItem {
   /** frustumCulled. */
   cull: boolean;
   visible: boolean;
-  /** World matrix, 12 floats (3x4 affine, column-major). */
+  /**
+   * World matrix, 12 floats (3x4 affine, column-major). With `hand`, the matrix relative to that
+   * controller's grip instead; `xf` entries for this id then carry grip-relative matrices too.
+   */
   m: number[];
+  /**
+   * Drawn attached to this controller's grip (0 left, 1 right): the headset composes its current
+   * grip pose with `m` every display frame and hides the object while that grip is not tracked.
+   * Changing it re-sends the whole object.
+   */
+  hand?: 0 | 1;
   /** Sprite center. */
   center?: [number, number];
   inst?: InstanceData;

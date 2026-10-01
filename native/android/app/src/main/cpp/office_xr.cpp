@@ -1,4 +1,5 @@
 #include "bridge_state.h"
+#include "controller_attachment.h"
 #include "cursor_swapchain.h"
 #ifndef NDEBUG
 #include "depth_probe.h"
@@ -996,8 +997,21 @@ class Office {
             sharpProjection.viewCount = 2;
             sharpProjection.views = sharpProjectionViews.data();
             bool valid = frame.shouldRender && poseValid;
-            if (valid)
+            if (valid) {
                 sceneRenderer->prepareFrame();
+                // Held objects follow this frame's tracked grip, as the controller models do.
+                office::AttachmentFrame attachmentFrame;
+                attachmentFrame.focused = focused;
+                attachmentFrame.poseValid = poseValid;
+                attachmentFrame.shouldRender = frame.shouldRender;
+                attachmentFrame.controlsActive = controls.active;
+                attachmentFrame.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                            Clock::now().time_since_epoch())
+                                            .count();
+                attachmentFrame.receivedNs = controls.receivedNs;
+                sceneRenderer->setControllerPoses(
+                    office::attachmentPoses(inputFrame, controls.rig, attachmentFrame));
+            }
             office::SharpScreenPlan sharpPlan;
             bool sharp = valid && sharpScreensAvailable && controls.graphics.sharpScreens &&
                          controls.fade < .999f;
@@ -1281,6 +1295,8 @@ class Office {
                                                {"drawCalls", stats.drawCalls},
                                                {"sharpScreens", stats.sharpScreens},
                                                {"sharpItems", stats.sharpItems},
+                                               {"attachedItems", stats.attachedItems},
+                                               {"attachedPlaced", stats.attachedPlaced},
                                                {"sharpOverlays", stats.sharpOverlays},
                                                {"sharpDrawCalls", stats.sharpDrawCalls},
                                                {"sharpMs", stats.sharpMs},

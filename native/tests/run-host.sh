@@ -51,6 +51,7 @@ CPP_TESTS=(
   "refresh_policy|tests/refresh_policy_test.cpp|"
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
+  "controller_attachment|tests/controller_attachment_test.cpp|"
 )
 # Java rules tests: "test class|production class", both in dev.droidoffice.xr. The test source is
 # looked up in JAVA_TEST_DIRS and must be in exactly one of them; the production source is

@@ -955,6 +955,238 @@ void main() {
 
 } // namespace
 
+std::string base64(const void *data, size_t size) {
+    static const char *a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const auto *s = static_cast<const uint8_t *>(data);
+    std::string out;
+    for (size_t i = 0; i < size; i += 3) {
+        uint32_t n = uint32_t(s[i]) << 16 | (i + 1 < size ? uint32_t(s[i + 1]) << 8 : 0) |
+                     (i + 2 < size ? s[i + 2] : 0);
+        out += a[(n >> 18) & 63];
+        out += a[(n >> 12) & 63];
+        out += i + 1 < size ? a[(n >> 6) & 63] : '=';
+        out += i + 2 < size ? a[n & 63] : '=';
+    }
+    return out;
+}
+
+/**
+ * Objects attached to a controller grip (ObjectItem hand) draw at the grip of the frame's
+ * setControllerPoses, follow it every frame without a packet, never batch or leave a copy where
+ * they were, hide when the frame has no valid grip, and draw at their world matrix once dropped.
+ */
+void attachmentChecks(std::vector<std::string> &failed) {
+    auto expect = [&](bool ok, const std::string &what) {
+        std::printf("  attachment: %s %s\n", ok ? "ok  " : "FAIL", what.c_str());
+        if (!ok)
+            failed.push_back("attachment: " + what);
+    };
+    constexpr int size = 64;
+    GLuint color = 0, depth = 0, fbo = 0;
+    glGenRenderbuffers(1, &color);
+    glBindRenderbuffer(GL_RENDERBUFFER, color);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, size, size);
+    glGenRenderbuffers(1, &depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, size, size);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+
+    SceneRendererOptions options;
+    options.srgbFramebuffer = false;
+    options.shadows = false;
+    options.checkGlErrors = true;
+    options.staticAfterSeconds = 0.05f;
+    auto r = std::make_unique<SceneRenderer>(options);
+    if (!r->initialize()) {
+        expect(false, "initialize: " + r->lastError());
+        return;
+    }
+    // A 0.2 m square facing +Z, in front of an eye at the origin looking down -Z.
+    const float quad[18] = {-.1f, -.1f, 0, .1f, -.1f, 0, .1f,  .1f, 0,
+                            -.1f, -.1f, 0, .1f, .1f,  0, -.1f, .1f, 0};
+    const json data = json::object({{"d", base64(quad, sizeof quad)}});
+    const json position = json::object({{"n", 3}, {"data", data}});
+    const json geometry = json::object({{"id", 1},
+                                        {"rev", 0},
+                                        {"count", 6},
+                                        {"attrs", {{"position", position}}},
+                                        {"groups", json::array()},
+                                        {"range", {0, -1}},
+                                        {"sphere", {0, 0, 0, .15}}});
+    const json materials = json::array(
+        {json::object({{"id", 1}, {"type", "basic"}, {"color", {1, 0, 0}}, {"opacity", 1}}),
+         json::object({{"id", 2}, {"type", "basic"}, {"color", {0, 1, 0}}, {"opacity", 1}})});
+    auto object = [](uint32_t id, uint32_t mat, json hand, std::vector<float> m) {
+        json o = {{"id", id}, {"kind", "mesh"}, {"geo", 1}, {"mat", mat}, {"m", m}};
+        if (!hand.is_null())
+            o["hand"] = hand;
+        return o;
+    };
+    const std::vector<float> atGrip = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const json desk = object(12, 2, nullptr, {1, 0, 0, 0, 1, 0, 0, 0, 1, .45f, -.3f, -1.5f});
+    uint64_t seq = 0;
+    auto send = [&](json objects, bool reset) {
+        json p = {{"v", 1}, {"seq", ++seq}, {"commit", true}, {"objects", std::move(objects)}};
+        if (reset) {
+            p["reset"] = true;
+            p["geometries"] = json::array({geometry});
+            p["materials"] = materials;
+        }
+        expect(r->enqueue(std::move(p)), "packet " + std::to_string(seq) + " is accepted");
+    };
+
+    SceneEye eye;
+    const Mat proj = perspective(60, 1, .05f, 100);
+    const Mat view = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+    std::memcpy(eye.view, view.m, sizeof view.m);
+    std::memcpy(eye.projection, proj.m, sizeof proj.m);
+    auto gripAt = [](float x, float y, float z, float yawRad = 0, float scale = 1) {
+        SceneControllerPoses g;
+        const float c = std::cos(yawRad) * scale, s = std::sin(yawRad) * scale;
+        const float m[16] = {c, 0, -s, 0, 0, scale, 0, 0, s, 0, c, 0, x, y, z, 1};
+        for (int h = 0; h < 2; h++) {
+            std::copy(m, m + 16, g.grip[h]);
+            g.valid[h] = true;
+        }
+        return g;
+    };
+    struct Image {
+        std::vector<uint8_t> px;
+        size_t red = 0, green = 0;
+        double redX = 0; // mean column of the red pixels
+        bool redAt(int x, int y) const {
+            const uint8_t *p = &px[size_t(y * size + x) * 4];
+            return p[0] > 150 && p[1] < 80 && p[2] < 80;
+        }
+    };
+    // One display frame; `poses` null: no setControllerPoses call this frame.
+    auto frame = [&](const SceneControllerPoses *poses) {
+        r->tick();
+        r->prepareFrame();
+        if (poses)
+            r->setControllerPoses(*poses);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, size, size);
+        r->render(eye, size);
+        glFinish();
+        Image im;
+        im.px = readPixels(size, size);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++) {
+                const uint8_t *p = &im.px[size_t(y * size + x) * 4];
+                if (im.redAt(x, y)) {
+                    im.red++;
+                    im.redX += x;
+                }
+                im.green += p[1] > 150 && p[0] < 80 && p[2] < 80;
+            }
+        if (im.red)
+            im.redX /= double(im.red);
+        return im;
+    };
+    auto loaded = [&] {
+        const SceneStats s = r->stats();
+        return s.stateSerial && !s.pendingUploads && !s.waitingState && !s.programsCompiling &&
+               !s.queuedTextureOps && !s.queuedBytes;
+    };
+    const auto center = gripAt(0, 0, -1);
+    // The same square at the same depth covers the same pixels, give or take its edges.
+    auto same = [](size_t a, size_t b) { return a + 12 >= b && b + 12 >= a; };
+    auto settle = [&](const SceneControllerPoses *poses) {
+        for (int i = 0; i < 600 && !loaded(); i++)
+            frame(poses);
+        expect(loaded(), "the state loads");
+    };
+
+    send(json::array({object(10, 1, 0, atGrip), desk}), true);
+    settle(&center);
+    Image held = frame(&center);
+    SceneStats st = r->stats();
+    expect(held.red > 50 && held.redAt(size / 2, size / 2), "the held object draws at the grip");
+    expect(held.green > 20, "the world object draws");
+    expect(st.attachedItems == 1 && st.attachedPlaced == 1,
+           "stats count one attached item, placed at its grip");
+
+    // Every frame, without a packet: the grip moves left, the object follows.
+    auto left = gripAt(-.35f, 0, -1);
+    Image moved = frame(&left);
+    expect(same(moved.red, held.red) && moved.redX < held.redX - 8 &&
+               !moved.redAt(size / 2, size / 2),
+           "the object follows the grip on the next frame");
+    // A grip turned 60 degrees around Y narrows the square: the composition uses its rotation.
+    auto turned = gripAt(0, 0, -1, 1.0472f);
+    Image narrow = frame(&turned);
+    expect(narrow.red > held.red / 3 && narrow.red < held.red * 2 / 3,
+           "the grip's rotation turns the object");
+
+    // No valid grip this frame: nothing is drawn, not even where it was last.
+    Image none = frame(nullptr);
+    expect(none.red == 0 && none.green == held.green,
+           "a frame without controller poses hides only the attached object");
+    expect(r->stats().attachedPlaced == 0, "nothing is placed without a grip");
+    SceneControllerPoses lost = center;
+    lost.valid[0] = false;
+    lost.valid[1] = true;
+    expect(frame(&lost).red == 0, "the other hand's valid grip does not place it");
+    auto scaled = gripAt(0, 0, -1, 0, 2);
+    expect(frame(&scaled).red == 0, "a non-rigid grip hides it");
+    SceneControllerPoses broken = center;
+    broken.grip[0][12] = std::nanf("");
+    expect(frame(&broken).red == 0, "a non-finite grip hides it");
+    const SceneControllerPoses &valid = center;
+    expect(same(frame(&valid).red, held.red), "a valid grip shows it again");
+
+    // Hold still past staticAfterSeconds: the world object batches; the held one never does and
+    // leaves no copy behind when the grip then moves.
+    // Batching follows wall time; a loaded host may take longer than staticAfterSeconds.
+    const auto batchDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        frame(&valid);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        settle(&valid);
+        st = r->stats();
+    } while (!st.staticBatches && std::chrono::steady_clock::now() < batchDeadline);
+    expect(st.staticBatches == 1 && st.batchedObjects == 1 && st.attachedItems == 1,
+           "only the world object is batched (batches " + std::to_string(st.staticBatches) +
+               ", batched objects " + std::to_string(st.batchedObjects) + ", attached " +
+               std::to_string(st.attachedItems) + ")");
+    const SceneControllerPoses &leftValid = left;
+    Image after = frame(&leftValid);
+    expect(same(after.red, held.red) && !after.redAt(size / 2, size / 2) &&
+               after.green == held.green,
+           "a still held object moves without a ghost at its old place");
+
+    // Dropped (re-sent without hand, at a world matrix): drawn there regardless of the grips.
+    send(json::array({object(10, 1, nullptr, {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1})}), false);
+    settle(&leftValid);
+    Image dropped = frame(&leftValid);
+    expect(dropped.redAt(size / 2, size / 2) && same(dropped.red, held.red),
+           "a dropped object draws at its world matrix, not the grip");
+    expect(same(frame(nullptr).red, held.red), "a dropped object does not hide without a grip");
+    expect(r->stats().attachedItems == 0, "a dropped object is no longer attached");
+
+    // Picked up again, then a reset without it: nothing attached remains.
+    send(json::array({object(10, 1, 1, atGrip)}), false);
+    settle(&leftValid);
+    Image picked = frame(&leftValid);
+    expect(same(picked.red, held.red) && picked.redX < held.redX - 8,
+           "picking it up attaches it to the other hand");
+    send(json::array({desk}), true);
+    settle(&leftValid);
+    Image reset = frame(&leftValid);
+    expect(reset.red == 0 && reset.green == held.green && r->stats().attachedItems == 0,
+           "a reset clears the attachment");
+    expect(r->lastError().empty(), "renderer error: " + r->lastError());
+    expect(glGetError() == GL_NO_ERROR, "no GL error");
+    r.reset();
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteRenderbuffers(1, &color);
+    glDeleteRenderbuffers(1, &depth);
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         std::fprintf(stderr, "usage: render <packets.json> <out-dir> [--size px] [--seconds s]\n");
@@ -1398,6 +1630,7 @@ int main(int argc, char **argv) {
               std::to_string(st.programsCompiling) + " still compiling");
     check(!st.pendingUploads && !st.waitingState, "uploads still pending after settling");
     sharpSamplingChecks(out, failed);
+    attachmentChecks(failed);
     for (const std::string &what : failed)
         std::printf("failed: %s\n", what.c_str());
     if (failed.empty())

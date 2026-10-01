@@ -122,6 +122,12 @@ struct DrawItem {
     /** renderSharpScreens may draw it over the screens: a transparent mesh or sprite that does not
      * write the world depth, so the screen occlusion test cannot see it. */
     bool sharpOverlay = false;
+    /**
+     * The controller (0 left, 1 right) this item is drawn on, else -1. model, normal, mirrored and
+     * sphere are then relative to that grip; the renderer composes them with the display frame's
+     * grip and hides the item without one. Never batched, casts no shadow, not in the screen layer.
+     */
+    int8_t attachment = -1;
     ProgramKey key;      // the color pass
     ProgramKey depthKey; // the shadow pass (castShadow only)
 };
@@ -142,7 +148,8 @@ struct RenderState {
      * SharpDepth variants it may use after warmKeys, with links left over.
      */
     std::vector<ProgramKey> sharpWarmKeys;
-    uint32_t sharpItems = 0; // items with sharpText
+    uint32_t sharpItems = 0;    // items with sharpText
+    uint32_t attachedItems = 0; // items with an attachment
     FrameBlock frame;
     SkyBlock sky;
     bool hasBackground = false;
@@ -274,6 +281,48 @@ class SceneModel {
     float camera_[16] = {};
     uint32_t unsupported_ = 0;
 };
+
+/**
+ * Whether `m` (column-major 4x4) can hold attached items: finite, affine, and a rotation plus
+ * translation (orthonormal within `tolerance`, determinant +1). A grip pose is always rigid.
+ */
+inline bool rigidPose(const float m[16], float tolerance = 1e-3f) {
+    for (int i = 0; i < 16; i++)
+        if (!std::isfinite(m[i]))
+            return false;
+    if (m[3] != 0 || m[7] != 0 || m[11] != 0 || m[15] != 1)
+        return false;
+    const Vec3 x{m[0], m[1], m[2]}, y{m[4], m[5], m[6]}, z{m[8], m[9], m[10]};
+    auto off = [&](float v, float want) { return std::fabs(v - want) > tolerance; };
+    if (off(dot(x, x), 1) || off(dot(y, y), 1) || off(dot(z, z), 1) || off(dot(x, y), 0) ||
+        off(dot(y, z), 0) || off(dot(z, x), 0))
+        return false;
+    const Vec3 c{x.y * y.z - x.z * y.y, x.z * y.x - x.x * y.z, x.x * y.y - x.y * y.x};
+    return !off(dot(c, z), 1);
+}
+
+/**
+ * Places an attached item (DrawItem::attachment) at a rigid `grip`: `out` gets grip *
+ * relative.model with its normal matrix and bounding sphere. `out` must otherwise be a copy of
+ * `relative`. Matrix-only: no allocation.
+ */
+inline void placeAttachment(const DrawItem &relative, const float grip[16], DrawItem &out) {
+    Mat4 g, rel;
+    std::copy(grip, grip + 16, g.begin());
+    std::copy(relative.model, relative.model + 16, rel.begin());
+    const Mat4 world = multiply(g, rel);
+    std::copy(world.begin(), world.end(), out.model);
+    float affine[12];
+    toAffine(world, affine);
+    normalMatrix(affine, out.normal);
+    // A rigid grip keeps the determinant's sign and every length: the winding and radius stay.
+    out.mirrored = relative.mirrored;
+    float gripAffine[12];
+    toAffine(g, gripAffine);
+    out.sphere.c = relative.sphere.infinite() ? Vec3{grip[12], grip[13], grip[14]}
+                                              : transformPoint(gripAffine, relative.sphere.c);
+    out.sphere.r = relative.sphere.r;
+}
 
 /** A tagged laptop screen the high-resolution layer redraws (DrawItem::sharpText). */
 bool sharpScreenMaterial(const MaterialState &m);

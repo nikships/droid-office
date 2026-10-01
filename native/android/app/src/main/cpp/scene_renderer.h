@@ -62,6 +62,17 @@ struct SharpScreenDepth {
     float uvRect[4] = {0, 0, 1, 1};
 };
 
+/**
+ * The display frame's controller grips for objects the page attaches to them (wire ObjectItem
+ * hand): grip[h] is the grip's scene-world matrix (rig * tracked grip pose), column-major, rigid.
+ * An attached object draws at grip[h] * its grip-relative matrix, and not at all unless valid[h].
+ */
+struct SceneControllerPoses {
+    float grip[2][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+                         {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+    bool valid[2] = {false, false};
+};
+
 struct SceneEye {         // column-major, OpenGL clip conventions
     float view[16];       // world -> eye
     float projection[16]; // eye -> clip
@@ -200,6 +211,9 @@ struct SceneStats {
     // views) and pixels cleared and drawn (region, per view; multiview counts both layers).
     uint64_t sharpViewPixels = 0, sharpRegionPixels = 0;
     float sharpMs = 0; // CPU time in planSharpScreens and renderSharpScreens
+    // Controller-attached items in the drawn state, and how many of them the last render call
+    // drew at a valid grip (before frustum culling).
+    uint32_t attachedItems = 0, attachedPlaced = 0;
 };
 
 class SceneRenderer {
@@ -237,6 +251,13 @@ class SceneRenderer {
      * restored too).
      */
     void prepareFrame();
+    /**
+     * The grips this frame's render calls attach objects to, after prepareFrame (which forgets the
+     * previous frame's, so a frame without this call hides every attached object). Only matrices
+     * are recomposed: no upload, allocation or program change. A non-finite or non-rigid grip is
+     * treated as invalid.
+     */
+    void setControllerPoses(const SceneControllerPoses &poses);
     // render/renderStereo draw into the bound draw framebuffer and viewport, and leave: no program
     // or vertex array bound, GL_ARRAY_BUFFER 0, blend/cull/polygon offset off, depth test on with
     // LEQUAL and writes on, full color mask, front face CCW, active texture unit 0. Texture units

@@ -49,6 +49,33 @@ inline Mat4 fromAffine(const float *m) {
     return {m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, m[9], m[10], m[11], 1};
 }
 
+/** The 12 affine floats of a column-major 4x4 (its last row dropped). */
+inline void toAffine(const Mat4 &m, float out[12]) {
+    const int from[12] = {0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14};
+    for (int i = 0; i < 12; i++)
+        out[i] = m[from[i]];
+}
+
+/** Inverse transpose of an affine matrix's 3x3 part (column-major out), and whether it mirrors. */
+inline bool normalMatrix(const float *a, float *out) {
+    float m00 = a[0], m10 = a[1], m20 = a[2], m01 = a[3], m11 = a[4], m21 = a[5], m02 = a[6],
+          m12 = a[7], m22 = a[8];
+    float c00 = m11 * m22 - m21 * m12, c01 = m20 * m12 - m10 * m22, c02 = m10 * m21 - m20 * m11;
+    float det = m00 * c00 + m01 * c01 + m02 * c02;
+    float k = det != 0 ? 1.0f / det : 0.0f;
+    // (M^-1)^T = cofactor(M) / det; cofactor row r is column r of `out` (column-major).
+    out[0] = c00 * k;
+    out[3] = c01 * k;
+    out[6] = c02 * k;
+    out[1] = (m21 * m02 - m01 * m22) * k;
+    out[4] = (m00 * m22 - m20 * m02) * k;
+    out[7] = (m20 * m01 - m00 * m21) * k;
+    out[2] = (m01 * m12 - m11 * m02) * k;
+    out[5] = (m10 * m02 - m00 * m12) * k;
+    out[8] = (m00 * m11 - m10 * m01) * k;
+    return det < 0;
+}
+
 inline Vec3 transformPoint(const float *affine, Vec3 p) {
     return {affine[0] * p.x + affine[3] * p.y + affine[6] * p.z + affine[9],
             affine[1] * p.x + affine[4] * p.y + affine[7] * p.z + affine[10],

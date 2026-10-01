@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -88,6 +89,26 @@ void testMath() {
     check(unite({{0, 0, 0}, 5}, {{1, 0, 0}, 1}).r == 5,
           "unite keeps a sphere that contains the other");
     check(unite(Sphere{}, {{1, 2, 3}, 2}).r == 2, "unite with an empty sphere is the other");
+
+    // The normal matrix is the inverse transpose (three's getNormalMatrix): a rotation's is the
+    // rotation itself, column-major, and a scale divides.
+    const float c = std::cos(.4f), sn = std::sin(.4f);
+    float turn[12] = {c, sn, 0, -sn, c, 0, 0, 0, 1, 7, 8, 9};
+    float nm[9];
+    check(!normalMatrix(turn, nm), "a rotation does not mirror");
+    bool same = true;
+    for (int col = 0; col < 3; col++)
+        for (int row = 0; row < 3; row++)
+            same &= near(nm[col * 3 + row], turn[col * 3 + row]);
+    check(same, "a rotation's normal matrix is the rotation");
+    float sheared[12] = {1, 0, 0, .5f, 2, 0, 0, 0, 1, 0, 0, 0};
+    normalMatrix(sheared, nm);
+    // The surface z = 0 keeps its +Z normal; the plane x = 0 maps onto 2x = y (tangent (.5, 2, 0)).
+    check(near(nm[6], 0) && near(nm[7], 0) && near(nm[8], 1), "a sheared +Z normal stays +Z");
+    float nx = nm[0], ny = nm[1];
+    check(near(nx * .5f + ny * 2, 0), "a sheared normal stays perpendicular to its surface");
+    check(normalMatrix(std::array<float, 12>{-1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}.data(), nm),
+          "a reflection mirrors");
 
     // A symmetric frustum looking down -z: near 1, far 10, 90 degrees.
     Mat4 proj{};
@@ -381,6 +402,163 @@ void testModel(const json &packets) {
     }
 }
 
+/** A minimal committed stream: one box geometry, one lit material, and objects. */
+json attachmentPacket(uint64_t seq, bool reset, const json &objects) {
+    const float box[9] = {0, 0, 0, .1f, 0, 0, 0, .1f, 0};
+    std::string bytes(reinterpret_cast<const char *>(box), sizeof box);
+    json p = {{"v", 1}, {"seq", seq}, {"commit", true}, {"objects", objects}};
+    if (reset) {
+        p["reset"] = true;
+        json data = json::object({{"d", base64(bytes)}});
+        json position = json::object({{"n", 3}, {"data", data}});
+        p["geometries"] = json::array({json::object({{"id", 1},
+                                                     {"rev", 0},
+                                                     {"count", 3},
+                                                     {"attrs", {{"position", position}}},
+                                                     {"groups", json::array()},
+                                                     {"range", {0, -1}},
+                                                     {"sphere", {0.05, 0.05, 0, 0.08}}})});
+        p["materials"] = json::array(
+            {json::object({{"id", 1}, {"type", "lambert"}, {"color", {1, 1, 1}}, {"opacity", 1}})});
+    }
+    return p;
+}
+
+json attachedObject(uint32_t id, json hand, std::vector<float> m) {
+    json o = {{"id", id},     {"kind", "mesh"}, {"geo", 1},        {"mat", 1},
+              {"cast", true}, {"recv", true},   {"visible", true}, {"m", m}};
+    if (!hand.is_null())
+        o["hand"] = hand;
+    return o;
+}
+
+json transforms(uint32_t id, const std::string &matrices) {
+    json xf = json::object();
+    xf["ids"] = json::array({id});
+    xf["m"] = json::object({{"d", base64(matrices)}});
+    return xf;
+}
+
+const DrawItem *itemOf(const RenderState &s, uint32_t id) {
+    for (const DrawItem &it : s.items)
+        if (it.id == id)
+            return &it;
+    return nullptr;
+}
+
+void testAttachments() {
+    const std::vector<float> rel = {-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, -.02f, .03f};
+    const std::vector<float> world = {1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0, -2};
+    ModelOptions options;
+    options.staticAfterSeconds = 0.5f;
+    SceneModel m(options);
+    double t = 0;
+    auto r = m.apply(
+        attachmentPacket(1, true,
+                         json::array({attachedObject(10, 1, rel), attachedObject(11, 0, rel),
+                                      attachedObject(12, nullptr, world)})),
+        t);
+    check(r.state && r.state->attachedItems == 2, "two attached items");
+    const DrawItem *held = itemOf(*r.state, 10);
+    const DrawItem *left = itemOf(*r.state, 11);
+    const DrawItem *desk = itemOf(*r.state, 12);
+    check(held && held->attachment == 1 && left && left->attachment == 0,
+          "attached items carry their hand");
+    check(desk && desk->attachment == -1 && desk->model[12] == 4 && desk->model[14] == -2,
+          "a world object keeps its world matrix");
+    check(held && held->model[13] == -.02f && held->model[14] == .03f && held->model[0] == -1,
+          "an attached item keeps its grip-relative matrix");
+    check(held && !held->castShadow && desk && desk->castShadow,
+          "attached items cast no shadow; world objects still do");
+    check(held && !held->sharpText && !held->sharpOverlay,
+          "attached items are not in the screen layer");
+
+    // Holding still never batches an attached item; the world object batches.
+    std::shared_ptr<const RenderState> s = r.state;
+    for (int i = 0; i < 60; i++) {
+        t += 0.1;
+        if (auto k = m.tick(t); k.state)
+            s = k.state;
+    }
+    check(s->staticBatches == 1 && s->batchedObjects == 1,
+          "only the world object is in a static batch");
+    check(itemOf(*s, 10) && itemOf(*s, 11) && !itemOf(*s, 12),
+          "attached items stay dynamic; the batched desk draws as its batch");
+    for (const DrawItem &it : s->items)
+        check(!(it.batch && it.attachment >= 0), "no batch is attached");
+
+    // Transforms on an attached item stay grip-relative; a malformed one rejects the packet.
+    std::vector<float> moved = rel;
+    moved[11] = .08f;
+    std::string xf(reinterpret_cast<const char *>(moved.data()), moved.size() * 4);
+    uint64_t seq = m.lastSeq();
+    r = m.apply({{"v", 1}, {"seq", ++seq}, {"commit", true}, {"xf", transforms(10, xf)}},
+                t += 0.01);
+    check(r.state && itemOf(*r.state, 10) && itemOf(*r.state, 10)->model[14] == .08f,
+          "an xf moves an attached item on its grip");
+
+    // Dropping it (hand removed) re-sends it as a world object; it may batch again later.
+    r = m.apply(attachmentPacket(++seq, false, json::array({attachedObject(10, nullptr, world)})),
+                t += 0.01);
+    held = r.state ? itemOf(*r.state, 10) : nullptr;
+    check(held && held->attachment == -1 && held->model[12] == 4 && held->castShadow,
+          "a dropped object is an authoritative world object again");
+    check(r.state && r.state->attachedItems == 1, "one attachment remains");
+    for (int i = 0; i < 60; i++) {
+        t += 0.1;
+        if (auto k = m.tick(t); k.state)
+            s = k.state;
+    }
+    check(s->batchedObjects == 2 && !itemOf(*s, 10), "the dropped object batches once still");
+    // Picking it up evicts it from its batch in the same commit: no ghost at the drop point.
+    r = m.apply(attachmentPacket(++seq, false, json::array({attachedObject(10, 0, rel)})),
+                t += 0.01);
+    held = r.state ? itemOf(*r.state, 10) : nullptr;
+    check(held && held->attachment == 0, "picking it up attaches it again");
+    check(r.state && r.state->batchedObjects == 1, "the picked-up object left its batch");
+    uint32_t batchTriangles = 0;
+    for (const DrawItem &it : r.state->items)
+        if (it.batch)
+            batchTriangles += it.count;
+    check(batchTriangles == 3, "the batch no longer draws the picked-up object");
+
+    // Validation: malformed hands and non-finite attached matrices reject and need a reset.
+    const json bad[] = {attachedObject(20, 2, rel), attachedObject(20, -1, rel),
+                        attachedObject(20, 0.5, rel), attachedObject(20, "0", rel),
+                        attachedObject(20, true, rel)};
+    for (const json &o : bad) {
+        SceneModel v(options);
+        v.apply(attachmentPacket(1, true, json::array()), 0);
+        check(throwsPacketError([&] { v.apply(attachmentPacket(2, false, json::array({o})), 0); }),
+              "a hand of " + o["hand"].dump() + " is rejected");
+        check(v.needsReset(), "a rejected attachment needs a reset");
+    }
+    {
+        // JSON has no NaN, but a number beyond float range overflows to infinity.
+        SceneModel v(options);
+        v.apply(attachmentPacket(1, true, json::array()), 0);
+        json huge = attachedObject(30, 1, rel);
+        huge["m"][9] = 1e39;
+        check(
+            throwsPacketError([&] { v.apply(attachmentPacket(2, false, json::array({huge})), 0); }),
+            "an attached matrix beyond float range is rejected");
+        // Transform blobs are sanitized on decode: a NaN arrives as 0, never as a NaN.
+        SceneModel w(options);
+        w.apply(attachmentPacket(1, true, json::array({attachedObject(30, 1, rel)})), 0);
+        std::vector<float> nan = rel;
+        nan[9] = std::numeric_limits<float>::quiet_NaN();
+        std::string raw(reinterpret_cast<const char *>(nan.data()), nan.size() * 4);
+        auto k = w.apply({{"v", 1}, {"seq", 2}, {"commit", true}, {"xf", transforms(30, raw)}}, 0);
+        const DrawItem *it = k.state ? itemOf(*k.state, 30) : nullptr;
+        check(it && it->model[12] == 0, "a NaN attached transform arrives finite");
+    }
+    // A reset clears every attachment.
+    r = m.apply(attachmentPacket(1, true, json::array({attachedObject(12, nullptr, world)})),
+                t += 0.01);
+    check(r.state && r.state->attachedItems == 0 && !itemOf(*r.state, 10),
+          "a reset leaves no attachment behind");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -391,6 +569,7 @@ int main(int argc, char **argv) {
     testMath();
     testBase64();
     testBlobs();
+    testAttachments();
     std::ifstream in(argv[1], std::ios::binary);
     std::stringstream buf;
     buf << in.rdbuf();
