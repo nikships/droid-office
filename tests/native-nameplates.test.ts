@@ -13,7 +13,7 @@ import { Person, Worker, workerPlate, type WorkerPlateState } from '../src/clien
 import { buildOffice } from '../src/client/world/office.js';
 import { buildBookshelf } from '../src/client/world/bookshelf.js';
 import { Laptop } from '../src/client/world/laptop.js';
-import { plainLabel, textPlane } from '../src/client/world/toon.js';
+import { enamel, plainLabel, textPlane } from '../src/client/world/toon.js';
 import { BOOKSHELF, DESK_SIZE, KIOSK } from '../src/shared/layout.js';
 
 /** Stands in for any canvas member the painters reach for: callable, and every member is itself. */
@@ -439,6 +439,18 @@ test('in the headset app a sign is a printed plate on a board, without emoji, li
   assert.equal(plainLabel('🚒 ⬇ floor-alpha'), '↓ floor-alpha');
   const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', glow: 1 });
   assert.equal((exit.material as THREE.MeshToonMaterial).emissiveIntensity, 1, 'an exit sign is lit from inside');
+});
+
+test('in the headset app a dark sign is white enamel on a steel board, its words in dark ink or their own color', (t) => {
+  page(t, '?native=1');
+  const tag = { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 44 };
+  assert.deepEqual(enamel(tag), { ...tag, bg: '#e6e8ec', color: '#1d2027', border: '#59606c', board: '#8d99ae' });
+  assert.equal(enamel({ ...tag, color: '#ef4444' }).color, '#ef4444', "a fire pole's red letters stay red");
+  for (const lit of [{ bg: '#2a9d4b', color: '#ffffff' }, { bg: '#fffaf3', board: '#7f5539' }, { bg: '#ffd166' }, { color: '#171a20' }])
+    assert.deepEqual(enamel(lit), lit, 'an exit sign, the Docs and BOSS plates and a key cap keep their colors');
+  const sign = textPlane('📋 Task queue', tag);
+  const board = sign.getObjectByName('sign-board') as THREE.Mesh<THREE.BoxGeometry, THREE.MeshToonMaterial>;
+  assert.equal(`#${board.material.color.getHexString()}`, '#8d99ae');
 });
 
 test('on the desktop a sign stays a flat glowing label, emoji and all', (t) => {

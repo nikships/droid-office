@@ -278,7 +278,8 @@ The office's signs are printed objects too (`signsPrinted`, `textPlane` in
 `src/client/world/toon.ts`): each is a plate on a board fixed to a wall, a shelf, a beam, a post or
 a rail, its face lit by the room with a little light of its own so it reads in the dark, its
 board's steel or wooden edge showing round it, and its words without emoji ("↑ floor-beta" on the
-wall beside the ladder). None hangs in the air: the boards' titles sit flat on the wall over them,
+wall beside the ladder). A sign that is a black tag with white words on the desktop is white enamel
+with dark letters (`enamel`), which shows the room's light and shade as a black face can't. None hangs in the air: the boards' titles sit flat on the wall over them,
 the bookshelf's "Docs" board stands on the shelf's crown, the fire pole's sign is strapped under its
 railing's top bar, and the golf hole's sign spans both its posts (`tests/native-nameplates.test.ts`
 casts rays behind and under every sign). An exit sign stays lit from inside. Desktop and WebXR keep

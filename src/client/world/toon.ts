@@ -69,7 +69,7 @@ export function roundedBox(w: number, h: number, d: number, r = 0.06): THREE.Buf
   return geo;
 }
 
-type TextOpts = {
+export type TextOpts = {
   color?: string;
   bg?: string;
   size?: number;
@@ -122,6 +122,24 @@ export const SIGN_BACK = BOARD_DEPTH + 0.002;
 /** The brushed steel a sign's board leans toward, and how much light of its own its edge gives off, so it shows round the face in the dark. */
 const BOARD_STEEL = new THREE.Color('#8d99ae');
 const BOARD_GLOW = 0.16;
+/** A printed sign's white enamel face, the dark ink of its words, and the fine rule round them. */
+const ENAMEL = '#e6e8ec';
+const ENAMEL_INK = '#1d2027';
+const ENAMEL_RULE = '#59606c';
+
+/**
+ * A label's colors as a printed sign's in the headset app. A dark label (white words on black, as
+ * a tag floating over the desktop office is) becomes white enamel, which shows the room's light and
+ * shade the way a black face can't: its words in dark ink, or in their own color when they have
+ * one (a fire pole's red), on a steel board. Every other label keeps its colors.
+ */
+export function enamel(opts: TextOpts): TextOpts {
+  if (!opts.bg) return opts;
+  const hsl = { h: 0, s: 0, l: 0 };
+  if (new THREE.Color(opts.bg).getHSL(hsl, THREE.SRGBColorSpace).l > 0.2) return opts;
+  const plain = new THREE.Color(opts.color ?? ENAMEL_INK).getHSL(hsl, THREE.SRGBColorSpace).s < 0.25;
+  return { ...opts, bg: ENAMEL, color: plain ? ENAMEL_INK : opts.color, border: ENAMEL_RULE, board: opts.board ?? `#${BOARD_STEEL.getHexString()}` };
+}
 
 /** Every text label drawn so far, so they can be repainted once the bundled fonts finish loading. */
 const textLabels = new Set<() => void>();
@@ -193,12 +211,14 @@ export function textSprite(text: string, opts: TextOpts = {}): THREE.Sprite {
 /**
  * A flat text sign facing +Z, for mounting on a wall (a sprite would swing into the wall). In the
  * headset app (signsPrinted) it is a printed sign: its face lit by the room (printedMaterial), its
- * words without emoji (plainLabel), and, when it has a background, a board behind it whose edge
+ * words without emoji (plainLabel), a dark label in white enamel (enamel), and, when it has a
+ * background, a board behind it whose edge
  * shows round the face and reaches back BOARD_DEPTH, to the wall it's mounted on. Disposing the
  * face's geometry disposes the board's.
  */
 export function textPlane(text: string, opts: TextOpts = {}): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial | THREE.MeshToonMaterial> {
   const printed = signsPrinted();
+  if (printed) opts = enamel(opts);
   const { tex, w, h } = textTexture(printed ? plainLabel(text) : text, opts, printed);
   const face = new THREE.PlaneGeometry(w * TEXT_SCALE, h * TEXT_SCALE);
   if (!printed) return new THREE.Mesh(face, new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 }));
