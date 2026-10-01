@@ -12,6 +12,11 @@ class ControllerRenderer {
     ~ControllerRenderer();
     void initialize(bool multiview, bool srgbFramebuffer, AAssetManager *assets);
     void update(const InputFrame &frame);
+    /**
+     * Until the next update: a bit per hand (1 left, 2 right) whose model is not drawn, because
+     * the object it holds (the gun) takes the controller's place in the hand.
+     */
+    void hide(unsigned hands) { hidden = hands; }
     void render(const Matrix &left, const Matrix &right);
 
   private:
@@ -28,6 +33,8 @@ class ControllerRenderer {
     GLuint program = 0;
     bool stereo = false;
     XrVector3f head{};
+    unsigned hidden = 0;
+    GLint solidLocation = -1;
     GLint viewLocation = -1, modelLocation = -1, headLocation = -1, colorLocation = -1,
           emissiveLocation = -1, metalLocation = -1, roughLocation = -1, mapsLocation = -1;
 };

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { FLOOR, LADDER, POLE, WALL_HEIGHT, type PoleSpot } from '../../shared/layout';
 import type { PlayerController } from '../player';
 import { GONG_TOUCH } from '../world/gong';
-import { magnum, MUZZLE_AT, Muzzle } from '../world/gun';
+import { HELD_FLASH, INDOOR_LIGHT, heldGunFill, lightHeldGun, magnum, MUZZLE_AT, Muzzle } from '../world/gun';
 import { LOST_MS, type NativeInputFrame } from './input';
 
 type Hand = 0 | 1;
@@ -20,6 +20,17 @@ export interface PhysicalClimber {
   letGoPhysical(): void;
 }
 
+/**
+ * Shot workers lying on the floor with their server-owned revival windows open (main.ts, over
+ * world/casualties.ts and native/downed.ts). The use action with a free hand at one revives it.
+ */
+export interface DownedBodies {
+  /** The body a free hand's use action lands on: touched by its grip at `grip`, or pointed at along `ray` (world); null for none. */
+  at(grip: THREE.Vector3, ray: THREE.Ray | null): string | null;
+  /** The use action at it: ask the server to revive it. False when that can't happen now. */
+  revive(id: string): boolean;
+}
+
 export interface NativePhysicalHooks {
   player: PlayerController;
   climber: PhysicalClimber;
@@ -32,6 +43,10 @@ export interface NativePhysicalHooks {
   canDraw(): boolean;
   gunChanged(held: boolean, quiet: boolean): void;
   fireGun(origin: THREE.Vector3, direction: THREE.Vector3): void;
+  /** Shot workers lying on the floor that a free hand's use action revives (main.ts). */
+  bodies?: DownedBodies;
+  /** How lit it is at a world point, 0–1 (Sky.lightAt): the held gun is lit like your hands. Default indoors. */
+  lightAt?(p: THREE.Vector3): number;
 }
 
 interface Motion {
@@ -54,6 +69,31 @@ const CONTACT_OFFSET = new THREE.Vector3(0, 0.025, -0.075);
 /** The shared model's +Z bore points along the OpenXR aim pose's -Z. */
 const MODEL_TO_AIM = new THREE.Quaternion(0, 1, 0, 0);
 const HANDS = [0, 1] as const;
+/**
+ * Recoil: the muzzle flips up about the wrist and the frame slides back into the palm, then the
+ * hand brings it back down onto the aim, home by RECOIL_MS.
+ */
+const RECOIL_MS = 340;
+/** How fast the hand recovers (1/ms): a critically damped return, still about 40% up 133 ms on. */
+const RECOIL_RECOVERY = 0.015;
+/** The taper that brings the last of the return exactly home, from here to RECOIL_MS. */
+const RECOIL_TAPER_MS = 240;
+const RECOIL_PITCH = 0.26;
+const RECOIL_BACK = 0.03;
+/** The wrist the muzzle flips about, below and behind the fist (gun model space, meters). */
+const RECOIL_PIVOT = new THREE.Vector3(0, -0.05, -0.06);
+const MODEL_X = new THREE.Vector3(1, 0, 0);
+
+/**
+ * How much of the kick is left `ms` after a shot (sample clock): all of it in the shot's own frame,
+ * then a damped return that is visibly still up at a tenth of a second and settled by 0.3 s.
+ */
+export function recoilAt(ms: number): number {
+  if (!(ms >= 0) || ms >= RECOIL_MS) return 0;
+  const w = RECOIL_RECOVERY * ms;
+  const taper = 1 - THREE.MathUtils.smoothstep(ms, RECOIL_TAPER_MS, RECOIL_MS);
+  return (1 + w) * Math.exp(-w) * taper;
+}
 
 /** A swept front or rear contact, including a quick punch that crosses the whole disc in one sample. */
 export function gongContact(from: THREE.Vector3, to: THREE.Vector3, seconds: number): boolean {
@@ -110,7 +150,14 @@ export class NativePhysical {
   private gun: THREE.Group | null = null;
   private muzzle: Muzzle | null = null;
   private gunHand: Hand | null = null;
+  /** Debug staging: this hand's samples are scripted, with no real controller grip under them. */
+  private scripted: Hand | null = null;
   private lastShot = -Infinity;
+  private kick = new THREE.Quaternion();
+  private wrist = new THREE.Vector3();
+  private gunAt = new THREE.Vector3();
+  /** The fill the held gun is lit with now (lightHeldGun), or NaN before its first light. */
+  private gunFill = Number.NaN;
   private lastStrike = -Infinity;
   private dropped = false;
   private dropTime = 0;
@@ -125,7 +172,18 @@ export class NativePhysical {
   ) {}
 
   private slot(): Motion {
-    return { valid: false, stable: false, time: 0, local: new THREE.Vector3(), world: new THREE.Vector3(), contact: new THREE.Vector3(), gunRotation: new THREE.Quaternion(), armed: false, hold: null, lost: null };
+    return {
+      valid: false,
+      stable: false,
+      time: 0,
+      local: new THREE.Vector3(),
+      world: new THREE.Vector3(),
+      contact: new THREE.Vector3(),
+      gunRotation: new THREE.Quaternion(),
+      armed: false,
+      hold: null,
+      lost: null,
+    };
   }
 
   owns(hand: Hand): boolean {
@@ -235,7 +293,7 @@ export class NativePhysical {
       m.contact.copy(this.contact);
       m.valid = true;
       if (m.hold === 'gun' && this.gun) {
-        this.gun.quaternion.copy(m.gunRotation);
+        this.presentGun(m, frame.time - this.lastShot);
         this.gun.visible = true;
       }
     }
@@ -303,13 +361,70 @@ export class NativePhysical {
     if (!m.hold) return false;
     if (m.hold !== 'gun' || !m.valid || !m.stable || !this.allowed || time - this.lastShot < 350 || !this.gun) return true;
     this.lastShot = time;
+    // The bullet leaves the muzzle as aimed, before this shot's kick moves the model.
+    this.presentGun(m, Infinity);
     this.gun.updateWorldMatrix(true, true);
     this.position.copy(MUZZLE_AT).applyMatrix4(this.gun.matrixWorld);
     this.direction.set(0, 0, 1).transformDirection(this.gun.matrixWorld);
-    this.muzzle?.fire();
     this.hooks.fireGun(this.position, this.direction);
-    this.pulse(hand, 0.85, 50);
+    this.muzzle?.fire();
+    this.pulse(hand, 1, 70);
+    // The kick shows in this very update, rather than a sample later.
+    this.presentGun(m, 0);
     return true;
+  }
+
+  /** The held gun in the fist: aimed along the pointing pose, plus what is left of a shot's kick `ms` after it. */
+  private presentGun(m: Motion, ms: number): void {
+    const gun = this.gun!;
+    gun.quaternion.copy(m.gunRotation);
+    gun.position.set(0, 0, 0);
+    const k = recoilAt(ms);
+    if (k > 0) {
+      // Muzzle up about the wrist: the fist rides up and back round it, and slides back into the palm.
+      this.kick.setFromAxisAngle(MODEL_X, -RECOIL_PITCH * k);
+      gun.quaternion.multiply(this.kick);
+      this.wrist.copy(RECOIL_PIVOT).applyQuaternion(this.kick);
+      gun.position.copy(RECOIL_PIVOT).sub(this.wrist);
+      gun.position.z -= RECOIL_BACK * k;
+      gun.position.applyQuaternion(m.gunRotation);
+    }
+  }
+
+  /** Lights the gun like the hand holding it, for how lit it is where the gun is. */
+  private lightGun(): void {
+    const gun = this.gun!;
+    const level = this.hooks.lightAt ? this.hooks.lightAt(gun.getWorldPosition(this.gunAt)) : INDOOR_LIGHT;
+    const fill = heldGunFill(level);
+    if (Math.abs(fill - this.gunFill) < 0.005) return;
+    this.gunFill = fill;
+    lightHeldGun(gun, level);
+  }
+
+  /**
+   * The use action (trigger) with a free hand at a shot worker lying on the floor: its tracked grip
+   * touching the body, or its ray pointing at it from close by. It revives the worker: the server
+   * owns the revival window, and the body gets back up when the server says so. A firm pulse in
+   * that hand answers at once. False when the hand holds something or is at no body.
+   */
+  useAtBody(hand: Hand, ray: THREE.Ray | null): boolean {
+    const id = this.bodyAt(hand, ray);
+    if (id === null || !this.hooks.bodies!.revive(id)) return false;
+    this.pulse(hand, 0.9, 60);
+    return true;
+  }
+
+  /** The body a free hand with a tracked, stable grip is at: touching it, or pointing at it along `ray`. */
+  bodyAt(hand: Hand, ray: THREE.Ray | null): string | null {
+    const m = this.motion[hand];
+    const bodies = this.hooks.bodies;
+    if (!bodies || m.hold || !this.allowed || !m.valid || !m.stable) return null;
+    return bodies.at(m.world, ray);
+  }
+
+  /** Debug staging: which hand is scripted (see NativeControls.stage), or null. */
+  script(hand: Hand | null): void {
+    this.scripted = hand;
   }
 
   cancelHand(hand: Hand): void {
@@ -340,8 +455,10 @@ export class NativePhysical {
     if (!this.gun) {
       this.gun = magnum();
       this.gun.name = 'native-held-magnum';
-      this.muzzle = new Muzzle();
+      // Seen down its own barrel: a warm pop round the shot, never a white-out at the muzzle.
+      this.muzzle = new Muzzle(HELD_FLASH);
       this.gun.add(this.muzzle.group);
+      this.gunFill = Number.NaN;
     }
     this.dropped = false;
     this.gunHand = hand;
@@ -351,7 +468,11 @@ export class NativePhysical {
     this.gun.quaternion.copy(this.motion[hand].gunRotation);
     this.gun.scale.setScalar(1);
     this.gun.visible = true;
-    this.gun.userData.nativeControllerAttachment = { hand, requiresGrip: true };
+    this.lightGun();
+    // The native renderer draws an attachment on the live controller grip; a scripted hand has
+    // none under it, so its gun is drawn where the script holds it instead.
+    if (this.scripted === hand) delete this.gun.userData.nativeControllerAttachment;
+    else this.gun.userData.nativeControllerAttachment = { hand, requiresGrip: true };
     this.hooks.gunChanged(true, false);
     this.pulse(hand, 0.4, 25);
   }
@@ -371,6 +492,7 @@ export class NativePhysical {
 
   update(dt: number): void {
     this.muzzle?.update(dt);
+    if (this.gun?.parent) this.lightGun();
     if (!this.dropped || !this.gun) return;
     this.dropTime += dt;
     if (!this.landed) {

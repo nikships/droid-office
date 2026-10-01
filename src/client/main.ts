@@ -72,8 +72,8 @@ import { Gallery } from './world/gallery';
 import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
-import { Casualties } from './world/casualties';
-import { gunHit, Puff } from './world/gun';
+import { Casualties, RISE_TIME } from './world/casualties';
+import { BloodSpray, gunHit, Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
@@ -123,11 +123,15 @@ import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/m
 import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
 import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
+import { NativePuppet } from './native/puppet';
 import { NativeScene } from './native/scene';
+import { ShotStage, TargetStage, type ShotOutcome, type StageReviveOptions, type StageShotOptions, type StageTargetOptions, matchWorker } from './native/stage';
+import { bodyAt, PendingShots, REVIVE_TOUCH, SHOT_ECHO_MS } from './native/downed';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
 import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
 import { Nameplate } from './world/nameplate';
-import { getNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { getNativeGraphicsSettings, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { nativeGraphicsPacket } from './native/graphics-settings';
 import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
@@ -144,6 +148,12 @@ const floatingTags = floatingTagsShown();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
+/** Debug-only shot and revival staging for headset captures (native/stage.ts); inert unless the host is debuggable. */
+let shotStage: ShotStage | null = null;
+/** Debug-only practice targets for those staged shots: hired through the office, and sent home again (native/stage.ts). */
+let targetStage: TargetStage | null = null;
+/** Debug builds of the headset app only: synthetic controllers for headless captures (__office.puppet). */
+let nativePuppet: NativePuppet | null = null;
 function headsetActive() {
   return vr.active || nativeControls?.active === true;
 }
@@ -589,11 +599,14 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     climber.letGo();
     return;
   }
-  if (reviveNearby()) return;
+  // In the headset a body is revived by a hand at it (native/physical.ts trigger), never by E
+  // landing on something else nearby.
+  if (!nativeMode && reviveNearby()) return;
   // Aiming at nothing (the ladder's let-go fires this way too): E lands on nothing, as on desktop.
   if (!it) return;
   if ((it.kind === 'desk' || it.kind === 'station') && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
+    // A downed worker's desk opens nothing; the headset (no control hints) says nothing either: the body on the floor is what you deal with.
     if (w?.downedUntil !== undefined) return hintToast(`Walk closer to ${w.name}'s body to revive`);
   }
   if (it.kind === 'coffee') {
@@ -1482,11 +1495,33 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
   },
   onLand: (at) => sound.thud(at),
   onSiren: (at) => sound.siren(at),
+  // Back in its seat, session untouched: a little hop.
+  onBack: (id) => workerViews.get(id)?.model.cheer(0.8),
+  // In the headset the body keeps the server's revival window in the world: a heartbeat you hear
+  // up close and feel in a hand near it, slowing and fading as the window runs out, and it gets
+  // back up into its chair rather than popping into it.
+  ...(nativeMode
+    ? {
+        onBeat: (at: THREE.Vector3, strength: number) => {
+          sound.heartbeat(at, strength);
+          nativeControls?.pulseNear(at, REVIVE_TOUCH + 0.25, 0.15 + 0.3 * strength, 40);
+        },
+        left: (id: string) => {
+          const until = store.workers.get(id)?.downedUntil;
+          return until === undefined ? null : (until - store.officeNow()) / 1000;
+        },
+        riseTime: RISE_TIME,
+      }
+    : {}),
 });
+/** Native: shots resolved here whose downed state the server has not echoed yet (native/downed.ts). */
+const pendingShots = new PendingShots();
+/** Native: workers seen shot on this floor, whose dismissal the medics already tell in the world. */
+const gunDowned = new Set<string>();
 /** The gun in your right hand (`7` draws and holsters it). */
 let gunOut = false;
-/** Dust where missed shots cracked into the walls and floor. */
-const puffs: Puff[] = [];
+/** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
+const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
@@ -1543,7 +1578,7 @@ function fireGun(ndc: THREE.Vector2) {
   resolveGunShot();
 }
 
-/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and revival. */
+/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and the server's downed state. */
 function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
   sound.gunshot();
   smoke.wisp(origin);
@@ -1562,24 +1597,52 @@ function resolveGunShot() {
   const result = gunHit(raycaster, office.group, byRoot);
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
-  if (nativeMode)
-    console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, solid: hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null, distance: hit ? Math.round(hit.distance * 1000) / 1000 : null })}`);
-  // Anything solid in front blocks the shot; a miss cracks into it with dust.
+  const direction = raycaster.ray.direction.clone();
+  const outcome = landShot(result, direction);
+  const solid = hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null;
+  const distance = hit ? Math.round(hit.distance * 1000) / 1000 : null;
+  if (nativeMode) console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, outcome, solid, distance })}`);
+  shotStage?.shot({ workerId, outcome, solid, distance });
+}
+
+/**
+ * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
+ * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
+ * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
+ * session still running. No menu opens anywhere. In the headset it goes down at once, knocked out
+ * of its chair along the bullet, without waiting for the server (native/downed.ts PendingShots).
+ */
+function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): ShotOutcome {
+  const hit = result?.hit;
+  const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
-    if (hit) {
-      const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
-      const puff = new Puff(hit.point, normal);
-      scene.add(puff.group);
-      puffs.push(puff);
-      sound.impact(hit.point);
-    }
-    return;
+    if (!hit) return 'miss';
+    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
+    const puff = new Puff(hit.point, normal);
+    scene.add(puff.group);
+    puffs.push(puff);
+    sound.impact(hit.point);
+    return 'miss';
   }
+  const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
+  const spray = new BloodSpray(hit.point, out, direction);
+  scene.add(spray.group);
+  puffs.push(spray);
+  sound.hit(hit.point);
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk || w.downedUntil !== undefined) return;
+  if (!v || !w || !desk || w.downedUntil !== undefined) return 'hit';
+  if (nativeMode) {
+    arrivals.forget(v.model);
+    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction)) {
+      pendingShots.add(workerId, performance.now());
+      // Should the server never echo it, the body gets back up rather than lying there for good.
+      window.setTimeout(syncWorkers, SHOT_ECHO_MS + 50);
+    }
+  }
   net.send({ t: 'worker.shoot', workerId });
+  return 'down';
 }
 
 /** Walk up to a body to revive it; the gun can stay drawn. */
@@ -1595,6 +1658,21 @@ function reviveNearby(): boolean {
   if (!w) return false;
   reach();
   net.send({ t: 'worker.revive', workerId: w.id });
+  return true;
+}
+
+/**
+ * Native: the use action with a free hand at a body (native/physical.ts useAtBody). It comes to
+ * with a gasp and stirs at once while the server revives it; it gets back up into its chair when
+ * the server says so. False when its window has closed or there is no office to ask.
+ */
+function reviveBody(id: string): boolean {
+  const w = store.workers.get(id);
+  if (!net.up || upTop || trip || !w || w.downedUntil === undefined || w.downedUntil <= store.officeNow()) return false;
+  if (!casualties.rouse(id)) return false;
+  const v = workerViews.get(id);
+  if (v) sound.gasp(v.model.root.localToWorld(new THREE.Vector3(0, 0.9, 0)));
+  net.send({ t: 'worker.revive', workerId: id });
   return true;
 }
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
@@ -1619,6 +1697,8 @@ net.onMessage((msg) => {
     departures.clear();
     arrivals.clear();
     casualties.clear();
+    pendingShots.clear();
+    gunDowned.clear();
     seatedAlready = true;
   }
   if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
@@ -1718,6 +1798,8 @@ net.onMessage((msg) => {
       routeWorktreeMessage(msg);
       break;
     case 'toast':
+      // In the headset, a shot worker's dismissal is told by the medics who carry it out.
+      if (nativeMode && msg.workerId !== undefined && msg.level === 'info' && gunDowned.has(msg.workerId)) break;
       toast(msg.text, msg.level);
       break;
     case 'upgrade':
@@ -2370,20 +2452,26 @@ function syncWorkers() {
     const lost = withControlHint(`🌿 ${w.name}'s worktree was deleted`, ' — press E to fix it');
     v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? withControlHint(`💤 ${w.name} is asleep`, ` — press R to ${again}`) : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
+      pendingShots.settle(w.id);
+      gunDowned.add(w.id);
       arrivals.forget(v.model);
       casualties.shoot(w.id, v.model, desk.seatAnchor);
-    } else if (casualties.revive(w.id)) v.model.cheer(0.8);
+    } else if (!pendingShots.holds(w.id, performance.now())) casualties.revive(w.id);
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
     v.model.setPlate(null);
+    pendingShots.settle(id);
+    // Revived and still getting back up into its chair: it is there now, before it walks out.
+    casualties.settle(id);
     const desk = office.desks.get(v.deskId);
     // A shot worker: the medics take the body instead of the send-home walk-out.
     if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
         casualties.revive(id);
+        casualties.settle(id);
         v.model.root.removeFromParent();
         v.laptop.root.removeFromParent();
         v.model.dispose();
@@ -5514,30 +5602,109 @@ if (nativeMode) {
         hintKey = 'stale';
       },
       fireGun: fireNativeGun,
+      bodies: {
+        at: (grip, ray) => (trip || upTop ? null : bodyAt(casualties, grip, ray)),
+        revive: reviveBody,
+      },
+      // The held gun is lit like the desktop's first-person hands are (Hands.setLight).
+      lightAt: (p) => sky.lightAt(p),
     },
     setCarrying: (card) => nativeUi?.setCarrying(card),
   });
   nativeScene = new NativeScene(scene, camera);
+  const controls = nativeControls;
+  shotStage = new ShotStage({
+    controls,
+    player,
+    worker: (key) =>
+      matchWorker(
+        key,
+        [...workerViews].map(([id, v]) => {
+          const w = store.workers.get(id);
+          return { id, name: w?.name ?? id, root: v.model.root, kind: w?.kind, worktree: w?.worktree, repos: w?.repos, meeting: w?.meeting };
+        }),
+      ),
+    downed: (id) => {
+      const chest = casualties.dying(id) ? casualties.chest(id) : null;
+      const v = workerViews.get(id);
+      const desk = v ? office.desks.get(v.deskId) : undefined;
+      if (!chest || !desk) return null;
+      const open = chest.clone().sub(desk.seatAnchor.getWorldPosition(new THREE.Vector3())).setY(0);
+      const until = store.workers.get(id)?.downedUntil;
+      const state = until !== undefined && until <= store.officeNow() ? 'closed' : casualties.roused(id) ? 'roused' : casualties.lyingFor(id) === null ? 'falling' : 'lying';
+      return { state, chest, open };
+    },
+    lineOfFire: (muzzle, direction, id) => {
+      const ray = new THREE.Raycaster(muzzle, direction);
+      ray.camera = camera;
+      const byRoot = new Map<THREE.Object3D, string>();
+      for (const [wid, v] of workerViews) byRoot.set(v.model.root, wid);
+      return gunHit(ray, office.group, byRoot)?.workerId === id;
+    },
+    blocked: () => {
+      if (upTop) return 'on the roof: no workers to stage';
+      if (trip) return 'between floors';
+      if (climber.active || player.rig) return 'climbing or riding';
+      if (golf.active || hanger.active || carrying || readingNow() || holdingBall()) return 'hands full: put down what you are holding';
+      return null;
+    },
+    eye: () => (nativeControls?.active ? camera.position.clone() : null),
+    clearPanel: () => nativeUi?.setPanelOpen(false),
+    revive: (id) => {
+      if (reviveBody(id)) return;
+      if (store.workers.get(id)?.downedUntil !== undefined) net.send({ t: 'worker.revive', workerId: id });
+    },
+    now: () => performance.now(),
+  });
+  // Both stages go by one list of worker ids, never by name (see TargetAllowlist).
+  targetStage = new TargetStage(
+    {
+      crew: () => [...store.workers.values()],
+      taken: (deskId) => !!store.workerAtDesk(deskId) || departures.seated(deskId),
+      you: () => ({ x: player.pos.x, z: player.pos.z }),
+      present: (id) => workerViews.has(id),
+      hire: (deskId) => net.send({ t: 'worker.spawn', deskId, kind: 'shell', target: true }),
+      sendHome: (id) => net.send({ t: 'worker.kill', workerId: id }),
+      officeNow: () => store.officeNow(),
+      lastToast: () => document.querySelector('#toasts .toast:last-child')?.textContent ?? '',
+    },
+    100,
+    shotStage.targets,
+  );
+  nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
   (window as any).officeNative = {
-    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean }) => {
+    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean }, host?: { debuggable?: boolean }) => {
+      // Only a debuggable Android build says so (OfficeActivity passes BuildConfig.DEBUG).
+      if (shotStage) shotStage.debuggable = host?.debuggable === true;
+      if (targetStage) targetStage.debuggable = host?.debuggable === true;
+      // Only a debug build of the headset app reports the capture puppet. The host cannot change
+      // while this page lives, so a manual frame() call without events never withdraws it.
+      if (events?.puppet === true) nativePuppet?.host(true);
+      nativePuppet?.observe(frames);
       if (events?.sceneReset) nativeScene?.reset();
       if (events?.resetInput) nativeControls?.reset();
       if (events?.recenter) nativeControls?.rebase();
-      nativeControls?.consume(frames);
-      if (loopStarted) frame(performance.now());
+      // A frozen staged shot holds this instant on the headset until it is released.
+      const frozen = shotStage?.frozen === true;
+      if (!frozen) nativeControls?.consume(frames);
+      if (loopStarted && !frozen) frame(performance.now());
+      shotStage?.tick();
       (window as any).officeNative.metrics = metrics;
       nativeUi?.updatePerformance(metrics);
       updateNativeGraphicsMetrics(metrics);
       const control = nativeControls?.state();
+      const puppet = nativePuppet?.packet() ?? null;
       const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
-        control: control ? { ...control, graphics: getNativeGraphicsSettings() } : control,
+        control: control ? { ...control, graphics: nativeGraphicsPacket(getNativeGraphicsSettings()), ...(puppet ? { puppet } : {}) } : control,
         panel: { ...nativeUi?.panelState(), status: nativeStatus(metrics, getNativeGraphicsSettings().fps, message) },
       };
     },
     reset: () => nativeScene?.reset(),
     recenter: () => nativeControls?.recenter(),
+    // Headset checks switch foveation levels and the density view from devtools.
+    graphics: { get: getNativeGraphicsSettings, set: setNativeGraphicsSettings },
     report: () => nativeScene?.report(),
     controls: nativeControls,
     ui: nativeUi,
@@ -5601,6 +5768,7 @@ void whoami().then(() => {
   plates,
   departures,
   arrivals,
+  casualties,
   scene,
   net,
   renderer,
@@ -5627,7 +5795,21 @@ void whoami().then(() => {
   native: nativeControls,
   nativeScene,
   nativeUi,
+  puppet: nativePuppet?.api,
   ball,
+  // Debuggable headset builds only (inert otherwise): hire a practice target or list a harness's
+  // target ids, stage a shot or a revival through the real controller path, and send the target
+  // home again.
+  ...(shotStage && targetStage
+    ? {
+        stageTarget: (options?: StageTargetOptions) => targetStage!.hire(options),
+        stageShot: (options: StageShotOptions) => shotStage!.run(options),
+        stageRevive: (options: StageReviveOptions) => shotStage!.revive(options),
+        releaseShot: (revive?: boolean) => shotStage!.release(revive !== false),
+        dismissTarget: (worker: string) => targetStage!.dismiss(worker),
+        allowTargets: (ids: string[]) => targetStage!.allow(ids),
+      }
+    : {}),
 };
 (window as any).__voice = voice;
 (window as any).__sound = sound;

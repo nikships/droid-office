@@ -84,10 +84,11 @@ const BLOCK_WOOD = '#9c6644';
 const PLATE_BACKING = '#6b4f2a';
 const BEZEL = '#23252e';
 const COLLAR = '#8d99ae';
-/** A lamp that is out. */
-const LAMP_OFF = '#2b2d42';
 /** How long one blink of a lamp calling for you takes, on and off, in seconds. */
 const BLINK = 0.6;
+/** An unlit lamp, and the red a shot owner's heartbeat flashes it (see Nameplate.heartbeat). */
+const LAMP_OFF = new THREE.Color('#2b2d42');
+const BEAT_RED = new THREE.Color('#ff1f2d');
 
 /** `s` on one line at `px` in the current alignment, shrunk as far as `min` px to fit `width`, and cut short with "…" past that. */
 function fitLine(ctx: CanvasRenderingContext2D, s: string, px: number, weight: number, color: string, x: number, y: number, width: number, min = px * 0.7) {
@@ -235,6 +236,8 @@ export class Nameplate {
   private drawn = '';
   private drawnFonts = -1;
   private t = 0;
+  /** A shot owner's heartbeat on the lamp, or null while it shows the owner's status. */
+  private beat: { glow: number; swell: number } | null = null;
 
   constructor(mount: Omit<PlateMount, 'anchor'>) {
     const { shape, width, height } = mount;
@@ -324,6 +327,7 @@ export class Nameplate {
     this.owner = null;
     this.text = null;
     this.pitchText = null;
+    this.beat = null;
     this.root.visible = false;
   }
 
@@ -332,8 +336,19 @@ export class Nameplate {
     if (this.owner !== owner) return;
     this.text = text;
     this.root.visible = true;
-    this.lampMat.color.set(text.lamp ?? LAMP_OFF);
     this.paint();
+    this.paintLamp();
+  }
+
+  /**
+   * `owner` lies shot (Worker.pulse): with no light over its head, the lamp on its seat flashes red
+   * with each heartbeat, `glow` 0 (dark) to 1 (a full beat), swelling by `swell`, like a monitor by
+   * the body. null puts the owner's status color back.
+   */
+  heartbeat(owner: unknown, glow: number | null, swell = 0) {
+    if (this.owner !== owner) return;
+    this.beat = glow === null ? null : { glow: THREE.MathUtils.clamp(glow, 0, 1), swell: THREE.MathUtils.clamp(swell, 0, 1) };
+    this.paintLamp();
   }
 
   /** A board agent's pitch on its kiosk's screen while you're talking to it; null goes back to its nameplate. */
@@ -352,9 +367,14 @@ export class Nameplate {
     if (!this.root.visible) return;
     if (fontRevision() !== this.drawnFonts) this.paint(true);
     this.t += dt;
-    const pulse = this.text?.lamp ? this.text.pulse : 'steady';
+    const pulse = this.text?.lamp && !this.beat ? this.text.pulse : 'steady';
     this.lamp.visible = pulse !== 'call' || this.t % BLINK < BLINK * 0.6;
-    this.lamp.scale.setScalar(pulse === 'busy' ? 1 + 0.22 * Math.sin(this.t * 5) : 1);
+    this.lamp.scale.setScalar(this.beat ? 1 + 0.35 * this.beat.swell : pulse === 'busy' ? 1 + 0.22 * Math.sin(this.t * 5) : 1);
+  }
+
+  private paintLamp() {
+    if (this.beat) this.lampMat.color.copy(LAMP_OFF).lerp(BEAT_RED, this.beat.glow);
+    else this.lampMat.color.set(this.text?.lamp ?? LAMP_OFF);
   }
 
   /** Repaints its face when what it says has changed: all of it on a screen, only who it is on an engraved plate. */

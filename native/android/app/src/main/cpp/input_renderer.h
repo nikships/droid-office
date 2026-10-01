@@ -12,7 +12,19 @@ class InputRenderer {
     void initialize(bool multiview, bool srgbFramebuffer, AAssetManager *assets);
     void update(const InputFrame &frame, const ControlState &state, XrPosef panelPose,
                 bool panelVisible);
-    void render(const Matrix &left, const Matrix &right, float fade);
+    /**
+     * After update: a bit per hand (1 left, 2 right) whose controller model is not drawn this
+     * frame, because an attached object (the gun, SceneRenderer::attachedHands) is in that hand.
+     */
+    void hideControllers(unsigned hands) { controllers.hide(hands); }
+    /** Controllers, rays, the teleport arc. Depth-tested, so after PanelCutout::punch they show
+     * in front of the workspace panel exactly where they are nearer than it. */
+    void render(const Matrix &left, const Matrix &right);
+    /**
+     * The comfort fade over everything drawn so far. Color only: the alpha a PanelCutout punched
+     * stays 0, so the workspace panel beneath is not faded (as when it was composited on top).
+     */
+    void renderFade(float fade);
 
   private:
     struct Vertex {

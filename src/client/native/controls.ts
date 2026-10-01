@@ -29,6 +29,7 @@ import { VRGrab, type GrabAim, type GrabHooks } from '../vr/grab';
 import { RayAccel } from '../vr/pick';
 import { SnapTurn, sampleParabola, xrRayDirection, yawForFacing } from '../vr/session';
 import { LOST_MS, MAX_QUEUE, type NativeHand, type NativeInputFrame, type Pose7, SQUEEZE_OFF, SQUEEZE_ON, STALE_MS, TRIGGER_OFF, TRIGGER_ON, pressLatch, readFrame, webStick } from './input';
+import { nativeFloorOffset, registerNativeHeadHeight } from './height';
 import { applyGravity, findLanding, placeAvatar, rigFor, snapGround, stepToward } from './locomotion';
 import { NativePhysical, type NativePhysicalHooks } from './physical';
 
@@ -78,6 +79,12 @@ export interface NativeHooks {
 
 type Vec3 = [number, number, number];
 
+/** A scripted controller (native/stage.ts ShotScript): its sample, or null once it is over. */
+export interface StagedHand {
+  readonly hand: 0 | 1;
+  sample(time: number, head: Pose7, rig: THREE.Matrix4): NativeHand | null;
+}
+
 export interface NativeHandState {
   connected: boolean;
   ui: boolean;
@@ -122,6 +129,8 @@ interface HandSlot {
   squeezeDown: boolean;
   hover: { it: Interactable; near: boolean; hit: THREE.Intersection } | null;
   hoverFresh: boolean;
+  /** The shot worker's body this free hand is at (touching or pointing at), whose use action revives it. */
+  body: string | null;
   uiConsumed: boolean;
   wasPrimary: boolean;
   wasSecondary: boolean;
@@ -141,6 +150,7 @@ const _q = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const _p = new THREE.Matrix4();
 const _s = new THREE.Vector3(1, 1, 1);
+const _ray = new THREE.Ray();
 
 function setPose(o: THREE.Object3D, p: Pose7): void {
   o.position.set(p[0], p[1], p[2]);
@@ -197,6 +207,8 @@ export class NativeControls {
   private carriedOwner: 0 | 1 | null = null;
   private carryPublishedAt = -Infinity;
   private interactionHand: 0 | 1 | null = null;
+  /** Debug staging only (native/stage.ts): a scripted controller standing in for one hand. */
+  private staged: StagedHand | null = null;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, hooks: NativeHooks) {
     this.camera = camera;
@@ -205,6 +217,7 @@ export class NativeControls {
     this.grab = hooks.grab ? new VRGrab(scene, hooks.grab) : null;
     this.hands = [this.slot(0), this.slot(1)];
     this.physical = hooks.physical ? new NativePhysical(scene, [this.hands[0].grip, this.hands[1].grip], hooks.physical, (hand, strength, ms) => this.pulse(hand, strength, ms)) : null;
+    registerNativeHeadHeight(() => (this.on && this.headSeen && this.headTracked ? this.headLocal.y : null));
     this.carriedRoot.name = 'native-carried-issue';
     this.carriedRoot.position.set(0, 0.05, -0.06);
     this.rig.visible = false;
@@ -229,6 +242,7 @@ export class NativeControls {
       squeezeDown: false,
       hover: null,
       hoverFresh: false,
+      body: null,
       uiConsumed: false,
       wasPrimary: false,
       wasSecondary: false,
@@ -247,6 +261,7 @@ export class NativeControls {
     const viewFacing = player.view === 'first' ? player.facing : player.camYaw + Math.PI;
     player.facing = viewFacing;
     this.origin.copy(player.pos);
+    this.origin.y -= nativeFloorOffset();
     this.yaw = yawForFacing(viewFacing);
     this.lastAvatar.copy(player.pos);
     this.needsRebase = true;
@@ -351,6 +366,35 @@ export class NativeControls {
     this.physical?.cancelGun();
   }
 
+  /**
+   * A rumble in every tracked controller whose grip is within `radius` meters of `point` (world),
+   * such as a downed worker's heartbeat felt by a hand reaching for it. The hands it buzzed.
+   */
+  pulseNear(point: THREE.Vector3, radius: number, strength: number, ms: number): (0 | 1)[] {
+    const buzzed: (0 | 1)[] = [];
+    for (const s of this.hands) {
+      if (!s.connected || s.lostAt !== null || s.input?.gripTracked === false) continue;
+      if (s.grip.getWorldPosition(_l).distanceTo(point) > radius) continue;
+      this.pulse(s.idx, strength, ms);
+      buzzed.push(s.idx);
+    }
+    return buzzed;
+  }
+
+  /**
+   * Debug staging only: `script` replaces one hand's samples as they are replayed, until it
+   * returns null, so a staged shot or revival runs the same draw, trigger, grip and shot path as a
+   * held controller. A staged gun is drawn at the scripted world pose. Null hands the controller back.
+   */
+  stage(script: StagedHand | null): void {
+    this.staged = script;
+    this.physical?.script(script?.hand ?? null);
+  }
+
+  get staging(): boolean {
+    return this.staged !== null;
+  }
+
   /** The original pickUp/putDown/putBack dispatch calls this when its single carry slot changes. */
   syncCarrying(): void {
     const card = this.hooks.carrying();
@@ -415,6 +459,7 @@ export class NativeControls {
     if (!this.on) return;
     this.jumpPresentation();
     this.yaw = rigFor(this.headLocal, this.headQuat, this.hooks.player.pos, this.hooks.player.facing, this.origin);
+    this.origin.y -= nativeFloorOffset();
     this.lastAvatar.copy(this.hooks.player.pos);
     this.placeRig();
   }
@@ -448,6 +493,12 @@ export class NativeControls {
       this.jumpPresentation();
       this.followHead();
     }
+  }
+
+  /** The latest native head pose in LOCAL_FLOOR, or null before the first sample (the capture puppet's head space). */
+  headPose(): Pose7 | null {
+    if (!this.on || !this.headSeen) return null;
+    return [this.headLocal.x, this.headLocal.y, this.headLocal.z, this.headQuat.x, this.headQuat.y, this.headQuat.z, this.headQuat.w];
   }
 
   /** Head look direction in the world, for the ears. */
@@ -487,6 +538,8 @@ export class NativeControls {
       if (aiming) s.hover = null;
       else this.freshHover(s);
     }
+    // A tick in the hand as it reaches a body; what the trigger does there is the body's to show.
+    this.bodyHover(aiming);
     this.updateTeleport();
     if (this.hooks.settings.vr.turn !== 'snap') this.smoothTurn(dt);
     if (!player.rig) this.updateGlide(dt);
@@ -541,6 +594,12 @@ export class NativeControls {
 
   /** One native sample: poses in, then every edge VRSession resolves per event or per frame. */
   private replay(f: NativeInputFrame): void {
+    if (this.staged) {
+      this.rig.updateMatrixWorld();
+      const scripted = this.staged.sample(f.time, f.head, this.rig.matrixWorld);
+      if (scripted) f.hands[this.staged.hand] = scripted;
+      else this.stage(null);
+    }
     this.now = f.time;
     this.headTracked = f.headTracked !== false;
     if (f.headTracked !== false) {
@@ -657,6 +716,7 @@ export class NativeControls {
     s.input = null;
     s.hover = null;
     s.hoverFresh = false;
+    s.body = null;
     s.uiConsumed = false;
     s.triggerDown = false;
     s.squeezeDown = false;
@@ -673,6 +733,8 @@ export class NativeControls {
     if (this.physical?.trigger(s.idx, this.now)) return;
     if (s.uiConsumed || this.worldBlocked()) return;
     if (s.input?.gripTracked === false && this.ownsCarry(s.idx)) return;
+    // A free hand at a shot worker's body on the floor: the use action revives it.
+    if (!this.ownsObject(s.idx) && this.physical?.useAtBody(s.idx, this.rayOf(s))) return;
     if (this.grab?.use(s.idx, this.grabAim(s))) return;
     const hover = this.freshHover(s);
     if (this.hooks.player.rig) return;
@@ -773,6 +835,28 @@ export class NativeControls {
     this.raycaster.far = this.hooks.reachOf('tv') + 6;
     s.hover = this.hooks.pickFromRay(this.raycaster, 0);
     return s.hover;
+  }
+
+  /**
+   * Which shot worker's body each free hand is at, with a soft tick as a hand arrives at one, the
+   * way a hand feels what it reaches. True when either hand is at one.
+   */
+  private bodyHover(aiming: boolean): boolean {
+    let any = false;
+    for (const s of this.hands) {
+      const id = aiming || !s.connected || this.ownsObject(s.idx) || this.worldBlocked() ? null : (this.physical?.bodyAt(s.idx, this.rayOf(s)) ?? null);
+      if (id !== null && id !== s.body) this.pulse(s.idx, 0.2, 15);
+      s.body = id;
+      if (id !== null) any = true;
+    }
+    return any;
+  }
+
+  /** This hand's pointing ray in the world, or null while it is lost or on a panel. */
+  private rayOf(s: HandSlot): THREE.Ray | null {
+    if (!s.connected || s.lostAt !== null || s.uiConsumed) return null;
+    this.rayOut(s);
+    return _ray.set(_o, _d);
   }
 
   private rayOut(s: HandSlot): void {
@@ -971,7 +1055,8 @@ export class NativeControls {
         if (player.grounded) snapGround(player);
       }
     }
-    this.origin.y = player.pos.y;
+    // The player's height setting corrects a headset floor that sits above the real one.
+    this.origin.y = player.pos.y - nativeFloorOffset();
     const t = performance.now() / 1000;
     const d = this.sway;
     this.rig.rotation.z = d > 0 ? d * (0.07 * Math.sin(t * 0.9) + 0.025 * Math.sin(t * 2.3 + 1)) : 0;

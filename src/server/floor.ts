@@ -43,7 +43,8 @@ export interface FloorContext {
   prompts: PromptSource;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
-  toast(floor: Floor, text: string, level?: ToastLevel): void;
+  /** To everyone on this floor; `workerId` names the worker it is about, when one is. */
+  toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string): void;
   /** A worker's terminal output, for whoever has that terminal open. */
   termData(workerId: string, data: string, viewers: string[]): void;
   /** What a worker changed, for whoever has its Changes window open. */
@@ -189,7 +190,7 @@ export class Floor {
         },
         data: (workerId, data, viewers) => ctx.termData(workerId, data, viewers),
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame }, true),
-        toast: (text, level) => ctx.toast(this, text, level),
+        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },
       ctx.ledger,
       ctx.capacity,

@@ -99,16 +99,137 @@ and the rest of the application; the host-only improvement should not be read as
 ### Display and workspace
 
 The display path uses GLES multiview for both eyes, with 4× tile MSAA where supported.
-Gaze-driven `GL_QCOM_texture_foveated` adjusts full-resolution rendering around the gaze and
-reduces peripheral pixel density. Invalid gaze falls back to a fixed central fovea.
-Depth attachments inherit the color attachment's foveation; they are not independently
-foveated. The implementation follows the
-[Qualcomm extension](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt).
+Foveated rendering is owned by the OpenXR runtime, as described in
+[Runtime foveation](#runtime-foveation). Depth attachments inherit the colour attachment's
+foveation; they are not independently foveated
+([QCOM_texture_foveated](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt) issue 5).
 
-The current gaze profile uses gain 4, fovea area 2 and minimum pixel density 0.25. Every
-supported focal point is updated; an unused default focal point would keep the entire eye
-at full density. The invalid-gaze profile uses a broader central fovea. These settings are
-performance choices that still require headset sharpness and gaze-motion validation.
+### Runtime foveation
+
+The app no longer computes focal points or writes `GL_QCOM_texture_foveated` state. Earlier
+builds steered app-side focal points from the eye-gaze interaction pose with invented gain,
+area and density values. The current build uses the extensions Android XR lists for this runtime
+([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)), each enabled
+only when advertised:
+
+1. `XR_FB_swapchain_update_state`, `XR_FB_foveation` and `XR_FB_foveation_configuration`.
+   Only the world colour swapchain is created with
+   `XrSwapchainCreateInfoFoveationFB{XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB}`, the flag
+   the registry defines for OpenGL with `QCOM_texture_foveated`. Depth, the sharp-screen layer
+   and the Android Surface panels stay unfoveated.
+2. A profile (`XrFoveationProfileCreateInfoFB` → `XrFoveationLevelProfileCreateInfoFB`, static,
+   vertical offset 0) is applied with `xrUpdateSwapchainFB` right after the swapchain is created,
+   as Meta's GLES sample (`ovrRenderer_Create`, then `ovrRenderer_SetFoveation`) and Godot
+   (`on_main_swapchains_created`) do, and the same profile once more after `xrBeginSession`.
+3. Every foveation choice creates new world targets, through the same staged replacement as a
+   resolution change. On Galaxy XR the runtime keeps the first profile a world swapchain
+   receives: in the 2026-10-01 headset run, Off as the empty profile left
+   `GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM` at 3 and the foveated pattern unchanged, and Balanced
+   to More headroom gave identical density maps, until the targets were recreated.
+   `GL_QCOM_texture_foveated` also says foveation "cannot be disabled" on a texture once enabled.
+   So Off creates swapchains without `XrSwapchainCreateInfoFoveationFB`, which have no foveation
+   support (`XR_FB_foveation`), and a level creates them with it and applies that level first.
+4. With `XR_META_foveation_eye_tracked`, `supportsFoveationEyeTracked` and a granted
+   `EYE_TRACKING_FINE`, the profile also chains `XrFoveationEyeTrackedProfileCreateInfoMETA`.
+   Each frame, after acquiring the world image (Godot's order), the app calls
+   `xrUpdateSwapchainFB` right before `xrGetFoveationEyeTrackedStateMETA`, as the extension
+   asks. The runtime places the fovea; the app only reports the returned centre and draws it in
+   the diagnostic view. As in Godot, a failed update or query is tried again on the next frame:
+   in the headset run the query returned `XR_ERROR_RUNTIME_FAILURE` while nobody wore the
+   headset. `XR_EXT_eye_gaze_interaction` stays bound because Galaxy XR's eye-tracked foveation
+   needs it ([godotengine/godot#113778](https://github.com/godotengine/godot/issues/113778)).
+5. The profile is destroyed before the swapchains and the session.
+6. Reduced regions are filtered, not submitted in blocks. `GL_QCOM_texture_foveated` renders a
+   scaled bin at reduced density and "finally upscal[es] the subregion to the native texture
+   resolution" (issue 2); on Galaxy XR that repeats each low-density pixel, which the
+   2026-10-01 headset captures showed as 4–8 px stair-steps and hard tiles in the periphery.
+   Android XR documents bilinear filtering of low-density regions only through a subsampled
+   layout ("Reduces aliasing in peripheral areas through bilinear filtering",
+   [Android XR Extensions settings](https://developer.android.com/develop/xr/unity/performance/androidxr-extension-settings)),
+   and OpenXR offers that only for Vulkan swapchains. So a level creates two sets of world
+   swapchains of the same size: the foveated set above, which the world renders into and which
+   is never submitted (`XR_SWAPCHAIN_USAGE_SAMPLED_BIT` as well), and the submitted set without
+   foveation support. The last draw into the foveated image writes each invocation's neighbour
+   step (`dFdx`/`dFdy` of `gl_FragCoord`, which issue 4 leaves uncorrected, so the step is
+   1/density) into its alpha, which the opaque projection layer ignores. A full-screen pass then
+   draws the submitted image: full-density pixels are copied unchanged, and every reduced pixel
+   averages linear taps spread over its own block width (two taps at half density, three for
+   coarser blocks), which equals a bilinear upscale of the low-density pixels at half density and
+   keeps every step across a block edge at a third or less beyond it. The runtime still chooses
+   the density everywhere and places the fovea; the app never writes QCOM state. The pass costs
+   one extra read and write of the eye images and doubles the world swapchain memory. If the
+   filter's programs do not compile, or the second set cannot be created, the foveated set is
+   submitted directly for the rest of the session (fallback `filtered targets rejected`). No
+   OpenXR text says whether a runtime foveates a swapchain that is never submitted, so when every
+   image of the foveated set reads no foveation bits (`FOVEATION_TEXTURE`), the app falls back
+   the same way (`filtered swapchain not foveated`).
+7. Nothing else in the world pass changes from bin to bin. QCOM issue 4 also leaves
+   `gl_PointSize` unscaled, so GL points changed size and dropped out between bins, which showed
+   as rectangles of missing lamp and pumpkin glow. Points are drawn as instanced quads of the
+   same square instead (indexed points, which the office does not use, stay GL points).
+   Derivative-based shading (the Standard material's geometry roughness, the toon fallback ramp)
+   divides by the measured step, so it matches across bins.
+
+The page keeps the settings in its storage, which the native renderer only sees once the page
+has loaded. The native host therefore keeps the page's last render scale and foveation in
+`files/native-graphics.json` in the app's private storage and creates the first world targets
+with them, so a stored Off starts without foveation instead of being replaced after the page
+loads. A page reload keeps the current settings until the new page sends its own.
+
+| Setting | World targets |
+| --- | --- |
+| Off | Created without foveation support: full density everywhere, no filter pass |
+| Wider sharp area (`clarity`) | `XR_FOVEATION_LEVEL_LOW_FB`, filtered |
+| Balanced (default) | `XR_FOVEATION_LEVEL_MEDIUM_FB`, filtered |
+| More headroom (`performance`) | `XR_FOVEATION_LEVEL_HIGH_FB`, filtered |
+
+The level mapping is the app's choice; Godot uses the same order. The runtime levels have no
+density parameter, so the earlier peripheral-detail setting is gone. Pages still send
+`peripheralDensity: 0.25` because APKs up to v0.1.301 reject graphics without it; current APKs
+ignore it. If the runtime rejects something, the app degrades one step for the session:
+eye-tracked → the same level fixed, on the same new swapchains → world swapchains without
+foveation support (full resolution everywhere). Filtered targets that cannot be created fall
+back to unfiltered ones. Only `XR_ERROR_FEATURE_UNSUPPORTED` from the
+state query drops eye tracking during a session; the targets are then recreated with the fixed
+level.
+
+`FRAME_METRICS` carries `foveationSupported`, `foveationEnabled` and `foveationLevel` for the
+bound targets. The details are a separate `FOVEATION_METRICS` line, because together they
+exceeded Android's 1024-byte log record, and the page receives them as `foveation`: `setting`,
+the bound `level` (`none`, `low`, `medium` or `high`), `eyeTracked`, `eyeTrackedAvailable`,
+`filtered` and `filterAvailable` (the reconstruction above), `pending` (the setting asks for other targets, which follow within about 250 ms), the profile
+`create`/`update` results, per-window `frames`/`validFrames`/`invalidFrames`/`failedFrames`,
+the last update/state results, `centerValid` and `center` (NDC per eye), the probed texture
+state and `fallback`. New targets also update the page's copy at once, without waiting for the
+next window. The log also has `FOVEATION_CAPABILITY`, `FOVEATION_FILTER` and `GRAPHICS_START`
+(the stored settings) at startup, `VIEW_FOV` (each eye's field of view in degrees) after focus,
+`FOVEATION_PROFILE` for every applied profile, `WORLD_TARGET` (with `filtered`) for new targets,
+`FOVEATION_EYE_STATE` when the per-frame results change and `FOVEATION_TEXTURE` for each image
+the world renders into. The texture line reads
+`GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM`, `_MIN_PIXEL_DENSITY_QCOM` and the focal-point count
+back from the image on its second frame (the first frame of a new image read 0 bits on the
+headset although every frame was foveated): 0 bits for Off, and bits of 0 at a level mean the
+runtime does not foveate this GLES swapchain.
+
+**Graphics & performance → Show rendering detail (diagnostic)** draws a full-screen pass into
+the foveated world target, before the filter's step pass. Its fragments run at the runtime's
+actual density: green, yellow,
+orange and red mark a neighbour step of one, two, three and four or more full-resolution pixels
+(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), and a
+one-pixel checker can only be resolved at full density (the filter smooths it elsewhere). A magenta ring marks the
+runtime-reported centre when it is valid. Without one, on foveated targets, a white ring marks
+the image centre (NDC 0, 0, `GL_QCOM_texture_foveated`'s default focal point) as the fallback.
+Both rings are computed, not measured. Reading density
+from derivatives is derived from the QCOM text, not a documented debugging aid. The view is
+not saved and turns off when the app restarts. Pages can also switch it with
+`officeNative.graphics.set({ foveationDebug: true })`.
+
+Not documented anywhere, and so still headset checks: whether an eye-tracked profile moves the
+full-density region on GLES (every published eye-tracked implementation is Vulkan; it needs a
+wearer) and the NDC axis convention of the reported centre for a GL image. The 2026-10-01
+headset run showed that the runtime does foveate GLES scaled-bin swapchains (bits 3 at every
+level; app GPU frame time 32.7 ms with Off and 9.7 ms with Balanced at 116% resolution, measured
+with each state on freshly created targets) and keeps the first profile of each swapchain.
 
 The original desktop windows, including terminals, are displayed through a 2400×1600 Android
 Surface compositor layer. This preserves text resolution independently of world foveation.
@@ -163,6 +284,15 @@ railing's top bar, and the golf hole's sign spans both its posts (`tests/native-
 casts rays behind and under every sign). An exit sign stays lit from inside. Desktop and WebXR keep
 their flat glowing labels.
 A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
+While the workspace is open, its layer is composited beneath the world layer, which shows it
+through a hole so the player's controllers, rays and held gun stay in front of it, and the toast
+card fades while a hand is in front of it (see
+[Hands in front of compositor panels](vr-native-controller-interactions.md#hands-in-front-of-compositor-panels)).
+While the panel is beneath the world layer, the foveation filter pass is left out
+(`filterFrame` in `foveation.h`): it keeps its density codes in the world image's alpha and
+submits opaque pixels, which would cover the panel, so those frames submit the foveated world
+image as drawn, with the driver's blocky periphery and the same GPU savings, until the workspace
+closes.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.
@@ -273,13 +403,10 @@ before promotion. A wait timeout or failed allocation/completeness check retains
 targets. GPU commands complete before old swapchains are destroyed. Scene assets, player state,
 Android Surfaces and panel resolution are retained.
 
-**Foveated rendering → Off** uses new unfoveated targets at the chosen world resolution.
-On profiles preserve the sharp gaze region with configurable peripheral density; gaze loss
-keeps the central fallback. The shader, controller and sharp-screen depth mapping use the
-actually allocated world dimensions. The runtime reports foveation availability and the applied
-mode. QCOM forbids disabling foveation on a texture after enabling it, so the Off transition
-recreates targets instead of clearing that bit on existing images.
-[QCOM texture-foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt),
+**Foveated rendering** choices, including Off, allocate new targets the same way
+([Runtime foveation](#runtime-foveation)). The shader, controller and sharp-screen depth mapping
+use the actually allocated world dimensions. The native app reports foveation availability and
+the bound targets.
 [OpenXR swapchain destruction](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrDestroySwapchain.html).
 
 The log windows adjacent to the blurry-laptop screenshot already had a resident, active
@@ -425,6 +552,80 @@ that interface, and both devices must be able to reach it. Voice requires a secu
 origin: localhost for USB, or HTTPS for Wi-Fi. The app trusts system CAs and CAs explicitly
 installed by the device owner, so a development certificate can use normal Android trust
 instead of bypassing verification.
+
+### Debug shot staging
+
+A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
+each `officeNative.frame` call; a release build passes `false`. Only then do the page's
+`window.__office.stageTarget(options)`, `allowTargets(ids)`, `stageShot(options)`,
+`stageRevive(options)` and `dismissTarget(worker)` do anything; otherwise they resolve
+`{ ok: false }`. They are for headset captures over the WebView DevTools socket, and change no
+normal gameplay.
+
+**Every shot is real.** A hit sends `worker.shoot`, which starts the server's 30-second revival
+window; when it runs out the worker is dismissed and its owned worktrees and branches deleted.
+`stageShot` and `dismissTarget` therefore go by a list of **worker ids, never by name**
+(`TargetAllowlist` in `src/client/native/stage.ts`): the practice targets this page hired with
+`stageTarget`, and the ids a capture harness lists from its own target list with `allowTargets`.
+A listed worker must still be a plain shell (no agent, no worktree, no other repositories, no
+meeting). The office names a `worker.spawn` with `target: true` `Target <n>`
+(`src/shared/targets.ts`), but that name only tells the office's answer to the hire apart on the
+floor; it never lets anything be shot. A capture goes:
+
+```js
+const t = await __office.stageTarget();            // { ok, worker: 'Target 1 🐚', workerId, desk, clearance }
+__office.allowTargets(['93e35222c41a']);           // or list a harness's target ids: { ok, targets }
+await __office.stageShot({ worker: t.workerId });  // or the capture puppet's draw and trigger
+await __office.stageRevive({ worker: t.workerId }); // or releaseShot(), well inside the window
+await __office.dismissTarget(t.workerId);          // { ok, gone: true }; off the list again
+```
+
+`stageTarget` hires one at `desk` (a free desk or bean bag), or by default at the free desk
+farthest from every other worker on the floor (the nearest of equally clear ones), so a bore aimed
+at it crosses nobody else; `clearance` is the meters to the nearest other worker. It resolves once
+the target sits there, or with the office's refusal (`timeoutMs`, `8000`), and lists its id.
+`dismissTarget` sends home only a listed target, and refuses one lying shot inside its revival
+window: revive it first.
+
+`stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
+raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
+local fall, `worker.shoot` and effects therefore run the code a held controller drives. The head
+remains the headset's own; the rig is turned and placed so the worker is in front of it. The
+staged gun is drawn at its scripted world pose, because no real grip is under it. Without
+`angle` or `pitch`, the first approach whose line of fire reaches the worker before anything else
+is used. Options:
+
+| Option | Meaning (default) |
+| --- | --- |
+| `worker` | Id or name of a worker on this floor, in any case (`target 1` finds `Target 1 🐚`); its id must be listed |
+| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides) |
+| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line) |
+| `reach` | Meters from the headset back from the gun's fist (`0.42`) |
+| `height` | Aim point in meters up a seated worker's own body (`0.62`) |
+| `hand` | `'right'` or `'left'` (`'right'`) |
+| `freezeMs` | Stop advancing gameplay this long after the shot, holding that frame (none) |
+| `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
+| `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
+
+It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`
+when `worker.shoot` went out, or `'hit'` for a worker already down), `solid`, `distance`,
+`angle`, `pitch`, `muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. A worker
+already down is refused.
+
+`stageRevive` scripts the other hand (`left` by default) reaching a worker lying on the floor and
+pulling the trigger, the use action, through `NativePhysical.useAtBody`: with `how: 'touch'`
+(default) the rig stands half a meter off its chest on the open floor beside it and the hand
+comes down onto it; with `how: 'point'` it stands `distance` (`1.4`) meters back and points at
+it from waist height. Options: `worker`, `hand`, `how`, `distance`, `holdMs` (`1200`), `freezeMs`
+(after the trigger) and `timeoutMs`. It resolves once the hand is handed back (or once frozen)
+with `roused` (the use action landed: it stirred and `worker.revive` went out) and `revived` (the
+server confirmed and it is getting back up). A worker past its window is refused.
+
+`__office.releaseShot()` unfreezes, hands the controller back (a staged gun goes away; a gun
+held in the other hand stays) and asks the server to revive the staged worker if it is still
+down within its window; pass `false` to leave it down. A freeze releases itself after 15 seconds,
+well inside the window.
 
 ## Acceptance status
 
