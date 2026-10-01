@@ -333,7 +333,7 @@ export class Hands {
     }
     const prop = magnum();
     prop.position.set(0, -0.01, -0.06);
-    // The muzzle down -z, at the crosshair.
+    // The muzzle down the hand's local -z.
     prop.rotation.y = Math.PI;
     prop.scale.setScalar(0.01);
     const muzzle = new Muzzle();
@@ -510,7 +510,7 @@ export class Hands {
     l.position.y += 0.13 * sip;
     l.position.z += 0.14 * sip;
     l.rotation.x += 0.7 * sip;
-    // The gun: out toward the crosshair, like a point you hold; the shot kicks it up.
+    // The gun: a low, right-hand hip-fire pose; the shot kicks it up.
     if (this.gun) {
       const g = this.gun;
       g.draw = Math.min(1, g.draw + dt / 0.18);
@@ -522,12 +522,12 @@ export class Hands {
         kick = Math.max(0, 1 - g.fireT / 0.22);
         if (g.fireT >= 0.22) g.fireT = -1;
       }
-      r.position.x -= 0.16 * e;
-      r.position.y += (0.09 + kick * 0.09) * e;
-      r.position.z -= (0.2 - kick * 0.06) * e;
-      // The gun's canonical bore is straight along the view. The relaxed wrist's tilt used
-      // to make it point above and sideways from the crosshair, even before recoil.
-      r.rotation.set(kick * 0.18 * e, 0, 0);
+      r.position.x += 0.07 * e;
+      r.position.y += (-0.035 + kick * 0.09) * e;
+      r.position.z -= (0.06 - kick * 0.06) * e;
+      // Show the barrel's side above the wrist without stretching the sleeve across the view.
+      r.rotation.set((0.25 + kick * 0.18) * e, 0.3 * e, -0.08 * e);
+      if (!this.wantsMug && !this.glass) l.position.y -= 0.2 * e;
       g.muzzle.update(dt);
     }
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.

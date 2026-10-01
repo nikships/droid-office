@@ -81,12 +81,12 @@ import { Voice } from './voice';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL, type Modal } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
-import { openPrompt, confirmDialog, sendHomeDialog, shootDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
+import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
@@ -589,8 +589,13 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     climber.letGo();
     return;
   }
+  if (reviveNearby()) return;
   // Aiming at nothing (the ladder's let-go fires this way too): E lands on nothing, as on desktop.
   if (!it) return;
+  if ((it.kind === 'desk' || it.kind === 'station') && it.deskId) {
+    const w = store.workerAtDesk(it.deskId);
+    if (w?.downedUntil !== undefined) return hintToast(`Walk closer to ${w.name}'s body to revive`);
+  }
   if (it.kind === 'coffee') {
     hintToast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
     return;
@@ -716,8 +721,7 @@ const vrHooks: VRHooks = {
     // Nor a way to shoot: the ball drops where you stand, and the club goes back in the bag.
     dropBall();
     golf.stop();
-    // Nor a way to answer a bleed-out dialog: the gun goes back and the worker is unharmed.
-    dropDying();
+    // Put the desktop gun away; shared revival deadlines keep running in VR.
     holsterGun(true);
     // A focused DOM field (the chat box) would take IME text the capture below can't cancel.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -1469,8 +1473,7 @@ const departures = new Departures(
 );
 // Workers called to a meeting, walking in from the elevator to the meeting table.
 const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
-// Workers shot with the .44 Magnum: the death scene is local to the shooter, and a confirmed
-// kill goes out as an ordinary `worker.kill` (everyone else sees the send-home walk-out).
+// Workers shot with the .44 Magnum: shared downed state, then revival or a medic pickup.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
   spawnMedic: (name) => {
     const m = new Person(name, '#f2f4f6', randomLook());
@@ -1480,15 +1483,8 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
   onLand: (at) => sound.thud(at),
   onSiren: (at) => sound.siren(at),
 });
-/** Confirmed kills waiting on their `worker.remove`: the medics take the body, not the walk-out. */
-const shotDead = new Set<string>();
 /** The gun in your right hand (`7` draws and holsters it). */
 let gunOut = false;
-/** The worker bleeding out on the floor with its dialog open, if any. */
-let dyingId: string | null = null;
-let dyingModal: Modal | null = null;
-/** Closing the dialog without the revive toast (it went away some other way). */
-let dyingSilent = false;
 /** Dust where missed shots cracked into the walls and floor. */
 const puffs: Puff[] = [];
 
@@ -1547,7 +1543,7 @@ function fireGun(ndc: THREE.Vector2) {
   resolveGunShot();
 }
 
-/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and confirmation. */
+/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and revival. */
 function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
   sound.gunshot();
   smoke.wisp(origin);
@@ -1582,48 +1578,24 @@ function resolveGunShot() {
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk) return;
-  arrivals.forget(v.model);
-  if (!casualties.shoot(workerId, v.model, desk.seatAnchor)) return;
-  dyingId = workerId;
-  const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
-  dyingModal = shootDialog({
-    workerId,
-    name: w.name,
-    where,
-    worktree: w.worktree ?? undefined,
-    ask: () => net.send({ t: 'worker.worktree', workerId }),
-    onKill: (cleanup) => {
-      dyingId = null;
-      dyingModal = null;
-      shotDead.add(workerId);
-      net.send(cleanup ? { t: 'worker.kill', workerId, cleanup } : { t: 'worker.kill', workerId });
-      toast(`💀 ${w.name} — the medics are on their way`);
-    },
-    onRevive: () => {
-      const d = dyingId;
-      dyingId = null;
-      dyingModal = null;
-      if (d && casualties.revive(d)) {
-        // Back on its feet with a little hop.
-        workerViews.get(d)?.model.cheer(0.8);
-        if (!dyingSilent) toast(`🩹 ${w.name} is back on its feet — session untouched`);
-      }
-      dyingSilent = false;
-    },
-  });
+  if (!v || !w || !desk || w.downedUntil !== undefined) return;
+  net.send({ t: 'worker.shoot', workerId });
 }
 
-/** The bleed-out dialog goes away some other way (floor switch, disconnect, the worker vanished): the worker is unharmed, quietly. */
-function dropDying() {
-  if (dyingId === null) return;
-  const d = dyingId;
-  dyingId = null;
-  const m = dyingModal;
-  dyingModal = null;
-  dyingSilent = true;
-  casualties.revive(d);
-  m?.close();
+/** Walk up to a body to revive it; the gun can stay drawn. */
+function nearbyCasualty(): WorkerInfo | undefined {
+  if (!net.up || upTop) return undefined;
+  const id = casualties.nearby(player.pos);
+  const w = id ? store.workers.get(id) : undefined;
+  return w?.downedUntil !== undefined && w.downedUntil > store.officeNow() ? w : undefined;
+}
+
+function reviveNearby(): boolean {
+  const w = nearbyCasualty();
+  if (!w) return false;
+  reach();
+  net.send({ t: 'worker.revive', workerId: w.id });
+  return true;
 }
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
 let seatedAlready = false;
@@ -1638,8 +1610,6 @@ net.onStatus((up) => {
     headsetControls().clearGrab();
     setCarrying(null);
   }
-  // The office is gone: a bleed-out dialog can't confirm anything, so the worker is unharmed.
-  if (!up) dropDying();
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
@@ -1649,8 +1619,6 @@ net.onMessage((msg) => {
     departures.clear();
     arrivals.clear();
     casualties.clear();
-    dropDying();
-    shotDead.clear();
     seatedAlready = true;
   }
   if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
@@ -1945,7 +1913,6 @@ store.on('floors', syncElevatorButtons);
 /** Rides the elevator to another floor (or up to the roof). From outside the car, you step in while the lights are down. */
 function ride(floorId: string) {
   if (trip || floorId === store.floor) return;
-  dropDying();
   holsterGun(true);
   closeAllModals();
   if (hanger.active) hanger.cancel();
@@ -1983,7 +1950,6 @@ function switchFloor(floorId: string) {
   // The roof isn't laid out like a floor: to and from it, it's the elevator.
   if (upTop || floorId === ROOF) return ride(floorId);
   if (trip || floorId === store.floor) return;
-  dropDying();
   holsterGun(true);
   closeAllModals();
   if (hanger.active) hanger.cancel();
@@ -2002,7 +1968,6 @@ function switchFloor(floorId: string) {
 /** Through the ceiling up the ladder, or through the floor down one: the lights dip as you pass. */
 function travel(floorId: string, how: Grip, at: Arrival) {
   if (trip) return;
-  dropDying();
   holsterGun(true);
   trip = { floor: floorId, how, timer: window.setTimeout(tripFailed, 10_000) };
   fade(true, true);
@@ -2404,18 +2369,18 @@ function syncWorkers() {
     const again = w.kind === 'shell' ? 'restart' : 'resume';
     const lost = withControlHint(`🌿 ${w.name}'s worktree was deleted`, ' — press E to fix it');
     v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? withControlHint(`💤 ${w.name} is asleep`, ` — press R to ${again}`) : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    if (w.downedUntil !== undefined) {
+      arrivals.forget(v.model);
+      casualties.shoot(w.id, v.model, desk.seatAnchor);
+    } else if (casualties.revive(w.id)) v.model.cheer(0.8);
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
     v.model.setPlate(null);
-    // Shot and bleeding out when it went (sent home from elsewhere, or it exited): the dialog
-    // closes quietly and removal proceeds as normal.
-    if (dyingId === id) dropDying();
     const desk = office.desks.get(v.deskId);
-    // A confirmed kill: the medics take the body instead of the walk-out.
-    if (shotDead.has(id)) {
-      shotDead.delete(id);
+    // A shot worker: the medics take the body instead of the send-home walk-out.
+    if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
         casualties.revive(id);
@@ -2659,6 +2624,10 @@ function hireAtDesk(deskId: string) {
 function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
+  if (w.downedUntil !== undefined) {
+    const revive = controlHintsShown() ? `Walk up to ${w.name} and press E to revive — otherwise` : `${w.name} is down: unless it's revived,`;
+    return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
+  }
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
   const session = w.kind === 'shell' ? 'shared shell' : `${providerLabel(w.provider, store.project)} session`;
   if (w.meeting) {
@@ -2690,6 +2659,7 @@ function killWorker(id: string) {
 function killWarning(id: string): string | null {
   const w = store.workers.get(id);
   if (!w) return null;
+  if (w.downedUntil !== undefined) return `Walk up to ${w.name} to revive before the deadline; otherwise its worktree and branch are deleted`;
   const again = `Tap ⏻ again to send ${w.name} home`;
   if (w.meeting) {
     const m = store.meeting.current;
@@ -3443,6 +3413,13 @@ function watchShare() {
 /** `note` is the issue note you're pointing at on the issues board, if any (see aimedNote); `spot` the tab or Jira card (see aimedSpot). */
 function interact(target: Interactable | null, key: DeskKey, note = aimedNote, spot = aimedSpot) {
   if (!target) return;
+  if ((target.kind === 'desk' || target.kind === 'station') && target.deskId) {
+    const w = store.workerAtDesk(target.deskId);
+    if (w?.downedUntil !== undefined) {
+      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}'s body to revive`, 'info');
+      return;
+    }
+  }
   if (target.kind !== 'issues') {
     note = null;
     spot = null;
@@ -3981,6 +3958,7 @@ function onQueue(issue: number): boolean {
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
+  if (w.downedUntil !== undefined) return controlHintsShown() ? `Walk up to ${w.name}'s body and press E to revive first` : `${w.name} is down`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
   if (w.lost) return withControlHint(`${w.name}'s worktree was deleted`, ' — press E at its desk to fix it');
   if (isAsleep(w.status)) return withControlHint(`${w.name} is asleep`, ' — press R to resume first');
@@ -4175,6 +4153,16 @@ function renderHint() {
   if (hanger.active && !modalOpen()) return renderHangHint(el);
   if (climber.active && !modalOpen()) return renderClimbHint(el);
   if (golf.active && !modalOpen()) return renderGolfHint(el);
+  const casualty = !modalOpen() && nearbyCasualty();
+  if (casualty) {
+    const hint = casualtyHint(casualty, true);
+    if (hint.k !== hintKey) {
+      hintKey = hint.k;
+      el.replaceChildren(...hint.parts);
+      el.classList.remove('hidden');
+    }
+    return;
+  }
   if (gunOut && !modalOpen()) return renderGunHint(el);
   const withBall = holdingBall();
   if ((!target && !carrying && !withBall) || modalOpen()) {
@@ -4354,6 +4342,14 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   return { k: '', parts: parts(aside('take it to an empty desk, a worker or the 📋 queue')) };
 }
 
+function casualtyHint(w: WorkerInfo, near: boolean): Hint {
+  const seconds = Math.max(0, Math.ceil((w.downedUntil! - store.officeNow()) / 1000));
+  return {
+    k: `downed|${w.id}|${seconds}|${near}`,
+    parts: [h('span.title', {}, `🩹 ${w.name} is down`), seconds ? (near ? key('E', 'Revive') : aside('Walk up to the body to revive')) : aside('Medics on their way'), aside(`${seconds}s · then worktree + branch deleted`)],
+  };
+}
+
 function deskHint(deskId: string): Hint {
   const w = store.workerAtDesk(deskId);
   if (!w && DESK_BY_ID.get(deskId)?.room) return { k: 'room', parts: [h('span.title', {}, `🤝 ${DESK_BY_ID.get(deskId)!.label} · free`), key('E', 'Call a meeting')] };
@@ -4375,6 +4371,7 @@ function deskHint(deskId: string): Hint {
       ],
     };
   }
+  if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   if (w.lost && w.worktree) {
     return {
       k: `lost|${w.id}|${w.lost.branch}`,
@@ -4422,6 +4419,7 @@ function stationHint(deskId: string): Hint {
       parts: [h('span.title', {}, `${info.icon} ${STATION_AGENT[kind].name}`), aside(info.offer.replace(/^Ask me /, '')), full ? h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`) : key('E', 'Prompt')],
     };
   }
+  if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   const doing = w.activity ? clip(w.activity, 48) : '';
   const provider = resolvedProvider(w.provider, store.project);
   const spent = w.usage ? usageLabel(w.usage, provider) : '';
@@ -4600,6 +4598,11 @@ window.addEventListener('keydown', (e) => {
   // At the golf tee, E puts the club back (Space swings, see Golfer); nothing else is in reach, and no emotes mid-swing.
   if (golf.active && (e.code === 'KeyF' || e.code === 'KeyG' || e.code in DESK_KEYS || /^(?:Digit|Numpad)[1-6]$/.test(e.code))) {
     if (e.code === 'KeyE') golf.stop();
+    return;
+  }
+  // A nearby body takes E even with the gun or another object in your hands.
+  if (e.code === 'KeyE' && !e.repeat && reviveNearby()) {
+    e.preventDefault();
     return;
   }
   // With the ball in your hands (and no card), E winds up a shot (let go to shoot) and Q drops it.

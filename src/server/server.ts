@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,7 @@ import { Sky } from './sky.js';
 import { Themes } from './theme.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { OfficePrompts } from './prompts.js';
+import { HotReload, sourceAppDir } from './hot-reload.js';
 import { RELAY_LOGIN, relayRequest, relayUpgrade, signInPage, stoppedPage, tunneledPort } from './relay.js';
 import { ChatLog } from './history.js';
 import { Arcade, HighScores } from './cabinet.js';
@@ -205,6 +206,11 @@ const SEARCH_TERMINAL_HITS = 25;
 
 export async function startServer(cfg: Config) {
   const publicDir = findPublicDir();
+  const appDir = sourceAppDir();
+  const hotReload = new HotReload({ appDir, dataDir: cfg.dataDir, publicDir });
+  // Frozen at startup, outside the game bundle: a bad source edit cannot remove recovery.
+  const reloadScriptFile = [path.join(publicDir, 'office-reload.js'), ...(appDir ? [path.join(appDir, 'src/client/public/office-reload.js')] : [])].find(existsSync);
+  const reloadScript = reloadScriptFile ? readFileSync(reloadScriptFile, 'utf8') : '';
   const accounts = new Accounts(cfg.dataDir);
   const auth = new Auth(cfg.verifier, cfg.salt, cfg.secret, accounts);
   const clients = new Map<string, Client>();
@@ -598,13 +604,22 @@ export async function startServer(cfg: Config) {
       'x-frame-options': 'DENY',
       'referrer-policy': 'no-referrer',
     });
-    createReadStream(file).pipe(res);
+    createReadStream(file)
+      .on('error', (err) => res.destroy(err))
+      .pipe(res);
   };
 
   /** A file of the client bundle, or undefined when it's missing, a folder, or outside the bundle. */
-  const publicFile = (p: string): string | undefined => {
-    const file = path.join(publicDir, path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
-    return file.startsWith(publicDir + path.sep) && existsSync(file) && statSync(file).isFile() ? file : undefined;
+  const publicFile = (p: string): string | undefined => hotReload.file(p);
+
+  const serveIndex = (res: http.ServerResponse) => {
+    let html = readFileSync(path.join(hotReload.publicDir, 'index.html'), 'utf8');
+    html = html.replace(/<meta\b[^>]*name=["']office-revision["'][^>]*>/gi, '').replace(/<script\b[^>]*src=["']\/api\/hot-reload\/client\.js["'][^>]*>\s*<\/script>/gi, '');
+    const recovery = `<meta name="office-revision" content="${hotReload.state().revision}"><script src="/api/hot-reload/client.js" defer></script>`;
+    // Also inject when a source edit deletes the original tags (or even the head).
+    html = /<head\b[^>]*>/i.test(html) ? html.replace(/<head\b[^>]*>/i, (head) => head + recovery) : recovery + html;
+    res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
+    res.end(html);
   };
 
   /**
@@ -723,21 +738,19 @@ export async function startServer(cfg: Config) {
         res.writeHead(404).end();
         return;
       }
-      // The prop GLBs and the Draco decoder. They are fetched before the session exists,
-      // and a given prop name always maps to the same bytes, so they cache for a year
-      // the same way the bundle's /assets/ files do.
+      // In a source checkout props can change under the same name; releases keep immutable caching.
       if (p.startsWith('/props/')) {
         const file = publicFile(p);
-        if (file) return serveFile(res, file, true);
+        if (file) return serveFile(res, file, !hotReload.state().available);
         res.writeHead(404).end();
         return;
       }
-      if (p === '/login' || p === '/login.html') return serveFile(res, path.join(publicDir, 'login.html'), false);
-      if (p === '/claim' || p === '/claim.html') return serveFile(res, path.join(publicDir, 'claim.html'), false);
-      if (p === '/join' || p === '/join.html') return serveFile(res, path.join(publicDir, 'join.html'), false);
-      if (p === '/favicon.svg') return serveFile(res, path.join(publicDir, 'favicon.svg'), false);
+      if (p === '/login' || p === '/login.html') return serveFile(res, path.join(hotReload.publicDir, 'login.html'), false);
+      if (p === '/claim' || p === '/claim.html') return serveFile(res, path.join(hotReload.publicDir, 'claim.html'), false);
+      if (p === '/join' || p === '/join.html') return serveFile(res, path.join(hotReload.publicDir, 'join.html'), false);
+      if (p === '/favicon.svg') return serveFile(res, path.join(hotReload.publicDir, 'favicon.svg'), false);
       // Auth-page and app-install assets must also load without a session.
-      if (p === '/factory-glyph.svg') return serveFile(res, path.join(publicDir, 'factory-glyph.svg'), false);
+      if (p === '/factory-glyph.svg') return serveFile(res, path.join(hotReload.publicDir, 'factory-glyph.svg'), false);
       if (p === '/manifest.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, false);
@@ -752,6 +765,27 @@ export async function startServer(cfg: Config) {
         return;
       }
       if (p === '/api/whoami') return send(res, 200, { ok: true, me: meOf(session.account?.id) });
+      if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        return res.end(reloadScript);
+      }
+      if (p === '/api/hot-reload') {
+        const admin = meOf(session.account?.id).admin;
+        const state = () => ({ ...hotReload.state(), admin });
+        if (req.method === 'GET') return send(res, 200, state());
+        if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' }, { allow: 'GET, POST' });
+        if (!admin) return send(res, 403, { error: 'Only admins can change source hot reload' });
+        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Use source hot reload from the office itself' });
+        let body: { enabled?: unknown; rebuild?: unknown } | null;
+        try {
+          body = JSON.parse(await readBody(req, 4096));
+        } catch {
+          return send(res, 400, { error: 'Send JSON with enabled or rebuild' });
+        }
+        if (!body || typeof body !== 'object' || (typeof body.enabled === 'boolean') === (body.rebuild === true)) return send(res, 400, { error: 'Choose enabled (boolean) or rebuild (true)' });
+        const error = typeof body.enabled === 'boolean' ? await hotReload.setEnabled(body.enabled) : hotReload.rebuild();
+        return error ? send(res, 400, { error }) : send(res, 200, state());
+      }
       if (p === '/api/agents/opencode/models' && req.method === 'GET') {
         try {
           return send(res, 200, { models: await openCodeModels.get() });
@@ -892,7 +926,7 @@ export async function startServer(cfg: Config) {
         }
         return send(res, 404, { error: 'Not found' });
       }
-      if (p === '/' || p === '/index.html') return serveFile(res, path.join(publicDir, 'index.html'), false);
+      if (p === '/' || p === '/index.html') return serveIndex(res);
       const file = publicFile(p);
       if (file) return serveFile(res, file, false);
       res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
@@ -1423,10 +1457,18 @@ export async function startServer(cfg: Config) {
         warn(c, w ? w.floor.workers.resume(w.wid) : 'No such worker');
         break;
       }
+      case 'worker.shoot':
+      case 'worker.revive': {
+        const w = worker(msg.workerId);
+        if (!w) break;
+        warn(c, msg.t === 'worker.shoot' ? w.floor.workers.shoot(w.wid) : w.floor.workers.revive(w.wid));
+        break;
+      }
       case 'worker.kill': {
         const w = worker(msg.workerId);
         if (!w) break;
         const { floor, info } = w;
+        if (info.downedUntil !== undefined && info.downedUntil > Date.now()) return warn(c, 'This worker is downed — revive them or wait until the revival window expires');
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const done = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
         toastFloor(floor, `${who} sent ${info.name} home`);
@@ -2104,6 +2146,7 @@ export async function startServer(cfg: Config) {
     server.listen(cfg.port, cfg.host, () => resolve());
   });
   services.start();
+  await hotReload.start();
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
@@ -2112,6 +2155,7 @@ export async function startServer(cfg: Config) {
     clearTimeout(floorsTimer);
     arcade.flush();
     upgrader.stop();
+    void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     services.stop();
     webhook.stop();
     machine.stop();
