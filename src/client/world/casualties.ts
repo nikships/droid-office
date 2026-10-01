@@ -46,6 +46,15 @@ const SETTLE_END = 2.9;
 const LIFT_END = 4.3;
 /** How far out of its seat the shot worker lands. */
 const TUMBLE = 0.65;
+/** The hit itself, before the fall takes over: how far the body is shoved and leans along the bullet. */
+const KNOCK = 0.12;
+const KICK = 0.42;
+
+/** How much of the hit's shove is in the body `t` seconds after it: at once, then easing into the fall. */
+export function jolt(t: number): number {
+  if (!(t >= 0)) return 0;
+  return t < 0.07 ? Math.sin((t / 0.07) * (Math.PI / 2)) : Math.exp(-(t - 0.07) / 0.09);
+}
 
 /** Where the medics come from: out of the elevator, on every floor. */
 const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
@@ -192,6 +201,9 @@ interface Casualty {
   lean: number;
   /** Which side it sprawls out on. */
   side: number;
+  /** The bullet's horizontal direction, and the axis the hit leans the body about; null without one. */
+  push: THREE.Vector3 | null;
+  axis: THREE.Vector3;
   /** Where it lands on the floor. */
   floor: THREE.Vector3;
   pool: THREE.Group;
@@ -210,6 +222,7 @@ const smooth = (p: number) => {
   return u * u * (3 - 2 * u);
 };
 const SUPINE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+const _lean = new THREE.Quaternion();
 
 export class Casualties {
   private all = new Map<string, Casualty>();
@@ -234,9 +247,11 @@ export class Casualties {
 
   /**
    * Shoots the worker: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
-   * out under a spreading pool. False when it already has a scene running.
+   * out under a spreading pool. With the bullet's `direction`, the hit visibly shoves it that way
+   * at once and it sprawls out on the side away from the shooter. False when it already has a
+   * scene running.
    */
-  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D): boolean {
+  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D, direction?: THREE.Vector3): boolean {
     if (this.all.has(id)) return false;
     // Off the desk first if it was up there dancing: it falls out of its seat.
     model.die();
@@ -249,8 +264,13 @@ export class Casualties {
     model.root.position.copy(from);
     model.root.quaternion.copy(quat);
     model.root.scale.setScalar(scale);
-    // Sideways out of the chair, into the open: forward would put it under the desk.
-    const side = Math.random() < 0.5 ? -1 : 1;
+    let push = direction ? new THREE.Vector3(direction.x, 0, direction.z) : null;
+    if (push && push.lengthSq() < 1e-6) push = null;
+    push?.normalize();
+    // Sideways out of the chair, into the open: forward would put it under the desk. A shot
+    // knocks it out on the side the bullet was travelling toward.
+    const across = push ? push.x * Math.cos(yaw) - push.z * Math.sin(yaw) : 0;
+    const side = Math.abs(across) > 0.05 ? Math.sign(across) : Math.random() < 0.5 ? -1 : 1;
     const floor = new THREE.Vector3(from.x + Math.cos(yaw) * side * TUMBLE, 0, from.z - Math.sin(yaw) * side * TUMBLE);
     floor.y = this.ground(floor.x, floor.z, from.y) - FEET;
     const pool = bloodPool();
@@ -271,6 +291,8 @@ export class Casualties {
       tip: (Math.random() < 0.5 ? -1 : 1) * (1.35 + Math.random() * 0.25),
       lean: (Math.random() - 0.5) * 0.5,
       side,
+      push,
+      axis: push ? new THREE.Vector3(0, 1, 0).cross(push).normalize() : new THREE.Vector3(),
       floor,
       pool,
       laptop: null,
@@ -409,6 +431,12 @@ export class Casualties {
         const e = easeOut(p);
         root.position.set(THREE.MathUtils.lerp(c.from.x, c.floor.x, e), THREE.MathUtils.lerp(c.from.y, c.floor.y, e) + Math.sin(p * Math.PI) * 0.3, THREE.MathUtils.lerp(c.from.z, c.floor.z, e));
         root.rotation.set(c.tip * e, c.yaw + (c.lean + c.side * 0.9) * e, (c.lean * 0.6 + c.side * 0.35) * e);
+        const j = c.push ? jolt(c.t) : 0;
+        if (j > 0.001) {
+          // The bullet's shove, leaning the body away from the shooter about its feet.
+          root.position.addScaledVector(c.push!, KNOCK * j);
+          root.quaternion.premultiply(_lean.setFromAxisAngle(c.axis, KICK * j));
+        }
         if (p >= 1) this.land(c);
         return;
       }

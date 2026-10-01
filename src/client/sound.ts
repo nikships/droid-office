@@ -872,6 +872,40 @@ export class OfficeSound {
     this.play(pick(this.buf.steps), { gain: 0.3, rate: 0.55, when: t0, dest: out });
   }
 
+  /** A bullet striking a worker, from where it went in: a short wet smack over a dull thump. */
+  hit(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('hit');
+    const out = this.panner(at, 3, 0.9);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    const smack = this.noise(this.buf.white);
+    const sg = ctx.createGain();
+    envelope(sg.gain, t0, [
+      [0.004, 0.55],
+      [0.04, 0.12],
+      [0.12, 0],
+    ]);
+    smack
+      .connect(biquad(ctx, 'bandpass', 900, 1.1))
+      .connect(sg)
+      .connect(out);
+    smack.start(t0);
+    smack.stop(t0 + 0.14);
+    const thump = this.noise(this.buf.brown);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.0001, t0);
+    tg.gain.exponentialRampToValueAtTime(0.5, t0 + 0.012);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+    thump
+      .connect(biquad(ctx, 'lowpass', 180, 0.8))
+      .connect(tg)
+      .connect(out);
+    thump.start(t0);
+    thump.stop(t0 + 0.22);
+  }
+
   /** A missed shot cracking into the wall or floor, from where it hit. */
   impact(at: Pos) {
     const ctx = this.ctx;

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { GUN_LEN, MUZZLE_AT, Muzzle, Puff, disposeGun, magnum } from '../src/client/world/gun.js';
+import { BREECH_AT, BloodSpray, GUN_LEN, MUZZLE_AT, Muzzle, Puff, boreOf, disposeGun, magnum } from '../src/client/world/gun.js';
+import { recoilAt } from '../src/client/native/physical.js';
 
 test('a magnum points down +z with its grip around the origin', () => {
   const gun = magnum();
@@ -42,4 +43,77 @@ test('an impact puff bursts out and clears within half a second', () => {
   assert.equal(puff.update(1 / 60), true, 'still hanging in the air');
   assert.equal(puff.update(1), false, 'cleared');
   puff.dispose();
+});
+
+test('the first frame after a shot shows the whole flash, however long that frame is', () => {
+  const muzzle = new Muzzle();
+  const core = muzzle.group.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  muzzle.fire();
+  muzzle.update(1 / 30);
+  assert.equal(core.material.opacity, 1, 'a 30 Hz headset frame is not spent fading it');
+  muzzle.update(1 / 30);
+  assert.ok(core.material.opacity > 0.4 && core.material.opacity < 1, 'it fades from the next frame');
+  muzzle.update(1 / 30);
+  muzzle.update(1 / 30);
+  assert.equal(muzzle.lit, false);
+  muzzle.dispose();
+});
+
+test('a worker hit sprays out of the wound toward the shooter and clears within half a second', () => {
+  const at = new THREE.Vector3(1, 1, 1);
+  const spray = new BloodSpray(at, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
+  assert.deepEqual(spray.group.position.toArray(), [1, 1, 1]);
+  assert.equal(spray.update(1 / 30), true);
+  const toward = spray.group.children.filter((c) => c.position.z > 0).length;
+  assert.ok(toward > spray.group.children.length / 2, 'most of it flies back out at the shooter');
+  assert.equal(spray.update(0.5), false, 'cleared');
+  spray.dispose();
+});
+
+test('the bore runs from the breech behind the fist through the muzzle', () => {
+  const gun = magnum();
+  gun.position.set(1, 2, 3);
+  gun.rotation.set(0.3, -0.8, 0.2);
+  const bore = boreOf(gun);
+  assert.ok(BREECH_AT.z < 0 && BREECH_AT.y === MUZZLE_AT.y, 'the breech sits on the bore axis behind the fist');
+  assert.ok(bore.muzzle.distanceTo(gun.localToWorld(MUZZLE_AT.clone())) < 1e-9);
+  assert.ok(bore.breech.distanceTo(gun.localToWorld(BREECH_AT.clone())) < 1e-9);
+  assert.ok(bore.direction.distanceTo(new THREE.Vector3(0, 0, 1).transformDirection(gun.matrixWorld)) < 1e-9);
+  disposeGun(gun);
+});
+
+test('recoil kicks in full on the shot and settles within a quarter second', () => {
+  assert.equal(recoilAt(0), 1);
+  assert.ok(recoilAt(33) > 0.5 && recoilAt(33) < 1);
+  assert.ok(recoilAt(100) < recoilAt(33));
+  assert.equal(recoilAt(250), 0);
+  assert.equal(recoilAt(-5), 0);
+  assert.equal(recoilAt(Number.NaN), 0);
+});
+
+test('the held gun, its flash and a hit spray export to the headset renderer without unsupported features', async () => {
+  const { NativeScene } = await import('../src/client/native/scene.js');
+  const scene = new THREE.Scene();
+  const grip = new THREE.Group();
+  scene.add(grip);
+  const gun = magnum();
+  const muzzle = new Muzzle();
+  gun.add(muzzle.group);
+  gun.userData.nativeControllerAttachment = { hand: 1, requiresGrip: true };
+  grip.add(gun);
+  muzzle.fire();
+  const spray = new BloodSpray(new THREE.Vector3(0, 1, -1), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
+  scene.add(spray.group);
+  const native = new NativeScene(scene, new THREE.PerspectiveCamera(), { encodeImage: async () => ({ fmt: 'png', bytes: new Uint8Array([1]) }), now: () => 0 });
+  native.capture();
+  while (native.drain()) {}
+  spray.update(1 / 30);
+  muzzle.update(1 / 30);
+  native.capture();
+  while (native.drain()) {}
+  assert.deepEqual(native.report().errors, []);
+  assert.deepEqual(native.report().unsupported, []);
+  spray.dispose();
+  muzzle.dispose();
+  disposeGun(gun);
 });

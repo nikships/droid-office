@@ -8,7 +8,7 @@ import { gongContact, inBackHolster, onLadder } from '../src/client/native/physi
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import { GONG_TOUCH } from '../src/client/world/gong.js';
-import { MUZZLE_AT } from '../src/client/world/gun.js';
+import { BREECH_AT, MUZZLE_AT } from '../src/client/world/gun.js';
 import { FLOOR, GONG, LADDER, POLES, SLAB, WALL_HEIGHT, type PoleSpot } from '../src/shared/layout.js';
 
 const pose = (x: number, y: number, z: number): Pose7 => [x, y, z, 0, 0, 0, 1];
@@ -47,7 +47,7 @@ function fixture(t: TestContext, at = new THREE.Vector3()) {
   let strikes = 0;
   let uses = 0;
   let travels = 0;
-  const shots: { origin: THREE.Vector3; direction: THREE.Vector3 }[] = [];
+  const shots: { origin: THREE.Vector3; direction: THREE.Vector3; breech: THREE.Vector3 }[] = [];
   const gunEvents: boolean[] = [];
   t.mock.method(performance, 'now', () => time);
   const gong = new THREE.Group();
@@ -85,7 +85,7 @@ function fixture(t: TestContext, at = new THREE.Vector3()) {
       grabPole: (spot) => climber.twirl(spot, true),
       canDraw: () => !climber.active,
       gunChanged: (held) => gunEvents.push(held),
-      fireGun: (origin, direction) => shots.push({ origin: origin.clone(), direction: direction.clone() }),
+      fireGun: (bore) => shots.push({ origin: bore.muzzle.clone(), direction: bore.direction.clone(), breech: bore.breech.clone() }),
     },
   };
   const controls = new NativeControls(scene, camera, hooks);
@@ -248,12 +248,15 @@ test('gun draws on a fresh back grip, aims from the canonical muzzle, and grip r
   for (const z of [0.1, -0.1, -0.3]) r.tick(r.frame(hand(pose(0.25, 1.2, z), { squeeze: 1 })));
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
   assert.equal(r.shots.length, 1);
-  const muzzle = r.gun()!.localToWorld(MUZZLE_AT.clone());
-  assert.ok(r.shots[0].origin.distanceTo(muzzle) < 1e-9);
-  assert.ok(r.shots[0].direction.distanceTo(new THREE.Vector3(0, 0, -1)) < 1e-9);
+  const kicked = new THREE.Vector3(0, 0, 1).transformDirection(r.gun()!.matrixWorld);
+  assert.ok(kicked.y > 0.2, 'the shot kicks the muzzle up at once');
   assert.equal(r.uses(), 0, 'gun trigger does not also dispatch E');
   r.advance(400);
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1 })));
+  const muzzle = r.gun()!.localToWorld(MUZZLE_AT.clone());
+  assert.ok(r.shots[0].origin.distanceTo(muzzle) < 1e-9, 'the bullet left the muzzle as aimed, before the kick');
+  assert.ok(r.shots[0].direction.distanceTo(new THREE.Vector3(0, 0, -1)) < 1e-9);
+  assert.ok(r.shots[0].breech.distanceTo(r.gun()!.localToWorld(BREECH_AT.clone())) < 1e-9, 'the shot is traced from the breech behind the fist');
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { trigger: 1 })));
   assert.equal(r.shots.length, 1, 'a released grip cannot fire');
   assert.equal(r.controls.holdingGun, false);
@@ -317,9 +320,27 @@ for (const activeHand of [0, 1] as const) {
       r.tick(sample(-0.3, 1), sample(-0.3, 1, 1));
       const shot = r.shots.at(-1)!;
       assert.ok(shot.direction.distanceTo(expected) < 1e-9, 'shots follow the corrected visual bore');
-      assert.ok(shot.origin.distanceTo(gun.localToWorld(MUZZLE_AT.clone())) < 1e-9);
+      r.advance(400);
+      r.tick(sample(-0.3, 1));
+      assert.ok(shot.origin.distanceTo(gun.localToWorld(MUZZLE_AT.clone())) < 1e-9, 'the muzzle returns to where the bullet left it');
       assert.equal(r.uses(), 0);
     }
     assert.equal(r.shots.length, 3);
   });
 }
+
+test('a shot body still waiting for its dialog keeps the trigger dead, without the trigger clicking anything else', (t) => {
+  const r = fixture(t);
+  let canFire = false;
+  r.hooks.physical!.canFire = () => canFire;
+  r.draw();
+  for (const z of [0.1, -0.1, -0.3]) r.tick(r.frame(hand(pose(0.25, 1.2, z), { squeeze: 1 })));
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
+  assert.equal(r.shots.length, 0);
+  assert.equal(r.uses(), 0, 'the held gun still owns the trigger');
+  canFire = true;
+  r.advance(400);
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1 })));
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
+  assert.equal(r.shots.length, 1, 'it fires again once the dialog resolves');
+});

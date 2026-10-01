@@ -4,7 +4,9 @@ The casualty presentation is shared by the desktop scene and the installed nativ
 `src/client/world/casualties.ts` handles only local visuals and sound callbacks. A shot does
 not stop a worker or its PTY. The existing kill dialog sends `worker.kill` only after explicit
 confirmation, and the collection starts when that worker's removal arrives. Revive restores
-an unconfirmed worker to its seat with its session untouched.
+an unconfirmed worker to its seat with its session untouched. Given the bullet's direction, the
+hit shoves the body along it and leans it away from the shooter in the first frame, easing into
+the fall, and the body sprawls out on the side the bullet was heading.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
 turning into the fallen worker's orientation. They approach its torso rather than its foot

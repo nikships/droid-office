@@ -72,8 +72,8 @@ import { Gallery } from './world/gallery';
 import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
-import { Casualties } from './world/casualties';
-import { gunHit, Puff } from './world/gun';
+import { Casualties, FALL_TIME } from './world/casualties';
+import { BloodSpray, type Bore, gunHit, type GunHit, Puff, traceShot } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
@@ -124,6 +124,7 @@ import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
 import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativeScene } from './native/scene';
+import { ShotStage, type StageShotOptions, matchWorker } from './native/stage';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
 import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
@@ -139,6 +140,8 @@ const nativeMode = isNativeMode();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
+/** Debug-only shot staging for headset captures (native/stage.ts); inert unless the host is debuggable. */
+let shotStage: ShotStage | null = null;
 function headsetActive() {
   return vr.active || nativeControls?.active === true;
 }
@@ -1406,13 +1409,20 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
 const shotDead = new Set<string>();
 /** The gun in your right hand (`7` draws and holsters it). */
 let gunOut = false;
-/** The worker bleeding out on the floor with its dialog open, if any. */
+/** The worker bleeding out on the floor with its dialog open (or about to open), if any. */
 let dyingId: string | null = null;
 let dyingModal: Modal | null = null;
+/** In the headset, the dialog waits for the body to land: gameplay seconds left, and its opener. */
+let dyingAsk: { left: number; open: () => void } | null = null;
 /** Closing the dialog without the revive toast (it went away some other way). */
 let dyingSilent = false;
-/** Dust where missed shots cracked into the walls and floor. */
-const puffs: Puff[] = [];
+/**
+ * The headset's workspace panel opens in front of your face with a dialog. It waits until the
+ * shot body has hit the floor, so the hit itself stays in view; the trigger stays dead until then.
+ */
+const SHOT_DIALOG_DELAY = FALL_TIME + 0.3;
+/** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
+const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
@@ -1464,31 +1474,33 @@ function fireGun(ndc: THREE.Vector2) {
       smoke.wisp(tip);
     }
   }
-  raycaster.setFromCamera(ndc, camera);
-  resolveGunShot();
-}
-
-/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and confirmation. */
-function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
-  sound.gunshot();
-  smoke.wisp(origin);
-  raycaster.set(origin, direction);
-  raycaster.camera = camera;
-  raycaster.near = 0;
-  raycaster.far = Infinity;
-  resolveGunShot();
-}
-
-function resolveGunShot() {
   if (upTop) return;
+  raycaster.setFromCamera(ndc, camera);
+  resolveGunShot(gunHit(raycaster, office.group, shotTargets()), raycaster.ray.direction);
+}
+
+/** The headset gun fires along its real bore; the desktop and headset share hit blocking and confirmation. */
+function fireNativeGun(bore: Bore) {
+  sound.gunshot();
+  smoke.wisp(bore.muzzle);
+  if (upTop) return;
+  raycaster.camera = camera;
+  resolveGunShot(traceShot(raycaster, bore, office.group, shotTargets()), bore.direction);
+}
+
+/** Every worker model that can be shot. Workers sit inside the office; ones still walking in are out in the scene. Players are never targets. */
+function shotTargets(): Map<THREE.Object3D, string> {
   const byRoot = new Map<THREE.Object3D, string>();
   for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
-  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
-  const result = gunHit(raycaster, office.group, byRoot);
+  return byRoot;
+}
+
+function resolveGunShot(result: GunHit | null, direction: THREE.Vector3) {
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
-  if (nativeMode)
-    console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, solid: hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null, distance: hit ? Math.round(hit.distance * 1000) / 1000 : null })}`);
+  const report = { workerId, buried: result?.buried ?? false, solid: hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null, distance: hit ? Math.round(hit.distance * 1000) / 1000 : null };
+  if (nativeMode) console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, buried: report.buried, solid: report.solid, distance: report.distance })}`);
+  shotStage?.shot(report);
   // Anything solid in front blocks the shot; a miss cracks into it with dust.
   if (!hit || workerId === null) {
     if (hit) {
@@ -1500,39 +1512,50 @@ function resolveGunShot() {
     }
     return;
   }
+  // The hit itself, where the bullet went in: a spray back out of the wound and a wet smack.
+  const out = !result?.buried && hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
+  const spray = new BloodSpray(hit.point, out, direction);
+  scene.add(spray.group);
+  puffs.push(spray);
+  sound.hit(hit.point);
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
   if (!v || !w || !desk) return;
   arrivals.forget(v.model);
-  if (!casualties.shoot(workerId, v.model, desk.seatAnchor)) return;
+  if (!casualties.shoot(workerId, v.model, desk.seatAnchor, direction)) return;
   dyingId = workerId;
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
-  dyingModal = shootDialog({
-    workerId,
-    name: w.name,
-    where,
-    worktree: w.worktree ?? undefined,
-    ask: () => net.send({ t: 'worker.worktree', workerId }),
-    onKill: (cleanup) => {
-      dyingId = null;
-      dyingModal = null;
-      shotDead.add(workerId);
-      net.send(cleanup ? { t: 'worker.kill', workerId, cleanup } : { t: 'worker.kill', workerId });
-      toast(`💀 ${w.name} — the medics are on their way`);
-    },
-    onRevive: () => {
-      const d = dyingId;
-      dyingId = null;
-      dyingModal = null;
-      if (d && casualties.revive(d)) {
-        // Back on its feet with a little hop.
-        workerViews.get(d)?.model.cheer(0.8);
-        if (!dyingSilent) toast(`🩹 ${w.name} is back on its feet — session untouched`);
-      }
-      dyingSilent = false;
-    },
-  });
+  const ask = () => {
+    if (dyingId !== workerId || dyingModal) return;
+    dyingModal = shootDialog({
+      workerId,
+      name: w.name,
+      where,
+      worktree: w.worktree ?? undefined,
+      ask: () => net.send({ t: 'worker.worktree', workerId }),
+      onKill: (cleanup) => {
+        dyingId = null;
+        dyingModal = null;
+        shotDead.add(workerId);
+        net.send(cleanup ? { t: 'worker.kill', workerId, cleanup } : { t: 'worker.kill', workerId });
+        toast(`💀 ${w.name} — the medics are on their way`);
+      },
+      onRevive: () => {
+        const d = dyingId;
+        dyingId = null;
+        dyingModal = null;
+        if (d && casualties.revive(d)) {
+          // Back on its feet with a little hop.
+          workerViews.get(d)?.model.cheer(0.8);
+          if (!dyingSilent) toast(`🩹 ${w.name} is back on its feet — session untouched`);
+        }
+        dyingSilent = false;
+      },
+    });
+  };
+  if (nativeMode) dyingAsk = { left: SHOT_DIALOG_DELAY, open: ask };
+  else ask();
 }
 
 /** The bleed-out dialog goes away some other way (floor switch, disconnect, the worker vanished): the worker is unharmed, quietly. */
@@ -1540,11 +1563,13 @@ function dropDying() {
   if (dyingId === null) return;
   const d = dyingId;
   dyingId = null;
+  dyingAsk = null;
   const m = dyingModal;
   dyingModal = null;
-  dyingSilent = true;
   casualties.revive(d);
-  m?.close();
+  if (!m) return;
+  dyingSilent = true;
+  m.close();
 }
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
 let seatedAlready = false;
@@ -5244,6 +5269,11 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   departures.update(dt, t);
   arrivals.update(dt);
   casualties.update(dt, t);
+  if (dyingAsk && (dyingAsk.left -= dt) <= 0) {
+    const open = dyingAsk.open;
+    dyingAsk = null;
+    open();
+  }
   for (let i = puffs.length - 1; i >= 0; i--) {
     if (puffs[i].update(dt)) continue;
     scene.remove(puffs[i].group);
@@ -5411,6 +5441,8 @@ if (nativeMode) {
       grabLadder: () => grabLadder(true),
       grabPole: (spot) => usePole(POLES.indexOf(spot), true),
       canDraw: () => !trip && !upTop && !climber.active && !golf.active && !hanger.active && !carrying && !readingNow() && !holdingBall(),
+      // One body at a time: the trigger stays dead until the last one's dialog has resolved.
+      canFire: () => dyingId === null,
       gunChanged: (held, quiet) => {
         gunOut = held;
         if (held) sound.gunDraw();
@@ -5422,13 +5454,39 @@ if (nativeMode) {
     setCarrying: (card) => nativeUi?.setCarrying(card),
   });
   nativeScene = new NativeScene(scene, camera);
+  const controls = nativeControls;
+  shotStage = new ShotStage({
+    controls,
+    player,
+    worker: (key) =>
+      matchWorker(
+        key,
+        [...workerViews].map(([id, v]) => ({ id, name: store.workers.get(id)?.name ?? id, root: v.model.root })),
+      ),
+    blocked: () => {
+      if (upTop) return 'on the roof: no workers to stage';
+      if (trip) return 'between floors';
+      if (climber.active || player.rig) return 'climbing or riding';
+      if (golf.active || hanger.active || carrying || readingNow() || holdingBall()) return 'hands full: put down what you are holding';
+      return null;
+    },
+    eye: () => (nativeControls?.active ? camera.position.clone() : null),
+    clearPanel: () => nativeUi?.setPanelOpen(false),
+    revive: dropDying,
+    now: () => performance.now(),
+  });
   (window as any).officeNative = {
-    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean }) => {
+    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean }, host?: { debuggable?: boolean }) => {
+      // Only a debuggable Android build says so (OfficeActivity passes BuildConfig.DEBUG).
+      if (shotStage) shotStage.debuggable = host?.debuggable === true;
       if (events?.sceneReset) nativeScene?.reset();
       if (events?.resetInput) nativeControls?.reset();
       if (events?.recenter) nativeControls?.rebase();
-      nativeControls?.consume(frames);
-      if (loopStarted) frame(performance.now());
+      // A frozen staged shot holds this instant on the headset until it is released.
+      const frozen = shotStage?.frozen === true;
+      if (!frozen) nativeControls?.consume(frames);
+      if (loopStarted && !frozen) frame(performance.now());
+      shotStage?.tick();
       (window as any).officeNative.metrics = metrics;
       nativeUi?.updatePerformance(metrics);
       updateNativeGraphicsMetrics(metrics);
@@ -5531,6 +5589,13 @@ void whoami().then(() => {
   nativeScene,
   nativeUi,
   ball,
+  // Debuggable headset builds only (inert otherwise): stage a shot through the real trigger path.
+  ...(shotStage
+    ? {
+        stageShot: (options: StageShotOptions) => shotStage!.run(options),
+        releaseShot: (revive?: boolean) => shotStage!.release(revive !== false),
+      }
+    : {}),
 };
 (window as any).__voice = voice;
 (window as any).__sound = sound;

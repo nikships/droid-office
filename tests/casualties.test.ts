@@ -184,3 +184,30 @@ test('the blood pool geometry is shared and the constants sanity-check', () => {
   assert.ok(POOL_R > 0.5 && POOL_R < 1.5);
   assert.ok(FADE_TIME > 0 && FADE_TIME < 2);
 });
+
+test('a shot shoves the body along the bullet at once and sprawls it out on the far side', () => {
+  for (const sign of [-1, 1]) {
+    const { seat, lands, casualties, model, frames } = rig();
+    // The seat faces -z (yaw π): its sideways axis is world x. The bullet travels along `sign` x.
+    const direction = new THREE.Vector3(sign, -0.2, 0.15);
+    const from = model.root.getWorldPosition(new THREE.Vector3());
+    assert.equal(casualties.shoot('w1', model, seat, direction), true);
+    frames(1, 1 / 30);
+    const moved = model.root.position.clone().sub(from);
+    assert.ok(moved.x * sign > 0.06, `the first frame after the hit already shoves it ${moved.x.toFixed(3)} m along the bullet`);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion);
+    assert.ok(up.x * sign > 0.2, 'and leans it away from the shooter');
+    frames(60, 1 / 30);
+    assert.equal(lands.length, 1);
+    assert.ok((lands[0].x - from.x) * sign > 0.5, 'it lands out on the side the bullet was heading');
+  }
+});
+
+test('the hit shove peaks at once and has gone by the time the body lands', async () => {
+  const { jolt } = await import('../src/client/world/casualties.js');
+  assert.equal(jolt(-0.01), 0);
+  assert.ok(jolt(1 / 30) > 0.6, 'most of it shows in the first headset frame');
+  assert.ok(Math.abs(jolt(0.07) - 1) < 1e-9);
+  assert.ok(jolt(0.3) < 0.1);
+  assert.ok(jolt(FALL_TIME) < 0.001, 'nothing left to jump out of when it lands');
+});

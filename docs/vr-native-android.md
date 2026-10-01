@@ -377,6 +377,38 @@ origin: localhost for USB, or HTTPS for Wi-Fi. The app trusts system CAs and CAs
 installed by the device owner, so a development certificate can use normal Android trust
 instead of bypassing verification.
 
+### Debug shot staging
+
+A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
+each `officeNative.frame` call; a release build passes `false`. Only then does the page's
+`window.__office.stageShot(options)` do anything; otherwise it resolves `{ ok: false }`.
+It is for headset captures over the WebView DevTools socket, and changes no normal gameplay.
+
+`stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
+raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, traced bore,
+casualty and effects therefore run the code a held controller drives. The head remains the
+headset's own; the rig is turned and placed so the worker is in front of it. The staged gun is
+drawn at its scripted world pose, because no real grip is under it. Options:
+
+| Option | Meaning (default) |
+| --- | --- |
+| `worker` | Id or name of a worker on this floor, in any case; `Pixel` finds `Pixel 🐚` or a lone `Pixel (shell)` |
+| `gap` | Meters from the muzzle to the body surface along the bore; negative presses it in (`0.03`) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`) |
+| `pitch` | Degrees the shot slopes down (by default, so the gun sits just under the headset's eye line) |
+| `reach` | Meters from the headset back from the gun's fist (`0.42`) |
+| `height` | Aim point in meters up the worker's own body (`0.62`) |
+| `hand` | `'right'` or `'left'` (`'right'`) |
+| `freezeMs` | Stop advancing gameplay this long after the shot, holding that frame (none) |
+| `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
+| `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
+
+It resolves after the shot, or once frozen, with `hit`, `struck`, `buried`, `solid`, `distance`,
+`muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. `__office.releaseShot()`
+unfreezes, puts the gun away and quietly revives the worker; pass `false` to leave the worker
+down and let its dialog open. A freeze releases itself after 30 seconds. Staged shots never
+confirm a kill.
+
 ## Acceptance status
 
 The latest published release is [v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).

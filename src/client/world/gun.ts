@@ -14,29 +14,118 @@ export const GUN_LEN = 0.34;
 /** How high the barrel sits above the origin. */
 const BORE_Y = 0.086;
 
-/** The closest rendered solid struck by a bullet; only registered workers can be targets. */
-export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
+/** What a bullet struck: a registered worker, or the solid that stopped it (workerId null). */
+export interface GunHit {
+  hit: THREE.Intersection;
+  workerId: string | null;
+  /** The ray began inside this worker's body (a barrel pressed into it); `hit.distance` is 0. */
+  buried: boolean;
+}
+
+/**
+ * The closest rendered solid struck by a bullet; only registered workers can be targets. A ray
+ * that starts inside a worker strikes that worker at once: three.js culls the inner faces of a
+ * closed body, so without this a barrel pressed into a worker would shoot out of its back.
+ * Furniture and walls nearer than `barrel` meters are where a held barrel itself is stuck, not
+ * what the bullet leaving its muzzle meets, so they do not block it; a worker there is struck.
+ */
+export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>, barrel = 0): GunHit | null {
   // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
   // would throw before any worker could react. Only rendered meshes can absorb a bullet.
   const solids = new Set<THREE.Mesh>();
+  const bodies = new Set<THREE.Mesh>();
   for (const root of [office, ...workers.keys()])
     root.traverseVisible((object) => {
-      if (object instanceof THREE.Mesh) solids.add(object);
+      if (object instanceof THREE.Mesh) (workers.has(root) ? bodies : solids).add(object);
     });
+  for (const mesh of bodies) {
+    solids.add(mesh);
+    const exit = exitFrom(ray, mesh);
+    const struck = exit && solidAt(mesh, exit, workers);
+    if (struck && struck.workerId !== null) return { hit: { ...struck.hit, distance: 0, point: ray.ray.origin.clone(), face: null }, workerId: struck.workerId, buried: true };
+  }
   for (const hit of ray.intersectObjects([...solids], false)) {
-    // Raycaster includes material-invisible meshes; a multi-material mesh can hide one face.
-    if (!(hit.object instanceof THREE.Mesh)) continue;
-    const material = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
-    if (!material?.visible || material.opacity <= 0) continue;
-    let shown = true;
-    let workerId: string | null = null;
-    for (let object: THREE.Object3D | null = hit.object; object; object = object.parent) {
-      if (!object.visible) shown = false;
-      workerId ??= workers.get(object) ?? null;
-    }
-    if (shown) return { hit, workerId };
+    const struck = solidAt(hit.object, hit, workers);
+    if (struck && (struck.workerId !== null || hit.distance >= barrel)) return { ...struck, buried: false };
   }
   return null;
+}
+
+/** The worker (or null) owning a rendered, shown surface; null when that surface cannot stop a bullet. */
+function solidAt(object: THREE.Object3D, hit: THREE.Intersection, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
+  // Raycaster includes material-invisible meshes; a multi-material mesh can hide one face.
+  if (!(object instanceof THREE.Mesh)) return null;
+  const material = Array.isArray(object.material) ? object.material[hit.face?.materialIndex ?? 0] : object.material;
+  if (!material?.visible || material.opacity <= 0) return null;
+  let workerId: string | null = null;
+  for (let o: THREE.Object3D | null = object; o; o = o.parent) {
+    if (!o.visible) return null;
+    workerId ??= workers.get(o) ?? null;
+  }
+  return { hit, workerId };
+}
+
+const EMPTY = new THREE.BufferGeometry();
+const probe = new THREE.Mesh(EMPTY, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+const bounds = new THREE.Sphere();
+const inverse = new THREE.Matrix4();
+const along = new THREE.Vector3();
+
+/**
+ * Where a ray leaves a closed mesh it starts inside, or null when it starts outside: the first
+ * surface it crosses then faces away from it. Only meshes whose bounds hold the origin are traced.
+ */
+function exitFrom(ray: THREE.Raycaster, mesh: THREE.Mesh): THREE.Intersection | null {
+  const geometry = mesh.geometry;
+  if (!geometry.attributes.position) return null;
+  if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+  if (!bounds.copy(geometry.boundingSphere!).applyMatrix4(mesh.matrixWorld).containsPoint(ray.ray.origin)) return null;
+  probe.geometry = geometry;
+  probe.matrixWorld.copy(mesh.matrixWorld);
+  const crossings: THREE.Intersection[] = [];
+  probe.raycast(ray, crossings);
+  probe.geometry = EMPTY;
+  let first: THREE.Intersection | null = null;
+  for (const c of crossings) if (!first || c.distance < first.distance) first = c;
+  if (!first?.face) return null;
+  // Face normals are in the mesh's own space, so compare the ray's direction there.
+  along.copy(ray.ray.direction).transformDirection(inverse.copy(mesh.matrixWorld).invert());
+  return along.dot(first.face.normal) > 0 ? { ...first, object: mesh } : null;
+}
+
+/** Where a held gun's bullet travels, in world space: from the breech, out of the muzzle. */
+export interface Bore {
+  breech: THREE.Vector3;
+  muzzle: THREE.Vector3;
+  direction: THREE.Vector3;
+}
+
+/** The bore of a gun from magnum() at its current world transform. */
+export function boreOf(gun: THREE.Object3D, out: Bore = { breech: new THREE.Vector3(), muzzle: new THREE.Vector3(), direction: new THREE.Vector3() }): Bore {
+  gun.updateWorldMatrix(true, false);
+  out.breech.copy(BREECH_AT).applyMatrix4(gun.matrixWorld);
+  out.muzzle.copy(MUZZLE_AT).applyMatrix4(gun.matrixWorld);
+  out.direction.subVectors(out.muzzle, out.breech).normalize();
+  return out;
+}
+
+/**
+ * A held gun's shot, traced along its whole bore as Half-Life: Alyx traces its pistol: from the
+ * breech behind the fist, through the muzzle and on. A barrel pressed into or through a worker
+ * strikes it where the barrel went in, even through a chair back the barrel is poked through.
+ * A shot that starts with the whole gun buried in a worker strikes it at the muzzle.
+ */
+export function traceShot(ray: THREE.Raycaster, bore: Bore, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): GunHit | null {
+  ray.set(bore.breech, bore.direction);
+  ray.near = 0;
+  ray.far = Infinity;
+  const barrel = bore.breech.distanceTo(bore.muzzle);
+  const result = gunHit(ray, office, workers, barrel);
+  if (result?.buried) {
+    result.hit.point.copy(bore.muzzle);
+    result.hit.distance = barrel;
+  }
+  return result;
 }
 
 /** A beveled side silhouette: coordinates are [forward Z, up Y], thickness runs along X. */
@@ -228,6 +317,8 @@ export function magnum(): THREE.Group {
 
 /** Where the muzzle is: the flash and the shot's smoke start here. */
 export const MUZZLE_AT = new THREE.Vector3(0, BORE_Y, 0.26);
+/** The back of the frame on the bore's axis, behind the fist: a held gun's shot is traced from here. */
+export const BREECH_AT = new THREE.Vector3(0, BORE_Y, -0.06);
 
 /** Takes a gun from magnum() out of the hand holding it, and frees what it was made of. */
 export function disposeGun(prop: THREE.Group) {
@@ -249,6 +340,7 @@ const FLASH_TIME = 0.09;
 export class Muzzle {
   readonly group = new THREE.Group();
   private t = Infinity;
+  private fresh = false;
   private core: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
@@ -280,6 +372,10 @@ export class Muzzle {
 
   fire() {
     this.t = 0;
+    this.fresh = true;
+    // A different star each shot, at full brightness from the shot's own frame.
+    this.group.rotation.z = Math.random() * Math.PI;
+    this.show(1);
   }
 
   get lit(): boolean {
@@ -288,8 +384,17 @@ export class Muzzle {
 
   update(dt: number) {
     if (this.t >= FLASH_TIME) return;
+    // The first frame drawn after the shot shows the whole flash; at the headset's 30 Hz
+    // gameplay rate that is the difference between a pop and a two-frame glimmer.
+    if (this.fresh) {
+      this.fresh = false;
+      return;
+    }
     this.t += dt;
-    const k = Math.max(0, 1 - this.t / FLASH_TIME);
+    this.show(Math.max(0, 1 - this.t / FLASH_TIME));
+  }
+
+  private show(k: number) {
     this.core.material.opacity = k;
     this.core.scale.setScalar(0.6 + 0.4 * k);
     for (const b of this.star) b.material.opacity = k * 0.9;
@@ -364,4 +469,77 @@ export class Puff {
       (m.material as THREE.Material | undefined)?.dispose();
     });
   }
+}
+
+/** How long a hit's spray hangs in the air, in seconds. */
+const SPRAY_TIME = 0.45;
+
+/**
+ * Where a bullet strikes a worker, at the contact point: a red mist bursting back out of the hit
+ * and droplets flung out of it that drop and fade in under half a second. One shared sphere keeps
+ * it to a single small upload in the headset. update() returns false once it's gone.
+ */
+export class BloodSpray {
+  readonly group = new THREE.Group();
+  private t = 0;
+  private bits: { mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>; vel: THREE.Vector3; size: number; grow: number; fall: number }[] = [];
+  private ball = new THREE.SphereGeometry(1, 8, 6);
+
+  /** `out` points back out of the wound (toward the shooter); `travel` is the bullet's direction. */
+  constructor(at: THREE.Vector3, out: THREE.Vector3, travel: THREE.Vector3) {
+    this.group.position.copy(at);
+    const away = out.clone().normalize();
+    const on = travel.clone().normalize();
+    const add = (color: string, opacity: number, size: number, vel: THREE.Vector3, grow: number, fall: number) => {
+      const mesh = new THREE.Mesh(this.ball, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+      mesh.scale.setScalar(size);
+      this.group.add(mesh);
+      this.bits.push({ mesh, vel, size, grow, fall });
+    };
+    // The mist: a quick red cloud swelling out of the wound.
+    for (let i = 0; i < 3; i++)
+      add(
+        '#9e1420',
+        0.85,
+        0.035 + Math.random() * 0.02,
+        away
+          .clone()
+          .multiplyScalar(0.5 + Math.random() * 0.4)
+          .add(jitter(0.5)),
+        3.2,
+        0.4,
+      );
+    // Droplets: most fly back at the shooter, a few carry on with the bullet; gravity takes them.
+    for (let i = 0; i < 8; i++) {
+      const dir = (i < 6 ? away : on)
+        .clone()
+        .multiplyScalar(1.6 + Math.random() * 1.6)
+        .add(jitter(1.4));
+      dir.y += 0.6 + Math.random() * 0.8;
+      add(i % 3 ? '#b3121f' : '#d8202e', 0.95, 0.009 + Math.random() * 0.009, dir, 0.3, 9.8);
+    }
+  }
+
+  /** Moves the spray along; false once it has cleared. */
+  update(dt: number): boolean {
+    this.t += dt;
+    const p = Math.min(1, this.t / SPRAY_TIME);
+    for (const b of this.bits) {
+      b.mesh.position.addScaledVector(b.vel, dt);
+      b.vel.multiplyScalar(Math.exp(-dt * 2.5));
+      b.vel.y -= dt * b.fall;
+      b.mesh.scale.setScalar(b.size * (1 + p * b.grow));
+      b.mesh.material.opacity = (b.grow > 1 ? 0.85 : 0.95) * (1 - p * p);
+    }
+    return p < 1;
+  }
+
+  dispose() {
+    this.ball.dispose();
+    for (const b of this.bits) b.mesh.material.dispose();
+  }
+}
+
+function jitter(size: number): THREE.Vector3 {
+  return new THREE.Vector3((Math.random() - 0.5) * size, (Math.random() - 0.5) * size, (Math.random() - 0.5) * size);
 }

@@ -98,6 +98,11 @@ public final class OfficeActivity extends Activity {
     private boolean pollPending;
     private volatile int navigationGeneration;
 
+    // Debuggable builds let the page's debug-only shot staging run (native/stage.ts);
+    // a release build never enables it.
+    private static final String HOST_FLAGS =
+        BuildConfig.DEBUG ? "{\"debuggable\":true}" : "{\"debuggable\":false}";
+
     // There is no privileged JavaScript interface. The host pulls bounded scene data
     // only from the chosen office origin, then parses it away from the render thread.
     private final Runnable poll = new Runnable() {
@@ -115,7 +120,7 @@ public final class OfficeActivity extends Activity {
             String samples = nativeReadInput();
             web.evaluateJavascript(
                 "window.officeNative ? window.officeNative.frame(" + samples + "," +
-                    nativeReadMetrics() + "," + nativeReadEvents() + ") : null",
+                    nativeReadMetrics() + "," + nativeReadEvents() + "," + HOST_FLAGS + ") : null",
                 result -> {
                     if (destroyed || generation != navigationGeneration)
                         return;

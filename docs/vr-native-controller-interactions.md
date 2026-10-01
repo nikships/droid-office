@@ -78,10 +78,23 @@ the grip-local rotation from the runtime's aim and grip orientations, mapping th
 while keeping the handle at the grip origin. The live display-frame grip still places the gun.
 The runtime defines aim as the controller's pointing direction, distinct from grip; see the
 [controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
-Shots start at the transformed
-model muzzle and reuse desktop solid occlusion, local casualty effects and explicit worker
-confirmation. Shot picking ignores hidden scene subtrees, invisible materials, name sprites
-and glow points; visible furniture and glass still block shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
+Shots are traced along the whole bore, as Half-Life: Alyx traces its pistol: from the breech
+behind the fist, through the transformed model muzzle and on (`traceShot` in `world/gun.ts`).
+A worker the trace starts inside is struck at once; a barrel pressed into or through a worker
+strikes it where the barrel enters. Furniture the barrel itself is stuck through, such as a chair
+back, does not stop the bullet; anything solid beyond the muzzle does. Shots reuse desktop
+solid occlusion, local casualty effects and explicit worker confirmation. Shot picking ignores
+hidden scene subtrees, invisible materials, name sprites and glow points; visible furniture and
+glass still block shots.
+
+A shot shows its muzzle flash at full brightness in its own 30 Hz update and kicks the gun model
+up about the fist and back, settling within 0.24 s on the input clock; the bullet leaves along
+the bore as aimed, before the kick. The holding controller gets a full-strength 70 ms pulse. A
+struck worker sprays blood back out of the contact point with a wet hit sound, and the shot
+shoves it along the bullet at once before it sprawls out on the far side of its chair. In the
+headset, the bleed-out dialog waits until the body has landed (about one second of gameplay),
+because the workspace panel opens in front of the face; the trigger stays dead until that
+dialog resolves. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.
 The native app does not draw the gun through the desktop `7` shortcut.
@@ -118,6 +131,13 @@ real furniture/glass occlusion. The headset log confirmed every trigger pull thr
 solid meshes before intersecting, so a direct muzzle ray never visits a sprite at all. Native
 shots also set the shared ray camera and record the chosen solid locally for diagnosis.
 The camera-less muzzle regression passes; the fix still needs wearer confirmation.
+A later report, point-blank shots doing nothing, was the muzzle inside the worker's body:
+three.js culls a closed mesh's inner faces, so the ray left through its back into the chair
+behind it. `tests/gun-point-blank.test.ts` seats a real worker at real office desks and fires
+through the trigger path from five sides with the muzzle 15 cm and 3 cm in, 2 cm and 5 cm off,
+30 cm off and 2.2 m away, plus point-blank through a chair back and a gun buried whole. Each
+fails with the old muzzle-only ray. A debuggable build can stage such a shot on the headset
+through the same path; see [debug shot staging](vr-native-android.md#debug-shot-staging).
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic
 replay or browser render establishes physical headset ergonomics or worn-view sharpness.

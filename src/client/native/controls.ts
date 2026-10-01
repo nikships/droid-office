@@ -82,6 +82,12 @@ export interface NativeHooks {
 
 type Vec3 = [number, number, number];
 
+/** A scripted controller (native/stage.ts ShotScript): its sample, or null once it is over. */
+export interface StagedHand {
+  readonly hand: 0 | 1;
+  sample(time: number, head: Pose7, rig: THREE.Matrix4): NativeHand | null;
+}
+
 export interface NativeHandState {
   connected: boolean;
   ui: boolean;
@@ -204,6 +210,8 @@ export class NativeControls {
   private carriedOwner: 0 | 1 | null = null;
   private carryPublishedAt = -Infinity;
   private interactionHand: 0 | 1 | null = null;
+  /** Debug staging only (native/stage.ts): a scripted controller standing in for one hand. */
+  private staged: StagedHand | null = null;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, hooks: NativeHooks) {
     this.camera = camera;
@@ -361,6 +369,20 @@ export class NativeControls {
 
   cancelGun(): void {
     this.physical?.cancelGun();
+  }
+
+  /**
+   * Debug staging only: `script` replaces one hand's samples as they are replayed, until it
+   * returns null, so a staged shot runs the same draw, trigger and shot path as a held controller.
+   * Its gun is drawn at the scripted world pose. Null hands the controller back.
+   */
+  stage(script: StagedHand | null): void {
+    this.staged = script;
+    this.physical?.script(script?.hand ?? null);
+  }
+
+  get staging(): boolean {
+    return this.staged !== null;
   }
 
   /** The original pickUp/putDown/putBack dispatch calls this when its single carry slot changes. */
@@ -559,6 +581,12 @@ export class NativeControls {
 
   /** One native sample: poses in, then every edge VRSession resolves per event or per frame. */
   private replay(f: NativeInputFrame): void {
+    if (this.staged) {
+      this.rig.updateMatrixWorld();
+      const scripted = this.staged.sample(f.time, f.head, this.rig.matrixWorld);
+      if (scripted) f.hands[this.staged.hand] = scripted;
+      else this.stage(null);
+    }
     this.now = f.time;
     this.headTracked = f.headTracked !== false;
     if (f.headTracked !== false) {
