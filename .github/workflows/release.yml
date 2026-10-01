@@ -162,15 +162,15 @@ jobs:
         timeout-minutes: 10
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends glslang-tools libegl1-mesa-dev libgles2-mesa-dev
+          sudo apt-get install --yes --no-install-recommends glslang-tools libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libshaderc-dev
           # playwright-core is already pinned by package-lock.json; do not fetch another npm package.
           npx --no-install playwright-core install --with-deps chromium
 
       - name: Native host tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK }}/ndk/27.2.12479018
-        run: bash native/tests/run-host.sh --android-sdk "$ANDROID_SDK" --require-java
+        run: bash native/tests/run-host.sh --android-sdk "$ANDROID_SDK" --require-java --timeout 900
 
       - name: Build the native Android app
         timeout-minutes: 30

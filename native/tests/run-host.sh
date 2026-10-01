@@ -54,6 +54,10 @@ CPP_TESTS=(
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
   "controller_attachment|tests/controller_attachment_test.cpp|"
+  "vk_spike_logic|tests/vk_spike_logic_test.cpp|"
+  "log_record|tests/log_record_test.cpp|"
+  "scene_frame|tests/scene_frame_test.cpp|android/app/src/main/cpp/scene_frame.cpp android/app/src/main/cpp/scene_shaders.cpp"
+  "vk_scene_state|tests/vk_scene_state_test.cpp|"
   "status_layout|tests/status_layout_test.cpp|"
   "layer_occlusion|tests/layer_occlusion_test.cpp|"
   # The same source as the debug APK (puppet compiled in) and as the release APK (ignored).
@@ -76,7 +80,11 @@ JAVA_TEST_DIRS=(hosttest app/src/test/java)
 SUITES=(
   native/android/app/src/test/cpp/run.sh
   native/android/app/src/test/cpp/shaders/check.sh
+  native/android/app/src/test/cpp/vk/check.sh
 )
+# The real Vulkan device check requires Linux Mesa and validation layers. Register it on every
+# platform, run it on Linux, and report it as NOT RUN on hosts without that platform.
+LINUX_SUITES=(native/tests/run-vulkan.sh)
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -291,7 +299,7 @@ while IFS= read -r found; do
 done < <(find "$NATIVE/tests" -maxdepth 1 -name '*_test.cpp' -type f | LC_ALL=C sort)
 
 registered_suites=" "
-for suite in ${SUITES[@]+"${SUITES[@]}"}; do
+for suite in "${SUITES[@]}" "${LINUX_SUITES[@]}"; do
   case "$suite" in
   /*) registered_suites="$registered_suites$suite " ;;
   *) registered_suites="$registered_suites$ROOT/$suite " ;;
@@ -404,6 +412,14 @@ if [ -n "$sdk" ]; then
   done
 else
   results+=("NOT RUN  java rules tests: pass --android-sdk DIR to run them")
+fi
+
+if [ "$(uname -s)" = Linux ]; then
+  SUITES+=("${LINUX_SUITES[@]}")
+else
+  for suite in "${LINUX_SUITES[@]}"; do
+    results+=("NOT RUN  suite $suite: requires Linux Mesa and Vulkan validation layers")
+  done
 fi
 
 for suite in ${SUITES[@]+"${SUITES[@]}"}; do

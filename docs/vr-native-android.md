@@ -6,7 +6,44 @@ use its existing authentication, WebSocket protocol, workers, terminals, boards 
 state. The headset uses the same first-person world and shared objects. Galaxy XR motion controllers
 are now the only supported native control scheme; this supersedes the earlier hand-tracking
 requirement. The left controller’s Menu button toggles the workspace. Grip must not open or
-close it. The controller-only combined APK is installed on the connected headset.
+close it. Dated installation and device results are recorded below.
+
+## Current Vulkan renderer
+
+Debug and release builds draw the office exclusively through `world_vk.cpp` and
+`VkSceneRenderer`. There is no GLES or fixed-foveation fallback. The GLES sources and their
+host checks remain a rendering reference, not an installed path. The dated device evidence
+below describes the builds tested on those dates; it does not establish acceptance of the
+Vulkan office renderer.
+
+The Vulkan renderer uses `XR_KHR_vulkan_enable2`, a two-eye multiview render pass and
+4× MSAA resolved in the subpass. Runtime-generated office material shaders compile with the
+pinned NDK's shaderc, and Vulkan Memory Allocator 3.1.0 manages scene allocations. Packet parsing
+and scene snapshots stay shared with the reference renderer in `scene_stream.cpp` and
+`scene_frame.cpp`.
+
+With foveation enabled, world colour swapchains carry
+`XR_SWAPCHAIN_CREATE_FOVEATION_FRAGMENT_DENSITY_MAP_BIT_FB`. The META Vulkan swapchain chain
+requests `VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM`, plus subsampled images when the
+device requires them. Runtime-provided density images are attached to the render pass. Each
+frame updates the eye-tracked profile, queries `xrGetFoveationEyeTrackedStateMETA`, and ends
+the pass with per-eye offsets using `vkCmdEndRenderPass2`. Off explicitly creates unfoveated
+Vulkan targets. Missing required extensions, device features, eye permission or eye-tracked
+system support are errors, not reasons to select a different renderer or fixed profile.
+See the [Android XR extension reference](https://developer.android.com/develop/xr/openxr/extensions)
+and the [OpenXR foveation specification](https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#XR_FB_foveation_vulkan).
+
+GPU timestamp pools reserve both views at each boundary. This avoids the observed Mesa
+lavapipe crash when multiview query expansion outlives a render pass, while retaining GPU
+timing in the host and headset renderers.
+
+The renderer draws native controllers, rays, fade and the workspace cutout. Android Surface
+panels remain compositor layers. The separate maximum-resolution sharp-screen layer is not
+implemented in this Vulkan path: metrics report `sharpScreens: false`, and laptop screens
+remain part of the world draw. The historical GLES sharp-layer measurements below must not
+be presented as Vulkan capability or acceptance. Required checks remain populated-office
+rendering, physical controller/panel behavior, eye-following foveation, laptop readability
+and focused 1–2 minute timing runs with scene packets advancing.
 
 ## Why the browser was struggling
 
@@ -55,6 +92,22 @@ office's gameplay and scene updates at approximately 30 Hz. Parsing and scene pr
 run away from the render thread. Head and controller rendering use current native poses each
 display frame rather than waiting for JavaScript's next update.
 
+`office_xr.cpp` runs the API-neutral session: the instance, system and session, the reference
+spaces, the Android Surface panels, input, the refresh preference, layer composition and the
+metrics lines. Everything a graphics API draws sits behind one coarse seam, `WorldRenderer`
+(`world_renderer.h`). `world_vk.cpp` is the installed renderer and owns the Vulkan binding,
+world targets, scene and native input drawing. `world_gles.cpp` retains the GLES reference
+implementation and is not compiled into the installed app.
+
+The GLES scene renderer (`scene_renderer.cpp`) keeps only its GPU work. Two GL-free parts are
+shared with the Vulkan renderer:
+
+- `scene_stream.cpp` is the bridge side: packet apply, publish, reset requests and
+  backpressure, with the texture changes queued in order.
+- `scene_frame.cpp` is the frame planner: frustum culling and three's draw order, the
+  controller-attached items, the laptop-screen plan and the prepare budget. It asks the backend
+  what is on its GPU through `SceneResidency`.
+
 ### Locomotion presentation
 
 The source now interpolates approved player-rig translation and rotation each display frame
@@ -96,7 +149,10 @@ does not establish Galaxy XR timing or encoding performance. The exporter improv
 included in the installed combined build. Device measurements still include image encoding
 and the rest of the application; the host-only improvement should not be read as a device speedup.
 
-### Display and workspace
+### Historical GLES display and workspace
+
+The GLES-specific rendering and foveation details in this subsection describe the reference
+implementation and earlier headset builds. The current Vulkan path is described above.
 
 The display path uses GLES multiview for both eyes, with 4× tile MSAA where supported.
 Foveated rendering is owned by the OpenXR runtime, as described in
@@ -106,11 +162,17 @@ foveation; they are not independently foveated
 
 ### Runtime foveation
 
+This subsection records the earlier GLES implementation, including its filter and fallbacks.
+Neither is used by the installed Vulkan render path.
+
 The app no longer computes focal points or writes `GL_QCOM_texture_foveated` state. Earlier
 builds steered app-side focal points from the eye-gaze interaction pose with invented gain,
-area and density values. The current build uses the extensions Android XR lists for this runtime
-([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)), each enabled
-only when advertised:
+area and density values. The current build uses fixed runtime foveation, the OpenGL ES path
+Android XR documents: its Unity "Foveation (Legacy)" feature "also supports … OpenGL ES" with
+only the three FB extensions below, while its eye-tracked foveated rendering is Vulkan-only
+([Develop with Unity](https://developer.android.com/develop/xr/unity)). Each extension is enabled
+only when advertised
+([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)):
 
 1. `XR_FB_swapchain_update_state`, `XR_FB_foveation` and `XR_FB_foveation_configuration`.
    Only the world colour swapchain is created with
@@ -129,15 +191,14 @@ only when advertised:
    `GL_QCOM_texture_foveated` also says foveation "cannot be disabled" on a texture once enabled.
    So Off creates swapchains without `XrSwapchainCreateInfoFoveationFB`, which have no foveation
    support (`XR_FB_foveation`), and a level creates them with it and applies that level first.
-4. With `XR_META_foveation_eye_tracked`, `supportsFoveationEyeTracked` and a granted
-   `EYE_TRACKING_FINE`, the profile also chains `XrFoveationEyeTrackedProfileCreateInfoMETA`.
-   Each frame, after acquiring the world image (Godot's order), the app calls
-   `xrUpdateSwapchainFB` right before `xrGetFoveationEyeTrackedStateMETA`, as the extension
-   asks. The runtime places the fovea; the app only reports the returned centre and draws it in
-   the diagnostic view. As in Godot, a failed update or query is tried again on the next frame:
-   in the headset run the query returned `XR_ERROR_RUNTIME_FAILURE` while nobody wore the
-   headset. `XR_EXT_eye_gaze_interaction` stays bound because Galaxy XR's eye-tracked foveation
-   needs it ([godotengine/godot#113778](https://github.com/godotengine/godot/issues/113778)).
+4. No eye tracking. Earlier builds chained `XrFoveationEyeTrackedProfileCreateInfoMETA` and
+   called `xrUpdateSwapchainFB` and `xrGetFoveationEyeTrackedStateMETA` every frame. On Galaxy XR
+   that query returned `XR_ERROR_RUNTIME_FAILURE` on 13,092 of 13,092 frames of a GLES session,
+   and the runtime logged `Using static model` for the eye-tracked profile: its GL client
+   compositor has no eye-tracked state and applies the level only. So the GLES renderer neither
+   enables `XR_META_foveation_eye_tracked` nor queries it, and reports `mode: "fixed"`. Eye-tracked
+   foveation needs the Vulkan world renderer (fragment density map offsets).
+   `XR_EXT_eye_gaze_interaction` stays bound as an interaction pose for the metrics.
 5. The profile is destroyed before the swapchains and the session.
 6. Reduced regions are filtered, not submitted in blocks. `GL_QCOM_texture_foveated` renders a
    scaled bin at reduced density and "finally upscal[es] the subregion to the native texture
@@ -147,23 +208,40 @@ only when advertised:
    layout ("Reduces aliasing in peripheral areas through bilinear filtering",
    [Android XR Extensions settings](https://developer.android.com/develop/xr/unity/performance/androidxr-extension-settings)),
    and OpenXR offers that only for Vulkan swapchains. So a level creates two sets of world
-   swapchains of the same size: the foveated set above, which the world renders into and which
-   is never submitted (`XR_SWAPCHAIN_USAGE_SAMPLED_BIT` as well), and the submitted set without
-   foveation support. The last draw into the foveated image writes each invocation's neighbour
-   step (`dFdx`/`dFdy` of `gl_FragCoord`, which issue 4 leaves uncorrected, so the step is
-   1/density) into its alpha, which the opaque projection layer ignores. A full-screen pass then
-   draws the submitted image: full-density pixels are copied unchanged, and every reduced pixel
-   averages linear taps spread over its own block width (two taps at half density, three for
-   coarser blocks), which equals a bilinear upscale of the low-density pixels at half density and
-   keeps every step across a block edge at a third or less beyond it. The runtime still chooses
-   the density everywhere and places the fovea; the app never writes QCOM state. The pass costs
-   one extra read and write of the eye images and doubles the world swapchain memory. If the
-   filter's programs do not compile, or the second set cannot be created, the foveated set is
-   submitted directly for the rest of the session (fallback `filtered targets rejected`). No
-   OpenXR text says whether a runtime foveates a swapchain that is never submitted, so when every
-   image of the foveated set reads no foveation bits (`FOVEATION_TEXTURE`), the app falls back
-   the same way (`filtered swapchain not foveated`).
-7. Nothing else in the world pass changes from bin to bin. QCOM issue 4 also leaves
+   swapchains of the same size: the foveated set above, which the world renders into
+   (`XR_SWAPCHAIN_USAGE_SAMPLED_BIT` as well), and the submitted set without foveation support.
+   The last draw into the foveated image writes, per axis, which block of the driver's upscale
+   each pixel belongs to into its alpha, which the opaque projection layer ignores: the block
+   width from `dFdx`/`dFdy` of `gl_FragCoord` (issue 4 leaves them uncorrected, so the step is
+   1/density) and where blocks start, from `gl_FragCoord` itself (issue 4 scales it to the
+   invocation's full-resolution position). Widths of 1, 2, 4 and 8 pixels and every start fit
+   in four bits per axis; the Galaxy XR diagnostic view showed steps of 1, 2 and 4 or more
+   almost everywhere (the view now marks any other width in blue).
+   A full-screen pass then draws the submitted image: full-density pixels are copied unchanged,
+   and every pixel of a reduced bin takes one linear tap between its own block and the nearer
+   neighbouring block, placed so its weight is the distance between the blocks' centres. That is
+   exactly a bilinear upsample of the bin's low-density pixels, on each axis separately, so a
+   bin reduced on one axis is only resampled along that axis. A block the code cannot describe
+   (another width, or a start off the pixel grid) is smoothed [1 2 1] / 4 instead. The runtime
+   still chooses the density everywhere and places the fovea; the app never writes QCOM state.
+   The pass costs one extra read and write of the eye images and doubles the world swapchain
+   memory. If the filter's programs do not compile, or the second set cannot be created, the
+   foveated set is submitted directly for the rest of the session (fallback `filtered targets
+   rejected`).
+7. Priming. Applying a profile only stores it with a Galaxy XR GLES swapchain: the runtime writes
+   `GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM` and the focal points of all of a swapchain's images when
+   that swapchain is submitted in a projection layer (its projection layer registers the
+   swapchain, and the GL client compositor's layer commit applies the profile, in
+   `libopenxr_android.so`). A foveated set that is never submitted is never foveated: the
+   2026-10-01 headset run read 0 bits on every image of it, and the filter never ran. So each pass
+   reads the bits of the foveated image it has acquired, until that image is foveated, and
+   submits it directly while it is not (`FOVEATION_PRIMED` when an image first reads foveated).
+   Such an image is drawn at full density, so the frame looks the same; the first submission
+   foveates every image of the set, and from the next frame on the pass is filtered. Foveation
+   "cannot be disabled" on a texture once enabled (`GL_QCOM_texture_foveated`), so an image read
+   as foveated is not read again. If eight direct submissions leave the set unfoveated, the
+   targets fall back to unfiltered ones (`filtered swapchain not foveated`).
+8. Nothing else in the world pass changes from bin to bin. QCOM issue 4 also leaves
    `gl_PointSize` unscaled, so GL points changed size and dropped out between bins, which showed
    as rectangles of missing lamp and pumpkin glow. Points are drawn as instanced quads of the
    same square instead (indexed points, which the office does not use, stay GL points).
@@ -186,26 +264,25 @@ loads. A page reload keeps the current settings until the new page sends its own
 The level mapping is the app's choice; Godot uses the same order. The runtime levels have no
 density parameter, so the earlier peripheral-detail setting is gone. Pages still send
 `peripheralDensity: 0.25` because APKs up to v0.1.301 reject graphics without it; current APKs
-ignore it. If the runtime rejects something, the app degrades one step for the session:
-eye-tracked → the same level fixed, on the same new swapchains → world swapchains without
-foveation support (full resolution everywhere). Filtered targets that cannot be created fall
-back to unfiltered ones. Only `XR_ERROR_FEATURE_UNSUPPORTED` from the
-state query drops eye tracking during a session; the targets are then recreated with the fixed
-level.
+ignore it. If something fails, the app degrades one step for the session: filtered targets
+that cannot be created, or whose foveated set the runtime never foveates, fall back to
+unfiltered ones, and a level the runtime rejects falls back to world swapchains without
+foveation support (full resolution everywhere).
 
 `FRAME_METRICS` carries `foveationSupported`, `foveationEnabled` and `foveationLevel` for the
 bound targets. The details are a separate `FOVEATION_METRICS` line, because together they
 exceeded Android's 1024-byte log record, and the page receives them as `foveation`: `setting`,
-the bound `level` (`none`, `low`, `medium` or `high`), `eyeTracked`, `eyeTrackedAvailable`,
-`filtered` and `filterAvailable` (the reconstruction above), `pending` (the setting asks for other targets, which follow within about 250 ms), the profile
-`create`/`update` results, per-window `frames`/`validFrames`/`invalidFrames`/`failedFrames`,
-the last update/state results, `centerValid` and `center` (NDC per eye), the probed texture
-state and `fallback`. New targets also update the page's copy at once, without waiting for the
-next window. The log also has `FOVEATION_CAPABILITY`, `FOVEATION_FILTER` and `GRAPHICS_START`
-(the stored settings) at startup, `VIEW_FOV` (each eye's field of view in degrees) after focus,
-`FOVEATION_PROFILE` for every applied profile, `WORLD_TARGET` (with `filtered`) for new targets,
-`FOVEATION_EYE_STATE` when the per-frame results change and `FOVEATION_TEXTURE` for each image
-the world renders into. The texture line reads
+the bound `level` (`none`, `low`, `medium` or `high`), `mode` (`fixed` or `off`), `eyeTracked`
+(always false), `filtered` and `filterAvailable` (the reconstruction above), the window's world
+passes by how they were submitted (`filteredFrames`, `primingFrames`, `underlayFrames` for the
+workspace panel beneath the world), `primed` (every foveated image is foveated), `pending` (the
+setting asks for other targets, which follow within about 250 ms), the profile
+`create`/`update` results, the probed texture state and `fallback`. New targets also update the
+page's copy at once, without waiting for the next window. The log also has
+`FOVEATION_CAPABILITY`, `FOVEATION_FILTER` and `GRAPHICS_START` (the stored settings) at startup,
+`VIEW_FOV` (each eye's field of view in degrees) after focus, `FOVEATION_PROFILE` for every
+applied profile, `WORLD_TARGET` (with `filtered`) for new targets, `FOVEATION_PRIMED` and
+`FOVEATION_TEXTURE` for each image the world renders into. The texture line reads
 `GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM`, `_MIN_PIXEL_DENSITY_QCOM` and the focal-point count
 back from the image on its second frame (the first frame of a new image read 0 bits on the
 headset although every frame was foveated): 0 bits for Off, and bits of 0 at a level mean the
@@ -215,21 +292,24 @@ runtime does not foveate this GLES swapchain.
 the foveated world target, before the filter's step pass. Its fragments run at the runtime's
 actual density: green, yellow,
 orange and red mark a neighbour step of one, two, three and four or more full-resolution pixels
-(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), and a
-one-pixel checker can only be resolved at full density (the filter smooths it elsewhere). A magenta ring marks the
-runtime-reported centre when it is valid. Without one, on foveated targets, a white ring marks
-the image centre (NDC 0, 0, `GL_QCOM_texture_foveated`'s default focal point) as the fallback.
-Both rings are computed, not measured. Reading density
+(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), blue marks blocks
+the filter's code cannot describe and only smooths, and a one-pixel checker can only be resolved
+at full density (the filter rebuilds it elsewhere). On foveated targets a white ring marks the
+image centre (NDC 0, 0, `GL_QCOM_texture_foveated`'s default focal point); it is computed, not
+measured. Reading density
 from derivatives is derived from the QCOM text, not a documented debugging aid. The view is
 not saved and turns off when the app restarts. Pages can also switch it with
 `officeNative.graphics.set({ foveationDebug: true })`.
 
-Not documented anywhere, and so still headset checks: whether an eye-tracked profile moves the
-full-density region on GLES (every published eye-tracked implementation is Vulkan; it needs a
-wearer) and the NDC axis convention of the reported centre for a GL image. The 2026-10-01
-headset run showed that the runtime does foveate GLES scaled-bin swapchains (bits 3 at every
-level; app GPU frame time 32.7 ms with Off and 9.7 ms with Balanced at 116% resolution, measured
-with each state on freshly created targets) and keeps the first profile of each swapchain.
+Not documented anywhere, and so still headset checks: that the first direct submission foveates
+every image of the foveated set (`FOVEATION_PRIMED` … `complete=1`, then `filteredFrames` and no
+`primingFrames` in `FOVEATION_METRICS`), where in its block a reduced bin's `gl_FragCoord` sits
+(the code accepts the block centre and the centre of its first pixel), and that the bins' widths
+are ones the code describes (no blue in the diagnostic view). The 2026-10-01 headset runs showed
+that the runtime foveates GLES scaled-bin swapchains it is given in a projection layer (bits 3 at
+every level; app GPU frame time 32.5 ms with Off and 7.1 ms with Balanced at 116% resolution,
+measured with each state on freshly created targets, before the filter ran), keeps the first
+profile of each swapchain, and leaves a never-submitted one at 0 bits.
 
 The original desktop windows, including terminals, are displayed through a 2400×1600 Android
 Surface compositor layer. This preserves text resolution independently of world foveation.
@@ -259,17 +339,31 @@ and the DroidProxy refresh key on the machine monitor carries only its ↻ glyph
 window, opened on purpose, still lists the controller roles. Desktop and WebXR keep their hints.
 No name, status bubble, task card, light or pitch floats over a character either
 (`floatingTagsShown`): a worker wears no antenna or status bulb, and its headset band runs from
-ear cup to ear cup. A worker's name, engine, state and task are printed on its seat's nameplate
-(`src/client/world/nameplate.ts`): a three-sided sign on its desk, a plate on the back of its
-bean bag or meeting chair, or a screen set into the front of a board agent's kiosk. Its state
-reads like a device's status light, a colored dot and a word ("READY"). A status lamp on the
-seat, a lit dome in a dark collar, glows in the worker's status color, breathing while it works
-and blinking while it waits on someone: on top of the desk sign, on the plate's top edge, or on
-the kiosk counter's front corner. A teammate wears a name badge on their shirt. A kiosk has no
-"Ask me" sign: its screen shows the agent's name, its board and its state. The first trigger pull
+ear cup to ear cup. A worker's name and engine are engraved on its seat's nameplate
+(`src/client/world/nameplate.ts`), lit by the room like the desk or chair it is on: a brass
+plate on each sloped face of a wooden name block lying on its desk (one toward the chair and the
+aisle behind it, one toward the desk's front), or a brass plate on the back of its bean bag or
+meeting chair. A status lamp beside it, a lit dome in a steel collar, glows in the worker's status
+color, breathing while it works and blinking while it waits on someone: on the desk in front of
+the block's end, on the plate's top edge, or on the kiosk counter's front corner. The title bar
+across the top of its laptop's screen says the rest, as a terminal window's does: its name and
+engine on the left, and what it's on and its state, a colored dot and a word ("READY"), on the
+right (`Laptop.setTitle` in `src/client/world/laptop.ts`). A teammate wears a name badge on their
+shirt. A board agent's kiosk has a screen set into its front instead, and no "Ask me" sign: its
+screen shows the agent's name, its board and its state. The first trigger pull
 at the kiosk greets the agent, which looks up while the screen says what it does; the screen goes
 back to the nameplate once you ask it something or walk away, and the next pull opens the ask
 form.
+The office's signs are printed objects too (`signsPrinted`, `textPlane` in
+`src/client/world/toon.ts`): each is a plate on a board fixed to a wall, a shelf, a beam, a post or
+a rail, its face lit by the room with a little light of its own so it reads in the dark, its
+board's steel or wooden edge showing round it, and its words without emoji ("↑ floor-beta" on the
+wall beside the ladder). A sign that is a black tag with white words on the desktop is white enamel
+with dark letters (`enamel`), which shows the room's light and shade as a black face can't. None hangs in the air: the boards' titles sit flat on the wall over them,
+the bookshelf's "Docs" board stands on the shelf's crown, the fire pole's sign is strapped under its
+railing's top bar, and the golf hole's sign spans both its posts (`tests/native-nameplates.test.ts`
+casts rays behind and under every sign). An exit sign stays lit from inside. Desktop and WebXR keep
+their flat glowing labels.
 A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
 While the workspace is open, its layer is composited beneath the world layer, which shows it
 through a hole so the player's controllers, rays and held gun stay in front of it, and the toast
@@ -340,6 +434,9 @@ closing the workspace. Native FPS alone would have concealed this freeze.
 
 ### Laptop-screen sharpness and refresh preference
 
+The separate sharp-screen pass described here belongs to the historical GLES renderer.
+The Vulkan office renderer does not yet implement this pass.
+
 On 2026-09-29 the owner physically wore the headset and reported that the office looked good,
 except for pixelated worker laptop terminal screens even at the highest graphics settings.
 Those screens already use lossless 2048×1360 canvases, and the native exporter preserves that
@@ -380,7 +477,8 @@ the recommendation and runtime bounds. At this headset's reported limits, the un
 reaches approximately 169.8%, or 3152×3668 per eye, within the 3152×3682 runtime limit.
 These are OpenXR render-image dimensions, not a claim of one render pixel per physical panel pixel.
 
-Resolution choices allocate matching world targets, bounded by both eye views, OpenXR system
+The GLES implementation described in this subsection allocates matching world targets,
+bounded by both eye views, OpenXR system
 limits and GLES texture limits. The default does not allocate maximum-size world targets.
 Slider dragging previews the choice and applies it on release; native target changes wait
 250 ms for a stable choice. Replacement starts on the GL thread with no acquired world images.
@@ -450,6 +548,86 @@ The WebView loads only the office origin the user selects. There is no privilege
 interface and no certificate-error bypass. User-selected external issue, PR and documentation
 links open through Android's browser. Microphone requests require the chosen office origin,
 recent user input and Android permission.
+
+### Vulkan eye-tracked foveation spike (debug builds)
+
+This Android XR runtime gives eye-tracked foveation only to Vulkan sessions: its OpenGL ES
+compositor fails `xrGetFoveationEyeTrackedStateMETA` on every frame and always uses its static
+model. Debug builds also contain a separate Vulkan test session (`vk_spike*.cpp`,
+`shaders/vk`). It renders a world-locked test room, never the office, and connects to no office.
+The default debug and release route is the Vulkan office renderer. Release builds do not compile
+the test-room session (`OFFICE_VULKAN_SPIKE` is set only for the debug build type) and ignore the
+test-room switch; shared Vulkan GPU and shader support is compiled into both variants.
+
+It follows Godot's working Vulkan path:
+
+- `XR_KHR_vulkan_enable2` creates the instance, device and session.
+- The world swapchain carries `XrSwapchainCreateInfoFoveationFB{FRAGMENT_DENSITY_MAP}` and
+  `XrVulkanSwapchainCreateInfoMETA{FRAGMENT_DENSITY_MAP_OFFSET}`.
+- Each runtime density image is attached to the multiview render pass.
+- Each frame runs acquire, wait, `xrUpdateSwapchainFB` and `xrGetFoveationEyeTrackedStateMETA`,
+  records the pass, and ends it with per-eye offsets in `vkCmdEndRenderPass2`.
+
+A density overlay colours each fragment by its `gl_FragSizeEXT` area: green 1 px, yellow 2, orange
+4, red 8, magenta larger. A white cross marks the map's centre: the eye's optical axis (from its
+asymmetric field of view, not the image centre) plus the applied offset. The
+Android Surface workspace panel and status card are still created in the Vulkan session; the
+panel describes the overlay (it names no controls, as nothing in the headset app does) and the
+status card shows the live eye state.
+
+Start it (the app must be stopped first, because the activity is `singleTask`):
+
+```bash
+adb shell am force-stop dev.droidoffice.xr
+adb shell am start -n dev.droidoffice.xr/.OfficeActivity --es xr_renderer vulkan-spike \
+  --es vk_msaa 4 --es vk_offsets eye --es vk_level high
+```
+
+| Extra | Values (default first) |
+| --- | --- |
+| `vk_msaa` | `4` (resolved in the subpass), `1`, `4ms` (`VK_EXT_multisampled_render_to_single_sampled`, when the device has it) |
+| `vk_offsets` | `eye`, `none` (count 0), `sweep` (synthetic offsets, 3 s per point) |
+| `vk_level` | `high`, `medium`, `low`, `none` |
+| `vk_overlay` | `1`, `0` |
+| `vk_fixed` | `0`, `1` (profile without the META eye-tracked struct) |
+| `vk_foveation` | `on`, `off` (no foveation struct on the swapchain) |
+| `vk_flip` | `none`, `x`, `y`, `xy` (axis of `foveationCenter`) |
+| `vk_profile` | `live` (one profile re-applied each frame), `per-frame` (Godot's create, update, destroy) |
+| `vk_subsampled_probe` | `0`, `1` (create a subsampled swapchain once and log the result) |
+
+Controllers change modes live: right trigger cycles the level, right A the offsets mode, right B
+the overlay, left trigger switches eye-tracked and fixed, left X the status card, left Y the flip
+and left Menu the panel.
+
+The log lines, all with tag `OfficeXR`:
+
+- `VK_CAPS` gives the extensions, the FDM, offset and multiview features, the texel size, the
+  offset granularity, lazily allocated memory and the instance layers.
+- `FOVEATION_VK_SWAPCHAIN`, `FOVEATION_VK_IMAGES` and `FOVEATION_VK_GATES` give the create
+  results, the density image size and what blocks the eye-tracked path.
+- `FOVEATION_VK_PROFILE` gives each profile's create and update results.
+- `FOVEATION_VK` runs per frame, rate-limited: every change, the first frames after a mode change,
+  and one per second. It gives the update and state results, flags, `valid`, both centres and the
+  applied offsets.
+- `FRAME_METRICS` has `renderer` and `msaa` besides the keys `harness/metrics.sh` reads.
+  `FOVEATION_METRICS` has the window summary (queries, successes, valid frames, last result,
+  centres and their spread, offsets); the page receives it as `foveation`. In M1 the summary
+  sat inside `FRAME_METRICS`, which then passed Android's 1023-byte log record and lost its world
+  size. `RUNTIME_METRICS` and `SCENE_METRICS` keep the shape `harness/metrics.sh` reads.
+- `VIEW_FOV` gives each eye's field of view in degrees and its optical axis in pixels, after
+  focus.
+
+Eye-tracked foveation is proven only when all of these appear together:
+
+- the runtime logs `[FoveationManager] Using eye tracked model with level N` (not `static model`);
+- `FOVEATION_VK ... state=0 ... valid=1` appears on nearly every frame;
+- the centres change when the wearer looks around;
+- the overlay's green patch follows the eyes.
+
+The runtime sets `valid` whenever eye-tracked foveation is enabled, so `valid=1` on an unworn
+headset proves nothing about tracking. The offset sign, the eye index and whether the runtime
+or `VK_LAYER_ANDROID_foveation` already moves the map are measured with `sweep`, `none` and a
+wearer. They are not assumed.
 
 ## Build and install
 
@@ -616,12 +794,42 @@ well inside the window.
 
 ## Acceptance status
 
-The latest published release is [v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
-Its exact published APK is installed, with retained app data and the matching laptop server
-running. Earlier session, nearby-office picker and layout checks are recorded in
+### Vulkan office validation, 2026-10-01
+
+The locally signed `0.1.302-vulkan-dev` debug APK (version code 302) is installed with retained
+app data. Its signature and 16 KB alignment use the existing release key and signing lineage.
+The installed office renderer initializes on the Adreno 740 with a two-eye multiview pass,
+4× MSAA, runtime density images and fragment-density-map offsets. Focused device logs report
+`renderer: "vulkan"`, eye-tracked foveation with valid changing centres, and no graphics error.
+
+The populated office has 1,713 scene objects and 97 resident textures. Scene sequences advance
+with no rejected packets, pending uploads or failed programs. Initial focused windows at
+1856×2160 per eye measured approximately 89.6–89.8 submitted fps at an actual 90 Hz refresh.
+The latest 60.245-second focused sample at 2784×3240 per eye (150%) measured
+79.658–85.834 submitted fps per window and 286 missed periods. Its scene sequences advanced
+through 13,936, and eye-tracked queries remained valid. These are different resolution/view
+conditions, not a controlled performance comparison or a sustained-90 pass.
+
+Node 22 clean install, lint, typecheck and coverage pass (866 tests). The complete macOS
+ASan/UBSan native host run, seven static Vulkan shader stages and four links, all generated
+Vulkan material shader stages/links, and both Android variants pass. Linux Mesa renders the
+real-office fixture at 1× and 4× MSAA with GPU timing and no Khronos validation messages;
+the ASan/UBSan run also passes both variants. The host fixture exercises the same default
+multiview renderer construction as the installed app.
+
+Physical visual confirmation, the required workspace-open/closed performance views, sustained
+90 Hz and the separate sharp-screen pass remain open. The Vulkan path reports
+`sharpScreens: false`; the scene also reports one unsupported object. No GLES or fixed-profile
+fallback is installed.
+
+The dated release checks below include
+[v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289), whose exact published
+APK was installed with retained app data and a matching laptop server.
+Earlier session, nearby-office picker and layout checks are recorded in
 [published release validation](#published-release-validation-2026-09-30).
 The font, sampling and resolution changes and actual device checks are recorded in
 [resolution and glyph release validation](#resolution-and-glyph-release-validation-2026-09-30).
+Vulkan office acceptance is not established by these earlier GLES results.
 Physical terminal readability, held-card comfort, required-view performance and recovery from
 an actual runtime change to 72 Hz remain open acceptance checks. The dated measurements below
 preserve earlier experiments and should not be read as the current release pointer.

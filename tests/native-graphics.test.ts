@@ -121,4 +121,9 @@ test('the menu reports the bound targets while a new foveation choice is still b
     nativeFoveationStatus({ foveation: { level: 'medium', eyeTracked: false, filtered: false, fallback: 'filtered targets rejected' } }),
     'Currently applied: Medium runtime level, fixed at the centre. Fallback: filtered targets rejected.',
   );
+  // The GLES renderer reports fixed foveation, and how its passes were submitted, without eye-tracked state.
+  assert.equal(
+    nativeFoveationStatus({ foveation: { level: 'medium', setting: 'balanced', mode: 'fixed', eyeTracked: false, filtered: true, filteredFrames: 448, primingFrames: 0, pending: false, fallback: '' } }),
+    'Currently applied: Medium runtime level, fixed at the centre, smoothed periphery.',
+  );
 });

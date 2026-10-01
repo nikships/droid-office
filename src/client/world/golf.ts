@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BALCONY, FLOOR, GOLF_HOLE, GOLF_TEE, ROAD, SLAB, STOREY, STREET_Y, WALL_HEIGHT, WALL_T } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
 import { bulb, neighbourBoxes, streetLamp, tree, type NightParts } from './outside';
+import { signsPrinted } from '../native/mode';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
 import { disposeSprite, mergeByMaterial, mesh, textPlane, textSprite, toon } from './toon';
 
@@ -62,6 +63,9 @@ const CUP = 0.12;
 const CUP_SPEED = 1.8;
 /** The flagstick, taller than a real one so it shows up from the balcony. */
 const STICK = 3.4;
+/** The hole's sign's two posts: how far either side of its middle they stand, and how thick they are (meters). */
+const POST_X = 1.1;
+const POST_W = 0.12;
 
 /** What a ball can come down on. `below` is a balcony further down the building. */
 export type Lie = 'green' | 'fringe' | 'fairway' | 'rough' | 'sand' | 'road' | 'deck' | 'roof' | 'below';
@@ -241,12 +245,17 @@ export function buildGreen(ground: THREE.Group, colliders: Collider[], night: Ni
   // A sign where the fairway starts, facing the office: which hole it is.
   const sx = fx1 + 1.8;
   const sz = FAIRWAY_Z0 + 0.6;
-  for (const dx of [-1.1, 1.1]) {
-    parts.add(mesh(new THREE.BoxGeometry(0.12, 1.5, 0.12), toon('#8a5a3b'), sx + dx, G + 0.75, sz));
+  for (const dx of [-POST_X, POST_X]) {
+    parts.add(mesh(new THREE.BoxGeometry(POST_W, 1.5, POST_W), toon('#8a5a3b'), sx + dx, G + 0.75, sz));
     colliders.push({ minX: sx + dx - 0.08, maxX: sx + dx + 0.08, minZ: sz - 0.08, maxZ: sz + 0.08, bottom: G, top: G + 1.5 });
   }
   ground.add(mergeByMaterial(parts));
   const sign = textPlane('⛳ Hole 1 · Par 1', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+  if (signsPrinted()) {
+    // In the headset app a board fixed across the tops of both posts, as wide as they stand apart.
+    const board = sign.getObjectByName('sign-board') as THREE.Mesh<THREE.BoxGeometry>;
+    sign.scale.setScalar((2 * POST_X + POST_W) / board.geometry.parameters.width);
+  }
   sign.position.set(sx, G + 1.5, sz - 0.07);
   sign.rotation.y = Math.PI;
   ground.add(sign);

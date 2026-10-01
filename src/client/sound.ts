@@ -317,6 +317,24 @@ export class OfficeSound {
     this.count('paper');
   }
 
+  /**
+   * A menu floating in the headset app (native/menus.ts): a soft rising chirp as it opens, falling as
+   * it folds away, and a short tick for a press.
+   */
+  menu(kind: 'open' | 'close' | 'press') {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count(`menu-${kind}`);
+    const t0 = ctx.currentTime + 0.005;
+    if (kind === 'press') {
+      this.blip(this.ambience, t0, 1500, 0.8, 0.035, 0.05, 'triangle');
+      return;
+    }
+    const up = kind === 'open';
+    this.blip(this.ambience, t0, up ? 520 : 780, up ? 1.5 : 0.66, 0.11, 0.045, 'triangle');
+    this.blip(this.ambience, t0 + 0.05, up ? 780 : 520, up ? 1.3 : 0.75, 0.09, 0.03, 'sine');
+  }
+
   // ---- The ladder and the fire poles -----------------------------------------------------------
 
   /** Your hand closing on a steel rung, or on the pole: a soft clank. */

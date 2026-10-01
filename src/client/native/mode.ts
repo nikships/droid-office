@@ -33,13 +33,25 @@ export function withControlHint(text: string, hint: string): string {
  * the status bubble or task card over a worker, the bulb on its antenna, the "Ask me" pitch at a
  * board agent's kiosk and the farewell over a worker walking out. Desktop and WebXR keep them. The
  * headset app (`/?native=1`) floats no name, state, light or pitch over anyone, as in Half-Life:
- * Alyx: a worker wears no antenna, and its name, engine and state are printed on its seat's
- * nameplate (world/nameplate.ts), whose status lamp and the worker's body show how it's doing; a
- * teammate wears a name badge; and a board agent's pitch lights the screen in its kiosk's front
- * only once you greet it.
+ * Alyx: a worker wears no antenna; its name and engine are engraved on its seat's nameplate
+ * (world/nameplate.ts), whose status lamp and the worker's body show how it's doing, and the title
+ * bar of its laptop's screen says its state and task (world/laptop.ts setTitle); a teammate wears a
+ * name badge; and a board agent's kiosk screen shows its state, and its pitch only once you greet it.
  */
 export function floatingTagsShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
   return !isNativeSearch(search);
+}
+
+/**
+ * Whether the world's signs are printed objects rather than labels. Desktop and WebXR keep their
+ * flat, glowing, emoji-led labels. In the headset app (`/?native=1`), as in Half-Life: Alyx, a sign
+ * is a plate on a board fixed to a wall or a shelf (world/toon.ts textPlane): its face is lit by
+ * the room like the wall around it, its board's edge shows round it, and it says its words without
+ * emoji. A worker's name is engraved on a brass plate on a wooden block on its desk
+ * (world/nameplate.ts).
+ */
+export function signsPrinted(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
+  return isNativeSearch(search);
 }
 
 /**

@@ -10,12 +10,16 @@ uncommitted or unpublished work. Collection starts when that worker's removal ar
 Every client on the floor renders the downed state and the medic sequence.
 In the headset nothing opens either, and the revival is the use action with a free hand at the
 body (see the gun section of [the controller interactions](vr-native-controller-interactions.md)).
-Each body has its own scene, so several can be down at once. Given the bullet's direction (the
-headset's own shots, which go down at once rather than waiting for the server's echo), the hit
-shoves the body along it and leans it away from the shooter in the first frame, easing into the
-fall, and the body sprawls out on the side the bullet was heading. It lands with its length flat
-along the floor and its lowest point on it, so the medics, a reaching hand and the blood pool all
-meet it at floor level.
+Each body has its own scene, so several can be down at once. Given the bullet's direction and
+the shooter's eyes (the headset's own shots, which go down at once rather than waiting for the
+server's echo), the body reels from the hit instead of tumbling: thrown back out of its chair
+along the bullet, it staggers away from the shot onto its feet beside the chair, then goes over
+backwards onto the open floor, where the shooter can see it past the furniture round it (see the
+gun section of [the controller interactions](vr-native-controller-interactions.md)). Without a
+bullet (the desktop, and other clients) it tumbles out sideways. Either way it lands with its
+length flat along the floor and its lowest point on it, so the medics, a reaching hand and the
+blood pool all meet it at floor level; a reeled body's pool spreads under its chest, and its
+flung-out arms come in to its sides as it settles onto the stretcher or gets back up.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
 turning into the fallen worker's orientation. They approach its torso rather than its foot

@@ -5,7 +5,7 @@ import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, Work
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
-import { controlHintsShown, worldNotice } from '../native/mode';
+import { controlHintsShown, signsPrinted, worldNotice } from '../native/mode';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
@@ -16,6 +16,34 @@ const BOARD_H = 600;
 // constants in style.css). The board's cards all read as one family; the marker squares vary.
 export const NOTE_COLORS = ['#161616', '#15181c', '#17151a', '#141618', '#16161a'];
 export const PINS = ['#ee6018', '#5aa9e6', '#3ccf91', '#f2b84b'];
+
+/**
+ * How far down a board's own heading reaches (see drawHeading). The task queue always heads its
+ * screen this way; in the headset app (signsPrinted) every board does, since no sign hangs on the
+ * wall over it (world/office.ts): its name is part of the screen, inside its frame.
+ */
+const HEAD_H = 110;
+
+/** A board's heading across the top of its screen: its name in orange over a rule, and how it stands (`summary`) on the right. */
+function drawHeading(g: CanvasRenderingContext2D, title: string, summary: string) {
+  g.textBaseline = 'alphabetic';
+  g.textAlign = 'left';
+  g.fillStyle = '#ee6018';
+  g.font = `700 46px ${MONO}`;
+  g.fillText(title, 40, 76);
+  // A straight rule under the heading.
+  g.strokeStyle = '#ee6018';
+  g.lineWidth = 4;
+  g.beginPath();
+  g.moveTo(42, 92);
+  g.lineTo(Math.max(400, 44 + g.measureText(title).width), 92);
+  g.stroke();
+  g.textAlign = 'right';
+  g.fillStyle = '#8c8c8c';
+  g.font = `500 24px ${MONO}`;
+  g.fillText(summary, BOARD_W - 40, 72);
+  g.textAlign = 'left';
+}
 
 export function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
   const words = text.split(/\s+/);
@@ -155,8 +183,11 @@ export class BoardTexture {
     for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
     const open = (state.items as (GhIssue | GhPull)[]).filter((i) => i.state === 'OPEN');
     const jira = this.kind === 'issues' ? this.jira : null;
-    const top = jira ? TAB_H : 0;
+    // A Jira epic's tab strip names the views; otherwise the headset app's board heads its screen with its name.
+    const headed = !jira && signsPrinted();
+    const top = jira ? TAB_H : headed ? HEAD_H : 0;
     if (jira) this.drawTabs(jira, open.length);
+    else if (headed) drawHeading(g, this.kind === 'issues' ? 'ISSUES' : `${words().pull.toUpperCase()}S`, open.length ? `${open.length} open` : '');
     if (jira && this.shown === 'jira') {
       this.drawJira(jira, top);
       this.texture.needsUpdate = true;
@@ -388,13 +419,15 @@ export class ServicesBoardTexture {
     // A faint dot grid, like the issues and PRs boards.
     g.fillStyle = 'rgba(255, 255, 255, .045)';
     for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
+    const top = signsPrinted() ? HEAD_H : 0;
+    if (top) drawHeading(g, 'SERVICES', rows.length ? `${rows.length} running` : '');
     if (!rows.length) {
       g.textAlign = 'center';
       g.fillStyle = '#eeeeee';
       g.font = `700 44px ${MONO}`;
       // The headset app's board states only what is so; the line on how it fills is desktop help.
       const help = controlHintsShown();
-      g.fillText('No web servers running', W / 2, help ? H / 2 - 20 : H / 2 + 14);
+      g.fillText('No web servers running', W / 2, help ? H / 2 - 20 : (H + top) / 2 + 14);
       g.fillStyle = 'rgba(140, 140, 140, .9)';
       g.font = `500 28px ${SANS}`;
       if (help) g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
@@ -403,10 +436,10 @@ export class ServicesBoardTexture {
       return;
     }
     const shown = rows.slice(0, 5);
-    const rowH = Math.min(140, (H - 40) / shown.length);
+    const rowH = Math.min(140, (H - 40 - top) / shown.length);
     const fs = Math.round(rowH * 0.36);
     shown.forEach((r, i) => {
-      const y = 20 + i * rowH;
+      const y = top + 20 + i * rowH;
       g.fillStyle = 'rgba(255, 255, 255, .04)';
       g.fillRect(24, y + 6, W - 48, rowH - 12);
       g.strokeStyle = 'rgba(255, 255, 255, .12)';
@@ -494,23 +527,7 @@ export class QueueBoardTexture {
     // A faint dot grid, like the other boards.
     g.fillStyle = 'rgba(255, 255, 255, .045)';
     for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
-    g.textBaseline = 'alphabetic';
-    g.textAlign = 'left';
-    g.fillStyle = '#ee6018';
-    g.font = `700 46px ${MONO}`;
-    g.fillText('TASK QUEUE', 40, 76);
-    // A straight rule under the heading.
-    g.strokeStyle = '#ee6018';
-    g.lineWidth = 4;
-    g.beginPath();
-    g.moveTo(42, 92);
-    g.lineTo(400, 92);
-    g.stroke();
-    g.textAlign = 'right';
-    g.fillStyle = '#8c8c8c';
-    g.font = `500 24px ${MONO}`;
-    g.fillText(summary, W - 40, 72);
-    g.textAlign = 'left';
+    drawHeading(g, 'TASK QUEUE', summary);
     if (!rows.length) {
       g.textAlign = 'center';
       g.fillStyle = '#eeeeee';
@@ -528,7 +545,7 @@ export class QueueBoardTexture {
     const rowH = Math.min(62, (H - 150) / shown.length);
     const fs = Math.round(rowH * 0.5);
     shown.forEach((r, i) => {
-      const y = 128 + i * rowH + fs;
+      const y = HEAD_H + 18 + i * rowH + fs;
       g.fillStyle = r.color;
       g.font = `600 ${fs}px ${SANS}`;
       g.fillText(r.icon, 44, y);

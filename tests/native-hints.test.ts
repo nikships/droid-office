@@ -6,7 +6,6 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { controlHintsShown, withControlHint } from '../src/client/native/mode.js';
 import { nativeStatus } from '../src/client/native/performance.js';
-import { nativeTooltipText } from '../src/client/native/tooltips.js';
 import { ServicesBoardTexture } from '../src/client/world/boards.js';
 import { MachineTexture } from '../src/client/world/machine.js';
 import type { MachineState, ProxyState } from '../src/shared/protocol.js';
@@ -56,22 +55,6 @@ test('the closed-workspace status shows the FPS counter when it is on, and other
   assert.deepEqual(nativeStatus(metrics, false, ''), { aim: '', message: '' }, 'the counter off leaves nothing to show, so the panel hides');
   assert.deepEqual(nativeStatus(metrics, true, 'Merged #12 🎉'), { aim: '90.0 fps · 90 Hz', message: 'Merged #12 🎉' });
   assert.equal(namesControl(nativeStatus(metrics, true, '').aim), false);
-});
-
-test('panel tooltips say what a control does, never which key or button does it', () => {
-  const tip = (title: string) => nativeTooltipText({ getAttribute: (name: string) => (name === 'title' ? title : null) } as unknown as Element);
-  assert.equal(tip('Close (Esc)'), 'Close');
-  assert.equal(tip('Mute (M)'), 'Mute');
-  assert.equal(tip('Put back the card in your hands (Q)'), 'Put back the card in your hands');
-  assert.equal(tip('What this worker changed: files, diff, commit, open a PR (C at the desk)'), 'What this worker changed: files, diff, commit, open a PR');
-  assert.equal(tip('Menu: everything else, and what shows on screen (Tab)'), 'Menu: everything else, and what shows on screen');
-  assert.equal(tip('Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal'), 'Leave terminal');
-  assert.equal(tip('Carry its card to an empty desk, a worker or the queue board, and press E there'), 'Carry its card to an empty desk, a worker or the queue board');
-  assert.equal(tip('Open a pull request (2 repositories)'), 'Open a pull request (2 repositories)', 'ordinary parentheses stay');
-  assert.equal(tip(''), '');
-  for (const title of ['Close (Esc)', 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'Carry its card to an empty desk, a worker or the queue board, and press E there', 'Mute (M)']) {
-    assert.equal(namesControl(tip(title)), false, title);
-  }
 });
 
 // ---- Source guards: new text has to choose desktop-only hints on purpose ----

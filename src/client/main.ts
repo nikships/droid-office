@@ -44,7 +44,7 @@ import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { Net } from './net';
 import { guardLeaving, leaveTo } from './leave';
-import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveProfile, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { Climber, gripOf, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
@@ -128,14 +128,19 @@ import { NativeScene } from './native/scene';
 import { ShotStage, TargetStage, type ShotOutcome, type StageReviveOptions, type StageShotOptions, type StageTargetOptions, matchWorker } from './native/stage';
 import { bodyAt, PendingShots, REVIVE_TOUCH, SHOT_ECHO_MS } from './native/downed';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
+import { NativeMenus } from './native/menus';
+import { KioskDraft, NativeTyping, type TypingTarget } from './native/typing';
+import { nativeUse } from './native/world-use';
+import { calibrateNativeHeight, nativeEyeHeightNow, nativeFloorOffset, nativeHeight, setNativeHeight } from './native/height';
+import { modifiedEnter, wantsCsiEnter } from './term-keys';
 import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
 import { Nameplate } from './world/nameplate';
-import { getNativeGraphicsSettings, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { getNativeGraphicsSettings, nativeGraphicsMetrics, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
 import { nativeGraphicsPacket } from './native/graphics-settings';
 import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
-import { captureVrKeys } from './vr/physical-keys';
+import { captureVrKeys, type KeyLike } from './vr/physical-keys';
 import { probeXRSupport } from './vr/support';
 
 // Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
@@ -143,11 +148,15 @@ const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
 const nativeMode = isNativeMode();
-/** Names, status bubbles and pitches float over characters; the headset app prints them on seats' nameplates instead (see plateAt). */
+/** Names, status bubbles and pitches float over characters; the headset app puts them on seats' nameplates and laptops instead (see plateAt). */
 const floatingTags = floatingTagsShown();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
+/** The headset app's two menus, settings and hire, floating where they open (native/menus.ts). */
+let nativeMenus: NativeMenus | null = null;
+/** Where a keyboard paired to the headset types: the laptop or kiosk you are at (native/typing.ts). */
+let nativeTyping: NativeTyping | null = null;
 /** Debug-only shot and revival staging for headset captures (native/stage.ts); inert unless the host is debuggable. */
 let shotStage: ShotStage | null = null;
 /** Debug-only practice targets for those staged shots: hired through the office, and sent home again (native/stage.ts). */
@@ -252,8 +261,8 @@ const idleAgents = STATIONS.map((def) => {
 // ---- Nameplates (the headset app) ----------------------------------------------------------------
 /**
  * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
- * there, what it is and how it's doing, printed where it sits instead of floating over its head. A
- * kiosk's is the screen set into its front.
+ * there and what it is, engraved where it sits instead of floating over its head, with a status lamp
+ * for how it's doing (its laptop's title bar says the rest). A kiosk's is the screen set into its front.
  */
 const plates = new Map<string, Nameplate>();
 
@@ -298,9 +307,83 @@ function startTalking(deskId: string) {
   if (!kind || !plate) return;
   if (talkingTo !== deskId) stopTalking();
   talkingTo = deskId;
-  const info = STATION_INFO[kind];
-  plate.pitch({ heading: `${info.icon} ${STATION_AGENT[kind].name}`, title: info.offer, body: info.does });
+  paintKiosk(deskId);
   agentAt(deskId)?.cheer(0.6);
+}
+
+/** What you have typed to each kiosk's agent on a keyboard paired to the headset, not yet sent. */
+const kioskDrafts = new Map<string, KioskDraft>();
+/** The kiosk that just took a request, and until when its screen says so. */
+let kioskSent: { deskId: string; text: string; until: number } | null = null;
+
+/** A kiosk's screen while you talk to its agent: its pitch, what you are typing to it, or what it just took. */
+function paintKiosk(deskId: string) {
+  const kind = DESK_BY_ID.get(deskId)?.station;
+  const plate = plates.get(deskId);
+  if (!kind || !plate || talkingTo !== deskId) return;
+  const info = STATION_INFO[kind];
+  const heading = `${info.icon} ${STATION_AGENT[kind].name}`;
+  const draft = kioskDrafts.get(deskId)?.value ?? '';
+  if (draft) plate.pitch({ heading, title: '', body: '', typing: draft });
+  else if (kioskSent?.deskId === deskId && performance.now() < kioskSent.until) plate.pitch({ heading, title: 'On it', body: kioskSent.text });
+  else plate.pitch({ heading, title: info.offer, body: info.does });
+}
+
+/** A key typed to a kiosk's agent: onto its screen, and Enter hands it the request (as the desktop's ask form does). */
+function kioskKey(deskId: string, key: KeyLike) {
+  const kind = DESK_BY_ID.get(deskId)?.station;
+  if (!kind) return;
+  if (talkingTo !== deskId) startTalking(deskId);
+  let draft = kioskDrafts.get(deskId);
+  if (!draft) kioskDrafts.set(deskId, (draft = new KioskDraft()));
+  const changed = draft.key(key, (text) => {
+    const w = store.workerAtDesk(deskId);
+    // Nobody there yet: asking hires the agent, which a full office can't.
+    if (!w && officeFull(store.machine)) {
+      kioskSent = { deskId, text: `The office is at its limit of ${store.machine.limit} workers`, until: performance.now() + 4000 };
+      return;
+    }
+    const c = rememberedChoice(store.project, `desk:${deskId}`);
+    net.send({ t: 'station.prompt', deskId, prompt: text, provider: c.provider, model: c.model, effort: c.effort });
+    kioskSent = { deskId, text: clip(text, 90), until: performance.now() + 4000 };
+    agentAt(deskId)?.cheer(0.4);
+    setTimeout(() => paintKiosk(deskId), 4100);
+  });
+  if (changed) paintKiosk(deskId);
+}
+
+/** A paired keyboard types into a laptop you are within this far of (metres, flat), and lets go of it beyond. */
+const TYPE_AT = 1.7;
+const TYPE_LEAVE = 2.6;
+
+/** A worker whose terminal takes keys: at a desk (a kiosk agent takes requests instead), awake, and not shot. */
+function typingWorker(w: WorkerInfo): boolean {
+  return !DESK_BY_ID.get(w.deskId)?.station && !w.lost && !isAsleep(w.status) && w.downedUntil === undefined;
+}
+
+/** The laptop you are standing at: the nearest one in front of you, within TYPE_AT. */
+function nearestLaptop(): TypingTarget | null {
+  if (!nativeControls?.active || upTop || trip) return null;
+  const eye = camera.getWorldPosition(new THREE.Vector3());
+  const look = nativeControls.lookDir(new THREE.Vector3()).setY(0);
+  if (look.lengthSq() < 1e-6) return null;
+  look.normalize();
+  const at = new THREE.Vector3();
+  let best: TypingTarget | null = null;
+  let bestD = TYPE_AT;
+  for (const [id, v] of workerViews) {
+    const w = store.workers.get(id);
+    if (!w || !typingWorker(w)) continue;
+    v.laptop.root.getWorldPosition(at);
+    const dx = at.x - eye.x;
+    const dz = at.z - eye.z;
+    const d = Math.hypot(dx, dz);
+    // Ahead of you: within about 60 degrees of where you look.
+    if (d > bestD || (d > 0.05 && (dx * look.x + dz * look.z) / d < 0.5)) continue;
+    bestD = d;
+    best = { kind: 'laptop', workerId: id };
+  }
+  return best;
 }
 
 /** The kiosk's screen goes back to the agent's nameplate. */
@@ -617,6 +700,8 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     if (!trip && lift().pressFloor(it.floorId)) ride(it.floorId);
     return;
   }
+  // The headset app has no workspace: what the trigger does plays out in the world (or nothing does).
+  if (nativeMode) return nativeUseE(it, note, spot);
   if (vrUi) {
     // The same issue preset as desktop, in a world-space prompt.
     if (carrying && (it.kind === 'meeting' || (it.kind === 'desk' && it.deskId && DESK_BY_ID.get(it.deskId)?.room && !store.workerAtDesk(it.deskId)))) {
@@ -682,6 +767,63 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     }
   }
   use(it, 'E', note, spot);
+}
+/**
+ * The trigger on something in the world, in the headset app (native/world-use.ts): it does its job in
+ * the world, or nothing. It never opens a window or the workspace; the hire menu that floats at an
+ * empty desk is the one menu it opens.
+ */
+function nativeUseE(it: Interactable, note: GhIssue | null, spot: BoardSpot | null) {
+  const w = it.deskId ? store.workerAtDesk(it.deskId) : undefined;
+  const def = it.deskId ? DESK_BY_ID.get(it.deskId) : undefined;
+  const use = nativeUse(it.kind, {
+    carrying: !!carrying,
+    worker: w ? { asleep: isAsleep(w.status), lost: !!w.lost, downed: w.downedUntil !== undefined } : null,
+    room: !!def?.room,
+    note: !!note,
+    spot: it.kind === 'issues' && spot ? (spot.kind === 'tab' ? 'tab' : 'ticket') : null,
+    seated: !!it.seatId && player.seat?.seatId === it.seatId,
+  });
+  switch (use.do) {
+    case 'hire-menu':
+      if (it.deskId) nativeMenus?.openHire(it.deskId);
+      return;
+    case 'laptop':
+      if (w) nativeTyping?.use({ kind: 'laptop', workerId: w.id });
+      return;
+    case 'wake':
+      if (w) resumeWorker(w);
+      return;
+    case 'talk':
+      if (it.deskId && talkingTo !== it.deskId) startTalking(it.deskId);
+      return;
+    case 'card':
+      if (carrying) dropCard(it, carrying, physicalCarry?.pose ? null : note);
+      return;
+    case 'note':
+      if (note) pickUp(note);
+      return;
+    case 'tab':
+      useSpot(spot, 'E');
+      return;
+    case 'sit':
+      if (it.seatId) sitOn(it.seatId);
+      return;
+    case 'stand':
+      standUp();
+      return;
+    case 'smoke':
+      setSmoking(!smokeBreakUntil);
+      return;
+    case 'horn':
+      blowHorn();
+      return;
+    case 'proxy':
+      if (!store.proxy.refreshing) net.send({ t: 'proxy.refresh' });
+      return;
+    case 'none':
+      return;
+  }
 }
 const vrHooks: VRHooks = {
   player,
@@ -1609,8 +1751,9 @@ function resolveGunShot() {
  * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
  * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
  * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. No menu opens anywhere. In the headset it goes down at once, knocked out
- * of its chair along the bullet, without waiting for the server (native/downed.ts PendingShots).
+ * session still running. No menu opens anywhere. In the headset it goes down at once, reeling back
+ * out of its chair along the bullet and over onto the floor where the shooter can see it, without
+ * waiting for the server (native/downed.ts PendingShots).
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): ShotOutcome {
   const hit = result?.hit;
@@ -1635,7 +1778,8 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): 
   if (!v || !w || !desk || w.downedUntil !== undefined) return 'hit';
   if (nativeMode) {
     arrivals.forget(v.model);
-    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction)) {
+    // It reels from the hit where the shooter (the headset's eyes) can see it go down.
+    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction, camera.getWorldPosition(new THREE.Vector3()))) {
       pendingShots.add(workerId, performance.now());
       // Should the server never echo it, the body gets back up rather than lying there for good.
       window.setTimeout(syncWorkers, SHOT_ECHO_MS + 50);
@@ -1997,6 +2141,7 @@ function ride(floorId: string) {
   if (trip || floorId === store.floor) return;
   holsterGun(true);
   closeAllModals();
+  nativeMenus?.close(true);
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
@@ -2034,6 +2179,7 @@ function switchFloor(floorId: string) {
   if (trip || floorId === store.floor) return;
   holsterGun(true);
   closeAllModals();
+  nativeMenus?.close(true);
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
@@ -2123,8 +2269,10 @@ function usable(): Interactable[][] {
  * the pole…). `back` is standing in the spot you left from last time, the doors open already.
  */
 function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
-  // The balls lying about were this floor's.
+  // The balls lying about were this floor's, and so were a menu left open and the laptop you typed into.
   balls.clear();
+  nativeMenus?.close(true);
+  nativeTyping?.clear();
   setPlace();
   paintFloor();
   renderProject();
@@ -4088,16 +4236,24 @@ function useSeat(seatId: string) {
     else standUp();
     return;
   }
+  if (!sitOn(seatId)) return;
+  // The couch in front of the TV is where you watch whoever's sharing.
+  if (seat.tv && tvShowing()) watchShare();
+}
+
+/** Sits down on a free place on a seat; false when everyone else has taken them all. */
+function sitOn(seatId: string): boolean {
+  const seat = SEATING_BY_ID.get(seatId);
+  if (!seat) return false;
   const place = freePlace(seat);
   if (!place) {
     toast(`No room on that ${seat.label.replace(/^\S+ /, '').toLowerCase()} right now`, 'warn');
-    return;
+    return false;
   }
   player.sit(place);
   me.sit(place.hips);
   net.send({ t: 'sit', seat: place.key });
-  // The couch in front of the TV is where you watch whoever's sharing.
-  if (seat.tv && tvShowing()) watchShare();
+  return true;
 }
 
 function standUp() {
@@ -5422,6 +5578,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     v.model.update(dt, t);
     // A board agent's kiosk has no laptop to paint (see buildKiosk).
     if (desk.station) continue;
+    // In the headset app its screen's title bar says who it is and how it's doing (null elsewhere).
+    v.laptop.setTitle(v.model.plateText);
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
     glow.power = v.laptop.glow(glow.pos, glow.dir);
@@ -5430,6 +5588,10 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   updatePlates(dt);
+  if (nativeMode) {
+    nativeMenus?.update(dt);
+    nativeTyping?.update();
+  }
   departures.update(dt, t);
   arrivals.update(dt);
   casualties.update(dt, t);
@@ -5551,38 +5713,124 @@ function startLoop() {
 
 // Native keeps the original scene, interact dispatch, windows and Net instance.
 if (nativeMode) {
-  nativeUi = initNativeUi({
-    openWorker: openWorkerTerminal,
-    hireAtDesk,
-    openShell,
-    putBack,
-    openCommands: () => togglePalette(paletteEntries),
-    workerActions: {
-      prompt: (id) => {
-        const worker = store.workers.get(id);
-        if (!worker) return;
-        if (DESK_BY_ID.get(worker.deskId)?.station) askStation(worker.deskId);
-        else promptAtDesk(worker.deskId);
+  // No workspace in the headset app: no window opens, and the page itself shows nothing (native/ui.ts).
+  nativeUi = initNativeUi();
+  const headNow = () => (nativeControls?.active ? { pos: camera.getWorldPosition(new THREE.Vector3()), dir: nativeControls.lookDir(new THREE.Vector3()) } : null);
+  /** A floor correction moves you up or down in the world: the open settings menu comes along, so it stays in front of you. */
+  const keepMenu = (change: () => void) => {
+    const before = nativeFloorOffset();
+    change();
+    nativeMenus?.shift(before - nativeFloorOffset());
+  };
+  nativeMenus = new NativeMenus(scene, {
+    head: headNow,
+    // The closest drawn solid, as a bullet would find it: no sprites, nothing hidden.
+    obstacle: (origin, dir, far) => (upTop ? null : (gunHit(new THREE.Raycaster(origin, dir, 0, far), office.group, new Map())?.hit.distance ?? null)),
+    feedback: (kind) => sound.menu(kind),
+    settings: {
+      heightCm: () => nativeHeight().heightCm,
+      setHeightCm: (cm) => setNativeHeight({ heightCm: cm }),
+      calibrate: () => {
+        let ok = false;
+        keepMenu(() => (ok = calibrateNativeHeight().ok));
+        return ok;
       },
-      resume: (id) => {
-        const worker = store.workers.get(id);
-        if (worker) resumeWorker(worker);
+      resetFloor: () => keepMenu(() => setNativeHeight({ floorOffset: 0 })),
+      eyes: nativeEyeHeightNow,
+      floorOffset: nativeFloorOffset,
+      graphics: getNativeGraphicsSettings,
+      setGraphics: (patch) => setNativeGraphicsSettings(patch),
+      metrics: nativeGraphicsMetrics,
+    },
+    hire: {
+      desk: (deskId) => {
+        const def = DESK_BY_ID.get(deskId);
+        const view = office.desks.get(deskId);
+        if (!def || !view || def.room || def.station || upTop || trip || store.workerAtDesk(deskId) || departures.seated(deskId)) return null;
+        return { label: def.label, marker: view.vacancy };
       },
-      changes: openWorkerChanges,
-      pullRequest: (id) => {
-        const worker = store.workers.get(id);
-        if (worker) pullRequestFor(worker);
+      engines: (deskId) =>
+        supportedProviders(store.project).map((provider) => {
+          const c = choiceForProvider(store.project, `desk:${deskId}`, provider);
+          const badge = modelBadge(c.provider, c.model, c.effort);
+          const name = providerLabel(provider, store.project);
+          return { id: provider, label: badge ? `${name} · ${badge}` : name };
+        }),
+      engine: (deskId) => rememberedChoice(store.project, `desk:${deskId}`).provider,
+      setEngine: (_deskId, engine) => rememberProvider(engine as AgentProvider),
+      worktree: () => ({ offered: !!store.project?.branch, on: worktreePref() }),
+      setWorktree: setWorktreePref,
+      blocked: () => (officeFull(store.machine) ? `The office is at its limit of ${store.machine.limit} worker${store.machine.limit === 1 ? '' : 's'}` : hiringPaused() ? 'The budget is spent: hiring resumes tomorrow' : null),
+      pressure: () => (store.machine.pressure ? `This machine is under pressure: ${store.machine.pressure}` : null),
+      hire: (deskId, engine, worktree) => {
+        const c = choiceForProvider(store.project, `desk:${deskId}`, engine as AgentProvider);
+        hire(deskId, undefined, worktree, c.provider, c.model, c.effort);
       },
-      sendHome: killWorker,
+      shell: (deskId) => openShell(deskId),
     },
   });
+  const menus = nativeMenus;
+  /** The laptop a paired keyboard types into: attached to its terminal while linked, like an open terminal window. */
+  let typedAt = 0;
+  nativeTyping = new NativeTyping(
+    {
+      aimed: () => {
+        const it = target;
+        if (!it?.deskId) return null;
+        if (it.kind === 'station') return { kind: 'kiosk', deskId: it.deskId };
+        const w = it.kind === 'desk' ? store.workerAtDesk(it.deskId) : undefined;
+        return w && typingWorker(w) ? { kind: 'laptop', workerId: w.id } : null;
+      },
+      talking: () => talkingTo,
+      nearest: () => nearestLaptop(),
+      near: (t) => {
+        if (t.kind === 'kiosk') return talkingTo === t.deskId;
+        const w = store.workers.get(t.workerId);
+        const v = workerViews.get(t.workerId);
+        if (!w || !v || !typingWorker(w)) return false;
+        const at = v.laptop.root.getWorldPosition(new THREE.Vector3());
+        return Math.hypot(at.x - player.pos.x, at.z - player.pos.z) <= TYPE_LEAVE;
+      },
+    },
+    {
+      terminal: (workerId, bytes, key) => {
+        const w = store.workers.get(workerId);
+        if (!w) return;
+        const enter = key.key === 'Enter' ? modifiedEnter(wantsCsiEnter(w.kind, resolvedProvider(w.provider, store.project)), { ctrl: key.ctrlKey, shift: key.shiftKey, alt: key.altKey, meta: key.metaKey }) : undefined;
+        const now = performance.now();
+        if (now - typedAt > 1000) {
+          typedAt = now;
+          net.send({ t: 'term.typing', workerId });
+        }
+        net.send({ t: 'term.input', workerId, data: enter ?? bytes });
+      },
+      kiosk: (deskId, _bytes, key) => kioskKey(deskId, key),
+      linked: (next, prev) => {
+        if (prev?.kind === 'laptop') {
+          workerViews.get(prev.workerId)?.laptop.setLinked(false);
+          net.send({ t: 'worker.detach', workerId: prev.workerId });
+        }
+        if (next?.kind === 'laptop') {
+          workerViews.get(next.workerId)?.laptop.setLinked(true);
+          // Keys reach a terminal only from someone attached to it (server.ts term.input).
+          net.send({ t: 'worker.attach', workerId: next.workerId });
+        }
+      },
+    },
+  );
+  const typing = nativeTyping;
+  // Reconnected: attach to the linked laptop's terminal again.
+  net.onStatus((up) => {
+    const t = typing.linked;
+    if (up && t?.kind === 'laptop') net.send({ t: 'worker.attach', workerId: t.workerId });
+  });
+  // A keyboard paired to the headset types into the world, and no office shortcut ever sees its keys.
+  captureVrKeys(window, { active: () => nativeControls?.active === true, onBytes: (bytes, key) => void typing.key(bytes, key) });
   nativeControls = new NativeControls(scene, camera, {
     ...vrHooks,
     useE: vrUseE,
-    togglePanel: () => nativeUi?.togglePanel(),
-    panelOpen: () => nativeUi?.panelState().open === true,
-    openCommands: () => nativeUi?.openCommands(),
-    back: () => nativeUi?.back(),
+    togglePanel: () => menus.toggleSettings(),
+    menus,
     physical: {
       player,
       climber,
@@ -5647,7 +5895,10 @@ if (nativeMode) {
       return null;
     },
     eye: () => (nativeControls?.active ? camera.position.clone() : null),
-    clearPanel: () => nativeUi?.setPanelOpen(false),
+    clearPanel: () => {
+      nativeUi?.setPanelOpen(false);
+      nativeMenus?.close(true);
+    },
     revive: (id) => {
       if (reviveBody(id)) return;
       if (store.workers.get(id)?.downedUntil !== undefined) net.send({ t: 'worker.revive', workerId: id });
@@ -5688,7 +5939,6 @@ if (nativeMode) {
       if (loopStarted && !frozen) frame(performance.now());
       shotStage?.tick();
       (window as any).officeNative.metrics = metrics;
-      nativeUi?.updatePerformance(metrics);
       updateNativeGraphicsMetrics(metrics);
       const control = nativeControls?.state();
       const puppet = nativePuppet?.packet() ?? null;
@@ -5737,6 +5987,13 @@ void whoami().then(() => {
   store.emit('me');
   if (saved?.look) {
     store.profile = { ...saved, look: saved.look };
+    showMyProfile(store.profile);
+    boot();
+  } else if (nativeMode) {
+    // The headset app has no character window: you come straight in with a look of your own
+    // (and your name), and change it on the desktop.
+    if (saved) Object.assign(store.profile, { name: saved.name, color: saved.color });
+    saveProfile(store.profile);
     showMyProfile(store.profile);
     boot();
   } else {
@@ -5793,6 +6050,16 @@ void whoami().then(() => {
   native: nativeControls,
   nativeScene,
   nativeUi,
+  // The headset app's settings and hire menus, and where its paired keyboard types (debug and capture hooks).
+  nativeMenus: nativeMenus && {
+    state: () => nativeMenus!.state(),
+    openSettings: () => nativeMenus!.openSettings(),
+    openHire: (deskId: string) => nativeMenus!.openHire(deskId),
+    close: () => nativeMenus!.close(),
+    press: (id: string) => nativeMenus!.pressTarget(id),
+    targetPoint: (id: string) => nativeMenus!.targetPoint(id),
+  },
+  nativeTyping: nativeTyping && { linked: () => nativeTyping!.linked, target: () => nativeTyping!.target() },
   puppet: nativePuppet?.api,
   ball,
   // Debuggable headset builds only (inert otherwise): hire a practice target or list a harness's

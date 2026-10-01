@@ -164,7 +164,10 @@ void InputRenderer::render(const Matrix &left, const Matrix &right) {
     glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_FALSE);
+    // Rays, hover dots and the teleport arc write depth like the controllers do: the sharp screen
+    // layer drops its fragments where world depth is nearer, so a ray reaching a laptop screen or
+    // a menu (opaque sharpText panels) stays visible in front of it instead of being covered.
+    glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glUseProgram(program);
     std::array<Matrix, 2> matrices{left, right};

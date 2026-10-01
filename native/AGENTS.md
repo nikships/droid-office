@@ -6,7 +6,7 @@ windows and server protocol remain authoritative; update their existing adapters
 of creating a second office state or a separate worker/board implementation.
 
 - Keep head and controller rendering in the native display loop. Parse packets, decode images
-  and prepare scene snapshots away from the GL thread; budget uploads and shader links.
+  and prepare scene snapshots away from the display thread; budget uploads and pipeline creation.
 - Rig presentation may interpolate only approved rig endpoints and fade, never tracked
   eye/head/controller poses or predicted movement. Apply `presentationEpoch` changes and full-black
   fade immediately; reset on focus/reference changes or stale updates. Keep original player
@@ -14,7 +14,12 @@ of creating a second office state or a separate worker/board implementation.
 - Preserve scene packet revisions, reset/commit boundaries, bounded drains and backpressure
   when changing the native consumer. Geometry sharing requires exact buffer semantics, not
   parameter names alone; texture scheduling must retain first-pixel priority and fair redraws.
-- Initialize, use and destroy GLES objects on the GL thread. Stop Android Surface producers
+- `office_xr.cpp` is the API-neutral session and frame loop. Everything a graphics API draws
+  sits behind the coarse `WorldRenderer` seam (`world_renderer.h`); `world_vk.cpp` is the
+  only installed render path. Do not add a GLES or fixed-foveation fallback. Keep GL and Vulkan
+  calls out of `office_xr.cpp`, and keep API-free scene
+  logic shared in `scene_stream.cpp` and `scene_frame.cpp`, not copied into a backend.
+- Initialize, use and destroy graphics objects on the display thread. Stop Android Surface producers
   before ending the OpenXR session or destroying their swapchains. Clear scene callbacks
   before destroying the renderer they capture.
 - Keep the status Surface producer stopped while its quad is hidden. Consume its BufferQueue
@@ -33,24 +38,24 @@ of creating a second office state or a separate worker/board implementation.
   bridge round trips; tracking loss must cancel interactions and suppress stale presses.
 - Check extensions, function pointers and supported modes at runtime. Treat a 90 Hz request
   as a request, and report the actual refresh rate and frame timing. The OpenXR runtime owns
-  foveation: create only the world colour swapchain with `XR_FB_foveation` scaled-bin support and
-  apply `XR_FB_foveation_configuration` / `XR_META_foveation_eye_tracked` profiles with
-  `xrUpdateSwapchainFB`. Never write QCOM texture foveation state or focal points from the app,
-  and never foveate depth, the sharp-screen layer or the Android Surface panels. Cite the
-  specification or working Android XR code next to each foveation call. Never submit the
-  driver's upscaled blocks: render into the foveated swapchains and draw the submitted,
-  unfoveated ones with the filter pass (`foveation_filter_shader.h`), falling back to direct
-  submission only when that cannot be created. Keep world-pass output independent of bin
-  density: no `gl_PointSize` (points are quads) and derivative-based shading divided by the
-  measured step.
+  foveation: use `XR_KHR_vulkan_enable2`, world colour swapchains with
+  `XR_SWAPCHAIN_CREATE_FOVEATION_FRAGMENT_DENSITY_MAP_BIT_FB`, and
+  `XR_META_vulkan_swapchain_create_info` with fragment-density-map offsets. Attach the runtime's
+  density images to the multiview render pass. Apply the eye-tracked profile before querying
+  `xrGetFoveationEyeTrackedStateMETA`, and pass per-eye offsets to `vkCmdEndRenderPass2`.
+  Required extensions, eye permission, eye-tracked system support and Vulkan device features
+  must fail explicitly when unavailable. Off is an explicit user setting, not an automatic
+  fallback. Never write QCOM texture foveation state or foveate Android Surface panels.
+  Cite the specification or working Android XR code next to foveation calls. Keep derivative
+  shading and point-quad size independent of fragment density.
 - World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
-  and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
+  and Vulkan image limits. Allocate the selected eye size; do not relabel recommended resolution as
   the maximum or force default frames through maximum-size targets. Replace targets on the
-  GL thread with no acquired images, retaining the current targets if allocation fails.
+  display thread with no acquired images. Report target allocation failures explicitly.
   Complete GPU image use before destroying old swapchains, including during teardown.
   The Galaxy XR runtime keeps the first profile a world swapchain receives, so every foveation
   choice is new world targets: Off is swapchains without `XrSwapchainCreateInfoFoveationFB`, a
-  level is swapchains with it and that level's profile applied first. Create the first targets
+  level is swapchains with it and that eye-tracked level's profile applied first. Create the first targets
   from the stored settings, report only what is bound, and destroy the foveation profile before
   the session.
 - Validate performance with a visible, populated office and advancing scene packets, both
@@ -72,5 +77,9 @@ of creating a second office state or a separate worker/board implementation.
   both variants, signs only on `main`, and publishes the verified APK with its checksum.
   Preserve signing lineage and increasing version codes so updates retain headset app data.
 - Format changed C++ and Java using `native/.clang-format`. Run the affected native host
-  checks and the APK build as well as the parent checks; a TypeScript build does not compile
+  checks and both APK variants as well as the parent checks; a TypeScript build does not compile
   the Android client. Keep changing measurements in the linked evidence document.
+  The Linux host run includes `native/tests/run-vulkan.sh` with Mesa and Khronos validation;
+  macOS reports that suite as NOT RUN. Retain the GLES suites as reference checks, not an
+  installed fallback. A passing build or software render does not prove headset eye tracking,
+  sharp-screen readability or sustained 90 Hz.

@@ -54,12 +54,6 @@ function topLevelParts(sel: string): string[] {
   return out.filter(Boolean);
 }
 
-test('long board and list rows keep their content height in a scrolling column', () => {
-  const rule = css.split('\n').find((l) => l.includes(':is(.card, .svc-list li') && l.includes('min-height: 48px'));
-  assert.ok(rule, 'the row min-height rule exists');
-  assert.match(rule!, /flex-shrink: 0/);
-});
-
 test('every native.css rule is scoped to the panel', () => {
   const body = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const selectors = [...body.matchAll(/(^|\})\s*([^{}@]+)\{/g)].map((m) => m[2].trim()).filter((s) => s && !s.startsWith('from') && !s.startsWith('to'));

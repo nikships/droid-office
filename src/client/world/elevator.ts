@@ -3,6 +3,7 @@ import { ELEVATOR, ELEVATOR_CAR, ELEVATOR_FRONT, FLOOR, WALL_HEIGHT } from '../.
 import type { FloorInfo } from '../../shared/protocol';
 import { ROOF } from '../../shared/rooftop';
 import { mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
+import { signsPrinted } from '../native/mode';
 import type { Collider, Interactable } from './office';
 
 // The elevator: a steel shaft against the north wall, doors facing into the room. Every floor has
@@ -11,6 +12,10 @@ import type { Collider, Interactable } from './office';
 const STEEL = '#5b6068';
 const STEEL_DARK = '#3f444c';
 const BRASS = '#e9b949';
+/** The headset app's floor indicator over the doors: its dark display, the amber its words light up in, and how tall its housing is (meters). */
+const INDICATOR = '#0d0e11';
+const INDICATOR_LIT = '#ffb347';
+const INDICATOR_H = 0.24;
 
 export interface Elevator {
   group: THREE.Group;
@@ -232,7 +237,9 @@ export function buildElevator(): Elevator {
   const doorCollider: Collider = { minX: x - doorWidth / 2, maxX: x + doorWidth / 2, minZ: front - wall - 0.06, maxZ: front, top: 99 };
   colliders.push(doorCollider);
 
-  // What floor this is: a sign over the doors, facing the room.
+  // What floor this is: a sign over the doors, facing the room. In the headset app it is the
+  // elevator's floor indicator instead: amber words lit on a dark display in a steel housing that sits
+  // on the head of the door frame, its back against the shaft, as wide as fits over the frame.
   let sign: ReturnType<typeof textPlane> | null = null;
   const setSign = (text: string) => {
     if (sign) {
@@ -241,11 +248,21 @@ export function buildElevator(): Elevator {
       sign.material.dispose();
       sign.geometry.dispose();
     }
-    sign = textPlane(text, { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
-    const { width: sw } = sign.geometry.parameters;
-    // As big as fits over the doors.
-    sign.scale.multiplyScalar(Math.min(1.6, (width + 0.6) / sw));
-    sign.position.set(x, doorHeight + 0.75, front + 0.03);
+    if (signsPrinted()) {
+      sign = textPlane(text, { bg: INDICATOR, color: INDICATOR_LIT, size: 64, border: INDICATOR, board: STEEL_DARK, glow: 1 });
+      sign.updateMatrixWorld(true);
+      const unit = new THREE.Box3().setFromObject(sign);
+      sign.scale.setScalar(Math.min(INDICATOR_H / (unit.max.y - unit.min.y), (doorWidth + 2 * frameT - 0.06) / (unit.max.x - unit.min.x)));
+      sign.updateMatrixWorld(true);
+      const housing = new THREE.Box3().setFromObject(sign);
+      sign.position.set(x, doorHeight + frameT - housing.min.y, front - housing.min.z);
+    } else {
+      sign = textPlane(text, { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+      const { width: sw } = sign.geometry.parameters;
+      // As big as fits over the doors.
+      sign.scale.multiplyScalar(Math.min(1.6, (width + 0.6) / sw));
+      sign.position.set(x, doorHeight + 0.75, front + 0.03);
+    }
     group.add(sign);
   };
 

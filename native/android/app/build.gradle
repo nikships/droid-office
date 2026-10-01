@@ -20,10 +20,14 @@ android {
         cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' }
     }
     buildTypes {
-        // Debug only: the capture puppet (synthetic controllers for headless captures). The Java
-        // host also requires BuildConfig.DEBUG; release builds never compile it in.
+        // Debug builds only; release libraries contain neither:
+        // - the Vulkan eye-tracked foveation spike (native/android/app/src/main/cpp/vk_spike*);
+        // - the capture puppet (synthetic controllers for headless captures). The Java host also
+        //   requires BuildConfig.DEBUG.
         debug {
-            externalNativeBuild { cmake { arguments '-DOFFICE_CAPTURE_PUPPET=ON' } }
+            externalNativeBuild {
+                cmake { arguments '-DOFFICE_CAPTURE_PUPPET=ON', '-DOFFICE_VULKAN_SPIKE=ON' }
+            }
         }
         release { minifyEnabled false }
     }

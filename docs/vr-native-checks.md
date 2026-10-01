@@ -7,8 +7,9 @@ vr-native-android.md.
 
 | Command | Needs | Checks |
 | --- | --- | --- |
-| `native/tests/run-host.sh` | A C++17 compiler with ASan and UBSan, `curl`, `unzip`, `glslangValidator`, Node and the repository's installed npm dependencies and Chromium | Host C++ tests, scene packet/replay/GLES suite and required shader pixel comparison |
+| `native/tests/run-host.sh` | A C++17 compiler with ASan and UBSan, `curl`, `unzip`, `glslangValidator`, `glslc` and `spirv-val` (the pinned NDK's `shader-tools`, or `PATH`), Node and the repository's installed npm dependencies and Chromium | Host C++ tests, scene packet/replay/GLES suite, the Vulkan shader dialect and required shader pixel comparison |
 | `native/tests/run-host.sh --android-sdk DIR --require-java` | The above, plus JDK 17 or newer and `platforms;android-35` in `DIR` | All host checks and Java rules tests |
+| `native/tests/run-vulkan.sh` | Linux, Vulkan headers/loader, Mesa lavapipe, Khronos validation layers and shaderc/glslang/SPIR-V libraries; run the host checks first | The production Vulkan scene renderer with 1× and 4× MSAA, packet loading and validation messages |
 | `cd native/android && ./gradlew --no-daemon :app:assembleDebug` | JDK 17 or 21, and SDK platform 35, build tools 35.0.0, NDK 27.2.12479018 and CMake 3.22.1 | The installable debug APK |
 | `cd native/android && ./gradlew --no-daemon :app:assembleRelease` | The same pinned Android toolchain | The unsigned optimized release APK |
 
@@ -19,8 +20,11 @@ Install the existing npm dependencies with `npm ci` and the Chromium revision se
 the locked `playwright-core` package with `npx --no-install playwright-core install chromium`.
 On Linux, use `npx --no-install playwright-core install --with-deps chromium` to install its
 system dependencies too, and install `glslang-tools` with the system package manager. On
-macOS, `brew install glslang` supplies `glslangValidator`. A missing browser, validator or npm
-dependency fails the shader suite; the pixel comparison cannot silently drop out. To use an
+macOS, `brew install glslang` supplies `glslangValidator`. `glslc` and `spirv-val` come from the
+pinned NDK's `shader-tools` (found through `ANDROID_NDK_HOME`, else `ANDROID_HOME`), or from `PATH`
+(`glslc` and `spirv-tools` on Linux, `shaderc` and `spirv-tools` on Homebrew). A missing browser,
+validator, compiler or npm dependency fails the shader suite; the pixel comparison cannot
+silently drop out. To use an
 already installed local Chrome on macOS, set
 `OFFICE_XR_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'`.
 
@@ -49,12 +53,17 @@ covers, using `CXX` (default `c++`), and runs it:
   foveation change at the same size and targets bound below the request.
 - `native/tests/foveation_test.cpp` for the header-only `foveation.h`,
   `foveation_filter_shader.h` and `foveation_overlay_shader.h`: setting-to-target mapping (Off
-  is targets without foveation, every level is filtered when the reconstruction is available),
-  capability gates, the eye-tracked → fixed → unfoveated fallback and the filtered → unfiltered
-  one, eye-tracked state results that are retried rather than dropped, the filter's density code,
-  taps and GLSL (a copy at full density, flat regions kept flat, and a block edge spread over
-  three or more pixels for every block width and phase), and the diagnostic view's density
-  bands, centre mapping, fallback marker and GLSL.
+  is targets without foveation, every level is a fixed, filtered level when the reconstruction
+  is available), capability gates, the filtered → unfiltered → unfoveated fallbacks, which passes
+  are filtered (not while the drawn image is unfoveated or the workspace panel is beneath the
+  world), the priming of a foveated set (images read until foveated, per eye, and the give-up
+  after eight unfoveated submissions), the density code (every block width and start round-trips
+  for both `gl_FragCoord` conventions; other widths, off-grid starts and non-finite input are
+  unknown), the resolve emulated on driver-style rows and a 2 × 4 bin (full density copied
+  exactly, reduced bins equal to the bilinear upsample of their own blocks for every width and
+  start, steps no larger than one block difference over its width, flat regions flat, ramps
+  straight, undescribed blocks smoothed [1 2 1] / 4), the GLSL contracts, and the diagnostic
+  view's density bands, undescribed-block tint, centre mapping, marker and GLSL.
 - `native/tests/refresh_policy_test.cpp`: bounded 90 Hz re-requests, focus loss, actual-rate
   recovery and invalid observations.
 - `native/tests/hand_mesh_test.cpp` retains standalone checks for the historical mesh code:
@@ -62,6 +71,22 @@ covers, using `CXX` (default `c++`), and runs it:
   part of the controller-only app build.
 - `native/tests/controller_model_test.cpp` with `controller_model.cpp`: both bundled Samsung
   meshes, malformed asset rejection and animated button transforms.
+- `native/tests/vk_spike_logic_test.cpp` covers the pure logic of the debug-only Vulkan
+  foveation spike (`vk_spike_logic.h`): option parsing, foveation centre to density map offset
+  rounding and flips, the optical axis the density map is centred on, the synthetic sweep, the
+  log rate limit, the per-window summary and its log line size, the eye-tracking gates and the
+  test room mesh.
+- `native/tests/scene_frame_test.cpp` with `scene_frame.cpp`: the GL-free frame planner against
+  a fake backend (culling and three's draw order, controller attachments, the screen layer's
+  plan and its validity, the prepare budget). The GLES renderer's use of it is checked by the
+  render suite below.
+- `native/tests/vk_scene_state_test.cpp` covers the Vulkan scene renderer's pure tables
+  (`vk_scene_state.h`): GL compare, blend, wrap and filter values as Vulkan values, the blend,
+  face, depth and color state the GLES renderer sets for each material, the swapchain and shadow
+  pass winding rules, the vertex layout and topology of each draw mode and the pipeline key.
+- `native/tests/log_record_test.cpp` covers `log_record.h`: metrics lines fit Android's
+  1023-byte log record with every key `harness/metrics.sh` reads, rounding fractions before
+  shortening the longest strings, never splitting a UTF-8 character.
 - `native/tests/controller_attachment_test.cpp` for the header-only `controller_attachment.h`:
   grip-attached objects, their validity rules and per-item placement.
 - `native/tests/status_layout_test.cpp` for the header-only `status_layout.h`: the status
@@ -79,7 +104,7 @@ covers, using `CXX` (default `c++`), and runs it:
   page stall keeps the puppet and its gun), focus, head and heading spaces, and attachments at
   the puppet grip.
 
-Two registered suites are required on every host run:
+Three registered suites are required on every host run:
 
 - `native/android/app/src/test/cpp/run.sh` generates a fixture from the original office and exporter,
   checks packet/model rules and replay, and renders it through the production GLES renderer.
@@ -93,7 +118,13 @@ Two registered suites are required on every host run:
   `panel_cutout.cpp` and draws a frame with the workspace panel beneath the world layer, as the
   display loop does (World pass, `PanelCutout::punch`, Attached pass, `seal`), and checks the
   hole, a gun held in front of and behind the panel, `attachedHands`/`attachedBounds` and the
-  GL state the cutout leaves.
+  GL state the cutout leaves. It also builds `foveation_filter.cpp` and runs the filter's GLSL
+  on the host driver against its C++ reference: `axisCode` for positions on a quarter-pixel grid
+  and every step class, the density pass at full density (alpha code 0, colour untouched), and
+  the resolve of a driver-style image with bins of 2 × 1, 2 × 4, 4 × 4, 8 × 2 and an undescribed
+  3 × 2 starting off their grids (full-density pixels exact, the rest within 1.5/255 of the
+  bilinear reference, opaque output), single-view and, when the driver exposes
+  `GL_OVR_multiview2`, both layers in one multiview draw.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts (including points drawn as quads),
   validates and links every generated stage, the foveation diagnostic view and the foveation
@@ -101,6 +132,36 @@ Two registered suites are required on every host run:
   three.js code.
   Its strict block parser and contract checks self-test malformed declarations before reading
   the generated programs; malformed text must fail rather than be skipped.
+  The GLES text must hash to `shaders/gles-dump.sha256`: the Vulkan port keeps the shipping
+  reference programs byte for byte, and a deliberate GLES shader change updates that file in the same commit
+  with the hash the suite prints. Every program is also generated in the Vulkan dialect
+  (`generateShader(key, Dialect::Vulkan)`, `scene_shaders.h`): `dump` checks its contract
+  (`#version 450` and `GL_EXT_multiview`, no GLSL ES built-ins, every block and sampler at its
+  descriptor set and binding, no default-block uniform, the `Draw` block identical in both stages
+  and member for member `DrawBlock` in `scene_uniforms.h` with std140 offsets, every varying at its
+  fixed location and declared alike in both stages, the clip depth remap) and self-tests those
+  checks against broken stages. `vulkan-stages.sh` then compiles every stage with `glslc`
+  (`--target-env=vulkan1.1 -Werror`, the shaderc that the Vulkan renderer embeds), validates it
+  with `spirv-val` and compares glslang's reflection of the `Draw` block with `DrawBlock`, and
+  `glslangValidator -V -l` links every program's two stages.
+
+- `native/android/app/src/test/cpp/vk/check.sh` compiles the shipping Vulkan input/fade shaders
+  and the debug test-room shaders
+  (`app/src/main/cpp/shaders/vk`) to Vulkan 1.1 SPIR-V with `glslangValidator`, validates them
+  with `spirv-val` (from the pinned NDK's `shader-tools`, or `PATH`) and checks that every stage
+  that uses `Frame` declares the same block. All seven stages and four program links are checked.
+  A missing validator fails the suite.
+
+On Linux the runner also requires `native/tests/run-vulkan.sh`, registered in `LINUX_SUITES`.
+It uses the same default `VkSceneRenderer` construction as the installed app, the shaderc
+compiler and allocator with the real-office
+fixture generated by the preceding scene suite. Both 1× and 4× MSAA renders must finish packet,
+geometry, texture and pipeline loading, draw the office, and produce no Khronos validation
+warning or error. It honors suite compiler flags and dependency/output paths, including
+ASan/UBSan. Like the GLES process, it excludes Mesa's process-global leak reports.
+macOS explicitly reports this Linux-only suite as `NOT RUN`; the other suites remain required.
+These software renders do not exercise the OpenXR runtime's density-map offsets or physical
+eye tracking.
 
 The shader suite accepts `CXX`, the suite output directory and sanitizer flags just like the
 other suites. It also cross-compiles the generator when the pinned NDK is present at
@@ -137,7 +198,8 @@ otherwise `javac` and `java` come from `PATH`.
 The discovery rules check the versioned DNS-SD TXT contract, HTTP/HTTPS and port validation,
 IPv4 preference and IPv6 formatting, unsuitable addresses and display names. The catalog checks
 bounded discovery, serialized resolutions, network identities, lost services, failed resolutions,
-and callbacks from a previous picker session. The full runner registers fourteen checks.
+and callbacks from a previous picker session. The full runner registers seventeen C++ runs,
+three Java checks, three portable suites and one Linux Vulkan suite.
 
 Without `--android-sdk`, the summary lists the Java tests as `NOT RUN`. With
 `--require-java`, a missing `--android-sdk` is an error rather than a smaller run. CI passes
@@ -190,7 +252,9 @@ skipped because a file happens to be absent.
 - A Java rules test named `<Class>Test.java` in package `dev.droidoffice.xr` goes in
   `JAVA_TESTS` as `"<Class>Test|<ProductionClass>"`. The source goes in `native/android/hosttest`
   or `native/android/app/src/test/java`, but not both.
-- A suite with its own build goes in `SUITES` as a path from the repository root. Every
+- A portable suite with its own build goes in `SUITES` as a path from the repository root.
+  Linux-only Vulkan device checks go in `LINUX_SUITES` and are explicitly reported on other
+  platforms. Every
   `run.sh` or `check.sh` anywhere below `native/android/app/src/test`, and every
   `native/tests/*.sh` other than `run-host.sh`, that is not in `SUITES` fails the run.
   `--suite FILE` runs a suite
@@ -241,10 +305,13 @@ the existing lint, typecheck, coverage, pack and install steps, it:
    replace `sdkmanager` with a wrapper that downloads the Android CLI at run time without a
    pinned version, so the job stays on 19.0. Moving to the Android CLI means pinning that
    download too.
-3. Installs `glslang-tools`, `libegl1-mesa-dev` and `libgles2-mesa-dev`, and runs `npx --no-install playwright-core install --with-deps
+3. Installs `glslang-tools`, `libegl1-mesa-dev`, `libgles2-mesa-dev`, `libvulkan-dev`,
+   `mesa-vulkan-drivers`, `vulkan-validationlayers` and `libshaderc-dev`, and runs
+   `npx --no-install playwright-core install --with-deps
    chromium`, using the browser revision selected by the existing locked npm dependency.
 4. Runs `native/tests/run-host.sh --android-sdk "$ANDROID_SDK" --require-java`, including all
-   two required scene/shader suites. `ANDROID_NDK_HOME` selects the pinned NDK.
+   three portable suites and the Linux Vulkan render suite, with a 900-second limit per step
+   for instrumented software rendering. `ANDROID_NDK_HOME` selects the pinned NDK.
 5. Checks the Gradle wrapper jar's SHA-256 and compiles both `:app:assembleDebug` and
    `:app:assembleRelease` with `ANDROID_HOME` pointing at that SDK. APK version names match
    the desktop release, and version codes use the commit count.

@@ -1,7 +1,7 @@
 // The display frame's controller grips for scene objects the page attaches to them. Header-only
-// and GL-free so the host tests use the device code. See scene_renderer.h SceneControllerPoses.
+// and GL-free so the host tests use the device code. See scene_frame.h SceneControllerPoses.
 #pragma once
-#include "scene_renderer.h"
+#include "scene_frame.h"
 #include "xr_input.h"
 #include "xr_math.h"
 

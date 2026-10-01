@@ -82,13 +82,45 @@ export function setDoing(modal: Modal, doing: string | undefined) {
 }
 
 /**
+ * Whether a window may open at all. The headset app (native/ui.ts) refuses every one: it shows no
+ * workspace, so a window would only sit unseen and block the world. Null lets every window open.
+ */
+let modalGate: ((content: HTMLElement) => boolean) | null = null;
+let refused = 0;
+
+export function setModalGate(gate: ((content: HTMLElement) => boolean) | null) {
+  modalGate = gate;
+}
+
+/** How many windows the gate has turned away since the page loaded. */
+export function refusedModals(): number {
+  return refused;
+}
+
+/**
  * Opens a modal. Esc closes it unless `escCloses` is false (for dialogs you mustn't skip) or a
  * function that returns false for that keypress (to let Esc through to what has focus), and so
  * does a ✕ in its top right corner unless `closeButton` is false (it follows `escCloses`). `doing`
  * is what teammates see under your name tag while it's open, like "reading PR #12", and `reading`
  * puts an open book in your character's hands.
+ *
+ * Where setModalGate refuses it, nothing opens: the window is never added to the page or the open
+ * stack, modalOpen() stays false, and the returned modal runs `onClose` only if its caller closes it.
  */
 export function openModal(content: HTMLElement, opts: { escCloses?: boolean | ((e: KeyboardEvent) => boolean); onClose?: () => void; backdropCloses?: boolean; closeButton?: boolean; doing?: string; reading?: boolean } = {}): Modal {
+  if (modalGate && !modalGate(content)) {
+    refused++;
+    let shut = false;
+    return {
+      el: content,
+      backdrop: h('div.backdrop'),
+      close() {
+        if (shut) return;
+        shut = true;
+        opts.onClose?.();
+      },
+    };
+  }
   const backdrop = h('div.backdrop', {}, content);
   const root = document.getElementById('modal-root')!;
   root.append(backdrop);

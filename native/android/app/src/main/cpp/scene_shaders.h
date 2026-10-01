@@ -64,8 +64,23 @@ struct ShaderSource {
     std::string fragment;
 };
 
-/** GLSL ES 3.00 source for `key`. Deterministic; never throws. */
-ShaderSource generateShader(const ProgramKey &key);
+/**
+ * Which GLSL a program is generated in. Gles is the shipping text (GLSL ES 3.00), byte for byte as
+ * before the Vulkan port. Vulkan is GLSL 4.50 for SPIR-V (KHR_vulkan_glsl, compiled by shaderc /
+ * glslc): the same programs with `#version 450` and GL_EXT_multiview (gl_ViewIndex,
+ * gl_VertexIndex), every block and sampler at its descriptor set and binding (scene_uniforms.h),
+ * every default-block uniform in one nameless `Draw` block declared identically in both stages (so
+ * the names stay), varyings at fixed locations, and the GL clip depth remapped to Vulkan's [0, w].
+ * The renderer keeps GL matrices and draws swapchain passes with a negative viewport height (Vulkan
+ * 1.1 / VK_KHR_maintenance1), so NDC +y is the image's top row as OpenXR expects and GL winding
+ * holds; window-space y then points down, so the two fragment terms that depend on its sign (flat
+ * shading's dFdy, the shadow noise's gl_FragCoord.y) are flipped back to GL's. See
+ * research/vulkan-port.md 4.3 and 4.5.
+ */
+enum class Dialect : uint8_t { Gles, Vulkan };
+
+/** Source for `key` in `dialect`. Deterministic; never throws. */
+ShaderSource generateShader(const ProgramKey &key, Dialect dialect = Dialect::Gles);
 
 /** A short name for logs, e.g. "toon+map+sky+fog+shadow+mv". */
 std::string programName(const ProgramKey &key);

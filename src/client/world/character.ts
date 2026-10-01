@@ -9,9 +9,9 @@ import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
 import { Muzzle, disposeGun, magnum } from './gun';
-import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
+import { cardSprite, disposeSprite, mesh, plainLabel, textSprite, toon, toonUnique } from './toon';
 import { floatingTagsShown } from '../native/mode';
-import { disposeBadge, nameBadge, plainLabel, type LampPulse, type Nameplate, type PlateText } from './nameplate';
+import { disposeBadge, nameBadge, type LampPulse, type Nameplate, type PlateText } from './nameplate';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -1568,8 +1568,10 @@ export class Worker {
   private name = '';
   /** What it is, on its nameplate (see setRole). */
   private role = '';
-  /** The nameplate on its seat, where its name and state are printed instead of floating over it (see setPlate). */
+  /** The nameplate on its seat, where its name is engraved instead of floating over it (see setPlate). */
   private plate: Nameplate | null = null;
+  /** What its nameplate, its lamp and its laptop's title bar say (see plateText); null where its tags float. */
+  private shown: PlateText | null = null;
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
   status: WorkerStatus = 'starting';
@@ -1803,8 +1805,9 @@ export class Worker {
   }
 
   /**
-   * The nameplate on its seat (world/nameplate.ts), or null to let go of it. It shows what the card
-   * over its head would: its name, what it is, its state and its task, with its status lamp.
+   * The nameplate on its seat (world/nameplate.ts), or null to let go of it: its name and what it
+   * is, engraved, with its status lamp; a kiosk's screen also shows its state and what it's on, as
+   * the card over its head would.
    */
   setPlate(plate: Nameplate | null) {
     if (plate === this.plate) return;
@@ -1815,7 +1818,18 @@ export class Worker {
   }
 
   private drawPlate() {
-    this.plate?.show(this, workerPlate({ name: this.name, role: this.role, color: this.color, status: this.status, bounce: this.bouncing, task: this.task, pr: this.pr, lost: this.lost, out: this.dead || !!this.leaving }));
+    if (this.tags) return;
+    this.shown = workerPlate({ name: this.name, role: this.role, color: this.color, status: this.status, bounce: this.bouncing, task: this.task, pr: this.pr, lost: this.lost, out: this.dead || !!this.leaving });
+    this.plate?.show(this, this.shown);
+  }
+
+  /**
+   * In the headset app, who it is and how it's doing, as the tags over its head say elsewhere: its
+   * seat's nameplate and lamp show it, and so does the title bar of its laptop's screen
+   * (Laptop.setTitle). The same object until any of it changes; null where its tags float.
+   */
+  get plateText(): PlateText | null {
+    return this.shown;
   }
 
   /** What it's working on, shown on a card over its head in place of the status bubble. */
@@ -1928,6 +1942,21 @@ export class Worker {
     }
     this.plate?.heartbeat(this, glow, swell);
     this.body.scale.setScalar(1 + swell * 0.035);
+  }
+
+  /**
+   * Down, reeling from a shot in the headset: its arms thrown up and forward by the hit (`flail`,
+   * 0 → 1), or flung out to its sides and back, down onto the floor it lies on (`splay`, 0 → 1);
+   * (0, 0) is arms at its sides. Nothing while it is up; revive puts them back.
+   */
+  limp(flail: number, splay: number) {
+    if (!this.dead) return;
+    const f = THREE.MathUtils.clamp(flail, 0, 1);
+    const s = THREE.MathUtils.clamp(splay, 0, 1);
+    const pitch = -1.35 * f + 1.1 * s;
+    const out = 0.45 * f + 0.8 * s;
+    this.armL.rotation.set(pitch, 0, -out);
+    this.armR.rotation.set(pitch, 0, out);
   }
 
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */

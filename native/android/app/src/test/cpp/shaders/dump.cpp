@@ -5,7 +5,14 @@
 // scene_uniforms.h member for member, and the stages keep the contract (attribute locations, no
 // gl_ViewID_OVR in fragment shaders).
 //
-//   dump <out-dir>     exit status 0 when every check passes
+// With a second directory it also writes every key in the Vulkan dialect (Dialect::Vulkan) there,
+// for glslc and spirv-val, and checks that dialect's contract: #version 450 and GL_EXT_multiview,
+// no GL-only built-ins, every block and sampler at its set and binding, no default-block uniform,
+// the Draw block identical in both stages and member for member DrawBlock (std140 offsets), every
+// varying at its fixed location with the same declaration in both stages, and the clip depth
+// remap.
+//
+//   dump <out-dir> [<vulkan-out-dir>]     exit status 0 when every check passes
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -332,7 +339,19 @@ size_t structSize(const std::string &name) {
     return sizeof(SkyBlock);
 }
 
-void checkBlocks(const std::string &prog, const std::string &stage, const std::string &src) {
+// The layout qualifier generateShader gives block `name` (Vulkan: its set and binding).
+std::string blockHead(const std::string &name, bool vulkan) {
+    if (!vulkan)
+        return "layout(std140) uniform " + name + " {";
+    const uint32_t binding = name == "View"    ? kBlockView
+                             : name == "Frame" ? kBlockFrame
+                                               : kBlockSky;
+    return "layout(std140, set = " + std::to_string(kSetFrame) +
+           ", binding = " + std::to_string(binding) + ") uniform " + name + " {";
+}
+
+void checkBlocks(const std::string &prog, const std::string &stage, const std::string &src,
+                 bool vulkan = false) {
     for (const char *name : {"View", "Frame", "Sky"}) {
         std::vector<Member> got;
         std::string error;
@@ -360,9 +379,354 @@ void checkBlocks(const std::string &prog, const std::string &stage, const std::s
             if (offsets[member] != off)
                 fail(prog + "." + stage + ": " + name + "." + member + " std140 offset " +
                      std::to_string(offsets[member]));
-        if (src.find("layout(std140) uniform " + std::string(name) + " {") == std::string::npos)
-            fail(prog + "." + stage + ": block " + name + " is not layout(std140)");
+        if (src.find(blockHead(name, vulkan)) == std::string::npos)
+            fail(prog + "." + stage + ": block " + name + " is not " + blockHead(name, vulkan));
     }
+}
+
+// ---- The Vulkan dialect -------------------------------------------------------------------------
+
+// std140 base alignment and size of the member types the Draw block uses.
+bool std140Type(const std::string &type, size_t &align, size_t &size) {
+    if (type == "float" || type == "int") {
+        align = size = 4;
+    } else if (type == "vec2") {
+        align = size = 8;
+    } else if (type == "vec3") {
+        align = 16;
+        size = 12;
+    } else if (type == "vec4" || type == "ivec4") {
+        align = size = 16;
+    } else if (type == "mat3") {
+        align = 16;
+        size = 48; // three vec3 columns, each padded to a vec4
+    } else if (type == "mat4") {
+        align = 16;
+        size = 64;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// The std140 layout of non-array members (GLSL 4.50 7.6.2.2), offsets by name; returns the block
+// size rounded up to 16.
+size_t std140Layout(const std::vector<Member> &ms, std::map<std::string, size_t> &offsets) {
+    size_t off = 0;
+    for (const Member &m : ms) {
+        size_t align = 0, size = 0;
+        if (m.count != 1 || !std140Type(m.type, align, size)) {
+            fail("Draw member " + m.type + " " + m.name + " has no std140 rule here");
+            continue;
+        }
+        off = (off + align - 1) / align * align;
+        offsets[m.name] = off;
+        off += size;
+    }
+    return (off + 15) / 16 * 16;
+}
+
+const std::vector<Member> &expectedDraw() {
+    static const std::vector<Member> draw = {
+        {"mat4", "uModel", 1},
+        {"mat4", "uLightViewProj", 1},
+        {"mat3", "uNormalMatrix", 1},
+        {"mat3", "uMapTransform", 1},
+        {"mat3", "uAlphaMapTransform", 1},
+        {"mat3", "uEmissiveMapTransform", 1},
+        {"vec4", "uColor", 1},
+        {"vec4", "uSpecular", 1},
+        {"vec4", "uSky0", 1},
+        {"vec4", "uSky1", 1},
+        {"vec4", "uSky2", 1},
+        {"vec4", "uSky3", 1},
+        {"vec4", "uSky4", 1},
+        {"vec4", "uSharpRect", 1},
+        {"vec4", "uSharpParams", 1},
+        {"vec4", "uSharpBias", 1},
+        {"vec3", "uEmissive", 1},
+        {"float", "uAlphaTest", 1},
+        {"vec2", "uMetalRough", 1},
+        {"vec2", "uSpriteCenter", 1},
+        {"float", "uReceiveShadow", 1},
+        {"float", "uPointSize", 1},
+        {"float", "uSpriteRotation", 1},
+        {"int", "uPointQuad", 1},
+    };
+    return draw;
+}
+
+// DrawBlock's offsets, from the compiler.
+const std::map<std::string, size_t> &drawOffsets() {
+    static const std::map<std::string, size_t> o = {
+        {"uModel", offsetof(DrawBlock, model)},
+        {"uLightViewProj", offsetof(DrawBlock, lightViewProj)},
+        {"uNormalMatrix", offsetof(DrawBlock, normalMatrix)},
+        {"uMapTransform", offsetof(DrawBlock, mapTransform)},
+        {"uAlphaMapTransform", offsetof(DrawBlock, alphaMapTransform)},
+        {"uEmissiveMapTransform", offsetof(DrawBlock, emissiveMapTransform)},
+        {"uColor", offsetof(DrawBlock, color)},
+        {"uSpecular", offsetof(DrawBlock, specular)},
+        {"uSky0", offsetof(DrawBlock, sky)},
+        {"uSky1", offsetof(DrawBlock, sky) + 16},
+        {"uSky2", offsetof(DrawBlock, sky) + 32},
+        {"uSky3", offsetof(DrawBlock, sky) + 48},
+        {"uSky4", offsetof(DrawBlock, sky) + 64},
+        {"uSharpRect", offsetof(DrawBlock, sharpRect)},
+        {"uSharpParams", offsetof(DrawBlock, sharpParams)},
+        {"uSharpBias", offsetof(DrawBlock, sharpBias)},
+        {"uEmissive", offsetof(DrawBlock, emissive)},
+        {"uAlphaTest", offsetof(DrawBlock, alphaTest)},
+        {"uMetalRough", offsetof(DrawBlock, metalRough)},
+        {"uSpriteCenter", offsetof(DrawBlock, spriteCenter)},
+        {"uReceiveShadow", offsetof(DrawBlock, receiveShadow)},
+        {"uPointSize", offsetof(DrawBlock, pointSize)},
+        {"uSpriteRotation", offsetof(DrawBlock, spriteRotation)},
+        {"uPointQuad", offsetof(DrawBlock, pointQuad)},
+    };
+    return o;
+}
+
+// The text of `uniform Draw { ... };` in src, or empty.
+std::string drawBlockText(const std::string &src) {
+    const size_t at = src.find("uniform Draw {");
+    if (at == std::string::npos)
+        return {};
+    const size_t end = src.find("};\n", at);
+    return end == std::string::npos ? std::string() : src.substr(at, end + 3 - at);
+}
+
+std::vector<std::string> lines(const std::string &src) {
+    std::vector<std::string> out;
+    size_t from = 0;
+    while (from < src.size()) {
+        size_t end = src.find('\n', from);
+        if (end == std::string::npos)
+            end = src.size();
+        out.push_back(src.substr(from, end - from));
+        from = end + 1;
+    }
+    return out;
+}
+
+bool startsWith(const std::string &s, const std::string &prefix) {
+    return s.compare(0, prefix.size(), prefix) == 0;
+}
+
+// The set and binding each Vulkan resource must have (scene_uniforms.h).
+bool expectedBinding(const std::string &name, uint32_t &set, uint32_t &binding) {
+    const std::map<std::string, std::pair<uint32_t, uint32_t>> table = {
+        {"View", {kSetFrame, kBlockView}},
+        {"Frame", {kSetFrame, kBlockFrame}},
+        {"Sky", {kSetFrame, kBlockSky}},
+        {"uShadowMap", {kSetFrame, uint32_t(kUnitShadowMap)}},
+        {"uSharpDepth", {kSetFrame, uint32_t(kUnitSharpDepth)}},
+        {"uMap", {kSetMaterial, uint32_t(kUnitMap)}},
+        {"uAlphaMap", {kSetMaterial, uint32_t(kUnitAlphaMap)}},
+        {"uEmissiveMap", {kSetMaterial, uint32_t(kUnitEmissiveMap)}},
+        {"uGradientMap", {kSetMaterial, uint32_t(kUnitGradientMap)}},
+        {"Draw", {kSetDraw, kBindingDraw}},
+    };
+    auto it = table.find(name);
+    if (it == table.end())
+        return false;
+    set = it->second.first;
+    binding = it->second.second;
+    return true;
+}
+
+// Every `uniform` of a Vulkan stage: a block or a sampler, at its expected set and binding, once.
+void checkVulkanResources(const std::string &prog, const std::string &stage,
+                          const std::string &src) {
+    std::set<std::pair<uint32_t, uint32_t>> used;
+    for (const std::string &line : lines(src)) {
+        const size_t u = line.find("uniform ");
+        if (u == std::string::npos || (u > 0 && line[u - 1] != ' '))
+            continue;
+        unsigned set = 0, binding = 0;
+        if (std::sscanf(line.c_str(), "layout(set = %u, binding = %u) uniform", &set, &binding) !=
+                2 &&
+            std::sscanf(line.c_str(), "layout(std140, set = %u, binding = %u) uniform", &set,
+                        &binding) != 2) {
+            fail(prog + "." + stage + ": a uniform without a set and binding: " + line);
+            continue;
+        }
+        // The resource's name: the block name, or a sampler's last word.
+        std::string rest = line.substr(u + 8), name;
+        const bool block = rest.find('{') != std::string::npos;
+        if (block) {
+            name = rest.substr(0, rest.find(' '));
+        } else {
+            if (rest.find("sampler") == std::string::npos)
+                fail(prog + "." + stage +
+                     ": a default-block uniform in the Vulkan dialect: " + line);
+            const size_t semi = rest.rfind(';'), space = rest.rfind(' ', semi);
+            name = rest.substr(space + 1, semi - space - 1);
+        }
+        uint32_t wantSet = 0, wantBinding = 0;
+        if (!expectedBinding(name, wantSet, wantBinding))
+            fail(prog + "." + stage + ": unknown Vulkan resource " + name);
+        else if (set != wantSet || binding != wantBinding)
+            fail(prog + "." + stage + ": " + name + " at set " + std::to_string(set) + " binding " +
+                 std::to_string(binding));
+        if (!used.insert({set, binding}).second)
+            fail(prog + "." + stage + ": set " + std::to_string(set) + " binding " +
+                 std::to_string(binding) + " declared twice");
+    }
+}
+
+struct Varying {
+    int location;
+    std::string declaration; // "[flat ]<type> <name>"
+};
+
+// The `layout(location = N) [flat ]in|out <type> <name>;` declarations of `direction` in src,
+// except the vertex attributes and the fragment color; any other in/out without a location fails.
+std::map<std::string, Varying> varyings(const std::string &prog, const std::string &stage,
+                                        const std::string &src, const std::string &direction) {
+    std::map<std::string, Varying> out;
+    std::set<int> locations;
+    for (const std::string &line : lines(src)) {
+        std::string body = line;
+        int location = -1;
+        if (startsWith(body, "layout(location = ")) {
+            location = std::atoi(body.c_str() + 18);
+            body = body.substr(body.find(") ") + 2);
+        }
+        std::string flat;
+        if (startsWith(body, "flat ")) {
+            flat = "flat ";
+            body = body.substr(5);
+        }
+        if (!startsWith(body, direction + " ") || body.back() != ';')
+            continue;
+        const std::string decl =
+            body.substr(direction.size() + 1, body.size() - direction.size() - 2);
+        const std::string name = decl.substr(decl.rfind(' ') + 1);
+        if (name == "pc_fragColor" || (name.size() > 1 && name[0] == 'a' && direction == "in"))
+            continue; // the color output and the vertex attributes
+        if (location < 0) {
+            fail(prog + "." + stage + ": " + direction + " " + name + " has no location");
+            continue;
+        }
+        if (!locations.insert(location).second)
+            fail(prog + "." + stage + ": location " + std::to_string(location) + " used twice");
+        out[name] = {location, flat + decl};
+    }
+    return out;
+}
+
+void checkVulkanStages(const ProgramKey &k, const std::string &prog, const ShaderSource &s) {
+    if (s.vertex.rfind("#version 450\n", 0) != 0 || s.fragment.rfind("#version 450\n", 0) != 0)
+        fail(prog + ": not #version 450 first");
+    const bool mv = k.multiview && k.model != ShadeModel::Depth;
+    if (mv != (s.vertex.find("#extension GL_EXT_multiview : require\n") != std::string::npos))
+        fail(prog + ": GL_EXT_multiview " + (mv ? "missing" : "unexpected"));
+    if (s.fragment.find("multiview") != std::string::npos ||
+        s.fragment.find("gl_ViewIndex") != std::string::npos)
+        fail(prog + ": the fragment stage uses multiview");
+    for (const char *gles : {"gl_ViewID_OVR", "gl_VertexID", "num_views", "#version 300 es"})
+        if (s.vertex.find(gles) != std::string::npos || s.fragment.find(gles) != std::string::npos)
+            fail(prog + ": GLSL ES only " + gles);
+    checkVulkanResources(prog, "vert", s.vertex);
+    checkVulkanResources(prog, "frag", s.fragment);
+    checkBlocks(prog, "vert", s.vertex, true);
+    checkBlocks(prog, "frag", s.fragment, true);
+    // The Draw block: both stages, the same text, DrawBlock's members and offsets.
+    const std::string drawV = drawBlockText(s.vertex), drawF = drawBlockText(s.fragment);
+    if (drawV.empty() || drawV != drawF)
+        fail(prog + ": the Draw block is missing or differs between the stages");
+    std::vector<Member> draw;
+    std::string error;
+    if (parseBlock(s.vertex, "Draw", draw, error) != Parse::Ok) {
+        fail(prog + ": the Draw block is malformed: " + error);
+    } else {
+        const auto &want = expectedDraw();
+        bool same = draw.size() == want.size();
+        for (size_t i = 0; same && i < draw.size(); ++i)
+            same = draw[i].type == want[i].type && draw[i].name == want[i].name &&
+                   draw[i].count == want[i].count;
+        if (!same)
+            fail(prog + ": the Draw block does not match DrawBlock");
+        std::map<std::string, size_t> offsets;
+        if (std140Layout(draw, offsets) != sizeof(DrawBlock))
+            fail(prog + ": the Draw block's std140 size is not sizeof(DrawBlock)");
+        for (const auto &[member, off] : drawOffsets())
+            if (offsets.count(member) == 0 || offsets[member] != off)
+                fail(prog + ": Draw." + member + " std140 offset " +
+                     std::to_string(offsets[member]) + ", DrawBlock " + std::to_string(off));
+    }
+    // Every fragment input matches a vertex output at the same location, declared the same way.
+    const auto outs = varyings(prog, "vert", s.vertex, "out");
+    const auto ins = varyings(prog, "frag", s.fragment, "in");
+    for (const auto &[name, in] : ins) {
+        auto it = outs.find(name);
+        if (it == outs.end())
+            fail(prog + ": fragment input " + name + " has no vertex output");
+        else if (it->second.location != in.location || it->second.declaration != in.declaration)
+            fail(prog + ": " + name + " differs between the stages");
+    }
+    const std::string remap = "\tgl_Position.z = ( gl_Position.z + gl_Position.w ) * 0.5;\n}\n";
+    if (s.vertex.size() < remap.size() ||
+        s.vertex.compare(s.vertex.size() - remap.size(), remap.size(), remap) != 0)
+        fail(prog + ": the vertex stage does not end with the clip depth remap");
+    if (k.model == ShadeModel::Points && s.vertex.find("gl_VertexIndex") == std::string::npos)
+        fail(prog + ": Vulkan points are not drawn as quads");
+}
+
+// checkVulkanStages must reject real generated stages broken in each way the contract covers.
+void selfTestVulkanChecks() {
+    ProgramKey k;
+    k.model = ShadeModel::Toon;
+    k.multiview = true;
+    k.sky = true;
+    k.fog = FogMode::Linear;
+    k.map = k.shadows = k.gradientMap = true;
+    const ShaderSource src = generateShader(k, Dialect::Vulkan);
+    const struct {
+        const char *what;
+        bool vertex;
+        const char *from, *to;
+    } mutations[] = {
+        {"GLES version", true, "#version 450\n", "#version 300 es\n"},
+        {"no multiview extension", true, "#extension GL_EXT_multiview : require\n", ""},
+        {"default-block uniform", false, "layout(location = 0) out highp vec4 pc_fragColor;",
+         "uniform float uExtra;\nlayout(location = 0) out highp vec4 pc_fragColor;"},
+        {"sampler binding", false, "binding = 0) uniform sampler2D uMap;",
+         "binding = 3) uniform sampler2D uMap;"},
+        {"block set", true, "layout(std140, set = 0, binding = 2) uniform View {",
+         "layout(std140, set = 1, binding = 2) uniform View {"},
+        {"Draw differs", false, "  highp float uAlphaTest;\n", "  highp int uAlphaTest;\n"},
+        {"varying location", false, "layout(location = 0) in vec2 vMapUv;",
+         "layout(location = 3) in vec2 vMapUv;"},
+        {"varying without location", false, "layout(location = 0) in vec2 vMapUv;",
+         "in vec2 vMapUv;"},
+        {"no depth remap", true, "\tgl_Position.z = ( gl_Position.z + gl_Position.w ) * 0.5;\n",
+         ""},
+        {"gl_ViewID_OVR", true, "gl_ViewIndex", "gl_ViewID_OVR"},
+    };
+    for (const auto &m : mutations) {
+        ShaderSource bad = src;
+        std::string &text = m.vertex ? bad.vertex : bad.fragment;
+        const size_t at = text.find(m.from);
+        if (at == std::string::npos) {
+            fail(std::string("Vulkan check self-test: '") + m.from + "' is not in the stage");
+            continue;
+        }
+        text.replace(at, std::strlen(m.from), m.to);
+        const int before = failures;
+        expectingFailure = true;
+        checkVulkanStages(k, std::string("self-test (") + m.what + ")", bad);
+        expectingFailure = false;
+        if (failures == before)
+            fail(std::string("Vulkan check self-test: ") + m.what + " passed");
+        else
+            failures = before;
+    }
+    const int before = failures;
+    checkVulkanStages(k, "self-test", src);
+    if (failures != before)
+        fail("Vulkan check self-test: the unchanged stages fail");
 }
 
 // checkBlocks must reject real generated blocks with one declaration broken in each way the
@@ -456,13 +820,22 @@ void checkStages(const ProgramKey &k, const std::string &prog, const ShaderSourc
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: dump <out-dir>\n");
+    if (argc != 2 && argc != 3) {
+        std::fprintf(stderr, "usage: dump <out-dir> [<vulkan-out-dir>]\n");
         return 2;
     }
     const std::string dir = argv[1];
+    const std::string vkDir = argc == 3 ? argv[2] : "";
     selfTestParser();
     selfTestBlockChecks();
+    if (!vkDir.empty()) {
+        selfTestVulkanChecks();
+        // For vulkan-stages.sh: glslang's reflection of every stage must agree with DrawBlock.
+        std::ofstream offsets(vkDir + "/draw-offsets.txt");
+        offsets << "size " << sizeof(DrawBlock) << "\n";
+        for (const auto &[member, off] : drawOffsets())
+            offsets << member << " " << off << "\n";
+    }
 
     const ShadeModel models[] = {ShadeModel::Basic,   ShadeModel::Toon,     ShadeModel::Lambert,
                                  ShadeModel::Phong,   ShadeModel::Standard, ShadeModel::Points,
@@ -580,6 +953,15 @@ int main(int argc, char **argv) {
         std::ofstream(dir + "/" + prog + ".frag") << s.fragment;
         written.insert(prog);
         ++programs;
+        if (!vkDir.empty()) {
+            const ShaderSource v = generateShader(k, Dialect::Vulkan);
+            const ShaderSource vAgain = generateShader(k, Dialect::Vulkan);
+            if (v.vertex != vAgain.vertex || v.fragment != vAgain.fragment)
+                fail("nondeterministic Vulkan " + programName(k));
+            checkVulkanStages(k, prog, v);
+            std::ofstream(vkDir + "/" + prog + ".vert") << v.vertex;
+            std::ofstream(vkDir + "/" + prog + ".frag") << v.fragment;
+        }
     }
 
     // bits() tells apart keys that differ in any one field.

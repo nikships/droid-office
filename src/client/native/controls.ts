@@ -6,7 +6,8 @@
 // and update() replays them in order, so an edge between two JS ticks still counts once.
 // Grabs, teleport arcs, turning and collision reuse the desktop/WebXR helpers. Native face buttons
 // have fixed left/right jobs; physical.ts owns tracked-grip strikes, climbing and the gun.
-// Left Menu owns the workspace. Right Menu belongs to Android XR; grip never navigates menus.
+// Left Menu opens the settings menu that floats where you are (main.ts, native/menus.ts); a ray on an
+// open menu is the menu's, never the world's. Right Menu belongs to Android XR; grip never navigates menus.
 //
 // A controller that drops out for less than LOST_MS keeps its held buttons, grab and carried card
 // and fires nothing until it returns. A controller that connects (or reconnects after that) with
@@ -32,6 +33,7 @@ import { LOST_MS, MAX_QUEUE, type NativeHand, type NativeInputFrame, type Pose7,
 import { nativeFloorOffset, registerNativeHeadHeight } from './height';
 import { applyGravity, findLanding, placeAvatar, rigFor, snapGround, stepToward } from './locomotion';
 import { NativePhysical, type NativePhysicalHooks } from './physical';
+import type { NativeMenuInput } from './menus';
 
 /** VRSession's private stick thresholds: a push, and where a pushed stick re-arms. */
 const STICK_ON = 0.7;
@@ -63,7 +65,7 @@ export interface NativeHooks {
   reachAnim: () => void;
   onTarget: (it: Interactable | null, note: GhIssue | null, spot?: BoardSpot | null) => void;
   pickRoot?: () => THREE.Object3D | null;
-  /** The ☰ menu (VRUiSink.toggleMenu): only the left controller's menu button calls it. */
+  /** The left controller's Menu button: main.ts opens or puts away the settings menu (native/menus.ts). */
   togglePanel: () => void;
   panelOpen?: () => boolean;
   openCommands?: () => void;
@@ -75,6 +77,8 @@ export interface NativeHooks {
   carryAlong?: (delta: THREE.Vector3) => void;
   /** A lost controller cancels that controller's panel press (VRUiSink.cancelRay). */
   cancelRay?: (hand: 0 | 1) => void;
+  /** World-anchored menus (native/menus.ts): a ray on one hovers and presses it instead of the world. */
+  menus?: NativeMenuInput;
 }
 
 type Vec3 = [number, number, number];
@@ -131,6 +135,10 @@ interface HandSlot {
   hoverFresh: boolean;
   /** The shot worker's body this free hand is at (touching or pointing at), whose use action revives it. */
   body: string | null;
+  /** Where this hand's ray meets an open menu, and the target under it; null when it is not on one. */
+  menu: { point: THREE.Vector3; target: string | null } | null;
+  /** Its trigger went down on a menu: the release goes to the menu too. */
+  menuPress: boolean;
   uiConsumed: boolean;
   wasPrimary: boolean;
   wasSecondary: boolean;
@@ -243,6 +251,8 @@ export class NativeControls {
       hover: null,
       hoverFresh: false,
       body: null,
+      menu: null,
+      menuPress: false,
       uiConsumed: false,
       wasPrimary: false,
       wasSecondary: false,
@@ -571,7 +581,8 @@ export class NativeControls {
     const hand = (s: HandSlot): NativeHandState => ({
       connected: s.connected,
       ui: s.uiConsumed,
-      hover: s.hover ? { point: [s.hover.hit.point.x, s.hover.hit.point.y, s.hover.hit.point.z], near: s.hover.near } : null,
+      // On a menu, the ray ends at the menu, lit as in reach.
+      hover: s.menu ? { point: [s.menu.point.x, s.menu.point.y, s.menu.point.z], near: true } : s.hover ? { point: [s.hover.hit.point.x, s.hover.hit.point.y, s.hover.hit.point.z], near: s.hover.near } : null,
       holding: this.ownsObject(s.idx),
     });
     return {
@@ -615,6 +626,7 @@ export class NativeControls {
     }
     for (const s of this.hands) this.applyHand(s, f.hands[s.idx]);
     this.rig.updateMatrixWorld(true);
+    this.aimMenus();
     this.physical?.sample(f, this.headWorldFull(_h), this.headWorldQuat(_q), !this.worldBlocked(), (hand) => this.ownsCarry(hand));
     for (const s of this.hands) this.controllerEdges(s);
     this.pollButtons();
@@ -677,6 +689,7 @@ export class NativeControls {
     s.hover = null;
     s.hoverFresh = true;
     s.uiConsumed = false;
+    this.dropMenu(s);
     this.hooks.cancelRay?.(s.idx);
   }
 
@@ -696,8 +709,20 @@ export class NativeControls {
     }
     const trigger = pressLatch(s.triggerDown, h.trigger, TRIGGER_ON, TRIGGER_OFF);
     const pressed = trigger && !s.triggerDown;
+    const released = !trigger && s.triggerDown;
     s.triggerDown = trigger;
+    if (released && s.menuPress) {
+      s.menuPress = false;
+      this.hooks.menus?.press(s.idx, false);
+    }
     if (pressed && !(owned && !squeeze)) {
+      // A trigger with the ray on a menu presses the menu, and nothing in the world behind it.
+      if (s.menu && !this.ownsObject(s.idx)) {
+        s.menuPress = true;
+        this.hooks.menus?.press(s.idx, true);
+        this.pulse(s.idx, 0.25, 12);
+        return;
+      }
       this.pulse(s.idx, 0.15, 10);
       this.tapE(s);
     }
@@ -718,6 +743,7 @@ export class NativeControls {
     s.hoverFresh = false;
     s.body = null;
     s.uiConsumed = false;
+    this.dropMenu(s);
     s.triggerDown = false;
     s.squeezeDown = false;
     s.wasPrimary = false;
@@ -726,6 +752,30 @@ export class NativeControls {
     s.teleportReady = true;
     if (this.stickAiming && this.stickSlot === s.idx) this.stickAiming = false;
     if (cancel) this.hooks.cancelRay?.(s.idx);
+  }
+
+  /** A hand leaves the menus: its press ends without a click. */
+  private dropMenu(s: HandSlot): void {
+    if (s.menu || s.menuPress) this.hooks.menus?.cancel(s.idx);
+    s.menu = null;
+    s.menuPress = false;
+  }
+
+  /**
+   * Each sample: where each free hand's ray meets an open menu. A hand holding something, lost,
+   * or on the workspace panel points at no menu. A tick in the hand as the ray reaches a new target.
+   */
+  private aimMenus(): void {
+    const menus = this.hooks.menus;
+    if (!menus) return;
+    for (const s of this.hands) {
+      const free = s.connected && s.lostAt === null && !s.uiConsumed && !this.ownsObject(s.idx) && !this.teleportAiming();
+      const was = s.menu?.target ?? null;
+      s.menu = menus.aim(s.idx, free ? this.rayOf(s) : null);
+      const target = s.menu?.target ?? null;
+      if (target && target !== was) this.pulse(s.idx, 0.08, 6);
+      if (s.menu) s.hover = null;
+    }
   }
 
   /** The tap itself: E on whatever that ray hovers, through the shared dispatch (VRSession.tapE). */
@@ -825,7 +875,7 @@ export class NativeControls {
   private freshHover(s: HandSlot): HandSlot['hover'] {
     if (s.hoverFresh) return s.hover;
     s.hoverFresh = true;
-    if (!s.connected || s.lostAt !== null || s.uiConsumed || this.physical?.owns(s.idx) || this.worldBlocked() || this.teleportAiming()) {
+    if (!s.connected || s.lostAt !== null || s.uiConsumed || s.menu || this.physical?.owns(s.idx) || this.worldBlocked() || this.teleportAiming()) {
       s.hover = null;
       return null;
     }
@@ -844,7 +894,7 @@ export class NativeControls {
   private bodyHover(aiming: boolean): boolean {
     let any = false;
     for (const s of this.hands) {
-      const id = aiming || !s.connected || this.ownsObject(s.idx) || this.worldBlocked() ? null : (this.physical?.bodyAt(s.idx, this.rayOf(s)) ?? null);
+      const id = aiming || !s.connected || s.menu || this.ownsObject(s.idx) || this.worldBlocked() ? null : (this.physical?.bodyAt(s.idx, this.rayOf(s)) ?? null);
       if (id !== null && id !== s.body) this.pulse(s.idx, 0.2, 15);
       s.body = id;
       if (id !== null) any = true;
@@ -865,9 +915,9 @@ export class NativeControls {
   }
 
   /**
-   * Fixed left/right roles: X next worker, Y commands, left stick-click sprint; A jump,
-   * B back. Right stick-forward aims and releases a teleport.
-   * Left Menu owns the workspace; right Menu is reserved by Android XR.
+   * Fixed left/right roles: X next worker, Y commands (none in the headset app), left stick-click
+   * sprint; A jump, B puts away an open menu or returns a card. Right stick-forward aims and
+   * releases a teleport. Left Menu opens the settings menu; right Menu is reserved by Android XR.
    */
   private pollButtons(): void {
     for (const s of this.hands) {
@@ -884,7 +934,8 @@ export class NativeControls {
       } else {
         if (pad.a && !s.wasPrimary && !s.uiConsumed && !this.worldBlocked() && !this.teleportAiming()) this.hooks.player.jump();
         if (pad.b && !s.wasSecondary) {
-          if (this.hooks.panelOpen?.() || this.hooks.modalOpen()) this.hooks.back?.();
+          if (this.hooks.menus?.back()) this.pulse(s.idx, 0.2, 12);
+          else if (this.hooks.panelOpen?.() || this.hooks.modalOpen()) this.hooks.back?.();
           else if (this.hooks.carrying()) {
             this.clearGrab();
             if (this.hooks.carrying()) this.hooks.putBack();
@@ -897,7 +948,7 @@ export class NativeControls {
     const teleport = this.slotFor('right');
     if (teleport && this.pad(teleport)) {
       const y = this.stickOf(teleport).y;
-      const allowed = !this.hooks.player.rig && !teleport.uiConsumed && !this.worldBlocked() && !this.ownsObject(1);
+      const allowed = !this.hooks.player.rig && !teleport.uiConsumed && !teleport.menu && !this.worldBlocked() && !this.ownsObject(1);
       if (!allowed) {
         this.stickAiming = false;
         teleport.teleportReady = y > -STICK_OFF;

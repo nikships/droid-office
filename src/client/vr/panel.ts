@@ -45,6 +45,11 @@ export interface WorldPanelOpts {
   height: number;
   /** Canvas density before the devicePixelRatio multiplier (default 1400 px/m). */
   pxPerMeter?: number;
+  /**
+   * An opaque face (default: transparent). The headset app also draws an opaque panel in its
+   * unfoveated high-resolution screen layer, like a laptop screen (native/scene.ts `sharpText`).
+   */
+  opaque?: boolean;
   paint: PanelPainter;
 }
 
@@ -136,7 +141,8 @@ export class WorldPanel {
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.anisotropy = 4;
     const geo = new THREE.PlaneGeometry(opts.width, opts.height);
-    const mat = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, toneMapped: false });
+    const mat = new THREE.MeshBasicMaterial({ map: this.texture, transparent: !opts.opaque, toneMapped: false });
+    if (opts.opaque) mat.userData.nativeSharpText = true;
     this.mat = mat;
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.userData.panel = this;

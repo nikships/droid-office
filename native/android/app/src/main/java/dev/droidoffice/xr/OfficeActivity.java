@@ -60,6 +60,11 @@ public final class OfficeActivity extends Activity {
     private native void nativeOverlay(boolean visible);
     private native void nativeStatusVisible(boolean visible);
     private native void nativeCapturePuppet(boolean hostDebug);
+    private native void nativeSelectRenderer(String options);
+    /** Intent extras of the debug-only Vulkan foveation spike, passed through as key=value. */
+    private static final String[] VULKAN_SPIKE_EXTRAS = {
+        "vk_msaa",      "vk_offsets",          "vk_level", "vk_overlay", "vk_fixed",
+        "vk_foveation", "vk_subsampled_probe", "vk_flip",  "vk_profile"};
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService bridge = Executors.newSingleThreadExecutor(
         task -> new Thread(() -> {
@@ -99,6 +104,9 @@ public final class OfficeActivity extends Activity {
     private boolean statusLayerVisible;
     private boolean pollPending;
     private volatile int navigationGeneration;
+    // Debug builds only: `--es xr_renderer vulkan-spike` runs the Vulkan foveation test room
+    // instead of the office. It never loads or connects to an office.
+    private boolean vulkanSpike;
 
     // Debuggable builds let the page's debug-only shot staging run (native/stage.ts);
     // a release build never enables it.
@@ -160,11 +168,13 @@ public final class OfficeActivity extends Activity {
         TextView text = new TextView(this);
         text.setText("Opening Droid Office XR…");
         setContentView(text);
+        vulkanSpike =
+            BuildConfig.DEBUG && "vulkan-spike".equals(getIntent().getStringExtra("xr_renderer"));
         if (checkSelfPermission("android.permission.EYE_TRACKING_FINE") !=
             PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] {"android.permission.EYE_TRACKING_FINE"}, 1);
         } else
-            nativeStart(getFilesDir().getAbsolutePath());
+            startNative();
     }
 
     @Override
@@ -173,7 +183,23 @@ public final class OfficeActivity extends Activity {
         if (services.onRequestPermissionsResult(request, permissions, results))
             return;
         if (request == 1)
-            nativeStart(getFilesDir().getAbsolutePath());
+            startNative();
+    }
+
+    private void startNative() {
+        if (vulkanSpike) {
+            StringBuilder options = new StringBuilder("renderer=vulkan-spike");
+            for (String extra : VULKAN_SPIKE_EXTRAS) {
+                String value = getIntent().getStringExtra(extra);
+                if (value != null)
+                    options.append(';').append(extra.substring(3)).append('=').append(value);
+            }
+            boolean eyes = checkSelfPermission("android.permission.EYE_TRACKING_FINE") ==
+                           PackageManager.PERMISSION_GRANTED;
+            options.append(";eye_permission=").append(eyes ? 1 : 0);
+            nativeSelectRenderer(options.toString());
+        }
+        nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override
@@ -200,6 +226,8 @@ public final class OfficeActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (vulkanSpike)
+            return;
         setIntent(intent);
         String address = intent.getStringExtra("server_url");
         if (panelRoot != null && address != null)
@@ -240,6 +268,10 @@ public final class OfficeActivity extends Activity {
             panelPresentation.getWindow().setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
             panelPresentation.show();
+            if (vulkanSpike) {
+                showVulkanSpikePanel();
+                return;
+            }
             showConnection();
             String launchUrl = getIntent().getStringExtra("server_url");
             if (launchUrl != null)
@@ -250,6 +282,24 @@ public final class OfficeActivity extends Activity {
                     connect(saved, getPreferences(MODE_PRIVATE).getString("server_name", null));
             }
         });
+    }
+
+    /** The spike's workspace Surface shows only its controls, to prove the layer composites. */
+    private void showVulkanSpikePanel() {
+        TextView text = new TextView(panelPresentation.getContext());
+        text.setPadding(60, 50, 60, 50);
+        text.setTextSize(26);
+        text.setTextColor(Color.WHITE);
+        // The headset app names no controls (tests/native-hints.test.ts); the spike's controller
+        // modes are listed in docs/vr-native-android.md.
+        text.setText("Vulkan foveation spike (debug build)\n\n"
+                     + "This panel is an Android Surface layer over the Vulkan session. "
+                     + "No office is loaded.\n\n"
+                     + "Overlay: green 1 px, yellow 2 px, orange 4 px, red 8 px, magenta larger "
+                     + "fragments. White cross: the density map's centre (the eye's optical "
+                     + "axis plus the applied offset).");
+        panelRoot.removeAllViews();
+        panelRoot.addView(text);
     }
 
     /**

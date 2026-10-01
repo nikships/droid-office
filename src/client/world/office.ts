@@ -62,7 +62,7 @@ import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { HOOP } from '../../shared/hoop';
 import type { TouchVolume } from './touch';
 import type { PlateMount } from './nameplate';
-import { floatingTagsShown } from '../native/mode';
+import { floatingTagsShown, signsPrinted } from '../native/mode';
 
 export interface Collider {
   minX: number;
@@ -139,7 +139,7 @@ export interface DeskView {
   vacancy: THREE.Group;
   /** How high the vacancy marker floats. */
   vacancyY: number;
-  /** Where the headset app prints who sits here, in place of the tags over their head (world/nameplate.ts). */
+  /** Where the headset app engraves who sits here, in place of the tags over their head (world/nameplate.ts). */
   plate: PlateMount;
 }
 
@@ -420,7 +420,8 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
   hinge.add(leaf);
   g.add(hinge);
 
-  const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', size: 64, border: '#ffffff' });
+  // Lit from inside, as an exit sign is.
+  const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', size: 64, border: '#ffffff', glow: 1 });
   exit.scale.multiplyScalar(0.7);
   exit.position.set(0, o.y1 + 0.35, -(WALL_T / 2 + 0.03));
   exit.rotation.y = Math.PI;
@@ -872,13 +873,13 @@ function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskVi
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  // A three-sided sign on the corner left of the laptop, clear of the stage, the mug and the books:
-  // one face to the chair and the aisle behind it, one to the side, one to the front.
+  // A wooden name block lying on the desk left of the laptop, clear of the stage, the mug and the
+  // books: one brass plate to the chair and the aisle behind it, the other to the desk's front.
   const plateAnchor = new THREE.Object3D();
-  plateAnchor.position.set(-width / 2 + 0.24, height, depth / 2 - 0.25);
+  plateAnchor.position.set(-width / 2 + 0.22, height, depth / 2 - 0.25);
   group.add(plateAnchor);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'prism', width: 0.36, height: 0.2 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'block', width: 0.3, height: 0.11 } };
 }
 
 /** The floating green "+" over an empty seat. */
@@ -940,13 +941,13 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  // Sewn on to the back of the bag, tipped up toward whoever walks up behind it.
+  // A brass plate on a leather patch sewn to the back of the bag, tipped up toward whoever walks up behind it.
   const plateAnchor = new THREE.Object3D();
   plateAnchor.position.set(0, 0.64, 0.7);
   plateAnchor.rotation.x = -0.3;
   bag.add(plateAnchor);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'panel', width: 0.42, height: 0.16 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'plate', width: 0.42, height: 0.16 } };
 }
 
 const KIOSK_SIGN: Record<StationKind, string> = { issues: '📌 Ask me', pulls: '🔀 Ask me', queue: '📋 Ask me' };
@@ -1010,7 +1011,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.48, height: 0.24, lamp } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'screen', width: 0.48, height: 0.24, lamp } };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
@@ -1195,11 +1196,15 @@ export function buildOffice(): Office {
     bg.rotation.y = b.rotY;
     group.add(bg);
     boardMeshes[key] = face;
-    const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
-    label.scale.multiplyScalar(1.3);
-    label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
-    label.rotation.y = b.rotY;
-    group.add(label);
+    // Its title on a sign over it, half as far out from the wall. The headset app hangs nothing on
+    // the wall over a board: its title heads the board's own screen, inside its frame (world/boards.ts).
+    if (!signsPrinted()) {
+      const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
+      label.scale.multiplyScalar(1.3);
+      label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
+      label.rotation.y = b.rotY;
+      group.add(label);
+    }
     const it: Interactable = { kind: key, x: b.x + nx * 1.6, z: b.z + nz * 1.6, radius: 2.4 };
     interactables.push(it);
     bg.userData.interact = it;
@@ -1500,7 +1505,7 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
   plateAnchor.position.set(0, 0.93, 0.33);
   plateAnchor.rotation.x = -0.12;
   ch.add(plateAnchor);
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.5, height: 0.2 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'plate', width: 0.5, height: 0.2 } };
 }
 
 /**

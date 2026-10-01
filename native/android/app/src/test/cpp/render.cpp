@@ -8,6 +8,8 @@
 // must stay bound too.
 //   render <packets.json> <out-dir> [--size px] [--seconds s] [--look ex,ey,ez,tx,ty,tz]
 // Without --look the eyes sit at the page camera from the stream.
+#include "foveation_filter.h"
+#include "foveation_filter_shader.h"
 #include "layer_occlusion.h"
 #include "panel_cutout.h"
 #include "scene_renderer.h"
@@ -17,6 +19,7 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -955,6 +958,282 @@ void main() {
     glDeleteTextures(4, textures);
 }
 
+// The foveation filter's GLSL on a real GLES driver against its C++ reference
+// (foveation_filter_shader.h): the density code of synthetic positions and steps, the density
+// pass at full density, and the resolve of a driver-style upscaled image with every block width,
+// start and an undescribed width, single-view and (with GL_OVR_multiview2) multiview.
+void foveationFilterChecks(std::vector<std::string> &failed, bool hasMultiview,
+                           MultiviewFn multiviewFn) {
+    auto expect = [&](bool ok, const std::string &what) {
+        std::printf("  foveation filter: %s %s\n", ok ? "ok  " : "FAIL", what.c_str());
+        if (!ok)
+            failed.push_back("foveation filter: " + what);
+    };
+    auto compile = [&](GLenum type, const std::string &code) {
+        GLuint shader = glCreateShader(type);
+        const char *text = code.c_str();
+        glShaderSource(shader, 1, &text, nullptr);
+        glCompileShader(shader);
+        GLint good = 0;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &good);
+        if (!good) {
+            char log[2048]{};
+            glGetShaderInfoLog(shader, sizeof log, nullptr, log);
+            expect(false, std::string("compile: ") + log);
+        }
+        return shader;
+    };
+
+    // 1. axisCode in GLSL equals densityAxisCode for positions on a quarter-pixel grid and every
+    //    step class, including widths and starts the code cannot describe.
+    {
+        const float steps[16] = {1.f,  1.2f, 2.f, 2.01f, 4.f,  3.98f, 8.f,  8.05f,
+                                 1.5f, 3.f,  6.f, 16.f,  2.3f, 0.f,   -4.f, 12.f};
+        constexpr int w = 256, h = 16;
+        GLuint tex = 0, fbo = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        const auto vs = compile(GL_VERTEX_SHADER, foveationFilterShaders(false).vertex);
+        const auto fs = compile(GL_FRAGMENT_SHADER,
+                                "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+                                "flat in int layer;\nuniform float steps[16];\nout vec4 pixel;\n" +
+                                    densityAxisCodeGlsl() +
+                                    "void main() {\n"
+                                    "    float fc = floor(gl_FragCoord.x) * 0.25 + 0.5;\n"
+                                    "    float s = steps[int(gl_FragCoord.y)];\n"
+                                    "    pixel = vec4(float(axisCode(fc, abs(s))) / 255.0, 0.0, "
+                                    "0.0, 1.0);\n"
+                                    "}\n");
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vs);
+        glAttachShader(program, fs);
+        glLinkProgram(program);
+        GLint linked = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        expect(linked == GL_TRUE, "axisCode test program links");
+        glUseProgram(program);
+        glUniform1fv(glGetUniformLocation(program, "steps"), 16, steps);
+        GLuint vao = 0;
+        glGenVertexArrays(1, &vao);
+        glBindVertexArray(vao);
+        glViewport(0, 0, w, h);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        const auto px = readPixels(w, h);
+        int mismatches = 0, unknown = 0, described = 0;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const int gpu = px[size_t(y * w + x) * 4];
+                const int cpu = densityAxisCode(float(x) * .25f + .5f, std::abs(steps[y]));
+                mismatches += gpu != cpu;
+                unknown += cpu == kDensityUnknown;
+                described += cpu > 0 && cpu < kDensityUnknown;
+            }
+        expect(mismatches == 0 && unknown > 0 && described > 0,
+               "GLSL axisCode matches densityAxisCode (" + std::to_string(mismatches) +
+                   " mismatches of " + std::to_string(w * h) + ")");
+        glUseProgram(0);
+        glBindVertexArray(0);
+        glDeleteVertexArrays(1, &vao);
+        glDeleteProgram(program);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &tex);
+    }
+
+    // A driver-style image: bins at block widths (x by y) with blocks starting off their grid,
+    // each block repeating its centre's scene value, the alpha holding the density pass's code.
+    constexpr int w = 96, h = 64;
+    struct Region {
+        int x0, x1, y0, y1, sx, sy;
+    };
+    const Region regions[] = {{0, 23, 0, 64, 1, 1},  {23, 47, 0, 30, 2, 1},  {23, 47, 30, 64, 2, 4},
+                              {47, 79, 0, 33, 4, 4}, {47, 79, 33, 64, 8, 2}, {79, 96, 0, 64, 3, 2}};
+    const auto scene = [](float x, float y, int c) {
+        const float edge = (x + .6f * y > 50.f) ? .55f : 0.f;
+        return std::clamp(.15f + .004f * x * float(c + 1) + .003f * y + edge +
+                              .08f * std::sin(.9f * x + .4f * y + float(c)),
+                          0.f, 1.f);
+    };
+    const auto build = [&](int layer) {
+        std::vector<uint8_t> image(size_t(w * h * 4));
+        for (const auto &r : regions)
+            for (int y = r.y0; y < r.y1; ++y)
+                for (int x = r.x0; x < r.x1; ++x) {
+                    const int kx = (x - r.x0) / r.sx, ky = (y - r.y0) / r.sy;
+                    const float cx = float(r.x0) + (float(kx) + .5f) * float(r.sx);
+                    const float cy = float(r.y0) + (float(ky) + .5f) * float(r.sy);
+                    uint8_t *p = &image[size_t(y * w + x) * 4];
+                    for (int c = 0; c < 3; ++c)
+                        p[c] = uint8_t(std::lround(255.f * scene(cx + float(layer) * 7.f, cy, c)));
+                    p[3] = encodeDensityCode(densityAxisCode(cx, float(r.sx)),
+                                             densityAxisCode(cy, float(r.sy)));
+                }
+        return image;
+    };
+    // The resolve as resolveFragment computes it, on the 8-bit image.
+    const auto reference = [&](const std::vector<uint8_t> &image) {
+        std::vector<float> out(size_t(w * h * 3));
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const int code = image[size_t(y * w + x) * 4 + 3];
+                const auto texel = [&](int tx, int ty, int c) {
+                    tx = std::clamp(tx, 0, w - 1);
+                    ty = std::clamp(ty, 0, h - 1);
+                    return float(image[size_t(ty * w + tx) * 4 + size_t(c)]);
+                };
+                const auto tap = [&](float ax, float ay, int c) {
+                    const float tx = ax - .5f, ty = ay - .5f;
+                    const int x0 = int(std::floor(tx)), y0 = int(std::floor(ty));
+                    const float fx = tx - float(x0), fy = ty - float(y0);
+                    return (texel(x0, y0, c) * (1 - fx) + texel(x0 + 1, y0, c) * fx) * (1 - fy) +
+                           (texel(x0, y0 + 1, c) * (1 - fx) + texel(x0 + 1, y0 + 1, c) * fx) * fy;
+                };
+                const int cx = code / kDensityCodeLevels, cy = code % kDensityCodeLevels;
+                const float ax = densityTapCoordinate(x, decodeDensityAxis(cx));
+                const float ay = densityTapCoordinate(y, decodeDensityAxis(cy));
+                const float spreadX = cx == kDensityUnknown ? .5f : 0.f;
+                const float spreadY = cy == kDensityUnknown ? .5f : 0.f;
+                for (int c = 0; c < 3; ++c) {
+                    float v = 0;
+                    if (code == 0)
+                        v = texel(x, y, c);
+                    else if (!spreadX && !spreadY)
+                        v = tap(ax, ay, c);
+                    else
+                        v = .25f * (tap(ax - spreadX, ay - spreadY, c) +
+                                    tap(ax + spreadX, ay + spreadY, c) +
+                                    tap(ax + spreadX, ay - spreadY, c) +
+                                    tap(ax - spreadX, ay + spreadY, c));
+                    out[size_t(y * w + x) * 3 + size_t(c)] = v;
+                }
+            }
+        return out;
+    };
+    const auto compareResolve = [&](const std::vector<uint8_t> &image,
+                                    const std::vector<uint8_t> &px, const std::string &label) {
+        const auto ref = reference(image);
+        int copyErrors = 0, far = 0, alphaErrors = 0;
+        float worst = 0;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const bool full = image[size_t(y * w + x) * 4 + 3] == 0;
+                for (int c = 0; c < 3; ++c) {
+                    const float got = float(px[size_t(y * w + x) * 4 + size_t(c)]);
+                    const float err = std::abs(got - ref[size_t(y * w + x) * 3 + size_t(c)]);
+                    worst = std::max(worst, err);
+                    if (full && got != float(image[size_t(y * w + x) * 4 + size_t(c)]))
+                        ++copyErrors;
+                    if (err > 1.5f)
+                        ++far;
+                }
+                alphaErrors += px[size_t(y * w + x) * 4 + 3] != 255;
+            }
+        expect(copyErrors == 0, label + ": full-density pixels are exact copies");
+        expect(far == 0, label + ": reduced bins match the bilinear reference (worst " +
+                             std::to_string(worst) + " of 255)");
+        expect(alphaErrors == 0, label + ": the submitted image is opaque");
+    };
+    const auto uploadTarget = [&](GLuint &tex, GLenum target, int layers) {
+        glGenTextures(1, &tex);
+        glBindTexture(target, tex);
+        if (layers > 1)
+            glTexStorage3D(target, 1, GL_RGBA8, w, h, layers);
+        else
+            glTexStorage2D(target, 1, GL_RGBA8, w, h);
+    };
+
+    // 2. The density pass at full density writes code 0 into the alpha only.
+    {
+        FoveationFilter filter;
+        std::string error;
+        expect(filter.initialize(false, error), "initialize single-view: " + error);
+        GLuint tex = 0, fbo = 0;
+        uploadTarget(tex, GL_TEXTURE_2D, 1);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glViewport(0, 0, w, h);
+        glClearColor(.2f, .4f, .6f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        filter.markDensity();
+        const auto px = readPixels(w, h);
+        bool alphaZero = true, rgbKept = true;
+        for (size_t i = 0; i < px.size(); i += 4) {
+            alphaZero = alphaZero && px[i + 3] == 0;
+            rgbKept = rgbKept && std::abs(int(px[i]) - 51) <= 1 &&
+                      std::abs(int(px[i + 1]) - 102) <= 1 && std::abs(int(px[i + 2]) - 153) <= 1;
+        }
+        expect(alphaZero, "density pass at full density writes code 0");
+        expect(rgbKept, "density pass leaves the colour alone");
+
+        // 3. Resolve, single view.
+        const auto image = build(0);
+        GLuint source = 0;
+        glGenTextures(1, &source);
+        glBindTexture(GL_TEXTURE_2D, source);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, w, h);
+        filter.resolve(source);
+        compareResolve(image, readPixels(w, h), "single-view resolve");
+        expect(glGetError() == GL_NO_ERROR, "single-view GL errors");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &tex);
+        glDeleteTextures(1, &source);
+    }
+
+    // 4. Resolve, multiview: both layers of a 2-layer array in one draw.
+    if (!hasMultiview) {
+        std::printf("  foveation filter: skip multiview resolve (no GL_OVR_multiview2)\n");
+        return;
+    }
+    FoveationFilter filter;
+    std::string error;
+    expect(filter.initialize(true, error), "initialize multiview: " + error);
+    const auto left = build(0), right = build(1);
+    GLuint source = 0, tex = 0, fbo = 0, readFbo = 0;
+    glGenTextures(1, &source);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, source);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, w, h, 2);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    left.data());
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 1, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    right.data());
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    uploadTarget(tex, GL_TEXTURE_2D_ARRAY, 2);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    multiviewFn(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 0, 2);
+    expect(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+           "multiview target complete");
+    glViewport(0, 0, w, h);
+    filter.resolve(source);
+    glGenFramebuffers(1, &readFbo);
+    for (int layer = 0; layer < 2; ++layer) {
+        glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, layer);
+        compareResolve(layer ? right : left, readPixels(w, h),
+                       std::string("multiview resolve layer ") + std::to_string(layer));
+    }
+    expect(glGetError() == GL_NO_ERROR, "multiview GL errors");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteFramebuffers(1, &readFbo);
+    glDeleteTextures(1, &tex);
+    glDeleteTextures(1, &source);
+}
+
 } // namespace
 
 std::string base64(const void *data, size_t size) {
@@ -1884,6 +2163,7 @@ int main(int argc, char **argv) {
     sharpSamplingChecks(out, failed);
     attachmentChecks(failed);
     panelUnderlayChecks(failed);
+    foveationFilterChecks(failed, hasMultiview, multiviewFn);
     for (const std::string &what : failed)
         std::printf("failed: %s\n", what.c_str());
     if (failed.empty())

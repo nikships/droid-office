@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { BOOKSHELF, FLOOR } from '../../shared/layout';
+import { signsPrinted } from '../native/mode';
 import { mergeByMaterial, mesh, textPlane, toon } from './toon';
 import type { Collider, Interactable } from './office';
 
 // The bookshelf against the south wall: a tall wooden case, five shelves packed with books of every
 // size and color (a few leaning over, a stack lying flat, a plant and a globe among them), and a
-// "Docs" sign along its top. E at it opens the project's Markdown to read (ui/bookshelf.ts).
+// "Docs" sign over its crown. In the headset app nothing stands over the case: a rail runs across
+// the top of its front, under the crown, with a brass "Docs" plaque screwed to it, lit by the room
+// like the wood. E at it opens the project's Markdown to read (ui/bookshelf.ts).
 
 export interface BookshelfModel {
   group: THREE.Group;
@@ -19,6 +22,11 @@ const SHELVES = 5;
 const SIDE = 0.05;
 const BASE = 0.1;
 const BOARD = 0.03;
+/** The headset app's rail across the top of the case's front, under the crown: how tall it is, and the plaque on it (meters). */
+const RAIL = 0.12;
+const PLAQUE_H = 0.085;
+/** The plaque: brushed brass, the dark of its cut letters and the fine engraved rule round them, on a darker brass back. */
+const PLAQUE = { bg: '#c9a85a', color: '#2a2215', border: '#4a3c22', board: '#8a6a32' } as const;
 
 export function buildBookshelf(): BookshelfModel {
   const { width: W, depth: D, height: H } = BOOKSHELF;
@@ -37,8 +45,11 @@ export function buildBookshelf(): BookshelfModel {
   // A crown over the top and a kick board at the foot.
   box(W + 0.08, 0.07, D + 0.05, wood, 0, H + 0.035, 0.01);
   box(W - 2 * SIDE, BASE, D - 0.03, woodDark, 0, BASE / 2, -0.015);
-
   const inner = W - 2 * SIDE;
+  const printed = signsPrinted();
+  // The headset app's rail, between the sides and flush with their fronts: the tallest books on the top shelf go up behind it.
+  if (printed) box(inner, RAIL, 0.02, wood, 0, H - RAIL / 2, D / 2 - 0.01);
+
   const bay = (H - BASE - BOARD) / SHELVES;
   const front = D / 2 - 0.02;
   for (let s = 0; s < SHELVES; s++) {
@@ -104,10 +115,22 @@ export function buildBookshelf(): BookshelfModel {
   const group = new THREE.Group();
   group.add(mergeByMaterial(parts));
 
-  // A sign along the crown.
-  const sign = textPlane('📚 Docs', { size: 40, bg: '#fffaf3' });
-  sign.position.set(0, H + 0.3, 0.02);
-  group.add(sign);
+  if (printed) {
+    // The plaque, centered on the rail, its back against the rail's face.
+    const plaque = textPlane('Docs', { size: 40, ...PLAQUE });
+    plaque.updateMatrixWorld(true);
+    const unit = new THREE.Box3().setFromObject(plaque);
+    plaque.scale.setScalar(PLAQUE_H / (unit.max.y - unit.min.y));
+    plaque.updateMatrixWorld(true);
+    const back = new THREE.Box3().setFromObject(plaque).min.z;
+    plaque.position.set(0, H - RAIL / 2, D / 2 - back);
+    group.add(plaque);
+  } else {
+    // A sign along the crown.
+    const sign = textPlane('📚 Docs', { size: 40, bg: '#fffaf3' });
+    sign.position.set(0, H + 0.3, 0.02);
+    group.add(sign);
+  }
 
   // Built facing +z; it stands against the south wall facing into the room (-z).
   group.position.set(BOOKSHELF.x, 0, BOOKSHELF.z);
