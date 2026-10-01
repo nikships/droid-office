@@ -1,6 +1,7 @@
 #pragma once
 // The foveation diagnostic view: GLSL and the matching host-testable math. No GL or OpenXR
 // headers, so the shader check suite can dump and validate these stages on the host.
+#include "foveation_filter_shader.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -56,11 +57,16 @@ struct FoveationOverlayShader {
     std::string vertex, fragment;
 };
 
+/** The tint of blocks the filter's density code cannot describe (kDensityUnknown on an axis). */
+constexpr std::array<float, 3> kUndescribedTint{.15f, .35f, 1.f};
+
 /**
  * A full-screen pass drawn last into the foveated world framebuffer. Its fragments run at the
  * runtime's actual per-bin density: the colour shows the measured neighbour step, and a
  * one-pixel checker can only be resolved at full density (coarser bins upscale it into solid
- * blocks). The ring marks a centre (FoveaMarker); it is computed, not measured.
+ * blocks). Blue marks blocks the filter only smooths, because their width or start is not one its
+ * code describes (densityAxisCode). The ring marks a centre (FoveaMarker); it is computed, not
+ * measured.
  */
 inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
     const auto number = [](float v) { return std::to_string(v); };
@@ -82,11 +88,21 @@ inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
                  "uniform vec2 size;\n"
                  "uniform vec4 centers;\n"
                  "uniform int marker;\n"
-                 "out vec4 pixel;\n"
+                 "out vec4 pixel;\n" +
+                 densityAxisCodeGlsl() +
                  "void main() {\n"
                  "    vec2 fc = gl_FragCoord.xy;\n"
-                 "    float stepPx = max(abs(dFdx(fc.x)), abs(dFdy(fc.y)));\n"
-                 "    vec3 tint = stepPx < " +
+                 "    vec2 steps = abs(vec2(dFdx(fc.x), dFdy(fc.y)));\n"
+                 "    float stepPx = max(steps.x, steps.y);\n"
+                 "    bool described = axisCode(fc.x, steps.x) != " +
+                 std::to_string(kDensityUnknown) +
+                 " && axisCode(fc.y, steps.y) != " + std::to_string(kDensityUnknown) +
+                 ";\n"
+                 "    vec3 tint = !described ? vec3(" +
+                 number(kUndescribedTint[0]) + ", " + number(kUndescribedTint[1]) + ", " +
+                 number(kUndescribedTint[2]) +
+                 ")\n"
+                 "        : stepPx < " +
                  number(kDensityBandEdges[0]) +
                  " ? vec3(0.1, 1.0, 0.25)\n"
                  "        : stepPx < " +

@@ -49,12 +49,17 @@ covers, using `CXX` (default `c++`), and runs it:
   foveation change at the same size and targets bound below the request.
 - `native/tests/foveation_test.cpp` for the header-only `foveation.h`,
   `foveation_filter_shader.h` and `foveation_overlay_shader.h`: setting-to-target mapping (Off
-  is targets without foveation, every level is filtered when the reconstruction is available),
-  capability gates, the eye-tracked → fixed → unfoveated fallback and the filtered → unfiltered
-  one, eye-tracked state results that are retried rather than dropped, the filter's density code,
-  taps and GLSL (a copy at full density, flat regions kept flat, and a block edge spread over
-  three or more pixels for every block width and phase), and the diagnostic view's density
-  bands, centre mapping, fallback marker and GLSL.
+  is targets without foveation, every level is a fixed, filtered level when the reconstruction
+  is available), capability gates, the filtered → unfiltered → unfoveated fallbacks, which passes
+  are filtered (not while the drawn image is unfoveated or the workspace panel is beneath the
+  world), the priming of a foveated set (images read until foveated, per eye, and the give-up
+  after eight unfoveated submissions), the density code (every block width and start round-trips
+  for both `gl_FragCoord` conventions; other widths, off-grid starts and non-finite input are
+  unknown), the resolve emulated on driver-style rows and a 2 × 4 bin (full density copied
+  exactly, reduced bins equal to the bilinear upsample of their own blocks for every width and
+  start, steps no larger than one block difference over its width, flat regions flat, ramps
+  straight, undescribed blocks smoothed [1 2 1] / 4), the GLSL contracts, and the diagnostic
+  view's density bands, undescribed-block tint, centre mapping, marker and GLSL.
 - `native/tests/refresh_policy_test.cpp`: bounded 90 Hz re-requests, focus loss, actual-rate
   recovery and invalid observations.
 - `native/tests/hand_mesh_test.cpp` retains standalone checks for the historical mesh code:
@@ -93,7 +98,13 @@ Two registered suites are required on every host run:
   `panel_cutout.cpp` and draws a frame with the workspace panel beneath the world layer, as the
   display loop does (World pass, `PanelCutout::punch`, Attached pass, `seal`), and checks the
   hole, a gun held in front of and behind the panel, `attachedHands`/`attachedBounds` and the
-  GL state the cutout leaves.
+  GL state the cutout leaves. It also builds `foveation_filter.cpp` and runs the filter's GLSL
+  on the host driver against its C++ reference: `axisCode` for positions on a quarter-pixel grid
+  and every step class, the density pass at full density (alpha code 0, colour untouched), and
+  the resolve of a driver-style image with bins of 2 × 1, 2 × 4, 4 × 4, 8 × 2 and an undescribed
+  3 × 2 starting off their grids (full-density pixels exact, the rest within 1.5/255 of the
+  bilinear reference, opaque output), single-view and, when the driver exposes
+  `GL_OVR_multiview2`, both layers in one multiview draw.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts (including points drawn as quads),
   validates and links every generated stage, the foveation diagnostic view and the foveation

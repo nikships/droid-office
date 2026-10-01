@@ -34,15 +34,19 @@ of creating a second office state or a separate worker/board implementation.
 - Check extensions, function pointers and supported modes at runtime. Treat a 90 Hz request
   as a request, and report the actual refresh rate and frame timing. The OpenXR runtime owns
   foveation: create only the world colour swapchain with `XR_FB_foveation` scaled-bin support and
-  apply `XR_FB_foveation_configuration` / `XR_META_foveation_eye_tracked` profiles with
-  `xrUpdateSwapchainFB`. Never write QCOM texture foveation state or focal points from the app,
-  and never foveate depth, the sharp-screen layer or the Android Surface panels. Cite the
-  specification or working Android XR code next to each foveation call. Never submit the
-  driver's upscaled blocks: render into the foveated swapchains and draw the submitted,
-  unfoveated ones with the filter pass (`foveation_filter_shader.h`), falling back to direct
-  submission only when that cannot be created. Keep world-pass output independent of bin
-  density: no `gl_PointSize` (points are quads) and derivative-based shading divided by the
-  measured step.
+  apply a fixed `XR_FB_foveation_configuration` level profile with `xrUpdateSwapchainFB`. The
+  GLES renderer has no eye-tracked foveation on Android XR: do not enable or query
+  `XR_META_foveation_eye_tracked` from it (eye tracking needs the Vulkan world renderer). Never
+  write QCOM texture foveation state or focal points from the app, and never foveate depth, the
+  sharp-screen layer or the Android Surface panels. Cite the specification or working Android XR
+  code next to each foveation call. Never submit the driver's upscaled blocks: render into the
+  foveated swapchains and draw the submitted, unfoveated ones with the filter pass
+  (`foveation_filter_shader.h`: full density copied, reduced bins upsampled bilinearly), falling
+  back to direct submission only when that cannot be created. The runtime foveates a GLES
+  swapchain's images only when it is submitted, so a foveated image that reads no
+  `FOVEATION_ENABLE_BIT_QCOM` is submitted directly until it does (`FoveationPriming`). Keep
+  world-pass output independent of bin density: no `gl_PointSize` (points are quads) and
+  derivative-based shading divided by the measured step.
 - World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
   and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
   the maximum or force default frames through maximum-size targets. Replace targets on the

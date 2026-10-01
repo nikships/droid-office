@@ -108,9 +108,12 @@ foveation; they are not independently foveated
 
 The app no longer computes focal points or writes `GL_QCOM_texture_foveated` state. Earlier
 builds steered app-side focal points from the eye-gaze interaction pose with invented gain,
-area and density values. The current build uses the extensions Android XR lists for this runtime
-([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)), each enabled
-only when advertised:
+area and density values. The current build uses fixed runtime foveation, the OpenGL ES path
+Android XR documents: its Unity "Foveation (Legacy)" feature "also supports … OpenGL ES" with
+only the three FB extensions below, while its eye-tracked foveated rendering is Vulkan-only
+([Develop with Unity](https://developer.android.com/develop/xr/unity)). Each extension is enabled
+only when advertised
+([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)):
 
 1. `XR_FB_swapchain_update_state`, `XR_FB_foveation` and `XR_FB_foveation_configuration`.
    Only the world colour swapchain is created with
@@ -129,15 +132,14 @@ only when advertised:
    `GL_QCOM_texture_foveated` also says foveation "cannot be disabled" on a texture once enabled.
    So Off creates swapchains without `XrSwapchainCreateInfoFoveationFB`, which have no foveation
    support (`XR_FB_foveation`), and a level creates them with it and applies that level first.
-4. With `XR_META_foveation_eye_tracked`, `supportsFoveationEyeTracked` and a granted
-   `EYE_TRACKING_FINE`, the profile also chains `XrFoveationEyeTrackedProfileCreateInfoMETA`.
-   Each frame, after acquiring the world image (Godot's order), the app calls
-   `xrUpdateSwapchainFB` right before `xrGetFoveationEyeTrackedStateMETA`, as the extension
-   asks. The runtime places the fovea; the app only reports the returned centre and draws it in
-   the diagnostic view. As in Godot, a failed update or query is tried again on the next frame:
-   in the headset run the query returned `XR_ERROR_RUNTIME_FAILURE` while nobody wore the
-   headset. `XR_EXT_eye_gaze_interaction` stays bound because Galaxy XR's eye-tracked foveation
-   needs it ([godotengine/godot#113778](https://github.com/godotengine/godot/issues/113778)).
+4. No eye tracking. Earlier builds chained `XrFoveationEyeTrackedProfileCreateInfoMETA` and
+   called `xrUpdateSwapchainFB` and `xrGetFoveationEyeTrackedStateMETA` every frame. On Galaxy XR
+   that query returned `XR_ERROR_RUNTIME_FAILURE` on 13,092 of 13,092 frames of a GLES session,
+   and the runtime logged `Using static model` for the eye-tracked profile: its GL client
+   compositor has no eye-tracked state and applies the level only. So the GLES renderer neither
+   enables `XR_META_foveation_eye_tracked` nor queries it, and reports `mode: "fixed"`. Eye-tracked
+   foveation needs the Vulkan world renderer (fragment density map offsets).
+   `XR_EXT_eye_gaze_interaction` stays bound as an interaction pose for the metrics.
 5. The profile is destroyed before the swapchains and the session.
 6. Reduced regions are filtered, not submitted in blocks. `GL_QCOM_texture_foveated` renders a
    scaled bin at reduced density and "finally upscal[es] the subregion to the native texture
@@ -147,23 +149,40 @@ only when advertised:
    layout ("Reduces aliasing in peripheral areas through bilinear filtering",
    [Android XR Extensions settings](https://developer.android.com/develop/xr/unity/performance/androidxr-extension-settings)),
    and OpenXR offers that only for Vulkan swapchains. So a level creates two sets of world
-   swapchains of the same size: the foveated set above, which the world renders into and which
-   is never submitted (`XR_SWAPCHAIN_USAGE_SAMPLED_BIT` as well), and the submitted set without
-   foveation support. The last draw into the foveated image writes each invocation's neighbour
-   step (`dFdx`/`dFdy` of `gl_FragCoord`, which issue 4 leaves uncorrected, so the step is
-   1/density) into its alpha, which the opaque projection layer ignores. A full-screen pass then
-   draws the submitted image: full-density pixels are copied unchanged, and every reduced pixel
-   averages linear taps spread over its own block width (two taps at half density, three for
-   coarser blocks), which equals a bilinear upscale of the low-density pixels at half density and
-   keeps every step across a block edge at a third or less beyond it. The runtime still chooses
-   the density everywhere and places the fovea; the app never writes QCOM state. The pass costs
-   one extra read and write of the eye images and doubles the world swapchain memory. If the
-   filter's programs do not compile, or the second set cannot be created, the foveated set is
-   submitted directly for the rest of the session (fallback `filtered targets rejected`). No
-   OpenXR text says whether a runtime foveates a swapchain that is never submitted, so when every
-   image of the foveated set reads no foveation bits (`FOVEATION_TEXTURE`), the app falls back
-   the same way (`filtered swapchain not foveated`).
-7. Nothing else in the world pass changes from bin to bin. QCOM issue 4 also leaves
+   swapchains of the same size: the foveated set above, which the world renders into
+   (`XR_SWAPCHAIN_USAGE_SAMPLED_BIT` as well), and the submitted set without foveation support.
+   The last draw into the foveated image writes, per axis, which block of the driver's upscale
+   each pixel belongs to into its alpha, which the opaque projection layer ignores: the block
+   width from `dFdx`/`dFdy` of `gl_FragCoord` (issue 4 leaves them uncorrected, so the step is
+   1/density) and where blocks start, from `gl_FragCoord` itself (issue 4 scales it to the
+   invocation's full-resolution position). Widths of 1, 2, 4 and 8 pixels and every start fit
+   in four bits per axis; the Galaxy XR diagnostic view showed steps of 1, 2 and 4 or more
+   almost everywhere (the view now marks any other width in blue).
+   A full-screen pass then draws the submitted image: full-density pixels are copied unchanged,
+   and every pixel of a reduced bin takes one linear tap between its own block and the nearer
+   neighbouring block, placed so its weight is the distance between the blocks' centres. That is
+   exactly a bilinear upsample of the bin's low-density pixels, on each axis separately, so a
+   bin reduced on one axis is only resampled along that axis. A block the code cannot describe
+   (another width, or a start off the pixel grid) is smoothed [1 2 1] / 4 instead. The runtime
+   still chooses the density everywhere and places the fovea; the app never writes QCOM state.
+   The pass costs one extra read and write of the eye images and doubles the world swapchain
+   memory. If the filter's programs do not compile, or the second set cannot be created, the
+   foveated set is submitted directly for the rest of the session (fallback `filtered targets
+   rejected`).
+7. Priming. Applying a profile only stores it with a Galaxy XR GLES swapchain: the runtime writes
+   `GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM` and the focal points of all of a swapchain's images when
+   that swapchain is submitted in a projection layer (its projection layer registers the
+   swapchain, and the GL client compositor's layer commit applies the profile, in
+   `libopenxr_android.so`). A foveated set that is never submitted is never foveated: the
+   2026-10-01 headset run read 0 bits on every image of it, and the filter never ran. So each pass
+   reads the bits of the foveated image it has acquired, until that image is foveated, and
+   submits it directly while it is not (`FOVEATION_PRIMED` when an image first reads foveated).
+   Such an image is drawn at full density, so the frame looks the same; the first submission
+   foveates every image of the set, and from the next frame on the pass is filtered. Foveation
+   "cannot be disabled" on a texture once enabled (`GL_QCOM_texture_foveated`), so an image read
+   as foveated is not read again. If eight direct submissions leave the set unfoveated, the
+   targets fall back to unfiltered ones (`filtered swapchain not foveated`).
+8. Nothing else in the world pass changes from bin to bin. QCOM issue 4 also leaves
    `gl_PointSize` unscaled, so GL points changed size and dropped out between bins, which showed
    as rectangles of missing lamp and pumpkin glow. Points are drawn as instanced quads of the
    same square instead (indexed points, which the office does not use, stay GL points).
@@ -186,26 +205,25 @@ loads. A page reload keeps the current settings until the new page sends its own
 The level mapping is the app's choice; Godot uses the same order. The runtime levels have no
 density parameter, so the earlier peripheral-detail setting is gone. Pages still send
 `peripheralDensity: 0.25` because APKs up to v0.1.301 reject graphics without it; current APKs
-ignore it. If the runtime rejects something, the app degrades one step for the session:
-eye-tracked → the same level fixed, on the same new swapchains → world swapchains without
-foveation support (full resolution everywhere). Filtered targets that cannot be created fall
-back to unfiltered ones. Only `XR_ERROR_FEATURE_UNSUPPORTED` from the
-state query drops eye tracking during a session; the targets are then recreated with the fixed
-level.
+ignore it. If something fails, the app degrades one step for the session: filtered targets
+that cannot be created, or whose foveated set the runtime never foveates, fall back to
+unfiltered ones, and a level the runtime rejects falls back to world swapchains without
+foveation support (full resolution everywhere).
 
 `FRAME_METRICS` carries `foveationSupported`, `foveationEnabled` and `foveationLevel` for the
 bound targets. The details are a separate `FOVEATION_METRICS` line, because together they
 exceeded Android's 1024-byte log record, and the page receives them as `foveation`: `setting`,
-the bound `level` (`none`, `low`, `medium` or `high`), `eyeTracked`, `eyeTrackedAvailable`,
-`filtered` and `filterAvailable` (the reconstruction above), `pending` (the setting asks for other targets, which follow within about 250 ms), the profile
-`create`/`update` results, per-window `frames`/`validFrames`/`invalidFrames`/`failedFrames`,
-the last update/state results, `centerValid` and `center` (NDC per eye), the probed texture
-state and `fallback`. New targets also update the page's copy at once, without waiting for the
-next window. The log also has `FOVEATION_CAPABILITY`, `FOVEATION_FILTER` and `GRAPHICS_START`
-(the stored settings) at startup, `VIEW_FOV` (each eye's field of view in degrees) after focus,
-`FOVEATION_PROFILE` for every applied profile, `WORLD_TARGET` (with `filtered`) for new targets,
-`FOVEATION_EYE_STATE` when the per-frame results change and `FOVEATION_TEXTURE` for each image
-the world renders into. The texture line reads
+the bound `level` (`none`, `low`, `medium` or `high`), `mode` (`fixed` or `off`), `eyeTracked`
+(always false), `filtered` and `filterAvailable` (the reconstruction above), the window's world
+passes by how they were submitted (`filteredFrames`, `primingFrames`, `underlayFrames` for the
+workspace panel beneath the world), `primed` (every foveated image is foveated), `pending` (the
+setting asks for other targets, which follow within about 250 ms), the profile
+`create`/`update` results, the probed texture state and `fallback`. New targets also update the
+page's copy at once, without waiting for the next window. The log also has
+`FOVEATION_CAPABILITY`, `FOVEATION_FILTER` and `GRAPHICS_START` (the stored settings) at startup,
+`VIEW_FOV` (each eye's field of view in degrees) after focus, `FOVEATION_PROFILE` for every
+applied profile, `WORLD_TARGET` (with `filtered`) for new targets, `FOVEATION_PRIMED` and
+`FOVEATION_TEXTURE` for each image the world renders into. The texture line reads
 `GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM`, `_MIN_PIXEL_DENSITY_QCOM` and the focal-point count
 back from the image on its second frame (the first frame of a new image read 0 bits on the
 headset although every frame was foveated): 0 bits for Off, and bits of 0 at a level mean the
@@ -215,21 +233,24 @@ runtime does not foveate this GLES swapchain.
 the foveated world target, before the filter's step pass. Its fragments run at the runtime's
 actual density: green, yellow,
 orange and red mark a neighbour step of one, two, three and four or more full-resolution pixels
-(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), and a
-one-pixel checker can only be resolved at full density (the filter smooths it elsewhere). A magenta ring marks the
-runtime-reported centre when it is valid. Without one, on foveated targets, a white ring marks
-the image centre (NDC 0, 0, `GL_QCOM_texture_foveated`'s default focal point) as the fallback.
-Both rings are computed, not measured. Reading density
+(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), blue marks blocks
+the filter's code cannot describe and only smooths, and a one-pixel checker can only be resolved
+at full density (the filter rebuilds it elsewhere). On foveated targets a white ring marks the
+image centre (NDC 0, 0, `GL_QCOM_texture_foveated`'s default focal point); it is computed, not
+measured. Reading density
 from derivatives is derived from the QCOM text, not a documented debugging aid. The view is
 not saved and turns off when the app restarts. Pages can also switch it with
 `officeNative.graphics.set({ foveationDebug: true })`.
 
-Not documented anywhere, and so still headset checks: whether an eye-tracked profile moves the
-full-density region on GLES (every published eye-tracked implementation is Vulkan; it needs a
-wearer) and the NDC axis convention of the reported centre for a GL image. The 2026-10-01
-headset run showed that the runtime does foveate GLES scaled-bin swapchains (bits 3 at every
-level; app GPU frame time 32.7 ms with Off and 9.7 ms with Balanced at 116% resolution, measured
-with each state on freshly created targets) and keeps the first profile of each swapchain.
+Not documented anywhere, and so still headset checks: that the first direct submission foveates
+every image of the foveated set (`FOVEATION_PRIMED` … `complete=1`, then `filteredFrames` and no
+`primingFrames` in `FOVEATION_METRICS`), where in its block a reduced bin's `gl_FragCoord` sits
+(the code accepts the block centre and the centre of its first pixel), and that the bins' widths
+are ones the code describes (no blue in the diagnostic view). The 2026-10-01 headset runs showed
+that the runtime foveates GLES scaled-bin swapchains it is given in a projection layer (bits 3 at
+every level; app GPU frame time 32.5 ms with Off and 7.1 ms with Balanced at 116% resolution,
+measured with each state on freshly created targets, before the filter ran), keeps the first
+profile of each swapchain, and leaves a never-submitted one at 0 bits.
 
 The original desktop windows, including terminals, are displayed through a 2400×1600 Android
 Surface compositor layer. This preserves text resolution independently of world foveation.

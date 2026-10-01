@@ -6,7 +6,7 @@ export const MAX_NATIVE_RENDER_SCALE = 2;
 export interface NativeGraphicsSettings {
   v: 1;
   renderScale: number;
-  /** Off renders the world without foveation; the others are a runtime level, eye-tracked when available. Each choice creates new world targets. */
+  /** Off renders the world without foveation; the others are a fixed runtime level (the GLES renderer has no eye-tracked foveation). Each choice creates new world targets. */
   foveation: NativeFoveation;
   fps: boolean;
   sharpScreens: boolean;

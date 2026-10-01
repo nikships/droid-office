@@ -47,12 +47,14 @@ int main() {
     high.foveation.level = 3;
     assert(high != maximum && !changes.observe(high, 10100));
     assert(changes.observe(high, 10350));
-    // The runtime rejected the eye-tracked profile: the bound targets are the fixed level, and a
-    // request that matches them later is not replaced again.
-    auto highFixed = high;
-    highFixed.foveation.eyeTracked = false;
-    changes.finish(highFixed, true);
-    assert(!changes.observe(highFixed, 20000) && !changes.observe(highFixed, 30000));
+    // The filtered targets could not be created: the bound targets are the unfiltered level, and
+    // a request that matches them later is not replaced again.
+    assert(high.foveation.filtered);
+    auto highUnfiltered = high;
+    highUnfiltered.foveation.filtered = false;
+    assert(highUnfiltered != high);
+    changes.finish(highUnfiltered, true);
+    assert(!changes.observe(highUnfiltered, 20000) && !changes.observe(highUnfiltered, 30000));
     assert(!changes.observe(recommended, 31000));
     assert(changes.observe(recommended, 31250));
     changes.finish(recommended, true);

@@ -49,18 +49,18 @@ inline RenderSize renderSize(const ResolutionLimits &limits, float scale) {
  * The runtime foveation a set of world swapchains is created with (foveation.h). level is an
  * XrFoveationLevelFB value: 0 (NONE) creates them without XrSwapchainCreateInfoFoveationFB, so
  * they have no foveation support at all; LOW, MEDIUM or HIGH creates them with it and applies that
- * level's profile, with the eye-tracked struct when eyeTracked, as their first profile. On Galaxy
- * XR the runtime keeps the first profile a new swapchain receives, so a change is a new target.
- * filtered: the world renders into those foveated swapchains, which are never submitted, and a
- * filtered reconstruction draws the submitted, unfoveated swapchains (foveation_filter_shader.h).
+ * level's fixed profile as their first profile. On Galaxy XR the runtime keeps the first profile a
+ * new swapchain receives, so a change is a new target. filtered: the world renders into those
+ * foveated swapchains, and a filtered reconstruction draws the submitted, unfoveated swapchains
+ * (foveation_filter_shader.h); the foveated ones are submitted only until the runtime has foveated
+ * their images (FoveationPriming).
  */
 struct TargetFoveation {
     int level = 0;
-    bool eyeTracked = false;
     bool filtered = false;
     bool foveated() const { return level != 0; }
     bool operator==(const TargetFoveation &other) const {
-        return level == other.level && eyeTracked == other.eyeTracked && filtered == other.filtered;
+        return level == other.level && filtered == other.filtered;
     }
     bool operator!=(const TargetFoveation &other) const { return !(*this == other); }
 };

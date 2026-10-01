@@ -209,7 +209,7 @@ export function openNativeGraphicsSettings(): void {
     h(
       'p.setting-note',
       {},
-      'Tints the world by the detail each area is actually rendered at: green is full detail, then yellow, orange and red. A fine checker appears only at full detail. A magenta ring marks where the headset reports your gaze; a white ring marks the image centre while it reports none. Turns off when the app restarts.',
+      'Tints the world by the detail each area is actually rendered at: green is full detail, then yellow, orange and red; blue marks lower-detail areas the app can only soften instead of rebuilding them. A fine checker appears only at full detail. A white ring marks the image centre, where the sharp area stays. Turns off when the app restarts.',
     ),
     h('label.choice.ng-fps', {}, sharpScreens, h('span', {}, 'Sharper laptop screens')),
     h('p.setting-note', {}, 'Keeps nearby terminal screens at full resolution independently of world detail. Turning this off saves GPU time and uses the normal world rendering.'),
@@ -270,7 +270,7 @@ export function openNativeGraphicsSettings(): void {
         ? 'Foveated rendering is unavailable on this headset. The world keeps full detail at the selected resolution.'
         : current.foveation === 'off'
           ? 'Off renders the whole eye at full detail at the selected world resolution. This uses more GPU time.'
-          : 'The headset lowers detail away from where you look, following your eyes when eye tracking is allowed and centred otherwise, and the app smooths the lower-detail areas. A wider sharp area uses more GPU time.';
+          : 'The headset lowers detail toward the edges of the view around a sharp area fixed at the centre, and the app rebuilds the lower-detail areas smoothly. A wider sharp area uses more GPU time.';
     const applied = nativeFoveationStatus(metrics);
     setText(foveationNote, applied ? `${foveationText} ${applied}` : foveationText);
     const runtime = m.runtime && typeof m.runtime === 'object' ? (m.runtime as Record<string, { value?: number }>) : {};
