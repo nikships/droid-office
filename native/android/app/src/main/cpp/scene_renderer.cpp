@@ -242,6 +242,7 @@ struct SceneRenderer::Impl {
     std::vector<DrawItem> placed;
     uint64_t placedSerial = 0;
     SceneControllerPoses grips; // valid[h] only between setControllerPoses and the next frame
+    unsigned heldHands = 0;     // attachedHands(): a bit per hand with an attached item placed
     SceneStats stats;
 
     explicit Impl(const SceneRendererOptions &o) : options(o), model(modelOptions(o)) {}
@@ -1429,12 +1430,22 @@ struct SceneRenderer::Impl {
             grips.held[h] = grips.valid[h] && poses.held[h];
             std::copy(poses.grip[h], poses.grip[h] + 16, grips.grip[h]);
         }
+        heldHands = 0;
         if (const RenderState *s = current.get()) {
             if (placedSerial != s->serial)
                 syncAttachments(*s);
             else
                 compose(*s);
+            for (const DrawItem &it : placed)
+                if (placedAt(it))
+                    heldHands |= 1u << it.attachment;
         }
+    }
+
+    /** An attached item has a pose this frame: its grip is valid and, if grip-held, squeezed. */
+    bool placedAt(const DrawItem &it) const {
+        return it.attachment >= 0 && grips.valid[it.attachment] &&
+               (!it.gripHeld || grips.held[it.attachment]);
     }
 
     /**
@@ -1443,7 +1454,8 @@ struct SceneRenderer::Impl {
      * transparent by group order, render order, far to near, id. Depth is the bounding-sphere
      * center in eye 0's clip space, as three projects the bounding-sphere center.
      */
-    void buildLists(const RenderState &s, const SceneEye *eyes, int count, bool multiviewPass) {
+    void buildLists(const RenderState &s, const SceneEye *eyes, int count, bool multiviewPass,
+                    SceneDrawSet set) {
         opaque.clear();
         transparent.clear();
         Frustum fr[2];
@@ -1451,18 +1463,25 @@ struct SceneRenderer::Impl {
         for (int i = 0; i < count; i++)
             fr[i] = Frustum::fromViewProj(multiply(toMat(eyes[i].projection), toMat(eyes[i].view)));
         syncAttachments(s);
-        size_t attached = 0;
-        stats.attachedPlaced = 0;
+        size_t attached = 0, considered = 0;
+        if (set != SceneDrawSet::World)
+            stats.attachedPlaced = 0;
         for (const DrawItem &source : s.items) {
             const DrawItem *drawn = &source;
             if (source.attachment >= 0) {
                 drawn = &placed[attached++];
+                if (set == SceneDrawSet::World)
+                    continue;
+                considered++;
                 // Without this frame's tracked grip there is no pose to draw it at: never a stale
                 // one. A grip-held item drops on the display frame its squeeze is released.
-                if (!grips.valid[source.attachment] ||
-                    (source.gripHeld && !grips.held[source.attachment]))
+                if (!placedAt(source))
                     continue;
                 stats.attachedPlaced++;
+            } else if (set == SceneDrawSet::Attached) {
+                continue;
+            } else {
+                considered++;
             }
             const DrawItem &it = *drawn;
             bool seen = false;
@@ -1502,7 +1521,9 @@ struct SceneRenderer::Impl {
                 return a.z > b.z;
             return x.id < y.id;
         });
-        stats.culledItems = uint32_t(s.items.size() - opaque.size() - transparent.size());
+        // The attached pass follows a world pass of the same frame and adds its own culls.
+        const auto culled = uint32_t(considered - opaque.size() - transparent.size());
+        stats.culledItems = set == SceneDrawSet::Attached ? stats.culledItems + culled : culled;
     }
 
     /**
@@ -1651,6 +1672,7 @@ struct SceneRenderer::Impl {
         frameNumber++;
         // Grips are valid for one display frame only.
         grips.valid[0] = grips.valid[1] = grips.held[0] = grips.held[1] = false;
+        heldHands = 0;
         prepareMs = drawMs = 0;
         stats.drawCalls = stats.shadowDrawCalls = stats.triangles = stats.points = stats.lines =
             stats.culledItems = 0;
@@ -1717,7 +1739,7 @@ struct SceneRenderer::Impl {
     }
 
     void draw(const SceneEye *eyes, int count, int heightPx,
-              const std::function<void(int)> &bindEye) {
+              const std::function<void(int)> &bindEye, SceneDrawSet set) {
         if (autoPrepare || !prepared)
             prepareFrame();
         auto t0 = Clock::now();
@@ -1731,7 +1753,7 @@ struct SceneRenderer::Impl {
         const RenderState *s = current.get();
         if (s) {
             writeViewUbos(eyes, count, heightPx, multiviewPass);
-            buildLists(*s, eyes, count, multiviewPass);
+            buildLists(*s, eyes, count, multiviewPass, set);
         }
         int passes = multiviewPass ? 1 : count;
         for (int e = 0; e < passes; e++) {
@@ -1741,7 +1763,7 @@ struct SceneRenderer::Impl {
             }
             if (s && !multiviewPass)
                 glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, viewUbo[ring][e]);
-            if (options.clear)
+            if (options.clear && set != SceneDrawSet::Attached)
                 clearTarget(s);
             if (!s)
                 continue;
@@ -2538,15 +2560,35 @@ void SceneRenderer::setControllerPoses(const SceneControllerPoses &poses) {
         impl_->setControllerPoses(poses);
 }
 
-void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx) {
+unsigned SceneRenderer::attachedHands() const { return impl_->initialized ? impl_->heldHands : 0; }
+
+size_t SceneRenderer::attachedBounds(float (*out)[4], size_t max) const {
+    if (!impl_->initialized || !impl_->heldHands)
+        return 0;
+    size_t count = 0;
+    for (const DrawItem &it : impl_->placed) {
+        if (count >= max)
+            break;
+        if (!impl_->placedAt(it) || it.sphere.empty() || it.sphere.infinite())
+            continue;
+        out[count][0] = it.sphere.c.x;
+        out[count][1] = it.sphere.c.y;
+        out[count][2] = it.sphere.c.z;
+        out[count][3] = it.sphere.r;
+        count++;
+    }
+    return count;
+}
+
+void SceneRenderer::render(const SceneEye &eye, int viewportHeightPx, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(&eye, 1, viewportHeightPx, {});
+        impl_->draw(&eye, 1, viewportHeightPx, {}, set);
 }
 
 void SceneRenderer::renderStereo(const SceneEye eyes[2], int viewportHeightPx,
-                                 const std::function<void(int eye)> &bindEye) {
+                                 const std::function<void(int eye)> &bindEye, SceneDrawSet set) {
     if (impl_->initialized)
-        impl_->draw(eyes, 2, viewportHeightPx, bindEye);
+        impl_->draw(eyes, 2, viewportHeightPx, bindEye, set);
 }
 
 bool SceneRenderer::hasSharpScreens() const { return impl_->hasSharpAnywhere(); }

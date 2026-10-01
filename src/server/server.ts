@@ -267,8 +267,8 @@ export async function startServer(cfg: Config) {
       c.ws.send(json);
     }
   };
-  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info') => {
-    if (floor) toFloor(floor, { t: 'toast', text, level });
+  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
+    if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
   const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}) }))];
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
@@ -1425,6 +1425,7 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const kind = msg.kind === 'shell' ? 'shell' : 'agent';
+        const target = msg.target === true;
         if (kind === 'agent' && msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
           warn(c, 'Unknown agent provider');
           break;
@@ -1439,11 +1440,19 @@ export async function startServer(cfg: Config) {
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, repos);
+          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, repos, target);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') warn(c, r);
-          else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
+          else
+            toastFloor(
+              floor,
+              target
+                ? `${who} set up ${r.name.replace(/ 🐚$/u, '')} for target practice`
+                : kind === 'shell'
+                  ? `${who} opened a shell at a desk`
+                  : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`,
+            );
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
         };
         // Every project it gets a worktree of starts from what's on the forge now.

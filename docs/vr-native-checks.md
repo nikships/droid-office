@@ -67,6 +67,17 @@ covers, using `CXX` (default `c++`), and runs it:
 - `native/tests/status_layout_test.cpp` for the header-only `status_layout.h`: the status
   Surface's toast and FPS counter columns, the counter's lower-left placement and text size,
   the controller cover test and which status layers a frame composites.
+- `native/tests/layer_occlusion_test.cpp`: the workspace panel's hole in the world layer
+  against `panelHit`, and when the status card yields to a controller or held object in front
+  of it, with its fade timing.
+- `native/tests/capture_puppet_test.cpp` with `bridge_state.cpp`, compiled twice: as
+  `capture_puppet_debug` with `-DOFFICE_CAPTURE_PUPPET=1` (the debug APK) and as
+  `capture_puppet_release` without it (the release APK). The release run proves the bridge never
+  reads the debug capture puppet and the display-frame merge never applies it, even when the
+  Java host asks; the debug run checks the BuildConfig.DEBUG gate, the puppet parser and
+  malformed-input isolation. Both check the merge: untracked slots only, freshness (a 495 ms
+  page stall keeps the puppet and its gun), focus, head and heading spaces, and attachments at
+  the puppet grip.
 
 Two registered suites are required on every host run:
 
@@ -78,7 +89,11 @@ Two registered suites are required on every host run:
   no pending uploads, waiting state, shader compilation or queued texture work, within a
   bounded frame count. Each failed check is named again in the final summary. The fixture
   uses placeholder gradients for DOM canvas images; actual
-  text and material pixels are compared in the browser shader suite.
+  text and material pixels are compared in the browser shader suite. It also builds
+  `panel_cutout.cpp` and draws a frame with the workspace panel beneath the world layer, as the
+  display loop does (World pass, `PanelCutout::punch`, Attached pass, `seal`), and checks the
+  hole, a gun held in front of and behind the panel, `attachedHands`/`attachedBounds` and the
+  GL state the cutout leaves.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts (including points drawn as quads),
   validates and links every generated stage, the foveation diagnostic view and the foveation

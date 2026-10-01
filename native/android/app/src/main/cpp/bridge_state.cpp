@@ -46,6 +46,72 @@ GraphicsControls parseGraphics(const Json &graphics) {
 bool sameStored(const GraphicsControls &a, const GraphicsControls &b) {
     return a.renderScale == b.renderScale && a.foveation == b.foveation;
 }
+XrPosef pose7(const Json &value) {
+    if (!value.is_array() || value.size() != 7)
+        throw std::runtime_error("Expected a pose [x, y, z, qx, qy, qz, qw]");
+    XrPosef pose;
+    pose.position = {finite(value[0], 1000), finite(value[1], 1000), finite(value[2], 1000)};
+    const float x = finite(value[3], 2), y = finite(value[4], 2), z = finite(value[5], 2),
+                w = finite(value[6], 2);
+    const float length = std::sqrt(x * x + y * y + z * z + w * w);
+    if (length < .5f || length > 1.5f)
+        throw std::runtime_error("Expected a unit quaternion");
+    pose.orientation = {x / length, y / length, z / length, w / length};
+    return pose;
+}
+float unit(const Json &hand, const char *key, float low) {
+    return hand.contains(key) ? std::clamp(finite(hand[key], 10), low, 1.f) : 0.f;
+}
+bool flag(const Json &hand, const char *key) {
+    if (!hand.contains(key))
+        return false;
+    if (!hand[key].is_boolean())
+        throw std::runtime_error(std::string("Expected a boolean ") + key);
+    return hand[key].get<bool>();
+}
+/** The page's capture puppet: {v: 1, hands: [hand | null, hand | null]} (capture_puppet.h). */
+PuppetState puppetState(const Json &value) {
+    if (!value.is_object() || value.value("v", 0) != 1)
+        throw std::runtime_error("Unsupported puppet version");
+    const auto &hands = value.at("hands");
+    if (!hands.is_array() || hands.size() != 2)
+        throw std::runtime_error("Expected two puppet hands");
+    PuppetState out;
+    for (size_t h = 0; h < 2; h++) {
+        const auto &hand = hands[h];
+        if (hand.is_null())
+            continue;
+        if (!hand.is_object())
+            throw std::runtime_error("Expected a puppet hand");
+        auto &slot = out.hands[h];
+        const auto space = hand.value("space", std::string{"local"});
+        if (space == "head")
+            slot.space = PuppetSpace::Head;
+        else if (space == "heading")
+            slot.space = PuppetSpace::Heading;
+        else if (space == "local")
+            slot.space = PuppetSpace::Local;
+        else
+            throw std::runtime_error("Invalid puppet space");
+        slot.grip = pose7(hand.at("grip"));
+        slot.aim = pose7(hand.at("aim"));
+        slot.trigger = unit(hand, "trigger", 0);
+        slot.squeeze = unit(hand, "squeeze", 0);
+        if (hand.contains("stick")) {
+            const auto &stick = hand["stick"];
+            if (!stick.is_array() || stick.size() != 2)
+                throw std::runtime_error("Expected a puppet stick [x, y]");
+            slot.stick = {std::clamp(finite(stick[0], 10), -1.f, 1.f),
+                          std::clamp(finite(stick[1], 10), -1.f, 1.f)};
+        }
+        slot.primary = flag(hand, "a");
+        slot.secondary = flag(hand, "b");
+        slot.menu = flag(hand, "menu");
+        slot.stickClick = flag(hand, "stickClick");
+        slot.present = true;
+    }
+    return out;
+}
 std::string statusText(std::string value) {
     constexpr size_t limit = 4096;
     if (value.size() > limit) {
@@ -135,6 +201,16 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
                 next.marker = vector(teleport.at("marker"));
                 next.teleportValid = teleport.value("valid", false);
             }
+            // A malformed puppet clears it without rejecting the rest of the controls.
+            next.puppet = PuppetState{};
+            if (kCapturePuppetBuild && puppetAllowed && c.contains("puppet") &&
+                !c["puppet"].is_null()) {
+                try {
+                    next.puppet = puppetState(c["puppet"]);
+                } catch (const std::exception &invalid) {
+                    error = std::string("Invalid capture puppet: ") + invalid.what();
+                }
+            }
             if (c.contains("haptics")) {
                 const auto &haptics = c["haptics"];
                 if (!haptics.is_array() || haptics.size() > 16)
@@ -186,6 +262,7 @@ ControlState BridgeState::read() {
     state.haptics.clear();
     return result;
 }
+void BridgeState::allowPuppet(bool allowed) { puppetAllowed = kCapturePuppetBuild && allowed; }
 void BridgeState::reset() {
     std::lock_guard<std::mutex> lock(mutex);
     auto revision = state.revision + 1;

@@ -120,6 +120,36 @@ test('a nameplate paints its name and state, and a pitch only once it has one', 
   assert.ok(drawn.includes('Ask me about issues'), drawn.join(' | '));
 });
 
+test("in the headset app a shot worker's heartbeat flashes its seat's lamp red, and revival gives the lamp its status back", (t) => {
+  page(t, '?native=1');
+  const plate = new Nameplate({ shape: 'prism', width: 0.36, height: 0.2 });
+  const byte = new Worker('Byte 🐚', '#8d99ae');
+  byte.setStatus('idle', false);
+  byte.setPlate(plate);
+  const dome = lampOf(plate);
+  const color = (dome.material as THREE.MeshBasicMaterial).color;
+  const idle = color.getHex();
+  byte.pulse(1, 1);
+  assert.equal(color.getHex(), idle, 'nothing while it is up');
+  byte.die();
+  byte.pulse(1, 1);
+  plate.update(0.016);
+  assert.ok(color.r > 0.8 && color.g < 0.2, `red at the beat (${color.getHexString()})`);
+  assert.ok(dome.scale.x > 1.3, 'the dome swells with the beat');
+  assert.equal(dome.visible, true);
+  byte.pulse(0, 0.5);
+  plate.update(0.016);
+  assert.ok(color.r < 0.35 && color.r > color.b * 0.9, `an ember between beats (${color.getHexString()})`);
+  assert.equal(dome.scale.x, 1);
+  byte.pulse(0, 0);
+  assert.equal(color.getHex(), new THREE.Color('#2b2d42').getHex(), 'out once its heart stops');
+  byte.revive();
+  assert.equal(color.getHex(), new THREE.Color(plate.showing.text?.lamp ?? '#000').getHex(), 'its status color again');
+  assert.notEqual(plate.showing.text?.lamp, null);
+  byte.setPlate(null);
+  byte.dispose();
+});
+
 test('in the headset app a worker floats nothing over its head; its seat nameplate carries it all', (t) => {
   page(t, '?native=1');
   const plate = new Nameplate({ shape: 'prism', width: 0.36, height: 0.2 });

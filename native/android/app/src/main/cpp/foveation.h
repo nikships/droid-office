@@ -45,6 +45,16 @@ inline bool eyeTrackedFoveation(const FoveationSupport &s) {
 }
 
 /**
+ * Whether a frame draws the world through the filter pass. While the workspace panel is
+ * composited beneath the world layer (panel_cutout.h), the world image's alpha is the hole that
+ * shows the panel, but the filter keeps its density codes in that alpha and submits opaque pixels,
+ * which would cover the panel. Such frames draw straight into the submitted, unfoveated image.
+ */
+inline bool filterFrame(bool filteredTargets, bool panelUnderlay) {
+    return filteredTargets && !panelUnderlay;
+}
+
+/**
  * The app's mapping of its quality names to XrFoveationLevelFB, an app policy rather than a
  * documented table. HIGH is "lower periphery visual fidelity, higher performance" and LOW
  * "higher periphery visual fidelity, lower performance" (registry enum comments). Godot uses the

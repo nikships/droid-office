@@ -69,6 +69,9 @@ const PAPER = '#f4f4f6';
 const MUTED = '#a6a9b8';
 /** How long one blink of a lamp calling for you takes, on and off, in seconds. */
 const BLINK = 0.6;
+/** An unlit lamp, and the red a shot owner's heartbeat flashes it (see Nameplate.heartbeat). */
+const LAMP_OFF = new THREE.Color('#2b2d42');
+const BEAT_RED = new THREE.Color('#ff1f2d');
 
 /** A status label without its emoji: "💬 READY" reads "READY" on a nameplate, beside its colored light. */
 export function plainLabel(label: string): string {
@@ -177,6 +180,8 @@ export class Nameplate {
   private drawn = '';
   private drawnFonts = -1;
   private t = 0;
+  /** A shot owner's heartbeat on the lamp, or null while it shows the owner's status. */
+  private beat: { glow: number; swell: number } | null = null;
 
   constructor(mount: Omit<PlateMount, 'anchor'>) {
     const { shape, width, height } = mount;
@@ -267,6 +272,7 @@ export class Nameplate {
     this.owner = null;
     this.text = null;
     this.pitchText = null;
+    this.beat = null;
     this.root.visible = false;
   }
 
@@ -276,6 +282,17 @@ export class Nameplate {
     this.text = text;
     this.root.visible = true;
     this.paint();
+  }
+
+  /**
+   * `owner` lies shot (Worker.pulse): with no light over its head, the lamp on its seat flashes red
+   * with each heartbeat, `glow` 0 (dark) to 1 (a full beat), swelling by `swell`, like a monitor by
+   * the body. null puts the owner's status color back.
+   */
+  heartbeat(owner: unknown, glow: number | null, swell = 0) {
+    if (this.owner !== owner) return;
+    this.beat = glow === null ? null : { glow: THREE.MathUtils.clamp(glow, 0, 1), swell: THREE.MathUtils.clamp(swell, 0, 1) };
+    this.paintLamp();
   }
 
   /** A board agent's pitch in place of its plate while you're talking to it; null goes back to the plate. */
@@ -294,9 +311,14 @@ export class Nameplate {
     if (!this.root.visible) return;
     if (fontRevision() !== this.drawnFonts) this.paint(true);
     this.t += dt;
-    const pulse = this.text?.lamp ? this.text.pulse : 'steady';
+    const pulse = this.text?.lamp && !this.beat ? this.text.pulse : 'steady';
     this.lamp.visible = pulse !== 'call' || this.t % BLINK < BLINK * 0.6;
-    this.lamp.scale.setScalar(pulse === 'busy' ? 1 + 0.22 * Math.sin(this.t * 5) : 1);
+    this.lamp.scale.setScalar(this.beat ? 1 + 0.35 * this.beat.swell : pulse === 'busy' ? 1 + 0.22 * Math.sin(this.t * 5) : 1);
+  }
+
+  private paintLamp() {
+    if (this.beat) this.lampMat.color.copy(LAMP_OFF).lerp(BEAT_RED, this.beat.glow);
+    else this.lampMat.color.set(this.text?.lamp ?? LAMP_OFF);
   }
 
   private paint(force = false) {
@@ -306,7 +328,7 @@ export class Nameplate {
     this.drawnFonts = fontRevision();
     paintPlate(this.ctx, this.canvas.width, this.canvas.height, this.text, this.pitchText);
     this.texture.needsUpdate = true;
-    this.lampMat.color.set(this.text?.lamp ?? '#2b2d42');
+    this.paintLamp();
   }
 
   dispose() {

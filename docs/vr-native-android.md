@@ -271,6 +271,14 @@ at the kiosk greets the agent, which looks up while the screen says what it does
 back to the nameplate once you ask it something or walk away, and the next pull opens the ask
 form.
 A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
+While the workspace is open, its layer is composited beneath the world layer, which shows it
+through a hole so the player's controllers, rays and held gun stay in front of it, and the toast
+card fades while a hand is in front of it (see
+[Hands in front of compositor panels](vr-native-controller-interactions.md#hands-in-front-of-compositor-panels)).
+While the panel is beneath the world layer, filtered foveation is set aside for those frames: the
+filter pass keeps its density codes in the world image's alpha and submits opaque pixels, which
+would cover the panel, so the world is drawn straight into the submitted, unfoveated image until
+the workspace closes.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.
@@ -530,6 +538,80 @@ that interface, and both devices must be able to reach it. Voice requires a secu
 origin: localhost for USB, or HTTPS for Wi-Fi. The app trusts system CAs and CAs explicitly
 installed by the device owner, so a development certificate can use normal Android trust
 instead of bypassing verification.
+
+### Debug shot staging
+
+A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
+each `officeNative.frame` call; a release build passes `false`. Only then do the page's
+`window.__office.stageTarget(options)`, `allowTargets(ids)`, `stageShot(options)`,
+`stageRevive(options)` and `dismissTarget(worker)` do anything; otherwise they resolve
+`{ ok: false }`. They are for headset captures over the WebView DevTools socket, and change no
+normal gameplay.
+
+**Every shot is real.** A hit sends `worker.shoot`, which starts the server's 30-second revival
+window; when it runs out the worker is dismissed and its owned worktrees and branches deleted.
+`stageShot` and `dismissTarget` therefore go by a list of **worker ids, never by name**
+(`TargetAllowlist` in `src/client/native/stage.ts`): the practice targets this page hired with
+`stageTarget`, and the ids a capture harness lists from its own target list with `allowTargets`.
+A listed worker must still be a plain shell (no agent, no worktree, no other repositories, no
+meeting). The office names a `worker.spawn` with `target: true` `Target <n>`
+(`src/shared/targets.ts`), but that name only tells the office's answer to the hire apart on the
+floor; it never lets anything be shot. A capture goes:
+
+```js
+const t = await __office.stageTarget();            // { ok, worker: 'Target 1 🐚', workerId, desk, clearance }
+__office.allowTargets(['93e35222c41a']);           // or list a harness's target ids: { ok, targets }
+await __office.stageShot({ worker: t.workerId });  // or the capture puppet's draw and trigger
+await __office.stageRevive({ worker: t.workerId }); // or releaseShot(), well inside the window
+await __office.dismissTarget(t.workerId);          // { ok, gone: true }; off the list again
+```
+
+`stageTarget` hires one at `desk` (a free desk or bean bag), or by default at the free desk
+farthest from every other worker on the floor (the nearest of equally clear ones), so a bore aimed
+at it crosses nobody else; `clearance` is the meters to the nearest other worker. It resolves once
+the target sits there, or with the office's refusal (`timeoutMs`, `8000`), and lists its id.
+`dismissTarget` sends home only a listed target, and refuses one lying shot inside its revival
+window: revive it first.
+
+`stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
+raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
+local fall, `worker.shoot` and effects therefore run the code a held controller drives. The head
+remains the headset's own; the rig is turned and placed so the worker is in front of it. The
+staged gun is drawn at its scripted world pose, because no real grip is under it. Without
+`angle` or `pitch`, the first approach whose line of fire reaches the worker before anything else
+is used. Options:
+
+| Option | Meaning (default) |
+| --- | --- |
+| `worker` | Id or name of a worker on this floor, in any case (`target 1` finds `Target 1 🐚`); its id must be listed |
+| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides) |
+| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line) |
+| `reach` | Meters from the headset back from the gun's fist (`0.42`) |
+| `height` | Aim point in meters up a seated worker's own body (`0.62`) |
+| `hand` | `'right'` or `'left'` (`'right'`) |
+| `freezeMs` | Stop advancing gameplay this long after the shot, holding that frame (none) |
+| `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
+| `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
+
+It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`
+when `worker.shoot` went out, or `'hit'` for a worker already down), `solid`, `distance`,
+`angle`, `pitch`, `muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. A worker
+already down is refused.
+
+`stageRevive` scripts the other hand (`left` by default) reaching a worker lying on the floor and
+pulling the trigger, the use action, through `NativePhysical.useAtBody`: with `how: 'touch'`
+(default) the rig stands half a meter off its chest on the open floor beside it and the hand
+comes down onto it; with `how: 'point'` it stands `distance` (`1.4`) meters back and points at
+it from waist height. Options: `worker`, `hand`, `how`, `distance`, `holdMs` (`1200`), `freezeMs`
+(after the trigger) and `timeoutMs`. It resolves once the hand is handed back (or once frozen)
+with `roused` (the use action landed: it stirred and `worker.revive` went out) and `revived` (the
+server confirmed and it is getting back up). A worker past its window is refused.
+
+`__office.releaseShot()` unfreezes, hands the controller back (a staged gun goes away; a gun
+held in the other hand stays) and asks the server to revive the staged worker if it is still
+down within its window; pass `false` to leave it down. A freeze releases itself after 15 seconds,
+well inside the window.
 
 ## Acceptance status
 

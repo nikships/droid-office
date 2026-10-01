@@ -1285,6 +1285,10 @@ const STATUS_BULB: Record<string, string> = {
   offline: '#6c757d',
 };
 
+/** A downed worker's light between heartbeats, and at the peak of one (see Worker.pulse). */
+const DEAD_BULB = new THREE.Color(STATUS_BULB.exited);
+const PULSE_RED = new THREE.Color('#ff1f2d');
+
 /** Status pill on a worker's task card: [text, background, text color]. */
 const TASK_CHIP: Record<string, [string, string, string]> = {
   starting: ['⏳ STARTING', STATUS_BULB.starting, '#2b2d42'],
@@ -1906,10 +1910,31 @@ export class Worker {
     this.drawPlate();
   }
 
+  /**
+   * Down, in the headset: its light glows red with each heartbeat (`beat`, 0 → 1), its last ember
+   * dimmer as its revival window runs out (`life`, 1 → 0), and its body swells a little with the
+   * beat. (0, 0) puts the light out. Revive puts it all back. The light is the bulb on its antenna,
+   * or, in the headset app where nothing sticks up over its head, the lamp on its seat's nameplate.
+   */
+  pulse(beat: number, life: number) {
+    if (!this.dead) return;
+    // In steps, so the headset is sent a changed material only when the light visibly changes.
+    const glow = Math.round(THREE.MathUtils.clamp(0.15 * life + 0.85 * beat, 0, 1) * 64) / 64;
+    const swell = Math.round(beat * 32) / 32;
+    if (this.bulb) {
+      this.bulb.mat.color.copy(DEAD_BULB).lerp(PULSE_RED, glow);
+      this.bulb.mat.emissive.copy(PULSE_RED).multiplyScalar(glow);
+      this.bulbScale(1 + swell * 0.35);
+    }
+    this.plate?.heartbeat(this, glow, swell);
+    this.body.scale.setScalar(1 + swell * 0.035);
+  }
+
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */
   revive() {
     if (!this.dead) return;
     this.dead = false;
+    this.plate?.heartbeat(this, null);
     for (const p of this.pupils) p.position.y = 0.7;
     for (const e of this.eyes) e.scale.y = 1;
     this.settle();

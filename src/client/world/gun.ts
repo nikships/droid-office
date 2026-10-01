@@ -239,21 +239,76 @@ export function disposeGun(prop: THREE.Group) {
   });
 }
 
+/** How a muzzle flash lights its surroundings, at the flash's peak. */
+export interface FlashLight {
+  color: string;
+  /** three.js point light intensity. */
+  intensity: number;
+  /** Meters beyond which it lights nothing. */
+  distance: number;
+  /** three.js decay exponent: 2 is physical, 0 lights everything within `distance` alike. */
+  decay: number;
+  /** Meters ahead of the muzzle along the bore. */
+  ahead: number;
+}
+
+/** A flash seen from across the room: a hard physical light right at the barrel, thrown on the walls. */
+const ROOM_FLASH: FlashLight = { color: '#ffb347', intensity: 14, distance: 7, decay: 2, ahead: 0.1 };
+
+/**
+ * A flash seen down the barrel of a gun in your own hand (native/physical.ts). The physical light
+ * above falls off with the square of the distance, so in the headset it clipped everything within
+ * an arm's length of the muzzle to white: the gun itself, the chair in front of it and the worker.
+ * This one has no hot spot: a warm pool of up to about half the surfaces' own color round the shot
+ * (the gun, what it is pointed at, the desk under it), softening out to 1.4 m, whatever is right
+ * at the muzzle. The floor and the walls beyond stay as they were, rather than washing pink.
+ */
+export const HELD_FLASH: FlashLight = { color: '#ffb347', intensity: 1.5, distance: 1.4, decay: 0, ahead: 0.35 };
+
+/** A held gun's light level where Sky.lightAt has nothing to say: indoors in the office. */
+export const INDOOR_LIGHT = 0.4;
+/** How much of its own color a held gun shows at a clear day's light level. */
+const HELD_FILL = 0.85;
+
+/**
+ * The fill a held gun gets at `level` (Sky.lightAt, 0–1), as a share of its own color: the curve
+ * Hands.setLight lights the desktop's first-person fist and gun with. Indoors that is about half,
+ * like the native hand renderer's ambient term (0.55), so the gun reads as steel and walnut in the
+ * hand that holds it; the office's night light alone gives it a tenth, and it goes navy.
+ */
+export function heldGunFill(level: number): number {
+  return HELD_FILL * (0.25 + 0.75 * THREE.MathUtils.clamp(Number.isFinite(level) ? level : INDOOR_LIGHT, 0, 1));
+}
+
+/**
+ * Lights a gun from magnum() like the hand holding it: each of its toon batches glows with
+ * heldGunFill(level) of its own color, under whatever the room adds (lamps, the moon, a flash).
+ */
+export function lightHeldGun(gun: THREE.Object3D, level: number): void {
+  const fill = heldGunFill(level);
+  gun.traverse((o) => {
+    const material = (o as THREE.Mesh).material;
+    if (material instanceof THREE.MeshToonMaterial) material.emissive.copy(material.color).multiplyScalar(fill);
+  });
+}
+
 /** How long a muzzle flash lasts, in seconds. */
 const FLASH_TIME = 0.09;
 
 /**
  * The flash at the muzzle when it fires: a star of crossed additive planes round a white-hot core,
- * and a point light that throws it on the walls. fire() pops it; update() fades it back to nothing.
+ * and a point light that throws it round the shot (`flash`). fire() pops it; update() fades it
+ * back to nothing.
  */
 export class Muzzle {
   readonly group = new THREE.Group();
   private t = Infinity;
+  private fresh = false;
   private core: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
 
-  constructor() {
+  constructor(private flash: FlashLight = ROOM_FLASH) {
     this.group.position.copy(MUZZLE_AT);
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
     this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive('#fff6d8', 0));
@@ -273,13 +328,17 @@ export class Muzzle {
       this.group.add(blade);
       this.star.push(blade);
     }
-    this.light = new THREE.PointLight('#ffb347', 0, 7, 2);
-    this.light.position.z = 0.1;
+    this.light = new THREE.PointLight(flash.color, 0, flash.distance, flash.decay);
+    this.light.position.z = flash.ahead;
     this.group.add(this.light);
   }
 
   fire() {
     this.t = 0;
+    this.fresh = true;
+    // A different star each shot, at full brightness from the shot's own frame.
+    this.group.rotation.z = Math.random() * Math.PI;
+    this.show(1);
   }
 
   get lit(): boolean {
@@ -288,13 +347,22 @@ export class Muzzle {
 
   update(dt: number) {
     if (this.t >= FLASH_TIME) return;
+    // The first frame drawn after the shot shows the whole flash; at the headset's 30 Hz
+    // gameplay rate that is the difference between a pop and a two-frame glimmer.
+    if (this.fresh) {
+      this.fresh = false;
+      return;
+    }
     this.t += dt;
-    const k = Math.max(0, 1 - this.t / FLASH_TIME);
+    this.show(Math.max(0, 1 - this.t / FLASH_TIME));
+  }
+
+  private show(k: number) {
     this.core.material.opacity = k;
     this.core.scale.setScalar(0.6 + 0.4 * k);
     for (const b of this.star) b.material.opacity = k * 0.9;
     this.group.scale.setScalar(1 + (1 - k) * 0.6);
-    this.light.intensity = 14 * k * k;
+    this.light.intensity = this.flash.intensity * k * k;
   }
 
   dispose() {
@@ -364,4 +432,80 @@ export class Puff {
       (m.material as THREE.Material | undefined)?.dispose();
     });
   }
+}
+
+/** How long a hit's spray hangs in the air, in seconds. */
+const SPRAY_TIME = 0.45;
+
+/** Every spray's one small sphere: the headset uploads it once. */
+let sprayBall: THREE.SphereGeometry | null = null;
+
+/**
+ * Where a bullet strikes a worker, at the contact point: a red mist bursting back out of the hit
+ * and droplets flung out of it that drop and fade in under half a second. update() returns false
+ * once it's gone.
+ */
+export class BloodSpray {
+  readonly group = new THREE.Group();
+  private t = 0;
+  private bits: { mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>; vel: THREE.Vector3; size: number; grow: number; fall: number }[] = [];
+  private ball = (sprayBall ??= new THREE.SphereGeometry(1, 8, 6));
+
+  /** `out` points back out of the wound (toward the shooter); `travel` is the bullet's direction. */
+  constructor(at: THREE.Vector3, out: THREE.Vector3, travel: THREE.Vector3) {
+    this.group.position.copy(at);
+    const away = out.clone().normalize();
+    const on = travel.clone().normalize();
+    const add = (color: string, opacity: number, size: number, vel: THREE.Vector3, grow: number, fall: number) => {
+      const mesh = new THREE.Mesh(this.ball, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+      mesh.scale.setScalar(size);
+      this.group.add(mesh);
+      this.bits.push({ mesh, vel, size, grow, fall });
+    };
+    // The mist: a quick red cloud swelling out of the wound.
+    for (let i = 0; i < 3; i++)
+      add(
+        '#9e1420',
+        0.85,
+        0.035 + Math.random() * 0.02,
+        away
+          .clone()
+          .multiplyScalar(0.5 + Math.random() * 0.4)
+          .add(jitter(0.5)),
+        3.2,
+        0.4,
+      );
+    // Droplets: most fly back at the shooter, a few carry on with the bullet; gravity takes them.
+    for (let i = 0; i < 8; i++) {
+      const dir = (i < 6 ? away : on)
+        .clone()
+        .multiplyScalar(1.6 + Math.random() * 1.6)
+        .add(jitter(1.4));
+      dir.y += 0.6 + Math.random() * 0.8;
+      add(i % 3 ? '#b3121f' : '#d8202e', 0.95, 0.009 + Math.random() * 0.009, dir, 0.3, 9.8);
+    }
+  }
+
+  /** Moves the spray along; false once it has cleared. */
+  update(dt: number): boolean {
+    this.t += dt;
+    const p = Math.min(1, this.t / SPRAY_TIME);
+    for (const b of this.bits) {
+      b.mesh.position.addScaledVector(b.vel, dt);
+      b.vel.multiplyScalar(Math.exp(-dt * 2.5));
+      b.vel.y -= dt * b.fall;
+      b.mesh.scale.setScalar(b.size * (1 + p * b.grow));
+      b.mesh.material.opacity = (b.grow > 1 ? 0.85 : 0.95) * (1 - p * p);
+    }
+    return p < 1;
+  }
+
+  /** Frees its materials; the shared sphere stays for the next hit. */
+  dispose() {
+    for (const b of this.bits) b.mesh.material.dispose();
+  }
+}
+
+function jitter(size: number): THREE.Vector3 {
+  return new THREE.Vector3((Math.random() - 0.5) * size, (Math.random() - 0.5) * size, (Math.random() - 0.5) * size);
 }
