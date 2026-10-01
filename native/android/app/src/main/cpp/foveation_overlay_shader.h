@@ -39,8 +39,18 @@ inline std::array<float, 2> foveaPixel(float x, float y, int width, int height) 
     return {(unit(x) * .5f + .5f) * width, (unit(y) * .5f + .5f) * height};
 }
 
-/** The marker ring around a reported centre, as fractions of the shorter eye-image side. */
+/** The marker ring around a centre, as fractions of the shorter eye-image side. */
 constexpr float kFoveaRingRadius = .05f, kFoveaRingWidth = .005f, kFoveaDotRadius = .01f;
+
+/**
+ * Which centre the diagnostic view marks. Reported: the runtime's valid foveationCenter
+ * (magenta). ImageCentre: foveated targets without a valid reported centre (a fixed profile, or
+ * eye tracking without a valid state), marked at the image centre, NDC (0, 0) (white). That is
+ * GL_QCOM_texture_foveated's default focal point ("focalX = focalY = 0.0"), and the profile asks
+ * for a vertical offset of 0; the ring marks this fallback, it does not measure the runtime's
+ * pattern. None: targets without foveation support.
+ */
+enum class FoveaMarker { None = 0, Reported = 1, ImageCentre = 2 };
 
 struct FoveationOverlayShader {
     std::string vertex, fragment;
@@ -50,7 +60,7 @@ struct FoveationOverlayShader {
  * A full-screen pass drawn last into the foveated world framebuffer. Its fragments run at the
  * runtime's actual per-bin density: the colour shows the measured neighbour step, and a
  * one-pixel checker can only be resolved at full density (coarser bins upscale it into solid
- * blocks). The magenta ring marks the runtime-reported centre; it is computed, not measured.
+ * blocks). The ring marks a centre (FoveaMarker); it is computed, not measured.
  */
 inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
     const auto number = [](float v) { return std::to_string(v); };
@@ -71,7 +81,7 @@ inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
                  "flat in int view;\n"
                  "uniform vec2 size;\n"
                  "uniform vec4 centers;\n"
-                 "uniform int centerValid;\n"
+                 "uniform int marker;\n"
                  "out vec4 pixel;\n"
                  "void main() {\n"
                  "    vec2 fc = gl_FragCoord.xy;\n"
@@ -88,8 +98,9 @@ inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
                  "    float parity = mod(floor(fc.x) + floor(fc.y), 2.0);\n"
                  "    vec3 color = tint * (0.3 + 0.7 * parity);\n"
                  "    float alpha = 0.55;\n"
-                 "    if (centerValid != 0) {\n"
-                 "        vec2 c = clamp(view == 0 ? centers.xy : centers.zw, -1.0, 1.0);\n"
+                 "    if (marker != 0) {\n"
+                 "        vec2 c = marker == 1 ? clamp(view == 0 ? centers.xy : centers.zw, "
+                 "-1.0, 1.0) : vec2(0.0);\n"
                  "        vec2 at = (c * 0.5 + 0.5) * size;\n"
                  "        float unit = min(size.x, size.y);\n"
                  "        float r = length(fc - at);\n"
@@ -97,7 +108,7 @@ inline FoveationOverlayShader foveationOverlayShader(bool multiview) {
                  number(kFoveaRingRadius) + " * unit) < " + number(kFoveaRingWidth) +
                  " * unit || r < " + number(kFoveaDotRadius) +
                  " * unit) {\n"
-                 "            color = vec3(1.0, 0.0, 1.0);\n"
+                 "            color = marker == 1 ? vec3(1.0, 0.0, 1.0) : vec3(1.0);\n"
                  "            alpha = 0.9;\n"
                  "        }\n"
                  "    }\n"

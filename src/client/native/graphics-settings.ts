@@ -6,7 +6,7 @@ export const MAX_NATIVE_RENDER_SCALE = 2;
 export interface NativeGraphicsSettings {
   v: 1;
   renderScale: number;
-  /** A runtime foveation profile: Off applies none, the others a runtime level (eye-tracked when available). */
+  /** Off renders the world without foveation; the others are a runtime level, eye-tracked when available. Each choice creates new world targets. */
   foveation: NativeFoveation;
   fps: boolean;
   sharpScreens: boolean;
@@ -40,17 +40,20 @@ export function readNativeGraphics(value: unknown): NativeGraphicsSettings {
 
 const FOVEATION_LEVELS: Record<string, string> = { none: 'Off', low: 'Low', medium: 'Medium', high: 'High' };
 
-/** The foveation the native runtime actually applied, from its frame metrics; null before the first report. */
+/** The foveation the native renderer has bound to its world targets, from its metrics; null before the first report. */
 export function nativeFoveationStatus(metrics: unknown): string | null {
   const m = metrics && typeof metrics === 'object' ? (metrics as Record<string, unknown>) : {};
   const f = m.foveation && typeof m.foveation === 'object' ? (m.foveation as Record<string, unknown>) : null;
   if (!f || typeof f.level !== 'string') return typeof m.foveationEnabled === 'boolean' ? `Currently applied: ${m.foveationEnabled ? 'On' : 'Off'}.` : null;
-  if (f.level === 'unfoveated') return 'Currently applied: full detail everywhere (no runtime foveation).';
-  const level = FOVEATION_LEVELS[f.level] ?? f.level;
-  if (f.level === 'none') return 'Currently applied: Off (full detail everywhere).';
-  const tracked = f.eyeTracked === true ? 'follows your eyes' : 'fixed at the centre';
+  const pending = f.pending === true ? ' Applying your choice…' : '';
   const fallback = typeof f.fallback === 'string' && f.fallback ? ` Fallback: ${f.fallback}.` : '';
-  return `Currently applied: ${level} runtime level, ${tracked}.${fallback}`;
+  // "none" is targets without foveation: Off, or a fallback when a level was chosen. Older APKs reported that fallback as "unfoveated".
+  const unavailable = f.level === 'unfoveated' || (f.level === 'none' && typeof f.setting === 'string' && f.setting !== 'off' && !pending);
+  if (unavailable) return `Currently applied: full detail everywhere (no runtime foveation).${fallback}`;
+  if (f.level === 'none') return `Currently applied: Off (full detail everywhere).${pending}`;
+  const level = FOVEATION_LEVELS[f.level] ?? f.level;
+  const tracked = f.eyeTracked === true ? 'follows your eyes' : 'fixed at the centre';
+  return `Currently applied: ${level} runtime level, ${tracked}.${fallback}${pending}`;
 }
 
 export interface NativeEyeSize {

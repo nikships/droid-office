@@ -171,7 +171,7 @@ export function openNativeGraphicsSettings(): void {
     h(
       'p.setting-note',
       {},
-      'Tints the world by the detail each area is actually rendered at: green is full detail, then yellow, orange and red. A fine checker appears only at full detail. A magenta ring marks where the headset reports your gaze. Turns off when the app restarts.',
+      'Tints the world by the detail each area is actually rendered at: green is full detail, then yellow, orange and red. A fine checker appears only at full detail. A magenta ring marks where the headset reports your gaze; a white ring marks the image centre while it reports none. Turns off when the app restarts.',
     ),
     h('label.choice.ng-fps', {}, sharpScreens, h('span', {}, 'Sharper laptop screens')),
     h('p.setting-note', {}, 'Keeps nearby terminal screens at full resolution independently of world detail. Turning this off saves GPU time and uses the normal world rendering.'),

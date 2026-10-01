@@ -46,7 +46,7 @@ inline bool eyeTrackedFoveation(const FoveationSupport &s) {
  * The app's mapping of its quality names to XrFoveationLevelFB, an app policy rather than a
  * documented table. HIGH is "lower periphery visual fidelity, higher performance" and LOW
  * "higher periphery visual fidelity, lower performance" (registry enum comments). Godot uses the
- * same order. Off is handled by the empty profile, not by a level.
+ * same order. Off is not a profile: its world swapchains are created without foveation support.
  */
 inline XrFoveationLevelFB foveationLevel(FoveationQuality quality) {
     switch (quality) {
@@ -76,30 +76,9 @@ inline const char *foveationQualityName(FoveationQuality quality) {
     }
 }
 
-/** One runtime profile request. */
-struct FoveationProfileSpec {
-    // False when the world swapchains have no foveation support: nothing is applied.
-    bool apply = false;
-    // XrFoveationProfileCreateInfoFB with nothing in its next chain: "a foveation profile that
-    // will apply no foveation to any area of the swapchain" (XR_FB_foveation, a runtime must).
-    bool empty = true;
-    XrFoveationLevelFB level = XR_FOVEATION_LEVEL_NONE_FB;
-    // XrFoveationEyeTrackedProfileCreateInfoMETA chained to the level struct.
-    bool eyeTracked = false;
-    bool operator==(const FoveationProfileSpec &o) const {
-        return apply == o.apply && empty == o.empty && level == o.level &&
-               eyeTracked == o.eyeTracked;
-    }
-    bool operator!=(const FoveationProfileSpec &o) const { return !(*this == o); }
-};
-
-/** "unfoveated" (no swapchain support), "none" (empty profile), or the level. */
-inline const char *foveationLevelName(const FoveationProfileSpec &spec) {
-    if (!spec.apply)
-        return "unfoveated";
-    if (spec.empty)
-        return "none";
-    switch (spec.level) {
+/** "none" for world targets without foveation support, otherwise the bound runtime level. */
+inline const char *foveationLevelName(const TargetFoveation &foveation) {
+    switch (foveation.level) {
     case XR_FOVEATION_LEVEL_LOW_FB:
         return "low";
     case XR_FOVEATION_LEVEL_MEDIUM_FB:
@@ -112,47 +91,53 @@ inline const char *foveationLevelName(const FoveationProfileSpec &spec) {
 }
 
 /**
- * Chooses the profile for a setting and degrades one step at a time when the runtime rejects
- * something: eye-tracked -> fixed level -> empty profile -> swapchains without foveation (full
- * resolution everywhere). Each step is kept for the rest of the session.
+ * Chooses the world targets' foveation for a setting and degrades one step at a time when the
+ * runtime rejects something: eye-tracked -> the same level fixed -> swapchains without foveation
+ * support (full resolution everywhere). Each step is kept for the rest of the session.
+ *
+ * Every change of the result is a new set of world swapchains with that profile applied first,
+ * as Meta (ovrRenderer_Create, then ovrRenderer_SetFoveation) and Godot
+ * (on_main_swapchains_created -> update_profile) apply theirs. A swapchain created without
+ * XrSwapchainCreateInfoFoveationFB has no foveation support (XR_FB_foveation), which is how Off
+ * renders full density: GL_QCOM_texture_foveated says foveation "cannot be disabled" on a texture
+ * once enabled, and on Galaxy XR neither the empty profile nor another level changed a world
+ * swapchain that had already received a profile (headset capture, 2026-10-01).
  */
 class FoveationPolicy {
   public:
-    static constexpr int kStateFailureLimit = 30; // about a third of a second at 90 Hz
-
     explicit FoveationPolicy(FoveationSupport s = {}) : support(s) {}
     const FoveationSupport &capabilities() const { return support; }
 
-    /** World swapchains carry XrSwapchainCreateInfoFoveationFB{SCALED_BIN}. */
+    /** World swapchains may carry XrSwapchainCreateInfoFoveationFB{SCALED_BIN}. */
     bool swapchainFoveation() const { return runtimeFoveation(support) && !swapchainRejected; }
     bool eyeTrackedAvailable() const { return eyeTrackedFoveation(support) && !eyeTrackedRejected; }
 
-    FoveationProfileSpec desired(FoveationQuality quality) const {
-        FoveationProfileSpec spec;
-        spec.apply = swapchainFoveation();
-        if (!spec.apply || quality == FoveationQuality::Off || levelsRejected)
-            return spec;
-        spec.empty = false;
-        spec.level = foveationLevel(quality);
-        spec.eyeTracked = eyeTrackedAvailable();
-        return spec;
+    TargetFoveation desired(FoveationQuality quality) const {
+        TargetFoveation foveation;
+        if (!swapchainFoveation() || quality == FoveationQuality::Off)
+            return foveation;
+        foveation.level = foveationLevel(quality);
+        foveation.eyeTracked = eyeTrackedAvailable();
+        return foveation;
     }
 
-    /** The runtime refused to create or apply spec. Returns false when nothing is left to try. */
-    bool rejected(const FoveationProfileSpec &spec) {
-        if (!spec.apply)
+    /**
+     * The runtime refused to create or apply foveation's profile on new world swapchains. Returns
+     * true when the same level without eye tracking is still worth applying to them; false when
+     * the targets must be created without foveation support.
+     */
+    bool rejected(const TargetFoveation &foveation) {
+        if (!foveation.foveated())
             return false;
-        if (spec.eyeTracked) {
+        if (foveation.eyeTracked) {
             eyeTrackedRejected = true;
             reason = "eye-tracked profile rejected";
-        } else if (!spec.empty) {
-            levelsRejected = true;
-            reason = "foveation level rejected";
-        } else {
-            swapchainRejected = true;
-            reason = "empty profile rejected";
+            return true;
         }
-        return swapchainFoveation();
+        if (!swapchainRejected)
+            reason = "foveation profile rejected";
+        swapchainRejected = true;
+        return false;
     }
 
     /** Foveated world swapchains could not be created or validated. */
@@ -163,32 +148,19 @@ class FoveationPolicy {
     }
 
     /**
-     * One eye-tracked frame: the per-frame xrUpdateSwapchainFB and
-     * xrGetFoveationEyeTrackedStateMETA results. Returns true when eye tracking was dropped, so
-     * the caller re-applies a fixed profile. A state without the VALID bit (closed eyes, an
-     * obscured tracker) is not an API failure and keeps the eye-tracked profile.
+     * One eye-tracked frame's xrGetFoveationEyeTrackedStateMETA result. Returns true when eye
+     * tracking is dropped, so the caller creates targets with the fixed level. Only
+     * XR_ERROR_FEATURE_UNSUPPORTED, a listed result of that query, drops it. Any other failure,
+     * like a state without the VALID bit (closed eyes, an obscured tracker, nobody wearing the
+     * headset), keeps the eye-tracked profile and is queried again next frame, as Godot's
+     * get_fragment_density_offsets logs a failed query and retries on the next frame.
      */
-    bool eyeTrackedFrame(XrResult update, XrResult state) {
-        if (eyeTrackedRejected)
+    bool eyeTrackedState(XrResult state) {
+        if (!eyeTrackedAvailable() || state != XR_ERROR_FEATURE_UNSUPPORTED)
             return false;
-        if (XR_FAILED(update)) {
-            eyeTrackedRejected = true;
-            reason = "eye-tracked update failed";
-            return true;
-        }
-        // XR_ERROR_FEATURE_UNSUPPORTED is a listed result of xrGetFoveationEyeTrackedStateMETA.
-        if (state == XR_ERROR_FEATURE_UNSUPPORTED) {
-            eyeTrackedRejected = true;
-            reason = "eye-tracked state unsupported";
-            return true;
-        }
-        stateFailures = XR_FAILED(state) ? stateFailures + 1 : 0;
-        if (stateFailures >= kStateFailureLimit) {
-            eyeTrackedRejected = true;
-            reason = "eye-tracked state failing";
-            return true;
-        }
-        return false;
+        eyeTrackedRejected = true;
+        reason = "eye-tracked state unsupported";
+        return true;
     }
 
     /** Why the applied mode is below the requested one, or "". */
@@ -196,8 +168,7 @@ class FoveationPolicy {
 
   private:
     FoveationSupport support;
-    bool swapchainRejected = false, levelsRejected = false, eyeTrackedRejected = false;
-    int stateFailures = 0;
+    bool swapchainRejected = false, eyeTrackedRejected = false;
     const char *reason = "";
 };
 

@@ -49,7 +49,8 @@ import org.json.JSONObject;
 /** Android owns the lifecycle; the native thread owns the OpenXR frame loop. */
 public final class OfficeActivity extends Activity {
     static { System.loadLibrary("office_xr"); }
-    private native void nativeStart();
+    /** filesDir keeps the page's graphics settings between launches for the first world targets. */
+    private native void nativeStart(String filesDir);
     private native void nativeStop();
     private native String nativeReadInput();
     private native String nativeReadMetrics();
@@ -154,7 +155,7 @@ public final class OfficeActivity extends Activity {
             PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] {"android.permission.EYE_TRACKING_FINE"}, 1);
         } else
-            nativeStart();
+            nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override
@@ -163,7 +164,7 @@ public final class OfficeActivity extends Activity {
         if (services.onRequestPermissionsResult(request, permissions, results))
             return;
         if (request == 1)
-            nativeStart();
+            nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override

@@ -28,15 +28,14 @@ void levels() {
     assert(foveationLevel(FoveationQuality::Performance) == XR_FOVEATION_LEVEL_HIGH_FB);
     assert(!strcmp(foveationQualityName(FoveationQuality::Off), "off"));
     assert(!strcmp(foveationQualityName(FoveationQuality::Balanced), "balanced"));
-    FoveationProfileSpec spec;
-    assert(!strcmp(foveationLevelName(spec), "unfoveated"));
-    spec.apply = true;
-    assert(!strcmp(foveationLevelName(spec), "none"));
-    spec.empty = false;
-    spec.level = XR_FOVEATION_LEVEL_HIGH_FB;
-    assert(!strcmp(foveationLevelName(spec), "high"));
-    spec.level = XR_FOVEATION_LEVEL_LOW_FB;
-    assert(!strcmp(foveationLevelName(spec), "low"));
+    TargetFoveation target;
+    assert(!target.foveated() && !strcmp(foveationLevelName(target), "none"));
+    target.level = XR_FOVEATION_LEVEL_HIGH_FB;
+    assert(target.foveated() && !strcmp(foveationLevelName(target), "high"));
+    target.level = XR_FOVEATION_LEVEL_LOW_FB;
+    assert(!strcmp(foveationLevelName(target), "low"));
+    target.level = XR_FOVEATION_LEVEL_MEDIUM_FB;
+    assert(!strcmp(foveationLevelName(target), "medium"));
 }
 
 void capabilities() {
@@ -61,85 +60,93 @@ void capabilities() {
 }
 
 void plans() {
-    // Nothing supported: full-resolution swapchains, nothing to apply, at every setting.
+    // Nothing supported: targets without foveation support at every setting.
     FoveationPolicy none;
     assert(!none.swapchainFoveation() && !none.eyeTrackedAvailable());
     for (auto q : kQualities)
-        assert(!none.desired(q).apply);
+        assert(!none.desired(q).foveated() && !none.desired(q).eyeTracked);
 
     FoveationPolicy policy(full());
     assert(policy.swapchainFoveation() && policy.eyeTrackedAvailable());
     const auto off = policy.desired(FoveationQuality::Off);
-    assert(off.apply && off.empty && !off.eyeTracked && "Off is the documented empty profile");
+    assert(!off.foveated() && !off.eyeTracked &&
+           "Off is targets without foveation support, not a profile on foveated ones");
     for (auto q :
          {FoveationQuality::Clarity, FoveationQuality::Balanced, FoveationQuality::Performance}) {
-        const auto spec = policy.desired(q);
-        assert(spec.apply && !spec.empty && spec.eyeTracked && spec.level == foveationLevel(q));
+        const auto target = policy.desired(q);
+        assert(target.foveated() && target.eyeTracked && target.level == foveationLevel(q));
     }
     assert(*policy.fallback() == 0);
+
+    // Every setting change is a different target, so the world swapchains are recreated.
+    for (auto a : kQualities)
+        for (auto b : kQualities)
+            assert((policy.desired(a) == policy.desired(b)) == (a == b));
+    RenderTargetRequest balanced{{RenderSize{1856, 2160}, {}},
+                                 policy.desired(FoveationQuality::Balanced)};
+    auto offTargets = balanced;
+    offTargets.foveation = off;
+    assert(balanced != offTargets && "same size, Off: new targets");
 
     auto denied = full();
     denied.eyePermission = false;
     const auto fixed = FoveationPolicy(denied).desired(FoveationQuality::Balanced);
-    assert(fixed.apply && !fixed.empty && !fixed.eyeTracked &&
-           fixed.level == XR_FOVEATION_LEVEL_MEDIUM_FB && "refused permission keeps fixed levels");
+    assert(fixed.foveated() && !fixed.eyeTracked && fixed.level == XR_FOVEATION_LEVEL_MEDIUM_FB &&
+           "refused permission keeps fixed levels");
     assert(fixed != policy.desired(FoveationQuality::Balanced));
 }
 
 void degrade() {
     FoveationPolicy policy(full());
     const auto eye = policy.desired(FoveationQuality::Performance);
-    assert(policy.rejected(eye));
+    assert(policy.rejected(eye) && "the same level is tried without eye tracking");
     assert(!policy.eyeTrackedAvailable() && *policy.fallback());
     const auto fixed = policy.desired(FoveationQuality::Performance);
-    assert(fixed.apply && !fixed.empty && !fixed.eyeTracked &&
-           fixed.level == XR_FOVEATION_LEVEL_HIGH_FB);
-    assert(policy.rejected(fixed));
-    for (auto q : kQualities) {
-        const auto spec = policy.desired(q);
-        assert(spec.apply && spec.empty && "levels rejected: every setting is unfoveated");
-    }
+    assert(fixed.foveated() && !fixed.eyeTracked && fixed.level == XR_FOVEATION_LEVEL_HIGH_FB);
+    assert(!policy.rejected(fixed) && "a rejected fixed level leaves no profile to try");
+    assert(!policy.swapchainFoveation());
+    for (auto q : kQualities)
+        assert(!policy.desired(q).foveated() && "the targets are recreated without foveation");
     assert(!policy.rejected(policy.desired(FoveationQuality::Balanced)));
-    assert(!policy.swapchainFoveation() && *policy.fallback());
     const std::string reason = policy.fallback();
     policy.swapchainFailed();
     assert(reason == policy.fallback() && "the first reason is kept");
-    for (auto q : kQualities)
-        assert(!policy.desired(q).apply && "the targets are recreated without foveation");
-    assert(!policy.rejected(policy.desired(FoveationQuality::Balanced)));
 
     FoveationPolicy swapchain(full());
     swapchain.swapchainFailed();
-    assert(!swapchain.swapchainFoveation() && !swapchain.desired(FoveationQuality::Balanced).apply);
+    assert(!swapchain.swapchainFoveation() &&
+           !swapchain.desired(FoveationQuality::Balanced).foveated());
+    assert(*swapchain.fallback());
 
     auto denied = full();
     denied.systemEyeTracked = false;
     FoveationPolicy fixedOnly(denied);
-    assert(fixedOnly.rejected(fixedOnly.desired(FoveationQuality::Clarity)));
-    assert(fixedOnly.desired(FoveationQuality::Clarity).empty);
+    assert(!fixedOnly.rejected(fixedOnly.desired(FoveationQuality::Clarity)));
+    assert(!fixedOnly.desired(FoveationQuality::Clarity).foveated());
 }
 
 void eyeTrackedFrames() {
     FoveationPolicy policy(full());
-    assert(!policy.eyeTrackedFrame(XR_SUCCESS, XR_SUCCESS));
-    assert(policy.eyeTrackedAvailable());
-    for (int i = 1; i < FoveationPolicy::kStateFailureLimit; ++i)
-        assert(!policy.eyeTrackedFrame(XR_SUCCESS, XR_ERROR_RUNTIME_FAILURE));
-    assert(!policy.eyeTrackedFrame(XR_SUCCESS, XR_SUCCESS) && "a success resets the count");
-    for (int i = 1; i < FoveationPolicy::kStateFailureLimit; ++i)
-        assert(!policy.eyeTrackedFrame(XR_SUCCESS, XR_ERROR_RUNTIME_FAILURE));
-    assert(policy.eyeTrackedFrame(XR_SUCCESS, XR_ERROR_RUNTIME_FAILURE));
-    assert(!policy.eyeTrackedAvailable() && !policy.desired(FoveationQuality::Balanced).eyeTracked);
-    assert(!policy.eyeTrackedFrame(XR_SUCCESS, XR_ERROR_RUNTIME_FAILURE) && "reported once");
+    assert(!policy.eyeTrackedState(XR_SUCCESS));
+    // A failing query (nobody wearing the headset, closed eyes) keeps eye tracking and is tried
+    // again on the next frame, however long it lasts.
+    for (int i = 0; i < 10000; ++i)
+        assert(!policy.eyeTrackedState(XR_ERROR_RUNTIME_FAILURE));
+    assert(!policy.eyeTrackedState(XR_ERROR_HANDLE_INVALID));
+    assert(policy.eyeTrackedAvailable() && policy.desired(FoveationQuality::Balanced).eyeTracked);
+    assert(*policy.fallback() == 0);
+    // Only an unsupported state drops it, once, and the next targets use the fixed level.
+    assert(policy.eyeTrackedState(XR_ERROR_FEATURE_UNSUPPORTED));
+    assert(!policy.eyeTrackedState(XR_ERROR_FEATURE_UNSUPPORTED) && "reported once");
+    assert(!policy.eyeTrackedAvailable() && *policy.fallback());
+    const auto fixed = policy.desired(FoveationQuality::Balanced);
+    assert(fixed.foveated() && !fixed.eyeTracked && fixed.level == XR_FOVEATION_LEVEL_MEDIUM_FB);
 
-    FoveationPolicy unsupported(full());
-    assert(unsupported.eyeTrackedFrame(XR_SUCCESS, XR_ERROR_FEATURE_UNSUPPORTED));
-    assert(unsupported.desired(FoveationQuality::Balanced).level == XR_FOVEATION_LEVEL_MEDIUM_FB);
-
-    FoveationPolicy update(full());
-    assert(update.eyeTrackedFrame(XR_ERROR_HANDLE_INVALID, XR_SUCCESS));
-    assert(!update.desired(FoveationQuality::Clarity).eyeTracked &&
-           update.desired(FoveationQuality::Clarity).apply);
+    auto denied = full();
+    denied.eyePermission = false;
+    FoveationPolicy fixedOnly(denied);
+    assert(!fixedOnly.eyeTrackedState(XR_ERROR_FEATURE_UNSUPPORTED) &&
+           "nothing to drop without eye tracking");
 }
 
 void samples() {
@@ -195,7 +202,15 @@ void overlay() {
         for (float edge : kDensityBandEdges)
             assert(s.fragment.find("stepPx < " + std::to_string(edge)) != std::string::npos);
         assert(s.fragment.find(std::to_string(kFoveaRingRadius)) != std::string::npos);
+        // The marker uniform takes FoveaMarker values: magenta at the reported centre, white at
+        // the image centre as the fallback.
+        assert(s.fragment.find("uniform int marker;") != std::string::npos);
+        assert(s.fragment.find("marker == 1 ?") != std::string::npos);
+        assert(s.fragment.find(": vec2(0.0)") != std::string::npos);
     }
+    assert(static_cast<int>(FoveaMarker::None) == 0 &&
+           static_cast<int>(FoveaMarker::Reported) == 1 &&
+           static_cast<int>(FoveaMarker::ImageCentre) == 2);
 }
 } // namespace
 
@@ -207,6 +222,6 @@ int main() {
     eyeTrackedFrames();
     samples();
     overlay();
-    std::cout << "runtime foveation levels, fallbacks, eye-tracked results and overlay checks "
+    std::cout << "runtime foveation targets, fallbacks, eye-tracked results and overlay checks "
                  "passed\n";
 }

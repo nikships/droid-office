@@ -37,18 +37,21 @@ process; address and undefined-behavior sanitizers remain active.
 covers, using `CXX` (default `c++`), and runs it:
 
 - `native/tests/bridge_state_test.cpp` with `bridge_state.cpp`: pose math, panel rays, bridge
-  packet validation, pointer events and frame metric percentiles.
+  packet validation, graphics kept across a page reset and between launches, pointer events
+  and frame metric percentiles.
 - `native/tests/xr_performance_test.cpp` with `xr_performance.cpp`: a fake OpenXR runtime
   checks the performance-metrics counter flags, units and capacities, and the performance
   settings hints.
 - `native/tests/rig_presentation_test.cpp` for the header-only `rig_presentation.h`: rig and
   fade interpolation, discontinuities, stale focus and rotation handling.
 - `native/tests/graphics_controls_test.cpp` for the header-only graphics control rules:
-  supported settings, quality selection and input bounds.
+  supported settings, quality selection, input bounds and world-target changes, including a
+  foveation change at the same size and targets bound below the request.
 - `native/tests/foveation_test.cpp` for the header-only `foveation.h` and
-  `foveation_overlay_shader.h`: setting-to-runtime-level mapping, capability gates, the
-  eye-tracked → fixed → empty profile → unfoveated fallback, eye-tracked frame results, and the
-  diagnostic view's density bands, centre mapping and GLSL.
+  `foveation_overlay_shader.h`: setting-to-target mapping (Off is targets without foveation),
+  capability gates, the eye-tracked → fixed → unfoveated fallback, eye-tracked state results
+  that are retried rather than dropped, and the diagnostic view's density bands, centre mapping,
+  fallback marker and GLSL.
 - `native/tests/refresh_policy_test.cpp`: bounded 90 Hz re-requests, focus loss, actual-rate
   recovery and invalid observations.
 - `native/tests/hand_mesh_test.cpp` retains standalone checks for the historical mesh code:

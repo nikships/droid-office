@@ -1,5 +1,4 @@
 #include "foveation_overlay.h"
-#include "foveation_overlay_shader.h"
 
 namespace office {
 namespace {
@@ -57,13 +56,13 @@ bool FoveationOverlay::initialize(bool multiview, std::string &error) {
     eyeUniform = glGetUniformLocation(program, "eye");
     sizeUniform = glGetUniformLocation(program, "size");
     centersUniform = glGetUniformLocation(program, "centers");
-    validUniform = glGetUniformLocation(program, "centerValid");
+    markerUniform = glGetUniformLocation(program, "marker");
     glGenVertexArrays(1, &vao);
     return true;
 }
 
 void FoveationOverlay::render(int firstView, int width, int height, const float centers[4],
-                              bool centerValid) {
+                              FoveaMarker marker) {
     if (!program)
         return;
     glBindVertexArray(vao);
@@ -77,7 +76,7 @@ void FoveationOverlay::render(int firstView, int width, int height, const float 
         glUniform1i(eyeUniform, firstView);
     glUniform2f(sizeUniform, static_cast<float>(width), static_cast<float>(height));
     glUniform4fv(centersUniform, 1, centers);
-    glUniform1i(validUniform, centerValid ? 1 : 0);
+    glUniform1i(markerUniform, static_cast<int>(marker));
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glUseProgram(0);
     glBindVertexArray(0);

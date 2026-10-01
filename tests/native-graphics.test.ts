@@ -102,6 +102,17 @@ test('the applied foveation reads the runtime profile the headset reports', () =
   assert.equal(nativeFoveationStatus({ foveation: { level: 'medium', eyeTracked: true, fallback: '' } }), 'Currently applied: Medium runtime level, follows your eyes.');
   assert.equal(nativeFoveationStatus({ foveation: { level: 'high', eyeTracked: false, fallback: 'eye-tracked profile rejected' } }), 'Currently applied: High runtime level, fixed at the centre. Fallback: eye-tracked profile rejected.');
   assert.equal(nativeFoveationStatus({ foveation: { level: 'none', eyeTracked: false } }), 'Currently applied: Off (full detail everywhere).');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'none', setting: 'off', fallback: '' } }), 'Currently applied: Off (full detail everywhere).');
   assert.equal(nativeFoveationStatus({ foveation: { level: 'unfoveated' } }), 'Currently applied: full detail everywhere (no runtime foveation).');
   assert.equal(nativeFoveationStatus({ foveation: 'broken', foveationEnabled: false }), 'Currently applied: Off.');
+});
+
+test('the menu reports the bound targets while a new foveation choice is still being applied', () => {
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'medium', setting: 'off', eyeTracked: true, pending: true } }), 'Currently applied: Medium runtime level, follows your eyes. Applying your choice…');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'none', setting: 'balanced', pending: true } }), 'Currently applied: Off (full detail everywhere). Applying your choice…');
+  assert.equal(
+    nativeFoveationStatus({ foveation: { level: 'none', setting: 'balanced', pending: false, fallback: 'foveation profile rejected' } }),
+    'Currently applied: full detail everywhere (no runtime foveation). Fallback: foveation profile rejected.',
+  );
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'high', setting: 'performance', eyeTracked: false, pending: false, fallback: '' } }), 'Currently applied: High runtime level, fixed at the centre.');
 });

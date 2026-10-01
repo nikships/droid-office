@@ -45,18 +45,35 @@ inline RenderSize renderSize(const ResolutionLimits &limits, float scale) {
     return {dimension(limits.recommended.width, limits.maximum.width),
             dimension(limits.recommended.height, limits.maximum.height)};
 }
+/**
+ * The runtime foveation a set of world swapchains is created with (foveation.h). level is an
+ * XrFoveationLevelFB value: 0 (NONE) creates them without XrSwapchainCreateInfoFoveationFB, so
+ * they have no foveation support at all; LOW, MEDIUM or HIGH creates them with it and applies that
+ * level's profile, with the eye-tracked struct when eyeTracked, as their first profile. On Galaxy
+ * XR the runtime keeps the first profile a new swapchain receives, so a change is a new target.
+ */
+struct TargetFoveation {
+    int level = 0;
+    bool eyeTracked = false;
+    bool foveated() const { return level != 0; }
+    bool operator==(const TargetFoveation &other) const {
+        return level == other.level && eyeTracked == other.eyeTracked;
+    }
+    bool operator!=(const TargetFoveation &other) const { return !(*this == other); }
+};
 struct RenderTargetRequest {
     std::array<RenderSize, 2> size{};
-    // Create the world swapchains with runtime foveation support
-    // (XrSwapchainCreateInfoFoveationFB). Levels, including Off, are runtime profiles applied to
-    // these swapchains, not new targets.
-    bool foveated = false;
+    TargetFoveation foveation;
     bool operator==(const RenderTargetRequest &other) const {
-        return size == other.size && foveated == other.foveated;
+        return size == other.size && foveation == other.foveation;
     }
     bool operator!=(const RenderTargetRequest &other) const { return !(*this == other); }
 };
-/** Resize only after a stable choice; a failed allocation waits for a different user choice. */
+/**
+ * Replace targets only after a stable choice (size or foveation); a failed allocation waits for a
+ * different choice. finish() records the targets actually bound, which can be below the request
+ * when the runtime rejected part of it.
+ */
 class RenderTargetChanges {
   public:
     void reset(RenderTargetRequest current) {
@@ -77,9 +94,9 @@ class RenderTargetChanges {
         }
         return !failed && nowMs - changedAt >= 250;
     }
-    void finish(RenderTargetRequest requested, bool success) {
+    void finish(RenderTargetRequest bound, bool success) {
         if (success)
-            applied = requested;
+            applied = bound;
         failed = !success;
     }
 

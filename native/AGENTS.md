@@ -43,9 +43,11 @@ of creating a second office state or a separate worker/board implementation.
   the maximum or force default frames through maximum-size targets. Replace targets on the
   GL thread with no acquired images, retaining the current targets if allocation fails.
   Complete GPU image use before destroying old swapchains, including during teardown.
-  Foveation levels, including Off (the empty profile), change by applying a profile, not by new
-  targets; targets without foveation support are only the fallback when the runtime rejects
-  every profile. Destroy the foveation profile before the session.
+  The Galaxy XR runtime keeps the first profile a world swapchain receives, so every foveation
+  choice is new world targets: Off is swapchains without `XrSwapchainCreateInfoFoveationFB`, a
+  level is swapchains with it and that level's profile applied first. Create the first targets
+  from the stored settings, report only what is bound, and destroy the foveation profile before
+  the session.
 - Validate performance with a visible, populated office and advancing scene packets, both
   workspace-open and workspace-closed, using focused 1–2 minute checks. An empty world, a frozen snapshot
   or compositor FPS alone cannot establish sustained application frame rate. Record visual
