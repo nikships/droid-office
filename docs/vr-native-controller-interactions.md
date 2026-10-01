@@ -123,7 +123,61 @@ dialog.
 The gun model is shared with desktop. The desktop wrist no longer adds a large resting tilt
 to its bore. Native attachment rendering uses actual display-loop grip transforms, rather
 than presenting a controller-held model at the bridge's lower scene update rate. Removing
-the attachment tag on a drop returns it to ordinary world transforms.
+the attachment tag on a drop returns it to ordinary world transforms. While a controller holds
+a placed attachment (`SceneRenderer::attachedHands`), its Samsung model is not drawn: the gun
+takes the controller's place in the hand instead of the controller poking through its trigger
+guard, on exactly the display frames the gun is drawn.
+
+The page's control packets arrive about every 33 ms, but on the headset they regularly arrive
+250–500 ms apart while the page works (`controlAgeMs` 495 ms measured). An attachment therefore
+stays at its grip for up to 1.5 s without a packet (`kAttachmentStaleNs`); a grip-held object
+still hides on the display frame its squeeze is released, tracking loss hides it at once, and
+a page navigation resets the controls.
+
+## Hands in front of compositor panels
+
+The workspace panel and the status card are compositor quads, which the compositor cannot
+depth-test against the controllers. While the workspace is open, the display loop submits the
+panel (and its pointer reticles) beneath the world layer and gives the world layer
+`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT`. `PanelCutout` cuts a hole the panel's
+shape (inset 4 mm against reprojection seams) into the world layer after the world pass:
+alpha 1 everywhere first, then transparent black and the panel's own depth inside the hole,
+over whatever the world drew there. The held gun (`SceneDrawSet::Attached`), controllers and
+rays are drawn afterwards with the depth test, so they show in front of the panel where they
+are nearer than it and stay behind it otherwise; the world never covers the panel. When the
+sharp-screen layer is drawn, `seal` writes the near plane's depth inside the hole so no
+screen is drawn over the panel, and the comfort fade writes color only, leaving the panel
+unfaded as before. With the workspace closed the layers and passes are unchanged.
+
+The status card is a head-locked quad over the world. With
+`XR_KHR_composition_layer_color_scale_bias` it fades out (0.1 s) while a drawn controller or
+the bounds of what it holds lie between the eyes and the card (`layer_occlusion.h`), and back
+in (0.25 s) once clear. It is still submitted at opacity 0, so its Surface keeps being
+consumed. Without the extension it stays drawn over the hand.
+
+## Capture puppet (debug builds only)
+
+Physical controllers are not tracked while nobody holds them, so a headless capture shows no
+controllers, held gun or hand at a button. Debug builds accept synthetic controllers from the
+page (`window.__office.puppet`, `src/client/native/puppet.ts`): `set`, `update`, `clear` and
+timed `script` steps give each hand grip and aim poses in LOCAL_FLOOR, head, heading or world
+space, plus trigger, squeeze, stick and buttons. The page sends them in the control packet's
+`puppet` field. `capture_puppet.h` fills only the slots the runtime reports as untracked, in the
+display loop with that frame's head pose, before the controller models, rays, button animation,
+attachments, panel pointer and the page's samples read the frame; native marks those samples
+`puppet: true`. A tracked controller always wins. The puppet counts as a tracked grip only in
+debug builds. It disappears at once with focus or pose loss, a page navigation or a control
+packet without it, and after 1.5 s without a fresh packet (`kPuppetStaleNs`, never longer than
+`kAttachmentStaleNs`): at 250 ms it vanished for 10–333 ms about six times a minute, because
+the page's packets regularly arrive that far apart, and a held gun flickered out of captures.
+Every `set`, `update` and `script` call may pass `{ label }`; `state()` reports the latest
+(`label`) and every staging call since the puppet appeared (`staging`), so a capture names
+exactly what staged it. Calls without a label are recorded as `__office.puppet.set` and so on.
+
+The native `OFFICE_CAPTURE_PUPPET` definition comes only from the Gradle debug build type, and
+the Java host must also pass `BuildConfig.DEBUG`; native reports `puppet: true` in its frame
+events only then. Release builds never parse the field or apply a puppet
+(`capture_puppet_release`). Captures that use it are synthetic input, not physical evidence.
 
 ## Validation status
 
@@ -134,7 +188,12 @@ The original desktop climb tests also pass. These checks are synthetic input evi
 
 The shared gun model and display-loop attachments are integrated. Attachment host/GLES checks
 cover tracked grip, focus, stale snapshots and release-frame hiding without hiding ordinary
-attachments on the same controller. Browser captures at 1600×1019 and 1280×720 show clean,
+attachments on the same controller. The GLES suite also draws a frame with the workspace open
+the way the display loop does (`panelUnderlayChecks` in `render.cpp`): the world is cut inside
+the hole even where it is nearer than the panel, a gun held in front of the panel stays opaque
+there, one behind it stays hidden, and the seal keeps anything drawn later out of the hole.
+`layer_occlusion_test.cpp` covers the hole's corners against `panelHit` and when the status
+card yields. Browser captures at 1600×1019 and 1280×720 show clean,
 scrollable control rows with the keyboard open. Native login captures at 1280×720 and 1024×600
 also keep the submit button above the keyboard; the compact card now scrolls when necessary.
 The controller release passed all 689 tests with coverage, 13 native host checks, both Android

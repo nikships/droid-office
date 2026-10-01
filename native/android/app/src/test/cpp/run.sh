@@ -18,8 +18,9 @@ done
 gl_includes=() gl_links=(-lEGL -lGLESv2)
 if [ -n "${GL_HEADERS:-}" ]; then gl_includes=(-I "$GL_HEADERS"); fi
 if [ -n "${ANGLE_LIB:-}" ]; then gl_links=(-L "$ANGLE_LIB" -lEGL -lGLESv2 -Wl,-rpath,"$ANGLE_LIB"); fi
-"$cxx" "${flags[@]}" "${includes[@]}" ${gl_includes[@]+"${gl_includes[@]}"} -DGL_GLEXT_PROTOTYPES \
-  "$here/render.cpp" "${core[@]}" "$src/scene_renderer.cpp" "${gl_links[@]}" -o "$out/render"
+"$cxx" "${flags[@]}" "${includes[@]}" -I "${OFFICE_XR_OPENXR_INCLUDE:?run through native/tests/run-host.sh}" \
+  ${gl_includes[@]+"${gl_includes[@]}"} -DGL_GLEXT_PROTOTYPES "$here/render.cpp" "${core[@]}" \
+  "$src/scene_renderer.cpp" "$src/panel_cutout.cpp" "${gl_links[@]}" -o "$out/render"
 # Software GL drivers retain process-global allocations. Memory and undefined behavior
 # checks remain enabled; leak reporting is disabled only for this driver-backed process.
 ASAN_OPTIONS="${ASAN_OPTIONS:-}:detect_leaks=0" EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 \

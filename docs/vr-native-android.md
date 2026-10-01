@@ -116,6 +116,10 @@ Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
 The headset UI includes a controller-operated keyboard, larger targets and adjustable terminal text.
 A smaller compositor panel carries interaction hints and feedback when the workspace closes.
+While the workspace is open, its layer is composited beneath the world layer, which shows it
+through a hole so the player's controllers, rays and held gun stay in front of it, and the
+status card fades while a hand is in front of it (see
+[Hands in front of compositor panels](vr-native-controller-interactions.md#hands-in-front-of-compositor-panels)).
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.

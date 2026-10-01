@@ -1,6 +1,9 @@
 #include "bridge_state.h"
+#include "capture_puppet.h"
 #include "controller_attachment.h"
 #include "cursor_swapchain.h"
+#include "layer_occlusion.h"
+#include "panel_cutout.h"
 #ifndef NDEBUG
 #include "depth_probe.h"
 #endif
@@ -46,6 +49,8 @@ std::thread renderThread;
 std::atomic<bool> stopping{false};
 std::atomic<bool> focused{false}, rebaseRequested{false};
 std::atomic<bool> overlayOpen{false};
+// Debug builds only: capturePuppetEnabled(BuildConfig.DEBUG) from the Java host.
+std::atomic<bool> puppetEnabled{false};
 // Keep consuming the status BufferQueue until the UI thread acknowledges that its producer
 // stopped. Otherwise a pending Canvas dequeue can block that thread, freezing office updates.
 std::atomic<bool> statusProducerVisible{false};
@@ -148,7 +153,12 @@ class Office {
     uint32_t refreshRequests = 0;
     std::unique_ptr<office::XrInput> input;
     std::unique_ptr<office::InputRenderer> inputRenderer;
+    std::unique_ptr<office::PanelCutout> panelCutout;
     std::unique_ptr<office::CursorSwapchain> cursor;
+    // XR_KHR_composition_layer_color_scale_bias: the status card fades out while a hand is in
+    // front of it (layer_occlusion.h). Without it the card stays drawn over the hand.
+    bool colorScaleBias = false;
+    office::StatusYield statusYield;
     std::unique_ptr<office::RuntimePerformance> performance;
     std::unique_ptr<office::SceneRenderer> sceneRenderer;
     PFNGLTEXTUREFOVEATIONPARAMETERSQCOMPROC textureFoveation = nullptr;
@@ -173,6 +183,7 @@ class Office {
         if (context != EGL_NO_CONTEXT)
             glFinish();
         inputRenderer.reset();
+        panelCutout.reset();
         sceneRenderer.reset();
 #ifndef NDEBUG
         depthProbe.reset();
@@ -450,6 +461,9 @@ class Office {
             extensions.push_back(XR_FB_FOVEATION_EXTENSION_NAME);
             extensions.push_back(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME);
         }
+        colorScaleBias = supports(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
+        if (colorScaleBias)
+            extensions.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
         auto android = office::structure<XrInstanceCreateInfoAndroidKHR>(
             XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR);
         android.applicationVM = vm;
@@ -737,6 +751,9 @@ class Office {
                                   AAssetManager_fromJava(env, assets));
         env->DeleteLocalRef(assets);
         env->DeleteLocalRef(assetClass);
+        panelCutout = std::make_unique<office::PanelCutout>();
+        panelCutout->initialize(multiview);
+        LOG("LAYER_OCCLUSION panel=underlay statusFade=%d", colorScaleBias);
         cursor = std::make_unique<office::CursorSwapchain>();
         cursor->initialize(session, format);
     }
@@ -745,6 +762,7 @@ class Office {
         office::FrameMetrics metrics;
         office::PanelHover hover;
         office::RigPresentation presentation;
+        unsigned puppetHands = 0;
         while (!stopping) {
             auto event = office::structure<XrEventDataBuffer>(XR_TYPE_EVENT_DATA_BUFFER);
             while (xrPollEvent(instance, &event) == XR_SUCCESS) {
@@ -876,6 +894,23 @@ class Office {
                 for (auto &hand : inputFrame.hands)
                     hand.active = false;
             auto controls = bridge.read();
+            if constexpr (office::kCapturePuppetBuild) {
+                // Debug builds only: synthetic controllers fill untracked slots before the
+                // pointer, models, rays, attachments and the page's samples read this frame.
+                office::PuppetFrame puppetFrame;
+                puppetFrame.enabled = puppetEnabled;
+                puppetFrame.tracking = focused && poseValid;
+                puppetFrame.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        Clock::now().time_since_epoch())
+                                        .count();
+                puppetFrame.receivedNs = controls.receivedNs;
+                puppetFrame.head = head;
+                const auto driven = office::applyPuppet(inputFrame, controls.puppet, puppetFrame);
+                if (driven != puppetHands) {
+                    puppetHands = driven;
+                    LOG("CAPTURE_PUPPET hands=%u (synthetic input)", driven);
+                }
+            }
             // Slider release/presets select an actual target size. Keep the old targets until
             // the selection settles, and create unfoveated targets for Off: QCOM texture
             // foveation cannot be disabled once enabled on an existing texture.
@@ -1012,6 +1047,40 @@ class Office {
                 sceneRenderer->setControllerPoses(
                     office::attachmentPoses(inputFrame, controls.rig, attachmentFrame));
             }
+            // A held gun takes the controller's place in the hand: its model is not drawn there.
+            const unsigned heldHands = valid ? sceneRenderer->attachedHands() : 0;
+            inputRenderer->hideControllers(heldHands);
+            // The status card is a quad over the world: it yields to what the player holds up in
+            // front of it, the drawn controllers and the bounds of the gun in hand.
+            bool statusCovered = false;
+            if (colorScaleBias && valid && statusProducerVisible) {
+                std::array<office::HandBall, 2 + 32> balls;
+                size_t count = office::controllerBalls(inputFrame, heldHands, balls.data());
+                float bounds[32][4];
+                const size_t held = sceneRenderer->attachedBounds(bounds, 32);
+                const auto fromWorld = office::inverseRigid(controls.rig);
+                for (size_t i = 0; i < held; i++)
+                    balls[count++] = {office::transformPoint(
+                                          fromWorld, {bounds[i][0], bounds[i][1], bounds[i][2]}),
+                                      bounds[i][3]};
+                statusCovered = office::handsCoverStatus(head, balls.data(), count);
+            }
+            const float statusOpacity =
+                statusYield.step(statusCovered, frame.predictedDisplayPeriod / 1e9f);
+            // The workspace panel goes beneath the world layer, which then shows it through a
+            // hole and keeps the player's controllers, rays and held gun in front of it.
+            const bool panelUnder = valid && controls.panelOpen;
+            float cutViews[2][16]{}, cutCorners[4][3]{};
+            if (panelUnder) {
+                const auto corners =
+                    office::panelCutoutCorners(panelPose, office::kPanelWidth, office::kPanelHeight,
+                                               office::kPanelCutoutInset);
+                for (int c = 0; c < 4; c++) {
+                    cutCorners[c][0] = corners[c].x;
+                    cutCorners[c][1] = corners[c].y;
+                    cutCorners[c][2] = corners[c].z;
+                }
+            }
             office::SharpScreenPlan sharpPlan;
             bool sharp = valid && sharpScreensAvailable && controls.graphics.sharpScreens &&
                          controls.fade < .999f;
@@ -1082,12 +1151,29 @@ class Office {
                         throw std::runtime_error("Projection framebuffer incomplete: " +
                                                  std::to_string(status));
                     glViewport(rect.x, rect.y, rect.width, rect.height);
-                    if (multiview)
-                        sceneRenderer->renderStereo(worldViews, rect.height);
-                    else
-                        sceneRenderer->render(worldViews[pass], rect.height);
-                    inputRenderer->render(localViews[pass], localViews[multiview ? 1 : pass],
-                                          controls.fade);
+                    auto drawScene = [&](office::SceneDrawSet set) {
+                        if (multiview)
+                            sceneRenderer->renderStereo(worldViews, rect.height, {}, set);
+                        else
+                            sceneRenderer->render(worldViews[pass], rect.height, set);
+                    };
+                    if (panelUnder) {
+                        // The world, the panel's hole over it (whatever was nearer), then what
+                        // the player holds and the controllers, depth-tested against the panel.
+                        std::copy(localViews[pass].begin(), localViews[pass].end(), cutViews[0]);
+                        const auto &other = localViews[multiview ? 1 : pass];
+                        std::copy(other.begin(), other.end(), cutViews[1]);
+                        drawScene(office::SceneDrawSet::World);
+                        panelCutout->punch(cutViews, cutCorners);
+                        drawScene(office::SceneDrawSet::Attached);
+                    } else {
+                        drawScene(office::SceneDrawSet::All);
+                    }
+                    inputRenderer->render(localViews[pass], localViews[multiview ? 1 : pass]);
+                    // The screen layer composites over the world layer: no screen over the panel.
+                    if (panelUnder && sharp)
+                        panelCutout->seal(cutViews, cutCorners);
+                    inputRenderer->renderFade(controls.fade);
                     // The sharp pass samples this depth, including the native motion controllers.
                     // Unbinding resolves tile MSAA; invalidating the sampled depth would lose
                     // occlusion, so only the texels the planned pass never reads are dropped.
@@ -1212,25 +1298,34 @@ class Office {
             panel.space = space;
             panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             panel.pose = panelPose;
-            panel.size = {1.8f, 1.2f};
+            panel.size = {office::kPanelWidth, office::kPanelHeight};
             panel.subImage.swapchain = panelSwapchain;
             panel.subImage.imageRect.extent = {2400, 1600};
             auto status = office::structure<XrCompositionLayerQuad>(XR_TYPE_COMPOSITION_LAYER_QUAD);
             status.space = viewSpace;
             status.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             status.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-            status.pose = {{0, 0, 0, 1}, {0, -.4f, -1.4f}};
-            status.size = {.9f, .16875f};
+            const office::StatusQuad statusQuad; // handsCoverStatus tests against the same quad
+            status.pose = {{0, 0, 0, 1}, statusQuad.center};
+            status.size = {statusQuad.width, statusQuad.height};
             status.subImage.swapchain = statusSwapchain;
             status.subImage.imageRect.extent = {1024, 192};
+            auto statusFade = office::structure<XrCompositionLayerColorScaleBiasKHR>(
+                XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR);
+            if (colorScaleBias && statusOpacity < 1) {
+                // Premultiplied: color and alpha scale together. Still submitted at 0, so the
+                // Surface producer's frames keep being consumed.
+                statusFade.colorScale = {statusOpacity, statusOpacity, statusOpacity,
+                                         statusOpacity};
+                statusFade.colorBias = {0, 0, 0, 0};
+                status.next = &statusFade;
+            }
             std::array<XrCompositionLayerQuad, 2> pointers;
             std::vector<const XrCompositionLayerBaseHeader *> layers;
             if (valid) {
-                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&projection));
-                if (sharp)
-                    layers.push_back(
-                        reinterpret_cast<XrCompositionLayerBaseHeader *>(&sharpProjection));
-                if (controls.panelOpen) {
+                // Beneath the world layer, which shows the panel and its pointers through the
+                // hole PanelCutout punched, with the hands in front of it.
+                if (panelUnder) {
                     layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&panel));
                     for (int h = 0; h < 2; h++)
                         if (cursorVisible[h]) {
@@ -1238,7 +1333,12 @@ class Office {
                             layers.push_back(
                                 reinterpret_cast<XrCompositionLayerBaseHeader *>(&pointers[h]));
                         }
+                    projection.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                 }
+                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&projection));
+                if (sharp)
+                    layers.push_back(
+                        reinterpret_cast<XrCompositionLayerBaseHeader *>(&sharpProjection));
             }
             // VIEW-space status does not depend on valid application eye poses. Drain a pending
             // Canvas post even when the world is temporarily invalid or shouldRender is false,
@@ -1460,8 +1560,18 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeReadEvents(JNIEnv *env, jobject) {
         std::string("{\"resetInput\":") + (focused ? "false" : "true") +
         ",\"recenter\":" + (rebaseRequested.exchange(false) ? "true" : "false") +
         ",\"sceneReady\":" + (sceneReady ? "true" : "false") +
-        ",\"sceneReset\":" + (sceneReset ? "true" : "false") + "}";
+        ",\"sceneReset\":" + (sceneReset ? "true" : "false") +
+        (puppetEnabled ? ",\"puppet\":true}" : "}");
     return env->NewStringUTF(events.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeCapturePuppet(JNIEnv *, jobject, jboolean hostDebug) {
+    const bool enabled = office::capturePuppetEnabled(hostDebug);
+    puppetEnabled = enabled;
+    bridge.allowPuppet(enabled);
+    LOG("CAPTURE_PUPPET build=%d host=%d enabled=%d", office::kCapturePuppetBuild,
+        static_cast<int>(hostDebug), enabled);
 }
 
 extern "C" JNIEXPORT void JNICALL
