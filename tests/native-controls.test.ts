@@ -322,18 +322,16 @@ test('face buttons have distinct roles and only left Menu opens the workspace', 
   const r = rig(t);
   let commands = 0,
     back = 0,
-    keyboard = 0,
     panelOpen = false;
   r.hooks.openCommands = () => commands++;
   r.hooks.back = () => back++;
-  r.hooks.toggleKeyboard = () => keyboard++;
   r.hooks.panelOpen = () => panelOpen;
   r.controls.start();
   r.tick(r.frame({ left: controller(), right: controller() }));
   r.tick(r.frame({ left: controller({ a: true }), right: controller({ b: true, stickClick: true }) }));
   assert.equal(r.calls.next, 1, 'only X calls the next waiting worker');
   assert.equal(back, 0, 'B in the world with no card does nothing');
-  assert.equal(keyboard, 0, 'keyboard shortcut requires the workspace');
+  assert.equal(r.calls.panel, 0, 'no button but left Menu opens the workspace');
   r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ left: controller({ b: true }), right: controller({ a: true }) }));
   assert.equal(commands, 1, 'Y opens commands');
   assert.ok(r.player.vy > 0, 'A jumps');
@@ -341,11 +339,10 @@ test('face buttons have distinct roles and only left Menu opens the workspace', 
   panelOpen = true;
   r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ left: controller({ stickClick: true }), right: controller({ b: true, stickClick: true }) }));
   assert.equal(back, 1);
-  assert.equal(keyboard, 1, 'right click toggles the keyboard once');
+  assert.equal(r.calls.panel, 0, 'a stick click with the workspace open leaves it as it is');
   r.tick(r.frame({ left: controller({ menu: true }), right: controller({ menu: true, b: true, stickClick: true }) }));
   assert.equal(r.calls.panel, 1, 'only left Menu toggles the workspace');
   assert.equal(back, 1);
-  assert.equal(keyboard, 1);
   r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ right: controller({ menu: true }) }));
   assert.equal(r.calls.panel, 1, 'right Menu stays reserved');
 });

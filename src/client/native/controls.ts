@@ -66,7 +66,6 @@ export interface NativeHooks {
   togglePanel: () => void;
   panelOpen?: () => boolean;
   openCommands?: () => void;
-  toggleKeyboard?: () => void;
   back?: () => void;
   physical?: NativePhysicalHooks;
   /** The issue card in hand, for Home's held-card row (VRUiSink.setCarrying). */
@@ -126,7 +125,6 @@ interface HandSlot {
   uiConsumed: boolean;
   wasPrimary: boolean;
   wasSecondary: boolean;
-  wasClick: boolean;
   wasMenu: boolean;
   teleportReady: boolean;
 }
@@ -234,7 +232,6 @@ export class NativeControls {
       uiConsumed: false,
       wasPrimary: false,
       wasSecondary: false,
-      wasClick: false,
       wasMenu: false,
       teleportReady: true,
     };
@@ -593,7 +590,6 @@ export class NativeControls {
       s.squeezeDown = h.squeeze >= SQUEEZE_OFF;
       s.wasPrimary = h.a;
       s.wasSecondary = h.b;
-      s.wasClick = h.stickClick === true;
       s.wasMenu = h.menu;
       s.teleportReady = h.stick[1] < STICK_ON;
     }
@@ -666,7 +662,6 @@ export class NativeControls {
     s.squeezeDown = false;
     s.wasPrimary = false;
     s.wasSecondary = false;
-    s.wasClick = false;
     s.wasMenu = false;
     s.teleportReady = true;
     if (this.stickAiming && this.stickSlot === s.idx) this.stickAiming = false;
@@ -787,7 +782,7 @@ export class NativeControls {
 
   /**
    * Fixed left/right roles: X next worker, Y commands, left stick-click sprint; A jump,
-   * B back, right stick-click keyboard. Right stick-forward aims and releases a teleport.
+   * B back. Right stick-forward aims and releases a teleport.
    * Left Menu owns the workspace; right Menu is reserved by Android XR.
    */
   private pollButtons(): void {
@@ -811,11 +806,9 @@ export class NativeControls {
             if (this.hooks.carrying()) this.hooks.putBack();
           }
         }
-        if (pad.stickClick && !s.wasClick && this.hooks.panelOpen?.()) this.hooks.toggleKeyboard?.();
       }
       s.wasPrimary = pad.a;
       s.wasSecondary = pad.b;
-      s.wasClick = pad.stickClick === true;
     }
     const teleport = this.slotFor('right');
     if (teleport && this.pad(teleport)) {

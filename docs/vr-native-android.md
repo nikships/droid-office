@@ -114,7 +114,14 @@ The original desktop windows, including terminals, are displayed through a 2400Ã
 Surface compositor layer. This preserves text resolution independently of world foveation.
 Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
-The headset UI includes a controller-operated keyboard, larger targets and adjustable terminal text.
+The headset UI has larger targets and adjustable terminal text, and no on-screen keyboard: a
+keyboard paired to the headset types into the open terminal or the focused field, because
+`OfficeActivity.dispatchKeyEvent` forwards its keys to the page. Only the sign-in page docks a
+controller keyboard, for the office password (`src/client/login.ts`).
+Every launch and page reload starts in the office with the workspace closed. Nothing opens Home
+by itself; the left controller's Menu button does (`native/ui.ts`, `tests/native-launch.test.ts`).
+Before the office page sends its first packet, the panel shows the app's own connection screen,
+and that packet closes it.
 With the workspace closed, a smaller head-locked compositor panel shows only the FPS counter,
 when that Graphics setting is on, and each toast while it lasts. Its card fits the text, so the
 counter alone is a small label rather than a full-width bar. The native page names no controls:

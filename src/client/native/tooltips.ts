@@ -40,7 +40,7 @@ export function mountNativeTooltips(): void {
   const show = (event: Event, temporary = false) => {
     const next = (event.target as Element | null)?.closest<HTMLElement>('[title]');
     const text = next ? nativeTooltipText(next) : '';
-    if (!next || !text || next.closest('.native-kb') || next.getClientRects().length === 0) return hide();
+    if (!next || !text || next.getClientRects().length === 0) return hide();
     if (next !== target) {
       hide();
       target = next;

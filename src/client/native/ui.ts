@@ -4,21 +4,24 @@
  *
  * initNativeUi hides what only makes sense over the page's own 3D view (the canvas, crosshair,
  * hints, waiting pins), makes the controls big enough to aim at with a controller, starts terminals at a size
- * readable in the headset, and adds two things the desktop doesn't need:
- * - a home screen on the panel: the floor, the workers, and every ☰ menu action as a large tile;
- * - a keyboard docked on the panel for controller input (native/keyboard.ts).
+ * readable in the headset, and adds a home screen the desktop doesn't need: the floor, the workers, and
+ * every ☰ menu action as a large tile.
  *
  * The panel is "open" while it has something to show: the home screen, any window or the ☰ menu,
  * the floor list, or a focused text field (the chat). The headset app reads panelState() and hears
  * changes through onPanelChange (or the `droid-office:native-panel` window event).
+ *
+ * The page starts with the panel closed, on every launch and reload: the player arrives in the office,
+ * and only the player opens the workspace (setPanelOpen, from the left controller's Menu button).
+ * There is no on-screen keyboard: a keyboard paired to the headset types into the focused field or
+ * terminal (the Android host forwards its keys to the page).
  */
 
 import './native.css';
 import { STATUS_LABEL, closeAllModals, closeTopModal, h, modalOpen, onModalChange } from '../ui/dom';
 import { actionIcon, actionLabel, actionOffered, hudActions, onHudRender, type HudAction } from '../ui/menu';
 import { closeFloorMenu, floorMenuOpen } from '../ui/floormenu';
-import { paletteOpen } from '../ui/palette';
-import { openTerminalSink } from '../ui/terminal';
+import { openTerminalFor } from '../ui/terminal';
 import { useNativeTermFont } from '../ui/term-font';
 import { providerLabel } from '../ui/provider';
 import { store, type Topic } from '../state';
@@ -26,9 +29,6 @@ import { DESK_BY_ID, nextFreeSeat } from '../../shared/layout';
 import { isAsleep, isBusy } from '../../shared/status';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { CarriedIssue, WorkerInfo } from '../../shared/protocol';
-import { isTyping } from '../player';
-import { mountKeyboard, type PanelKeyboard } from './keyboard';
-import { nativeCommandsKey } from './keys';
 import { workerReposLine } from './panel-text';
 import { isNativeSearch } from './mode';
 import { nativePerformanceLabel } from './performance';
@@ -54,8 +54,6 @@ export interface NativePanelState {
   floorMenu: boolean;
   /** A text field has focus (the chat, a window's field). */
   typing: boolean;
-  /** The panel's keyboard is showing. */
-  keyboard: boolean;
   /** The worker whose terminal is open, if any. */
   terminal: string | null;
   /** The original shared board card carried by this player. */
@@ -74,8 +72,6 @@ export interface NativeWorkerActions {
 export interface NativeUiOptions {
   /** Opens a worker's terminal the way the desktop does (waking it if it's asleep): main.ts's openWorkerTerminal. */
   openWorker?: (workerId: string) => void;
-  /** Whether the home screen shows at start (default true). */
-  home?: boolean;
   workerActions?: NativeWorkerActions;
   hireAtDesk?(deskId: string): void;
   openShell?(deskId: string): void;
@@ -91,14 +87,12 @@ export interface NativeUi {
   panelState(): NativePanelState;
   /** Hears every change of panelState; returns the unlisten. */
   onPanelChange(fn: (state: NativePanelState) => void): () => void;
-  /** Shows the home screen, or with false clears the panel: every window, the menu, the floor list and the keyboard. */
+  /** Shows the home screen, or with false clears the panel: every window, the menu, the floor list and the focused field. */
   setPanelOpen(open: boolean): void;
   togglePanel(): void;
   /** B goes back one workspace step; it never shares grip's object release. */
   back(): void;
   showHome(on: boolean): void;
-  keyboard: PanelKeyboard;
-  toggleKeyboard(): void;
   /** The command palette, as the Home screen's Find anything button and Ctrl+K open it. */
   openCommands(): void;
   /** Refreshes the home status from native measurements; unavailable data stays hidden. */
@@ -125,20 +119,21 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
   document.getElementById('chat-input')?.setAttribute('placeholder', 'Chat with the office');
 
   const listeners = new Set<(s: NativePanelState) => void>();
-  let homeOn = opts.home ?? true;
+  // Closed until the player asks: Home never greets a launch, a reload or an arrival.
+  let homeOn = false;
   let lastKey = '';
   let carrying: CarriedIssue | null = null;
 
   const typingNow = () => {
     const el = document.activeElement as HTMLElement | null;
-    if (!el || el.closest('.native-kb')) return false;
+    if (!el) return false;
     return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
   };
   const panelState = (): NativePanelState => {
     const modal = modalOpen();
     const floorMenu = floorMenuOpen();
     const typing = typingNow();
-    return { open: homeOn || modal || floorMenu || typing, home: homeOn, modal, floorMenu, typing, keyboard: keyboard?.shown() ?? false, terminal: openTerminalSink()?.workerId ?? null, carrying };
+    return { open: homeOn || modal || floorMenu || typing, home: homeOn, modal, floorMenu, typing, terminal: openTerminalFor(), carrying };
   };
   const notify = () => {
     decorateNativeMenu(() => openCommands());
@@ -162,27 +157,14 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     });
   };
 
-  const keyboard: PanelKeyboard = mountKeyboard({ terminal: openTerminalSink, storageKey: 'droid-office.native-keyboard', onVisibility: soon });
-
-  const mac = macPlatform();
   const openCommands = () => {
     if (opts.openCommands) opts.openCommands();
-    else pressPaletteShortcut(mac);
+    else pressPaletteShortcut(macPlatform());
   };
-  // The panel keyboard has Ctrl and no ⌘, so on a Mac-reported platform its Ctrl+K opens the
-  // palette here; elsewhere main.ts's own Ctrl+K listener already does, and this stays out of it.
-  window.addEventListener('keydown', (e) => {
-    if (!nativeCommandsKey(e, mac) || e.repeat) return;
-    const inPalette = paletteOpen() && !!(e.target as HTMLElement | null)?.closest?.('.modal.palette');
-    if (!inPalette && isTyping(e)) return;
-    e.preventDefault();
-    openCommands();
-  });
 
   const home = buildHome({
     openWorker: (id) => (opts.openWorker ? opts.openWorker(id) : openFromHud(id)),
     close: () => setPanelOpen(false),
-    toggleKeyboard: () => keyboard.toggle(),
     openCommands,
     workerActions: opts.workerActions,
     hireAtDesk: opts.hireAtDesk,
@@ -202,18 +184,10 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     closeAllModals();
     if (floorMenuOpen()) closeFloorMenu();
     (document.activeElement as HTMLElement | null)?.blur?.();
-    keyboard.show(false);
     showHome(false);
   }
 
   onModalChange(soon);
-  // A field (or a terminal) taking focus brings the keyboard up, as a phone's does; Hide puts it away.
-  document.addEventListener('focusin', (e) => {
-    const el = e.target as HTMLElement;
-    if (el.closest('.native-kb')) return;
-    const editable = el.tagName === 'TEXTAREA' || el.isContentEditable || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button', 'submit', 'color', 'file'].includes(el.type));
-    if (editable && !el.hasAttribute('readonly') && !keyboard.shown()) keyboard.show(true);
-  });
   document.addEventListener('focusin', soon);
   document.addEventListener('focusout', soon);
   // The floor list and the ☰ menu come and go as elements, without a store topic.
@@ -225,7 +199,7 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
   };
   onHudRender(repaint);
   for (const t of ['workers', 'floors', 'floor', 'project', 'peers', 'me'] as Topic[]) store.on(t, repaint);
-  showHome(homeOn);
+  showHome(false);
 
   instance = {
     panelState,
@@ -238,15 +212,12 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     setPanelOpen,
     togglePanel: () => setPanelOpen(!panelState().open),
     back: () => {
-      if (keyboard.shown()) keyboard.show(false);
-      else if (modalOpen()) closeTopModal();
+      if (modalOpen()) closeTopModal();
       else if (floorMenuOpen()) closeFloorMenu();
       else setPanelOpen(false);
       soon();
     },
     showHome,
-    keyboard,
-    toggleKeyboard: () => keyboard.toggle(),
     openCommands,
     updatePerformance: (metrics) => home.updatePerformance(metrics),
     setCarrying(card) {
@@ -307,7 +278,6 @@ function sortedWorkers(): WorkerInfo[] {
 interface HomeActions {
   openWorker(id: string): void;
   close(): void;
-  toggleKeyboard(): void;
   openCommands(): void;
   workerActions?: NativeWorkerActions;
   hireAtDesk?(deskId: string): void;
@@ -359,12 +329,11 @@ function buildHome(actions: HomeActions) {
     h('span', { 'aria-hidden': 'true' }, '🔎'),
     h('span', {}, 'Find anything'),
   );
-  const kbBtn = h('button.btn.nh-kb', { type: 'button', onclick: () => actions.toggleKeyboard() }, '⌨️ Keyboard');
   const closeBtn = h('button.btn.nh-close', { type: 'button', title: 'Hide the panel and go back to the office', onclick: () => actions.close() }, 'Back to the office');
   const el = h(
     'section.native-home.hidden',
     { 'aria-label': 'Home' },
-    h('header.nh-head', {}, h('div.nh-where', {}, floorName, floorMeta, performance), h('div.nh-head-actions', { role: 'group', 'aria-label': 'Panel' }, commandsBtn, kbBtn, closeBtn)),
+    h('header.nh-head', {}, h('div.nh-where', {}, floorName, floorMeta, performance), h('div.nh-head-actions', { role: 'group', 'aria-label': 'Panel' }, commandsBtn, closeBtn)),
     carried,
     h('div.nh-body', {}, h('section.nh-col.nh-workers-col', {}, h('h3', {}, h('span.no', {}, '01'), 'Workers', workersCount), hireRow, workersEl), h('section.nh-col', {}, h('h3', {}, h('span.no', {}, '02'), 'Office'), tilesEl)),
   );

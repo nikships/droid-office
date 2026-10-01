@@ -5491,7 +5491,6 @@ if (nativeMode) {
     togglePanel: () => nativeUi?.togglePanel(),
     panelOpen: () => nativeUi?.panelState().open === true,
     openCommands: () => nativeUi?.openCommands(),
-    toggleKeyboard: () => nativeUi?.toggleKeyboard(),
     back: () => nativeUi?.back(),
     physical: {
       player,

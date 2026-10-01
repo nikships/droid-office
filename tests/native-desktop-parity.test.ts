@@ -1,44 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { COMMANDS_SHORTCUT, KEYBOARD_ROWS, nativeCommandsKey, pressOf, type Modifier } from '../src/client/native/keys.js';
 import { NATIVE_SETTINGS, workerReposLine } from '../src/client/native/panel-text.js';
-import { isPaletteKey } from '../src/shared/palette.js';
 import { SETTINGS_CARDS } from '../src/shared/settings-nav.js';
-
-const ctrl = new Set<Modifier>(['ctrl']);
-const code = (k: { key: string }) => ({ ...k, code: `Key${k.key.toUpperCase()}` });
-
-// ---- Command palette on the panel ----
-
-test('the panel keyboard can type the palette shortcut the Controls window names', () => {
-  assert.equal(COMMANDS_SHORTCUT, 'Ctrl+K');
-  assert.match(readFileSync(new URL('../src/client/ui/hud.ts', import.meta.url), 'utf8'), /panel keyboard’s \$\{COMMANDS_SHORTCUT\}/);
-  const ids = KEYBOARD_ROWS.flat().map((k) => k.id);
-  assert.ok(ids.includes('mod:ctrl') && ids.includes('k'));
-  assert.ok(!ids.includes('mod:meta'), 'the panel keyboard has no ⌘, so it must never advertise ⌘K');
-  const press = code(pressOf('k', ctrl));
-  assert.ok(isPaletteKey(press, false), "on the headset's platform the page's own Ctrl+K listener opens it");
-});
-
-test('panel Ctrl+K opens the palette once, whatever platform the page reports', () => {
-  const press = code(pressOf('k', ctrl));
-  for (const mac of [false, true]) {
-    const page = isPaletteKey(press, mac);
-    const panel = nativeCommandsKey(press, mac);
-    assert.equal(Number(page) + Number(panel), 1, `mac=${mac}: exactly one listener toggles it`);
-  }
-});
-
-test('only Ctrl+K is the panel shortcut', () => {
-  const mods = (m: Modifier[]) => code(pressOf('k', new Set(m)));
-  assert.ok(!nativeCommandsKey(mods([]), true));
-  assert.ok(!nativeCommandsKey(mods(['ctrl', 'shift']), true));
-  assert.ok(!nativeCommandsKey(mods(['ctrl', 'alt']), true));
-  assert.ok(!nativeCommandsKey(code(pressOf('j', ctrl)), true));
-  // ⌘K on a Mac is the page's own, never the panel's too.
-  assert.ok(!nativeCommandsKey({ key: 'k', code: 'KeyK', ctrlKey: false, altKey: false, shiftKey: false, metaKey: true }, true));
-});
 
 // ---- Workers across repositories ----
 

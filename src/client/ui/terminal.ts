@@ -41,21 +41,6 @@ function initials(name: string): string {
   return first(words[0]) + (words.length > 1 ? first(words[words.length - 1]) : '') || '?';
 }
 
-/** The open terminal as something to type into from outside xterm (the headset panel's keyboard). */
-export interface TerminalSink {
-  workerId: string;
-  /** Whether its program takes CSI u for Ctrl+Enter and Shift+Enter (see term-keys.ts). */
-  csiEnter(): boolean;
-  /** Whether its program has switched the cursor keys to application mode (DECCKM). */
-  appCursor(): boolean;
-  /** Types these bytes, as if from this window's keyboard. */
-  input(data: string): void;
-  /** Whether a key typed on this page now would land in it: it has focus, or nothing does. */
-  holdsKeys(): boolean;
-  /** Leaves the terminal, like Shift+Esc. */
-  close(): void;
-}
-
 /** Sends a file dropped or pasted into a worker's terminal to the office; where the office keeps it. */
 async function uploadDrop(workerId: string, f: File): Promise<string> {
   const name = f.name || 'That file';
@@ -67,12 +52,7 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
   return r.path;
 }
 
-let current: { workerId: string; modal: Modal; find(f: TerminalFind): void; sink: TerminalSink } | null = null;
-
-/** The terminal window that's open, if any. */
-export function openTerminalSink(): TerminalSink | null {
-  return current?.sink ?? null;
-}
+let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;
 /** Whether we've said, this page load, that Esc now goes to the terminal and how to leave instead. */
 let escHinted = false;
 const listeners = new Set<(msg: ServerMsg) => void>();
@@ -82,6 +62,7 @@ export function routeTerminalMessage(msg: ServerMsg) {
   listeners.forEach((fn) => fn(msg));
 }
 
+/** The worker whose terminal window is open, if any. */
 export function openTerminalFor(): string | null {
   return current?.workerId ?? null;
 }
@@ -350,21 +331,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     find: (f) => {
       if (ready) jumpTo(f);
       else pendingFind = f;
-    },
-    sink: {
-      workerId,
-      csiEnter,
-      appCursor: () => term.modes.applicationCursorKeysMode,
-      // Through xterm, so it goes out exactly like a key typed into the window (onData below).
-      input: (data) => {
-        term.input(data);
-        sayTyping();
-      },
-      holdsKeys: () => {
-        const active = document.activeElement;
-        return !active || active === document.body || host.contains(active);
-      },
-      close: () => modal.close(),
     },
   };
   const paintZoom = (px: number) => {

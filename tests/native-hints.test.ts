@@ -154,9 +154,8 @@ test('the guard itself catches a control named in a toast', () => {
   assert.match(named[0].args, /press E/);
 });
 
-test('signs, boards and screens in the world name no controls in the headset app', () => {
-  // Canvas text drawn onto world objects: every line that names a control is gated on that line.
-  const files = [...sources(join(ROOT, 'world')), join(ROOT, 'ui/blocks.ts'), join(ROOT, 'ui/cabinet.ts'), join(ROOT, 'ui/minesweeper.ts')];
+/** Lines of these files whose prose names a control without being gated on that line. */
+function ungatedControlText(files: string[]): string[] {
   const offenders: string[] = [];
   for (const path of files) {
     readFileSync(path, 'utf8')
@@ -170,7 +169,16 @@ test('signs, boards and screens in the world name no controls in the headset app
         offenders.push(`${relative(ROOT, path)}:${i + 1}: ${line.trim().slice(0, 120)}`);
       });
   }
-  assert.deepEqual(offenders, []);
+  return offenders;
+}
+
+test('signs, boards and screens in the world name no controls in the headset app', () => {
+  // Canvas text drawn onto world objects: every line that names a control is gated on that line.
+  assert.deepEqual(ungatedControlText([...sources(join(ROOT, 'world')), join(ROOT, 'ui/blocks.ts'), join(ROOT, 'ui/cabinet.ts'), join(ROOT, 'ui/minesweeper.ts')]), []);
+});
+
+test('the hire and ask forms a desk or kiosk opens name no keys in the headset app', () => {
+  assert.deepEqual(ungatedControlText([join(ROOT, 'ui/prompt.ts'), join(ROOT, 'ui/ask.ts')]), []);
 });
 
 test('the headset app adds no control hints of its own outside the Controls window', () => {

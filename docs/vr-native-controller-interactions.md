@@ -36,7 +36,6 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 | Y, left secondary | Open/close Find anything |
 | A, right primary | Jump in the office |
 | B, right secondary | Go back one workspace step; return a carried card when in the office |
-| Right stick click | Show/hide keyboard while workspace is open |
 | Either trigger | Pointer selection, shared world actions, use a held object, or fire a held gun |
 | Either grip | Grab/hold/release a nearby object, ladder, pole or back-holstered gun |
 

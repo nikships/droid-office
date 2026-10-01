@@ -94,7 +94,8 @@ export function openPrompt(opts: PromptOptions) {
       wtRow,
       repos.element,
     ),
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
+    // The headset app names no keys; a keyboard paired to it still sends with Enter.
+    h('footer', {}, h('span.grow', {}, controlHintsShown() ? 'Enter to send · Shift+Enter for a new line' : ''), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
 
