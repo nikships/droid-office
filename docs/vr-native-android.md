@@ -121,6 +121,16 @@ counter alone is a small label rather than a full-width bar. The native page nam
 no aim labels, carry, climbing or gun hints, "press E" toasts, key legends or world signs
 (`controlHintsShown` in `src/client/native/mode.ts`). The Controls window, opened on purpose,
 still lists the controller roles. Desktop and WebXR keep their hints.
+No name, status bubble, task card or pitch floats over a character either (`floatingTagsShown`).
+A worker's name, engine, state and task are printed on its seat's nameplate
+(`src/client/world/nameplate.ts`): a three-sided sign on its desk, a plate on the back of its
+bean bag or meeting chair, or the display on a board agent's kiosk. The plate's lamp glows in the
+worker's status color, like its antenna bulb, breathing while it works and blinking while it
+waits on someone. A teammate wears a name badge on their shirt. A kiosk has no "Ask me" sign:
+its display shows the agent's name, its board and its state. The first trigger pull at the kiosk
+greets the agent, which looks up while the display says what it does; the display goes back to
+the nameplate once you ask it something or walk away, and the next pull opens the ask form.
+A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.

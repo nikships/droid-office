@@ -27,3 +27,28 @@ export function controlHintsShown(search: string = typeof location === 'undefine
 export function withControlHint(text: string, hint: string): string {
   return controlHintsShown() ? text + hint : text;
 }
+
+/**
+ * Whether characters wear floating billboards: the name pill over a head and the line under it,
+ * the status bubble or task card over a worker, the "Ask me" pitch at a board agent's kiosk and the
+ * farewell over a worker walking out. Desktop and WebXR keep them. The headset app (`/?native=1`)
+ * floats no name, state or pitch over anyone, as in Half-Life: Alyx: a worker's name, engine and
+ * state are printed on its seat's nameplate (world/nameplate.ts), whose lamp, the worker's antenna
+ * bulb and its body show how it's doing; a teammate wears a name badge; and a board agent's pitch
+ * lights its counter display only once you greet it.
+ */
+export function floatingTagsShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
+  return !isNativeSearch(search);
+}
+
+/**
+ * What a sign in the world says about a problem: all of `text` wherever control hints are shown.
+ * In the headset app, only what is wrong: its first sentence, up to any dash, without asides in
+ * parentheses ("This project has no GitHub remote yet.", not what to type to fix it). The whole
+ * text stays in the window the sign belongs to.
+ */
+export function worldNotice(text: string): string {
+  if (controlHintsShown()) return text;
+  const first = text.split(/(?<=[.!?])\s|\s[—–]\s/, 1)[0] ?? text;
+  return first.replace(/\s*\([^)]*\)/g, '').trim();
+}

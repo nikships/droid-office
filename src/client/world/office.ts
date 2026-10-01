@@ -61,6 +61,8 @@ import { buildHoop, type HoopView } from './hoop';
 import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { HOOP } from '../../shared/hoop';
 import type { TouchVolume } from './touch';
+import type { PlateMount } from './nameplate';
+import { floatingTagsShown } from '../native/mode';
 
 export interface Collider {
   minX: number;
@@ -137,6 +139,8 @@ export interface DeskView {
   vacancy: THREE.Group;
   /** How high the vacancy marker floats. */
   vacancyY: number;
+  /** Where the headset app prints who sits here, in place of the tags over their head (world/nameplate.ts). */
+  plate: PlateMount;
 }
 
 export interface Office {
@@ -868,7 +872,13 @@ function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskVi
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY };
+  // A three-sided sign on the corner left of the laptop, clear of the stage, the mug and the books:
+  // one face to the chair and the aisle behind it, one to the side, one to the front.
+  const plateAnchor = new THREE.Object3D();
+  plateAnchor.position.set(-width / 2 + 0.24, height, depth / 2 - 0.25);
+  group.add(plateAnchor);
+
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'prism', width: 0.36, height: 0.2 } };
 }
 
 /** The floating green "+" over an empty seat. */
@@ -930,7 +940,13 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY };
+  // Sewn on to the back of the bag, tipped up toward whoever walks up behind it.
+  const plateAnchor = new THREE.Object3D();
+  plateAnchor.position.set(0, 0.64, 0.7);
+  plateAnchor.rotation.x = -0.3;
+  bag.add(plateAnchor);
+
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'panel', width: 0.42, height: 0.16 } };
 }
 
 const KIOSK_SIGN: Record<StationKind, string> = { issues: '📌 Ask me', pulls: '🔀 Ask me', queue: '📋 Ask me' };
@@ -951,11 +967,26 @@ function buildKiosk(def: DeskDef): DeskView {
   group.add(mesh(roundedBox(width - 0.16, height - 0.1, depth - 0.12, 0.06), color, 0, (height - 0.1) / 2 + 0.04, 0));
   group.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.05), toon(PALETTE.ink), 0, 0.03, 0));
   group.add(mesh(roundedBox(width, 0.06, depth, 0.05), toon(PALETTE.desk), 0, height - 0.03, 0));
-  const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
-  sign.scale.multiplyScalar(0.62);
-  sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);
-  sign.rotation.y = Math.PI;
-  group.add(sign);
+  // The "Ask me" sign is the agent's pitch, which the headset app keeps to the counter display
+  // until you start talking to it.
+  if (floatingTagsShown()) {
+    const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
+    sign.scale.multiplyScalar(0.62);
+    sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);
+    sign.rotation.y = Math.PI;
+    group.add(sign);
+  }
+  // A display standing on the counter, tipped back toward whoever walks up: the agent's nameplate,
+  // and its pitch once you start talking to it.
+  const display = new THREE.Object3D();
+  display.position.set(0, height + 0.08, -0.04);
+  display.rotation.y = Math.PI;
+  const plateAnchor = new THREE.Object3D();
+  plateAnchor.rotation.x = -0.95;
+  display.add(plateAnchor);
+  // The headset app's display rests on a block on the counter, hidden under it from the front.
+  if (!floatingTagsShown()) display.add(mesh(box(0.4, 0.07, 0.1), toon('#23252e'), 0, -0.045, -0.05));
+  group.add(display);
 
   // No laptop: its lid would hide the agent's face from whoever walks up, and its screen would face
   // the wall. The agent's terminal is a key press away (O).
@@ -979,7 +1010,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0 };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.6, height: 0.24 } };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
@@ -1464,7 +1495,12 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
   // Nobody is hired here from the floor, so there's no '+' over a free chair: a meeting fills them.
   const vacancy = new THREE.Group();
   group.add(vacancy);
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0 };
+  // On the back of the chair, like a director's chair: the laptops leave no room on the table.
+  const plateAnchor = new THREE.Object3D();
+  plateAnchor.position.set(0, 0.93, 0.33);
+  plateAnchor.rotation.x = -0.12;
+  ch.add(plateAnchor);
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'panel', width: 0.5, height: 0.2 } };
 }
 
 /**

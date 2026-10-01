@@ -5,7 +5,7 @@ import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, Work
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
-import { controlHintsShown, withControlHint } from '../native/mode';
+import { controlHintsShown, worldNotice } from '../native/mode';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
@@ -163,7 +163,7 @@ export class BoardTexture {
       return;
     }
     if (!open.length) {
-      this.centerNote(state.error ? `⚠️ ${state.error}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
+      this.centerNote(state.error ? `⚠️ ${worldNotice(state.error)}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
       this.texture.needsUpdate = true;
       return;
     }
@@ -289,7 +289,7 @@ export class BoardTexture {
 
   /** The Jira tab: the epic's tickets in To Do, In Progress and Done, like the board window's. */
   private drawJira(jira: JiraBoardState, top: number) {
-    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
+    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${worldNotice(jira.error)}`, top);
     if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top);
     const g = this.ctx;
     const cols = ticketColumns(jira.items);
@@ -516,7 +516,8 @@ export class QueueBoardTexture {
       g.fillText('Nothing queued', W / 2, H / 2 - 10);
       g.fillStyle = '#8c8c8c';
       g.font = `500 28px ${SANS}`;
-      g.fillText(withControlHint('Add issues from the 📌 Issues board', ', or press E here'), W / 2, H / 2 + 44);
+      // How to fill it is the desktop's to say; the headset app's board only says it's empty.
+      if (controlHintsShown()) g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;

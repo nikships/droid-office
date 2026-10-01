@@ -125,7 +125,8 @@ import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativeScene } from './native/scene';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
-import { controlHintsShown, withControlHint } from './native/mode';
+import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
+import { Nameplate } from './world/nameplate';
 import { getNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
 import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
@@ -138,6 +139,8 @@ const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
 const nativeMode = isNativeMode();
+/** Names, status bubbles and pitches float over characters; the headset app prints them on seats' nameplates instead (see plateAt). */
+const floatingTags = floatingTagsShown();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
@@ -212,7 +215,10 @@ noOutline(office.group);
 noOutline(holiday.group);
 
 // ---- Board agents -------------------------------------------------------------------------------
-/** What each board agent is for: its board's icon, what it offers on the card over its head, and an example ask. */
+/**
+ * What each board agent is for: its board's icon, what it offers on the card over its head, and an
+ * example ask. The headset app shows the offer on its counter display only once you talk to it.
+ */
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
@@ -224,12 +230,82 @@ const idleAgents = STATIONS.map((def) => {
   const agent = STATION_AGENT[kind];
   const model = new Worker(agent.name, agent.color);
   model.setStatus('idle', false);
-  model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
+  if (floatingTags) model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
+  // Its nameplate says which board it's for (see seatIdleAgents).
+  else model.setRole(def.label);
   const view = office.desks.get(def.id)!;
   view.vacancy.children[0].add(model.root);
   noOutline(model.root);
   return { model, view };
 });
+
+// ---- Nameplates (the headset app) ----------------------------------------------------------------
+/**
+ * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
+ * there, what it is and how it's doing, printed where it sits instead of floating over its head. A
+ * kiosk's is its counter display.
+ */
+const plates = new Map<string, Nameplate>();
+
+/** The nameplate on `deskId`'s seat, made the first time it's asked for; null where tags float (desktop, WebXR). */
+function plateAt(deskId: string): Nameplate | null {
+  if (floatingTags) return null;
+  let plate = plates.get(deskId);
+  const desk = office.desks.get(deskId);
+  if (!plate && desk) {
+    plate = new Nameplate(desk.plate);
+    desk.plate.anchor.add(plate.root);
+    plates.set(deskId, plate);
+  }
+  return plate ?? null;
+}
+
+/** A board agent waiting at its kiosk has the counter display, and gives it up while someone's hired there. */
+function seatIdleAgents() {
+  if (floatingTags) return;
+  for (const a of idleAgents) a.model.setPlate(a.view.vacancy.visible ? plateAt(a.view.def.id) : null);
+}
+
+/**
+ * The kiosk whose agent you've started talking to, in the headset app. Nothing says what a board
+ * agent is for until then: its counter display shows its pitch (STATION_INFO) from your hello until
+ * you ask it something or walk away.
+ */
+let talkingTo: string | null = null;
+/** How far (meters) from a kiosk you can walk before its agent stops talking to you. */
+const TALK_LEAVE = 3.5;
+
+/** Whoever stands at a kiosk: the agent hired there, or the one waiting to be asked. */
+function agentAt(deskId: string): Worker | undefined {
+  const w = store.workerAtDesk(deskId);
+  return (w && workerViews.get(w.id)?.model) || idleAgents.find((a) => a.view.def.id === deskId)?.model;
+}
+
+/** Hello at a kiosk: its agent looks up with a little hop, and its counter display shows its pitch. */
+function startTalking(deskId: string) {
+  const kind = DESK_BY_ID.get(deskId)?.station;
+  const plate = plateAt(deskId);
+  if (!kind || !plate) return;
+  if (talkingTo !== deskId) stopTalking();
+  talkingTo = deskId;
+  const info = STATION_INFO[kind];
+  plate.pitch({ heading: `${info.icon} ${STATION_AGENT[kind].name}`, title: info.offer, body: info.does });
+  agentAt(deskId)?.cheer(0.6);
+}
+
+/** The counter display goes back to the agent's nameplate. */
+function stopTalking() {
+  if (!talkingTo) return;
+  plates.get(talkingTo)?.pitch(null);
+  talkingTo = null;
+}
+
+/** Each frame: the nameplates' lamps, and the agent you're talking to letting you go once you walk off. */
+function updatePlates(dt: number) {
+  for (const plate of plates.values()) plate.update(dt);
+  const def = talkingTo ? DESK_BY_ID.get(talkingTo) : undefined;
+  if (talkingTo && (!def || upTop || Math.hypot(player.pos.x - def.x, player.pos.z - def.z) > TALK_LEAVE)) stopTalking();
+}
 
 // Boards: each draws onto a canvas texture, redrawn whenever what it shows changes.
 /** How much of its light a wall board gives off in the dark room: dim, but its text stays easy to read. */
@@ -2289,6 +2365,7 @@ function syncWorkers() {
       desk.chair.rotation.y = 0;
       v = { model, laptop, deskId: w.deskId, status: '', acked: true };
       workerViews.set(w.id, v);
+      model.setPlate(plateAt(w.deskId));
     }
     if (v.status !== w.status || v.acked !== w.acked) {
       // It just finished or started waiting on you (not already so when this page first saw it): ding, and notify if you're away.
@@ -2312,8 +2389,16 @@ function syncWorkers() {
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
-    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
     const deskDef = DESK_BY_ID.get(w.deskId);
+    if (floatingTags) v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
+    else {
+      // Its nameplate has a line of its own for what it is, under its name: a board agent's says
+      // which board it's for first, as it did while it waited at its kiosk (see idleAgents).
+      const provider = providerLabel(w.provider, store.project);
+      const engine = w.kind === 'shell' ? 'Shell' : engineBadge ? `${provider} · ${engineBadge}` : provider;
+      v.model.setRole(deskDef?.station ? `${deskDef.label} · ${engineBadge ?? provider}` : engine);
+      v.model.setTask(meetingCard(w) ?? w.task);
+    }
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
@@ -2323,6 +2408,7 @@ function syncWorkers() {
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
+    v.model.setPlate(null);
     // Shot and bleeding out when it went (sent home from elsewhere, or it exited): the dialog
     // closes quietly and removal proceeds as normal.
     if (dyingId === id) dropDying();
@@ -2387,6 +2473,7 @@ function arrangeSeats() {
   const free = vacantSeats(store.workers.values(), (id) => departures.seated(id));
   for (const [id, desk] of office.desks) desk.vacancy.visible = free.has(id);
   const appeared = office.setBeanbags(beanbagsOut((id) => !free.has(id)));
+  seatIdleAgents();
   // One came out right where you're standing (on the office floor, not down in the garage): you end up on top of it.
   const p = player.pos;
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
@@ -2909,7 +2996,7 @@ function askStation(deskId: string) {
   // Nobody there yet: asking hires the agent.
   if (!w && officeIsFull()) return;
   const subtitle = !w
-    ? `${info.does}, in a terminal of my own: press O at the kiosk to watch.`
+    ? `${withControlHint(`${info.does}, in a terminal of my own`, ': press O at the kiosk to watch')}.`
     : isAsleep(w.status)
       ? `The ${name} is asleep: this wakes it up, and it carries on where it left off.`
       : isBusy(w.status)
@@ -2923,7 +3010,10 @@ function askStation(deskId: string) {
     warning: w ? undefined : pressureNote(store.machine),
     providerOption: !w,
     deskId,
-    onSubmit: (text, o) => net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort }),
+    onSubmit: (text, o) => {
+      stopTalking();
+      net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort });
+    },
   });
 }
 
@@ -3374,6 +3464,9 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   }
   if (target.kind === 'station' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
+    // In the headset app you say hello first: the agent looks up and its pitch lights its counter
+    // display. Asking it something comes next. One waiting on an answer goes straight to it.
+    if (key === 'E' && !floatingTags && talkingTo !== target.deskId && w?.status !== 'needs_input') return startTalking(target.deskId);
     if (key === 'E' || key === 'P') return askStation(target.deskId);
     if (key === 'O' && w) return openWorkerTerminal(w.id);
     if (key === 'X' && w) return killWorker(w.id);
@@ -5245,6 +5338,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   }
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
+  updatePlates(dt);
   departures.update(dt, t);
   arrivals.update(dt);
   casualties.update(dt, t);
@@ -5500,6 +5594,7 @@ void whoami().then(() => {
   arcade,
   cabinet,
   workerViews,
+  plates,
   departures,
   arrivals,
   scene,

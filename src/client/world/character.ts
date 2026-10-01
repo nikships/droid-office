@@ -10,6 +10,8 @@ import { HeldCard } from './card';
 import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
 import { Muzzle, disposeGun, magnum } from './gun';
 import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
+import { floatingTagsShown } from '../native/mode';
+import { disposeBadge, nameBadge, type LampPulse, type Nameplate, type PlateText } from './nameplate';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -371,6 +373,9 @@ export class Person {
   private hair = new THREE.Group();
   private look: Look;
   private label: THREE.Sprite | null = null;
+  /** Their name on a badge on their shirt, where names don't float over heads (see floatingTagsShown). */
+  private badge: THREE.Mesh | null = null;
+  private badgeName = '';
   /** The smaller line under the name tag: what they have open, or where they are (see whereabouts). */
   private doing: THREE.Sprite | null = null;
   private doingText = '';
@@ -440,7 +445,13 @@ export class Person {
   private gun: { prop: THREE.Group; muzzle: Muzzle; draw: number; fireT: number } | null = null;
   private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
-  constructor(name: string, color: string, look: Look) {
+  constructor(
+    name: string,
+    color: string,
+    look: Look,
+    /** Their name tag, the line under it and the mic float over their head (floatingTagsShown); else a badge on their shirt says who they are. */
+    private readonly tags = floatingTagsShown(),
+  ) {
     this.look = { ...look };
     this.shirt = toonUnique(color);
     const skin = (this.skin = toonUnique(SKIN_TONES[look.skin]));
@@ -641,6 +652,7 @@ export class Person {
   }
 
   setLabel(name: string, muted: boolean | null) {
+    if (!this.tags) return this.setBadge(name);
     if (this.label) {
       this.root.remove(this.label);
       disposeSprite(this.label);
@@ -651,8 +663,26 @@ export class Person {
     this.placeLabels();
   }
 
+  /** Clips a badge with `name` on it to the front of their shirt, in place of the name tag over their head. */
+  private setBadge(name: string) {
+    if (name === this.badgeName) return;
+    this.badgeName = name;
+    const shown = this.badge?.visible ?? true;
+    if (this.badge) disposeBadge(this.badge);
+    this.badge = nameBadge(name);
+    this.badge.position.set(0, 0.8, 0.262);
+    this.badge.visible = shown;
+    this.body.add(this.badge);
+  }
+
+  /** Who they are, as everyone else sees it: the tag over their head, or the badge on their shirt. */
+  private get tag(): THREE.Object3D | null {
+    return this.label ?? this.badge;
+  }
+
   /** Puts a smaller line under the name tag, like "💻 in Pixel's terminal"; none (or '') takes it away. */
   setDoing(text: string | undefined) {
+    if (!this.tags) return;
     text ??= '';
     if (text === this.doingText) return;
     this.doingText = text;
@@ -686,12 +716,14 @@ export class Person {
   setVoiceLevel(level: number) {
     this.voiceLevel = level;
     this.speaking = level > SPEAKING;
-    this.mic.visible = this.speaking;
+    // Where nothing floats over heads, their moving mouth shows they're talking.
+    this.mic.visible = this.speaking && this.tags;
   }
 
   showLabel(v: boolean) {
     if (this.label) this.label.visible = v;
     if (this.doing) this.doing.visible = v;
+    if (this.badge) this.badge.visible = v;
   }
 
   /** Reach out with the right hand, as if pressing or grabbing something in front of you. */
@@ -1016,6 +1048,7 @@ export class Person {
     this.root.removeFromParent();
     if (this.label) disposeSprite(this.label);
     if (this.doing) disposeSprite(this.doing);
+    if (this.badge) disposeBadge(this.badge);
     this.endEmote();
   }
 
@@ -1026,7 +1059,8 @@ export class Person {
       this.medicRig.limbs.forEach((limb, i) => limb.restore(i < 2));
       for (const item of this.medicRig.uniform) item.removeFromParent();
       for (const geometry of this.medicRig.geometries) geometry.dispose();
-      if (this.label) this.label.visible = this.medicRig.labelVisible;
+      const tag = this.tag;
+      if (tag) tag.visible = this.medicRig.labelVisible;
       this.medicRig = null;
       this.body.position.set(0, 0, 0);
       this.body.rotation.set(0, 0, 0);
@@ -1062,10 +1096,12 @@ export class Person {
         this.body.add(cross);
         uniform.push(cross);
       }
-      this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.label?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
+      this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.tag?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
     }
     const rig = this.medicRig;
-    if (this.label) this.label.visible = false;
+    // A medic on the job shows no name: its red cross takes the place of a badge.
+    const tag = this.tag;
+    if (tag) tag.visible = false;
     this.body.position.set(0, -0.24 * pose.crouch, 0);
     this.body.rotation.set(0.4 * pose.crouch, 0, 0);
     rig.inverse.copy(this.body.quaternion).invert();
@@ -1271,6 +1307,41 @@ const LOST_CHIP: [string, string, string] = ['🌿 WORKTREE DELETED', '#ffb703',
 
 /** The outline of a worker's bubble, and its pill, once it has a pull request: GitHub's open green, or the PR board's merged purple. */
 const PR_INK: Record<WorkerPr['state'], string> = { open: '#2da44e', merged: '#9d4edd' };
+
+/** Not working on or waiting for something more: its pull request in place of ready / done / asleep. */
+function prShown(status: WorkerStatus, pr: PrBadge | undefined): PrBadge | undefined {
+  return pr && status !== 'working' && status !== 'needs_input' && status !== 'starting' ? pr : undefined;
+}
+
+/** The pill on a worker's task card or nameplate: [text, background, text color]. */
+function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean): readonly [string, string, string] {
+  if (lost) return LOST_CHIP;
+  const shown = prShown(status, pr);
+  if (shown) return [shown.label.toUpperCase(), PR_INK[shown.state], '#ffffff'];
+  return TASK_CHIP[status] ?? TASK_CHIP.idle;
+}
+
+/** What a worker's nameplate says (see world/nameplate.ts): what the card over its head says elsewhere. */
+export interface WorkerPlateState {
+  name: string;
+  role: string;
+  color: string;
+  status: WorkerStatus;
+  /** Waiting on someone: it needs input, or it's done and nobody has looked yet. */
+  bounce: boolean;
+  task?: WorkerTask;
+  pr?: PrBadge;
+  lost: boolean;
+  /** Shot, or on its way out: its lamp is out. */
+  out: boolean;
+}
+
+export function workerPlate(w: WorkerPlateState): PlateText {
+  const calling = w.status === 'needs_input' || (w.status === 'done' && w.bounce);
+  const pulse: LampPulse = calling ? 'call' : w.status === 'working' || w.status === 'starting' ? 'busy' : 'steady';
+  const lamp = w.out ? null : w.lost ? LOST_CHIP[1] : (STATUS_BULB[w.status] ?? STATUS_BULB.starting);
+  return { name: w.name, role: w.role, chip: cardChip(w.status, w.pr, w.lost), line: w.task?.name ?? '', color: w.color, lamp, pulse };
+}
 
 /**
  * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing, or
@@ -1486,6 +1557,11 @@ export class Worker {
   /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
   private lost = false;
   private nameTag: THREE.Sprite | null = null;
+  private name = '';
+  /** What it is, on its nameplate (see setRole). */
+  private role = '';
+  /** The nameplate on its seat, where its name and state are printed instead of floating over it (see setPlate). */
+  private plate: Nameplate | null = null;
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
   status: WorkerStatus = 'starting';
@@ -1536,6 +1612,8 @@ export class Worker {
   constructor(
     name: string,
     private color: string,
+    /** Its name tag, status bubble, task card and farewell float over its head (floatingTagsShown); else only its seat's nameplate says them. */
+    private readonly tags = floatingTagsShown(),
   ) {
     const skin = (this.skin = toonUnique(color));
     const white = toon('#ffffff');
@@ -1633,6 +1711,9 @@ export class Worker {
   }
 
   setName(name: string) {
+    this.name = name;
+    this.drawPlate();
+    if (!this.tags) return;
     if (this.nameTag) {
       this.root.remove(this.nameTag);
       disposeSprite(this.nameTag);
@@ -1689,6 +1770,29 @@ export class Worker {
     this.settle();
   }
 
+  /** What it is, printed under its name on its nameplate (see PlateText.role): its engine, "Shell", or a board agent's board. */
+  setRole(role: string) {
+    if (role === this.role) return;
+    this.role = role;
+    this.drawPlate();
+  }
+
+  /**
+   * The nameplate on its seat (world/nameplate.ts), or null to let go of it. It shows what the card
+   * over its head would: its name, what it is, its state and its task, with its status lamp.
+   */
+  setPlate(plate: Nameplate | null) {
+    if (plate === this.plate) return;
+    this.plate?.release(this);
+    this.plate = plate;
+    plate?.claim(this);
+    this.drawPlate();
+  }
+
+  private drawPlate() {
+    this.plate?.show(this, workerPlate({ name: this.name, role: this.role, color: this.color, status: this.status, bounce: this.bouncing, task: this.task, pr: this.pr, lost: this.lost, out: this.dead || !!this.leaving }));
+  }
+
   /** What it's working on, shown on a card over its head in place of the status bubble. */
   setTask(task: WorkerTask | undefined) {
     this.task = task;
@@ -1722,11 +1826,14 @@ export class Worker {
     if (this.bubble) {
       this.root.remove(this.bubble);
       disposeSprite(this.bubble);
+      this.bubble = null;
     }
     this.bubbleKey = 'leaving';
     this.bubbleIsCard = false;
-    this.bubble = textSprite(farewell, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 34 });
-    this.root.add(this.bubble);
+    if (this.tags) {
+      this.bubble = textSprite(farewell, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 34 });
+      this.root.add(this.bubble);
+    }
     // Looking down, brows up in the middle.
     for (const p of this.pupils) p.position.y -= 0.035;
     for (const sx of [-1, 1]) {
@@ -1740,11 +1847,13 @@ export class Worker {
     box.scale.setScalar(0.001);
     this.body.add(box);
     this.leaving = { box, boxT: 0, stride: 0 };
+    // Its nameplate's lamp goes out with it.
+    this.drawPlate();
   }
 
   /** On its way out: says something else over its head in place of its farewell. */
   say(text: string) {
-    if (!this.leaving) return;
+    if (!this.leaving || !this.tags) return;
     if (this.bubble) {
       this.root.remove(this.bubble);
       disposeSprite(this.bubble);
@@ -1775,6 +1884,7 @@ export class Worker {
     }
     this.bubbleKey = 'dead';
     for (const p of this.pupils) p.position.y = 0.62;
+    this.drawPlate();
   }
 
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */
@@ -1789,14 +1899,14 @@ export class Worker {
   }
 
   private drawBubble() {
-    if (this.leaving || this.dead) return;
+    this.drawPlate();
+    if (!this.tags || this.leaving || this.dead) return;
     const { status, bouncing: bounce, task, pr, lost } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
     // Resting cards used to be cream. They sit black with white type, like the name tag.
     const bg = hot ? (status === 'done' ? '#caffbf' : '#ffd6e0') : status === 'working' ? '#ffec99' : '#0a0a0a';
     const border = pr && PR_INK[pr.state];
-    // Not working on or waiting for something more: its pull request in place of ready / done / asleep.
-    const prLabel = pr && status !== 'working' && status !== 'needs_input' && status !== 'starting' ? pr.label : undefined;
+    const prLabel = prShown(status, pr)?.label;
     const bubble = lost ? '🌿 worktree deleted' : (prLabel ?? (status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : ''));
     const key = `${lost}|${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble}`;
     if (key === this.bubbleKey) return;
@@ -1808,7 +1918,7 @@ export class Worker {
     }
     this.bubbleIsCard = !!task;
     if (task) {
-      const [text, chipBg, color] = lost ? LOST_CHIP : prLabel && border ? [prLabel.toUpperCase(), border, '#ffffff'] : (TASK_CHIP[status] ?? TASK_CHIP.idle);
+      const [text, chipBg, color] = cardChip(status, pr, lost);
       const dark = bg === '#0a0a0a';
       this.bubble = cardSprite({
         chip: { text, bg: chipBg, color },
@@ -2086,6 +2196,7 @@ export class Worker {
   }
 
   dispose() {
+    this.setPlate(null);
     if (this.bubble) disposeSprite(this.bubble);
     if (this.nameTag) disposeSprite(this.nameTag);
     undress(this.outfit);
