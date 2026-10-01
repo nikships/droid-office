@@ -106,6 +106,59 @@ struct SkyBlock {
     Vec4 screenColors[kMaxScreens];
 };
 
+// ---- Vulkan dialect (generateShader(key, Dialect::Vulkan)) --------------------------------------
+// Descriptor sets by update frequency, as Android's "Vulkan design guidelines" recommend:
+//   set 0, per frame: the blocks at their BlockBinding numbers (Frame 0, Sky 1, View 2), and the
+//          shadow map and the screen layer's world depth at their TextureUnit numbers (4, 5);
+//   set 1, per material: uMap, uAlphaMap, uEmissiveMap, uGradientMap at their TextureUnit numbers
+//          (0-3), each a combined image sampler;
+//   set 2, per draw: the Draw block (binding 0), a dynamic uniform buffer.
+enum VulkanSet : uint32_t { kSetFrame = 0, kSetMaterial = 1, kSetDraw = 2 };
+constexpr uint32_t kBindingDraw = 0;
+
+/** A std140 mat3: three columns, each padded to a vec4. */
+struct alignas(16) Mat3Std {
+    float c[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+};
+
+/**
+ * layout(std140, set = 2, binding = 0) uniform Draw (Vulkan dialect only): every default-block
+ * uniform the GLES programs declare, by the same name, in this order (scene_shaders.cpp
+ * drawBlock). A program reads only the members its GLES twin declares.
+ */
+struct DrawBlock {
+    Mat4Std model;                      // uModel
+    Mat4Std lightViewProj;              // uLightViewProj
+    Mat3Std normalMatrix;               // uNormalMatrix
+    Mat3Std mapTransform;               // uMapTransform
+    Mat3Std alphaMapTransform;          // uAlphaMapTransform
+    Mat3Std emissiveMapTransform;       // uEmissiveMapTransform
+    Vec4 color;                         // uColor
+    Vec4 specular;                      // uSpecular
+    Vec4 sky[5];                        // uSky0 .. uSky4
+    Vec4 sharpRect;                     // uSharpRect
+    Vec4 sharpParams;                   // uSharpParams
+    Vec4 sharpBias;                     // uSharpBias
+    float emissive[3] = {0, 0, 0};      // uEmissive (vec3)
+    float alphaTest = 0;                // uAlphaTest
+    float metalRough[2] = {0, 1};       // uMetalRough
+    float spriteCenter[2] = {.5f, .5f}; // uSpriteCenter
+    float receiveShadow = 0;            // uReceiveShadow
+    float pointSize = 1;                // uPointSize
+    float spriteRotation = 0;           // uSpriteRotation
+    int32_t pointQuad = 0;              // uPointQuad
+};
+
+static_assert(offsetof(DrawBlock, normalMatrix) == 128 && offsetof(DrawBlock, color) == 320,
+              "Draw std140 offsets");
+static_assert(offsetof(DrawBlock, sharpBias) == 464 && offsetof(DrawBlock, emissive) == 480 &&
+                  offsetof(DrawBlock, alphaTest) == 492 && offsetof(DrawBlock, metalRough) == 496,
+              "Draw std140 offsets");
+static_assert(offsetof(DrawBlock, spriteCenter) == 504 &&
+                  offsetof(DrawBlock, receiveShadow) == 512 &&
+                  offsetof(DrawBlock, pointQuad) == 524 && sizeof(DrawBlock) == 528,
+              "Draw std140 size");
+
 static_assert(sizeof(ViewBlock) == 432, "View std140 size");
 static_assert(offsetof(ViewBlock, cameraPos) == 384 && offsetof(ViewBlock, viewport) == 416,
               "View std140 offsets");

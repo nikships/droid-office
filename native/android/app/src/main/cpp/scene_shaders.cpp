@@ -41,10 +41,12 @@ struct Features {
                       // invariant)
     SharpDepth sharp; // screen layer: which world depth texture it samples
     bool overlay;     // screen layer: a surface drawn over the screens
+    bool vk;          // Dialect::Vulkan
 };
 
-Features features(const ProgramKey &k) {
+Features features(const ProgramKey &k, Dialect dialect) {
     Features f{};
+    f.vk = dialect == Dialect::Vulkan;
     f.model = k.model;
     const ShadeModel m = k.model;
     f.lit = m == ShadeModel::Toon || m == ShadeModel::Lambert || m == ShadeModel::Phong ||
@@ -94,10 +96,19 @@ const std::string kMaxPointS = std::to_string(kMaxPoint);
 const std::string kMaxLampsS = std::to_string(kMaxLamps);
 const std::string kMaxScreensS = std::to_string(kMaxScreens);
 
+// The layout qualifier of a block: std140, and in the Vulkan dialect its set and binding.
+std::string blockLayout(const Features &f, uint32_t set, uint32_t binding) {
+    if (!f.vk)
+        return "layout(std140)";
+    return "layout(std140, set = " + std::to_string(set) + ", binding = " +
+           std::to_string(binding) + ")";
+}
+
 // std140 blocks, member for member the structs in scene_uniforms.h. Explicit highp so the vertex
 // and fragment declarations match whatever the stage's default precision is.
-std::string viewBlock() {
-    return "layout(std140) uniform View {\n"
+std::string viewBlock(const Features &f) {
+    return blockLayout(f, kSetFrame, kBlockView) +
+           " uniform View {\n"
            "  highp mat4 viewProj[2];\n"
            "  highp mat4 view[2];\n"
            "  highp mat4 proj[2];\n"
@@ -106,8 +117,9 @@ std::string viewBlock() {
            "} uView;\n";
 }
 
-std::string frameBlock() {
-    return "layout(std140) uniform Frame {\n"
+std::string frameBlock(const Features &f) {
+    return blockLayout(f, kSetFrame, kBlockFrame) +
+           " uniform Frame {\n"
            "  highp vec4 fogColor;\n"
            "  highp vec4 fogParams;\n"
            "  highp vec4 ambient;\n"
@@ -139,8 +151,9 @@ std::string frameBlock() {
            "} uFrame;\n";
 }
 
-std::string skyBlock() {
-    return "layout(std140) uniform Sky {\n"
+std::string skyBlock(const Features &f) {
+    return blockLayout(f, kSetFrame, kBlockSky) +
+           " uniform Sky {\n"
            "  highp vec4 flags;\n"
            "  highp vec4 misc;\n"
            "  highp vec4 haze;\n"
@@ -181,6 +194,49 @@ const char *kAttributes = "layout(location = 0) in vec3 aPosition;\n"
                           "layout(location = 5) in vec4 aInstance1;\n"
                           "layout(location = 6) in vec4 aInstance2;\n"
                           "layout(location = 7) in vec3 aInstanceColor;\n";
+
+// Vulkan dialect: every GLES default-block uniform, by name, in one nameless std140 block that
+// both stages declare identically; member for member scene_uniforms.h's DrawBlock.
+const char *kDrawBlock = "layout(std140, set = 2, binding = 0) uniform Draw {\n"
+                         "  highp mat4 uModel;\n"
+                         "  highp mat4 uLightViewProj;\n"
+                         "  highp mat3 uNormalMatrix;\n"
+                         "  highp mat3 uMapTransform;\n"
+                         "  highp mat3 uAlphaMapTransform;\n"
+                         "  highp mat3 uEmissiveMapTransform;\n"
+                         "  highp vec4 uColor;\n"
+                         "  highp vec4 uSpecular;\n"
+                         "  highp vec4 uSky0;\n"
+                         "  highp vec4 uSky1;\n"
+                         "  highp vec4 uSky2;\n"
+                         "  highp vec4 uSky3;\n"
+                         "  highp vec4 uSky4;\n"
+                         "  highp vec4 uSharpRect;\n"
+                         "  highp vec4 uSharpParams;\n"
+                         "  highp vec4 uSharpBias;\n"
+                         "  highp vec3 uEmissive;\n"
+                         "  highp float uAlphaTest;\n"
+                         "  highp vec2 uMetalRough;\n"
+                         "  highp vec2 uSpriteCenter;\n"
+                         "  highp float uReceiveShadow;\n"
+                         "  highp float uPointSize;\n"
+                         "  highp float uSpriteRotation;\n"
+                         "  highp int uPointQuad;\n"
+                         "};\n";
+static_assert(kSetDraw == 2 && kBindingDraw == 0, "kDrawBlock's set and binding");
+
+// Vulkan dialect: each varying at a fixed location, the same in both stages whatever else the key
+// declares (KHR_vulkan_glsl needs explicit locations for stage interfaces).
+int varyingLocation(const std::string &name) {
+    static const char *const names[] = {
+        "vMapUv",  "vAlphaMapUv",  "vEmissiveMapUv", "vColor",       "vSkyWorld", "vNormal",
+        "vViewNormal", "vToEye",   "vFogDepth",      "vSkyFog",      "vShadowCoord", "vAlong",
+        "vDir",    "vPointCoord",  "vSharpDist",     "vSharpProj",   "vSharpView"};
+    for (int i = 0; i < int(sizeof names / sizeof names[0]); ++i)
+        if (name == names[i])
+            return i;
+    return -1;
+}
 
 // three's <common>, the parts these programs use.
 const char *kCommon = R"(#define PI 3.141592653589793
@@ -268,6 +324,20 @@ float getShadow( vec2 shadowMapSize, float shadowIntensity, float shadowBias, fl
 	return mix( 1.0, shadow, shadowIntensity );
 }
 )";
+
+// kShadow in the dialect: Vulkan's gl_FragCoord.y counts from the top (the negative-height
+// viewport), so its noise is seeded with GL's window y, the eye image's height (uView.viewport.x)
+// minus it, which keeps the PCF rotation of every pixel as GLES has it.
+std::string shadowChunk(const Features &f) {
+    std::string s = kShadow;
+    if (f.vk) {
+        const std::string gl = "interleavedGradientNoise( gl_FragCoord.xy )";
+        s.replace(s.find(gl), gl.size(),
+                  "interleavedGradientNoise( vec2( gl_FragCoord.x, uView.viewport.x - "
+                  "gl_FragCoord.y ) )");
+    }
+    return s;
+}
 
 // sky.ts PARS, with its uniforms and constants read from the Sky block.
 std::string skyPars() {
@@ -508,75 +578,118 @@ struct Src {
     }
 };
 
-void header(Src &o, bool multiviewVertex) {
+void header(Src &o, const Features &f, bool multiviewVertex) {
+    if (f.vk) {
+        // KHR_vulkan_glsl; GL_EXT_multiview gives gl_ViewIndex (the subpass's view mask sets the
+        // view count instead of num_views).
+        o << "#version 450\n";
+        if (multiviewVertex)
+            o << "#extension GL_EXT_multiview : require\n";
+        return;
+    }
     o << "#version 300 es\n";
     if (multiviewVertex)
         o << "#extension GL_OVR_multiview2 : require\nlayout(num_views = 2) in;\n";
+}
+
+// A default-block uniform, `decl` being "<type> <name>": GLES declares it; the Vulkan dialect has
+// it in kDrawBlock already.
+void uniform(Src &o, const Features &f, const char *decl) {
+    if (!f.vk)
+        o << "uniform " << decl << ";\n";
+}
+
+// A sampler, `decl` being "[highp ]<type> <name>": the Vulkan dialect adds its set and binding.
+void sampler(Src &o, const Features &f, const char *decl, uint32_t set, uint32_t binding) {
+    if (f.vk)
+        o << "layout(set = " << std::to_string(set) << ", binding = " << std::to_string(binding)
+          << ") ";
+    o << "uniform " << decl << ";\n";
+}
+
+// A varying: `qualifier` "in", "out", "flat in" or "flat out"; the Vulkan dialect adds its fixed
+// location (varyingLocation).
+void varying(Src &o, const Features &f, const char *qualifier, const char *type,
+             const char *name) {
+    if (f.vk)
+        o << "layout(location = " << std::to_string(varyingLocation(name)) << ") ";
+    o << qualifier << " " << type << " " << name << ";\n";
 }
 
 // ---- Vertex stage -------------------------------------------------------------------------------
 
 std::string vertexShader(const Features &f) {
     Src o;
-    header(o, f.multiview);
+    header(o, f, f.multiview);
     o << "precision highp float;\nprecision highp int;\n";
+    if (f.vk)
+        o << kDrawBlock;
     if (!f.depth)
-        o << viewBlock();
+        o << viewBlock(f);
     if (f.shadows)
-        o << frameBlock();
+        o << frameBlock(f);
     o << kAttributes;
-    o << "uniform mat4 uModel;\n";
+    uniform(o, f, "mat4 uModel");
     if (f.depth)
-        o << "uniform mat4 uLightViewProj;\n";
+        uniform(o, f, "mat4 uLightViewProj");
     if (f.normal || f.shadows)
-        o << "uniform mat3 uNormalMatrix;\n";
+        uniform(o, f, "mat3 uNormalMatrix");
     if (f.map)
-        o << "uniform mat3 uMapTransform;\n";
+        uniform(o, f, "mat3 uMapTransform");
     if (f.alphaMap)
-        o << "uniform mat3 uAlphaMapTransform;\n";
+        uniform(o, f, "mat3 uAlphaMapTransform");
     if (f.emissiveMap)
-        o << "uniform mat3 uEmissiveMapTransform;\n";
-    if (f.points)
-        o << "uniform float uPointSize;\nuniform int uPointQuad;\n";
-    if (f.sprite)
-        o << "uniform vec2 uSpriteCenter;\nuniform float uSpriteRotation;\n";
+        uniform(o, f, "mat3 uEmissiveMapTransform");
+    if (f.points) {
+        uniform(o, f, "float uPointSize");
+        uniform(o, f, "int uPointQuad");
+    }
+    if (f.sprite) {
+        uniform(o, f, "vec2 uSpriteCenter");
+        uniform(o, f, "float uSpriteRotation");
+    }
 
     // Varyings, in the same order as the fragment stage declares them.
     const bool uvMaps = !f.points;
     if (f.map && uvMaps)
-        o << "out vec2 vMapUv;\n";
+        varying(o, f, "out", "vec2", "vMapUv");
     if (f.alphaMap && uvMaps)
-        o << "out vec2 vAlphaMapUv;\n";
+        varying(o, f, "out", "vec2", "vAlphaMapUv");
     if (f.emissiveMap)
-        o << "out vec2 vEmissiveMapUv;\n";
+        varying(o, f, "out", "vec2", "vEmissiveMapUv");
     if (f.vertexColor)
-        o << "out vec4 vColor;\n";
+        varying(o, f, "out", "vec4", "vColor");
     if (f.world)
-        o << "out vec3 vSkyWorld;\n";
+        varying(o, f, "out", "vec3", "vSkyWorld");
     if (f.normal)
-        o << "out vec3 vNormal;\n";
+        varying(o, f, "out", "vec3", "vNormal");
     if (f.viewNormal)
-        o << "out vec3 vViewNormal;\n";
+        varying(o, f, "out", "vec3", "vViewNormal");
     if (f.toEye)
-        o << "out vec3 vToEye;\n";
+        varying(o, f, "out", "vec3", "vToEye");
     if (f.fog != FogMode::None)
-        o << "out float vFogDepth;\n";
+        varying(o, f, "out", "float", "vFogDepth");
     if (f.haze)
-        o << "out vec2 vSkyFog;\n";
+        varying(o, f, "out", "vec2", "vSkyFog");
     if (f.shadows)
-        o << "out vec4 vShadowCoord;\n";
+        varying(o, f, "out", "vec4", "vShadowCoord");
     if (f.beam)
-        o << "out float vAlong;\n";
+        varying(o, f, "out", "float", "vAlong");
     if (f.dome)
-        o << "out vec3 vDir;\n";
+        varying(o, f, "out", "vec3", "vDir");
     if (f.points)
-        o << "out vec2 vPointCoord;\n";
-    if (f.sharp != SharpDepth::None)
-        o << "out float vSharpDist;\nflat out vec2 vSharpProj;\nflat out int vSharpView;\n";
+        varying(o, f, "out", "vec2", "vPointCoord");
+    if (f.sharp != SharpDepth::None) {
+        varying(o, f, "out", "float", "vSharpDist");
+        varying(o, f, "flat out", "vec2", "vSharpProj");
+        varying(o, f, "flat out", "int", "vSharpView");
+    }
 
     o << "void main() {\n";
     if (!f.depth)
-        o << (f.multiview ? "\tint viewIndex = int( gl_ViewID_OVR );\n" : "\tint viewIndex = 0;\n");
+        o << (!f.multiview ? "\tint viewIndex = 0;\n"
+              : f.vk       ? "\tint viewIndex = int( gl_ViewIndex );\n"
+                           : "\tint viewIndex = int( gl_ViewID_OVR );\n");
     if (f.map && uvMaps)
         o << "\tvMapUv = ( uMapTransform * vec3( aUv, 1 ) ).xy;\n";
     if (f.alphaMap && uvMaps)
@@ -652,12 +765,17 @@ std::string vertexShader(const Features &f) {
         // uPointQuad 0 (indexed points) keeps GL points; vPointCoord.x < 0 then selects
         // gl_PointCoord. Half the size in NDC is size / height in pixels vertically; x follows
         // the projection's aspect, which is the eye image's for square pixels.
+        // KHR_vulkan_glsl names the vertex index gl_VertexIndex (gl_VertexID does not exist); a
+        // quad draw starts at vertex 0 in both APIs, so the values agree.
+        const std::string vertexId = f.vk ? "gl_VertexIndex" : "gl_VertexID";
         o << "\tgl_PointSize = pointSize;\n"
              "\tvPointCoord = vec2( - 1.0 );\n"
              "\tif ( uPointQuad != 0 ) {\n"
-             "\t\tvec2 corner = vec2( float( gl_VertexID & 1 ), float( ( gl_VertexID >> 1 ) & 1 "
-             ") ) * 2.0 - 1.0;\n"
-             "\t\tfloat halfNdc = max( pointSize, 1.0 ) / uView.viewport.x;\n"
+             "\t\tvec2 corner = vec2( float( " +
+                 vertexId + " & 1 ), float( ( " + vertexId +
+                 " >> 1 ) & 1 "
+                 ") ) * 2.0 - 1.0;\n"
+                 "\t\tfloat halfNdc = max( pointSize, 1.0 ) / uView.viewport.x;\n"
              "\t\tgl_Position.xy += corner * vec2( uView.proj[ viewIndex ][ 0 ][ 0 ] / "
              "uView.proj[ viewIndex ][ 1 ][ 1 ], 1.0 ) * ( halfNdc * gl_Position.w );\n"
              "\t\tvPointCoord = vec2( corner.x, - corner.y ) * 0.5 + 0.5;\n"
@@ -683,6 +801,11 @@ std::string vertexShader(const Features &f) {
              "][ 2 ] );\n"
              "\tvSharpView = viewIndex;\n";
     }
+    // The renderer's matrices are GL's (clip z in [-w, w]); Vulkan clips z to [0, w]. The stored
+    // depth then equals GL's window depth (z_ndc + 1) / 2, which the shadow map and the screen
+    // layer's distance formula assume.
+    if (f.vk)
+        o << "\tgl_Position.z = ( gl_Position.z + gl_Position.w ) * 0.5;\n";
     o << "}\n";
     return o.s;
 }
@@ -691,13 +814,22 @@ std::string vertexShader(const Features &f) {
 // world depth texture; uSharpParams: xy 1 / viewport size, z depth slack in world texels, w 1 -
 // fade; uSharpBias: x metres, y largest slope term in metres, z array layer (single view), w metres
 // per metre.
+// In the Vulkan dialect gl_FragCoord is top-left in the world and screen images alike, so the
+// lookup stays consistent when uSharpRect is given in top-left image coordinates
+// (research/vulkan-port.md 4.3, the Vulkan screen layer).
 std::string sharpPars(const Features &f) {
     const bool array = f.sharp == SharpDepth::Array;
-    std::string s = "in float vSharpDist;\nflat in vec2 vSharpProj;\nflat in int vSharpView;\n";
-    s += array ? "uniform highp sampler2DArray uSharpDepth;\n"
-               : "uniform highp sampler2D uSharpDepth;\n";
-    s += "uniform vec4 uSharpRect;\nuniform vec4 uSharpParams;\nuniform vec4 uSharpBias;\n"
-         "// Eye distance of the nearest surface the world pass left in its depth texture here.\n"
+    Src o;
+    varying(o, f, "in", "float", "vSharpDist");
+    varying(o, f, "flat in", "vec2", "vSharpProj");
+    varying(o, f, "flat in", "int", "vSharpView");
+    sampler(o, f, array ? "highp sampler2DArray uSharpDepth" : "highp sampler2D uSharpDepth",
+            kSetFrame, kUnitSharpDepth);
+    uniform(o, f, "vec4 uSharpRect");
+    uniform(o, f, "vec4 uSharpParams");
+    uniform(o, f, "vec4 uSharpBias");
+    std::string s = o.s;
+    s += "// Eye distance of the nearest surface the world pass left in its depth texture here.\n"
          "float sharpWorldDistance() {\n"
          "\tvec2 uv = uSharpRect.xy + gl_FragCoord.xy * uSharpParams.xy * uSharpRect.zw;\n";
     s += array ? "\tfloat depth = texture( uSharpDepth, vec3( uv, float( vSharpView ) + "
@@ -775,16 +907,22 @@ void colorPipeline(Src &o, const Features &f) {
 
 std::string fragmentShader(const Features &f) {
     Src o;
-    header(o, false);
+    header(o, f, false);
     o << "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision "
          "highp sampler2DShadow;\n";
+    if (f.vk)
+        o << kDrawBlock;
     if (f.depth) {
-        if (f.map)
-            o << "uniform sampler2D uMap;\nin vec2 vMapUv;\n";
-        if (f.alphaMap)
-            o << "uniform sampler2D uAlphaMap;\nin vec2 vAlphaMapUv;\n";
+        if (f.map) {
+            sampler(o, f, "sampler2D uMap", kSetMaterial, kUnitMap);
+            varying(o, f, "in", "vec2", "vMapUv");
+        }
+        if (f.alphaMap) {
+            sampler(o, f, "sampler2D uAlphaMap", kSetMaterial, kUnitAlphaMap);
+            varying(o, f, "in", "vec2", "vAlphaMapUv");
+        }
         if (f.alphaTest)
-            o << "uniform float uAlphaTest;\n";
+            uniform(o, f, "float uAlphaTest");
         o << "void main() {\n";
         if (f.map || f.alphaMap || f.alphaTest) {
             // three's depth.glsl.js fragment stage, up to alphatest_fragment.
@@ -806,64 +944,70 @@ std::string fragmentShader(const Features &f) {
         o << "#define USE_GRADIENTMAP\n";
     o << kCommon << kColorspace;
     if (needFrame)
-        o << frameBlock();
+        o << frameBlock(f);
     if (f.skyLit || f.haze)
-        o << skyBlock();
+        o << skyBlock(f);
+    // The Vulkan shadow noise turns gl_FragCoord.y back into GL's from the eye image's height.
+    if (f.vk && f.shadows)
+        o << viewBlock(f);
 
     const bool uvMaps = !f.points;
     if (f.map && uvMaps)
-        o << "in vec2 vMapUv;\n";
+        varying(o, f, "in", "vec2", "vMapUv");
     if (f.alphaMap && uvMaps)
-        o << "in vec2 vAlphaMapUv;\n";
+        varying(o, f, "in", "vec2", "vAlphaMapUv");
     if (f.emissiveMap)
-        o << "in vec2 vEmissiveMapUv;\n";
+        varying(o, f, "in", "vec2", "vEmissiveMapUv");
     if (f.vertexColor)
-        o << "in vec4 vColor;\n";
+        varying(o, f, "in", "vec4", "vColor");
     if (f.world)
-        o << "in vec3 vSkyWorld;\n";
+        varying(o, f, "in", "vec3", "vSkyWorld");
     if (f.normal)
-        o << "in vec3 vNormal;\n";
+        varying(o, f, "in", "vec3", "vNormal");
     if (f.viewNormal)
-        o << "in vec3 vViewNormal;\n";
+        varying(o, f, "in", "vec3", "vViewNormal");
     if (f.toEye)
-        o << "in vec3 vToEye;\n";
+        varying(o, f, "in", "vec3", "vToEye");
     if (fog)
-        o << "in float vFogDepth;\n";
+        varying(o, f, "in", "float", "vFogDepth");
     if (f.haze)
-        o << "in vec2 vSkyFog;\n";
+        varying(o, f, "in", "vec2", "vSkyFog");
     if (f.shadows)
-        o << "in vec4 vShadowCoord;\n";
+        varying(o, f, "in", "vec4", "vShadowCoord");
     if (f.beam)
-        o << "in float vAlong;\n";
+        varying(o, f, "in", "float", "vAlong");
     if (f.dome)
-        o << "in vec3 vDir;\n";
+        varying(o, f, "in", "vec3", "vDir");
     if (f.points)
-        o << "in vec2 vPointCoord;\n";
+        varying(o, f, "in", "vec2", "vPointCoord");
 
-    o << "uniform vec4 uColor;\n";
+    uniform(o, f, "vec4 uColor");
     if (f.map)
-        o << "uniform sampler2D uMap;\n";
+        sampler(o, f, "sampler2D uMap", kSetMaterial, kUnitMap);
     if (f.alphaMap)
-        o << "uniform sampler2D uAlphaMap;\n";
+        sampler(o, f, "sampler2D uAlphaMap", kSetMaterial, kUnitAlphaMap);
     if (f.points && (f.map || f.alphaMap))
-        o << "uniform mat3 uMapTransform;\n";
+        uniform(o, f, "mat3 uMapTransform");
     if (f.alphaTest)
-        o << "uniform float uAlphaTest;\n";
+        uniform(o, f, "float uAlphaTest");
     if (f.lit)
-        o << "uniform vec3 uEmissive;\n";
+        uniform(o, f, "vec3 uEmissive");
     if (f.emissiveMap)
-        o << "uniform sampler2D uEmissiveMap;\n";
+        sampler(o, f, "sampler2D uEmissiveMap", kSetMaterial, kUnitEmissiveMap);
     if (f.gradientMap)
-        o << "uniform sampler2D uGradientMap;\n";
-    if (f.shadows)
-        o << "uniform highp sampler2DShadow uShadowMap;\nuniform float uReceiveShadow;\n";
+        sampler(o, f, "sampler2D uGradientMap", kSetMaterial, kUnitGradientMap);
+    if (f.shadows) {
+        sampler(o, f, "highp sampler2DShadow uShadowMap", kSetFrame, kUnitShadowMap);
+        uniform(o, f, "float uReceiveShadow");
+    }
     if (f.model == ShadeModel::Standard)
-        o << "uniform vec2 uMetalRough;\n";
+        uniform(o, f, "vec2 uMetalRough");
     if (f.model == ShadeModel::Phong)
-        o << "uniform vec4 uSpecular;\n";
+        uniform(o, f, "vec4 uSpecular");
     if (f.dome)
-        o << "uniform vec4 uSky0;\nuniform vec4 uSky1;\nuniform vec4 uSky2;\nuniform vec4 "
-             "uSky3;\nuniform vec4 uSky4;\n";
+        for (const char *sky : {"vec4 uSky0", "vec4 uSky1", "vec4 uSky2", "vec4 uSky3",
+                                "vec4 uSky4"})
+            uniform(o, f, sky);
     if (f.sharp != SharpDepth::None)
         o << sharpPars(f);
     o << "layout(location = 0) out highp vec4 pc_fragColor;\n";
@@ -871,7 +1015,7 @@ std::string fragmentShader(const Features &f) {
     if (f.lit) {
         o << kDistanceAttenuation;
         if (f.shadows)
-            o << kShadow;
+            o << shadowChunk(f);
         switch (f.model) {
         case ShadeModel::Toon:
             o << kToon;
@@ -967,9 +1111,10 @@ std::string fragmentShader(const Features &f) {
     } else {
         // normal_fragment_begin, in world space.
         if (f.flatShading) {
+            // Vulkan's window y points down (the negative-height viewport): dFdy is GL's negated.
             o << "\tvec3 fdx = dFdx( vSkyWorld );\n"
-                 "\tvec3 fdy = dFdy( vSkyWorld );\n"
-                 "\tvec3 normal = normalize( cross( fdx, fdy ) );\n";
+              << (f.vk ? "\tvec3 fdy = - dFdy( vSkyWorld );\n" : "\tvec3 fdy = dFdy( vSkyWorld );\n")
+              << "\tvec3 normal = normalize( cross( fdx, fdy ) );\n";
         } else {
             o << "\tvec3 normal = normalize( vNormal );\n";
             if (f.doubleSided)
@@ -1128,8 +1273,8 @@ const char *modelName(ShadeModel m) {
 
 } // namespace
 
-ShaderSource generateShader(const ProgramKey &key) {
-    const Features f = features(key);
+ShaderSource generateShader(const ProgramKey &key, Dialect dialect) {
+    const Features f = features(key, dialect);
     return {vertexShader(f), fragmentShader(f)};
 }
 

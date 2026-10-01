@@ -57,6 +57,7 @@ CPP_TESTS=(
   "vk_spike_logic|tests/vk_spike_logic_test.cpp|"
   "log_record|tests/log_record_test.cpp|"
   "scene_frame|tests/scene_frame_test.cpp|android/app/src/main/cpp/scene_frame.cpp android/app/src/main/cpp/scene_shaders.cpp"
+  "vk_scene_state|tests/vk_scene_state_test.cpp|"
   "status_layout|tests/status_layout_test.cpp|"
   "layer_occlusion|tests/layer_occlusion_test.cpp|"
   # The same source as the debug APK (puppet compiled in) and as the release APK (ignored).

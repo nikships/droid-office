@@ -7,7 +7,7 @@ vr-native-android.md.
 
 | Command | Needs | Checks |
 | --- | --- | --- |
-| `native/tests/run-host.sh` | A C++17 compiler with ASan and UBSan, `curl`, `unzip`, `glslangValidator`, Node and the repository's installed npm dependencies and Chromium | Host C++ tests, scene packet/replay/GLES suite and required shader pixel comparison |
+| `native/tests/run-host.sh` | A C++17 compiler with ASan and UBSan, `curl`, `unzip`, `glslangValidator`, `glslc` and `spirv-val` (the pinned NDK's `shader-tools`, or `PATH`), Node and the repository's installed npm dependencies and Chromium | Host C++ tests, scene packet/replay/GLES suite, the Vulkan shader dialect and required shader pixel comparison |
 | `native/tests/run-host.sh --android-sdk DIR --require-java` | The above, plus JDK 17 or newer and `platforms;android-35` in `DIR` | All host checks and Java rules tests |
 | `cd native/android && ./gradlew --no-daemon :app:assembleDebug` | JDK 17 or 21, and SDK platform 35, build tools 35.0.0, NDK 27.2.12479018 and CMake 3.22.1 | The installable debug APK |
 | `cd native/android && ./gradlew --no-daemon :app:assembleRelease` | The same pinned Android toolchain | The unsigned optimized release APK |
@@ -19,8 +19,11 @@ Install the existing npm dependencies with `npm ci` and the Chromium revision se
 the locked `playwright-core` package with `npx --no-install playwright-core install chromium`.
 On Linux, use `npx --no-install playwright-core install --with-deps chromium` to install its
 system dependencies too, and install `glslang-tools` with the system package manager. On
-macOS, `brew install glslang` supplies `glslangValidator`. A missing browser, validator or npm
-dependency fails the shader suite; the pixel comparison cannot silently drop out. To use an
+macOS, `brew install glslang` supplies `glslangValidator`. `glslc` and `spirv-val` come from the
+pinned NDK's `shader-tools` (found through `ANDROID_NDK_HOME`, else `ANDROID_HOME`), or from `PATH`
+(`glslc` and `spirv-tools` on Linux, `shaderc` and `spirv-tools` on Homebrew). A missing browser,
+validator, compiler or npm dependency fails the shader suite; the pixel comparison cannot
+silently drop out. To use an
 already installed local Chrome on macOS, set
 `OFFICE_XR_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'`.
 
@@ -71,6 +74,10 @@ covers, using `CXX` (default `c++`), and runs it:
   a fake backend (culling and three's draw order, controller attachments, the screen layer's
   plan and its validity, the prepare budget). The GLES renderer's use of it is checked by the
   render suite below.
+- `native/tests/vk_scene_state_test.cpp` covers the Vulkan scene renderer's pure tables
+  (`vk_scene_state.h`): GL compare, blend, wrap and filter values as Vulkan values, the blend,
+  face, depth and color state the GLES renderer sets for each material, the swapchain and shadow
+  pass winding rules, the vertex layout and topology of each draw mode and the pipeline key.
 - `native/tests/log_record_test.cpp` covers `log_record.h`: metrics lines fit Android's
   1023-byte log record with every key `harness/metrics.sh` reads, rounding fractions before
   shortening the longest strings, never splitting a UTF-8 character.
@@ -113,6 +120,18 @@ Three registered suites are required on every host run:
   three.js code.
   Its strict block parser and contract checks self-test malformed declarations before reading
   the generated programs; malformed text must fail rather than be skipped.
+  The GLES text must hash to `shaders/gles-dump.sha256`: the Vulkan port keeps the shipping
+  programs byte for byte, and a deliberate GLES shader change updates that file in the same commit
+  with the hash the suite prints. Every program is also generated in the Vulkan dialect
+  (`generateShader(key, Dialect::Vulkan)`, `scene_shaders.h`): `dump` checks its contract
+  (`#version 450` and `GL_EXT_multiview`, no GLSL ES built-ins, every block and sampler at its
+  descriptor set and binding, no default-block uniform, the `Draw` block identical in both stages
+  and member for member `DrawBlock` in `scene_uniforms.h` with std140 offsets, every varying at its
+  fixed location and declared alike in both stages, the clip depth remap) and self-tests those
+  checks against broken stages. `vulkan-stages.sh` then compiles every stage with `glslc`
+  (`--target-env=vulkan1.1 -Werror`, the shaderc that the Vulkan renderer embeds), validates it
+  with `spirv-val` and compares glslang's reflection of the `Draw` block with `DrawBlock`, and
+  `glslangValidator -V -l` links every program's two stages.
 
 - `native/android/app/src/test/cpp/vk/check.sh` compiles the Vulkan spike's shaders
   (`app/src/main/cpp/shaders/vk`) to Vulkan 1.1 SPIR-V with `glslangValidator`, validates them
