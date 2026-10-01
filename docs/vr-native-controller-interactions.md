@@ -73,8 +73,12 @@ Brief tracking loss pauses hand-driven motion. Already committed floor arrivals 
 Native XR no longer automatically grabs a pole merely by walking into its hole.
 
 The **gun** draws on a fresh grip in the back holster. Either hand may hold it; grip must stay
-held. Its shared model uses metres, a fist-centred origin, +Y up and a +Z bore; the native grip
-holder rotates it by 180 degrees about Y to point along grip -Z. Shots start at the transformed
+held. Its shared model uses metres, a fist-centred origin, +Y up and a +Z bore. Native XR derives
+the grip-local rotation from the runtime's aim and grip orientations, mapping the bore to aim -Z
+while keeping the handle at the grip origin. The live display-frame grip still places the gun.
+The runtime defines aim as the controller's pointing direction, distinct from grip; see the
+[controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
+Shots start at the transformed
 model muzzle and reuse desktop solid occlusion, local casualty effects and explicit worker
 confirmation. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
@@ -95,10 +99,16 @@ The original desktop climb tests also pass. These checks are synthetic input evi
 
 The shared gun model and display-loop attachments are integrated. Attachment host/GLES checks
 cover tracked grip, focus, stale snapshots and release-frame hiding without hiding ordinary
-attachments on the same controller. Browser captures at 1600×1100 and 1280×720 show clean,
+attachments on the same controller. Browser captures at 1600×1019 and 1280×720 show clean,
 scrollable control rows with the keyboard open. Native login captures at 1280×720 and 1024×600
 also keep the submit button above the keyboard; the compact card now scrolls when necessary.
-Combined release checks, APK installation, CI and the focused device performance check are pending.
+The controller release passed all 689 tests with coverage, 13 native host checks, both Android
+variants and [CI](https://github.com/nikships/droid-office/actions/runs/36798298291). A locally
+signed v0.1.297 from the same source is installed with retained app data and a matching staged
+laptop server. This APK's bytes differ from the CI-published artifact; their source and signing
+identity match. The owner is reviewing the controls. Their first gun capture exposed an upward
+barrel caused by treating grip and aim orientations as identical; aim-relative attachment
+regressions now cover both hands, wrist pitch/yaw/roll, handle position and shot alignment.
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic
 replay or browser render establishes physical headset ergonomics or worn-view sharpness.

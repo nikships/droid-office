@@ -41,6 +41,8 @@ interface Motion {
   local: THREE.Vector3;
   world: THREE.Vector3;
   contact: THREE.Vector3;
+  /** Model rotation within the grip: the controller's pointing pose may have a different pitch. */
+  gunRotation: THREE.Quaternion;
   armed: boolean;
   hold: Hold;
   lost: number | null;
@@ -49,6 +51,8 @@ interface Motion {
 const MAX_STEP = 0.35;
 const MAX_SAMPLE_GAP = 80;
 const CONTACT_OFFSET = new THREE.Vector3(0, 0.025, -0.075);
+/** The shared model's +Z bore points along the OpenXR aim pose's -Z. */
+const MODEL_TO_AIM = new THREE.Quaternion(0, 1, 0, 0);
 const HANDS = [0, 1] as const;
 
 /** A swept front or rear contact, including a quick punch that crosses the whole disc in one sample. */
@@ -99,6 +103,7 @@ export class NativePhysical {
   private local = new THREE.Vector3();
   private contact = new THREE.Vector3();
   private direction = new THREE.Vector3();
+  private aimRotation = new THREE.Quaternion();
   private delta = new THREE.Vector3();
   private gongInverse = new THREE.Matrix4();
   private pole: PoleSpot | null = null;
@@ -120,7 +125,7 @@ export class NativePhysical {
   ) {}
 
   private slot(): Motion {
-    return { valid: false, stable: false, time: 0, local: new THREE.Vector3(), world: new THREE.Vector3(), contact: new THREE.Vector3(), armed: false, hold: null, lost: null };
+    return { valid: false, stable: false, time: 0, local: new THREE.Vector3(), world: new THREE.Vector3(), contact: new THREE.Vector3(), gunRotation: new THREE.Quaternion(), armed: false, hold: null, lost: null };
   }
 
   owns(hand: Hand): boolean {
@@ -195,6 +200,11 @@ export class NativePhysical {
       }
       m.lost = null;
       this.local.set(input.grip[0], input.grip[1], input.grip[2]);
+      // Keep the fist-centred origin at the grip, but align the bore with the pointing pose.
+      // This is a controller-local offset; native rendering still follows the live display-frame
+      // grip, without moving the gun from a lower-rate world-space pose.
+      this.aimRotation.set(input.aim[3], input.aim[4], input.aim[5], input.aim[6]);
+      m.gunRotation.set(input.grip[3], input.grip[4], input.grip[5], input.grip[6]).invert().multiply(this.aimRotation).multiply(MODEL_TO_AIM);
       this.anchors[hand].getWorldPosition(this.position);
       this.contact.copy(CONTACT_OFFSET).applyMatrix4(this.anchors[hand].matrixWorld).applyMatrix4(this.gongInverse);
       const seconds = (frame.time - m.time) / 1000;
@@ -230,7 +240,10 @@ export class NativePhysical {
       m.world.copy(this.position);
       m.contact.copy(this.contact);
       m.valid = true;
-      if (m.hold === 'gun' && this.gun) this.gun.visible = true;
+      if (m.hold === 'gun' && this.gun) {
+        this.gun.quaternion.copy(m.gunRotation);
+        this.gun.visible = true;
+      }
     }
     this.hooks.climber.pausePhysical(!this.allowed || climbing === 0);
     if (hands && this.allowed) {
@@ -341,7 +354,7 @@ export class NativePhysical {
     this.motion[hand].hold = 'gun';
     this.anchors[hand].add(this.gun);
     this.gun.position.set(0, 0, 0);
-    this.gun.rotation.set(0, Math.PI, 0);
+    this.gun.quaternion.copy(this.motion[hand].gunRotation);
     this.gun.scale.setScalar(1);
     this.gun.visible = true;
     this.gun.userData.nativeControllerAttachment = { hand, requiresGrip: true };

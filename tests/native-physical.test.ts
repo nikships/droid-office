@@ -289,3 +289,37 @@ test('back release holsters immediately; menus, fallback poses, loss and focus r
   assert.equal(r.gun(), undefined);
   assert.equal(r.controls.holdingGun, false);
 });
+
+for (const activeHand of [0, 1] as const) {
+  test(`the ${activeHand === 0 ? 'left' : 'right'} gun follows aim orientation while its handle stays at the tracked grip`, (t) => {
+    const r = fixture(t);
+    // A forward pointing pose with a pitched grip reproduces the upward barrel in the worn capture.
+    const gripPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 1.15);
+    const aim = new THREE.Quaternion();
+    const sample = (z: number, squeeze: number, trigger = 0) => {
+      const grip = aim.clone().multiply(gripPitch);
+      const h = hand([0.25, 0.85, z, grip.x, grip.y, grip.z, grip.w], { aim: [0.28, 0.9, z - 0.08, aim.x, aim.y, aim.z, aim.w], squeeze, trigger });
+      return r.frame(activeHand === 1 ? h : off(), activeHand === 0 ? h : off());
+    };
+    r.tick(sample(0.3, 0));
+    r.tick(sample(0.3, 1));
+    assert.equal(r.controls.holdingGun, true);
+    for (const rotation of [new THREE.Euler(0, 0, 0), new THREE.Euler(0.35, -0.7, 0.25), new THREE.Euler(-0.2, 0.6, -0.4)]) {
+      aim.setFromEuler(rotation);
+      r.tick(sample(0.1, 1), sample(-0.1, 1), sample(-0.3, 1));
+      const gun = r.gun()!;
+      const expected = new THREE.Vector3(0, 0, -1).applyQuaternion(aim).transformDirection(r.controls.rig.matrixWorld);
+      const bore = new THREE.Vector3(0, 0, 1).transformDirection(gun.matrixWorld);
+      assert.ok(bore.distanceTo(expected) < 1e-9, 'pitch, yaw and roll follow the pointing pose');
+      const expectedHandle = new THREE.Vector3(0.25, 0.85, -0.3).applyMatrix4(r.controls.rig.matrixWorld);
+      assert.ok(gun.getWorldPosition(new THREE.Vector3()).distanceTo(expectedHandle) < 1e-9, 'the aim pose offset never moves the handle out of the fist');
+      r.advance(400);
+      r.tick(sample(-0.3, 1), sample(-0.3, 1, 1));
+      const shot = r.shots.at(-1)!;
+      assert.ok(shot.direction.distanceTo(expected) < 1e-9, 'shots follow the corrected visual bore');
+      assert.ok(shot.origin.distanceTo(gun.localToWorld(MUZZLE_AT.clone())) < 1e-9);
+      assert.equal(r.uses(), 0);
+    }
+    assert.equal(r.shots.length, 3);
+  });
+}
