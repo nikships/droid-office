@@ -32,10 +32,17 @@ of creating a second office state or a separate worker/board implementation.
 - Controller geometry uploads once. Animate buttons from current native poses/input without
   bridge round trips; tracking loss must cancel interactions and suppress stale presses.
 - Check extensions, function pointers and supported modes at runtime. Treat a 90 Hz request
-  as a request, and report the actual refresh rate and frame timing. Preserve full resolution
-  at the tracked gaze; invalid gaze requires a central full-resolution fallback. Follow the
-  [QCOM foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt)
-  when changing focal points or depth attachments.
+  as a request, and report the actual refresh rate and frame timing. The OpenXR runtime owns
+  foveation: create only the world colour swapchain with `XR_FB_foveation` scaled-bin support and
+  apply `XR_FB_foveation_configuration` / `XR_META_foveation_eye_tracked` profiles with
+  `xrUpdateSwapchainFB`. Never write QCOM texture foveation state or focal points from the app,
+  and never foveate depth, the sharp-screen layer or the Android Surface panels. Cite the
+  specification or working Android XR code next to each foveation call. Never submit the
+  driver's upscaled blocks: render into the foveated swapchains and draw the submitted,
+  unfoveated ones with the filter pass (`foveation_filter_shader.h`), falling back to direct
+  submission only when that cannot be created. Keep world-pass output independent of bin
+  density: no `gl_PointSize` (points are quads) and derivative-based shading divided by the
+  measured step.
 - The Vulkan eye-tracked foveation spike (`vk_spike*`, `shaders/vk`, `OFFICE_VULKAN_SPIKE`) is
   for debug builds only and leaves the GLES path unchanged. Base each Vulkan or OpenXR call on
   Khronos, Android XR or working Android XR code (Godot's Vulkan FDM path) and cite the source
@@ -45,7 +52,11 @@ of creating a second office state or a separate worker/board implementation.
   the maximum or force default frames through maximum-size targets. Replace targets on the
   GL thread with no acquired images, retaining the current targets if allocation fails.
   Complete GPU image use before destroying old swapchains, including during teardown.
-  QCOM texture foveation cannot be disabled after enabling it; Off uses new unfoveated targets.
+  The Galaxy XR runtime keeps the first profile a world swapchain receives, so every foveation
+  choice is new world targets: Off is swapchains without `XrSwapchainCreateInfoFoveationFB`, a
+  level is swapchains with it and that level's profile applied first. Create the first targets
+  from the stored settings, report only what is bound, and destroy the foveation profile before
+  the session.
 - Validate performance with a visible, populated office and advancing scene packets, both
   workspace-open and workspace-closed, using focused 1–2 minute checks. An empty world, a frozen snapshot
   or compositor FPS alone cannot establish sustained application frame rate. Record visual

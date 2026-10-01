@@ -21,6 +21,8 @@ mkdirSync(out, { recursive: true });
 // Cases whose opaque pixels are held to 8/255 at most (three's own output is 8-bit, so a step of 1-2 is rounding).
 const EXACT = new Set(['toon-indoor-shadow-fog-sky', 'toon-outdoor-wet-snow-lamps-haze', 'toon-fallback-emissive-flat-double-back-instanced', 'basic-text-sprite-card-line-premul', 'points-stars-halos-snow', 'skydome-beam-moon']);
 const REQUIRED = new Set([...EXACT, 'standard-lambert-phong-exp2']);
+// Pixels the points-as-quads render may differ from three's points by more than 8/255 (0.5%).
+const POINT_QUAD_PIXELS = 128;
 
 const bundle = await build({ entryPoints: [join(here, 'harness.ts')], bundle: true, write: false, format: 'iife', target: 'es2022', logLevel: 'error' });
 const script = bundle.outputFiles[0].text;
@@ -73,10 +75,14 @@ try {
     delete r.images;
     const fmt = (s) => `max ${String(s.max).padStart(3)}  >2 ${String(s.over2).padStart(5)}  >8 ${String(s.over8).padStart(5)} / ${s.pixels}`;
     rows.push(
-      `${r.name}\n  sRGB output, own shadow map   ${fmt(r.srgb)}\n  sRGB output, three shadow map ${fmt(r.srgbThreeShadowMap)}\n  linear output (SRGB8_ALPHA8)  ${fmt(r.linear)}\n  linear output, opaque pixels  ${fmt(r.linearOpaque)}${r.srgbThreeDfg ? `\n  sRGB, three's DFG LUT        ${fmt(r.srgbThreeDfg)}` : ''}\n  keys: ${r.keys.join(' ')}`,
+      `${r.name}\n  sRGB output, own shadow map   ${fmt(r.srgb)}\n  sRGB output, three shadow map ${fmt(r.srgbThreeShadowMap)}\n  linear output (SRGB8_ALPHA8)  ${fmt(r.linear)}\n  linear output, opaque pixels  ${fmt(r.linearOpaque)}${r.srgbThreeDfg ? `\n  sRGB, three's DFG LUT        ${fmt(r.srgbThreeDfg)}` : ''}${r.srgbPointQuads ? `\n  sRGB, points as quads         ${fmt(r.srgbPointQuads)}` : ''}\n  keys: ${r.keys.join(' ')}`,
     );
     if (EXACT.has(r.name) && (r.srgb.max > 8 || r.srgbThreeShadowMap.max > 8 || r.linearOpaque.max > 8)) failed = true;
     if (r.name === 'standard-lambert-phong-exp2' && (!r.srgbThreeDfg || !Number.isFinite(r.srgbThreeDfg.max) || r.srgbThreeDfg.pixels !== 160 * 160 || r.srgbThreeDfg.max > 8)) failed = true;
+    // The native renderer draws points as quads of the same square (scene_shaders.cpp). Triangle
+    // and point rasterization round sub-pixel edges differently, so a 1.6-pixel star can gain or
+    // lose a pixel column; a wrong size, position or point coordinate changes thousands of pixels.
+    if (r.name === 'points-stars-halos-snow' && (!r.srgbPointQuads || r.srgbPointQuads.pixels !== 160 * 160 || r.srgbPointQuads.over8 > POINT_QUAD_PIXELS)) failed = true;
   }
   for (const name of REQUIRED) if (!seen.has(name)) errors.push(`missing required comparison case: ${name}`);
   // Block layout, framebuffer and missing LUT diagnostics are failures; the renderer line is informational.

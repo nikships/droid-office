@@ -49,7 +49,8 @@ import org.json.JSONObject;
 /** Android owns the lifecycle; the native thread owns the OpenXR frame loop. */
 public final class OfficeActivity extends Activity {
     static { System.loadLibrary("office_xr"); }
-    private native void nativeStart();
+    /** filesDir keeps the page's graphics settings between launches for the first world targets. */
+    private native void nativeStart(String filesDir);
     private native void nativeStop();
     private native String nativeReadInput();
     private native String nativeReadMetrics();
@@ -189,7 +190,7 @@ public final class OfficeActivity extends Activity {
             options.append(";eye_permission=").append(eyes ? 1 : 0);
             nativeSelectRenderer(options.toString());
         }
-        nativeStart();
+        nativeStart(getFilesDir().getAbsolutePath());
     }
 
     @Override

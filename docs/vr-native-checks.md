@@ -37,14 +37,24 @@ process; address and undefined-behavior sanitizers remain active.
 covers, using `CXX` (default `c++`), and runs it:
 
 - `native/tests/bridge_state_test.cpp` with `bridge_state.cpp`: pose math, panel rays, bridge
-  packet validation, pointer events and frame metric percentiles.
+  packet validation, graphics kept across a page reset and between launches, pointer events
+  and frame metric percentiles.
 - `native/tests/xr_performance_test.cpp` with `xr_performance.cpp`: a fake OpenXR runtime
   checks the performance-metrics counter flags, units and capacities, and the performance
   settings hints.
 - `native/tests/rig_presentation_test.cpp` for the header-only `rig_presentation.h`: rig and
   fade interpolation, discontinuities, stale focus and rotation handling.
 - `native/tests/graphics_controls_test.cpp` for the header-only graphics control rules:
-  supported settings, quality selection and input bounds.
+  supported settings, quality selection, input bounds and world-target changes, including a
+  foveation change at the same size and targets bound below the request.
+- `native/tests/foveation_test.cpp` for the header-only `foveation.h`,
+  `foveation_filter_shader.h` and `foveation_overlay_shader.h`: setting-to-target mapping (Off
+  is targets without foveation, every level is filtered when the reconstruction is available),
+  capability gates, the eye-tracked → fixed → unfoveated fallback and the filtered → unfiltered
+  one, eye-tracked state results that are retried rather than dropped, the filter's density code,
+  taps and GLSL (a copy at full density, flat regions kept flat, and a block edge spread over
+  three or more pixels for every block width and phase), and the diagnostic view's density
+  bands, centre mapping, fallback marker and GLSL.
 - `native/tests/refresh_policy_test.cpp`: bounded 90 Hz re-requests, focus loss, actual-rate
   recovery and invalid observations.
 - `native/tests/hand_mesh_test.cpp` retains standalone checks for the historical mesh code:
@@ -69,8 +79,10 @@ Three registered suites are required on every host run:
   uses placeholder gradients for DOM canvas images; actual
   text and material pixels are compared in the browser shader suite.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
-  uniform block layouts and generated-program contracts, validates and links every generated
-  stage with glslang, and compares seven material cases against the original three.js code.
+  uniform block layouts and generated-program contracts (including points drawn as quads),
+  validates and links every generated stage, the foveation diagnostic view and the foveation
+  filter's two passes with glslang, and compares seven material cases against the original
+  three.js code.
   Its strict block parser and contract checks self-test malformed declarations before reading
   the generated programs; malformed text must fail rather than be skipped.
 
@@ -90,7 +102,10 @@ and three.js shadow maps, and opaque pixels in the linear-output variant, must d
 most 8/255 per channel. Every case must execute; malformed results, browser errors and
 uniform/framebuffer diagnostics fail the comparison. The Standard case must also match
 within 8/255 when supplied with three.js's DFG lookup table. The native analytic DFG
-approximation is measured separately. Blended pixels in the linear-output variant remain
+approximation is measured separately. The points case is compared with GL points, which the
+renderer keeps for indexed points, and again with points drawn as the renderer's instanced
+quads: triangle and point rasterization round sub-pixel edges differently, so a 1.6-pixel star
+can gain or lose a pixel column, and at most 128 pixels (0.5%) may differ by more than 8/255. Blended pixels in the linear-output variant remain
 recorded diagnostics because sRGB framebuffer hardware blends in linear space while three.js
 blends the comparison image in encoded space. `report.json` records both outputs, the opaque
 subset, browser version/backend and all diagnostics, beside the comparison PNGs in the suite

@@ -34,6 +34,8 @@ export interface Result {
   linearOpaque: Stats;
   /** Standard only: the same programs reading three's DFG LUT instead of DFGApprox, to isolate that one approximation. */
   srgbThreeDfg?: Stats;
+  /** Cases with points: sRGB output with the points drawn as the native renderer's quads. */
+  srgbPointQuads?: Stats;
   images: Record<string, string>;
 }
 
@@ -538,6 +540,7 @@ const UNIFORMS = [
   'uEmissiveMapTransform',
   'uReceiveShadow',
   'uPointSize',
+  'uPointQuad',
   'uSpriteCenter',
   'uSpriteRotation',
   'uMetalRough',
@@ -582,6 +585,12 @@ class Raw {
   readonly log: string[] = [];
   /** Bound to unit 5 for programs patched to read three's DFG LUT (see withThreeDfg). */
   dfg: WebGLTexture | null = null;
+  /**
+   * Draw non-indexed points the way the native renderer does: one instanced quad per point
+   * (uPointQuad 1). Off, they are GL points (uPointQuad 0), so the shading is compared with three's
+   * own points exactly; the quads' rasterization is compared on its own (srgbPointQuads).
+   */
+  pointQuads = false;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -820,6 +829,14 @@ class Raw {
   private drawCall(it: Item, mode: number): void {
     const gl = this.gl;
     const a = this.attributes(it);
+    if (this.pointQuads && mode === gl.POINTS && !a.indexed) {
+      // The native renderer draws each point as a quad: its attributes advance per instance and
+      // the vertex stage builds the square from gl_VertexID (scene_shaders.cpp, uPointQuad).
+      gl.vertexAttribDivisor(0, 1);
+      gl.vertexAttribDivisor(3, 1);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, a.count);
+      return;
+    }
     if (a.indexed) gl.drawElementsInstanced(mode, a.count, a.indexType, 0, a.instances);
     else gl.drawArraysInstanced(mode, 0, a.count, a.instances);
   }
@@ -885,7 +902,10 @@ class Raw {
     tm(m.alphaMap, L.uAlphaMapTransform);
     tm(m.emissiveMap, L.uEmissiveMapTransform);
     gl.uniform1f(L.uReceiveShadow, o.receiveShadow ? 1 : 0);
-    if (m.isPointsMaterial) gl.uniform1f(L.uPointSize, m.size);
+    if (m.isPointsMaterial) {
+      gl.uniform1f(L.uPointSize, m.size);
+      gl.uniform1i(L.uPointQuad, this.pointQuads && !((o as THREE.Points).geometry as THREE.BufferGeometry).index ? 1 : 0);
+    }
     const sp = o as THREE.Sprite;
     if (sp.isSprite) {
       gl.uniform2f(L.uSpriteCenter, sp.center.x, sp.center.y);
@@ -1150,6 +1170,15 @@ function run(shaders: Shaders): { results: Result[]; log: string[] } {
       lutRaw.draw(c, srgbItems, null, false, own);
       srgbThreeDfg = compare(expected, read(gl));
     }
+    let srgbPointQuads: Stats | undefined;
+    let pointQuadImage: Uint8Array | undefined;
+    if (srgbItems.some((it) => (it.obj as THREE.Points).isPoints)) {
+      raw.pointQuads = true;
+      raw.draw(c, srgbItems, null, false, own);
+      pointQuadImage = read(gl);
+      srgbPointQuads = compare(expected, pointQuadImage);
+      raw.pointQuads = false;
+    }
     if (own) gl.deleteTexture(own);
     r.resetState();
 
@@ -1161,7 +1190,15 @@ function run(shaders: Shaders): { results: Result[]; log: string[] } {
       linear: compare(expected, mineLinear),
       linearOpaque: compare(expected, mineLinear, noTransparent),
       srgbThreeDfg,
-      images: { three: png(expected), native: png(mine), nativeLinear: png(mineLinear), diff: png(diffImage(expected, mine)), diffLinear: png(diffImage(expected, mineLinear)) },
+      srgbPointQuads,
+      images: {
+        three: png(expected),
+        native: png(mine),
+        nativeLinear: png(mineLinear),
+        diff: png(diffImage(expected, mine)),
+        diffLinear: png(diffImage(expected, mineLinear)),
+        ...(pointQuadImage ? { pointQuads: png(pointQuadImage), diffPointQuads: png(diffImage(expected, pointQuadImage)) } : {}),
+      },
     });
   }
   const info = gl.getExtension('WEBGL_debug_renderer_info');

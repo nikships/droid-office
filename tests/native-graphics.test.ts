@@ -1,22 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_NATIVE_GRAPHICS, nativeWorldResolution, readNativeGraphics, stepNativeRenderScale } from '../src/client/native/graphics-settings.js';
+import { DEFAULT_NATIVE_GRAPHICS, nativeFoveationStatus, nativeGraphicsPacket, nativeWorldResolution, readNativeGraphics, stepNativeRenderScale } from '../src/client/native/graphics-settings.js';
 import { nativeFpsCounter } from '../src/client/native/performance.js';
 
 test('missing, corrupted and legacy graphics storage uses the tested defaults', () => {
   for (const value of [undefined, null, 'broken', 42, {}]) assert.deepEqual(readNativeGraphics(value), DEFAULT_NATIVE_GRAPHICS);
-  assert.deepEqual(readNativeGraphics({ renderScale: Number.NaN, peripheralDensity: Infinity, foveation: 'unknown', fps: 'true' }), DEFAULT_NATIVE_GRAPHICS);
+  assert.deepEqual(readNativeGraphics({ renderScale: Number.NaN, peripheralDensity: Infinity, foveation: 'unknown', fps: 'true', foveationDebug: 'true' }), DEFAULT_NATIVE_GRAPHICS);
+  assert.equal('peripheralDensity' in readNativeGraphics({ peripheralDensity: 0.55 }), false, 'the runtime profiles have no density setting');
 });
 
 test('graphics changes remain bounded and do not alter the display refresh request', () => {
-  assert.deepEqual(readNativeGraphics({ renderScale: 0.1, peripheralDensity: 2, foveation: 'clarity', fps: true }), { v: 1, renderScale: 0.75, peripheralDensity: 1, foveation: 'clarity', fps: true, sharpScreens: true });
-  assert.deepEqual(readNativeGraphics({ renderScale: 3, peripheralDensity: -1, foveation: 'performance', fps: false, sharpScreens: false }), {
+  assert.deepEqual(readNativeGraphics({ renderScale: 0.1, peripheralDensity: 2, foveation: 'clarity', fps: true }), { v: 1, renderScale: 0.75, foveation: 'clarity', fps: true, sharpScreens: true, foveationDebug: false });
+  assert.deepEqual(readNativeGraphics({ renderScale: 3, peripheralDensity: -1, foveation: 'performance', fps: false, sharpScreens: false, foveationDebug: true }), {
     v: 1,
     renderScale: 2,
-    peripheralDensity: 0.25,
     foveation: 'performance',
     fps: false,
     sharpScreens: false,
+    foveationDebug: true,
   });
   assert.equal(readNativeGraphics({ sharpScreens: 'false' }).sharpScreens, true);
   assert.equal(readNativeGraphics(JSON.parse(JSON.stringify({ ...DEFAULT_NATIVE_GRAPHICS, sharpScreens: false }))).sharpScreens, false);
@@ -85,4 +86,39 @@ test('persistent counter distinguishes native FPS, display mode and delayed offi
   assert.deepEqual(nativeFpsCounter({ ...metrics, controlAgeMs: 2000 }), { text: '90.0 fps · 90 Hz · Office delayed', warning: true });
   assert.deepEqual(nativeFpsCounter({ ...metrics, focused: false }), { text: 'Session paused', warning: true });
   assert.deepEqual(nativeFpsCounter({ fps: Number.NaN, refresh: Infinity }), { text: 'Measuring FPS…', warning: false });
+});
+
+test('the native packet keeps the field older APKs require', () => {
+  const packet = nativeGraphicsPacket({ ...DEFAULT_NATIVE_GRAPHICS, foveation: 'off', foveationDebug: true });
+  assert.equal(packet.peripheralDensity, 0.25);
+  assert.equal(packet.foveation, 'off');
+  assert.equal(packet.foveationDebug, true);
+  assert.deepEqual(JSON.parse(JSON.stringify({ ...packet, foveationDebug: undefined })).foveationDebug, undefined, 'the diagnostic view is not stored');
+});
+
+test('the applied foveation reads the runtime profile the headset reports', () => {
+  assert.equal(nativeFoveationStatus(undefined), null);
+  assert.equal(nativeFoveationStatus({ foveationEnabled: true }), 'Currently applied: On.');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'medium', eyeTracked: true, fallback: '' } }), 'Currently applied: Medium runtime level, follows your eyes.');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'high', eyeTracked: false, fallback: 'eye-tracked profile rejected' } }), 'Currently applied: High runtime level, fixed at the centre. Fallback: eye-tracked profile rejected.');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'none', eyeTracked: false } }), 'Currently applied: Off (full detail everywhere).');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'none', setting: 'off', fallback: '' } }), 'Currently applied: Off (full detail everywhere).');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'unfoveated' } }), 'Currently applied: full detail everywhere (no runtime foveation).');
+  assert.equal(nativeFoveationStatus({ foveation: 'broken', foveationEnabled: false }), 'Currently applied: Off.');
+});
+
+test('the menu reports the bound targets while a new foveation choice is still being applied', () => {
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'medium', setting: 'off', eyeTracked: true, pending: true } }), 'Currently applied: Medium runtime level, follows your eyes. Applying your choice…');
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'none', setting: 'balanced', pending: true } }), 'Currently applied: Off (full detail everywhere). Applying your choice…');
+  assert.equal(
+    nativeFoveationStatus({ foveation: { level: 'none', setting: 'balanced', pending: false, fallback: 'foveation profile rejected' } }),
+    'Currently applied: full detail everywhere (no runtime foveation). Fallback: foveation profile rejected.',
+  );
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'high', setting: 'performance', eyeTracked: false, pending: false, fallback: '' } }), 'Currently applied: High runtime level, fixed at the centre.');
+  // Filtered targets: the reduced areas are rebuilt smoothly; unfiltered ones and older APKs say nothing about it.
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'high', setting: 'performance', eyeTracked: true, filtered: true, fallback: '' } }), 'Currently applied: High runtime level, follows your eyes, smoothed periphery.');
+  assert.equal(
+    nativeFoveationStatus({ foveation: { level: 'medium', eyeTracked: false, filtered: false, fallback: 'filtered targets rejected' } }),
+    'Currently applied: Medium runtime level, fixed at the centre. Fallback: filtered targets rejected.',
+  );
 });

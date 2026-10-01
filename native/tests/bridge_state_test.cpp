@@ -112,6 +112,32 @@ void packets() {
     packet["control"]["graphics"]["renderScale"] = 1;
     packet["control"]["graphics"]["foveation"] = "balanced";
     assert(bridge.submit(packet.dump(), scene, error));
+    assert(!bridge.read().graphics.foveationDebug && "the diagnostic view is off by default");
+    packet["control"]["graphics"]["foveationDebug"] = true;
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(bridge.read().graphics.foveationDebug);
+    for (const auto &quality : {"clarity", "performance", "off", "balanced"}) {
+        packet["control"]["graphics"]["foveation"] = quality;
+        assert(bridge.submit(packet.dump(), scene, error));
+    }
+    assert(bridge.read().graphics.foveation == FoveationQuality::Balanced);
+    // Current pages no longer send peripheralDensity; older pages still do.
+    packet["control"]["graphics"].erase("peripheralDensity");
+    packet["control"]["graphics"].erase("foveationDebug");
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    assert(!bridge.read().graphics.foveationDebug);
+    packet["control"]["graphics"]["peripheralDensity"] = 7;
+    assert(bridge.submit(packet.dump(), scene, error) && "legacy density is ignored, not rejected");
+    packet["control"]["graphics"].erase("peripheralDensity");
+    const auto debugRevision = bridge.read().revision;
+    packet["control"]["graphics"]["foveationDebug"] = "true";
+    assert(!bridge.submit(packet.dump(), scene, error));
+    assert(bridge.read().revision == debugRevision);
+    packet["control"]["graphics"].erase("foveationDebug");
+    packet["control"]["graphics"]["foveation"] = "maximum";
+    assert(!bridge.submit(packet.dump(), scene, error));
+    packet["control"]["graphics"]["foveation"] = "balanced";
+    assert(bridge.submit(packet.dump(), scene, error));
     const auto graphicsRevision = bridge.read().revision;
     for (const auto &invalid : Json::array({"false", 0, nullptr})) {
         packet["control"]["graphics"]["sharpScreens"] = invalid;
@@ -130,10 +156,88 @@ void packets() {
     nested += std::string(40, ']');
     assert(!bridge.submit(nested, scene, error) && !error.empty());
     assert(!bridge.submit("null", scene, error));
+    packet["control"]["graphics"]["sharpScreens"] = true;
+    packet["control"]["graphics"]["foveation"] = "off";
+    packet["control"]["graphics"]["renderScale"] = 1.25;
+    assert(bridge.submit(packet.dump(), scene, error));
     bridge.reset();
     state = bridge.read();
     assert(!state.active && state.panelOpen && state.arc.empty() && state.fade == 0);
     assert(state.presentationEpoch == 0 && state.receivedNs == 0);
+    assert(state.graphics.foveation == FoveationQuality::Off &&
+           close(state.graphics.renderScale, 1.25f) &&
+           "a reloading page keeps the world targets until it sends its settings");
+    // A control packet without graphics leaves them as they are.
+    packet["control"].erase("graphics");
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(bridge.read().graphics.foveation == FoveationQuality::Off);
+}
+void storedSettings() {
+    // The settings kept between launches: render scale and foveation only.
+    GraphicsControls page;
+    page.renderScale = 1.16f;
+    page.foveation = FoveationQuality::Off;
+    page.sharpScreens = false;
+    page.foveationDebug = true;
+    const auto text = storedGraphics(page);
+    GraphicsControls restored;
+    assert(restoreGraphics(text, restored));
+    assert(close(restored.renderScale, 1.16f) && restored.foveation == FoveationQuality::Off);
+    assert(restored.sharpScreens && !restored.foveationDebug && "only targets are restored");
+    for (const auto *quality : {"clarity", "performance", "balanced", "off"}) {
+        GraphicsControls value;
+        assert(restoreGraphics(Json{{"v", 1}, {"renderScale", 1}, {"foveation", quality}}.dump(),
+                               value));
+        assert(Json::parse(storedGraphics(value))["foveation"] == quality);
+    }
+    for (const auto &broken :
+         {std::string(""), std::string("{"), std::string("null"), std::string("[]"),
+          Json{{"v", 2}, {"renderScale", 1}}.dump(), Json{{"v", 1}}.dump(),
+          Json{{"v", 1}, {"renderScale", "1"}}.dump(),
+          Json{{"v", 1}, {"renderScale", 1}, {"foveation", "maximum"}}.dump()}) {
+        GraphicsControls value;
+        value.renderScale = 1.5f;
+        assert(!restoreGraphics(broken, value) && close(value.renderScale, 1.5f));
+    }
+    GraphicsControls clamped;
+    assert(restoreGraphics(Json{{"v", 1}, {"renderScale", 9}}.dump(), clamped));
+    assert(close(clamped.renderScale, 2.f) && clamped.foveation == FoveationQuality::Balanced);
+
+    // The stored copy is used until a page sends its own settings, which then win for good.
+    BridgeState bridge;
+    bridge.seedGraphics(restored);
+    assert(bridge.graphics().foveation == FoveationQuality::Off);
+    GraphicsControls changed;
+    assert(!bridge.takeStoredGraphics(changed) && "seeding is not a page change");
+    Json packet = {
+        {"control",
+         {{"v", 1},
+          {"fade", 0},
+          {"matrix", transform({{0, 0, 0, 1}, {0, 0, 0}})},
+          {"hands", Json::array({Json::object(), Json::object()})},
+          {"graphics", {{"v", 1}, {"renderScale", 1.16}, {"foveation", "off"}, {"fps", true}}}}}};
+    std::string scene, error;
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    assert(bridge.takeStoredGraphics(changed) && changed.foveation == FoveationQuality::Off &&
+           "the first page settings are stored");
+    assert(!bridge.takeStoredGraphics(changed) && "once");
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(!bridge.takeStoredGraphics(changed) && "unchanged settings are not stored again");
+    packet["control"]["graphics"]["foveationDebug"] = true;
+    packet["control"]["graphics"]["sharpScreens"] = false;
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(!bridge.takeStoredGraphics(changed) && "only render scale and foveation are kept");
+    packet["control"]["graphics"]["foveation"] = "performance";
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(bridge.takeStoredGraphics(changed) &&
+           changed.foveation == FoveationQuality::Performance);
+    GraphicsControls stale;
+    stale.foveation = FoveationQuality::Clarity;
+    bridge.seedGraphics(stale);
+    assert(bridge.graphics().foveation == FoveationQuality::Performance &&
+           "a stored copy never replaces settings a page sent");
+    bridge.reset();
+    assert(bridge.graphics().foveation == FoveationQuality::Performance);
 }
 void pointerEvents() {
     PanelPointer pointer;
@@ -207,6 +311,7 @@ void hoverEvents() {
 int main() {
     math();
     packets();
+    storedSettings();
     pointerEvents();
     hoverEvents();
     assert(FrameMetrics::percentile({3, 1, 4, 2}, .5) == 3);

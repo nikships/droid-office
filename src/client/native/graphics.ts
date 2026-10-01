@@ -1,5 +1,5 @@
 import { h, openModal, type Modal } from '../ui/dom';
-import { DEFAULT_NATIVE_GRAPHICS, MIN_NATIVE_RENDER_SCALE, nativeWorldResolution, readNativeGraphics, stepNativeRenderScale, type NativeEyeSize, type NativeGraphicsSettings } from './graphics-settings';
+import { DEFAULT_NATIVE_GRAPHICS, MIN_NATIVE_RENDER_SCALE, nativeFoveationStatus, nativeWorldResolution, readNativeGraphics, stepNativeRenderScale, type NativeEyeSize, type NativeGraphicsSettings } from './graphics-settings';
 import { nativeFpsCounter, nativePerformanceLabel } from './performance';
 import './graphics.css';
 
@@ -13,7 +13,8 @@ let counter: HTMLElement | null = null;
 export function getNativeGraphicsSettings(): NativeGraphicsSettings {
   if (!settings) {
     try {
-      settings = readNativeGraphics(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
+      // The diagnostic density view never survives a restart.
+      settings = { ...readNativeGraphics(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')), foveationDebug: false };
     } catch {
       settings = { ...DEFAULT_NATIVE_GRAPHICS };
     }
@@ -24,11 +25,18 @@ export function getNativeGraphicsSettings(): NativeGraphicsSettings {
 function save(next: NativeGraphicsSettings) {
   settings = readNativeGraphics(next);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    // JSON leaves out the undefined diagnostic flag, which lasts only this session.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, foveationDebug: undefined }));
   } catch {
     // The settings still apply for this session when storage is unavailable.
   }
   updateNativeGraphicsMetrics(metrics);
+}
+
+/** Changes some settings, as the menu does. The native page exposes this for headset checks. */
+export function setNativeGraphicsSettings(patch: Partial<NativeGraphicsSettings>): NativeGraphicsSettings {
+  save({ ...getNativeGraphicsSettings(), ...patch });
+  return getNativeGraphicsSettings();
 }
 
 export function updateNativeGraphicsMetrics(next: unknown) {
@@ -60,7 +68,7 @@ export function openNativeGraphicsSettings(): void {
   const status = h('p.ng-status', { role: 'status', 'aria-live': 'polite' });
   const details = h('p.setting-note.ng-measurements');
   const controls: (() => void)[] = [];
-  const choices = <K extends 'foveation' | 'peripheralDensity'>(key: K, label: string, values: readonly (readonly [NativeGraphicsSettings[K], string])[]) => {
+  const choices = <K extends 'foveation'>(key: K, label: string, values: readonly (readonly [NativeGraphicsSettings[K], string])[]) => {
     const row = h('div.seg.ng-choices', { role: 'radiogroup', 'aria-label': label });
     const buttons = values.map(([value, title]) => {
       const button = h('button.btn', { type: 'button', role: 'radio', onclick: () => save({ ...getNativeGraphicsSettings(), [key]: value }) }, title);
@@ -73,9 +81,7 @@ export function openNativeGraphicsSettings(): void {
         const selected = getNativeGraphicsSettings()[key] === value;
         button.classList.toggle('on', selected);
         button.setAttribute('aria-checked', String(selected));
-        button.disabled =
-          (key === 'foveation' && ((value === 'off' && typeof m.foveationSupported !== 'boolean') || (value !== 'off' && m.foveationSupported === false))) ||
-          (key === 'peripheralDensity' && (getNativeGraphicsSettings().foveation === 'off' || m.foveationSupported === false));
+        button.disabled = (value === 'off' && typeof m.foveationSupported !== 'boolean') || (value !== 'off' && m.foveationSupported === false);
       }
     });
     return row;
@@ -137,6 +143,10 @@ export function openNativeGraphicsSettings(): void {
   controls.push(() => {
     sharpScreens.checked = getNativeGraphicsSettings().sharpScreens;
   });
+  const foveationDebug = h('input', { type: 'checkbox', onchange: () => save({ ...getNativeGraphicsSettings(), foveationDebug: foveationDebug.checked }) });
+  controls.push(() => {
+    foveationDebug.checked = getNativeGraphicsSettings().foveationDebug;
+  });
   const body = h(
     'div.body',
     {},
@@ -157,15 +167,15 @@ export function openNativeGraphicsSettings(): void {
       ['clarity', 'Wider sharp area'],
     ]),
     foveationNote,
+    h('label.choice.ng-fps', {}, foveationDebug, h('span', {}, 'Show rendering detail (diagnostic)')),
+    h(
+      'p.setting-note',
+      {},
+      'Tints the world by the detail each area is actually rendered at: green is full detail, then yellow, orange and red. A fine checker appears only at full detail. A magenta ring marks where the headset reports your gaze; a white ring marks the image centre while it reports none. Turns off when the app restarts.',
+    ),
     h('label.choice.ng-fps', {}, sharpScreens, h('span', {}, 'Sharper laptop screens')),
     h('p.setting-note', {}, 'Keeps nearby terminal screens at full resolution independently of world detail. Turning this off saves GPU time and uses the normal world rendering.'),
-    h('h3', {}, 'Peripheral detail'),
-    choices('peripheralDensity', 'Peripheral detail', [
-      [0.25, 'Low'],
-      [0.4, 'Medium'],
-      [0.55, 'High'],
-    ]),
-    h('p.setting-note', {}, 'Higher detail outside your gaze uses more GPU time. This setting applies when foveation is on. Balanced, recommended resolution and Low detail are the defaults.'),
+    h('p.setting-note', {}, 'Balanced foveation and recommended resolution are the defaults.'),
     h('label.choice.ng-fps', {}, fps, h('span', {}, 'Always show the FPS counter')),
     h('p.setting-note', {}, 'The counter uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.'),
   );
@@ -218,8 +228,9 @@ export function openNativeGraphicsSettings(): void {
         ? 'Foveated rendering is unavailable on this headset. The world keeps full detail at the selected resolution.'
         : current.foveation === 'off'
           ? 'Off renders the whole eye at full detail at the selected world resolution. This uses more GPU time.'
-          : 'On profiles keep a sharp area around your gaze and reduce peripheral detail. Without eye tracking, that area stays centered. A wider sharp area uses more GPU time.';
-    setText(foveationNote, `${foveationText}${typeof m.foveationEnabled === 'boolean' ? ` Currently applied: ${m.foveationEnabled ? 'On' : 'Off'}.` : ''}`);
+          : 'The headset lowers detail away from where you look, following your eyes when eye tracking is allowed and centred otherwise, and the app smooths the lower-detail areas. A wider sharp area uses more GPU time.';
+    const applied = nativeFoveationStatus(metrics);
+    setText(foveationNote, applied ? `${foveationText} ${applied}` : foveationText);
     const runtime = m.runtime && typeof m.runtime === 'object' ? (m.runtime as Record<string, { value?: number }>) : {};
     const appGpu = runtime['/perfmetrics_android/app/gpu_frametime']?.value;
     const cpu = typeof m.cpuP99Ms === 'number' && Number.isFinite(m.cpuP99Ms) ? `CPU p99 ${m.cpuP99Ms.toFixed(1)} ms` : '';

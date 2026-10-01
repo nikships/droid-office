@@ -1,4 +1,5 @@
 #include "bridge_state.h"
+#include "foveation.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -20,6 +21,30 @@ XrVector3f vector(const Json &value) {
     if (!value.is_array() || value.size() != 3)
         throw std::runtime_error("Expected a position");
     return {finite(value[0]), finite(value[1]), finite(value[2])};
+}
+/** The graphics object of a control packet, version 1. Throws on an invalid value. */
+GraphicsControls parseGraphics(const Json &graphics) {
+    if (!graphics.is_object() || graphics.value("v", 0) != 1)
+        throw std::runtime_error("Unsupported graphics version");
+    GraphicsControls result;
+    result.sharpScreens = graphics.value("sharpScreens", true);
+    result.renderScale = std::clamp(finite(graphics.at("renderScale")), .75f, 2.f);
+    // Older pages also send peripheralDensity. Runtime foveation profiles have no density
+    // parameter, so it is accepted and ignored.
+    result.foveationDebug = graphics.value("foveationDebug", false);
+    const auto quality = graphics.value("foveation", std::string{"balanced"});
+    if (quality == "clarity")
+        result.foveation = FoveationQuality::Clarity;
+    else if (quality == "performance")
+        result.foveation = FoveationQuality::Performance;
+    else if (quality == "off")
+        result.foveation = FoveationQuality::Off;
+    else if (quality != "balanced")
+        throw std::runtime_error("Invalid foveation quality");
+    return result;
+}
+bool sameStored(const GraphicsControls &a, const GraphicsControls &b) {
+    return a.renderScale == b.renderScale && a.foveation == b.foveation;
 }
 std::string statusText(std::string value) {
     constexpr size_t limit = 4096;
@@ -54,6 +79,7 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
         if (parsed.contains("scene") && !parsed["scene"].is_null())
             scene = parsed["scene"].dump();
         ControlState next;
+        bool pageGraphics = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
             next = state;
@@ -64,25 +90,10 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
             if (c.value("v", 0) != 1)
                 throw std::runtime_error("Unsupported controls version");
             next.active = c.value("active", false);
-            next.graphics = GraphicsControls{};
+            // Graphics change only when a page sends them.
             if (c.contains("graphics")) {
-                const auto &graphics = c["graphics"];
-                if (!graphics.is_object() || graphics.value("v", 0) != 1)
-                    throw std::runtime_error("Unsupported graphics version");
-                next.graphics.sharpScreens = graphics.value("sharpScreens", true);
-                next.graphics.renderScale =
-                    std::clamp(finite(graphics.at("renderScale")), .75f, 2.f);
-                next.graphics.peripheralDensity =
-                    std::clamp(finite(graphics.at("peripheralDensity"), 1), .25f, 1.f);
-                const auto quality = graphics.value("foveation", std::string{"balanced"});
-                if (quality == "clarity")
-                    next.graphics.foveation = FoveationQuality::Clarity;
-                else if (quality == "performance")
-                    next.graphics.foveation = FoveationQuality::Performance;
-                else if (quality == "off")
-                    next.graphics.foveation = FoveationQuality::Off;
-                else if (quality != "balanced")
-                    throw std::runtime_error("Invalid foveation quality");
+                next.graphics = parseGraphics(c["graphics"]);
+                pageGraphics = true;
             }
             if (c.contains("presentationEpoch")) {
                 const auto &epoch = c["presentationEpoch"];
@@ -150,6 +161,11 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
         }
         {
             std::lock_guard<std::mutex> lock(mutex);
+            if (pageGraphics) {
+                if (!graphicsReceived || !sameStored(next.graphics, state.graphics))
+                    storedChanged = true;
+                graphicsReceived = true;
+            }
             next.revision = state.revision + 1;
             next.receivedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                   std::chrono::steady_clock::now().time_since_epoch())
@@ -171,7 +187,45 @@ ControlState BridgeState::read() {
 void BridgeState::reset() {
     std::lock_guard<std::mutex> lock(mutex);
     auto revision = state.revision + 1;
+    const auto graphics = state.graphics;
     state = ControlState{};
     state.revision = revision;
+    state.graphics = graphics;
+}
+void BridgeState::seedGraphics(const GraphicsControls &graphics) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (graphicsReceived)
+        return;
+    state.graphics = graphics;
+    state.graphics.foveationDebug = false;
+}
+GraphicsControls BridgeState::graphics() {
+    std::lock_guard<std::mutex> lock(mutex);
+    return state.graphics;
+}
+bool BridgeState::takeStoredGraphics(GraphicsControls &graphics) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!storedChanged)
+        return false;
+    storedChanged = false;
+    graphics = state.graphics;
+    return true;
+}
+std::string storedGraphics(const GraphicsControls &graphics) {
+    return Json{{"v", 1},
+                {"renderScale", graphics.renderScale},
+                {"foveation", foveationQualityName(graphics.foveation)}}
+        .dump();
+}
+bool restoreGraphics(const std::string &text, GraphicsControls &graphics) {
+    try {
+        const auto parsed = Json::parse(text);
+        const auto stored = parseGraphics(parsed);
+        graphics.renderScale = stored.renderScale;
+        graphics.foveation = stored.foveation;
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
 }
 } // namespace office
