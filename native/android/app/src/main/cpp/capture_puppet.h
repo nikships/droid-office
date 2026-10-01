@@ -52,10 +52,15 @@ struct PuppetState {
 };
 
 /**
- * Longest the page may go without refreshing the puppet. The page sends about every 33 ms; a
- * stalled or navigating page must not leave a synthetic controller behind.
+ * Longest the page may go without refreshing the puppet. The page sends about every 33 ms, but on
+ * the headset its control packets regularly arrive 250-500 ms apart while the page works (a frame's
+ * game logic, a scene drain, a garbage collection): at 250 ms the puppet vanished for 10-333 ms
+ * about six times a minute, and a held gun flickered out of captures. A page that navigates or
+ * reloads still drops it at once (BridgeState::reset), as do focus or eye-pose loss and a control
+ * packet without a puppet; this only covers a page that stopped answering. Never longer than
+ * kAttachmentStaleNs, or a puppet hand would outlive the gun it holds.
  */
-constexpr int64_t kPuppetStaleNs = 250'000'000;
+constexpr int64_t kPuppetStaleNs = 1'500'000'000;
 
 /** Everything besides the puppet itself that decides whether this display frame may use it. */
 struct PuppetFrame {

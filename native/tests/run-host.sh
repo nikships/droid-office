@@ -53,6 +53,7 @@ CPP_TESTS=(
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
   "controller_attachment|tests/controller_attachment_test.cpp|"
+  "layer_occlusion|tests/layer_occlusion_test.cpp|"
   # The same source as the debug APK (puppet compiled in) and as the release APK (ignored).
   "capture_puppet_debug|tests/capture_puppet_test.cpp|android/app/src/main/cpp/bridge_state.cpp|-DOFFICE_CAPTURE_PUPPET=1"
   "capture_puppet_release|tests/capture_puppet_test.cpp|android/app/src/main/cpp/bridge_state.cpp|"

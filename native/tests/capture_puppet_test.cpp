@@ -217,6 +217,17 @@ void mergeRules() {
         auto frame = idle();
         assert(applyPuppet(frame, PuppetState{}, usable()) == 0);
     }
+    // On the headset the page's control packets regularly arrive 250-500 ms apart (controlAgeMs
+    // 495 ms measured) while it works: the puppet stays through such a stall, up to the limit.
+    for (const int64_t age : {int64_t(260) * ms, int64_t(495) * ms, kPuppetStaleNs}) {
+        auto frame = idle();
+        auto at = usable();
+        at.receivedNs = at.nowNs - age;
+        assert(applyPuppet(frame, puppetFor(1, PuppetSpace::Head, ahead), at) == 2);
+        assert(frame.hands[1].puppet);
+    }
+    // A puppet hand never outlives the attachment it holds.
+    static_assert(kPuppetStaleNs <= kAttachmentStaleNs, "the puppet must not outlive its gun");
 
     // An idle slot becomes a tracked controller with a tracked grip, in head space.
     auto frame = idle();
@@ -282,6 +293,16 @@ void attachmentsFollowThePuppet() {
     assert(!poses.valid[0] && poses.valid[1] && poses.held[1]);
     assert(close(poses.grip[1][12], 4.15f) && close(poses.grip[1][13], 1.4f) &&
            close(poses.grip[1][14], -2.35f));
+    // Through a 495 ms page stall both the puppet hand and the gun it holds stay: a capture never
+    // shows the controller without its gun.
+    auto stalled = usable();
+    stalled.receivedNs = stalled.nowNs - 495 * ms;
+    frame = idle();
+    assert(applyPuppet(frame, puppetFor(1, PuppetSpace::Head, {{0, 0, 0, 1}, {.15f, -.2f, -.35f}}),
+                       stalled) == 2);
+    at.nowNs = stalled.nowNs;
+    at.receivedNs = stalled.receivedNs;
+    assert(attachmentPoses(frame, rig, at).valid[1]);
 }
 } // namespace
 

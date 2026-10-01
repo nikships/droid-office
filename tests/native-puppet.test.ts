@@ -177,6 +177,60 @@ test('update patches one hand and keeps the other; null removes a hand', () => {
   assert.deepEqual(api.state().driven, { left: false, right: true }, 'an empty batch changes nothing');
 });
 
+test('every staging call is recorded for capture labels, until the puppet is gone', async () => {
+  const { puppet, api, clock } = puppetWith();
+  assert.equal(api.state().label, null);
+  assert.deepEqual(api.state().staging, []);
+  api.set({ left: { grip: [-0.2, -0.3, -0.38] }, right: { grip: [0.2, -0.3, -0.38] } }, { label: 'scene.mjs puppet idle-hands' });
+  // A direct call without a label is named after the API it used.
+  api.update({ right: { b: true } });
+  const s = api.state();
+  assert.equal(s.label, '__office.puppet.update');
+  assert.deepEqual(
+    s.staging.map((x) => x.label),
+    ['scene.mjs puppet idle-hands', '__office.puppet.update'],
+  );
+  assert.ok(s.staging.every((x) => !Number.isNaN(Date.parse(x.at))));
+  api.update({ right: { b: false } });
+  assert.equal(api.state().staging.length, 2, 'the same caller again is one entry');
+  // A script is recorded when its steps apply, not when it is only queued.
+  const done = api.script([{ right: { squeeze: 1 } }, { after: 50, right: { squeeze: 0 } }], { label: 'scene.mjs puppet hold-gun-right' });
+  assert.equal(api.state().label, '__office.puppet.update');
+  puppet.packet();
+  clock.now += 60;
+  puppet.packet();
+  assert.equal((await done).ok, true);
+  assert.equal(api.state().label, 'scene.mjs puppet hold-gun-right');
+  // set replaces every hand, and the record starts over with it.
+  api.set({ left: { grip: [-0.15, -0.2, -0.35] } }, { label: 'scene.mjs puppet hold-gun-left' });
+  assert.deepEqual(
+    api.state().staging.map((x) => x.label),
+    ['scene.mjs puppet hold-gun-left'],
+  );
+  assert.throws(() => api.update({ left: { a: true } }, { label: ' ' }), /label/);
+  assert.throws(() => api.set({}, { label: 7 as unknown as string }), /label/);
+  api.update({ left: { a: true } }, { label: `  ${'x'.repeat(500)}  ` });
+  assert.equal(api.state().label, 'x'.repeat(120));
+  // Many calls keep the first and the latest ones.
+  for (let i = 0; i < 30; i++) api.update({ left: { a: i % 2 === 0 } }, { label: `call ${i}` });
+  const labels = api.state().staging.map((x) => x.label);
+  assert.equal(labels.length, 12);
+  assert.equal(labels[0], 'scene.mjs puppet hold-gun-left');
+  assert.equal(labels.at(-1), 'call 29');
+  api.clear();
+  assert.equal(api.state().label, null);
+  assert.deepEqual(api.state().staging, []);
+  // Removing the last hand also ends the record; the next staging starts a new one.
+  api.update({ right: { grip: [0.2, -0.3, -0.38] } }, { label: 'first' });
+  api.update({ right: null }, { label: 'second' });
+  assert.deepEqual(api.state().staging, []);
+  api.update({ right: { grip: [0.2, -0.3, -0.38] } }, { label: 'third' });
+  assert.deepEqual(
+    api.state().staging.map((x) => x.label),
+    ['third'],
+  );
+});
+
 test('scripts send every step at least once, in order, on the page clock', async () => {
   const { puppet, api, clock } = puppetWith();
   const done = api.script([

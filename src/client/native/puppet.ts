@@ -113,11 +113,32 @@ export interface PuppetScriptResult {
   applied: { step: number; label?: string; atMs: number }[];
 }
 
+/** Who staged the puppet: a capture is labelled with every staging since the puppet appeared. */
+export interface PuppetStaging {
+  /** E.g. `scene.mjs puppet hold-gun-right`; `__office.puppet.update` when the caller gave none. */
+  label: string;
+  /** ISO time of the call. */
+  at: string;
+}
+
+/** Optional on set, update and script: what is staging the puppet, for capture labels. */
+export interface PuppetCallOptions {
+  label?: string;
+}
+
+/** The most staging calls a report keeps (the first one and the latest ones). */
+const MAX_STAGINGS = 12;
+const MAX_LABEL = 120;
+
 export interface PuppetReport {
   /** The native host accepts a puppet (a debug build). */
   available: boolean;
   /** Some hand is staged. Every capture taken now shows synthetic input. */
   active: boolean;
+  /** The latest staging call's label, or null while nothing is staged. */
+  label: string | null;
+  /** Every staging call since the puppet appeared, oldest first (at most MAX_STAGINGS). */
+  staging: PuppetStaging[];
   hands: { left: PuppetHand | null; right: PuppetHand | null };
   /** Which slots native reported as driven by the puppet in its latest sample (a tracked controller wins). */
   driven: { left: boolean; right: boolean };
@@ -137,13 +158,13 @@ export interface PuppetEnv {
 export interface PuppetApi {
   readonly available: boolean;
   /** Replaces the whole puppet: hands not given are removed. Stops a running script. */
-  set(hands: PuppetHands): PuppetReport;
+  set(hands: PuppetHands, options?: PuppetCallOptions): PuppetReport;
   /** Changes only what is given, e.g. `update({ right: { trigger: 1 } })`. A running script keeps going. */
-  update(hands: PuppetHands): PuppetReport;
+  update(hands: PuppetHands, options?: PuppetCallOptions): PuppetReport;
   /** Removes both hands and stops a running script: the controllers go back to the runtime's. */
   clear(): PuppetReport;
   /** Plays timed steps; resolves when the last one has been sent (and its `over` move finished). */
-  script(steps: readonly PuppetStep[], options?: { timeoutMs?: number }): Promise<PuppetScriptResult>;
+  script(steps: readonly PuppetStep[], options?: PuppetCallOptions & { timeoutMs?: number }): Promise<PuppetScriptResult>;
   state(): PuppetReport;
 }
 
@@ -159,6 +180,14 @@ const AIM_FROM_GRIP = GRIP_FROM_AIM.clone().invert();
 
 function fail(message: string): never {
   throw new Error(`capture puppet: ${message}`);
+}
+
+/** The caller's label, or `fallback` (the API call) when it gave none. */
+function stagingLabel(options: PuppetCallOptions | undefined, fallback: string): string {
+  const label = options?.label;
+  if (label === undefined) return fallback;
+  if (typeof label !== 'string' || !label.trim()) fail('label must be a non-empty string');
+  return label.trim().slice(0, MAX_LABEL);
 }
 
 function num(v: unknown, what: string, limit = MAX_COORD): number {
@@ -323,6 +352,8 @@ interface Running {
   applied: PuppetScriptResult['applied'];
   resolve: (result: PuppetScriptResult) => void;
   timer: ReturnType<typeof setTimeout> | null;
+  /** The script's staging label (PuppetCallOptions). */
+  label: string;
 }
 
 const HANDS = ['left', 'right'] as const;
@@ -335,6 +366,7 @@ export class NativePuppet {
   private driven: [boolean, boolean] = [false, false];
   private supported = false;
   private since: string | null = null;
+  private staging: PuppetStaging[] = [];
   readonly api: PuppetApi;
 
   constructor(
@@ -346,8 +378,8 @@ export class NativePuppet {
       get available() {
         return available();
       },
-      set: (hands) => this.set(hands),
-      update: (hands) => this.update(hands),
+      set: (hands, options) => this.set(hands, options),
+      update: (hands, options) => this.update(hands, options),
       clear: () => this.clear(),
       script: (steps, options) => this.script(steps, options),
       state: () => this.state(),
@@ -377,8 +409,9 @@ export class NativePuppet {
     this.driven = [hands[0]?.puppet === true, hands[1]?.puppet === true];
   }
 
-  set(hands: PuppetHands): PuppetReport {
+  set(hands: PuppetHands, options: PuppetCallOptions = {}): PuppetReport {
     this.require();
+    const label = stagingLabel(options, '__office.puppet.set');
     const next: [PuppetHand | null, PuppetHand | null] = [null, null];
     HANDS.forEach((name, i) => {
       const spec = hands?.[name];
@@ -386,13 +419,18 @@ export class NativePuppet {
     });
     this.stopScript('cancelled');
     this.moves = [null, null];
+    // set replaces every hand, so the staging record starts over with it.
+    this.staging = [];
     this.commit(next);
+    this.record(label);
     return this.state();
   }
 
-  update(hands: PuppetHands): PuppetReport {
+  update(hands: PuppetHands, options: PuppetCallOptions = {}): PuppetReport {
     this.require();
+    const label = stagingLabel(options, '__office.puppet.update');
     this.patch(hands, 0, this.clock());
+    this.record(label);
     return this.state();
   }
 
@@ -401,8 +439,9 @@ export class NativePuppet {
     return this.state();
   }
 
-  script(steps: readonly PuppetStep[], options: { timeoutMs?: number } = {}): Promise<PuppetScriptResult> {
+  script(steps: readonly PuppetStep[], options: PuppetCallOptions & { timeoutMs?: number } = {}): Promise<PuppetScriptResult> {
     this.require();
+    const label = stagingLabel(options, '__office.puppet.script');
     if (!Array.isArray(steps) || steps.length === 0) fail('a script needs at least one step');
     const times: number[] = [];
     let t = 0;
@@ -426,7 +465,7 @@ export class NativePuppet {
     this.stopScript('cancelled');
     const start = this.clock();
     return new Promise((resolve) => {
-      const run: Running = { steps, times, next: 0, start, applied: [], resolve, timer: null };
+      const run: Running = { steps, times, next: 0, start, applied: [], resolve, timer: null, label };
       const timeout = options.timeoutMs ?? longest + 5000;
       run.timer = setTimeout(() => this.run === run && this.finish({ ok: false, reason: 'timeout' }), timeout);
       (run.timer as { unref?: () => void }).unref?.();
@@ -439,6 +478,8 @@ export class NativePuppet {
     return {
       available: this.supported,
       active: this.active,
+      label: this.active ? (this.staging[this.staging.length - 1]?.label ?? null) : null,
+      staging: this.active ? this.staging.map((s) => ({ ...s })) : [],
       hands: { left: this.hands[0], right: this.hands[1] },
       driven: { left: this.driven[0], right: this.driven[1] },
       script: run ? { step: run.next, of: run.steps.length, label: run.steps[run.next]?.label } : null,
@@ -467,7 +508,23 @@ export class NativePuppet {
     this.hands = next;
     if (!this.active) this.moves = [null, null];
     if (this.active && !was) this.since = new Date().toISOString();
-    if (!this.active) this.since = null;
+    if (!this.active) {
+      this.since = null;
+      this.staging = [];
+    }
+  }
+
+  /** Notes a staging call while the puppet is staged; keeps the first and the latest calls. */
+  private record(label: string): void {
+    if (!this.active) return;
+    const last = this.staging[this.staging.length - 1];
+    const at = new Date().toISOString();
+    if (last && last.label === label) {
+      last.at = at;
+      return;
+    }
+    this.staging.push({ label, at });
+    if (this.staging.length > MAX_STAGINGS) this.staging.splice(1, 1);
   }
 
   /** Applies one step's hands; `over` moves the poses from where they are shown now. */
@@ -536,6 +593,7 @@ export class NativePuppet {
           return;
         }
         this.patch(step, step.over ?? 0, now);
+        this.record(run.label);
         run.applied.push({ step: i, ...(step.label ? { label: step.label } : {}), atMs: Math.round(elapsed) });
         run.next++;
       }

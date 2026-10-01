@@ -114,8 +114,11 @@ void invalidFramesHide() {
     f = usable();
     f.controlsActive = false;
     assert(invalid(f, input));
-    // A page that stopped sending may already have dropped the gun: no stale attachment.
+    // A page stall of the length measured on the headset (controlAgeMs 495 ms) keeps the gun in
+    // the hand; a page that stopped answering loses it.
     f = usable();
+    f.receivedNs = f.nowNs - 495 * ms;
+    assert(!invalid(f, input));
     f.receivedNs = f.nowNs - kAttachmentStaleNs - 1;
     assert(invalid(f, input));
     f.receivedNs = f.nowNs - kAttachmentStaleNs;

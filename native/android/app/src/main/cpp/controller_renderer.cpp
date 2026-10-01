@@ -81,7 +81,7 @@ precision highp float;
 in vec3 world; in vec3 n; in vec2 texcoord;
 uniform sampler2D baseMap, normalMap, mrMap, emissiveMap;
 uniform vec4 color; uniform vec3 emissiveFactor, head;
-uniform float metal, rough; uniform ivec4 maps;
+uniform float metal, rough; uniform ivec4 maps; uniform float solid;
 out vec4 pixel;
 vec3 encode(vec3 v){return mix(v*12.92,1.055*pow(max(v,vec3(0)),vec3(1.0/2.4))-.055,step(vec3(.0031308),v));}
 void main(){
@@ -99,7 +99,10 @@ float diffuse=max(dot(N,L),0.0),spec=pow(max(dot(N,H),0.0),mix(100.0,4.0,clamp(r
 vec3 rgb=c.rgb*(.5+.5*diffuse)*(1.0-.35*m)+mix(vec3(.04),c.rgb,m)*spec*.45;
 vec3 emission=emissiveFactor;if(maps.w>0)emission*=texture(emissiveMap,texcoord).rgb;
 rgb+=emission;
-)") + (srgbFramebuffer ? "pixel=vec4(rgb,c.a);}" : "pixel=vec4(encode(rgb),c.a);}"));
+)") + (srgbFramebuffer ? "pixel=vec4(rgb,max(c.a,solid));}"
+                       : "pixel=vec4(encode(rgb),max(c.a,solid));}"));
+    // `solid`: opaque parts are opaque in the world layer's alpha too. Over the workspace panel's
+    // hole (panel_cutout.h) the compositor shows the panel wherever alpha is below 1.
     program = glCreateProgram();
     glAttachShader(program, vertex);
     glAttachShader(program, fragment);
@@ -118,6 +121,7 @@ rgb+=emission;
     metalLocation = glGetUniformLocation(program, "metal");
     roughLocation = glGetUniformLocation(program, "rough");
     mapsLocation = glGetUniformLocation(program, "maps");
+    solidLocation = glGetUniformLocation(program, "solid");
     glUseProgram(program);
     const char *samplers[]{"baseMap", "normalMap", "mrMap", "emissiveMap"};
     for (int i = 0; i < 4; i++)
@@ -200,6 +204,7 @@ rgb+=emission;
 }
 void ControllerRenderer::update(const InputFrame &frame) {
     head = frame.head.position;
+    hidden = 0;
     for (int h = 0; h < 2; h++) {
         auto &model = models[h];
         const auto &hand = frame.hands[h];
@@ -220,14 +225,18 @@ void ControllerRenderer::render(const Matrix &left, const Matrix &right) {
     glUniform3f(headLocation, head.x, head.y, head.z);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    for (const auto &model : models) {
-        if (!model.active)
+    for (int h = 0; h < 2; h++) {
+        const auto &model = models[size_t(h)];
+        if (!model.active || (hidden & (1u << h)))
             continue;
         for (int transparent = 0; transparent < 2; transparent++) {
             glDepthMask(transparent ? GL_FALSE : GL_TRUE);
+            glUniform1f(solidLocation, transparent ? 0.f : 1.f);
             if (transparent) {
                 glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                // Alpha as coverage: premultiplied over the panel's hole, still 1 over the world.
+                glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+                                    GL_ONE_MINUS_SRC_ALPHA);
             } else
                 glDisable(GL_BLEND);
             for (size_t i = 0; i < model.data.draws.size(); i++) {

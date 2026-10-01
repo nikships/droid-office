@@ -158,11 +158,12 @@ void InputRenderer::update(const InputFrame &frame, const ControlState &state, X
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(),
                  GL_STREAM_DRAW);
 }
-void InputRenderer::render(const Matrix &left, const Matrix &right, float fade) {
+void InputRenderer::render(const Matrix &left, const Matrix &right) {
     controllers.render(left, right);
     glBindVertexArray(vao);
     glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     glDisable(GL_BLEND);
     glUseProgram(program);
@@ -170,15 +171,23 @@ void InputRenderer::render(const Matrix &left, const Matrix &right, float fade) 
     glUniformMatrix4fv(matrixUniform, stereo ? 2 : 1, GL_FALSE, matrices[0].data());
     if (!vertices.empty())
         glDrawArrays(GL_TRIANGLES, 0, vertices.size());
-    if (fade > .001f) {
-        glDisable(GL_DEPTH_TEST);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glUseProgram(fadeProgram);
-        glUniform1f(fadeUniform, std::clamp(fade, 0.f, 1.f));
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
     glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+}
+void InputRenderer::renderFade(float fade) {
+    if (fade <= .001f)
+        return;
+    glBindVertexArray(vao);
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+    glUseProgram(fadeProgram);
+    glUniform1f(fadeUniform, std::clamp(fade, 0.f, 1.f));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 }
