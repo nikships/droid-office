@@ -11,6 +11,9 @@
 #include "refresh_policy.h"
 #include "rig_presentation.h"
 #include "scene_renderer.h"
+#ifdef OFFICE_VULKAN_SPIKE
+#include "vk_spike.h"
+#endif
 #include "xr_input.h"
 #include "xr_math.h"
 #include "xr_performance.h"
@@ -62,6 +65,8 @@ std::string latestMetrics = "{}";
 std::atomic<int64_t> lastControlReceiptNs{0};
 std::atomic<uint64_t> controlHeartbeats{0};
 std::atomic<float> observedRefreshRate{0};
+// Debug builds only: set by nativeSelectRenderer right before nativeStart and consumed by it.
+std::string rendererOptions;
 
 void resetControlHeartbeat() {
     lastControlReceiptNs = 0;
@@ -1377,7 +1382,10 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeStart(JNIEnv *env, jobject activity
         std::lock_guard<std::mutex> lock(metricsMutex);
         latestMetrics = "{}";
     }
-    renderThread = std::thread([global] {
+    std::string renderer;
+    renderer.swap(rendererOptions);
+    renderThread = std::thread([global, renderer] {
+        (void)renderer; // Empty, and unused, unless the build has the Vulkan spike.
         JNIEnv *threadEnv = nullptr;
         vm->AttachCurrentThread(&threadEnv, nullptr);
         jclass process = threadEnv->FindClass("android/os/Process");
@@ -1390,9 +1398,29 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeStart(JNIEnv *env, jobject activity
         }
         std::string ended = "The headset session ended";
         try {
-            Office office(threadEnv, global);
-            office.init();
-            office.loop();
+#ifdef OFFICE_VULKAN_SPIKE
+            if (!renderer.empty()) {
+                office::spike::Host host;
+                host.vm = vm;
+                host.env = threadEnv;
+                host.activity = global;
+                host.options = renderer;
+                host.stopping = &stopping;
+                host.focused = &focused;
+                host.statusProducerVisible = &statusProducerVisible;
+                host.observedRefreshRate = &observedRefreshRate;
+                host.publishMetrics = [](const std::string &json) {
+                    std::lock_guard<std::mutex> lock(metricsMutex);
+                    latestMetrics = json;
+                };
+                office::spike::run(host);
+            } else
+#endif
+            {
+                Office office(threadEnv, global);
+                office.init();
+                office.loop();
+            }
         } catch (const std::exception &error) {
             LOG("ERROR %s", error.what());
             ended = error.what();
@@ -1409,6 +1437,23 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeStart(JNIEnv *env, jobject activity
         threadEnv->DeleteGlobalRef(global);
         vm->DetachCurrentThread();
     });
+}
+
+// OfficeActivity calls this only in debug builds with `--es xr_renderer vulkan-spike`.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeSelectRenderer(JNIEnv *env, jobject, jstring options) {
+    std::string value;
+    if (const char *text = options ? env->GetStringUTFChars(options, nullptr) : nullptr) {
+        value = text;
+        env->ReleaseStringUTFChars(options, text);
+    }
+#ifdef OFFICE_VULKAN_SPIKE
+    LOG("XR_RENDERER %s", value.c_str());
+    if (!renderThread.joinable())
+        rendererOptions = value;
+#else
+    LOG("XR_RENDERER ignored (this build has no Vulkan spike): %s", value.c_str());
+#endif
 }
 
 extern "C" JNIEXPORT void JNICALL Java_dev_droidoffice_xr_OfficeActivity_nativeStop(JNIEnv *,

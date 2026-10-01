@@ -27,3 +27,33 @@ target_include_directories(office_xr PRIVATE "${OFFICE_DEPS}")
 target_compile_options(office_xr PRIVATE -O2)
 target_compile_definitions(office_xr PRIVATE XR_USE_PLATFORM_ANDROID XR_USE_GRAPHICS_API_OPENGL_ES)
 target_link_libraries(office_xr PRIVATE OpenXR::openxr_loader android log EGL GLESv3)
+
+# Debug builds only (app/build.gradle): the Vulkan eye-tracked foveation spike, selected at launch
+# with `--es xr_renderer vulkan-spike`. Release builds keep the GLES renderer alone.
+option(OFFICE_VULKAN_SPIKE "Build the debug-only Vulkan foveation spike" OFF)
+if(OFFICE_VULKAN_SPIKE)
+    # Ahead-of-time SPIR-V with the NDK's own glslc ("Vulkan shader compilers on Android": NDK
+    # r12+ ships glslc in <ndk>/shader-tools/). -mfmt=c emits a C initializer list.
+    find_program(OFFICE_GLSLC glslc PATHS "${ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}"
+                 NO_DEFAULT_PATH REQUIRED)
+    set(OFFICE_SPIKE_SHADERS "${CMAKE_CURRENT_BINARY_DIR}/vk-spike-shaders")
+    file(MAKE_DIRECTORY "${OFFICE_SPIKE_SHADERS}")
+    set(spike_spirv "")
+    foreach(stage room.vert room.frag overlay.vert overlay.frag)
+        set(source "${CMAKE_CURRENT_SOURCE_DIR}/shaders/vk/${stage}")
+        set(output "${OFFICE_SPIKE_SHADERS}/${stage}.inc")
+        add_custom_command(OUTPUT "${output}"
+            COMMAND "${OFFICE_GLSLC}" --target-env=vulkan1.1 -O -Werror -mfmt=c -o "${output}" "${source}"
+            DEPENDS "${source}" VERBATIM)
+        list(APPEND spike_spirv "${output}")
+    endforeach()
+    add_custom_target(office_vk_spike_shaders DEPENDS ${spike_spirv})
+    add_dependencies(office_xr office_vk_spike_shaders)
+    set(spike_sources vk_spike.cpp vk_spike_gpu.cpp)
+    target_sources(office_xr PRIVATE ${spike_sources})
+    # Only these files see the Vulkan half of openxr_platform.h; the GLES files compile as before.
+    set_source_files_properties(${spike_sources} PROPERTIES COMPILE_DEFINITIONS XR_USE_GRAPHICS_API_VULKAN)
+    target_include_directories(office_xr PRIVATE "${OFFICE_SPIKE_SHADERS}")
+    target_compile_definitions(office_xr PRIVATE OFFICE_VULKAN_SPIKE)
+    target_link_libraries(office_xr PRIVATE vulkan)
+endif()

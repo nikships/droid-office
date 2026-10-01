@@ -52,6 +52,7 @@ CPP_TESTS=(
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
   "controller_attachment|tests/controller_attachment_test.cpp|"
+  "vk_spike_logic|tests/vk_spike_logic_test.cpp|"
 )
 # Java rules tests: "test class|production class", both in dev.droidoffice.xr. The test source is
 # looked up in JAVA_TEST_DIRS and must be in exactly one of them; the production source is
@@ -69,6 +70,7 @@ JAVA_TEST_DIRS=(hosttest app/src/test/java)
 SUITES=(
   native/android/app/src/test/cpp/run.sh
   native/android/app/src/test/cpp/shaders/check.sh
+  native/android/app/src/test/cpp/vk/check.sh
 )
 
 say() { printf '%s\n' "$*"; }

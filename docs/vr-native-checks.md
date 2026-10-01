@@ -52,8 +52,12 @@ covers, using `CXX` (default `c++`), and runs it:
   part of the controller-only app build.
 - `native/tests/controller_model_test.cpp` with `controller_model.cpp`: both bundled Samsung
   meshes, malformed asset rejection and animated button transforms.
+- `native/tests/vk_spike_logic_test.cpp` covers the pure logic of the debug-only Vulkan
+  foveation spike (`vk_spike_logic.h`): option parsing, foveation centre to density map offset
+  rounding and flips, the synthetic sweep, the log rate limit, the per-window summary, the
+  eye-tracking gates and the test room mesh.
 
-Two registered suites are required on every host run:
+Three registered suites are required on every host run:
 
 - `native/android/app/src/test/cpp/run.sh` generates a fixture from the original office and exporter,
   checks packet/model rules and replay, and renders it through the production GLES renderer.
@@ -69,6 +73,11 @@ Two registered suites are required on every host run:
   stage with glslang, and compares seven material cases against the original three.js code.
   Its strict block parser and contract checks self-test malformed declarations before reading
   the generated programs; malformed text must fail rather than be skipped.
+
+- `native/android/app/src/test/cpp/vk/check.sh` compiles the Vulkan spike's shaders
+  (`app/src/main/cpp/shaders/vk`) to Vulkan 1.1 SPIR-V with `glslangValidator`, validates them
+  with `spirv-val` (from the pinned NDK's `shader-tools`, or `PATH`) and checks that every stage
+  declares the same `Frame` block. A missing validator fails the suite.
 
 The shader suite accepts `CXX`, the suite output directory and sanitizer flags just like the
 other suites. It also cross-compiles the generator when the pinned NDK is present at

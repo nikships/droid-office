@@ -20,6 +20,9 @@ android {
         cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' }
     }
     buildTypes {
+        // The Vulkan eye-tracked foveation spike (native/android/app/src/main/cpp/vk_spike*) is
+        // compiled into debug builds only; release libraries do not contain it.
+        debug { externalNativeBuild { cmake { arguments '-DOFFICE_VULKAN_SPIKE=ON' } } }
         release { minifyEnabled false }
     }
     compileOptions {

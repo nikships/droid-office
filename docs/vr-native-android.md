@@ -288,6 +288,79 @@ interface and no certificate-error bypass. User-selected external issue, PR and 
 links open through Android's browser. Microphone requests require the chosen office origin,
 recent user input and Android permission.
 
+### Vulkan eye-tracked foveation spike (debug builds)
+
+This Android XR runtime gives eye-tracked foveation only to Vulkan sessions: its OpenGL ES
+compositor fails `xrGetFoveationEyeTrackedStateMETA` on every frame and always uses its static
+model. Debug builds therefore contain a separate Vulkan test session (`vk_spike*.cpp`,
+`shaders/vk`). It is milestone M1 of the Vulkan port. It renders a world-locked test room, never
+the office, and connects to no office. Release builds do not compile it (`OFFICE_VULKAN_SPIKE`
+is set only for the debug build type) and ignore the switch.
+
+It follows Godot's working Vulkan path:
+
+- `XR_KHR_vulkan_enable2` creates the instance, device and session.
+- The world swapchain carries `XrSwapchainCreateInfoFoveationFB{FRAGMENT_DENSITY_MAP}` and
+  `XrVulkanSwapchainCreateInfoMETA{FRAGMENT_DENSITY_MAP_OFFSET}`.
+- Each runtime density image is attached to the multiview render pass.
+- Each frame runs acquire, wait, `xrUpdateSwapchainFB` and `xrGetFoveationEyeTrackedStateMETA`,
+  records the pass, and ends it with per-eye offsets in `vkCmdEndRenderPass2`.
+
+A density overlay colours each fragment by its `gl_FragSizeEXT` area: green 1 px, yellow 2, orange
+4, red 8, magenta larger. A white cross marks where the applied offset puts the map's centre. The
+Android Surface workspace panel and status card are still created in the Vulkan session; the
+panel shows the controls and the status card shows the live eye state.
+
+Start it (the app must be stopped first, because the activity is `singleTask`):
+
+```bash
+adb shell am force-stop dev.droidoffice.xr
+adb shell am start -n dev.droidoffice.xr/.OfficeActivity --es xr_renderer vulkan-spike \
+  --es vk_msaa 4 --es vk_offsets eye --es vk_level high
+```
+
+| Extra | Values (default first) |
+| --- | --- |
+| `vk_msaa` | `4` (resolved in the subpass), `1`, `4ms` (`VK_EXT_multisampled_render_to_single_sampled`, when the device has it) |
+| `vk_offsets` | `eye`, `none` (count 0), `sweep` (synthetic offsets, 3 s per point) |
+| `vk_level` | `high`, `medium`, `low`, `none` |
+| `vk_overlay` | `1`, `0` |
+| `vk_fixed` | `0`, `1` (profile without the META eye-tracked struct) |
+| `vk_foveation` | `on`, `off` (no foveation struct on the swapchain) |
+| `vk_flip` | `none`, `x`, `y`, `xy` (axis of `foveationCenter`) |
+| `vk_profile` | `live` (one profile re-applied each frame), `per-frame` (Godot's create, update, destroy) |
+| `vk_subsampled_probe` | `0`, `1` (create a subsampled swapchain once and log the result) |
+
+Controllers change modes live: right trigger cycles the level, right A the offsets mode, right B
+the overlay, left trigger switches eye-tracked and fixed, left X the status card, left Y the flip
+and left Menu the panel.
+
+The log lines, all with tag `OfficeXR`:
+
+- `VK_CAPS` gives the extensions, the FDM, offset and multiview features, the texel size, the
+  offset granularity, lazily allocated memory and the instance layers.
+- `FOVEATION_VK_SWAPCHAIN`, `FOVEATION_VK_IMAGES` and `FOVEATION_VK_GATES` give the create
+  results, the density image size and what blocks the eye-tracked path.
+- `FOVEATION_VK_PROFILE` gives each profile's create and update results.
+- `FOVEATION_VK` runs per frame, rate-limited: every change, the first frames after a mode change,
+  and one per second. It gives the update and state results, flags, `valid`, both centres and the
+  applied offsets.
+- `FRAME_METRICS` has `renderer`, `msaa` and a `foveation` window summary (queries, successes,
+  valid frames, last result, centres and their spread, offsets). `RUNTIME_METRICS` and
+  `SCENE_METRICS` keep the shape `harness/metrics.sh` reads.
+
+Eye-tracked foveation is proven only when all of these appear together:
+
+- the runtime logs `[FoveationManager] Using eye tracked model with level N` (not `static model`);
+- `FOVEATION_VK ... state=0 ... valid=1` appears on nearly every frame;
+- the centres change when the wearer looks around;
+- the overlay's green patch follows the eyes.
+
+The runtime sets `valid` whenever eye-tracked foveation is enabled, so `valid=1` on an unworn
+headset proves nothing about tracking. The offset sign, the eye index and whether the runtime
+or `VK_LAYER_ANDROID_foveation` already moves the map are measured with `sweep`, `none` and a
+wearer. They are not assumed.
+
 ## Build and install
 
 The Android project uses Gradle 8.13, JDK 17 or 21, Android SDK 35, NDK 27.2.12479018 and

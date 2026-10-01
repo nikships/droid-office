@@ -36,6 +36,10 @@ of creating a second office state or a separate worker/board implementation.
   at the tracked gaze; invalid gaze requires a central full-resolution fallback. Follow the
   [QCOM foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt)
   when changing focal points or depth attachments.
+- The Vulkan eye-tracked foveation spike (`vk_spike*`, `shaders/vk`, `OFFICE_VULKAN_SPIKE`) is
+  for debug builds only and leaves the GLES path unchanged. Base each Vulkan or OpenXR call on
+  Khronos, Android XR or working Android XR code (Godot's Vulkan FDM path) and cite the source
+  beside it. See the spike section of [the native client design](../docs/vr-native-android.md).
 - World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
   and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
   the maximum or force default frames through maximum-size targets. Replace targets on the
