@@ -1179,6 +1179,41 @@ void attachmentChecks(std::vector<std::string> &failed) {
     Image reset = frame(&leftValid);
     expect(reset.red == 0 && reset.green == held.green && r->stats().attachedItems == 0,
            "a reset clears the attachment");
+
+    // A grip-held gun (left of the grip) and an ordinary card (right of it) on the same hand: on
+    // the display frame the squeeze is released the gun is gone and the card stays, before any
+    // packet from the page.
+    json gun = object(20, 1, 0, {1, 0, 0, 0, 1, 0, 0, 0, 1, -.25f, 0, 0});
+    gun["gripHeld"] = true;
+    send(json::array({gun, object(21, 1, 0, {1, 0, 0, 0, 1, 0, 0, 0, 1, .25f, 0, 0})}), true);
+    SceneControllerPoses squeezed = center;
+    squeezed.held[0] = true;
+    settle(&squeezed);
+    auto halves = [&](const Image &im) {
+        size_t left = 0, right = 0;
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+                if (im.redAt(x, y))
+                    (x < size / 2 ? left : right)++;
+        return std::pair<size_t, size_t>(left, right);
+    };
+    const auto both = halves(frame(&squeezed));
+    expect(both.first > 50 && same(both.first, both.second),
+           "a squeezed grip draws the gun and the card");
+    const auto released = halves(frame(&center));
+    expect(released.first == 0 && same(released.second, both.second),
+           "the gun hides on the release frame; the card stays on its grip");
+    expect(r->stats().attachedPlaced == 1, "only the card is placed after the release");
+    SceneControllerPoses otherHand = center;
+    otherHand.held[1] = true;
+    expect(halves(frame(&otherHand)).first == 0, "the other hand's squeeze does not hold it");
+    SceneControllerPoses heldLost = squeezed;
+    heldLost.valid[0] = false;
+    const auto lostBoth = halves(frame(&heldLost));
+    expect(lostBoth.first == 0 && lostBoth.second == 0,
+           "a squeeze without a tracked grip draws neither");
+    const auto again = halves(frame(&squeezed));
+    expect(same(again.first, both.first), "squeezing again draws the gun again");
     expect(r->lastError().empty(), "renderer error: " + r->lastError());
     expect(glGetError() == GL_NO_ERROR, "no GL error");
     r.reset();

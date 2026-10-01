@@ -557,6 +557,39 @@ void testAttachments() {
                 t += 0.01);
     check(r.state && r.state->attachedItems == 0 && !itemOf(*r.state, 10),
           "a reset leaves no attachment behind");
+
+    // gripHeld: an attachment that needs the squeeze. It must be a boolean on an attached object.
+    {
+        SceneModel v(options);
+        json gun = attachedObject(40, 1, rel), card = attachedObject(41, 1, rel);
+        gun["gripHeld"] = true;
+        card["gripHeld"] = false;
+        auto k = v.apply(attachmentPacket(1, true, json::array({gun, card})), 0);
+        const DrawItem *g = k.state ? itemOf(*k.state, 40) : nullptr;
+        const DrawItem *c = k.state ? itemOf(*k.state, 41) : nullptr;
+        check(g && g->gripHeld && g->attachment == 1, "gripHeld reaches the attached item");
+        check(c && !c->gripHeld && c->attachment == 1, "an ordinary attachment needs no squeeze");
+        // Re-sending the object without the flag clears it.
+        k = v.apply(attachmentPacket(2, false, json::array({attachedObject(40, 1, rel)})), 0);
+        g = k.state ? itemOf(*k.state, 40) : nullptr;
+        check(g && !g->gripHeld, "a re-sent object without gripHeld no longer needs the squeeze");
+    }
+    for (const json &flag : {json(1), json("true"), json::array()}) {
+        SceneModel v(options);
+        v.apply(attachmentPacket(1, true, json::array()), 0);
+        json o = attachedObject(42, 0, rel);
+        o["gripHeld"] = flag;
+        check(throwsPacketError([&] { v.apply(attachmentPacket(2, false, json::array({o})), 0); }),
+              "a gripHeld of " + flag.dump() + " is rejected");
+    }
+    {
+        SceneModel v(options);
+        v.apply(attachmentPacket(1, true, json::array()), 0);
+        json o = attachedObject(43, nullptr, world);
+        o["gripHeld"] = true;
+        check(throwsPacketError([&] { v.apply(attachmentPacket(2, false, json::array({o})), 0); }),
+              "gripHeld without a hand is rejected");
+    }
 }
 
 } // namespace

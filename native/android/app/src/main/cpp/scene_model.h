@@ -128,6 +128,9 @@ struct DrawItem {
      * grip and hides the item without one. Never batched, casts no shadow, not in the screen layer.
      */
     int8_t attachment = -1;
+    // With an attachment: drawn only while that controller's squeeze is held
+    // (SceneControllerPoses::held), not merely while its grip is tracked.
+    bool gripHeld = false;
     ProgramKey key;      // the color pass
     ProgramKey depthKey; // the shadow pass (castShadow only)
 };

@@ -238,6 +238,8 @@ interface ObjState {
   m: Float32Array;
   /** Controller the object is attached to (m is then grip-relative), or -1 for a world object. */
   hand: -1 | 0 | 1;
+  /** Attached and drawn only while the controller's squeeze is held (tag `requiresGrip`). */
+  gripHeld: boolean;
   visible: boolean;
   sent: boolean;
   sentVisible: boolean;
@@ -462,19 +464,24 @@ function materialType(m: THREE.Material): MaterialType | null {
 /** A subtree drawn on a controller grip: its matrices are sent relative to the grip's world matrix. */
 interface Attachment {
   hand: 0 | 1;
+  /** Hidden natively from the display frame the squeeze is released (ObjectItem gripHeld). */
+  requiresGrip: boolean;
   /** The tagged object; its parent is the grip. */
   root: THREE.Object3D;
 }
 
 /**
- * The `userData.nativeControllerAttachment` tag's hand: `{ hand: 0 | 1 }` on an object whose parent
- * is that controller's grip group. Anything else is not an attachment.
+ * The `userData.nativeControllerAttachment` tag: `{ hand: 0 | 1, requiresGrip?: boolean }` on an
+ * object whose parent is that controller's grip group. `undefined` without a tag, `null` for a
+ * malformed one (ignored).
  */
-function attachmentHand(o: THREE.Object3D): 0 | 1 | null | undefined {
+function attachmentTag(o: THREE.Object3D): { hand: 0 | 1; requiresGrip: boolean } | null | undefined {
   const tag = (o.userData as Record<string, unknown> | undefined)?.nativeControllerAttachment;
   if (tag === undefined || tag === null) return undefined;
-  const hand = (tag as { hand?: unknown }).hand;
-  return hand === 0 || hand === 1 ? hand : null;
+  const { hand, requiresGrip } = tag as { hand?: unknown; requiresGrip?: unknown };
+  if (hand !== 0 && hand !== 1) return null;
+  if (requiresGrip !== undefined && typeof requiresGrip !== 'boolean') return null;
+  return { hand, requiresGrip: requiresGrip === true };
 }
 
 /** world/laptop.ts's tag for its terminal screen material; other canvas textures are not tagged. */
@@ -800,17 +807,18 @@ export class NativeScene {
     const visit = (o: THREE.Object3D, parentVisible: boolean, inherited: Attachment | null) => {
       const visible = parentVisible && o.visible;
       const a = o as THREE.Object3D & Record<string, unknown>;
-      const hand = attachmentHand(o);
+      const tag = attachmentTag(o);
       let attachment = inherited;
-      if (hand !== undefined) {
+      if (tag !== undefined) {
         // An invalid tag is ignored: the subtree keeps the placement it would have without it.
         const grip = o.parent;
-        if (hand !== null && grip && !(grip as THREE.Scene).isScene) {
-          const record = (this.attachments[attached++] ??= { hand, root: o });
-          record.hand = hand;
+        if (tag !== null && grip && !(grip as THREE.Scene).isScene) {
+          const record = (this.attachments[attached++] ??= { hand: tag.hand, requiresGrip: tag.requiresGrip, root: o });
+          record.hand = tag.hand;
+          record.requiresGrip = tag.requiresGrip;
           record.root = o;
           attachment = record;
-        } else this.note('object', this.idOf(o, 'object'), 'nativeControllerAttachment needs { hand: 0 | 1 } on a child of a controller grip', o.name);
+        } else this.note('object', this.idOf(o, 'object'), 'nativeControllerAttachment needs { hand: 0 | 1, requiresGrip?: boolean } on a child of a controller grip', o.name);
       }
       if (a.isLight) {
         if (visible && o.layers.test(layers)) lights.push(o as THREE.Light);
@@ -834,6 +842,7 @@ export class NativeScene {
   private captureObject(o: Drawable, kind: ObjectKind, visible: boolean, attachment: Attachment | null, seenObj: Set<number>, seenGeo: Set<number>, seenMat: Set<number>, seenTex: Set<number>): void {
     const id = this.idOf(o, 'object');
     const hand = attachment ? attachment.hand : -1;
+    const gripHeld = attachment?.requiresGrip === true;
     // The page's matrixWorld stays authoritative for collision and picking; only the wire copy is
     // relative. Local matrices from the tag down are exact, so grip motion never changes them.
     const matrix = attachment ? this.gripRelative(o, attachment.root) : o.matrixWorld.elements;
@@ -872,6 +881,7 @@ export class NativeScene {
         mat,
         m: new Float32Array(12),
         hand,
+        gripHeld,
         visible,
         sent: false,
         sentVisible: visible,
@@ -906,11 +916,13 @@ export class NativeScene {
         s.centerX !== centerX ||
         s.centerY !== centerY ||
         s.name !== o.name ||
-        s.hand !== hand
+        s.hand !== hand ||
+        s.gripHeld !== gripHeld
       ) {
         // A new hand changes what `m` means, so the whole object goes out with its new matrix.
         if (s.hand !== hand) affine12(matrix, s.m);
         s.hand = hand;
+        s.gripHeld = gripHeld;
         s.kind = kind;
         s.geo = geo;
         s.mat = mat;
@@ -1586,6 +1598,7 @@ export class NativeScene {
       m: Array.from(s.m),
     };
     if (s.hand !== -1) item.hand = s.hand;
+    if (s.gripHeld) item.gripHeld = true;
     item.order[0] = groupOrderOf(o);
     if (s.kind === 'sprite') {
       const c = (o as THREE.Sprite).center;

@@ -169,7 +169,7 @@ test('dropping the gun re-sends it whole as a world object in the same commit', 
 });
 
 test('an invalid tag leaves the subtree a world object and is reported', () => {
-  for (const tag of [{ hand: 2 }, { hand: '0' }, { hand: -1 }, {}, 1, { hand: 0.5 }]) {
+  for (const tag of [{ hand: 2 }, { hand: '0' }, { hand: -1 }, {}, 1, { hand: 0.5 }, { hand: 0, requiresGrip: 'yes' }, { hand: 1, requiresGrip: 1 }]) {
     const { scene, native } = make();
     const { grip } = rigWithGrip(scene);
     const g = gun(0);
@@ -218,4 +218,56 @@ test('attachment capture allocates no attachment records after the first capture
   }
   assert.equal(records.length, 1);
   assert.equal(records[0], first);
+});
+
+test('requiresGrip marks the whole held subtree gripHeld; plain attachments and world objects do not', () => {
+  const { scene, native } = make();
+  const { grip } = rigWithGrip(scene);
+  const g = gun(1);
+  g.root.userData.nativeControllerAttachment = { hand: 1, requiresGrip: true };
+  grip.add(g.root);
+  const card = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1), new THREE.MeshBasicMaterial());
+  card.name = 'card';
+  card.userData.nativeControllerAttachment = { hand: 1 };
+  grip.add(card);
+  const explicit = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1), new THREE.MeshBasicMaterial());
+  explicit.name = 'explicit';
+  explicit.userData.nativeControllerAttachment = { hand: 0, requiresGrip: false };
+  grip.add(explicit);
+  native.capture();
+  const packets = drainAll(native);
+  for (const name of ['gun-body', 'gun-barrel']) {
+    const [o] = byName(packets, name);
+    assert.equal(o.hand, 1, name);
+    assert.equal(o.gripHeld, true, `${name} needs the squeeze held`);
+  }
+  for (const name of ['card', 'explicit']) {
+    const [o] = byName(packets, name);
+    assert.ok(o.hand === 0 || o.hand === 1, name);
+    assert.equal(o.gripHeld, undefined, `${name} needs only a tracked grip`);
+  }
+  // A reset snapshot keeps the flag.
+  assert.equal(byName(drainAllReset(native), 'gun-body')[0].gripHeld, true);
+});
+
+test('changing requiresGrip re-sends the object; an untouched held gun sends nothing', () => {
+  const { scene, native } = make();
+  const { grip } = rigWithGrip(scene);
+  const g = gun(0);
+  grip.add(g.root);
+  native.capture();
+  assert.equal(byName(drainAll(native), 'gun-body')[0].gripHeld, undefined);
+  g.root.userData.nativeControllerAttachment = { hand: 0, requiresGrip: true };
+  native.capture();
+  const held = byName(drainAll(native), 'gun-body')[0];
+  assert.equal(held?.gripHeld, true, 'turning it on re-sends the object');
+  assertAffine(held.m, affineOf(relative(grip, g.body)), 'with its relative matrix');
+  native.capture();
+  assert.equal(drainAll(native).length, 0, 'no change, no packet');
+  // Dropping clears both the hand and the hold requirement.
+  delete g.root.userData.nativeControllerAttachment;
+  native.capture();
+  const dropped = byName(drainAll(native), 'gun-body')[0];
+  assert.equal(dropped.hand, undefined);
+  assert.equal(dropped.gripHeld, undefined);
 });

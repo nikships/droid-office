@@ -147,6 +147,28 @@ void invalidFramesHide() {
     assert(!poses.valid[0] && poses.valid[1]);
 }
 
+void squeezeHolds() {
+    const Matrix rig = transform({yaw(.2f), {1, 0, 1}});
+    auto input = hands();
+    input.hands[0].squeeze = kGripHeldSqueeze;
+    input.hands[1].squeeze = .59f;
+    auto poses = attachmentPoses(input, rig, usable());
+    // The page's grab latch keeps holding at 0.6 and releases below it.
+    assert(poses.valid[0] && poses.held[0]);
+    assert(poses.valid[1] && !poses.held[1]);
+    input.hands[1].squeeze = 1;
+    poses = attachmentPoses(input, rig, usable());
+    assert(poses.held[1]);
+    // A squeeze never holds without a valid grip.
+    auto f = usable();
+    f.focused = false;
+    poses = attachmentPoses(input, rig, f);
+    assert(!poses.held[0] && !poses.held[1]);
+    input.hands[1].gripTracked = false;
+    poses = attachmentPoses(input, rig, usable());
+    assert(poses.held[0] && !poses.valid[1] && !poses.held[1]);
+}
+
 void rigidGripsOnly() {
     float m[16];
     const Matrix good = transform({axisAngle({.6f, .8f, 0}, 1.1f), {1, 2, 3}});
@@ -199,6 +221,7 @@ void mirroredChildKeepsWinding() {
 int main() {
     muzzleFollowsBothGripsUnderRigMotion();
     invalidFramesHide();
+    squeezeHolds();
     rigidGripsOnly();
     mirroredChildKeepsWinding();
     std::puts("controller attachment tests passed");

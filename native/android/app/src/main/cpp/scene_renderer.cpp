@@ -1387,6 +1387,7 @@ struct SceneRenderer::Impl {
     void setControllerPoses(const SceneControllerPoses &poses) {
         for (int h = 0; h < 2; h++) {
             grips.valid[h] = poses.valid[h] && rigidPose(poses.grip[h]);
+            grips.held[h] = grips.valid[h] && poses.held[h];
             std::copy(poses.grip[h], poses.grip[h] + 16, grips.grip[h]);
         }
         if (const RenderState *s = current.get()) {
@@ -1418,8 +1419,9 @@ struct SceneRenderer::Impl {
             if (source.attachment >= 0) {
                 drawn = &placed[attached++];
                 // Without this frame's tracked grip there is no pose to draw it at: never a stale
-                // one.
-                if (!grips.valid[source.attachment])
+                // one. A grip-held item drops on the display frame its squeeze is released.
+                if (!grips.valid[source.attachment] ||
+                    (source.gripHeld && !grips.held[source.attachment]))
                     continue;
                 stats.attachedPlaced++;
             }
@@ -1609,7 +1611,7 @@ struct SceneRenderer::Impl {
         }
         frameNumber++;
         // Grips are valid for one display frame only.
-        grips.valid[0] = grips.valid[1] = false;
+        grips.valid[0] = grips.valid[1] = grips.held[0] = grips.held[1] = false;
         prepareMs = drawMs = 0;
         stats.drawCalls = stats.shadowDrawCalls = stats.triangles = stats.points = stats.lines =
             stats.culledItems = 0;

@@ -196,6 +196,7 @@ struct SceneModel::Obj {
     bool cast = false, recv = false, cull = true, visible = true;
     /** The wire's hand: m is relative to that controller's grip (never batched), else -1. */
     int8_t hand = -1;
+    bool gripHeld = false; // with a hand: drawn only while that controller's squeeze is held
     float m[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
     float center[2] = {0.5f, 0.5f};
     uint32_t instCount = 0;
@@ -702,6 +703,12 @@ void SceneModel::applyObject(const json &j, double now) {
     auto m = vecN<12>(j, "m", {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0});
     std::copy(m.begin(), m.end(), o.m);
     o.hand = -1;
+    o.gripHeld = false;
+    if (auto g = j.find("gripHeld"); g != j.end() && !g->is_null()) {
+        if (!g->is_boolean())
+            throw PacketError("object " + std::to_string(id) + " has a non-boolean gripHeld");
+        o.gripHeld = g->get<bool>();
+    }
     if (auto h = j.find("hand"); h != j.end() && !h->is_null()) {
         if (!h->is_number_integer() || (h->get<int64_t>() != 0 && h->get<int64_t>() != 1))
             throw PacketError("object " + std::to_string(id) + " has a hand other than 0 or 1");
@@ -709,6 +716,8 @@ void SceneModel::applyObject(const json &j, double now) {
         if (!finite12(o.m))
             throw PacketError("attached object " + std::to_string(id) + " has a non-finite matrix");
     }
+    if (o.gripHeld && o.hand < 0)
+        throw PacketError("object " + std::to_string(id) + " has gripHeld without a hand");
     auto c = vecN<2>(j, "center", {0.5f, 0.5f});
     o.center[0] = c[0];
     o.center[1] = c[1];
@@ -1458,6 +1467,7 @@ void SceneModel::addItems(RenderState &state, Obj &o) {
             // it every display frame.
             it.castShadow = o.cast && o.hand < 0;
             it.attachment = o.hand;
+            it.gripHeld = o.hand >= 0 && o.gripHeld;
             it.sphere = sphere;
             it.groupOrder = o.groupOrder;
             it.renderOrder = o.renderOrder;

@@ -195,6 +195,13 @@ export interface ObjectItem {
    * Changing it re-sends the whole object.
    */
   hand?: 0 | 1;
+  /**
+   * With `hand`: drawn only while that controller's squeeze is held (native value at or above the
+   * page's 0.6 release threshold), so a released object stops following the grip on the release
+   * display frame instead of when the page re-sends it. Without it, an attachment needs only a
+   * tracked grip.
+   */
+  gripHeld?: true;
   /** Sprite center. */
   center?: [number, number];
   inst?: InstanceData;

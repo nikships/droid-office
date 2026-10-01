@@ -65,12 +65,14 @@ struct SharpScreenDepth {
 /**
  * The display frame's controller grips for objects the page attaches to them (wire ObjectItem
  * hand): grip[h] is the grip's scene-world matrix (rig * tracked grip pose), column-major, rigid.
- * An attached object draws at grip[h] * its grip-relative matrix, and not at all unless valid[h].
+ * An attached object draws at grip[h] * its grip-relative matrix, and not at all unless valid[h];
+ * one marked gripHeld (wire ObjectItem gripHeld) also needs held[h], this frame's squeeze.
  */
 struct SceneControllerPoses {
     float grip[2][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
                          {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
     bool valid[2] = {false, false};
+    bool held[2] = {false, false};
 };
 
 struct SceneEye {         // column-major, OpenGL clip conventions

@@ -26,6 +26,12 @@ struct AttachmentFrame {
  */
 constexpr int64_t kAttachmentStaleNs = 250'000'000;
 
+/**
+ * Squeeze at or above this holds a grip-held attachment: the page's SQUEEZE_OFF, below which its
+ * grab latch releases, so the native drop lands on the same sample as the page's.
+ */
+constexpr float kGripHeldSqueeze = 0.6f;
+
 namespace detail {
 template <class Hand>
 auto gripTracked(const Hand &hand, int) -> decltype(static_cast<bool>(hand.gripTracked)) {
@@ -39,7 +45,8 @@ template <class Hand> bool gripTracked(const Hand &, long) { return true; }
  * grip[h] = rig * the current tracked grip pose, the same transform the native controller model
  * is drawn with. Invalid unless the session is focused and rendering, the control snapshot is
  * fresh and active, and hand h is active with a tracked grip; the renderer then hides hand h's
- * attached objects instead of drawing an older pose.
+ * attached objects instead of drawing an older pose. held[h] additionally needs hand h's squeeze
+ * at kGripHeldSqueeze or more, for objects that are only carried while the grip is squeezed.
  */
 template <class Input = InputFrame>
 SceneControllerPoses attachmentPoses(const Input &input, const Matrix &rig,
@@ -54,6 +61,7 @@ SceneControllerPoses attachmentPoses(const Input &input, const Matrix &rig,
         out.valid[h] = usable && hand.active && detail::gripTracked(hand, 0);
         if (!out.valid[h])
             continue;
+        out.held[h] = hand.squeeze >= kGripHeldSqueeze;
         const Matrix world = multiply(rig, transform(hand.grip));
         std::copy(world.begin(), world.end(), out.grip[h]);
     }
