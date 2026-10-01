@@ -72,8 +72,9 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
                 next.graphics.sharpScreens = graphics.value("sharpScreens", true);
                 next.graphics.renderScale =
                     std::clamp(finite(graphics.at("renderScale")), .75f, 2.f);
-                next.graphics.peripheralDensity =
-                    std::clamp(finite(graphics.at("peripheralDensity"), 1), .25f, 1.f);
+                // Older pages also send peripheralDensity. Runtime foveation profiles have no
+                // density parameter, so it is accepted and ignored.
+                next.graphics.foveationDebug = graphics.value("foveationDebug", false);
                 const auto quality = graphics.value("foveation", std::string{"balanced"});
                 if (quality == "clarity")
                     next.graphics.foveation = FoveationQuality::Clarity;

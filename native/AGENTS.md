@@ -32,16 +32,20 @@ of creating a second office state or a separate worker/board implementation.
 - Controller geometry uploads once. Animate buttons from current native poses/input without
   bridge round trips; tracking loss must cancel interactions and suppress stale presses.
 - Check extensions, function pointers and supported modes at runtime. Treat a 90 Hz request
-  as a request, and report the actual refresh rate and frame timing. Preserve full resolution
-  at the tracked gaze; invalid gaze requires a central full-resolution fallback. Follow the
-  [QCOM foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt)
-  when changing focal points or depth attachments.
+  as a request, and report the actual refresh rate and frame timing. The OpenXR runtime owns
+  foveation: create only the world colour swapchain with `XR_FB_foveation` scaled-bin support and
+  apply `XR_FB_foveation_configuration` / `XR_META_foveation_eye_tracked` profiles with
+  `xrUpdateSwapchainFB`. Never write QCOM texture foveation state or focal points from the app,
+  and never foveate depth, the sharp-screen layer or the Android Surface panels. Cite the
+  specification or working Android XR code next to each foveation call.
 - World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
   and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
   the maximum or force default frames through maximum-size targets. Replace targets on the
   GL thread with no acquired images, retaining the current targets if allocation fails.
   Complete GPU image use before destroying old swapchains, including during teardown.
-  QCOM texture foveation cannot be disabled after enabling it; Off uses new unfoveated targets.
+  Foveation levels, including Off (the empty profile), change by applying a profile, not by new
+  targets; targets without foveation support are only the fallback when the runtime rejects
+  every profile. Destroy the foveation profile before the session.
 - Validate performance with a visible, populated office and advancing scene packets, both
   workspace-open and workspace-closed, using focused 1–2 minute checks. An empty world, a frozen snapshot
   or compositor FPS alone cannot establish sustained application frame rate. Record visual

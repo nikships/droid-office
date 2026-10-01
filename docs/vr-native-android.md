@@ -99,16 +99,77 @@ and the rest of the application; the host-only improvement should not be read as
 ### Display and workspace
 
 The display path uses GLES multiview for both eyes, with 4× tile MSAA where supported.
-Gaze-driven `GL_QCOM_texture_foveated` adjusts full-resolution rendering around the gaze and
-reduces peripheral pixel density. Invalid gaze falls back to a fixed central fovea.
-Depth attachments inherit the color attachment's foveation; they are not independently
-foveated. The implementation follows the
-[Qualcomm extension](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt).
+Foveated rendering is owned by the OpenXR runtime, as described in
+[Runtime foveation](#runtime-foveation). Depth attachments inherit the colour attachment's
+foveation; they are not independently foveated
+([QCOM_texture_foveated](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt) issue 5).
 
-The current gaze profile uses gain 4, fovea area 2 and minimum pixel density 0.25. Every
-supported focal point is updated; an unused default focal point would keep the entire eye
-at full density. The invalid-gaze profile uses a broader central fovea. These settings are
-performance choices that still require headset sharpness and gaze-motion validation.
+### Runtime foveation
+
+The app no longer computes focal points or writes `GL_QCOM_texture_foveated` state. Earlier
+builds steered app-side focal points from the eye-gaze interaction pose with invented gain,
+area and density values. The current build uses the extensions Android XR lists for this runtime
+([OpenXR extensions](https://developer.android.com/develop/xr/openxr/extensions)), each enabled
+only when advertised:
+
+1. `XR_FB_swapchain_update_state`, `XR_FB_foveation` and `XR_FB_foveation_configuration`.
+   Only the world colour swapchain is created with
+   `XrSwapchainCreateInfoFoveationFB{XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB}`, the flag
+   the registry defines for OpenGL with `QCOM_texture_foveated`. Depth, the sharp-screen layer
+   and the Android Surface panels stay unfoveated.
+2. A profile (`XrFoveationProfileCreateInfoFB` → `XrFoveationLevelProfileCreateInfoFB`, static,
+   vertical offset 0) is applied with `xrUpdateSwapchainFB` right after the swapchain is created,
+   after `xrBeginSession`, and whenever the setting changes. Swapchains are not recreated for a
+   level change.
+3. With `XR_META_foveation_eye_tracked`, `supportsFoveationEyeTracked` and a granted
+   `EYE_TRACKING_FINE`, the profile also chains `XrFoveationEyeTrackedProfileCreateInfoMETA`.
+   Each frame, after acquiring the world image (Godot's order), the app calls
+   `xrUpdateSwapchainFB` right before `xrGetFoveationEyeTrackedStateMETA`, as the extension
+   asks. The runtime places the fovea; the app only reports the returned centre and draws it in
+   the diagnostic view. `XR_EXT_eye_gaze_interaction` stays bound because Galaxy XR's eye-tracked foveation
+   needs it ([godotengine/godot#113778](https://github.com/godotengine/godot/issues/113778)).
+4. The profile is destroyed before the swapchains and the session.
+
+| Setting | Runtime profile |
+| --- | --- |
+| Off | Empty profile: "no foveation to any area of the swapchain" |
+| Wider sharp area (`clarity`) | `XR_FOVEATION_LEVEL_LOW_FB` |
+| Balanced (default) | `XR_FOVEATION_LEVEL_MEDIUM_FB` |
+| More headroom (`performance`) | `XR_FOVEATION_LEVEL_HIGH_FB` |
+
+The level mapping is the app's choice; Godot uses the same order. The runtime levels have no
+density parameter, so the earlier peripheral-detail setting is gone. Pages still send
+`peripheralDensity: 0.25` because APKs up to v0.1.301 reject graphics without it; current APKs
+ignore it. If the runtime rejects something, the app degrades one step for the session:
+eye-tracked → the same level fixed → the empty profile → world swapchains without foveation
+support (full resolution everywhere). `XR_ERROR_FEATURE_UNSUPPORTED` from the state query, a
+failed per-frame update or 30 consecutive failed queries drop eye tracking.
+
+`FRAME_METRICS` carries `foveationSupported`, `foveationEnabled` and a `foveation` object:
+`setting`, the applied `level` (`none`, `low`, `medium`, `high` or `unfoveated`), `eyeTracked`,
+`eyeTrackedAvailable`, `applied`, the profile `create`/`update` results, per-window
+`frames`/`validFrames`/`invalidFrames`/`failedFrames`, the last update/state results,
+`centerValid` and `center` (NDC per eye), the probed texture state and `fallback`. The log also
+has `FOVEATION_CAPABILITY` at startup, `FOVEATION_PROFILE` for every applied profile and
+`FOVEATION_TEXTURE` for each world image after a profile change. The texture line reads
+`GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM`, `_MIN_PIXEL_DENSITY_QCOM` and the focal-point count
+back from the image; bits of 0 at a level mean the runtime does not foveate this GLES swapchain.
+
+**Graphics & performance → Show rendering detail (diagnostic)** draws a full-screen pass last
+into the foveated world target. Its fragments run at the runtime's actual density: green, yellow,
+orange and red mark a neighbour step of one, two, three and four or more full-resolution pixels
+(from `dFdx`/`dFdy` of `gl_FragCoord`, which QCOM issue 4 leaves uncorrected), and a
+one-pixel checker can only be resolved at full density. A magenta ring marks the
+runtime-reported centre when it is valid; that ring is computed, not measured. Reading density
+from derivatives is derived from the QCOM text, not a documented debugging aid. The view is
+not saved and turns off when the app restarts. Pages can also switch it with
+`officeNative.graphics.set({ foveationDebug: true })`.
+
+Not documented anywhere, and so still headset checks: whether this runtime applies QCOM
+foveation to GLES scaled-bin swapchains at all, whether an eye-tracked profile moves the
+full-density region on GLES (every published eye-tracked implementation is Vulkan), the NDC
+axis convention of the reported centre for a GL image, and whether the empty profile costs GPU
+time compared with a swapchain created without foveation.
 
 The original desktop windows, including terminals, are displayed through a 2400×1600 Android
 Surface compositor layer. This preserves text resolution independently of world foveation.
@@ -224,13 +285,10 @@ before promotion. A wait timeout or failed allocation/completeness check retains
 targets. GPU commands complete before old swapchains are destroyed. Scene assets, player state,
 Android Surfaces and panel resolution are retained.
 
-**Foveated rendering → Off** uses new unfoveated targets at the chosen world resolution.
-On profiles preserve the sharp gaze region with configurable peripheral density; gaze loss
-keeps the central fallback. The shader, controller and sharp-screen depth mapping use the
-actually allocated world dimensions. The runtime reports foveation availability and the applied
-mode. QCOM forbids disabling foveation on a texture after enabling it, so the Off transition
-recreates targets instead of clearing that bit on existing images.
-[QCOM texture-foveation contract](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_texture_foveated.txt),
+**Foveated rendering** levels, including Off, apply a runtime profile to the existing targets
+([Runtime foveation](#runtime-foveation)); only a size change or a rejected profile allocates new
+targets. The shader, controller and sharp-screen depth mapping use the actually allocated world
+dimensions. The native app reports foveation availability and the applied profile.
 [OpenXR swapchain destruction](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrDestroySwapchain.html).
 
 The log windows adjacent to the blurry-laptop screenshot already had a resident, active

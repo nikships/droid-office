@@ -51,22 +51,13 @@ int main() {
         assert(r.x >= 0 && r.y >= 0 && r.x + r.width <= 1856 && r.y + r.height <= 2160);
         assert(std::abs(r.width / 1856.f - scale) < .002f);
         assert(std::abs(r.height / 2160.f - scale) < .002f);
-        const auto center = textureFocalPoint(r, 1856, 2160, 0, 0);
-        assert(near(center[0], 0) && near(center[1], 0));
-        const auto corner = textureFocalPoint(r, 1856, 2160, 1, -1);
-        assert(near(corner[0], r.width / 1856.f) && near(corner[1], -r.height / 2160.f));
+        assert(r.x + r.width / 2 == 1856 / 2 && r.y + r.height / 2 == 2160 / 2);
     }
     assert(renderRect(1856, 2160, 4).width == full.width);
     assert(renderRect(1856, 2160, std::numeric_limits<float>::quiet_NaN()).height == full.height);
     const auto low = renderRect(1856, 2160, -1);
     assert(low.width == renderRect(1856, 2160, .75f).width);
-    for (auto quality :
-         {FoveationQuality::Balanced, FoveationQuality::Clarity, FoveationQuality::Performance}) {
-        auto valid = foveationProfile(quality, true), fallback = foveationProfile(quality, false);
-        assert(valid.gain >= 3 && valid.gain <= 5 && valid.area > 0);
-        assert(fallback.gain == valid.gain && fallback.area > valid.area);
-    }
-    assert(foveationProfile(FoveationQuality::Balanced, true).gain == 4);
-    assert(foveationProfile(FoveationQuality::Balanced, true).area == 2);
-    std::cout << "graphics maximum resolution, viewport, gaze mapping and fallback checks passed\n";
+    const GraphicsControls defaults;
+    assert(defaults.foveation == FoveationQuality::Balanced && !defaults.foveationDebug);
+    std::cout << "graphics maximum resolution, viewport and target change checks passed\n";
 }

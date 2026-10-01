@@ -7,9 +7,10 @@ namespace office {
 enum class FoveationQuality { Balanced, Clarity, Performance, Off };
 struct GraphicsControls {
     float renderScale = 1.f;
-    float peripheralDensity = .25f;
     FoveationQuality foveation = FoveationQuality::Balanced;
     bool sharpScreens = true;
+    // Diagnostic: tint the world by its measured shading density (foveation_overlay.h).
+    bool foveationDebug = false;
 };
 struct RenderRect {
     int x = 0, y = 0, width = 0, height = 0;
@@ -46,6 +47,9 @@ inline RenderSize renderSize(const ResolutionLimits &limits, float scale) {
 }
 struct RenderTargetRequest {
     std::array<RenderSize, 2> size{};
+    // Create the world swapchains with runtime foveation support
+    // (XrSwapchainCreateInfoFoveationFB). Levels, including Off, are runtime profiles applied to
+    // these swapchains, not new targets.
     bool foveated = false;
     bool operator==(const RenderTargetRequest &other) const {
         return size == other.size && foveated == other.foveated;
@@ -91,21 +95,5 @@ inline RenderRect renderRect(int width, int height, float scale) {
     const int h =
         scale == 1.f ? height : std::clamp(static_cast<int>(height * scale) & ~1, 2, height);
     return {(width - w) / 2, (height - h) / 2, w, h};
-}
-/** The QCOM fovea is expressed over the allocated texture, rather than the smaller viewport. */
-inline std::array<float, 2> textureFocalPoint(RenderRect rect, int width, int height, float x,
-                                              float y) {
-    return {(2.f * rect.x + rect.width) / width - 1.f + x * rect.width / width,
-            (2.f * rect.y + rect.height) / height - 1.f + y * rect.height / height};
-}
-struct FoveationProfile {
-    float gain = 4.f;
-    float area = 2.f;
-};
-inline FoveationProfile foveationProfile(FoveationQuality quality, bool gazeValid) {
-    const float gain = quality == FoveationQuality::Clarity       ? 3.f
-                       : quality == FoveationQuality::Performance ? 5.f
-                                                                  : 4.f;
-    return {gain, gazeValid ? (quality == FoveationQuality::Performance ? 1.8f : 2.f) : 4.f};
 }
 } // namespace office

@@ -45,6 +45,10 @@ covers, using `CXX` (default `c++`), and runs it:
   fade interpolation, discontinuities, stale focus and rotation handling.
 - `native/tests/graphics_controls_test.cpp` for the header-only graphics control rules:
   supported settings, quality selection and input bounds.
+- `native/tests/foveation_test.cpp` for the header-only `foveation.h` and
+  `foveation_overlay_shader.h`: setting-to-runtime-level mapping, capability gates, the
+  eye-tracked → fixed → empty profile → unfoveated fallback, eye-tracked frame results, and the
+  diagnostic view's density bands, centre mapping and GLSL.
 - `native/tests/refresh_policy_test.cpp`: bounded 90 Hz re-requests, focus loss, actual-rate
   recovery and invalid observations.
 - `native/tests/hand_mesh_test.cpp` retains standalone checks for the historical mesh code:
@@ -66,7 +70,8 @@ Two registered suites are required on every host run:
   text and material pixels are compared in the browser shader suite.
 - `native/android/app/src/test/cpp/shaders/check.sh` compiles the shader generator, checks
   uniform block layouts and generated-program contracts, validates and links every generated
-  stage with glslang, and compares seven material cases against the original three.js code.
+  stage and the foveation diagnostic view with glslang, and compares seven material cases
+  against the original three.js code.
   Its strict block parser and contract checks self-test malformed declarations before reading
   the generated programs; malformed text must fail rather than be skipped.
 

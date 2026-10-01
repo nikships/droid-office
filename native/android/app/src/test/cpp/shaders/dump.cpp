@@ -1,7 +1,8 @@
-// Writes the GLSL for every meaningful ProgramKey into a directory (name.vert, name.frag) for
-// glslangValidator, and checks what can be checked without a GL context: the keys' bits() are
-// unique, generation is deterministic, the std140 blocks match scene_uniforms.h member for member,
-// and the stages keep the contract (attribute locations, no gl_ViewID_OVR in fragment shaders).
+// Writes the GLSL for every meaningful ProgramKey, and the foveation overlay, into a directory
+// (name.vert, name.frag) for glslangValidator, and checks what can be checked without a GL context:
+// the keys' bits() are unique, generation is deterministic, the std140 blocks match
+// scene_uniforms.h member for member, and the stages keep the contract (attribute locations, no
+// gl_ViewID_OVR in fragment shaders).
 //
 //   dump <out-dir>     exit status 0 when every check passes
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "foveation_overlay_shader.h"
 #include "scene_shaders.h"
 #include "scene_uniforms.h"
 
@@ -646,6 +648,19 @@ int main(int argc, char **argv) {
             fail(prog + ": screen layer never applies its depth test");
     }
 
-    std::printf("programs %d (from %zu keys)\n", programs, keys.size());
+    // The foveation diagnostic view is not a scene program. Its stages go through the same
+    // glslangValidator compile and link steps in check.sh.
+    for (bool multiview : {true, false}) {
+        const auto s = office::foveationOverlayShader(multiview);
+        const std::string prog =
+            multiview ? "foveation_overlay.multiview" : "foveation_overlay.single";
+        if (s.fragment.find("gl_ViewID_OVR") != std::string::npos)
+            fail(prog + ": fragment stage uses gl_ViewID_OVR");
+        std::ofstream(dir + "/" + prog + ".vert") << s.vertex;
+        std::ofstream(dir + "/" + prog + ".frag") << s.fragment;
+    }
+
+    std::printf("programs %d (from %zu keys) and 2 foveation overlay programs\n", programs,
+                keys.size());
     return failures ? 1 : 0;
 }

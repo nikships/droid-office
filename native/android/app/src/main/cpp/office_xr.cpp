@@ -4,6 +4,8 @@
 #ifndef NDEBUG
 #include "depth_probe.h"
 #endif
+#include "foveation.h"
+#include "foveation_overlay.h"
 #include "frame_metrics.h"
 #include "input_renderer.h"
 #include "json.hpp"
@@ -92,11 +94,17 @@ template <class T> T function(XrInstance instance, const char *name) {
     return reinterpret_cast<T>(value);
 }
 
+/** nullptr instead of an exception, for features with a fallback. */
+template <class T> T optionalFunction(XrInstance instance, const char *name) {
+    PFN_xrVoidFunction value = nullptr;
+    return XR_SUCCEEDED(xrGetInstanceProcAddr(instance, name, &value)) ? reinterpret_cast<T>(value)
+                                                                       : nullptr;
+}
+
 struct Eye {
     XrSwapchain swapchain = XR_NULL_HANDLE;
     int width = 0, height = 0;
     std::vector<XrSwapchainImageOpenGLESKHR> images;
-    std::vector<float> foveationDensity;
 };
 
 class Office {
@@ -135,7 +143,26 @@ class Office {
     std::array<office::ResolutionLimits, 2> worldLimits;
     office::RenderTargetChanges targetChanges;
     int64_t worldFormat = GL_RGBA8;
-    bool swapchainFoveation = false, worldFoveated = false;
+    // Runtime-owned foveation (foveation.h). worldFoveated: the current world swapchains were
+    // created with XrSwapchainCreateInfoFoveationFB. profileCurrent: appliedProfile is applied to
+    // them. The runtime, not the app, configures the QCOM texture state.
+    office::FoveationPolicy foveation;
+    office::FoveationQuality desiredQuality = office::FoveationQuality::Balanced;
+    bool worldFoveated = false, profileCurrent = false;
+    PFN_xrCreateFoveationProfileFB createFoveationProfile = nullptr;
+    PFN_xrDestroyFoveationProfileFB destroyFoveationProfile = nullptr;
+    PFN_xrUpdateSwapchainFB updateSwapchain = nullptr;
+    PFN_xrGetFoveationEyeTrackedStateMETA getFoveationState = nullptr;
+    XrFoveationProfileFB foveationProfile = XR_NULL_HANDLE;
+    office::FoveationProfileSpec appliedProfile;
+    XrResult profileCreateResult = XR_SUCCESS, profileUpdateResult = XR_SUCCESS;
+    office::FoveationSamples foveationSamples;
+    // Read-only GL_QCOM_texture_foveated state of the world image after the runtime applied a
+    // profile (Table 21.10 queries): shows whether the runtime really foveates this GLES texture.
+    int textureProbes = 0;
+    GLint textureBits = -1, textureFocalPoints = -1;
+    GLfloat textureMinDensity = -1;
+    std::unique_ptr<office::FoveationOverlay> foveationOverlay;
     std::string graphicsError;
     bool sharpScreensAvailable = false;
 #ifndef NDEBUG
@@ -151,8 +178,6 @@ class Office {
     std::unique_ptr<office::CursorSwapchain> cursor;
     std::unique_ptr<office::RuntimePerformance> performance;
     std::unique_ptr<office::SceneRenderer> sceneRenderer;
-    PFNGLTEXTUREFOVEATIONPARAMETERSQCOMPROC textureFoveation = nullptr;
-    int focalPoints = 1;
 
     Office(JNIEnv *e, jobject a) : env(e), activity(a) {}
 
@@ -173,6 +198,7 @@ class Office {
         if (context != EGL_NO_CONTEXT)
             glFinish();
         inputRenderer.reset();
+        foveationOverlay.reset();
         sceneRenderer.reset();
 #ifndef NDEBUG
         depthProbe.reset();
@@ -180,6 +206,11 @@ class Office {
         cursor.reset();
         input.reset();
         performance.reset();
+        // A profile is a child of the session. "The application is responsible for ensuring
+        // that it has no calls using profile in progress when the foveation profile is
+        // destroyed" (XR_FB_foveation, xrDestroyFoveationProfileFB).
+        if (foveationProfile && destroyFoveationProfile)
+            destroyFoveationProfile(foveationProfile);
         if (panelSwapchain)
             xrDestroySwapchain(panelSwapchain);
         if (statusSwapchain)
@@ -214,6 +245,26 @@ class Office {
         }
     }
 
+    /** Android XR: XR_META_foveation_eye_tracked needs EYE_TRACKING_FINE. OfficeActivity starts
+     * the native session only after its permission request returns, so one check suffices. */
+    bool eyeTrackingPermission() {
+        jclass cls = env->GetObjectClass(activity);
+        jmethodID method = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
+        env->DeleteLocalRef(cls);
+        if (!method || env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return false;
+        }
+        jstring name = env->NewStringUTF("android.permission.EYE_TRACKING_FINE");
+        const jint result = env->CallIntMethod(activity, method, name);
+        env->DeleteLocalRef(name);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return false;
+        }
+        return result == 0; // PackageManager.PERMISSION_GRANTED
+    }
+
     void visibility(bool visible) {
         jclass cls = env->GetObjectClass(activity);
         env->CallVoidMethod(activity, env->GetMethodID(cls, "onSessionVisible", "(Z)V"), visible);
@@ -224,9 +275,9 @@ class Office {
         }
     }
 
-    office::RenderTargetRequest worldTargetRequest(float scale, bool foveated) const {
+    office::RenderTargetRequest worldTargetRequest(float scale) const {
         office::RenderTargetRequest request;
-        request.foveated = foveated && textureFoveation;
+        request.foveated = foveation.swapchainFoveation();
         for (int i = 0; i < (multiview ? 1 : 2); ++i)
             request.size[i] = office::renderSize(worldLimits[i], scale);
         return request;
@@ -248,13 +299,99 @@ class Office {
         }
     }
 
+    /**
+     * XrFoveationProfileCreateInfoFB -> XrFoveationLevelProfileCreateInfoFB ->
+     * XrFoveationEyeTrackedProfileCreateInfoMETA (flags 0, "no eye tracked profile create flags").
+     * The META struct "can be added to the next chain of XrFoveationLevelProfileCreateInfoFB in
+     * order to enable eye tracked foveation" (XR_META_foveation_eye_tracked). An empty spec leaves
+     * the next chain empty, which the runtime must treat as no foveation anywhere
+     * (XR_FB_foveation). Godot's _update_profile_rt builds the same chain; Meta's
+     * ovrRenderer_SetFoveation the one without the META struct.
+     */
+    XrResult createProfile(const office::FoveationProfileSpec &spec,
+                           XrFoveationProfileFB &profile) const {
+        auto eyeTracked = office::structure<XrFoveationEyeTrackedProfileCreateInfoMETA>(
+            XR_TYPE_FOVEATION_EYE_TRACKED_PROFILE_CREATE_INFO_META);
+        auto level = office::structure<XrFoveationLevelProfileCreateInfoFB>(
+            XR_TYPE_FOVEATION_LEVEL_PROFILE_CREATE_INFO_FB);
+        level.next = spec.eyeTracked ? &eyeTracked : nullptr;
+        level.level = spec.level;
+        level.verticalOffset = 0;
+        // A static pattern at the chosen level keeps each setting reproducible; DYNAMIC lets the
+        // runtime change it with headroom (XR_FB_foveation_configuration).
+        level.dynamic = XR_FOVEATION_DYNAMIC_DISABLED_FB;
+        auto info = office::structure<XrFoveationProfileCreateInfoFB>(
+            XR_TYPE_FOVEATION_PROFILE_CREATE_INFO_FB);
+        info.next = spec.empty ? nullptr : &level;
+        return createFoveationProfile(session, &info, &profile);
+    }
+
+    /** xrUpdateSwapchainFB with XrSwapchainStateFoveationFB (flags 0) (XR_FB_foveation). */
+    XrResult applyProfile(XrSwapchain swapchain, XrFoveationProfileFB profile) const {
+        auto state =
+            office::structure<XrSwapchainStateFoveationFB>(XR_TYPE_SWAPCHAIN_STATE_FOVEATION_FB);
+        state.profile = profile;
+        return updateSwapchain(swapchain,
+                               reinterpret_cast<const XrSwapchainStateBaseHeaderFB *>(&state));
+    }
+
+    /**
+     * Applies the policy's profile for desiredQuality to the world swapchains in targets,
+     * degrading per FoveationPolicy until the runtime accepts one. Level changes, including
+     * Off, only apply a new profile; swapchains are not recreated (Godot set_foveation_level).
+     * Returns false when even the empty profile fails; the targets are then replaced by
+     * swapchains without foveation. GL thread, no acquired world image. Cached GL state is not
+     * relied on afterwards: XR_FB_swapchain_update_state_opengl_es says a GLES update may alter
+     * texture bindings (assumed here as well), and every renderer rebinds what it uses.
+     */
+    bool configureFoveation(const std::array<Eye, 2> &targets) {
+        for (;;) {
+            const auto spec = foveation.desired(desiredQuality);
+            if (!spec.apply)
+                break;
+            XrFoveationProfileFB next = XR_NULL_HANDLE;
+            const auto created = createProfile(spec, next);
+            auto updated = created;
+            for (int i = 0; XR_SUCCEEDED(created) && i < (multiview ? 1 : 2); ++i)
+                if (XR_SUCCEEDED(updated))
+                    updated = applyProfile(targets[i].swapchain, next);
+            profileCreateResult = created;
+            profileUpdateResult = updated;
+            LOG("FOVEATION_PROFILE setting=%s level=%s eyeTracked=%d create=%d update=%d",
+                office::foveationQualityName(desiredQuality), office::foveationLevelName(spec),
+                spec.eyeTracked, created, updated);
+            if (XR_SUCCEEDED(updated)) {
+                // "A XrFoveationProfileFB may be safely destroyed after being applied to a
+                // swapchain state using xrUpdateSwapchainFB without affecting the foveation
+                // parameters of the swapchain" (XR_FB_foveation). The new one stays for the
+                // eye-tracked per-frame update.
+                if (foveationProfile)
+                    destroyFoveationProfile(foveationProfile);
+                foveationProfile = next;
+                appliedProfile = spec;
+                textureProbes = static_cast<int>(targets[0].images.size());
+                return true;
+            }
+            if (next)
+                destroyFoveationProfile(next);
+            if (!foveation.rejected(spec))
+                break;
+            LOG("FOVEATION_FALLBACK %s", foveation.fallback());
+        }
+        if (foveationProfile)
+            destroyFoveationProfile(foveationProfile);
+        foveationProfile = XR_NULL_HANDLE;
+        appliedProfile = {};
+        LOG("FOVEATION_UNAVAILABLE %s", foveation.fallback());
+        return false;
+    }
+
     /** Called only on the GL thread with no acquired world images. Keep old targets on failure. */
     bool replaceWorldTargets(const office::RenderTargetRequest &request) {
         std::array<Eye, 2> next;
         GLuint nextDepth = 0, nextFramebuffer = 0;
         XrSwapchain acquired = XR_NULL_HANDLE;
         bool waited = false;
-        int nextFocalPoints = focalPoints;
         try {
             glActiveTexture(GL_TEXTURE0);
             for (int i = 0; i < (multiview ? 1 : 2); ++i) {
@@ -264,8 +401,14 @@ class Office {
                 auto sc = office::structure<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
                 auto foveated = office::structure<XrSwapchainCreateInfoFoveationFB>(
                     XR_TYPE_SWAPCHAIN_CREATE_INFO_FOVEATION_FB);
+                // "Explicitly create the swapchain with scaled bin foveation support. The
+                // application must ensure that the swapchain is using the OpenGL graphics API and
+                // that the QCOM_texture_foveated extension is supported and enabled" (registry,
+                // XrSwapchainCreateFoveationFlagBitsFB). Godot uses this flag for GLES. Only the
+                // world colour swapchain is foveated: never depth (QCOM: an incomplete
+                // framebuffer), the sharp-screen layer or the Android Surface panels.
                 foveated.flags = XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB;
-                sc.next = request.foveated && swapchainFoveation ? &foveated : nullptr;
+                sc.next = request.foveated ? &foveated : nullptr;
                 sc.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
                 sc.format = worldFormat;
                 sc.sampleCount = 1;
@@ -280,31 +423,17 @@ class Office {
                       "world image count");
                 eye.images.resize(count, office::structure<XrSwapchainImageOpenGLESKHR>(
                                              XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR));
-                eye.foveationDensity.assign(count, .25f);
                 check(xrEnumerateSwapchainImages(
                           eye.swapchain, count, &count,
                           reinterpret_cast<XrSwapchainImageBaseHeader *>(eye.images.data())),
                       "world images");
-                if (request.foveated)
-                    for (auto image : eye.images) {
-                        const GLenum target = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-                        glBindTexture(target, image.image);
-                        GLint features = 0;
-                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_FEATURE_QUERY_QCOM,
-                                            &features);
-                        constexpr auto bits =
-                            GL_FOVEATION_ENABLE_BIT_QCOM | GL_FOVEATION_SCALED_BIN_METHOD_BIT_QCOM;
-                        if ((features & bits) != bits)
-                            throw std::runtime_error(
-                                "World texture cannot use scaled-bin foveation");
-                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_NUM_FOCAL_POINTS_QUERY_QCOM,
-                                            &nextFocalPoints);
-                        if (nextFocalPoints < 1 || nextFocalPoints > 16)
-                            throw std::runtime_error("Invalid foveation focal point count");
-                        glTexParameteri(target, GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM, bits);
-                        glTexParameterf(target, GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM, .25f);
-                    }
             }
+            // Apply the profile right after the world swapchains exist, as Godot
+            // (on_main_swapchains_created) and Meta (ovrRenderer_SetFoveation) do.
+            if (request.foveated && !configureFoveation(next))
+                throw std::runtime_error(std::string("Foveation profile rejected: ") +
+                                         foveation.fallback());
+            glActiveTexture(GL_TEXTURE0);
             glGenTextures(1, &nextDepth);
             const GLenum depthTarget = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
             glBindTexture(depthTarget, nextDepth);
@@ -370,6 +499,8 @@ class Office {
         } catch (const std::exception &error) {
             graphicsError = error.what();
             LOG("WORLD_TARGET_REJECTED %s", graphicsError.c_str());
+            // The current targets keep their foveation; re-apply the current profile to them.
+            profileCurrent = false;
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glFinish();
             if (nextFramebuffer)
@@ -399,9 +530,17 @@ class Office {
             if (eye.swapchain)
                 xrDestroySwapchain(eye.swapchain);
         worldFoveated = request.foveated;
-        focalPoints = nextFocalPoints;
+        profileCurrent = request.foveated;
+        if (!worldFoveated) {
+            if (foveationProfile)
+                destroyFoveationProfile(foveationProfile);
+            foveationProfile = XR_NULL_HANDLE;
+            appliedProfile = {};
+        }
         graphicsError.clear();
-        LOG("WORLD_TARGET size=%dx%d foveated=%d", eyes[0].width, eyes[0].height, worldFoveated);
+        LOG("WORLD_TARGET size=%dx%d foveated=%d level=%s eyeTracked=%d", eyes[0].width,
+            eyes[0].height, worldFoveated, office::foveationLevelName(appliedProfile),
+            appliedProfile.eyeTracked);
         return true;
     }
 
@@ -444,12 +583,27 @@ class Office {
             extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
         if (floor)
             extensions.push_back(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
-        const bool foveation = supports(XR_FB_FOVEATION_EXTENSION_NAME) &&
-                               supports(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME);
-        if (foveation) {
-            extensions.push_back(XR_FB_FOVEATION_EXTENSION_NAME);
+        // Runtime foveation, enabled only as advertised and within the registry's dependencies:
+        // XR_FB_foveation needs XR_FB_swapchain_update_state; XR_FB_foveation_configuration needs
+        // XR_FB_foveation; XR_META_foveation_eye_tracked needs both FB foveation extensions.
+        // XR_FB_swapchain_update_state_opengl_es only carries GLES sampler state and is not
+        // needed (this runtime does not advertise it).
+        office::FoveationSupport fovea;
+        fovea.updateState = supports(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME);
+        fovea.fbFoveation = fovea.updateState && supports(XR_FB_FOVEATION_EXTENSION_NAME);
+        fovea.configuration =
+            fovea.fbFoveation && supports(XR_FB_FOVEATION_CONFIGURATION_EXTENSION_NAME);
+        fovea.metaEyeTracked =
+            fovea.configuration && supports(XR_META_FOVEATION_EYE_TRACKED_EXTENSION_NAME);
+        fovea.eyeGaze = gaze;
+        if (fovea.fbFoveation) {
             extensions.push_back(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME);
+            extensions.push_back(XR_FB_FOVEATION_EXTENSION_NAME);
         }
+        if (fovea.configuration)
+            extensions.push_back(XR_FB_FOVEATION_CONFIGURATION_EXTENSION_NAME);
+        if (fovea.metaEyeTracked)
+            extensions.push_back(XR_META_FOVEATION_EYE_TRACKED_EXTENSION_NAME);
         auto android = office::structure<XrInstanceCreateInfoAndroidKHR>(
             XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR);
         android.applicationVM = vm;
@@ -471,7 +625,41 @@ class Office {
         systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
         check(xrGetSystem(instance, &systemInfo, &system), "get system");
         auto systemProperties = office::structure<XrSystemProperties>(XR_TYPE_SYSTEM_PROPERTIES);
+        // Only structs of enabled extensions may extend XrSystemProperties.
+        // XrSystemFoveationEyeTrackedPropertiesMETA: "An application can inspect whether the
+        // system is capable of eye tracked foveation" (XR_META_foveation_eye_tracked).
+        auto eyeTrackedProperties = office::structure<XrSystemFoveationEyeTrackedPropertiesMETA>(
+            XR_TYPE_SYSTEM_FOVEATION_EYE_TRACKED_PROPERTIES_META);
+        auto gazeProperties = office::structure<XrSystemEyeGazeInteractionPropertiesEXT>(
+            XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT);
+        if (gaze) {
+            gazeProperties.next = systemProperties.next;
+            systemProperties.next = &gazeProperties;
+        }
+        if (fovea.metaEyeTracked) {
+            eyeTrackedProperties.next = systemProperties.next;
+            systemProperties.next = &eyeTrackedProperties;
+        }
         check(xrGetSystemProperties(instance, system, &systemProperties), "system properties");
+        fovea.systemEyeTracked =
+            fovea.metaEyeTracked && eyeTrackedProperties.supportsFoveationEyeTracked == XR_TRUE;
+        if (fovea.fbFoveation) {
+            // Function pointers per Meta's ovrRenderer_SetFoveation and Godot's
+            // OpenXRFBFoveationExtension::on_instance_created. A missing one disables foveation.
+            createFoveationProfile = optionalFunction<PFN_xrCreateFoveationProfileFB>(
+                instance, "xrCreateFoveationProfileFB");
+            destroyFoveationProfile = optionalFunction<PFN_xrDestroyFoveationProfileFB>(
+                instance, "xrDestroyFoveationProfileFB");
+            updateSwapchain =
+                optionalFunction<PFN_xrUpdateSwapchainFB>(instance, "xrUpdateSwapchainFB");
+            fovea.fbFoveation =
+                createFoveationProfile && destroyFoveationProfile && updateSwapchain;
+        }
+        if (fovea.metaEyeTracked) {
+            getFoveationState = optionalFunction<PFN_xrGetFoveationEyeTrackedStateMETA>(
+                instance, "xrGetFoveationEyeTrackedStateMETA");
+            fovea.metaEyeTracked = getFoveationState != nullptr;
+        }
         // World + sharp screens + workspace + two pointers + the status shutdown handshake.
         sharpScreensAvailable = systemProperties.graphicsProperties.maxLayerCount >= 6;
         LOG("LAYER_CAPACITY max=%u sharpScreens=%d",
@@ -510,11 +698,18 @@ class Office {
             throw std::runtime_error("eglMakeCurrent failed");
         LOG("GPU %s; %s", glGetString(GL_RENDERER), glGetString(GL_VERSION));
         LOG("GL_EXTENSIONS %s", glGetString(GL_EXTENSIONS));
-        if (strstr(reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS)),
-                   "GL_QCOM_texture_foveated")) {
-            textureFoveation = reinterpret_cast<PFNGLTEXTUREFOVEATIONPARAMETERSQCOMPROC>(
-                eglGetProcAddress("glTextureFoveationParametersQCOM"));
-        }
+        // The SCALED_BIN swapchain flag requires GL_QCOM_texture_foveated. The runtime, not the
+        // app, sets its texture state, so glTextureFoveationParametersQCOM is not loaded.
+        fovea.qcomTexture = strstr(reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS)),
+                                   "GL_QCOM_texture_foveated") != nullptr;
+        fovea.eyePermission = eyeTrackingPermission();
+        foveation = office::FoveationPolicy(fovea);
+        LOG("FOVEATION_CAPABILITY fb=%d configuration=%d updateState=%d qcom=%d meta=%d "
+            "systemEyeTracked=%d permission=%d eyeGaze=%d gazeSystem=%d runtime=%d eyeTracked=%d",
+            fovea.fbFoveation, fovea.configuration, fovea.updateState, fovea.qcomTexture,
+            fovea.metaEyeTracked, fovea.systemEyeTracked, fovea.eyePermission, fovea.eyeGaze,
+            gaze && gazeProperties.supportsEyeGazeInteraction == XR_TRUE,
+            office::runtimeFoveation(fovea), office::eyeTrackedFoveation(fovea));
         auto graphics = office::structure<XrGraphicsBindingOpenGLESAndroidKHR>(
             XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR);
         graphics.display = display;
@@ -646,14 +841,16 @@ class Office {
             throw std::runtime_error("Invalid world eye resolution limits");
         worldLimits.fill(commonLimits);
         worldFormat = format;
-        swapchainFoveation = foveation;
-        auto initialTargets = worldTargetRequest(1.f, true);
+        auto initialTargets = worldTargetRequest(1.f);
         if (!replaceWorldTargets(initialTargets)) {
+            if (!initialTargets.foveated)
+                throw std::runtime_error(graphicsError);
+            // Fall back to full-resolution swapchains without foveation support.
+            foveation.swapchainFailed();
             LOG("FOVEATION_UNAVAILABLE %s", graphicsError.c_str());
-            initialTargets.foveated = false;
+            initialTargets = worldTargetRequest(1.f);
             if (!replaceWorldTargets(initialTargets))
                 throw std::runtime_error(graphicsError);
-            textureFoveation = nullptr;
         }
         targetChanges.reset(initialTargets);
         LOG("VIEW recommended=%dx%d max=%dx%d maxScale=%.6f", commonLimits.recommended.width,
@@ -728,6 +925,14 @@ class Office {
             scenePending.clear();
             scenePendingBytes = 0;
         }
+        {
+            auto overlay = std::make_unique<office::FoveationOverlay>();
+            std::string overlayError;
+            if (overlay->initialize(multiview, overlayError))
+                foveationOverlay = std::move(overlay);
+            else
+                LOG("FOVEATION_OVERLAY_UNAVAILABLE %s", overlayError.c_str());
+        }
         inputRenderer = std::make_unique<office::InputRenderer>();
         jclass assetClass = env->GetObjectClass(activity);
         jobject assets = env->CallObjectMethod(
@@ -785,6 +990,9 @@ class Office {
                         check(xrBeginSession(session, &begin), "begin session");
                         performance->start();
                         running = true;
+                        // Whether a profile applied before the session runs persists is not
+                        // documented; re-apply it on the first running frame.
+                        profileCurrent = false;
                         if (requestRate) {
                             auto result = requestRate(session, 90);
                             ++refreshRequests;
@@ -876,15 +1084,22 @@ class Office {
                 for (auto &hand : inputFrame.hands)
                     hand.active = false;
             auto controls = bridge.read();
+            desiredQuality = controls.graphics.foveation;
             // Slider release/presets select an actual target size. Keep the old targets until
-            // the selection settles, and create unfoveated targets for Off: QCOM texture
-            // foveation cannot be disabled once enabled on an existing texture.
-            const auto desiredTargets =
-                worldTargetRequest(controls.graphics.renderScale,
-                                   controls.graphics.foveation != office::FoveationQuality::Off);
+            // the selection settles. Foveation levels, including Off, are runtime profiles on
+            // the same targets; new targets without foveation support are only the fallback
+            // when the runtime rejects every profile.
+            const auto desiredTargets = worldTargetRequest(controls.graphics.renderScale);
             if (focused && poseValid && frame.shouldRender &&
                 targetChanges.observe(desiredTargets, nowMs))
                 targetChanges.finish(desiredTargets, replaceWorldTargets(desiredTargets));
+            {
+                // Level changes apply a new profile (Godot set_foveation_level); no world
+                // image is acquired here.
+                const auto wanted = foveation.desired(desiredQuality);
+                if (worldFoveated && wanted.apply && (!profileCurrent || wanted != appliedProfile))
+                    profileCurrent = configureFoveation(eyes);
+            }
             if (desiredTargets.size[0] == office::RenderSize{eyes[0].width, eyes[0].height} &&
                 desiredTargets.foveated == worldFoveated)
                 graphicsError.clear();
@@ -969,8 +1184,14 @@ class Office {
                     inputFrames.erase(inputFrames.begin());
                 inputFrames.push_back(inputFrame);
             }
+            // XR_EXT_eye_gaze_interaction stays bound: Godot found Android XR needs it for
+            // eye-tracked foveation (godotengine/godot#113778). Its pose is an interaction pose
+            // and only feeds the metrics; the runtime places the fovea.
             XrPosef gazePose;
             bool gazeValid = input->gazePose(space, frame.predictedDisplayTime, gazePose);
+            // This frame's runtime-reported centres (NDC, left x/y then right x/y).
+            float foveaCenters[4]{};
+            bool foveaCenterValid = false;
             inputRenderer->update(inputFrame, controls, panelPose, controls.panelOpen);
             std::array<office::Matrix, 2> localViews;
             office::SceneEye worldViews[2];
@@ -1035,44 +1256,41 @@ class Office {
                     imageWait.timeout = XR_INFINITE_DURATION;
                     check(xrWaitSwapchainImage(eye.swapchain, &imageWait), "wait eye");
                     const auto rect = office::renderRect(eye.width, eye.height, 1.f);
-                    const auto profile =
-                        office::foveationProfile(controls.graphics.foveation, gazeValid);
-                    if (worldFoveated && textureFoveation) {
-                        if (eye.foveationDensity[imageIndex] !=
-                            controls.graphics.peripheralDensity) {
-                            const GLenum target = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-                            glActiveTexture(GL_TEXTURE0);
-                            glBindTexture(target, eye.images[imageIndex].image);
-                            glTexParameterf(target, GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM,
-                                            controls.graphics.peripheralDensity);
-                            eye.foveationDensity[imageIndex] = controls.graphics.peripheralDensity;
+                    if (worldFoveated && profileCurrent && appliedProfile.eyeTracked &&
+                        foveationProfile) {
+                        // "xrUpdateSwapchainFB should be called right before the
+                        // xrGetFoveationEyeTrackedStateMETA function in order to (1) request a
+                        // foveation pattern update by the runtime" (XR_META_foveation_eye_tracked).
+                        // Each frame, after acquire and before drawing, as Godot does
+                        // (_update_profile_rt then xrGetFoveationEyeTrackedStateMETA).
+                        const auto updated = applyProfile(eye.swapchain, foveationProfile);
+                        auto state = office::structure<XrFoveationEyeTrackedStateMETA>(
+                            XR_TYPE_FOVEATION_EYE_TRACKED_STATE_META);
+                        auto queried = updated;
+                        if (pass == 0 && XR_SUCCEEDED(updated))
+                            queried = getFoveationState(session, &state);
+                        else if (pass > 0)
+                            queried = XR_SUCCESS; // the state is per session; queried once
+                        if (pass == 0) {
+                            // Not valid "if the eye tracker is obscured, the camera has dirt, or
+                            // eye lid is closed" (registry). The app never moves the fovea itself.
+                            foveaCenterValid =
+                                XR_SUCCEEDED(queried) &&
+                                (state.flags & XR_FOVEATION_EYE_TRACKED_STATE_VALID_BIT_META);
+                            foveationSamples.sample(updated, queried, foveaCenterValid,
+                                                    state.foveationCenter);
+                            if (foveaCenterValid)
+                                for (int i = 0; i < 2; ++i) {
+                                    foveaCenters[i * 2] = state.foveationCenter[i].x;
+                                    foveaCenters[i * 2 + 1] = state.foveationCenter[i].y;
+                                }
                         }
-                        for (int layer = 0; layer < (multiview ? 2 : 1); layer++) {
-                            int i = multiview ? layer : pass;
-                            auto direction =
-                                gazeValid ? office::rotate(
-                                                office::conjugate(views[i].pose.orientation),
-                                                office::rotate(gazePose.orientation, {0, 0, -1}))
-                                          : XrVector3f{0, 0, -1};
-                            float tx = direction.x / std::max(.01f, -direction.z),
-                                  ty = direction.y / std::max(.01f, -direction.z);
-                            float l = std::tan(views[i].fov.angleLeft),
-                                  r = std::tan(views[i].fov.angleRight),
-                                  b = std::tan(views[i].fov.angleDown),
-                                  t = std::tan(views[i].fov.angleUp);
-                            float fx = std::clamp(2 * (tx - l) / (r - l) - 1, -1.f, 1.f),
-                                  fy = std::clamp(2 * (ty - b) / (t - b) - 1, -1.f, 1.f);
-                            const auto focalPoint = office::textureFocalPoint(
-                                rect, eye.width, eye.height, gazeValid ? fx : 0.f,
-                                gazeValid ? fy : 0.f);
-                            // Every focal point contributes a maximum density; an untouched
-                            // default point would force the entire eye to full resolution.
-                            // Gaze loss uses a broader centered fovea while retaining headroom.
-                            // Workspace text is in its separate, unfoveated compositor layer.
-                            for (int focal = 0; focal < focalPoints; ++focal)
-                                textureFoveation(eye.images[imageIndex].image, layer, focal,
-                                                 focalPoint[0], focalPoint[1], profile.gain,
-                                                 profile.gain, profile.area);
+                        // Dropping eye tracking re-applies the same level as a fixed profile on
+                        // the next frame, with no image acquired.
+                        if (foveation.eyeTrackedFrame(updated, queried)) {
+                            profileCurrent = false;
+                            LOG("FOVEATION_FALLBACK %s update=%d state=%d", foveation.fallback(),
+                                updated, queried);
                         }
                     }
                     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -1088,6 +1306,11 @@ class Office {
                         sceneRenderer->render(worldViews[pass], rect.height);
                     inputRenderer->render(localViews[pass], localViews[multiview ? 1 : pass],
                                           controls.fade);
+                    // Diagnostic: drawn last into the foveated target, so its fragments run at
+                    // the runtime's actual density for this frame.
+                    if (controls.graphics.foveationDebug && foveationOverlay)
+                        foveationOverlay->render(pass, eye.width, eye.height, foveaCenters,
+                                                 foveaCenterValid);
                     // The sharp pass samples this depth, including the native motion controllers.
                     // Unbinding resolves tile MSAA; invalidating the sampled depth would lose
                     // occlusion, so only the texels the planned pass never reads are dropped.
@@ -1131,6 +1354,28 @@ class Office {
                                                        spans[k][1], spans[k][2], spans[k][3]);
                     }
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    if (textureProbes > 0 && worldFoveated) {
+                        // Read-only: did the runtime enable QCOM foveation on this GLES image?
+                        // GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM and _MIN_PIXEL_DENSITY_QCOM are
+                        // GetTexParameter queries (QCOM_texture_foveated, Table 21.10).
+                        --textureProbes;
+                        const GLenum target = multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(target, eye.images[imageIndex].image);
+                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM,
+                                            &textureBits);
+                        glGetTexParameterfv(target, GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM,
+                                            &textureMinDensity);
+                        glGetTexParameteriv(target, GL_TEXTURE_FOVEATED_NUM_FOCAL_POINTS_QUERY_QCOM,
+                                            &textureFocalPoints);
+                        glBindTexture(target, 0);
+                        const auto probeError = glGetError();
+                        LOG("FOVEATION_TEXTURE image=%u level=%s eyeTracked=%d bits=%d "
+                            "minDensity=%.3f focalPoints=%d gl_error=%x",
+                            imageIndex, office::foveationLevelName(appliedProfile),
+                            appliedProfile.eyeTracked, textureBits, textureMinDensity,
+                            textureFocalPoints, probeError);
+                    }
                     if (sharp) {
 #ifndef NDEBUG
                         if (depthProbe) {
@@ -1273,8 +1518,39 @@ class Office {
                 frameMetrics["worldWidth"] = eyes[0].width;
                 frameMetrics["worldHeight"] = eyes[0].height;
                 frameMetrics["maxRenderScale"] = office::maximumRenderScale(worldLimits[0]);
-                frameMetrics["foveationSupported"] = textureFoveation != nullptr;
-                frameMetrics["foveationEnabled"] = worldFoveated;
+                // The UI's availability and applied mode; details in "foveation".
+                frameMetrics["foveationSupported"] = foveation.swapchainFoveation();
+                frameMetrics["foveationEnabled"] =
+                    worldFoveated && appliedProfile.apply && !appliedProfile.empty;
+                {
+                    const auto &s = foveationSamples;
+                    nlohmann::json fovea = {
+                        {"setting", office::foveationQualityName(controls.graphics.foveation)},
+                        {"level",
+                         worldFoveated ? office::foveationLevelName(appliedProfile) : "unfoveated"},
+                        {"eyeTracked", worldFoveated && appliedProfile.eyeTracked},
+                        {"eyeTrackedAvailable", foveation.eyeTrackedAvailable()},
+                        {"applied", profileCurrent},
+                        {"create", profileCreateResult},
+                        {"update", profileUpdateResult},
+                        {"frames", s.frames},
+                        {"validFrames", s.valid},
+                        {"invalidFrames", s.invalid},
+                        {"failedFrames", s.failed},
+                        {"lastUpdate", s.update},
+                        {"lastState", s.state},
+                        {"centerValid", s.centerValid},
+                        {"textureBits", textureBits},
+                        {"textureMinDensity", textureMinDensity},
+                        {"textureFocalPoints", textureFocalPoints},
+                        {"debug", controls.graphics.foveationDebug},
+                        {"fallback", foveation.fallback()}};
+                    if (s.centerValid)
+                        fovea["center"] = {{s.center[0].x, s.center[0].y},
+                                           {s.center[1].x, s.center[1].y}};
+                    frameMetrics["foveation"] = fovea;
+                    foveationSamples.reset();
+                }
                 frameMetrics["graphicsError"] = graphicsError;
                 if (sharp) {
                     frameMetrics["sharpWidth"] = sharpEyes[0].width;

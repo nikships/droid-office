@@ -125,7 +125,8 @@ import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativeScene } from './native/scene';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
-import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
+import { getNativeGraphicsSettings, nativeGraphicsAim, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { nativeGraphicsPacket } from './native/graphics-settings';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
 import { captureVrKeys } from './vr/physical-keys';
@@ -5436,12 +5437,14 @@ if (nativeMode) {
       const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
-        control: control ? { ...control, graphics: getNativeGraphicsSettings() } : control,
+        control: control ? { ...control, graphics: nativeGraphicsPacket(getNativeGraphicsSettings()) } : control,
         panel: { ...nativeUi?.panelState(), status: { aim: nativeGraphicsAim(control?.aim ?? ''), message } },
       };
     },
     reset: () => nativeScene?.reset(),
     recenter: () => nativeControls?.recenter(),
+    // Headset checks switch foveation levels and the density view from devtools.
+    graphics: { get: getNativeGraphicsSettings, set: setNativeGraphicsSettings },
     report: () => nativeScene?.report(),
     controls: nativeControls,
     ui: nativeUi,

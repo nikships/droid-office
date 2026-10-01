@@ -112,6 +112,32 @@ void packets() {
     packet["control"]["graphics"]["renderScale"] = 1;
     packet["control"]["graphics"]["foveation"] = "balanced";
     assert(bridge.submit(packet.dump(), scene, error));
+    assert(!bridge.read().graphics.foveationDebug && "the diagnostic view is off by default");
+    packet["control"]["graphics"]["foveationDebug"] = true;
+    assert(bridge.submit(packet.dump(), scene, error));
+    assert(bridge.read().graphics.foveationDebug);
+    for (const auto &quality : {"clarity", "performance", "off", "balanced"}) {
+        packet["control"]["graphics"]["foveation"] = quality;
+        assert(bridge.submit(packet.dump(), scene, error));
+    }
+    assert(bridge.read().graphics.foveation == FoveationQuality::Balanced);
+    // Current pages no longer send peripheralDensity; older pages still do.
+    packet["control"]["graphics"].erase("peripheralDensity");
+    packet["control"]["graphics"].erase("foveationDebug");
+    assert(bridge.submit(packet.dump(), scene, error) && error.empty());
+    assert(!bridge.read().graphics.foveationDebug);
+    packet["control"]["graphics"]["peripheralDensity"] = 7;
+    assert(bridge.submit(packet.dump(), scene, error) && "legacy density is ignored, not rejected");
+    packet["control"]["graphics"].erase("peripheralDensity");
+    const auto debugRevision = bridge.read().revision;
+    packet["control"]["graphics"]["foveationDebug"] = "true";
+    assert(!bridge.submit(packet.dump(), scene, error));
+    assert(bridge.read().revision == debugRevision);
+    packet["control"]["graphics"].erase("foveationDebug");
+    packet["control"]["graphics"]["foveation"] = "maximum";
+    assert(!bridge.submit(packet.dump(), scene, error));
+    packet["control"]["graphics"]["foveation"] = "balanced";
+    assert(bridge.submit(packet.dump(), scene, error));
     const auto graphicsRevision = bridge.read().revision;
     for (const auto &invalid : Json::array({"false", 0, nullptr})) {
         packet["control"]["graphics"]["sharpScreens"] = invalid;
