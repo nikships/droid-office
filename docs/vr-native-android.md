@@ -55,6 +55,15 @@ office's gameplay and scene updates at approximately 30 Hz. Parsing and scene pr
 run away from the render thread. Head and controller rendering use current native poses each
 display frame rather than waiting for JavaScript's next update.
 
+The GLES scene renderer (`scene_renderer.cpp`) keeps only its GPU work. Two GL-free parts are
+shared with the planned Vulkan renderer:
+
+- `scene_stream.cpp` is the bridge side: packet apply, publish, reset requests and
+  backpressure, with the texture changes queued in order.
+- `scene_frame.cpp` is the frame planner: frustum culling and three's draw order, the
+  controller-attached items, the laptop-screen plan and the prepare budget. It asks the backend
+  what is on its GPU through `SceneResidency`.
+
 ### Locomotion presentation
 
 The source now interpolates approved player-rig translation and rotation each display frame

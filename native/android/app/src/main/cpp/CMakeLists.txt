@@ -22,6 +22,7 @@ endif()
 add_library(office_xr SHARED office_xr.cpp xr_input.cpp bridge_state.cpp input_renderer.cpp cursor_swapchain.cpp xr_performance.cpp)
 target_sources(office_xr PRIVATE foveation_overlay.cpp foveation_filter.cpp)
 target_sources(office_xr PRIVATE scene_renderer.cpp scene_model.cpp scene_packet.cpp scene_shaders.cpp)
+target_sources(office_xr PRIVATE scene_stream.cpp scene_frame.cpp)
 target_sources(office_xr PRIVATE controller_model.cpp controller_renderer.cpp)
 target_include_directories(office_xr PRIVATE "${OFFICE_DEPS}")
 # The development APK also needs the same real-time frame budget as a release.

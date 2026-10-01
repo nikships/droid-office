@@ -1,6 +1,7 @@
 #include "scene_renderer.h"
 
 #include "scene_model.h"
+#include "scene_stream.h"
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -69,7 +70,7 @@ typedef void (*MaxShaderCompilerThreadsFn)(GLuint count);
  * and the link is its own budgeted step (a driver may do each synchronously), and the result is
  * read a frame after the link, so no frame waits for more than one step.
  */
-struct Program {
+struct Program : ScenePipeline {
     GLuint id = 0, vs = 0, fs = 0;
     enum Stage : uint8_t { Vertex, Fragment, Linking } stage = Vertex; // the step done last
     bool ready = false, failed = false;
@@ -150,26 +151,15 @@ float srgbEncode(float c) {
 
 } // namespace
 
-struct SceneRenderer::Impl {
+struct SceneRenderer::Impl final : SceneResidency {
     SceneRendererOptions options;
-    SceneModel model;
+    // The bridge side (packets, backpressure, the newest state and its texture changes) and the
+    // frame planning (culling, draw order, attachments, the screen layer's plan) are shared with
+    // the other backends: scene_stream.h and scene_frame.h.
+    SceneStream stream;
+    SceneFramePlanner frame;
 
-    // ---- Bridge side ----------------------------------------------------------------------------
-    std::mutex modelMutex; // serializes apply and tick
-    bool awaitingReset = false;
-    double resetRequestedAt = 0;
-
-    // ---- Shared (guarded by `shared`) -----------------------------------------------------------
-    mutable std::mutex shared;
-    std::shared_ptr<const RenderState> latest;
-    std::deque<TextureOp> textureOps;
-    size_t queuedTextureBytes = 0;
-    size_t blobBytes = 0;
-    std::string error;
-    bool resetRequest = false;
-    uint64_t packetsApplied = 0, packetsRejected = 0, commits = 0, sceneSeq = 0;
-    float parseMs = 0, applyMs = 0;
-    mutable float applyMaxMs = 0; // since the last stats() call
+    mutable std::mutex statsMutex; // guards frameStats, read by stats() on any thread
     SceneStats frameStats;
 
     // ---- GL thread
@@ -211,10 +201,7 @@ struct SceneRenderer::Impl {
     float gpuMs = -1;
 
     // Per prepareFrame.
-    size_t budget = 0; // upload bytes left
-    int linksLeft = 0;
-    Clock::time_point deadline;
-    bool worked = false;   // some budgeted work ran this frame (the first piece always may)
+    FrameBudget work;      // upload bytes and program starts left, CPU deadline
     bool prepared = false; // prepareFrame ran at least once
     bool autoPrepare =
         true; // the caller never called prepareFrame: every render call runs it first
@@ -222,29 +209,17 @@ struct SceneRenderer::Impl {
     int windowFrames = 0;
     bool cpuWindowDone = false;
 
-    struct Draw {
-        const DrawItem *item;
-        const Program *program;
-        float z;
-        uint8_t views = 3; // the screen layer: bit i set when view i sees the item
-    };
-    std::vector<Draw> opaque, transparent;
-    std::vector<Draw> sharpScreens, sharpOverlays; // renderSharpScreens, z: eye distance
+    // The planner's draws; `program` is always this renderer's Program.
+    using Draw = SceneDraw;
+    using Rect = PixelRect;
+    static const Program &asProgram(const Draw &d) {
+        return *static_cast<const Program *>(d.program);
+    }
     GLuint sharpSampler = 0; // nearest, clamped, no comparison, whatever the depth texture's state
-    // The drawn state's tagged screens and overlay candidates, rebuilt when the state changes.
-    mutable uint64_t sharpIndexSerial = 0;
-    mutable std::vector<const DrawItem *> taggedScreens, taggedOverlays;
-    // The lists of the latest planSharpScreens, valid for that frame and state only.
-    uint64_t sharpPlanToken = 0, sharpPlanFrame = 0;
-    std::shared_ptr<const RenderState> sharpPlanState;
-    // Controller-attached items of the drawn state, in item order: copies whose matrices and
-    // sphere are recomposed from the grips each frame (the copies are made once per state).
-    std::vector<DrawItem> placed;
-    uint64_t placedSerial = 0;
-    SceneControllerPoses grips; // valid[h] only between setControllerPoses and the next frame
     SceneStats stats;
 
-    explicit Impl(const SceneRendererOptions &o) : options(o), model(modelOptions(o)) {}
+    explicit Impl(const SceneRendererOptions &o)
+        : options(o), stream(streamOptions(o)), frame(planOptions(o)) {}
 
     static ModelOptions modelOptions(const SceneRendererOptions &o) {
         ModelOptions m;
@@ -255,78 +230,49 @@ struct SceneRenderer::Impl {
         return m;
     }
 
+    static SceneStreamOptions streamOptions(const SceneRendererOptions &o) {
+        SceneStreamOptions s;
+        s.model = modelOptions(o);
+        s.maxPacketBytes = o.maxPacketBytes;
+        s.maxQueuedBytes = o.maxQueuedBytes;
+        return s;
+    }
+
+    static ScenePlanOptions planOptions(const SceneRendererOptions &o) {
+        ScenePlanOptions p;
+        p.multiview = o.multiview;
+        p.sharpMaxDistance = o.sharpMaxDistance;
+        p.sharpMaxScreens = o.sharpMaxScreens;
+        p.sharpMaxOverlays = o.sharpMaxOverlays;
+        p.sharpCropToScreens = o.sharpCropToScreens;
+        return p;
+    }
+
     void fail(const std::string &message) {
         SCENE_LOG("%s", message.c_str());
-        std::lock_guard<std::mutex> lock(shared);
-        error = message;
+        stream.setError(message);
     }
 
-    // ---- Bridge thread --------------------------------------------------------------------------
+    // ---- SceneResidency: what the planner asks about this renderer's GL objects ---------------
 
-    /**
-     * A rejected packet asks for one reset; packets still in flight from the old stream are then
-     * dropped quietly instead of asking again (which would restart the snapshot in a loop). The
-     * request repeats only if no reset arrives within a few seconds.
-     */
-    void reject(const std::string &message) {
-        double now = seconds();
-        bool ask = !awaitingReset || now - resetRequestedAt > 5.0;
-        std::lock_guard<std::mutex> s(shared);
-        packetsRejected++;
-        if (!ask)
-            return;
-        SCENE_LOG("%s", message.c_str());
-        error = message;
-        resetRequest = true;
-        awaitingReset = true;
-        resetRequestedAt = now;
+    const ScenePipeline *drawPipeline(const ProgramKey &key) override {
+        const Program *p = program(key);
+        return p && !p->failed ? p : nullptr;
     }
 
-    bool apply(const nlohmann::json &packet) {
-        std::lock_guard<std::mutex> lock(modelMutex);
-        auto t0 = Clock::now();
-        ApplyResult result;
-        try {
-            result = model.apply(packet, seconds());
-        } catch (const std::exception &e) {
-            reject(std::string("scene packet rejected: ") + e.what());
+    const ScenePipeline *readyPipeline(const ProgramKey &key) const override {
+        return readyProgram(key);
+    }
+
+    bool textureResident(uint32_t id) const override { return textures.count(id) != 0; }
+
+    bool vertexBox(uint64_t serial, float lo[3], float hi[3]) const override {
+        auto b = buffers.find(serial);
+        if (b == buffers.end() || !b->second.ready() || !b->second.boxValid || !b->second.boxAny)
             return false;
-        }
-        if (packet.is_object() && packet.value("reset", false))
-            awaitingReset = false;
-        publish(std::move(result));
-        std::lock_guard<std::mutex> s(shared);
-        packetsApplied++;
-        sceneSeq = model.lastSeq();
-        commits = model.commits();
-        blobBytes = model.blobBytes();
-        applyMs = std::chrono::duration<float, std::milli>(Clock::now() - t0).count();
-        applyMaxMs = std::max(applyMaxMs, applyMs);
+        std::copy(b->second.lo, b->second.lo + 3, lo);
+        std::copy(b->second.hi, b->second.hi + 3, hi);
         return true;
-    }
-
-    void publish(ApplyResult &&result) {
-        std::lock_guard<std::mutex> lock(shared);
-        for (auto &op : result.textures) {
-            if (op.kind == TextureOp::Clear) {
-                textureOps.clear();
-                queuedTextureBytes = 0;
-            } else if (op.kind == TextureOp::Upload) {
-                // A newer image of a texture replaces one still waiting (video frames, canvases),
-                // unless another op on that texture sits between them.
-                auto same = std::find_if(textureOps.rbegin(), textureOps.rend(),
-                                         [&](const TextureOp &q) { return q.id == op.id; });
-                if (same != textureOps.rend() && same->kind == TextureOp::Upload) {
-                    queuedTextureBytes = queuedTextureBytes - same->bytes() + op.bytes();
-                    *same = std::move(op);
-                    continue;
-                }
-                queuedTextureBytes += op.bytes();
-            }
-            textureOps.push_back(std::move(op));
-        }
-        if (result.state)
-            latest = std::move(result.state);
     }
 
     // ---- GL thread: resources -------------------------------------------------------------------
@@ -402,10 +348,10 @@ struct SceneRenderer::Impl {
     }
 
     void startProgram(ProgramKey key) {
-        if (linksLeft <= 0 || !mayWork())
+        if (work.links <= 0 || !mayWork())
             return;
-        linksLeft--;
-        worked = true;
+        work.links--;
+        work.worked = true;
         Program &p = programs[key.bits()];
         p.key = key;
         p.src = generateShader(key);
@@ -437,14 +383,14 @@ struct SceneRenderer::Impl {
                 if (done)
                     finishProgram(p);
             } else if (frameNumber > p.linkedFrame && mayWork()) {
-                worked = true;
+                work.worked = true;
                 finishProgram(p);
             }
             return;
         }
         if (!mayWork())
             return;
-        worked = true;
+        work.worked = true;
         if (p.stage == Program::Vertex) {
             p.fs = startCompile(GL_FRAGMENT_SHADER, p.src.fragment);
             p.stage = Program::Fragment;
@@ -542,7 +488,7 @@ struct SceneRenderer::Impl {
         keys2.swap(wanted);
         for (const ProgramKey &k : keys2)
             if (!programs.count(k.bits())) {
-                if (linksLeft > 0 && mayWork())
+                if (work.links > 0 && mayWork())
                     startProgram(k);
                 else
                     wanted.push_back(k);
@@ -551,7 +497,7 @@ struct SceneRenderer::Impl {
 
     /** Whether budgeted work may start now: always the first piece of a frame, then within the time
      * budget. */
-    bool mayWork() const { return !worked || Clock::now() < deadline; }
+    bool mayWork() const { return work.mayWork(); }
 
     /**
      * Uploads (part of) a buffer within the frame budget; true once all of it is on the GPU. Large
@@ -562,9 +508,9 @@ struct SceneRenderer::Impl {
         auto it = buffers.find(src->serial);
         if (it != buffers.end() && it->second.ready())
             return true;
-        if (budget == 0 || !mayWork())
+        if (work.bytes == 0 || !mayWork())
             return false;
-        worked = true;
+        work.worked = true;
         if (it == buffers.end()) {
             Buffer b;
             b.target = target;
@@ -576,14 +522,14 @@ struct SceneRenderer::Impl {
             it = buffers.emplace(src->serial, b).first;
         }
         Buffer &b = it->second;
-        size_t n = std::min(b.size - b.uploaded, budget);
+        size_t n = std::min(b.size - b.uploaded, work.bytes);
         if constexpr (std::is_same_v<T, GpuVertices>)
             extendBox(b, *src, b.uploaded, b.uploaded + n);
         glBindBuffer(target, b.id);
         glBufferSubData(target, GLintptr(b.uploaded), GLsizeiptr(n),
                         src->bytes.data() + b.uploaded);
         b.uploaded += n;
-        budget -= n;
+        work.bytes -= n;
         stats.uploadedBytesLastFrame += n;
         if (!b.ready())
             return false;
@@ -667,17 +613,7 @@ struct SceneRenderer::Impl {
      * depth array by view; single view samples a 2D depth or one layer of an array.
      */
     template <typename F> void sharpVariants(ProgramKey key, F &&f) const {
-        if (options.multiview) {
-            key.multiview = true;
-            key.sharpDepth = SharpDepth::Array;
-            f(key);
-            return;
-        }
-        key.multiview = false;
-        key.sharpDepth = SharpDepth::Texture2D;
-        f(key);
-        key.sharpDepth = SharpDepth::Array;
-        f(key);
+        sharpKeyVariants(options.multiview, key, std::forward<F>(f));
     }
 
     /** Links the screen layer's programs, after the world's, with links left over. */
@@ -690,10 +626,10 @@ struct SceneRenderer::Impl {
                 if (programs.count(v.bits()))
                     return;
                 missing = true;
-                if (linksLeft > 0 && mayWork())
+                if (work.links > 0 && mayWork())
                     startProgram(v);
             });
-            if (missing && (linksLeft <= 0 || !mayWork()))
+            if (missing && (work.links <= 0 || !mayWork()))
                 return;
         }
         sharpWarmedSerial = s.serial;
@@ -710,10 +646,10 @@ struct SceneRenderer::Impl {
                 if (programs.count(v.bits()))
                     return;
                 missing = true;
-                if (linksLeft > 0 && mayWork())
+                if (work.links > 0 && mayWork())
                     startProgram(v);
             });
-            if (missing && (linksLeft <= 0 || !mayWork()))
+            if (missing && (work.links <= 0 || !mayWork()))
                 return;
         }
         warmedSerial = s.serial;
@@ -899,25 +835,10 @@ struct SceneRenderer::Impl {
     }
 
     void takeTextureOps() {
-        std::deque<TextureOp> ops;
-        {
-            std::lock_guard<std::mutex> lock(shared);
-            // Keep most uploads on the bridge side, where a newer image still replaces a waiting
-            // one.
-            size_t waiting = jobs.size(),
-                   cap = size_t(std::max(1, options.textureUploadsPerFrame)) * 2;
-            while (!textureOps.empty()) {
-                TextureOp &op = textureOps.front();
-                if (op.kind == TextureOp::Upload) {
-                    if (waiting >= cap)
-                        break;
-                    waiting++;
-                    queuedTextureBytes -= op.bytes();
-                }
-                ops.push_back(std::move(op));
-                textureOps.pop_front();
-            }
-        }
+        // Keep most uploads on the bridge side, where a newer image still replaces a waiting
+        // one.
+        std::deque<TextureOp> ops = stream.takeTextureOps(
+            jobs.size(), size_t(std::max(1, options.textureUploadsPerFrame)) * 2);
         for (auto &op : ops) {
             switch (op.kind) {
             case TextureOp::Clear:
@@ -971,9 +892,9 @@ struct SceneRenderer::Impl {
         int started = 0;
         glActiveTexture(GL_TEXTURE0);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        for (auto j = jobs.begin(); j != jobs.end() && budget > 0 && mayWork();) {
+        for (auto j = jobs.begin(); j != jobs.end() && work.bytes > 0 && mayWork();) {
             UploadJob &job = *j;
-            worked = true;
+            work.worked = true;
             const Image &img = job.op.image;
             if (img.w <= 0 || img.h <= 0) {
                 j = jobs.erase(j);
@@ -993,14 +914,14 @@ struct SceneRenderer::Impl {
                                img.w, img.h);
             }
             size_t rowBytes = size_t(img.w) * 4;
-            int rows = int(
-                std::min<size_t>(size_t(img.h - job.row), std::max<size_t>(1, budget / rowBytes)));
+            int rows = int(std::min<size_t>(size_t(img.h - job.row),
+                                            std::max<size_t>(1, work.bytes / rowBytes)));
             glBindTexture(GL_TEXTURE_2D, job.tex);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, job.row, img.w, rows, GL_RGBA, GL_UNSIGNED_BYTE,
                             img.rgba.data() + size_t(job.row) * rowBytes);
             job.row += rows;
             size_t sent = size_t(rows) * rowBytes;
-            budget -= std::min(budget, sent);
+            work.bytes -= std::min(work.bytes, sent);
             stats.uploadedBytesLastFrame += sent;
             if (job.row < img.h)
                 break; // the rest next frame
@@ -1240,7 +1161,7 @@ struct SceneRenderer::Impl {
     void drawColor(const Draw &d) {
         const DrawItem &it = *d.item;
         const MaterialState &m = *it.material;
-        useProgram(*d.program);
+        useProgram(asProgram(d));
         setBlend(m);
         setFaces(it.side, it.mirrored);
         setDepth(m.depthTest, m.depthWrite, m.depthFunc);
@@ -1253,7 +1174,7 @@ struct SceneRenderer::Impl {
     void drawWithUniforms(const Draw &d) {
         const DrawItem &it = *d.item;
         const MaterialState &m = *it.material;
-        const Program &p = *d.program;
+        const Program &p = asProgram(d);
         if (p.uModel >= 0)
             glUniformMatrix4fv(p.uModel, 1, GL_FALSE, it.model);
         setMat3(p.uNormalMatrix, it.normal);
@@ -1398,111 +1319,8 @@ struct SceneRenderer::Impl {
         glBindBufferBase(GL_UNIFORM_BUFFER, kBlockView, viewUbo[ring][0]);
     }
 
-    /** Copies the drawn state's attached items once per state, then recomposes them per frame. */
-    void syncAttachments(const RenderState &s) {
-        if (placedSerial == s.serial)
-            return;
-        placed.clear();
-        placed.reserve(s.attachedItems);
-        for (const DrawItem &it : s.items)
-            if (it.attachment >= 0)
-                placed.push_back(it);
-        placedSerial = s.serial;
-        compose(s);
-    }
-
-    /** Places every attached item at its valid grip (matrices only). */
-    void compose(const RenderState &s) {
-        size_t k = 0;
-        for (const DrawItem &it : s.items) {
-            if (it.attachment < 0)
-                continue;
-            if (grips.valid[it.attachment])
-                placeAttachment(it, grips.grip[it.attachment], placed[k]);
-            k++;
-        }
-    }
-
     void setControllerPoses(const SceneControllerPoses &poses) {
-        for (int h = 0; h < 2; h++) {
-            grips.valid[h] = poses.valid[h] && rigidPose(poses.grip[h]);
-            grips.held[h] = grips.valid[h] && poses.held[h];
-            std::copy(poses.grip[h], poses.grip[h] + 16, grips.grip[h]);
-        }
-        if (const RenderState *s = current.get()) {
-            if (placedSerial != s->serial)
-                syncAttachments(*s);
-            else
-                compose(*s);
-        }
-    }
-
-    /**
-     * Culls against every eye and sorts as three's render lists do (painterSortStable and
-     * reversePainterSortStable): opaque by group order, render order, material, near to far, id;
-     * transparent by group order, render order, far to near, id. Depth is the bounding-sphere
-     * center in eye 0's clip space, as three projects the bounding-sphere center.
-     */
-    void buildLists(const RenderState &s, const SceneEye *eyes, int count, bool multiviewPass) {
-        opaque.clear();
-        transparent.clear();
-        Frustum fr[2];
-        Mat4 vp0 = multiply(toMat(eyes[0].projection), toMat(eyes[0].view));
-        for (int i = 0; i < count; i++)
-            fr[i] = Frustum::fromViewProj(multiply(toMat(eyes[i].projection), toMat(eyes[i].view)));
-        syncAttachments(s);
-        size_t attached = 0;
-        stats.attachedPlaced = 0;
-        for (const DrawItem &source : s.items) {
-            const DrawItem *drawn = &source;
-            if (source.attachment >= 0) {
-                drawn = &placed[attached++];
-                // Without this frame's tracked grip there is no pose to draw it at: never a stale
-                // one. A grip-held item drops on the display frame its squeeze is released.
-                if (!grips.valid[source.attachment] ||
-                    (source.gripHeld && !grips.held[source.attachment]))
-                    continue;
-                stats.attachedPlaced++;
-            }
-            const DrawItem &it = *drawn;
-            bool seen = false;
-            for (int i = 0; i < count && !seen; i++)
-                seen = fr[i].intersects(it.sphere);
-            if (!seen)
-                continue;
-            ProgramKey k = it.key;
-            k.multiview = multiviewPass;
-            const Program *p = program(k);
-            if (!p || p->failed)
-                continue;
-            Vec3 c = it.sphere.c;
-            float w = vp0[3] * c.x + vp0[7] * c.y + vp0[11] * c.z + vp0[15];
-            float z = (vp0[2] * c.x + vp0[6] * c.y + vp0[10] * c.z + vp0[14]) / (w != 0 ? w : 1);
-            (it.material->transparent ? transparent : opaque).push_back({&it, p, z});
-        }
-        std::stable_sort(opaque.begin(), opaque.end(), [](const Draw &a, const Draw &b) {
-            const DrawItem &x = *a.item, &y = *b.item;
-            if (x.groupOrder != y.groupOrder)
-                return x.groupOrder < y.groupOrder;
-            if (x.renderOrder != y.renderOrder)
-                return x.renderOrder < y.renderOrder;
-            if (x.material->id != y.material->id)
-                return x.material->id < y.material->id;
-            if (a.z != b.z)
-                return a.z < b.z;
-            return x.id < y.id;
-        });
-        std::stable_sort(transparent.begin(), transparent.end(), [](const Draw &a, const Draw &b) {
-            const DrawItem &x = *a.item, &y = *b.item;
-            if (x.groupOrder != y.groupOrder)
-                return x.groupOrder < y.groupOrder;
-            if (x.renderOrder != y.renderOrder)
-                return x.renderOrder < y.renderOrder;
-            if (a.z != b.z)
-                return a.z > b.z;
-            return x.id < y.id;
-        });
-        stats.culledItems = uint32_t(s.items.size() - opaque.size() - transparent.size());
+        frame.setControllerPoses(poses, current.get());
     }
 
     /**
@@ -1511,12 +1329,12 @@ struct SceneRenderer::Impl {
      */
     void adopt() {
         {
-            std::lock_guard<std::mutex> lock(shared);
+            std::shared_ptr<const RenderState> latest = stream.latest();
             uint64_t have = pending ? pending->serial : current ? current->serial : 0;
             if (latest && latest->serial > have) {
                 if (!pending)
                     pendingSince = seconds();
-                pending = latest;
+                pending = std::move(latest);
             }
         }
         if (!pending)
@@ -1528,7 +1346,7 @@ struct SceneRenderer::Impl {
         current = std::move(pending);
         pending.reset();
         // Before sweep: the previous state's attached copies must not keep its buffers alive.
-        syncAttachments(*current);
+        frame.syncAttachments(*current);
         sweep();
         // Vertex arrays now, so the eye passes only look them up.
         for (const DrawItem &it : current->items)
@@ -1650,7 +1468,7 @@ struct SceneRenderer::Impl {
         }
         frameNumber++;
         // Grips are valid for one display frame only.
-        grips.valid[0] = grips.valid[1] = grips.held[0] = grips.held[1] = false;
+        frame.beginFrame();
         prepareMs = drawMs = 0;
         stats.drawCalls = stats.shadowDrawCalls = stats.triangles = stats.points = stats.lines =
             stats.culledItems = 0;
@@ -1679,11 +1497,8 @@ struct SceneRenderer::Impl {
         chooseTimedFrame();
         beginTimed();
 
-        budget = options.uploadBytesPerFrame;
-        linksLeft = options.programLinksPerFrame;
-        worked = false;
-        deadline =
-            t0 + std::chrono::microseconds(int64_t(double(options.prepareBudgetMs) * 1000.0));
+        work.start(t0, options.uploadBytesPerFrame, options.programLinksPerFrame,
+                   options.prepareBudgetMs);
         gl = GlState{};
         setDefaultAttributes();
         // Geometry first: a state waits for its buffers, while textures may arrive a little later.
@@ -1731,7 +1546,9 @@ struct SceneRenderer::Impl {
         const RenderState *s = current.get();
         if (s) {
             writeViewUbos(eyes, count, heightPx, multiviewPass);
-            buildLists(*s, eyes, count, multiviewPass);
+            frame.buildLists(*s, eyes, count, multiviewPass, *this);
+            stats.attachedPlaced = frame.attachedPlaced();
+            stats.culledItems = frame.culledItems();
         }
         int passes = multiviewPass ? 1 : count;
         for (int e = 0; e < passes; e++) {
@@ -1747,9 +1564,9 @@ struct SceneRenderer::Impl {
                 continue;
             bindTexture(kUnitShadowMap,
                         shadowTex && s->shadow && options.shadows ? shadowTex : fallbackShadow);
-            for (const Draw &d : opaque)
+            for (const Draw &d : frame.opaque())
                 drawColor(d);
-            for (const Draw &d : transparent)
+            for (const Draw &d : frame.transparent())
                 drawColor(d);
         }
         endTimed();
@@ -1766,226 +1583,6 @@ struct SceneRenderer::Impl {
     const Program *readyProgram(const ProgramKey &key) const {
         auto it = programs.find(key.bits());
         return it != programs.end() && it->second.ready ? &it->second : nullptr;
-    }
-
-    struct SharpView {
-        Frustum frustum;
-        Mat4 viewProj;
-        Vec3 eye;
-    };
-
-    struct Rect {
-        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        bool empty() const { return x0 >= x1 || y0 >= y1; }
-    };
-
-    static Rect unite(const Rect &a, const Rect &b) {
-        if (a.empty())
-            return b;
-        if (b.empty())
-            return a;
-        return {std::min(a.x0, b.x0), std::min(a.y0, b.y0), std::max(a.x1, b.x1),
-                std::max(a.y1, b.y1)};
-    }
-
-    static Rect intersect(const Rect &a, const Rect &b) {
-        return {std::max(a.x0, b.x0), std::max(a.y0, b.y0), std::min(a.x1, b.x1),
-                std::min(a.y1, b.y1)};
-    }
-
-    static SharpView sharpView(const SceneEye &e) {
-        SharpView v;
-        Mat4 view = toMat(e.view), inv;
-        v.viewProj = multiply(toMat(e.projection), view);
-        v.frustum = Frustum::fromViewProj(v.viewProj);
-        if (!invert(view, inv))
-            inv = identity();
-        v.eye = {inv[12], inv[13], inv[14]};
-        return v;
-    }
-
-    /** Which views see the sphere (bit per view), and the distance from the nearest eye (0 inside
-     * it). */
-    static uint8_t sharpViewMask(const Sphere &sp, const SharpView *views, int count,
-                                 float &distance) {
-        uint8_t mask = 0;
-        distance = INFINITY;
-        for (int i = 0; i < count; i++) {
-            if (views[i].frustum.intersects(sp))
-                mask |= uint8_t(1u << i);
-            float d = sp.infinite() ? 0.0f : std::max(0.0f, length(sp.c - views[i].eye) - sp.r);
-            distance = std::min(distance, d);
-        }
-        return mask;
-    }
-
-    /** The drawn state's tagged screens and overlay candidates, found once per state. */
-    void sharpIndex(const RenderState &s) const {
-        if (sharpIndexSerial == s.serial)
-            return;
-        taggedScreens.clear();
-        taggedOverlays.clear();
-        for (const DrawItem &it : s.items) {
-            if (it.sharpText)
-                taggedScreens.push_back(&it);
-            else if (it.sharpOverlay)
-                taggedOverlays.push_back(&it);
-        }
-        sharpIndexSerial = s.serial;
-    }
-
-    /**
-     * Tagged screens the layer can draw now: texture resident, seen, near enough, program linked.
-     * With `out` null, whether there is any; else fills `out` (z: eye distance, views: which views
-     * see it).
-     */
-    bool sharpCandidates(const RenderState &s, const SharpView *views, int count, SharpDepth kind,
-                         bool multiviewKey, std::vector<Draw> *out) const {
-        sharpIndex(s);
-        for (const DrawItem *it : taggedScreens) {
-            if (!textures.count(it->material->map))
-                continue;
-            float distance = 0;
-            uint8_t mask = sharpViewMask(it->sphere, views, count, distance);
-            if (!mask || distance > options.sharpMaxDistance)
-                continue;
-            ProgramKey k = it->key;
-            k.multiview = multiviewKey;
-            k.sharpDepth = kind;
-            k.sharpOverlay = false;
-            const Program *p = readyProgram(k);
-            if (!p)
-                continue;
-            if (!out)
-                return true;
-            out->push_back({it, p, distance, mask});
-        }
-        return out && !out->empty();
-    }
-
-    /**
-     * Fills sharpScreens (the nearest sharpMaxScreens, drawn far to near) and sharpOverlays (the
-     * see-through surfaces in front of them, in three's transparent order) for `count` views, view
-     * i a w[i] x h[i] image, and cover[i]: every pixel of view i a selected screen may cover. False
-     * when no screen qualifies.
-     */
-    bool selectSharp(const RenderState &s, const SharpView *views, int count, SharpDepth kind,
-                     bool multiviewKey, const int w[2], const int h[2], Rect cover[2]) {
-        cover[0] = cover[1] = Rect{};
-        sharpScreens.clear();
-        sharpOverlays.clear();
-        sharpCandidates(s, views, count, kind, multiviewKey, &sharpScreens);
-        // The nearest few, drawn far to near (the world depth already hides a screen behind another
-        // laptop; the order only settles ties).
-        std::stable_sort(sharpScreens.begin(), sharpScreens.end(),
-                         [](const Draw &a, const Draw &b) { return a.z < b.z; });
-        if (int(sharpScreens.size()) > std::max(0, options.sharpMaxScreens))
-            sharpScreens.resize(size_t(std::max(0, options.sharpMaxScreens)));
-        std::reverse(sharpScreens.begin(), sharpScreens.end());
-        if (sharpScreens.empty())
-            return false;
-        float farthest = 0;
-        for (const Draw &d : sharpScreens) {
-            for (int i = 0; i < count; i++)
-                if (d.views & (1u << i))
-                    cover[i] = unite(cover[i], itemRect(*d.item, views[i].viewProj, w[i], h[i]));
-            farthest = std::max(farthest, d.z + 2 * std::max(0.0f, d.item->sphere.r));
-        }
-        if (options.sharpMaxOverlays <= 0)
-            return true;
-        for (const DrawItem *it : taggedOverlays) {
-            float distance = 0;
-            uint8_t seen = sharpViewMask(it->sphere, views, count, distance), mask = 0;
-            if (!seen || distance > farthest)
-                continue;
-            for (int i = 0; i < count; i++)
-                if ((seen & (1u << i)) && !cover[i].empty() &&
-                    !intersect(itemRect(*it, views[i].viewProj, w[i], h[i]), cover[i]).empty())
-                    mask |= uint8_t(1u << i);
-            if (!mask)
-                continue;
-            ProgramKey k = it->key;
-            k.multiview = multiviewKey;
-            k.sharpDepth = kind;
-            k.sharpOverlay = true;
-            const Program *p = readyProgram(k);
-            if (p)
-                sharpOverlays.push_back({it, p, distance, mask});
-        }
-        std::stable_sort(sharpOverlays.begin(), sharpOverlays.end(),
-                         [](const Draw &a, const Draw &b) { return a.z < b.z; });
-        if (int(sharpOverlays.size()) > options.sharpMaxOverlays)
-            sharpOverlays.resize(size_t(options.sharpMaxOverlays));
-        const Mat4 &vp0 = views[0].viewProj;
-        for (Draw &d : sharpOverlays) {
-            Vec3 c = d.item->sphere.c;
-            float cw = vp0[3] * c.x + vp0[7] * c.y + vp0[11] * c.z + vp0[15];
-            d.z = (vp0[2] * c.x + vp0[6] * c.y + vp0[10] * c.z + vp0[14]) / (cw != 0 ? cw : 1);
-        }
-        std::stable_sort(sharpOverlays.begin(), sharpOverlays.end(),
-                         [](const Draw &a, const Draw &b) {
-                             const DrawItem &x = *a.item, &y = *b.item;
-                             if (x.groupOrder != y.groupOrder)
-                                 return x.groupOrder < y.groupOrder;
-                             if (x.renderOrder != y.renderOrder)
-                                 return x.renderOrder < y.renderOrder;
-                             if (a.z != b.z)
-                                 return a.z > b.z;
-                             return x.id < y.id;
-                         });
-        return true;
-    }
-
-    /**
-     * The pixels a sphere may cover in a w x h viewport: its bounding box's corners projected, with
-     * a pixel of margin. A corner at or behind the eye covers the whole viewport.
-     */
-    static Rect projectedRect(const Sphere &sp, const Mat4 &vp, int w, int h) {
-        if (sp.empty())
-            return {};
-        if (sp.infinite())
-            return {0, 0, w, h};
-        const float lo[3] = {sp.c.x - sp.r, sp.c.y - sp.r, sp.c.z - sp.r};
-        const float hi[3] = {sp.c.x + sp.r, sp.c.y + sp.r, sp.c.z + sp.r};
-        return projectedBox(lo, hi, vp, w, h);
-    }
-
-    /**
-     * The pixels an item may cover: the box of its vertex positions, through its model matrix,
-     * projected like projectedRect. Without a usable box (not uploaded, empty, non-finite), its
-     * bounding sphere. Only for non-instanced, non-sprite triangles, whose vertex stage is exactly
-     * viewProj * model * position.
-     */
-    Rect itemRect(const DrawItem &it, const Mat4 &vp, int w, int h) const {
-        auto b = buffers.find(it.vertices->serial);
-        if (it.instances || it.key.model == ShadeModel::Sprite || b == buffers.end() ||
-            !b->second.ready() || !b->second.boxValid || !b->second.boxAny)
-            return projectedRect(it.sphere, vp, w, h);
-        return projectedBox(b->second.lo, b->second.hi, multiply(vp, toMat(it.model)), w, h);
-    }
-
-    /** The pixels the box [lo, hi] may cover through `m` (clip from box coordinates), see above. */
-    static Rect projectedBox(const float lo[3], const float hi[3], const Mat4 &vp, int w, int h) {
-        Rect full{0, 0, w, h};
-        float x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
-        for (int c = 0; c < 8; c++) {
-            float x = c & 1 ? hi[0] : lo[0], y = c & 2 ? hi[1] : lo[1], z = c & 4 ? hi[2] : lo[2];
-            float cw = vp[3] * x + vp[7] * y + vp[11] * z + vp[15];
-            if (cw < 1e-4f)
-                return full;
-            float nx = (vp[0] * x + vp[4] * y + vp[8] * z + vp[12]) / cw,
-                  ny = (vp[1] * x + vp[5] * y + vp[9] * z + vp[13]) / cw;
-            x0 = std::min(x0, nx);
-            x1 = std::max(x1, nx);
-            y0 = std::min(y0, ny);
-            y1 = std::max(y1, ny);
-        }
-        auto px = [](float ndc, int size) { return (ndc * 0.5f + 0.5f) * float(size); };
-        Rect r{int(std::floor(std::max(-1.0f, px(x0, w)))) - 1,
-               int(std::floor(std::max(-1.0f, px(y0, h)))) - 1,
-               int(std::ceil(std::min(float(w) + 1, px(x1, w)))) + 1,
-               int(std::ceil(std::min(float(h) + 1, px(y1, h)))) + 1};
-        return intersect(r, full);
     }
 
     void setSharpUniforms(const Program &p, const SharpScreenDepth &depth, int w, int h, float fade,
@@ -2008,90 +1605,24 @@ struct SceneRenderer::Impl {
         const RenderState *s = current.get();
         if (!initialized || !s || !s->sharpItems)
             return false;
-        SharpView views[2] = {sharpView(eyes[0]), sharpView(eyes[1])};
-        if (options.multiview)
-            return arrayDepth && sharpCandidates(*s, views, 2, SharpDepth::Array, true, nullptr);
-        return sharpCandidates(*s, views, 2, arrayDepth ? SharpDepth::Array : SharpDepth::Texture2D,
-                               false, nullptr);
+        return frame.hasSharp(*s, eyes, arrayDepth, *this);
     }
 
     bool hasSharpAnywhere() const {
         const RenderState *s = current.get();
         if (!initialized || !s || !s->sharpItems)
             return false;
-        for (const DrawItem &it : s->items) {
-            if (!it.sharpText || !textures.count(it.material->map))
-                continue;
-            bool linked = false;
-            sharpVariants(it.key, [&](ProgramKey k) { linked |= readyProgram(k) != nullptr; });
-            if (linked)
-                return true;
-        }
-        return false;
+        return frame.hasSharpAnywhere(*s, *this);
     }
 
     /** Plans this frame's screen layer; see SceneRenderer::planSharpScreens. */
     bool planSharp(const SceneEye *eyes, const int *w, const int *h, bool arrayDepth,
                    SharpScreenPlan &plan) {
         auto t0 = Clock::now();
-        plan = SharpScreenPlan{};
-        sharpPlanState.reset();
-        sharpScreens.clear();
-        sharpOverlays.clear();
-        const RenderState *s = current.get();
-        const bool mv = options.multiview;
-        bool sizes =
-            w[0] > 0 && h[0] > 0 && w[1] > 0 && h[1] > 0 && (!mv || (w[0] == w[1] && h[0] == h[1]));
-        Rect cover[2];
-        bool any = initialized && s && s->sharpItems && sizes && (!mv || arrayDepth);
-        if (any) {
-            SharpView views[2] = {sharpView(eyes[0]), sharpView(eyes[1])};
-            any = selectSharp(*s, views, 2, arrayDepth ? SharpDepth::Array : SharpDepth::Texture2D,
-                              mv, w, h, cover);
-        }
-        if (any) {
-            Rect region[2];
-            for (int i = 0; i < 2; i++) {
-                Rect full{0, 0, w[i], h[i]};
-                Rect v = options.sharpCropToScreens ? intersect(cover[i], full) : full;
-                if (v.empty()) {
-                    // A view that sees none of the screens presents a few transparent pixels. With
-                    // multiview they sit inside the other view's pixels, which the pass clears in
-                    // both views anyway.
-                    int b = std::min({2 * kSharpGuardPixels, w[i], h[i]});
-                    Rect other = intersect(cover[1 - i], full);
-                    int x = mv && !other.empty() ? other.x0 : (w[i] - b) / 2;
-                    int y = mv && !other.empty() ? other.y0 : (h[i] - b) / 2;
-                    v = intersect({x, y, x + b, y + b}, full);
-                }
-                region[i] = intersect({v.x0 - kSharpGuardPixels, v.y0 - kSharpGuardPixels,
-                                       v.x1 + kSharpGuardPixels, v.y1 + kSharpGuardPixels},
-                                      full);
-                int *r = plan.viewRect[i];
-                r[0] = v.x0;
-                r[1] = v.y0;
-                r[2] = v.x1 - v.x0;
-                r[3] = v.y1 - v.y0;
+        frame.planSharp(current, initialized, frameNumber, eyes, w, h, arrayDepth, plan, *this);
+        if (plan.any)
+            for (const int *r : plan.viewRect)
                 stats.sharpViewPixels += uint64_t(r[2]) * uint64_t(r[3]);
-            }
-            if (mv)
-                region[0] = region[1] = unite(region[0], region[1]);
-            for (int i = 0; i < 2; i++) {
-                int *r = plan.region[i];
-                r[0] = region[i].x0;
-                r[1] = region[i].y0;
-                r[2] = region[i].x1 - region[i].x0;
-                r[3] = region[i].y1 - region[i].y0;
-                plan.width[i] = w[i];
-                plan.height[i] = h[i];
-                plan.eyes[i] = eyes[i];
-            }
-            plan.any = true;
-            plan.arrayDepth = arrayDepth;
-            plan.token = ++sharpPlanToken;
-            sharpPlanFrame = frameNumber;
-            sharpPlanState = current;
-        }
         stats.sharpMs += std::chrono::duration<float, std::milli>(Clock::now() - t0).count();
         publishStats();
         return plan.any;
@@ -2164,13 +1695,13 @@ struct SceneRenderer::Impl {
         bool usable =
             sharpDepthUsable(depth, multiviewPass) && s && s->sharpItems && w > 0 && h > 0;
         uint32_t drawCalls = stats.drawCalls, triangles = stats.triangles;
-        sharpPlanState.reset(); // the lists below replace a plan's
+        frame.forgetPlan(); // the lists below replace a plan's
         if (usable) {
             SharpView views[2] = {sharpView(eyes[0]), sharpView(eyes[multiviewPass ? 1 : 0])};
             SharpDepth kind = depth.arrayTexture ? SharpDepth::Array : SharpDepth::Texture2D;
             const int ws[2] = {w, w}, hs[2] = {h, h};
             Rect cover[2];
-            if (selectSharp(*s, views, count, kind, multiviewPass, ws, hs, cover)) {
+            if (frame.selectSharp(*s, views, count, kind, multiviewPass, ws, hs, cover, *this)) {
                 Rect draw = unite(cover[0], cover[1]);
                 if (caller.scissor)
                     draw = intersect(draw, caller.scissorRect());
@@ -2194,9 +1725,7 @@ struct SceneRenderer::Impl {
         const CallerState caller = CallerState::now();
         gl = GlState{};
         setColorMask(true);
-        const bool current_ = plan.any && plan.token == sharpPlanToken &&
-                              sharpPlanFrame == frameNumber && sharpPlanState &&
-                              sharpPlanState == current;
+        const bool current_ = frame.planIsCurrent(plan, frameNumber, current);
         if (plan.any && !current_ && !sharpPlanReported) {
             sharpPlanReported = true;
             fail("renderSharpScreens: the plan is not this frame's latest planSharpScreens");
@@ -2266,12 +1795,12 @@ struct SceneRenderer::Impl {
         disableBlend();
         setDepth(false, false, GL_LEQUAL);
         setPolygonOffset(false, 0, 0);
-        for (const Draw &d : sharpScreens) {
+        for (const Draw &d : frame.sharpScreens()) {
             if (!(d.views & viewBits))
                 continue;
             const DrawItem &it = *d.item;
-            useProgram(*d.program);
-            setSharpUniforms(*d.program, depth, w, h, fade, multiviewPass);
+            useProgram(asProgram(d));
+            setSharpUniforms(asProgram(d), depth, w, h, fade, multiviewPass);
             setFaces(it.side, it.mirrored);
             drawWithUniforms(d);
             stats.sharpScreens++;
@@ -2281,7 +1810,7 @@ struct SceneRenderer::Impl {
         // destination alpha, so only screen pixels change and alpha stays 1 there:
         // screen * (1 - a) + color * a for normal blending, screen + color * a for additive.
         bool blending = false;
-        for (const Draw &d : sharpOverlays) {
+        for (const Draw &d : frame.sharpOverlays()) {
             if (!(d.views & viewBits))
                 continue;
             if (!blending) {
@@ -2294,8 +1823,8 @@ struct SceneRenderer::Impl {
             bool additive = it.material->blend.mode == BlendMode::Additive;
             glBlendFuncSeparate(GL_DST_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA, GL_ZERO,
                                 GL_ONE);
-            useProgram(*d.program);
-            setSharpUniforms(*d.program, depth, w, h, fade, multiviewPass);
+            useProgram(asProgram(d));
+            setSharpUniforms(asProgram(d), depth, w, h, fade, multiviewPass);
             setFaces(it.side, it.mirrored);
             drawWithUniforms(d);
             stats.sharpOverlays++;
@@ -2331,7 +1860,7 @@ struct SceneRenderer::Impl {
         stats.programsFailed = programsFailed;
         stats.buffers = uint32_t(buffers.size());
         stats.vertexArrays = uint32_t(vaos.size());
-        std::lock_guard<std::mutex> lock(shared);
+        std::lock_guard<std::mutex> lock(statsMutex);
         frameStats = stats;
     }
 
@@ -2471,60 +2000,15 @@ SceneRenderer::~SceneRenderer() { impl_->destroy(); }
 
 bool SceneRenderer::initialize() { return impl_->init(); }
 
-bool SceneRenderer::enqueueJson(std::string_view text) {
-    Impl &s = *impl_;
-    if (text.size() > s.options.maxPacketBytes) {
-        std::lock_guard<std::mutex> lock(s.modelMutex);
-        s.reject("scene packet of " + std::to_string(text.size()) + " bytes is over the " +
-                 std::to_string(s.options.maxPacketBytes) + " byte limit");
-        return false;
-    }
-    auto t0 = Clock::now();
-    nlohmann::json j = nlohmann::json::parse(text.begin(), text.end(), nullptr, false);
-    {
-        std::lock_guard<std::mutex> lock(s.shared);
-        s.parseMs = std::chrono::duration<float, std::milli>(Clock::now() - t0).count();
-    }
-    if (j.is_discarded()) {
-        std::lock_guard<std::mutex> lock(s.modelMutex);
-        s.reject("scene packet is not valid JSON");
-        return false;
-    }
-    return enqueue(std::move(j));
-}
+bool SceneRenderer::enqueueJson(std::string_view text) { return impl_->stream.enqueueJson(text); }
 
-bool SceneRenderer::enqueue(nlohmann::json &&j) {
-    // The frame() envelope {scene, control, panel}; a bare packet has "v".
-    if (j.is_object() && !j.contains("v") && j.contains("scene")) {
-        nlohmann::json scene = std::move(j["scene"]);
-        if (scene.is_null()) {
-            tick();
-            return true;
-        }
-        return impl_->apply(scene);
-    }
-    return impl_->apply(j);
-}
+bool SceneRenderer::enqueue(nlohmann::json &&j) { return impl_->stream.enqueue(std::move(j)); }
 
-void SceneRenderer::tick() {
-    Impl &s = *impl_;
-    std::lock_guard<std::mutex> lock(s.modelMutex);
-    ApplyResult r = s.model.tick(seconds());
-    if (r.state || !r.textures.empty())
-        s.publish(std::move(r));
-}
+void SceneRenderer::tick() { impl_->stream.tick(); }
 
-bool SceneRenderer::acceptsPackets() const {
-    std::lock_guard<std::mutex> lock(impl_->shared);
-    return impl_->queuedTextureBytes < impl_->options.maxQueuedBytes;
-}
+bool SceneRenderer::acceptsPackets() const { return impl_->stream.acceptsPackets(); }
 
-bool SceneRenderer::takeResetRequest() {
-    std::lock_guard<std::mutex> lock(impl_->shared);
-    bool r = impl_->resetRequest;
-    impl_->resetRequest = false;
-    return r;
-}
+bool SceneRenderer::takeResetRequest() { return impl_->stream.takeResetRequest(); }
 
 void SceneRenderer::prepareFrame() {
     if (!impl_->initialized)
@@ -2573,34 +2057,28 @@ void SceneRenderer::renderSharpScreens(const SharpScreenPlan &plan, int view,
         impl_->drawSharpPlan(plan, view, depth, fade);
 }
 
-bool SceneRenderer::cameraWorld(float out[16]) const {
-    std::lock_guard<std::mutex> lock(impl_->shared);
-    if (!impl_->latest || !impl_->latest->hasCamera)
-        return false;
-    std::copy(impl_->latest->camera, impl_->latest->camera + 16, out);
-    return true;
-}
+bool SceneRenderer::cameraWorld(float out[16]) const { return impl_->stream.cameraWorld(out); }
 
 SceneStats SceneRenderer::stats() const {
     const Impl &s = *impl_;
-    std::lock_guard<std::mutex> lock(s.shared);
-    SceneStats st = s.frameStats;
-    st.queuedTextureOps = uint32_t(s.textureOps.size());
-    st.queuedBytes = s.queuedTextureBytes + s.blobBytes;
-    st.packetsApplied = s.packetsApplied;
-    st.packetsRejected = s.packetsRejected;
-    st.commits = s.commits;
-    st.sceneSeq = s.sceneSeq;
-    st.parseMs = s.parseMs;
-    st.applyMs = s.applyMs;
-    st.applyMaxMs = s.applyMaxMs;
-    s.applyMaxMs = 0;
+    SceneStats st;
+    {
+        std::lock_guard<std::mutex> lock(s.statsMutex);
+        st = s.frameStats;
+    }
+    const SceneStreamStats bridge = s.stream.stats();
+    st.queuedTextureOps = bridge.queuedTextureOps;
+    st.queuedBytes = bridge.queuedBytes;
+    st.packetsApplied = bridge.packetsApplied;
+    st.packetsRejected = bridge.packetsRejected;
+    st.commits = bridge.commits;
+    st.sceneSeq = bridge.sceneSeq;
+    st.parseMs = bridge.parseMs;
+    st.applyMs = bridge.applyMs;
+    st.applyMaxMs = bridge.applyMaxMs;
     return st;
 }
 
-std::string SceneRenderer::lastError() const {
-    std::lock_guard<std::mutex> lock(impl_->shared);
-    return impl_->error;
-}
+std::string SceneRenderer::lastError() const { return impl_->stream.lastError(); }
 
 } // namespace office

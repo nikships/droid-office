@@ -67,6 +67,10 @@ covers, using `CXX` (default `c++`), and runs it:
   rounding and flips, the optical axis the density map is centred on, the synthetic sweep, the
   log rate limit, the per-window summary and its log line size, the eye-tracking gates and the
   test room mesh.
+- `native/tests/scene_frame_test.cpp` with `scene_frame.cpp`: the GL-free frame planner against
+  a fake backend (culling and three's draw order, controller attachments, the screen layer's
+  plan and its validity, the prepare budget). The GLES renderer's use of it is checked by the
+  render suite below.
 - `native/tests/log_record_test.cpp` covers `log_record.h`: metrics lines fit Android's
   1023-byte log record with every key `harness/metrics.sh` reads, rounding fractions before
   shortening the longest strings, never splitting a UTF-8 character.

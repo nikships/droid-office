@@ -1,8 +1,12 @@
 // Draws the office's three.js scene natively with OpenGL ES 3, from the packet stream that the
 // page's NativeScene (src/client/native/scene.ts) sends. Bridge threads call enqueue*; the GL
 // thread calls initialize, prepareFrame, render/renderStereo, renderSharpScreens and the
-// destructor. See docs/vr-native-android.md.
+// destructor. Its bridge side (SceneStream, scene_stream.h) and frame planning
+// (SceneFramePlanner, scene_frame.h) are GL-free and shared with the other world renderers.
+// See docs/vr-native-android.md.
 #pragma once
+
+#include "scene_frame.h"
 
 #include <nlohmann/json.hpp>
 
@@ -60,162 +64,6 @@ struct SharpScreenDepth {
     // x, y, width, height: where the high-resolution viewport ([0,1]^2) lies in the depth
     // texture's coordinates (the world eye rect divided by the texture size).
     float uvRect[4] = {0, 0, 1, 1};
-};
-
-/**
- * The display frame's controller grips for objects the page attaches to them (wire ObjectItem
- * hand): grip[h] is the grip's scene-world matrix (rig * tracked grip pose), column-major, rigid.
- * An attached object draws at grip[h] * its grip-relative matrix, and not at all unless valid[h];
- * one marked gripHeld (wire ObjectItem gripHeld) also needs held[h], this frame's squeeze.
- */
-struct SceneControllerPoses {
-    float grip[2][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
-                         {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
-    bool valid[2] = {false, false};
-    bool held[2] = {false, false};
-};
-
-struct SceneEye {         // column-major, OpenGL clip conventions
-    float view[16];       // world -> eye
-    float projection[16]; // eye -> clip
-};
-
-/**
- * One frame's screen layer, from planSharpScreens: which pixels of each view's high-resolution
- * image hold screens, and which pixels renderSharpScreens clears and draws. Rectangles are x, y,
- * width, height in GL window pixels (bottom-left origin), inside the view's width x height image.
- */
-struct SharpScreenPlan {
-    bool any = false;        // at least one screen is drawn; false: submit no layer this frame
-    bool arrayDepth = false; // the depth texture kind the programs were chosen for
-    int width[2] = {}, height[2] = {}; // each view's whole image (multiview: equal)
-    SceneEye eyes[2] = {};             // the whole-image eyes the plan was made for
-    // The pixels to present for each view: every pixel a planned screen can cover, with a pixel of
-    // margin (a few transparent pixels for a view that sees none of them).
-    int viewRect[2][4] = {};
-    // Cleared and drawn: viewRect plus a transparent guard band for the compositor's filtering.
-    // Multiview draws both views in one pass, so both regions are the union of the two.
-    int region[2][4] = {};
-    uint64_t token = 0; // internal: identifies the renderer's screen and overlay lists
-};
-
-/** Pixels in the band kept transparent around a plan's viewRect (bilinear bleed is one pixel). */
-constexpr int kSharpGuardPixels = 4;
-
-/** Tangents of a view's image edges (left and down negative for a view centred on its axis). */
-struct SharpTangents {
-    float left = -1, right = 1, down = -1, up = 1;
-};
-
-/**
- * The tangents that the pixel rectangle `rect` (x, y, width, height, bottom-left origin) of a
- * width x height image spans, when the whole image spans `full`. A projection is linear in the
- * tangent, so presenting `rect` with these edges places every pixel exactly where it lies in the
- * whole image.
- */
-inline SharpTangents sharpSubTangents(const SharpTangents &full, int width, int height,
-                                      const int rect[4]) {
-    // (1 - t) * a + t * b is exact at both ends, so the whole image keeps the located edges.
-    auto lerp = [](float a, float b, int at, int size) {
-        const double t = double(at) / double(size);
-        return float((1.0 - t) * double(a) + t * double(b));
-    };
-    return {lerp(full.left, full.right, rect[0], width),
-            lerp(full.left, full.right, rect[0] + rect[2], width),
-            lerp(full.down, full.up, rect[1], height),
-            lerp(full.down, full.up, rect[1] + rect[3], height)};
-}
-
-/**
- * The depth texels (x, y, width, height) renderSharpScreens can sample for view `view` of `plan`,
- * with depth.uvRect mapping the view's image into a depthWidth x depthHeight texture, plus a
- * two-texel margin, clipped to the texture. The world depth outside it is never read.
- */
-inline void sharpDepthRegion(const SharpScreenPlan &plan, int view, const float uvRect[4],
-                             int depthWidth, int depthHeight, int out[4]) {
-    const int *r = plan.region[view];
-    const float kx = uvRect[2] * float(depthWidth) / float(plan.width[view]);
-    const float ky = uvRect[3] * float(depthHeight) / float(plan.height[view]);
-    const float bx = uvRect[0] * float(depthWidth), by = uvRect[1] * float(depthHeight);
-    int x0 = int(std::floor(bx + kx * float(r[0]))) - 2;
-    int y0 = int(std::floor(by + ky * float(r[1]))) - 2;
-    int x1 = int(std::ceil(bx + kx * float(r[0] + r[2]))) + 2;
-    int y1 = int(std::ceil(by + ky * float(r[1] + r[3]))) + 2;
-    x0 = std::max(0, x0);
-    y0 = std::max(0, y0);
-    x1 = std::min(depthWidth, x1);
-    y1 = std::min(depthHeight, y1);
-    out[0] = x0;
-    out[1] = y0;
-    out[2] = std::max(0, x1 - x0);
-    out[3] = std::max(0, y1 - y0);
-}
-
-/**
- * Up to four non-empty rectangles (x, y, width, height) that tile a width x height image except
- * `keep`; returns how many. An empty `keep` yields the whole image.
- */
-inline int sharpComplement(const int keep[4], int width, int height, int out[4][4]) {
-    int x0 = std::max(0, std::min(width, keep[0])), y0 = std::max(0, std::min(height, keep[1]));
-    int x1 = std::max(x0, std::min(width, keep[0] + keep[2]));
-    int y1 = std::max(y0, std::min(height, keep[1] + keep[3]));
-    if (x0 == x1 || y0 == y1) {
-        x0 = x1 = 0;
-        y0 = y1 = height;
-    }
-    const int rects[4][4] = {{0, 0, width, y0},
-                             {0, y1, width, height - y1},
-                             {0, y0, x0, y1 - y0},
-                             {x1, y0, width - x1, y1 - y0}};
-    int n = 0;
-    for (const auto &r : rects)
-        if (r[2] > 0 && r[3] > 0) {
-            std::copy(r, r + 4, out[n]);
-            n++;
-        }
-    return n;
-}
-
-struct SceneStats {
-    // Last frame. Draw calls include the shadow pass; multiview counts both views once.
-    uint32_t drawCalls = 0, shadowDrawCalls = 0, triangles = 0, points = 0, lines = 0;
-    uint32_t shadowMapDraws = 0; // draws in the latest shadow map redraw (it redraws only when a
-                                 // caster or the light changed)
-    uint64_t shadowRedraws = 0;  // shadow map redraws since initialize
-    uint32_t drawItems = 0, culledItems = 0; // items in the drawn state; culled
-    uint32_t objects = 0, visibleObjects = 0, staticBatches = 0, batchedObjects = 0,
-             dynamicObjects = 0;
-    uint32_t geometries = 0, materials = 0, textures = 0, programs = 0, buffers = 0,
-             vertexArrays = 0;
-    uint32_t programsCompiling = 0, programsFailed = 0;
-    uint32_t queuedTextureOps = 0; // waiting for the GL thread
-    uint64_t queuedBytes = 0;      // decoded texture bytes queued + blob parts being assembled
-    uint32_t pendingUploads = 0;   // textures being uploaded in bands
-    bool waitingState = false;     // a newer state is uploading (the previous one is still drawn)
-    uint64_t uploadedBytesLastFrame = 0;
-    uint64_t packetsApplied = 0, packetsRejected = 0, commits = 0;
-    uint32_t unsupported = 0;
-    // GL thread CPU time of the last frame: prepareFrame, render calls, and their sum. cpuMaxMs is
-    // the worst frame of the last complete window of 90 frames.
-    float prepareMs = 0, drawMs = 0, cpuMs = 0, cpuMaxMs = 0;
-    float gpuMs = -1; // GPU time from prepareFrame to the end of the last render of a measured
-                      // frame (-1: no timer)
-    // Bridge thread, last packet: JSON parse (enqueueJson only) and model apply + publish.
-    float parseMs = 0, applyMs = 0,
-          applyMaxMs = 0; // applyMaxMs: worst apply since the previous stats() call window
-    uint64_t sceneSeq = 0;
-    uint64_t stateSerial = 0; // the drawn state (0 until the first one is on the GPU)
-    // renderSharpScreens this frame, summed over its calls. Not part of drawCalls, triangles,
-    // drawMs or cpuMs; gpuMs of a measured frame includes it.
-    uint32_t sharpScreens = 0, sharpOverlays = 0, sharpDrawCalls = 0;
-    uint32_t sharpItems = 0; // tagged screen items in the drawn state
-    // planSharpScreens / planned renderSharpScreens this frame: pixels presented (viewRect, both
-    // views) and pixels cleared and drawn (region, per view; multiview counts both layers).
-    uint64_t sharpViewPixels = 0, sharpRegionPixels = 0;
-    float sharpMs = 0; // CPU time in planSharpScreens and renderSharpScreens
-    // Controller-attached items in the drawn state, and how many of them the last render call
-    // drew at a valid grip (before frustum culling).
-    uint32_t attachedItems = 0, attachedPlaced = 0;
 };
 
 class SceneRenderer {

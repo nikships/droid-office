@@ -55,6 +55,7 @@ CPP_TESTS=(
   "controller_attachment|tests/controller_attachment_test.cpp|"
   "vk_spike_logic|tests/vk_spike_logic_test.cpp|"
   "log_record|tests/log_record_test.cpp|"
+  "scene_frame|tests/scene_frame_test.cpp|android/app/src/main/cpp/scene_frame.cpp android/app/src/main/cpp/scene_shaders.cpp"
 )
 # Java rules tests: "test class|production class", both in dev.droidoffice.xr. The test source is
 # looked up in JAVA_TEST_DIRS and must be in exactly one of them; the production source is
