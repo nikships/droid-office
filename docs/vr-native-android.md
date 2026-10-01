@@ -9,6 +9,11 @@ requirement. The left controller’s Menu button opens the APK-native settings. 
 button opens shared office tools; using an occupied desk opens that worker's terminal. Grip must
 not open or close panels. Dated installation and device results are recorded below.
 
+A standalone Unity app that talks to the laptop server directly is planned to replace this
+client: [Unity headset app](unity-headset.md), with its server contract in
+[headset protocol](headset-protocol.md). This document describes the installed app until that
+plan's Track D removes it.
+
 ## Current Vulkan renderer
 
 Debug and release builds draw the office exclusively through `world_vk.cpp` and

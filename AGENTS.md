@@ -4,6 +4,14 @@ A 3D multiplayer office in the browser where a team hires claude, opencode, code
 
 Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files). Read [docs/vr-webxr.md](docs/vr-webxr.md) before touching WebXR code.
 
+Planned work has written plans; follow them and keep them current when doing that work:
+
+| Work | Plan |
+| --- | --- |
+| Removing multiplayer, accounts, voice, chat or presence | [docs/single-owner.md](docs/single-owner.md) |
+| Device pairing, bearer auth, headset protocol messages, terminal grids, layout export | [docs/headset-protocol.md](docs/headset-protocol.md) |
+| The Unity headset app (`native/unity/`) | [docs/unity-headset.md](docs/unity-headset.md) |
+
 ## Repository map
 
 | Path | Contents |

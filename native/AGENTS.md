@@ -1,5 +1,8 @@
 # Native Galaxy XR client
 
+These rules govern the WebView-based app in `native/android/`. Its planned Unity replacement
+follows [the Unity headset plan](../docs/unity-headset.md) instead.
+
 Read [the native client design and acceptance evidence](../docs/vr-native-android.md)
 before changing the Android/OpenXR renderer or host. The original office scene, gameplay,
 windows and server protocol remain authoritative; update their existing adapters instead
