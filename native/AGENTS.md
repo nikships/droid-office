@@ -14,6 +14,10 @@ of creating a second office state or a separate worker/board implementation.
 - Preserve scene packet revisions, reset/commit boundaries, bounded drains and backpressure
   when changing the native consumer. Geometry sharing requires exact buffer semantics, not
   parameter names alone; texture scheduling must retain first-pixel priority and fair redraws.
+- `office_xr.cpp` is the API-neutral session and frame loop. Everything a graphics API draws
+  sits behind the coarse `WorldRenderer` seam (`world_renderer.h`); `world_gles.cpp` is the
+  shipping GLES path. Keep GL and Vulkan calls out of `office_xr.cpp`, and keep GL-free scene
+  logic shared in `scene_stream.cpp` and `scene_frame.cpp`, not copied into a backend.
 - Initialize, use and destroy GLES objects on the GL thread. Stop Android Surface producers
   before ending the OpenXR session or destroying their swapchains. Clear scene callbacks
   before destroying the renderer they capture.

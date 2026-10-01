@@ -19,7 +19,7 @@ if(NOT EXISTS "${OFFICE_DEPS}/stb_image.h")
         EXPECTED_HASH SHA256=594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3
         TLS_VERIFY ON)
 endif()
-add_library(office_xr SHARED office_xr.cpp xr_input.cpp bridge_state.cpp input_renderer.cpp cursor_swapchain.cpp xr_performance.cpp)
+add_library(office_xr SHARED office_xr.cpp world_gles.cpp xr_input.cpp bridge_state.cpp input_renderer.cpp cursor_swapchain.cpp xr_performance.cpp)
 target_sources(office_xr PRIVATE foveation_overlay.cpp foveation_filter.cpp)
 target_sources(office_xr PRIVATE scene_renderer.cpp scene_model.cpp scene_packet.cpp scene_shaders.cpp)
 target_sources(office_xr PRIVATE scene_stream.cpp scene_frame.cpp)

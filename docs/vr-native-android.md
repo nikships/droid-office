@@ -55,6 +55,14 @@ office's gameplay and scene updates at approximately 30 Hz. Parsing and scene pr
 run away from the render thread. Head and controller rendering use current native poses each
 display frame rather than waiting for JavaScript's next update.
 
+`office_xr.cpp` runs the API-neutral session: the instance, system and session, the reference
+spaces, the Android Surface panels, input, the refresh preference, layer composition and the
+metrics lines. Everything a graphics API draws sits behind one coarse seam, `WorldRenderer`
+(`world_renderer.h`): the device and session binding, the world and sharp-screen targets with
+their foveation, the scene, controllers, rays, fade and the cursor image. `world_gles.cpp` is the
+GLES office, moved there unchanged; it stays the shipping path and the fallback for the planned
+Vulkan renderer.
+
 The GLES scene renderer (`scene_renderer.cpp`) keeps only its GPU work. Two GL-free parts are
 shared with the planned Vulkan renderer:
 
