@@ -1,12 +1,20 @@
-// Debug-only staging for headset captures: window.__office.stageShot and stageHaul in a debuggable
-// native build (the Android host reports BuildConfig.DEBUG; a release build never enables them).
+// Debug-only staging for headset captures: window.__office.stageShot and stageRevive in a
+// debuggable native build (the Android host reports BuildConfig.DEBUG; a release build never
+// enables them).
 //
 // A scripted controller stands in for one hand inside NativeControls. For a shot it grips the back
 // holster, raises the gun to a pose aimed at a worker from a chosen distance and angle, and pulls
-// the trigger. For a haul it grips a worker lying on the floor and lifts it back up. The draw, the
-// trigger, the grip, the shot, the casualty and the effects therefore run through exactly the code
-// a held controller drives. Only the input samples are scripted; the head stays the headset's own.
-// A staged gun is drawn at its scripted world pose, because no real controller grip is under it.
+// the trigger. For a revival it reaches a free hand to a worker lying on the floor (touching it, or
+// pointing at it from a step away) and pulls the trigger: the use action. The draw, the trigger,
+// the grip, the shot, the casualty, the server's downed state and the effects therefore run through
+// exactly the code a held controller drives. Only the input samples are scripted; the head stays
+// the headset's own. A staged gun is drawn at its scripted world pose, because no real controller
+// grip is under it.
+//
+// Every shot now starts the server's 30-second revival window, after which the worker is dismissed
+// and its worktrees deleted: staged shots are refused for anyone not named "Target …", and
+// release() asks the server to revive the staged worker.
+//
 // No DOM or WebGL at import time, so tests load it in Node.
 
 import * as THREE from 'three';
@@ -160,11 +168,8 @@ export class ShotScript {
 const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
 
-/**
- * What a shot did: missed every worker, dropped one out of its chair, struck one already down, or
- * finished one off (its kill sent).
- */
-export type ShotOutcome = 'miss' | 'down' | 'hit' | 'finished';
+/** What a shot did: missed every worker, shot one down (worker.shoot sent), or struck one already down. */
+export type ShotOutcome = 'miss' | 'down' | 'hit';
 
 /** What main.ts's shot resolution reports for each shot (see resolveGunShot). */
 export interface ShotReport {
@@ -176,25 +181,17 @@ export interface ShotReport {
   distance: number | null;
 }
 
-/** Only a disposable worker named like this may be finished off by a staged shot. */
+/** Only a disposable worker named like this may be shot by a staged shot: every shot starts its dismissal clock. */
 export const DISPOSABLE = /^target\b/i;
 
 export interface StageShotOptions {
   /** A worker's name (any case) or id. */
   worker: string;
-  /** Meters from the muzzle to the body's surface along the bore. Default 1.2 (0.6 at a body on the floor). */
+  /** Meters from the muzzle to the body's surface along the bore. Default 1.2. */
   gap?: number;
-  /**
-   * Degrees around the worker from straight in front of it, positive toward its left. Default 70.
-   * For a worker already down, around its body from the open floor beside it; default 0.
-   */
+  /** Degrees around the worker from straight in front of it, positive toward its left. Default 70. */
   angle?: number;
-  /**
-   * Shoot a worker that is already down, which finishes it off once it has lain still long enough
-   * (its kill is sent and the medics come). Refused unless its name starts with "Target".
-   */
-  finish?: boolean;
-  /** Degrees the shot slopes down. By default, so the gun sits just below the headset's eye line (55 at a body on the floor). */
+  /** Degrees the shot slopes down. By default, so the gun sits just below the headset's eye line. */
   pitch?: number;
   /** Horizontal meters from the shooter's feet (under the headset) back from the gun's fist. Default 0.42. */
   reach?: number;
@@ -232,39 +229,41 @@ export interface StageShotResult {
   surface?: [number, number, number];
 }
 
-export interface StageHaulOptions {
-  /** A worker's name (any case) or id, lying on the floor with its session running. */
+export interface StageReviveOptions {
+  /** A worker's name (any case) or id, lying on the floor with its revival window open. */
   worker: string;
   /** Which controller is scripted. Default left (the gun hand is usually the right). */
   hand?: 'left' | 'right';
-  /** Meters the hand rises after it grips the body. Default 0.5 (all the way back into its chair). */
-  lift?: number;
-  /** Milliseconds the rise takes. Default 700. */
-  riseMs?: number;
-  /** Milliseconds the hand keeps its grip at the top before letting go. Default 300. */
-  holdMs?: number;
-  /** Freeze gameplay this many milliseconds after the grip closes, for a still capture, until release(). */
+  /** Touch the body with the hand (default), or point at it from `distance` meters away. */
+  how?: 'touch' | 'point';
+  /** Meters from the hand to the chest when pointing. Default 1.4. */
+  distance?: number;
+  /** Freeze gameplay this many milliseconds after the trigger, for a still capture, until release(). */
   freezeMs?: number;
+  /** How long the hand stays at the body after the trigger. Default 1200. */
+  holdMs?: number;
   /** Give up after this many milliseconds. Default 8000. */
   timeoutMs?: number;
 }
 
-export interface StageHaulResult {
+export interface StageReviveResult {
   ok: boolean;
   reason?: string;
   worker?: string;
   workerId?: string;
-  /** The worker is back in its chair. */
+  /** The use action landed on the body: it stirred and worker.revive went out. */
+  roused?: boolean;
+  /** It is back up (or on its way back into its chair) by the time the script ended. */
   revived?: boolean;
-  /** Milliseconds between the grip closing and the frozen frame, when freezeMs was given. */
+  /** Milliseconds between the trigger and the frozen frame, when freezeMs was given. */
   frozenAfterMs?: number | null;
   chest?: [number, number, number];
 }
 
-/** A worker shot down, as main.ts sees it (casualties plus the kills it has sent). */
+/** A worker shot down, as main.ts sees it (casualties plus the server's revival window). */
 export interface DownedState {
-  /** Still tumbling out of its chair, lying on the floor with its session running, or finished off. */
-  state: 'falling' | 'lying' | 'finished';
+  /** Still tumbling out of its chair, lying on the floor, stirring after a hand roused it, or its window closed (the medics are coming). */
+  state: 'falling' | 'lying' | 'roused' | 'closed';
   chest: THREE.Vector3;
   /** Horizontal, from the chair it fell out of toward where it lies: the open floor beside it. */
   open: THREE.Vector3;
@@ -276,14 +275,14 @@ export interface ShotStageHooks {
     readonly active: boolean;
     readonly holdingGun: boolean;
     readonly staging: boolean;
-    stage(script: ShotScript | HaulScript | null): void;
+    stage(script: ShotScript | ReviveScript | null): void;
     cancelGun(): void;
     recenter(): void;
   };
   player: Pick<PlayerController, 'pos' | 'facing' | 'vy' | 'grounded' | 'stepOffset' | 'street' | 'groundBelow' | 'blockedAt' | 'seat' | 'stand'>;
   /** A worker by name (any case) or id, with its model's root. */
   worker(key: string): { id: string; name: string; root: THREE.Object3D } | null;
-  /** The worker shot down, or null when it is up (or gone). */
+  /** The worker shot down, or null when it is up, getting back up, or gone. */
   downed(id: string): DownedState | null;
   /** Whether a bullet from `muzzle` along `direction` would strike worker `id` first. */
   lineOfFire?(muzzle: THREE.Vector3, direction: THREE.Vector3, id: string): boolean;
@@ -293,7 +292,7 @@ export interface ShotStageHooks {
   eye(): THREE.Vector3 | null;
   /** Shuts the workspace and its windows so world input is live. */
   clearPanel(): void;
-  /** Quietly stands a worker shot down back up in its seat; nothing when it was finished off. */
+  /** Asks the server to revive a worker shot down (worker.revive), while its window is open. */
   revive(id: string): void;
   now(): number;
 }
@@ -319,60 +318,69 @@ export function matchWorker<T extends { id: string; name: string }>(key: string,
 
 const round = (v: THREE.Vector3): [number, number, number] => [Math.round(v.x * 1000) / 1000, Math.round(v.y * 1000) / 1000, Math.round(v.z * 1000) / 1000];
 
-/** When each step of a scripted haul happens, in sample-clock milliseconds from its first sample. */
-export const HAUL_TIMING = {
-  /** The hand rests on the body, then its grip closes. */
-  grip: 150,
-  /** It starts to lift. */
-  rise: 300,
-  /** Released this long before the script hands the controller back. */
-  after: 150,
+/** When each step of a scripted revival happens, in sample-clock milliseconds from its first sample. */
+export const REVIVE_TIMING = {
+  /** The hand arrives at the body (or its aim), and holds still. */
+  reach: 300,
+  /** The trigger pull, and how long it stays pulled. */
+  fire: 600,
+  pull: 120,
 } as const;
 
 /**
- * The scripted hand for a haul: it rests on the body's chest, grips, rises `lift` meters over
- * `riseMs`, keeps its grip `holdMs`, and lets go. sample() returns null once it is over.
+ * The scripted free hand for a revival: it moves to `at` (world) pointing at `target`, pulls the
+ * trigger, stays `holdMs`, and is handed back. sample() returns null once it is over.
  */
-export class HaulScript {
+export class ReviveScript {
   private start: number | null = null;
+  private from = new THREE.Vector3();
   private local = new THREE.Vector3();
+  private aimLocal = new THREE.Quaternion();
   private inverse = new THREE.Matrix4();
+
+  /** The last sample time seen. */
+  last: number | null = null;
 
   constructor(
     readonly hand: 0 | 1,
     private at: THREE.Vector3,
-    private lift: number,
-    private riseMs: number,
+    private target: THREE.Vector3,
     private holdMs: number,
   ) {}
 
-  /** Whether the grip has closed on the body. */
-  gripped(time: number | null): boolean {
-    return this.start !== null && time !== null && time - this.start >= HAUL_TIMING.grip;
+  /** Sample-clock time of the scripted trigger pull, once the script has started. */
+  get fireTime(): number | null {
+    return this.start === null ? null : this.start + REVIVE_TIMING.fire;
   }
 
-  /** The last sample time seen, for gripped(). */
-  last: number | null = null;
-
-  sample(time: number, _head: Pose7, rig: THREE.Matrix4): NativeHand | null {
-    this.start ??= time;
+  sample(time: number, head: Pose7, rig: THREE.Matrix4): NativeHand | null {
+    if (this.start === null) {
+      this.start = time;
+      // From a relaxed spot in front of the chest, wherever the head is then.
+      this.from.set(head[0], head[1] - 0.45, head[2]);
+    }
     this.last = time;
     const t = time - this.start;
-    const letGo = HAUL_TIMING.rise + this.riseMs + this.holdMs;
-    if (t > letGo + HAUL_TIMING.after) return null;
-    const k = THREE.MathUtils.clamp((t - HAUL_TIMING.rise) / this.riseMs, 0, 1);
+    if (t > REVIVE_TIMING.fire + REVIVE_TIMING.pull + this.holdMs) return null;
     this.inverse.copy(rig).invert();
     this.local.copy(this.at).applyMatrix4(this.inverse);
-    // The rig only turns about the vertical and moves, so a native-space rise is a world rise.
-    this.local.y += this.lift * k * k * (3 - 2 * k);
-    const pose: Pose7 = [this.local.x, this.local.y, this.local.z, 0, 0, 0, 1];
+    const k = THREE.MathUtils.clamp(t / REVIVE_TIMING.reach, 0, 1);
+    _p.lerpVectors(this.from, this.local, k * k * (3 - 2 * k));
+    // The pointing ray (-Z) runs from the hand to the target.
+    _v.copy(this.target).applyMatrix4(this.inverse).sub(this.local);
+    if (_v.lengthSq() < 1e-8) _v.set(0, -1, 0);
+    _v.normalize();
+    _m.lookAt(_o.set(0, 0, 0), _v, Math.abs(_v.y) > 0.99 ? _z : UP);
+    this.aimLocal.setFromRotationMatrix(_m);
+    const pose: Pose7 = [_p.x, _p.y, _p.z, this.aimLocal.x, this.aimLocal.y, this.aimLocal.z, this.aimLocal.w];
+    const pulled = t >= REVIVE_TIMING.fire && t < REVIVE_TIMING.fire + REVIVE_TIMING.pull;
     return {
       active: true,
       aim: pose,
       grip: [...pose],
       gripTracked: true,
-      trigger: 0,
-      squeeze: t >= HAUL_TIMING.grip && t < letGo ? 1 : 0,
+      trigger: pulled ? 1 : 0,
+      squeeze: 0,
       stick: [0, 0],
       a: false,
       b: false,
@@ -383,24 +391,31 @@ export class HaulScript {
   }
 }
 
+const _v = new THREE.Vector3();
+const _o = new THREE.Vector3();
+const _z = new THREE.Vector3(0, 0, 1);
+const _m = new THREE.Matrix4();
+
 /**
- * window.__office.stageShot's and stageHaul's engine: one staged act at a time. The page reports
+ * window.__office.stageShot's and stageRevive's engine: one staged act at a time. The page reports
  * every shot (shot()) and each gameplay poll (tick()); a frozen stage tells the page to stop
- * advancing gameplay, so the headset keeps drawing that instant until release().
+ * advancing gameplay, so the headset keeps drawing that instant until release(). The server's
+ * revival window keeps running meanwhile, so a forgotten freeze releases itself (and asks for the
+ * revival) well inside it.
  */
 export class ShotStage {
   /** Set from the Android host's frame call; a release build never sets it. */
   debuggable = false;
   frozen = false;
-  private script: ShotScript | HaulScript | null = null;
-  /** The worker the latest staged act was at, stood back up by release(). */
+  private script: ShotScript | ReviveScript | null = null;
+  /** The worker the latest staged act was at, revived by release(). */
   private target: string | null = null;
   private freezeMs: number | null = null;
   private holdMs = 0;
-  private result: (StageShotResult & StageHaulResult) | null = null;
-  /** performance-clock time of the staged shot, or of the staged grip closing. */
+  private result: (StageShotResult & StageReviveResult) | null = null;
+  /** performance-clock time of the staged shot, or of the staged revival's trigger. */
   private actAt: number | null = null;
-  private done: ((r: StageShotResult & StageHaulResult) => void) | null = null;
+  private done: ((r: StageShotResult & StageReviveResult) => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private hooks: ShotStageHooks) {}
@@ -411,27 +426,23 @@ export class ShotStage {
     if (refused) return Promise.resolve({ ok: false, reason: refused });
     const w = this.hooks.worker(String(options.worker ?? ''));
     if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(options.worker)} on this floor` });
-    const down = this.hooks.downed(w.id);
-    if (down?.state === 'falling') return Promise.resolve({ ok: false, reason: `${w.name} is still falling` });
-    if (down?.state === 'finished') return Promise.resolve({ ok: false, reason: `${w.name} was already finished off: the medics are coming` });
-    if (down && options.finish !== true) return Promise.resolve({ ok: false, reason: `${w.name} is down: pass finish: true to finish it off (disposable Target workers only), or stageHaul to revive it` });
-    if (options.finish === true && !DISPOSABLE.test(w.name)) return Promise.resolve({ ok: false, reason: `staged shots finish off only disposable workers named "Target …", not ${w.name}` });
-    if (options.finish === true && !down) return Promise.resolve({ ok: false, reason: `${w.name} is not down: shoot it once first` });
+    // Every shot starts the server's dismissal clock: only disposable workers may be staged.
+    if (!DISPOSABLE.test(w.name)) return Promise.resolve({ ok: false, reason: `staged shots hit only disposable workers named "Target …", not ${w.name}: a shot dismisses a worker and deletes its worktrees 30 s later unless revived` });
+    if (this.hooks.downed(w.id)) return Promise.resolve({ ok: false, reason: `${w.name} is already down: stageRevive revives it` });
     const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
-    const gap = num(options.gap, down ? 0.6 : 1.2);
+    const gap = num(options.gap, 1.2);
     const reach = THREE.MathUtils.clamp(num(options.reach, 0.42), 0.2, 3);
     const height = num(options.height, 0.62);
     w.root.updateWorldMatrix(true, true);
-    const target = down ? down.chest.clone() : w.root.localToWorld(new THREE.Vector3(0, height, 0));
-    // A seated worker is circled from its face; one on the floor from the open floor beside it.
-    const facing = down ? down.open.clone() : new THREE.Vector3(0, 0, 1).transformDirection(w.root.matrixWorld);
+    const target = w.root.localToWorld(new THREE.Vector3(0, height, 0));
+    // A seated worker is circled from its face.
+    const facing = new THREE.Vector3(0, 0, 1).transformDirection(w.root.matrixWorld);
     // Slope the shot so the gun rides just under the headset's eye line, whatever its real height.
     const eye = this.hooks.eye();
     const level = eye ? THREE.MathUtils.radToDeg(Math.atan2(eye.y - 0.18 - target.y, reach + MUZZLE_AT.z + Math.max(gap, 0) + 0.2)) : 15;
-    // Without an asked angle or slope, the first approach with a clear line to the worker: a
-    // body on the floor is shot from over it, around it from the open floor beside it.
-    const angles = typeof options.angle === 'number' && Number.isFinite(options.angle) ? [options.angle] : down ? [0, 35, -35, 70, -70, 110, -110, 180] : [70, 40, 100, -70, -40, -100, 15];
-    const pitches = typeof options.pitch === 'number' && Number.isFinite(options.pitch) ? [options.pitch] : down ? [55, 70, 40] : [Math.round(THREE.MathUtils.clamp(level, -10, 60))];
+    // Without an asked angle or slope, the first approach with a clear line to the worker.
+    const angles = typeof options.angle === 'number' && Number.isFinite(options.angle) ? [options.angle] : [70, 40, 100, -70, -40, -100, 15];
+    const pitches = typeof options.pitch === 'number' && Number.isFinite(options.pitch) ? [options.pitch] : [Math.round(THREE.MathUtils.clamp(level, -10, 60))];
     const aimAt = (angle: number, pitch: number) => stageAim({ target, body: w.root, facing, angle: THREE.MathUtils.degToRad(angle), pitch: THREE.MathUtils.degToRad(pitch), gap, reach });
     let angle = angles[0];
     let pitch = pitches[0];
@@ -457,31 +468,35 @@ export class ShotStage {
   }
 
   /**
-   * Stages one haul: a scripted hand grips a worker lying on the floor and lifts it, through the
-   * same grip and haul code a held controller drives. Resolves once the hand has let go (or once
-   * frozen, with freezeMs), saying whether the worker is back in its chair.
+   * Stages one revival: a scripted free hand reaches a worker lying on the floor (touching its
+   * chest, or pointing at it from a step away) and pulls the trigger, through the same use action
+   * a held controller drives. Resolves once the hand is handed back (or once frozen, with
+   * freezeMs), saying whether it roused the body and whether the worker is back up.
    */
-  haul(options: StageHaulOptions): Promise<StageHaulResult> {
+  revive(options: StageReviveOptions): Promise<StageReviveResult> {
     const refused = this.begin();
     if (refused) return Promise.resolve({ ok: false, reason: refused });
     const w = this.hooks.worker(String(options.worker ?? ''));
     if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(options.worker)} on this floor` });
     const down = this.hooks.downed(w.id);
-    if (down?.state !== 'lying') return Promise.resolve({ ok: false, reason: down ? `${w.name} is ${down.state === 'falling' ? 'still falling' : 'finished off'}` : `${w.name} is not down` });
+    if (down?.state !== 'lying')
+      return Promise.resolve({ ok: false, reason: down ? `${w.name} is ${down.state === 'falling' ? 'still falling' : down.state === 'roused' ? 'already stirring' : 'past its revival window'}` : `${w.name} is not down` });
     const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     this.freezeMs = typeof options.freezeMs === 'number' && Number.isFinite(options.freezeMs) ? Math.max(0, options.freezeMs) : null;
     this.hooks.clearPanel();
-    // Stand half a meter off its chest on the open floor beside it, looking down at it.
     const chest = down.chest;
     const away = down.open.clone().setY(0);
     if (away.lengthSq() < 1e-6) away.set(0, 0, 1);
     away.normalize();
-    const stand = chest.clone().addScaledVector(away, 0.55);
+    const point = options.how === 'point';
+    // Stand on the open floor beside it, looking down at it: close enough to touch, or a step back to point.
+    const distance = THREE.MathUtils.clamp(num(options.distance, 1.4), 0.5, 2.2);
+    const stand = chest.clone().addScaledVector(away, point ? distance + 0.25 : 0.55);
     this.standAt(stand, away.clone().negate(), Math.atan2(-away.x, -away.z));
     this.target = w.id;
-    const hold = chest.clone().addScaledVector(away, 0.05);
-    hold.y += 0.06;
-    this.script = new HaulScript(options.hand === 'right' ? 1 : 0, hold, Math.max(0, num(options.lift, 0.5)), Math.max(50, num(options.riseMs, 700)), Math.max(0, num(options.holdMs, 300)));
+    const hand = chest.clone().addScaledVector(away, point ? distance : 0.05);
+    hand.y = point ? Math.max(chest.y + 0.75, 0.9) : chest.y + 0.08;
+    this.script = new ReviveScript(options.hand === 'right' ? 1 : 0, hand, chest, Math.max(0, num(options.holdMs, 1200)));
     this.hooks.controls.stage(this.script);
     this.actAt = null;
     this.result = { ok: true, worker: w.name, workerId: w.id, chest: round(chest) };
@@ -502,13 +517,14 @@ export class ShotStage {
   tick(): void {
     const script = this.script;
     if (!script || this.frozen) return;
-    if (script instanceof HaulScript) {
-      if (this.actAt === null && script.gripped(script.last)) this.actAt = this.hooks.now();
+    if (script instanceof ReviveScript) {
+      const fired = script.fireTime;
+      if (this.actAt === null && fired !== null && script.last !== null && script.last >= fired) this.actAt = this.hooks.now();
       if (!this.hooks.controls.staging) {
-        // The hand has let go and handed the controller back.
+        // The hand has been handed back.
         this.script = null;
         this.wait(null);
-        this.finish({ revived: this.revived(), frozenAfterMs: null });
+        this.finish({ ...this.revived(), frozenAfterMs: null });
         return;
       }
     }
@@ -516,19 +532,19 @@ export class ShotStage {
     const since = this.hooks.now() - this.actAt;
     if (this.freezeMs !== null && since >= this.freezeMs) {
       this.frozen = true;
-      // A forgotten freeze cannot strand the headset.
-      this.wait(() => this.release(true), 30_000);
-      this.finish({ frozenAfterMs: Math.round(since), ...(script instanceof HaulScript ? { revived: this.revived() } : {}) });
+      // A forgotten freeze cannot strand the headset, or let the revival window close under it.
+      this.wait(() => this.release(true), 15_000);
+      this.finish({ frozenAfterMs: Math.round(since), ...(script instanceof ReviveScript ? this.revived() : {}) });
     } else if (script instanceof ShotScript && this.freezeMs === null && since >= this.holdMs) this.endScript();
   }
 
-  /** Unfreezes, hands the controller back, and (by default) stands the staged worker back up if it is still down. */
+  /** Unfreezes, hands the controller back, and (by default) asks the server to revive the staged worker if it is still down. */
   release(revive = true): { ok: true } {
     this.wait(null);
     this.frozen = false;
     this.endScript();
     const down = this.target === null ? null : this.hooks.downed(this.target);
-    if (revive && down && down.state !== 'finished') this.hooks.revive(this.target!);
+    if (revive && down && down.state !== 'closed') this.hooks.revive(this.target!);
     this.finish({});
     return { ok: true };
   }
@@ -544,22 +560,24 @@ export class ShotStage {
     return this.hooks.blocked();
   }
 
-  private await(timeoutMs: number): Promise<StageShotResult & StageHaulResult> {
+  private await(timeoutMs: number): Promise<StageShotResult & StageReviveResult> {
     return new Promise((resolve) => {
       this.done = resolve;
       this.wait(() => this.timeout(), timeoutMs);
     });
   }
 
-  private revived(): boolean {
-    return this.target !== null && this.hooks.downed(this.target) === null;
+  /** Whether the staged revival roused its worker, and whether it is no longer down. */
+  private revived(): { roused: boolean; revived: boolean } {
+    const down = this.target === null ? null : this.hooks.downed(this.target);
+    return { roused: down === null || down.state === 'roused', revived: down === null };
   }
 
   private endScript(): void {
     const script = this.script;
     if (!script) return;
     this.script = null;
-    // Only a staged gun goes away: a haul never touches a gun held in the other hand.
+    // Only a staged gun goes away: a revival never touches a gun held in the other hand.
     if (script instanceof ShotScript) this.hooks.controls.cancelGun();
     this.hooks.controls.stage(null);
   }
@@ -570,7 +588,7 @@ export class ShotStage {
     this.timer = fn ? setTimeout(fn, ms) : null;
   }
 
-  private finish(extra: Partial<StageShotResult & StageHaulResult>): void {
+  private finish(extra: Partial<StageShotResult & StageReviveResult>): void {
     const done = this.done;
     const result = this.result;
     this.done = null;
@@ -580,11 +598,11 @@ export class ShotStage {
   private timeout(): void {
     if (!this.done || !this.result) return;
     const script = this.script;
-    const started = script instanceof ShotScript ? script.fireTime !== null : script !== null && script.last !== null;
+    const started = script !== null && script.fireTime !== null;
     const reason = !started
       ? 'no controller samples reached the page: is the headset awake, focused and tracking?'
-      : script instanceof HaulScript
-        ? 'the haul did not finish: world input blocked (workspace, fade or lost head tracking)'
+      : script instanceof ReviveScript
+        ? 'the revival did not finish: world input blocked (workspace, fade or lost head tracking)'
         : !this.hooks.controls.holdingGun
           ? 'the scripted draw did not take: world input blocked (workspace, dialog, fade or lost head tracking)'
           : 'the trigger did not fire: world input blocked or the gun was not ready';

@@ -385,24 +385,30 @@ instead of bypassing verification.
 
 A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
 each `officeNative.frame` call; a release build passes `false`. Only then do the page's
-`window.__office.stageShot(options)` and `stageHaul(options)` do anything; otherwise they
+`window.__office.stageShot(options)` and `stageRevive(options)` do anything; otherwise they
 resolve `{ ok: false }`. They are for headset captures over the WebView DevTools socket, and
 change no normal gameplay.
 
+**Every shot is real.** A hit sends `worker.shoot`, which starts the server's 30-second revival
+window; when it runs out the worker is dismissed and its owned worktrees and branches deleted.
+`stageShot` is therefore refused for any worker whose name does not start with `Target`: hire a
+disposable shell worker named `Target 1` for captures, and revive it (`stageRevive`, or
+`releaseShot()`) well inside the window.
+
 `stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
 raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
-casualty and effects therefore run the code a held controller drives. The head remains the
-headset's own; the rig is turned and placed so the worker is in front of it. The staged gun is
-drawn at its scripted world pose, because no real grip is under it. Without `angle` or `pitch`,
-the first approach whose line of fire reaches the worker before anything else is used. Options:
+local fall, `worker.shoot` and effects therefore run the code a held controller drives. The head
+remains the headset's own; the rig is turned and placed so the worker is in front of it. The
+staged gun is drawn at its scripted world pose, because no real grip is under it. Without
+`angle` or `pitch`, the first approach whose line of fire reaches the worker before anything else
+is used. Options:
 
 | Option | Meaning (default) |
 | --- | --- |
-| `worker` | Id or name of a worker on this floor, in any case; `Pixel` finds `Pixel 🐚` or a lone `Pixel (shell)` |
-| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`; `0.6` at a body on the floor) |
-| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides); at a body on the floor, around it from the open floor beside it (`0`, then other clear sides) |
-| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line; `55` over a body on the floor) |
-| `finish` | Shoot a worker that is already down, which finishes it off once it has lain still 0.8 s. Refused unless its name starts with `Target` (`false`) |
+| `worker` | Id or name of a `Target …` worker on this floor, in any case; `target 1` finds `Target 1` |
+| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides) |
+| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line) |
 | `reach` | Meters from the headset back from the gun's fist (`0.42`) |
 | `height` | Aim point in meters up a seated worker's own body (`0.62`) |
 | `hand` | `'right'` or `'left'` (`'right'`) |
@@ -410,21 +416,24 @@ the first approach whose line of fire reaches the worker before anything else is
 | `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
 | `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
 
-It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`,
-`'hit'` for a body already down, or `'finished'` when the kill was sent), `solid`, `distance`,
+It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`
+when `worker.shoot` went out, or `'hit'` for a worker already down), `solid`, `distance`,
 `angle`, `pitch`, `muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. A worker
-that is down is refused without `finish: true`, and `finish` is refused for any worker whose name
-does not start with `Target`: hire a disposable shell worker named `Target 1` for that.
+already down is refused.
 
-`stageHaul` scripts the other hand (`left` by default) gripping a worker lying on the floor and
-lifting it, through the same grip and haul code: the rig stands half a meter off its chest on the
-open floor beside it. Options: `worker`, `hand`, `lift` (meters the hand rises, `0.5`; `0.42`
-brings it all the way back), `riseMs` (`700`), `holdMs` (`300`), `freezeMs` (after the grip
-closes) and `timeoutMs`. It resolves once the hand lets go (or once frozen) with `revived`.
+`stageRevive` scripts the other hand (`left` by default) reaching a worker lying on the floor and
+pulling the trigger, the use action, through `NativePhysical.useAtBody`: with `how: 'touch'`
+(default) the rig stands half a meter off its chest on the open floor beside it and the hand
+comes down onto it; with `how: 'point'` it stands `distance` (`1.4`) meters back and points at
+it from waist height. Options: `worker`, `hand`, `how`, `distance`, `holdMs` (`1200`), `freezeMs`
+(after the trigger) and `timeoutMs`. It resolves once the hand is handed back (or once frozen)
+with `roused` (the use action landed: it stirred and `worker.revive` went out) and `revived` (the
+server confirmed and it is getting back up). A worker past its window is refused.
 
 `__office.releaseShot()` unfreezes, hands the controller back (a staged gun goes away; a gun
-held in the other hand stays) and quietly stands the staged worker back up if it is down and
-was not finished off; pass `false` to leave it down. A freeze releases itself after 30 seconds.
+held in the other hand stays) and asks the server to revive the staged worker if it is still
+down within its window; pass `false` to leave it down. A freeze releases itself after 15 seconds,
+well inside the window.
 
 ## Acceptance status
 

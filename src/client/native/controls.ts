@@ -133,6 +133,8 @@ interface HandSlot {
   squeezeDown: boolean;
   hover: { it: Interactable; near: boolean; hit: THREE.Intersection } | null;
   hoverFresh: boolean;
+  /** The shot worker's body this free hand is at (touching or pointing at), whose use action revives it. */
+  body: string | null;
   uiConsumed: boolean;
   wasPrimary: boolean;
   wasSecondary: boolean;
@@ -153,6 +155,7 @@ const _q = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const _p = new THREE.Matrix4();
 const _s = new THREE.Vector3(1, 1, 1);
+const _ray = new THREE.Ray();
 
 function setPose(o: THREE.Object3D, p: Pose7): void {
   o.position.set(p[0], p[1], p[2]);
@@ -244,6 +247,7 @@ export class NativeControls {
       squeezeDown: false,
       hover: null,
       hoverFresh: false,
+      body: null,
       uiConsumed: false,
       wasPrimary: false,
       wasSecondary: false,
@@ -388,7 +392,7 @@ export class NativeControls {
 
   /**
    * Debug staging only: `script` replaces one hand's samples as they are replayed, until it
-   * returns null, so a staged shot or haul runs the same draw, trigger, grip and shot path as a
+   * returns null, so a staged shot or revival runs the same draw, trigger, grip and shot path as a
    * held controller. A staged gun is drawn at the scripted world pose. Null hands the controller back.
    */
   stage(script: StagedHand | null): void {
@@ -542,6 +546,7 @@ export class NativeControls {
       if (aiming) s.hover = null;
       else this.freshHover(s);
     }
+    const atBody = this.bodyHover(aiming);
     this.updateTeleport();
     if (this.hooks.settings.vr.turn !== 'snap') this.smoothTurn(dt);
     if (!player.rig) this.updateGlide(dt);
@@ -560,7 +565,8 @@ export class NativeControls {
     const note = aim?.near ? this.hooks.noteUnder(aim) : null;
     const spot = aim?.near ? (this.hooks.spotUnder?.(aim) ?? null) : null;
     this.hooks.onTarget(aim?.near ? aim.it : null, note, spot);
-    const label = !player.rig && aim?.near ? this.hooks.aimLabel(aim.it, note) : null;
+    // A hand at a body needs no words: what the trigger does there is the body's to show.
+    const label = !player.rig && aim?.near && !atBody ? this.hooks.aimLabel(aim.it, note) : null;
     if (label !== this.aimText) {
       this.aimText = label;
       this.hooks.setAim?.(label);
@@ -725,6 +731,7 @@ export class NativeControls {
     s.input = null;
     s.hover = null;
     s.hoverFresh = false;
+    s.body = null;
     s.uiConsumed = false;
     s.triggerDown = false;
     s.squeezeDown = false;
@@ -742,6 +749,8 @@ export class NativeControls {
     if (this.physical?.trigger(s.idx, this.now)) return;
     if (s.uiConsumed || this.worldBlocked()) return;
     if (s.input?.gripTracked === false && this.ownsCarry(s.idx)) return;
+    // A free hand at a shot worker's body on the floor: the use action revives it.
+    if (!this.ownsObject(s.idx) && this.physical?.useAtBody(s.idx, this.rayOf(s))) return;
     if (this.grab?.use(s.idx, this.grabAim(s))) return;
     const hover = this.freshHover(s);
     if (this.hooks.player.rig) return;
@@ -849,6 +858,28 @@ export class NativeControls {
     this.raycaster.far = this.hooks.reachOf('tv') + 6;
     s.hover = this.hooks.pickFromRay(this.raycaster, 0);
     return s.hover;
+  }
+
+  /**
+   * Which shot worker's body each free hand is at, with a soft tick as a hand arrives at one, the
+   * way a hand feels what it reaches. True when either hand is at one.
+   */
+  private bodyHover(aiming: boolean): boolean {
+    let any = false;
+    for (const s of this.hands) {
+      const id = aiming || !s.connected || this.ownsObject(s.idx) || this.worldBlocked() ? null : (this.physical?.bodyAt(s.idx, this.rayOf(s)) ?? null);
+      if (id !== null && id !== s.body) this.pulse(s.idx, 0.2, 15);
+      s.body = id;
+      if (id !== null) any = true;
+    }
+    return any;
+  }
+
+  /** This hand's pointing ray in the world, or null while it is lost or on a panel. */
+  private rayOf(s: HandSlot): THREE.Ray | null {
+    if (!s.connected || s.lostAt !== null || s.uiConsumed) return null;
+    this.rayOut(s);
+    return _ray.set(_o, _d);
   }
 
   private rayOut(s: HandSlot): void {

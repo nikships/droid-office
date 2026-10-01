@@ -1,20 +1,26 @@
 import * as THREE from 'three';
 import { ELEVATOR, ELEVATOR_FRONT } from '../../shared/layout';
 import { nearestWalkable, route, type Pt } from '../../shared/nav';
+import { WORKER_REVIVE_MS } from '../../shared/protocol';
 import type { MedicPose } from './character';
 
 /**
- * Workers shot with the .44 Magnum. Nothing here goes to the server: the death scene is local to
- * the shooter, and the confirmed kill goes out as an ordinary `worker.kill`.
+ * Workers shot with the .44 Magnum. The server owns their revival deadlines; this class renders
+ * the shared downed state and the medic pickup after dismissal.
  *
  * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
  * pool spreads under it while its session keeps running (see shoot). Each body on the floor has
- * its own scene, so several can be down at once. From there either Revive stands it back up in its
- * seat with its session untouched (in the headset, by hauling it up by hand: see haul), or
- * confirming the kill calls in two paramedics with a stretcher (see confirm): they walk in from
+ * its own scene, so several can be down at once. Pressing E nearby (in the headset, the use
+ * action with a hand at the body: see rouse) stands it back up in its seat with its session
+ * untouched, or expiry calls in two paramedics with a stretcher (see confirm): they walk in from
  * the elevator, lower and open the scoop stretcher, support and settle the body, close the bed and
  * lift together, then carry it back to the elevator and fade, and the laptop shuts and shrinks as
- * on a send-home. Other clients just see the send-home walk-out.
+ * on a send-home. Every client on the floor sees the same lifecycle.
+ *
+ * In the headset the body also tells the time left in the server's revival window, in the world
+ * (hooks.left): a heartbeat that slows and fades, felt in a hand near it; its antenna bulb glowing
+ * red with each beat, dimmer as it goes; and a pool that creeps out to full size at the deadline.
+ * Once the window closes the heart stops and the bulb goes dark.
  *
  * No DOM or WebGL at import time, so tests can load this in Node.
  */
@@ -51,17 +57,24 @@ const TUMBLE = 0.65;
 /** The hit itself, before the fall takes over: how far the body is shoved and leans along the bullet. */
 const KNOCK = 0.12;
 const KICK = 0.42;
-/** A bullet into a body already down jerks it this much of a first hit's shove. */
-const TWITCH = 0.45;
-/** How fast a body let go mid-haul slumps back down: the whole way in about a third of a second. */
+/** Seconds the server's revival window lasts (shared/protocol.ts). */
+export const REVIVE_WINDOW = WORKER_REVIVE_MS / 1000;
+/** Seconds a revived body takes to get back up into its chair, when it doesn't go straight back (hooks.riseTime). */
+export const RISE_TIME = 0.7;
+/** Roused by a hand but not yet confirmed by the server: it stirs this far up, for at most ROUSE_WAIT seconds. */
+const STIR = 0.3;
+const ROUSE_WAIT = 2.5;
+/** How fast a body that was stirring slumps back down: the whole way in about a third of a second. */
 const SLUMP = 3;
 /** A body that drops back from this far up lands with a thud. */
-const SLUMP_THUD = 0.3;
-/** The heartbeat of a body on the floor: its first beat after it lands, then the gap between beats as it bleeds. */
+const SLUMP_THUD = 0.25;
+/** The heartbeat of a body on the floor: its first beat after it lands, then the gap between beats as the window runs out. */
 const FIRST_BEAT = 0.45;
-const BEAT_FAST = 0.9;
-const BEAT_SLOW = 1.45;
-/** A body's reachable length, from its feet: a hand anywhere along it within reach takes hold. */
+const BEAT_FAST = 0.75;
+const BEAT_SLOW = 2;
+/** How fast each beat's glow and swell die away, per second. */
+const BEAT_FADE = 6;
+/** A body's reachable length, from its feet: a hand anywhere along it within reach is at it. */
 const BODY_FROM = 0.12;
 const BODY_TO = 1.0;
 
@@ -74,7 +87,7 @@ export function jolt(t: number): number {
 /** Where the medics come from: out of the elevator, on every floor. */
 const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
 
-/** Falling, bled out waiting on the dialog, medics on the way, loading, carrying out, gone. */
+/** Falling, bled out waiting for revival, medics on the way, loading, carrying out, gone. */
 export type CasualtyPhase = 'fall' | 'bled' | 'fetch' | 'load' | 'carry' | 'fade';
 
 /** What a casualty needs of a worker's model (see world/character.ts Worker). */
@@ -85,12 +98,34 @@ export interface CasualtyModel {
   die(): void;
   /** Back on its feet: light and bubble as its status says. */
   revive(): void;
+  /**
+   * Down, in the headset: `beat` (0 → 1) of a heartbeat's glow and swell right now, and `life`
+   * (1 → 0) of its revival window left. Its light shows both; (0, 0) puts it out.
+   */
+  pulse?(beat: number, life: number): void;
   dispose(): void;
 }
 
-/** Seconds between a downed body's heartbeats, `bleed` (0 → 1) of the way through bleeding out. */
+/** Seconds between a downed body's heartbeats, `bleed` (0 → 1) of the way through its revival window. */
 export function beatGap(bleed: number): number {
-  return BEAT_FAST + (BEAT_SLOW - BEAT_FAST) * THREE.MathUtils.clamp(bleed, 0, 1);
+  const b = THREE.MathUtils.clamp(bleed, 0, 1);
+  // Slow at first, then dragging out toward the end.
+  return BEAT_FAST + (BEAT_SLOW - BEAT_FAST) * b * b;
+}
+
+/** How strong a downed body's heartbeat is, `bleed` (0 → 1) of the way through its revival window. */
+export function beatStrength(bleed: number): number {
+  return 1 - 0.75 * THREE.MathUtils.clamp(bleed, 0, 1);
+}
+
+/**
+ * How wide the pool under a body is (its scale), `t` seconds after it landed and `bleed` (0 → 1)
+ * of the way through a revival window the headset can see: a quick first spread, then creeping out
+ * to full size right at the deadline. Without the window (the desktop) it spreads in BLEED_TIME.
+ */
+export function poolSize(t: number, bleed: number, timed: boolean): number {
+  if (!timed) return Math.max(0.05, POOL_R * easeOut(THREE.MathUtils.clamp(bleed, 0, 1)));
+  return Math.max(0.05, POOL_R * (0.4 * easeOut(THREE.MathUtils.clamp(t / 2, 0, 1)) + 0.6 * THREE.MathUtils.clamp(bleed, 0, 1)));
 }
 
 /** What a casualty needs of a medic (see world/character.ts Person). */
@@ -116,8 +151,14 @@ export interface CasualtyHooks {
   /** The thud as the body lands, and the siren sting as the medics come in. */
   onLand(at: THREE.Vector3): void;
   onSiren(at: THREE.Vector3): void;
-  /** Each heartbeat of a body lying on the floor with its session still running, at its chest. */
-  onBeat?(at: THREE.Vector3): void;
+  /** Each heartbeat of a body lying on the floor with its session still running, at its chest; `strength` fades as its window runs out. */
+  onBeat?(at: THREE.Vector3, strength: number): void;
+  /** Seconds left in worker `id`'s server-owned revival window, or null when it isn't known (yet). */
+  left?(id: string): number | null;
+  /** Worker `id` is back in its seat with its session untouched; `head` is where its head is. */
+  onBack?(id: string, head: THREE.Vector3): void;
+  /** Seconds a revived body takes to get back up into its chair; without it, it is put straight back. */
+  riseTime?: number;
 }
 
 let poolGeo: THREE.CircleGeometry | null = null;
@@ -205,7 +246,14 @@ interface Team {
   inverse: THREE.Quaternion;
 }
 
+/**
+ * In the headset, a hand's use action at a body: 'roused' stirs it while the server is asked,
+ * 'up' gets it back up into its chair once the server has revived it.
+ */
+type Rouse = 'none' | 'roused' | 'up';
+
 interface Casualty {
+  id: string;
   model: CasualtyModel;
   /** The seat anchor it fell out of (and goes back to on Revive). */
   seat: THREE.Object3D;
@@ -229,22 +277,24 @@ interface Casualty {
   /** The latest bullet's horizontal direction, and the axis it leans the body about; null without one. */
   push: THREE.Vector3 | null;
   axis: THREE.Vector3;
-  /** Seconds since the latest bullet, and how hard that one shoved (1 for the shot that dropped it). */
+  /** Seconds since the bullet. */
   jt: number;
-  kick: number;
-  /** Where it lands on the floor, and how it lies there; and how it sat, to be hauled back. */
+  /** Where it lands on the floor, and how it lies there; and how it sat, to get back up into. */
   floor: THREE.Vector3;
   lying: THREE.Quaternion;
   seated: THREE.Quaternion;
-  /** 0 lying → 1 back in its chair while a hand hauls it up; it slumps back when let go. */
+  /** 0 lying → 1 back in its chair: stirring while roused, all the way once revived. */
   lift: number;
-  held: boolean;
-  /** How far up it got before it was let go, for the thud when it drops back. */
+  rouse: Rouse;
+  /** Seconds since it was roused. */
+  rouseT: number;
+  /** How far up it got before it slumped back, for the thud when it lands again. */
   peak: number;
-  /** Its kill was sent: no more heartbeat, and no hand can haul it up. */
+  /** Its revival window has closed (or the medics have it): no more heartbeat, and no hand can rouse it. */
   finished: boolean;
-  /** Seconds to its next heartbeat. */
+  /** Seconds to its next heartbeat, and how much of the last beat's glow and swell is left. */
   beat: number;
+  pulse: number;
   pool: THREE.Group;
   laptop: CasualtyLaptop | null;
   /** 0 → 1 as the shut laptop shrinks away. */
@@ -319,23 +369,31 @@ export class Casualties {
     private hooks: CasualtyHooks,
   ) {}
 
-  /** Whether `id` is down on the floor (falling or lying there), its kill not yet collected. */
+  /** Whether `id` is down on the floor and can still be revived (not already getting back up). */
   dying(id: string): boolean {
     const c = this.all.get(id);
-    return !!c && (c.phase === 'fall' || c.phase === 'bled');
+    return !!c && (c.phase === 'fall' || c.phase === 'bled') && c.rouse !== 'up';
   }
 
-  /** Every worker down on the floor, falling or lying there. */
-  down(): string[] {
-    const out: string[] = [];
-    for (const [id, c] of this.all) if (c.phase === 'fall' || c.phase === 'bled') out.push(id);
-    return out;
+  /** The closest revivable body within walking reach, on this storey. */
+  nearby(at: { x: number; y: number; z: number }, radius = 2.4): string | null {
+    let nearest: string | null = null;
+    let distance = radius;
+    for (const [id, c] of this.all) {
+      if (!this.dying(id) || Math.abs(c.ground - at.y) > 1.5) continue;
+      const d = Math.hypot(c.floor.x - at.x, c.floor.z - at.z);
+      if (d < distance) {
+        nearest = id;
+        distance = d;
+      }
+    }
+    return nearest;
   }
 
   /** Seconds `id` has lain still on the floor since it landed; null while it falls or when it isn't down. */
   lyingFor(id: string): number | null {
     const c = this.all.get(id);
-    return c?.phase === 'bled' ? c.t : null;
+    return c?.phase === 'bled' && c.rouse !== 'up' ? c.t : null;
   }
 
   /** The phase `id` is in, if it has a scene running. */
@@ -347,10 +405,12 @@ export class Casualties {
    * Shoots the worker: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
    * out under a spreading pool. With the bullet's `direction`, the hit visibly shoves it that way
    * at once and it sprawls out on the side away from the shooter. False when it already has a
-   * scene running.
+   * scene running (a body still getting back up into its chair is put there first).
    */
   shoot(id: string, model: CasualtyModel, seat: THREE.Object3D, direction?: THREE.Vector3): boolean {
-    if (this.all.has(id)) return false;
+    const was = this.all.get(id);
+    if (was?.rouse === 'up') this.back(was);
+    else if (was) return false;
     // Off the desk first if it was up there dancing: it falls out of its seat.
     model.die();
     const from = model.root.getWorldPosition(new THREE.Vector3());
@@ -384,6 +444,7 @@ export class Casualties {
     pool.rotation.y = Math.random() * Math.PI * 2;
     this.parent.add(pool);
     this.all.set(id, {
+      id,
       model,
       seat,
       scale: local,
@@ -400,15 +461,16 @@ export class Casualties {
       push,
       axis: push ? new THREE.Vector3(0, 1, 0).cross(push).normalize() : new THREE.Vector3(),
       jt: 0,
-      kick: 1,
       floor,
       lying,
       seated: quat.clone(),
       lift: 0,
-      held: false,
+      rouse: 'none',
+      rouseT: 0,
       peak: 0,
       finished: false,
       beat: FIRST_BEAT,
+      pulse: 0,
       pool,
       laptop: null,
       lgone: 0,
@@ -419,48 +481,15 @@ export class Casualties {
   }
 
   /**
-   * Another bullet into a body already down: it jerks along the bullet where it lies. False when
-   * `id` is not down.
-   */
-  nudge(id: string, direction: THREE.Vector3): boolean {
-    const c = this.all.get(id);
-    if (!c || (c.phase !== 'fall' && c.phase !== 'bled')) return false;
-    const push = new THREE.Vector3(direction.x, 0, direction.z);
-    if (push.lengthSq() < 1e-6) return true;
-    c.push = push.normalize();
-    c.axis.set(0, 1, 0).cross(c.push).normalize();
-    // A body still falling keeps its first, full shove going.
-    if (c.phase === 'bled') {
-      c.jt = 0;
-      c.kick = TWITCH;
-    }
-    return true;
-  }
-
-  /**
-   * Its kill was sent: the heart stops and no hand can haul it back up. It stays where it lies
-   * until confirm() sends the medics in. False when `id` is not down.
-   */
-  finish(id: string): boolean {
-    const c = this.all.get(id);
-    if (!c || (c.phase !== 'fall' && c.phase !== 'bled')) return false;
-    c.finished = true;
-    c.held = false;
-    return true;
-  }
-
-  /**
-   * The body lying on the floor (with its session running) that a hand at `point` can take hold
-   * of: the nearest one with any part of it within `radius` meters. Null when none is in reach.
+   * The body lying on the floor (with its revival window open) that a hand at `point` is at: the
+   * nearest one with any part of it within `radius` meters. Null when none is in reach.
    */
   reach(point: THREE.Vector3, radius: number): string | null {
     let best: string | null = null;
     let nearest = radius;
     for (const [id, c] of this.all) {
-      if (c.phase !== 'bled' || c.finished) continue;
-      const root = c.model.root;
-      root.updateWorldMatrix(true, false);
-      _line.set(root.localToWorld(_a.set(0, BODY_FROM, 0)), root.localToWorld(_b.set(0, BODY_TO, 0)));
+      if (!this.rousable(c)) continue;
+      this.length(c);
       const d = _line.closestPointToPoint(point, true, _on).distanceTo(point);
       if (d <= nearest) {
         nearest = d;
@@ -471,21 +500,40 @@ export class Casualties {
   }
 
   /**
-   * A hand hauls the body `lift` of the way (0 → 1) from where it lies back up into its chair; it
-   * follows the hand. False once it can't be held: gone, finished, or being collected.
+   * The body lying on the floor (with its revival window open) that `ray` points at: the first one
+   * whose length it passes within `radius` meters of, no further than `range` meters along it.
    */
-  haul(id: string, lift: number): boolean {
+  along(ray: THREE.Ray, range: number, radius: number): string | null {
+    let best: string | null = null;
+    let first = range;
+    for (const [id, c] of this.all) {
+      if (!this.rousable(c)) continue;
+      this.length(c);
+      const d = ray.distanceSqToSegment(_line.start, _line.end, _on);
+      const t = _on.sub(ray.origin).dot(ray.direction);
+      if (d > radius * radius || t < 0 || t > first) continue;
+      first = t;
+      best = id;
+    }
+    return best;
+  }
+
+  /**
+   * In the headset, a hand's use action at a body asks the server to revive it: the body stirs
+   * and starts to sit up while it waits. If no revival follows (the window closed under it, the
+   * office went away) it slumps back down. False when it can't be roused.
+   */
+  rouse(id: string): boolean {
     const c = this.all.get(id);
-    if (c?.phase !== 'bled' || c.finished) return false;
-    c.held = true;
-    c.lift = THREE.MathUtils.clamp(lift, 0, 1);
+    if (!c || !this.rousable(c)) return false;
+    c.rouse = 'roused';
+    c.rouseT = 0;
     return true;
   }
 
-  /** Let go before it was back in its chair: it slumps back down where it lay. */
-  letGo(id: string): void {
-    const c = this.all.get(id);
-    if (c) c.held = false;
+  /** Whether a hand already roused `id` and it is waiting on its revival. */
+  roused(id: string): boolean {
+    return this.all.get(id)?.rouse === 'roused';
   }
 
   /** Where `id`'s chest is while it is down, for staging a hand or a shot at it. */
@@ -497,16 +545,28 @@ export class Casualties {
   }
 
   /**
-   * Revive stands the worker back up in its seat with its session untouched, blood gone. False
-   * when there's nothing (left) to revive.
+   * Revive stands the worker back up in its seat with its session untouched, blood gone: at once,
+   * or in the headset (hooks.riseTime) getting back up into its chair from wherever it lies.
+   * False when there's nothing (left) to revive, or it is already getting up.
    */
   revive(id: string): boolean {
     const c = this.all.get(id);
-    if (!c || (c.phase !== 'fall' && c.phase !== 'bled')) return false;
-    this.reseat(c);
-    this.dropPool(c);
-    this.all.delete(id);
+    if (!c || !this.dying(id)) return false;
+    if (this.hooks.riseTime && c.phase === 'bled') {
+      c.rouse = 'up';
+      c.finished = false;
+      c.jt = Infinity;
+      c.model.pulse?.(0, 1);
+      return true;
+    }
+    this.back(c);
     return true;
+  }
+
+  /** A body still getting back up into its chair is put straight there. */
+  settle(id: string): void {
+    const c = this.all.get(id);
+    if (c?.rouse === 'up') this.back(c);
   }
 
   /**
@@ -516,13 +576,13 @@ export class Casualties {
    */
   confirm(id: string, laptop: CasualtyLaptop): boolean {
     const c = this.all.get(id);
-    if (!c || (c.phase !== 'fall' && c.phase !== 'bled')) return false;
+    if (!c || !this.dying(id)) return false;
     if (c.phase === 'fall') this.land(c);
-    // Wherever a hand left it, it lies flat for the stretcher.
+    // Its heart has stopped and its light is out; a body that was stirring slumps back (see step).
     c.finished = true;
-    c.held = false;
-    c.lift = 0;
+    c.rouse = 'none';
     c.jt = Infinity;
+    c.model.pulse?.(0, 0);
     this.lie(c);
     c.owned = true;
     c.laptop = laptop;
@@ -608,6 +668,8 @@ export class Casualties {
   update(dt: number, t: number) {
     for (const [id, c] of this.all) {
       this.step(c, dt);
+      // Back in its seat: the office animates it from here.
+      if (!this.all.has(id)) continue;
       c.model.update(dt, t);
       if (c.team) this.poseTeam(c, dt, t);
       if (c.laptop && !this.closeLaptop(c, dt)) c.laptop = null;
@@ -636,24 +698,31 @@ export class Casualties {
         return;
       }
       case 'bled': {
-        c.bleed = Math.min(1, c.bleed + dt / BLEED_TIME);
-        c.pool.scale.setScalar(Math.max(0.05, POOL_R * easeOut(c.bleed)));
-        if (!c.held && c.lift > 0) {
-          c.lift = Math.max(0, c.lift - dt * SLUMP);
-          // Dropped from high enough, it hits the floor again.
-          if (c.lift === 0 && c.peak >= SLUMP_THUD) this.hooks.onLand(c.floor);
+        // The headset knows the server's deadline: the pool and the heart keep its time.
+        const left = this.hooks.left?.(c.id) ?? null;
+        if (left === null) c.bleed = Math.min(1, c.bleed + dt / BLEED_TIME);
+        else {
+          c.bleed = THREE.MathUtils.clamp(1 - left / REVIVE_WINDOW, 0, 1);
+          if (left <= 0 && c.rouse !== 'up' && !c.finished) {
+            // The window has closed: the heart stops and the light goes out. The medics are coming.
+            c.finished = true;
+            c.model.pulse?.(0, 0);
+          }
         }
-        c.peak = c.lift > 0 ? Math.max(c.peak, c.lift) : 0;
+        c.pool.scale.setScalar(poolSize(c.t, c.bleed, left !== null));
+        if (this.rise(c, dt)) return;
         this.lie(c);
         this.shove(c);
-        if (!c.finished && this.hooks.onBeat && (c.beat -= dt) <= 0) {
-          c.beat += beatGap(c.bleed);
-          this.hooks.onBeat(c.model.root.localToWorld(_a.set(0, 0.55, 0)));
-        }
+        this.heart(c, dt);
         return;
       }
       case 'fetch': {
         const team = c.team!;
+        // A body that was stirring when its window closed slumps back down before they reach it.
+        if (c.lift > 0) {
+          this.slump(c, dt);
+          this.lie(c);
+        }
         this.opacity(team, smooth(c.t / TEAM_IN));
         if (this.walk(team, dt, team.pickupHeading)) {
           c.phase = 'load';
@@ -729,7 +798,71 @@ export class Casualties {
     this.hooks.onLand(c.floor);
   }
 
-  /** Where it lies, or as far back up into its chair as a hand has hauled it. */
+  /**
+   * Roused, it stirs and starts to sit up while the server is asked; revived, it gets all the way
+   * back up into its chair, and true once it is there. Otherwise a stirring body slumps back.
+   */
+  private rise(c: Casualty, dt: number): boolean {
+    const step = dt / (this.hooks.riseTime ?? RISE_TIME);
+    if (c.rouse === 'up') {
+      c.lift = Math.min(1, c.lift + step);
+      if (c.lift < 1) return false;
+      this.back(c);
+      return true;
+    }
+    if (c.rouse === 'roused') {
+      c.rouseT += dt;
+      c.lift = Math.min(STIR, c.lift + step);
+      if (c.rouseT >= ROUSE_WAIT || c.finished) c.rouse = 'none';
+    } else this.slump(c, dt);
+    c.peak = c.lift > 0 ? Math.max(c.peak, c.lift) : 0;
+    return false;
+  }
+
+  /** Not held up: it sinks back to the floor, with a thud when it dropped from high enough. */
+  private slump(c: Casualty, dt: number) {
+    if (c.lift <= 0) return;
+    c.lift = Math.max(0, c.lift - dt * SLUMP);
+    if (c.lift === 0 && c.peak >= SLUMP_THUD) this.hooks.onLand(c.floor);
+  }
+
+  /**
+   * In the headset (hooks.onBeat), its heart: a beat that slows and fades as the window runs out,
+   * at its chest, and its light glowing red with each one, dimmer as it goes. Stopped once finished.
+   */
+  private heart(c: Casualty, dt: number) {
+    if (!this.hooks.onBeat || c.finished || c.rouse === 'up') return;
+    c.pulse = Math.max(0, c.pulse - dt * BEAT_FADE);
+    if ((c.beat -= dt) <= 0) {
+      c.beat += beatGap(c.bleed);
+      c.pulse = 1;
+      this.hooks.onBeat(c.model.root.localToWorld(_a.set(0, 0.55, 0)), beatStrength(c.bleed));
+    }
+    c.model.pulse?.(c.pulse * beatStrength(c.bleed), 1 - c.bleed);
+  }
+
+  /** Whether a hand can rouse it: lying still on the floor, its window open, not already roused. */
+  private rousable(c: Casualty): boolean {
+    return c.phase === 'bled' && !c.finished && c.rouse === 'none';
+  }
+
+  /** Its length along the floor, feet to head, into _line. */
+  private length(c: Casualty) {
+    const root = c.model.root;
+    root.updateWorldMatrix(true, false);
+    _line.set(root.localToWorld(_a.set(0, BODY_FROM, 0)), root.localToWorld(_b.set(0, BODY_TO, 0)));
+  }
+
+  /** Revived: back in its seat with its session untouched, the blood gone; the office is told. */
+  private back(c: Casualty) {
+    this.reseat(c);
+    this.dropPool(c);
+    this.all.delete(c.id);
+    c.model.root.updateWorldMatrix(true, false);
+    this.hooks.onBack?.(c.id, c.model.root.localToWorld(new THREE.Vector3(0, 0.9, 0)));
+  }
+
+  /** Where it lies, or as far back up into its chair as it has got. */
   private lie(c: Casualty) {
     const root = c.model.root;
     const e = smooth(c.lift);
@@ -739,9 +872,9 @@ export class Casualties {
     root.quaternion.slerpQuaternions(c.lying, c.seated, e);
   }
 
-  /** The latest bullet's shove, on top of its pose: at once, leaning it away from the shooter about its feet. */
+  /** The bullet's shove, on top of its pose: at once, leaning it away from the shooter about its feet. */
   private shove(c: Casualty) {
-    const j = c.push ? jolt(c.jt) * c.kick : 0;
+    const j = c.push ? jolt(c.jt) : 0;
     if (j <= 0.001) return;
     c.model.root.position.addScaledVector(c.push!, KNOCK * j);
     c.model.root.quaternion.premultiply(_lean.setFromAxisAngle(c.axis, KICK * j));

@@ -1,44 +1,67 @@
-// Native (Galaxy XR): what a bullet does to a worker when nothing may open in front of you.
+// Native (Galaxy XR): a shot worker's body, when nothing may open in front of you.
 //
-// The desktop asks what to do with a shot worker in a dialog. The headset never does: a hit plays
-// out where it lands, and every choice after it is a physical act at the body. The first bullet
-// drops the worker out of its chair, its session still running (world/casualties.ts shoot). A
-// stray shot can do no more than that. Ending the session takes a second, aimed bullet into the
-// body once it has lain still for FINISH_AFTER seconds; a quick double tap only drops it. Hauling
-// the body back up into its chair by hand revives it instead (native/physical.ts haul). Each
-// downed worker has its own casualty scene, so several can be down at once.
+// The owner's design holds everywhere: a shot sends worker.shoot, the server starts the worker's
+// persisted 30-second revival window, every client on the floor sees it go down, and worker.revive
+// within that window stands it back up with its session untouched; otherwise the server dismisses
+// it and the medics collect the body. In the headset all of it happens in the world:
+//
+// - The hit lands at once where the bullet struck (main.ts landShot): the worker is knocked out of
+//   its chair along the bullet before the server's echo arrives (PendingShots keeps that local
+//   fall from being undone by an unrelated update meanwhile).
+// - The window's time is told by the body (world/casualties.ts): a heartbeat that slows and fades,
+//   felt in a hand near it, its light glowing red with each beat, and a pool that creeps out to full
+//   size at the deadline. No text, no countdown, nothing head-locked.
+// - Reviving is the use action (trigger) with a free hand at the body: its tracked grip touching
+//   it, or its ray pointing at it from within REVIVE_RANGE, the owner's walk-up distance
+//   (native/physical.ts useAtBody). The body stirs at once and gets back up into its chair when the
+//   server confirms.
 //
 // No DOM or WebGL at import time, so tests load it in Node.
 
 import type * as THREE from 'three';
-import type { Casualties, CasualtyModel } from '../world/casualties';
-import type { ShotOutcome } from './stage';
+import type { Casualties } from '../world/casualties';
 
-/** Seconds a downed worker must have lain still on the floor before another bullet into it ends its session. */
-export const FINISH_AFTER = 0.8;
+/** How close (meters) a free hand's grip must come to any part of a body on the floor to be at it. */
+export const REVIVE_TOUCH = 0.45;
+/** How far (meters) along a free hand's pointing ray a body can be revived: the owner's walk-up range. */
+export const REVIVE_RANGE = 2.4;
+/** How near (meters) the pointing ray must pass a body's length to point at it. */
+export const REVIVE_AIM = 0.3;
+/** How long (ms) a shot's local fall waits for the server's downed state before it gets back up. */
+export const SHOT_ECHO_MS = 2500;
 
-/** How close (meters) a hand must come to a body on the floor to take hold of it. */
-export const HAUL_REACH = 0.4;
+/** The body a free hand's use action lands on: the one its grip touches, else the one its ray points at. */
+export function bodyAt(casualties: Pick<Casualties, 'reach' | 'along'>, grip: THREE.Vector3, ray: THREE.Ray | null): string | null {
+  return casualties.reach(grip, REVIVE_TOUCH) ?? (ray ? casualties.along(ray, REVIVE_RANGE, REVIVE_AIM) : null);
+}
 
 /**
- * A bullet struck worker `id` in the headset. A worker in its chair goes down ('down'). A body
- * already down jerks where it lies ('hit'), and one that has lain still long enough is finished
- * off: `finish(id)` sends its kill, at most once ('finished'). `sent` holds the kills already sent.
+ * Shots this client resolved before the server's downed state came back. Until it does (or
+ * SHOT_ECHO_MS passes without it), the local fall stands even though the worker's info says it
+ * is up.
  */
-export function shootInWorld(
-  casualties: Pick<Casualties, 'shoot' | 'nudge' | 'lyingFor' | 'finish'>,
-  id: string,
-  model: CasualtyModel,
-  seat: THREE.Object3D,
-  direction: THREE.Vector3,
-  sent: ReadonlySet<string>,
-  finish: (id: string) => void,
-): ShotOutcome {
-  if (casualties.shoot(id, model, seat, direction)) return 'down';
-  if (!casualties.nudge(id, direction)) return 'hit';
-  const lying = casualties.lyingFor(id);
-  if (sent.has(id) || lying === null || lying < FINISH_AFTER) return 'hit';
-  casualties.finish(id);
-  finish(id);
-  return 'finished';
+export class PendingShots {
+  private at = new Map<string, number>();
+
+  add(id: string, now: number): void {
+    this.at.set(id, now);
+  }
+
+  /** The server's downed state arrived (or the worker is gone): nothing left to wait for. */
+  settle(id: string): void {
+    this.at.delete(id);
+  }
+
+  /** Whether `id`'s local fall still waits on the server at `now`. */
+  holds(id: string, now: number): boolean {
+    const t = this.at.get(id);
+    if (t === undefined) return false;
+    if (now - t < SHOT_ECHO_MS) return true;
+    this.at.delete(id);
+    return false;
+  }
+
+  clear(): void {
+    this.at.clear();
+  }
 }

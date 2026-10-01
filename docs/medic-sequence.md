@@ -1,18 +1,21 @@
 # Medic collection sequence
 
 The casualty presentation is shared by the desktop scene and the installed native client.
-`src/client/world/casualties.ts` handles only local visuals and sound callbacks. A shot does
-not stop a worker or its PTY. On the desktop the kill dialog sends `worker.kill` only after
-explicit confirmation. In the headset nothing opens: a second, aimed shot into the body once it
-has lain still sends it (see the gun section of
-[the controller interactions](vr-native-controller-interactions.md)). Either way the collection
-starts when that worker's removal arrives, and is the confirmation. Revive (the dialog's button,
-or in the headset hauling the body back up into its chair by hand) restores an unconfirmed
-worker to its seat with its session untouched. Each body has its own scene, so several can be
-down at once. Given the bullet's direction, the hit shoves the body along it and leans it away
-from the shooter in the first frame, easing into the fall, and the body sprawls out on the side
-the bullet was heading. It lands with its length flat along the floor and its lowest point on
-it, so the medics, a reaching hand and the blood pool all meet it at floor level.
+`src/client/world/casualties.ts` handles visuals and sound callbacks. `worker.shoot` starts a
+server-owned, persisted 30-second revival deadline without stopping the worker or its PTY.
+There is no confirmation dialog: walking within 2.4 metres of the body and pressing E sends
+`worker.revive`, restoring it to its seat with its session untouched. If the deadline expires,
+the server dismisses the worker and deletes its owned worktrees and branches, even with
+uncommitted or unpublished work. Collection starts when that worker's removal arrives.
+Every client on the floor renders the downed state and the medic sequence.
+In the headset nothing opens either, and the revival is the use action with a free hand at the
+body (see the gun section of [the controller interactions](vr-native-controller-interactions.md)).
+Each body has its own scene, so several can be down at once. Given the bullet's direction (the
+headset's own shots, which go down at once rather than waiting for the server's echo), the hit
+shoves the body along it and leans it away from the shooter in the first frame, easing into the
+fall, and the body sprawls out on the side the bullet was heading. It lands with its length flat
+along the floor and its lowest point on it, so the medics, a reaching hand and the blood pool all
+meet it at floor level.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
 turning into the fallen worker's orientation. They approach its torso rather than its foot
@@ -46,8 +49,8 @@ hand contact over six fall/yaw combinations and complete carry routes, planted b
 continuous position/rotation/world scale across loading and attachment, private fade material
 ownership, revive/clear behavior, helper reset/disposal, and native scene conformance.
 The exporter accepts the medic scene without errors or unsupported features and sends no
-new geometry buffers during pickup. The original casualty tests still cover shot/dialog,
-sound and laptop lifecycle behavior.
+new geometry buffers during pickup. The original casualty tests still cover shooting, nearby
+revival, sound and laptop lifecycle behavior.
 
 A standalone browser fixture was reviewed and recorded without connecting to an office,
 starting workers, or sending terminal input. This checks appearance and choreography.

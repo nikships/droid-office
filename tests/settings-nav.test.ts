@@ -29,6 +29,7 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Jira', 'building', 'office'],
     ["This floor's Jira epic", 'building', 'floor'],
     ['Workspace folder', 'building', 'office'],
+    ['Source hot reload', 'building', 'office'],
     ['Default worker', 'workers', 'office'],
     ['Prompts', 'workers', 'office'],
     ['Worker limit', 'workers', 'office'],

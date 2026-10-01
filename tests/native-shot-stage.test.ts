@@ -2,19 +2,20 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { NativeControls, type NativeHooks } from '../src/client/native/controls.js';
-import { FINISH_AFTER, HAUL_REACH, shootInWorld } from '../src/client/native/downed.js';
+import { bodyAt, PendingShots } from '../src/client/native/downed.js';
 import type { NativeHand, NativeInputFrame, Pose7 } from '../src/client/native/input.js';
-import { ShotStage, type ShotOutcome, type StageHaulOptions, type StageHaulResult, type StageShotOptions, type StageShotResult, matchWorker, stageAim } from '../src/client/native/stage.js';
+import { ShotStage, type ShotOutcome, type StageReviveOptions, type StageReviveResult, type StageShotOptions, type StageShotResult, matchWorker, stageAim } from '../src/client/native/stage.js';
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
-import { Casualties, FALL_TIME } from '../src/client/world/casualties.js';
+import { Casualties, FALL_TIME, REVIVE_WINDOW, RISE_TIME } from '../src/client/world/casualties.js';
 import { Worker } from '../src/client/world/character.js';
 import { gunHit } from '../src/client/world/gun.js';
 import { buildOffice, type Office } from '../src/client/world/office.js';
 
 // Headset shots against the real office and real seated workers, through the controller path:
-// scripted samples → NativeControls → the physical trigger → the muzzle ray → the in-world
-// outcome (native/downed.ts), and hauls through the grip → native/physical.ts haul → casualties.
+// scripted samples → NativeControls → the physical trigger → the muzzle ray → the local fall and
+// worker.shoot (as main.ts landShot), against a stand-in for the server's revival window; and
+// revivals through the use action → native/physical.ts useAtBody → worker.revive → the rise.
 
 /** Text canvases and font loading, enough for the office and characters to build without WebGL. */
 function stubDom(t: TestContext) {
@@ -78,7 +79,11 @@ function seat(t: TestContext, deskIndex: number, name = 'Pixel') {
 const pose = (x: number, y: number, z: number): Pose7 => [x, y, z, 0, 0, 0, 1];
 const idle = (): NativeHand => ({ active: false, aim: pose(0, 0, 0), grip: pose(0, 0, 0), trigger: 0, squeeze: 0, stick: [0, 0], a: false, b: false, menu: false, ui: false });
 
-/** NativeControls on the real office, wired as main.ts wires them: the muzzle ray, the in-world outcome, the casualties and the haul. */
+/**
+ * NativeControls on the real office, wired as main.ts wires them: the muzzle ray, the local fall
+ * and worker.shoot, the use action at the body and worker.revive. `server` stands in for the
+ * office: it owns each shot worker's revival window and answers on the next poll.
+ */
 function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) {
   const camera = new THREE.PerspectiveCamera();
   const player = new PlayerController(camera, new EventTarget() as unknown as HTMLElement, f.office.colliders);
@@ -86,11 +91,37 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
   let time = 1000;
   t.mock.method(performance, 'now', () => time);
   const shots: { workerId: string | null; outcome: ShotOutcome; point: THREE.Vector3 | null }[] = [];
-  const sent: string[] = [];
-  const kills = new Set<string>();
+  /** Every message to the office, in order. */
+  const sent: { t: 'worker.shoot' | 'worker.revive'; workerId: string }[] = [];
+  const outbox: typeof sent = [];
+  /** The office's revival windows (performance-clock ms), as WorkerInfo.downedUntil. */
+  const server = new Map<string, number>();
+  const pending = new PendingShots();
+  const send = (msg: (typeof sent)[number]) => {
+    sent.push(msg);
+    outbox.push(msg);
+  };
   const raycaster = new THREE.Raycaster();
-  const casualties = new Casualties(f.scene, () => 0, { spawnMedic: () => ({ root: new THREE.Group(), update() {}, dispose() {} }), onLand() {}, onSiren() {} });
+  const casualties = new Casualties(f.scene, () => 0, {
+    spawnMedic: () => ({ root: new THREE.Group(), update() {}, dispose() {} }),
+    onLand() {},
+    onSiren() {},
+    onBeat() {},
+    left: (id) => (server.has(id) ? (server.get(id)! - time) / 1000 : null),
+    riseTime: RISE_TIME,
+  });
   t.after(() => casualties.clear());
+  /** The office answers: windows open and close, and every client syncs its workers (main.ts syncWorkers). */
+  const deliver = () => {
+    for (const msg of outbox.splice(0)) {
+      if (msg.t === 'worker.shoot' && !server.has(msg.workerId)) server.set(msg.workerId, time + REVIVE_WINDOW * 1000);
+      if (msg.t === 'worker.revive' && (server.get(msg.workerId) ?? 0) > time) server.delete(msg.workerId);
+    }
+    if (server.has(f.id)) {
+      pending.settle(f.id);
+      casualties.shoot(f.id, f.worker, f.desk.seatAnchor);
+    } else if (!pending.holds(f.id, time)) casualties.revive(f.id);
+  };
   let stage: ShotStage | null = null;
   const hooks: NativeHooks = {
     player,
@@ -128,21 +159,23 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
         raycaster.far = Infinity;
         const result = gunHit(raycaster, f.office.group, new Map([...f.workers, [f.worker.root, f.id]]));
         const workerId = result?.workerId ?? null;
-        const outcome: ShotOutcome =
-          workerId === null
-            ? 'miss'
-            : shootInWorld(casualties, workerId, f.worker, f.desk.seatAnchor, direction, kills, (id) => {
-                kills.add(id);
-                sent.push(id);
-              });
+        let outcome: ShotOutcome = workerId === null ? 'miss' : 'hit';
+        if (workerId !== null && !server.has(workerId)) {
+          if (casualties.shoot(workerId, f.worker, f.desk.seatAnchor, direction)) pending.add(workerId, time);
+          send({ t: 'worker.shoot', workerId });
+          outcome = 'down';
+        }
         shots.push({ workerId, outcome, point: result?.hit.point.clone() ?? null });
         stage?.shot({ workerId, outcome, solid: result?.hit.object.name ?? null, distance: result?.hit.distance ?? null });
       },
       bodies: {
-        within: (point) => casualties.reach(point, HAUL_REACH),
-        haul: (id, lift) => casualties.haul(id, lift),
-        letGo: (id) => casualties.letGo(id),
-        revive: (id) => void casualties.revive(id),
+        at: (grip, ray) => bodyAt(casualties, grip, ray),
+        // main.ts reviveBody.
+        revive: (id) => {
+          if ((server.get(id) ?? 0) <= time || !casualties.rouse(id)) return false;
+          send({ t: 'worker.revive', workerId: id });
+          return true;
+        },
       },
     },
   };
@@ -154,20 +187,23 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
     player,
     worker: (key) => matchWorker(key, [{ id: f.id, name: f.name, root: f.worker.root }]),
     downed: (id) => {
-      const chest = casualties.chest(id);
+      const chest = casualties.dying(id) ? casualties.chest(id) : null;
       if (!chest) return null;
       const open = chest.clone().sub(f.desk.seatAnchor.getWorldPosition(new THREE.Vector3())).setY(0);
-      return { state: kills.has(id) ? 'finished' : casualties.lyingFor(id) === null ? 'falling' : 'lying', chest, open };
+      const until = server.get(id);
+      return { state: until !== undefined && until <= time ? 'closed' : casualties.roused(id) ? 'roused' : casualties.lyingFor(id) === null ? 'falling' : 'lying', chest, open };
     },
     lineOfFire: (muzzle, direction, id) => gunHit(new THREE.Raycaster(muzzle, direction), f.office.group, new Map([...f.workers, [f.worker.root, f.id]]))?.workerId === id,
     blocked: () => null,
     eye: () => camera.position.clone(),
     clearPanel() {},
-    revive: (id) => void casualties.revive(id),
+    revive: (id) => {
+      if (!hooks.physical!.bodies!.revive(id) && server.has(id)) send({ t: 'worker.revive', workerId: id });
+    },
     now: () => time,
   });
   stage.debuggable = debuggable;
-  /** One Java poll: three 90 Hz samples from a still, tracked headset, then a gameplay update. */
+  /** One Java poll: three 90 Hz samples from a still, tracked headset, then a gameplay update; the office answers. */
   const poll = () => {
     if (!stage!.frozen) {
       const frames: NativeInputFrame[] = [0, 1, 2].map(() => ({ time: (time += 11), head: [0, 1.62, 0, 0, 0, 0, 1], hands: [idle(), idle()] }));
@@ -176,11 +212,12 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
       casualties.update(1 / 30, time / 1000);
     } else time += 33;
     stage!.tick();
+    deliver();
   };
   const wait = (seconds: number) => {
     for (let i = 0; i < Math.ceil(seconds * 30); i++) poll();
   };
-  /** The page's __office.stageShot / stageHaul, with polls arriving until it resolves. */
+  /** The page's __office.stageShot / stageRevive, with polls arriving until it resolves. */
   const settle = async <R>(started: Promise<R>): Promise<R> => {
     let result: R | null = null;
     void started.then((r) => (result = r));
@@ -192,90 +229,117 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
     return result;
   };
   const stageShot = (options: StageShotOptions): Promise<StageShotResult> => settle(stage!.run(options));
-  const stageHaul = (options: StageHaulOptions): Promise<StageHaulResult> => settle(stage!.haul(options));
-  return { controls, player, stage, casualties, shots, sent, poll, wait, stageShot, stageHaul };
+  const stageRevive = (options: StageReviveOptions): Promise<StageReviveResult> => settle(stage!.revive(options));
+  /** Lets the office move on by `ms` without anything else happening (the deadline passing). */
+  const skip = (ms: number) => {
+    time += ms;
+  };
+  return { controls, player, stage, casualties, shots, sent, server, poll, wait, skip, stageShot, stageRevive };
 }
 
 /** Degrees around the worker from in front of its face, toward its left: front, both sides and diagonals. */
 const ANGLES = [15, 65, 100, -40, -95];
 
-test('native: a held gun drops a seated worker through the trigger path at every range, from every open side, and sends nothing', async (t) => {
-  const f = seat(t, 0);
+test('native: a held gun drops a Target worker through the trigger path at every range, from every open side; only worker.shoot goes out', async (t) => {
+  const f = seat(t, 0, 'Target 1');
   const h = headset(t, f);
   for (const angle of ANGLES)
     for (const gap of [0.04, 0.3, 1.2, 2.2]) {
       const before = h.shots.length;
-      const result = await h.stageShot({ worker: 'Pixel', gap, angle, pitch: 15 });
+      const sent = h.sent.length;
+      const result = await h.stageShot({ worker: 'Target 1', gap, angle, pitch: 15 });
       assert.equal(result.ok, true, `${gap} m at ${angle}°: ${result.reason ?? ''}`);
       assert.equal(h.shots.length, before + 1, `${gap} m at ${angle}°: the trigger fired once`);
       const shot = h.shots.at(-1)!;
       assert.equal(shot.workerId, f.id, `${gap} m at ${angle}°: struck ${result.solid ?? 'nothing'} instead`);
       assert.equal(result.outcome, 'down');
       assert.ok(shot.point!.distanceTo(new THREE.Vector3(...result.surface!)) < 0.06, `${gap} m at ${angle}°: struck where the bore meets the body`);
+      assert.deepEqual(h.sent.slice(sent), [{ t: 'worker.shoot', workerId: f.id }], 'the shot asks the office to down it, and nothing else');
+      assert.equal(h.casualties.dying(f.id), true, 'it is down at once, before the office answers');
       h.stage.release();
-      assert.equal(h.casualties.dying(f.id), false, 'release stands it back up');
+      h.wait(RISE_TIME + 0.2);
+      assert.equal(h.sent.at(-1)?.t, 'worker.revive', 'release asks the office to revive it');
+      assert.equal(f.worker.root.parent, f.desk.seatAnchor, 'back in its chair');
     }
-  assert.deepEqual(h.sent, [], 'not one kill');
 });
 
-test('native: staged shots finish off only a disposable Target worker, with a second shot at the body once it has lain still', async (t) => {
+test('native: staged shots refuse anyone not named Target, and a worker already down', async (t) => {
   const pixel = seat(t, 1, 'Pixel');
   const p = headset(t, pixel);
-  assert.equal((await p.stageShot({ worker: 'Pixel' })).outcome, 'down');
-  p.wait(FALL_TIME + FINISH_AFTER);
-  const again = await p.stageShot({ worker: 'Pixel' });
-  assert.equal(again.ok, false, 'a downed worker is not shot again by default');
-  assert.match(again.reason ?? '', /finish: true/);
-  const refused = await p.stageShot({ worker: 'Pixel', finish: true });
+  const refused = await p.stageShot({ worker: 'Pixel' });
   assert.equal(refused.ok, false);
   assert.match(refused.reason ?? '', /Target/);
   assert.deepEqual(p.sent, []);
-  p.stage.release();
-  assert.equal(p.casualties.dying(pixel.id), false);
+  assert.equal(p.shots.length, 0);
 
-  const target = seat(t, 2, 'Target 1');
+  const target = seat(t, 2, 'Target 2');
   const h = headset(t, target);
-  assert.equal((await h.stageShot({ worker: 'target 1', finish: true })).ok, false, 'not down yet: shoot it once first');
-  assert.equal((await h.stageShot({ worker: 'target 1' })).outcome, 'down');
-  h.wait(FALL_TIME + FINISH_AFTER);
-  const finished = await h.stageShot({ worker: 'target 1', finish: true });
-  assert.equal(finished.ok, true, finished.reason);
-  assert.equal(finished.hit, true, `struck ${finished.solid}`);
-  assert.equal(finished.outcome, 'finished');
-  assert.deepEqual(h.sent, [target.id], 'its kill went out once');
+  assert.equal((await h.stageShot({ worker: 'target 2' })).outcome, 'down');
+  h.wait(FALL_TIME);
+  const again = await h.stageShot({ worker: 'target 2' });
+  assert.equal(again.ok, false, 'a downed worker is not shot again');
+  assert.match(again.reason ?? '', /stageRevive/);
+  assert.deepEqual(
+    h.sent.map((m) => m.t),
+    ['worker.shoot'],
+  );
   h.stage.release();
-  assert.equal(h.casualties.dying(target.id), true, 'a finished body stays down for its medics');
 });
 
-test('native: a staged haul grips the body on the floor and lifts it back into its chair through the grip path', async (t) => {
-  const f = seat(t, 3);
+test('native: a free hand at the body revives it through the use action, touching it or pointing at it from a step away', async (t) => {
+  const f = seat(t, 3, 'Target 3');
   const h = headset(t, f);
-  assert.equal((await h.stageHaul({ worker: 'Pixel' })).ok, false, 'nothing to haul while it sits');
-  assert.equal((await h.stageShot({ worker: 'Pixel', angle: 40 })).outcome, 'down');
+  assert.equal((await h.stageRevive({ worker: 'Target 3' })).ok, false, 'nothing to revive while it sits');
+  assert.equal((await h.stageShot({ worker: 'Target 3', angle: 40 })).outcome, 'down');
   h.wait(FALL_TIME + 0.2);
-  const frozen = await h.stageHaul({ worker: 'Pixel', freezeMs: 500 });
+  const frozen = await h.stageRevive({ worker: 'Target 3', freezeMs: 100 });
   assert.equal(frozen.ok, true, frozen.reason);
-  assert.equal(frozen.revived, false, 'frozen halfway up');
-  const chest = h.casualties.chest(f.id)!;
-  assert.ok(chest.y > frozen.chest![1] + 0.1, 'the body is coming up with the hand');
+  assert.equal(frozen.roused, true, 'the use action landed on the body');
+  assert.deepEqual(
+    h.sent.map((m) => m.t),
+    ['worker.shoot', 'worker.revive'],
+  );
   h.stage.release(false);
-  h.wait(0.6);
-  assert.equal(h.casualties.dying(f.id), true, 'let go, it slumps back down');
-  const lifted = await h.stageHaul({ worker: 'Pixel' });
-  assert.equal(lifted.ok, true, lifted.reason);
-  assert.equal(lifted.revived, true);
-  assert.equal(f.worker.root.parent, f.desk.seatAnchor, 'back in its chair');
+  h.wait(RISE_TIME + 0.2);
+  assert.equal(f.worker.root.parent, f.desk.seatAnchor, 'it got back up into its chair');
   assert.equal(h.controls.staging, false, 'the controller is handed back');
-  assert.deepEqual(h.sent, []);
+
+  assert.equal((await h.stageShot({ worker: 'Target 3', angle: -40 })).outcome, 'down');
+  h.wait(FALL_TIME + 0.2);
+  const pointed = await h.stageRevive({ worker: 'Target 3', how: 'point' });
+  assert.equal(pointed.ok, true, pointed.reason);
+  assert.equal(pointed.revived, true, 'revived by pointing at it');
+  h.wait(RISE_TIME);
+  assert.equal(f.worker.root.parent, f.desk.seatAnchor);
+  assert.equal(h.shots.length, 2, 'the free hand fired nothing');
+});
+
+test('native: once the window has closed nothing revives it, and the body stays for the medics', async (t) => {
+  const f = seat(t, 5, 'Target 4');
+  const h = headset(t, f);
+  assert.equal((await h.stageShot({ worker: 'Target 4' })).outcome, 'down');
+  h.wait(FALL_TIME + 0.2);
+  h.skip(REVIVE_WINDOW * 1000);
+  h.wait(0.1);
+  const late = await h.stageRevive({ worker: 'Target 4' });
+  assert.equal(late.ok, false);
+  assert.match(late.reason ?? '', /window/);
+  h.stage.release();
+  assert.deepEqual(
+    h.sent.map((m) => m.t),
+    ['worker.shoot'],
+    'no revival goes out',
+  );
+  assert.equal(h.casualties.dying(f.id), true);
 });
 
 test('the staging hooks are inert without a debuggable host, and clean up after themselves', async (t) => {
-  const f = seat(t, 4);
+  const f = seat(t, 4, 'Target 5');
   const h = headset(t, f, false);
-  const refused = await h.stage.run({ worker: 'Pixel' });
+  const refused = await h.stage.run({ worker: 'Target 5' });
   assert.equal(refused.ok, false);
   assert.match(refused.reason ?? '', /debuggable/);
-  assert.equal((await h.stage.haul({ worker: 'Pixel' })).ok, false);
+  assert.equal((await h.stage.revive({ worker: 'Target 5' })).ok, false);
   for (let i = 0; i < 40; i++) h.poll();
   assert.equal(h.controls.staging, false);
   assert.equal(h.shots.length, 0, 'nothing is drawn or fired');
@@ -283,7 +347,7 @@ test('the staging hooks are inert without a debuggable host, and clean up after 
   assert.equal((await h.stage.run({ worker: 'Nobody' })).ok, false);
   // A staged gun has no real controller under it, so it is drawn at the scripted pose.
   let run: StageShotResult | null = null;
-  void h.stage.run({ worker: 'pixel', gap: 0.3, freezeMs: 100 }).then((r) => (run = r));
+  void h.stage.run({ worker: 'target 5', gap: 0.3, freezeMs: 100 }).then((r) => (run = r));
   let sawWorldGun = false;
   for (let i = 0; i < 120 && !run; i++) {
     h.poll();
@@ -304,7 +368,9 @@ test('the staging hooks are inert without a debuggable host, and clean up after 
   assert.equal(h.stage.frozen, false);
   assert.equal(h.controls.staging, false);
   assert.equal(h.controls.holdingGun, false, 'release puts the gun away');
-  assert.equal(h.casualties.dying(f.id), false, 'release stands the worker back up');
+  h.wait(RISE_TIME + 0.2);
+  assert.equal(h.casualties.dying(f.id), false, 'release revives the worker');
+  assert.equal(f.worker.root.parent, f.desk.seatAnchor);
 });
 
 test('desktop: the camera ray strikes the worker up close and across the room, from several sides', (t) => {

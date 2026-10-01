@@ -9,6 +9,7 @@ import { onJiraSetup } from './jira';
 import { agentFields, choiceLabel, officeChoice } from './provider';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { NATIVE_SETTINGS } from '../native/panel-text';
+import { hotReloadSettings } from './hot-reload';
 
 const VIEWS: [ViewMode, string, string][] = [
   ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
@@ -561,6 +562,7 @@ export function openSettings(
   const character = h('button.btn', { type: 'button' }, account ? 'Change your look' : 'Change your look & name');
   epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
   paintJira();
+  const sourceReload = hotReloadSettings();
   const panes: Record<SettingsPane, Node[]> = {
     you: [
       card('Your character', character),
@@ -612,6 +614,7 @@ export function openSettings(
       card('Jira', jiraForm, jiraActions, jiraNote),
       epicCard,
       card('Workspace folder', dirRow, dirActions, dirNote),
+      card('Source hot reload', sourceReload.element),
     ],
     workers: [card('Default worker', agentNow, agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
   };
@@ -679,6 +682,7 @@ export function openSettings(
       offDir.forEach((off) => off());
       offJira.forEach((off) => off());
       offPrompts.forEach((off) => off());
+      sourceReload.dispose();
     },
   });
   show(first ?? lastPane);

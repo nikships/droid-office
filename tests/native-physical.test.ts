@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Climber } from '../src/client/climb.js';
 import { NativeControls, type NativeHooks } from '../src/client/native/controls.js';
 import { type NativeHand, type NativeInputFrame, type Pose7, LOST_MS } from '../src/client/native/input.js';
-import { type DownedBodies, gongContact, HAUL_LIFT, inBackHolster, onLadder } from '../src/client/native/physical.js';
+import { type DownedBodies, gongContact, inBackHolster, onLadder } from '../src/client/native/physical.js';
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import { GONG_TOUCH } from '../src/client/world/gong.js';
@@ -343,99 +343,118 @@ test("the trigger stays live after a hit: nothing holds the next shot but the re
   assert.equal(r.uses(), 0, 'the held gun owns the trigger');
 });
 
-/** A body lying on the floor at `at` that the fixture's hands can haul, recording what happens to it. */
+/**
+ * A body lying on the floor at `at` with its revival window open: a free hand's grip within 0.45 m
+ * of it, or a ray passing within 0.3 m of it no more than 2.4 m away, is at it. Records every
+ * revival the use action asks for; `open` false refuses them (the window closed).
+ */
 function body(r: ReturnType<typeof fixture>, at = new THREE.Vector3(0.2, 0.2, -0.4)) {
-  const log = { hauls: [] as number[], letGo: 0, revived: 0, held: true };
+  const log = { revived: [] as string[], open: true, asked: 0 };
   const bodies: DownedBodies = {
-    within: (point) => (log.held && point.distanceTo(at) <= 0.4 ? 'w1' : null),
-    haul: (id, lift) => {
-      assert.equal(id, 'w1');
-      log.hauls.push(lift);
-      return log.held;
+    at: (grip, ray) => {
+      log.asked++;
+      if (grip.distanceTo(at) <= 0.45) return 'w1';
+      return ray && ray.distanceToPoint(at) <= 0.3 && ray.origin.distanceTo(at) <= 2.4 ? 'w1' : null;
     },
-    letGo: () => void log.letGo++,
-    revive: () => {
-      log.revived++;
-      log.held = false;
+    revive: (id) => {
+      if (!log.open) return false;
+      log.revived.push(id);
+      return true;
     },
   };
   r.hooks.physical!.bodies = bodies;
   return log;
 }
 
-test("a free hand grips a body on the floor and hauls it back up into its chair with the hand's rise", (t) => {
+const firm = (r: ReturnType<typeof fixture>, idx: 0 | 1) => r.controls.state().haptics.some((h) => h.hand === idx && h.strength >= 0.9);
+
+test('the trigger of a free hand touching a body on the floor revives it, with a firm pulse in that hand', (t) => {
   const r = fixture(t);
   const log = body(r);
-  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
-  assert.equal(r.controls.state().hands[0].holding, true, 'the left hand holds the body');
-  // Dipping lower first only moves where the haul starts from.
-  r.tick(r.frame(off(), at(0.2, { squeeze: 1 })));
-  const rise = [0.3, 0.4, 0.5, 0.58];
-  for (const y of rise) r.tick(r.frame(off(), at(y, { squeeze: 1 })));
-  const last = log.hauls.at(-1)!;
-  assert.ok(Math.abs(last - (0.58 - 0.2) / HAUL_LIFT) < 1e-6, `it is ${last.toFixed(2)} of the way up`);
-  assert.ok(
-    log.hauls.every((lift, i) => i === 0 || lift >= log.hauls[i - 1]),
-    'it rises with the hand',
-  );
-  assert.equal(log.revived, 0);
+  const at = (patch: Partial<NativeHand> = {}) => hand(pose(0.2, 0.3, -0.4), patch);
+  r.tick(r.frame(off(), at()));
+  r.tick(r.frame(off(), at()));
   r.controls.state();
-  r.tick(r.frame(off(), at(0.2 + HAUL_LIFT + 0.01, { squeeze: 1 })));
-  assert.equal(log.revived, 1, 'all the way up: back in its chair');
-  const state = r.controls.state();
-  assert.equal(state.hands[0].holding, false, 'nothing left in the hand');
-  assert.ok(
-    state.haptics.some((h) => h.hand === 0 && h.strength >= 0.9),
-    'a firm buzz as it comes back up',
-  );
-  r.tick(r.frame(off(), at(0.7)));
-  assert.equal(log.letGo, 0, 'letting go afterwards drops nothing');
-  assert.equal(r.uses(), 0);
-});
-
-test('letting go mid-haul, losing tracking or a world change drops the body; an untracked grip never takes hold', (t) => {
-  const r = fixture(t);
-  const log = body(r);
-  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
-  r.tick(r.frame(off(), at(0.35, { squeeze: 1 })));
-  r.tick(r.frame(off(), at(0.35)));
-  assert.equal(log.letGo, 1, 'released early, it slumps back');
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1, active: false })));
-  assert.equal(log.letGo, 1, 'a brief loss keeps hold');
-  r.advance(LOST_MS + 50);
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1, active: false })));
-  assert.equal(log.letGo, 2, 'a controller lost for good lets go');
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
-  r.controls.clearGrab();
-  assert.equal(log.letGo, 3, 'a floor change lets go');
-  r.tick(r.frame(off(), at(0.25)));
-  const before = log.hauls.length;
-  r.tick(r.frame(off(), at(0.25, { gripTracked: false })));
-  r.tick(r.frame(off(), at(0.25, { gripTracked: false, squeeze: 1 })));
-  r.tick(r.frame(off(), at(0.6, { gripTracked: false, squeeze: 1 })));
-  assert.equal(log.hauls.length, before, 'an aim pose without a tracked grip never hauls');
-  assert.equal(log.revived, 0);
-});
-
-test('a body that can no longer be held (finished off, collected) leaves the hand at once', (t) => {
-  const r = fixture(t);
-  const log = body(r);
-  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25)));
-  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
-  log.held = false;
-  r.tick(r.frame(off(), at(0.3, { squeeze: 1 })));
+  r.tick(r.frame(off(), at({ trigger: 1 })));
+  assert.deepEqual(log.revived, ['w1']);
+  assert.ok(firm(r, 0), 'a firm pulse answers at once');
+  assert.equal(r.uses(), 0, 'nothing else hears that trigger');
+  assert.equal(r.controls.state().hands[0].holding, false, 'the hand holds nothing: no grab, no haul');
+  // Squeezing at the body grabs nothing either: the use action is the trigger.
+  r.tick(r.frame(off(), at()));
+  r.tick(r.frame(off(), at({ squeeze: 1 })));
   assert.equal(r.controls.state().hands[0].holding, false);
-  r.tick(r.frame(off(), at(0.7, { squeeze: 1 })));
-  assert.equal(log.revived, 0);
+  assert.deepEqual(log.revived, ['w1']);
+});
+
+test('pointing a free hand at a body from a step away and pulling the trigger revives it; from too far it does not', (t) => {
+  const r = fixture(t);
+  const log = body(r, new THREE.Vector3(-0.2, 1, -1.9));
+  const at = (z: number, patch: Partial<NativeHand> = {}) => hand(pose(-0.2, 1, z), patch);
+  r.tick(r.frame(off(), at(-0.3)));
+  r.tick(r.frame(off(), at(-0.3)));
+  r.tick(r.frame(off(), at(-0.3, { trigger: 1 })));
+  assert.deepEqual(log.revived, ['w1'], 'pointing at it 1.6 m away');
+  const far = body(r, new THREE.Vector3(-0.2, 1, -3.2));
+  r.tick(r.frame(off(), at(-0.3)));
+  r.tick(r.frame(off(), at(-0.3, { trigger: 1 })));
+  assert.deepEqual(far.revived, [], 'not from 2.9 m');
+});
+
+test("the gun hand's trigger fires and never revives; a refused revival, an untracked grip or an open workspace revive nothing", (t) => {
+  const r = fixture(t);
+  r.draw();
+  const log = body(r, new THREE.Vector3(0.25, 0.85, -0.3));
+  for (const z of [0.1, -0.1, -0.3]) r.tick(r.frame(hand(pose(0.25, 0.9, z), { squeeze: 1 })));
+  r.tick(r.frame(hand(pose(0.25, 0.9, -0.3), { squeeze: 1, trigger: 1 })));
+  assert.equal(r.shots.length, 1, 'the gun fires');
+  assert.deepEqual(log.revived, [], 'even with its muzzle on the body');
+  const at = (patch: Partial<NativeHand> = {}) => hand(pose(0.25, 0.8, -0.3), patch);
+  log.open = false;
+  r.tick(r.frame(off(), at()));
+  r.tick(r.frame(off(), at()));
+  r.controls.state();
+  r.tick(r.frame(off(), at({ trigger: 1 })));
+  assert.deepEqual(log.revived, []);
+  assert.equal(firm(r, 0), false, 'a refused revival gives no answering pulse');
+  log.open = true;
+  r.tick(r.frame(off(), at({ gripTracked: false })));
+  r.tick(r.frame(off(), at({ gripTracked: false, trigger: 1 })));
+  assert.deepEqual(log.revived, [], 'never through the aim-pose fallback');
+  r.tick(r.frame(off(), at()));
+  r.tick(r.frame(off(), at()));
+  r.open(true);
+  r.tick(r.frame(off(), at({ trigger: 1 })));
+  assert.deepEqual(log.revived, [], 'the workspace pauses world actions');
+  r.open(false);
+  r.tick(r.frame(off(), at()));
+  r.tick(r.frame(off(), at({ trigger: 1 })));
+  assert.deepEqual(log.revived, ['w1']);
+});
+
+test('a free hand arriving at a body feels a soft tick once, and no aim words show while it is there', (t) => {
+  const r = fixture(t);
+  body(r);
+  r.hooks.pickFromRay = () => ({ it: { kind: 'desk', deskId: 'desk-1' } as never, near: true, hit: { point: new THREE.Vector3(0, 0.7, -1), distance: 1 } as THREE.Intersection });
+  r.hooks.aimLabel = () => "E · Pixel's terminal";
+  const away = hand(pose(0.6, 1.3, 0.2));
+  const at = hand(pose(0.2, 0.3, -0.4));
+  r.tick(r.frame(off(), away));
+  r.tick(r.frame(off(), away));
+  assert.equal(r.controls.state().aim, "E · Pixel's terminal");
+  r.tick(r.frame(off(), hand(pose(0.4, 0.8, -0.2))));
+  r.tick(r.frame(off(), hand(pose(0.25, 0.45, -0.35))));
+  r.tick(r.frame(off(), at));
+  const ticks = (s: ReturnType<typeof r.controls.state>) => s.haptics.filter((h) => h.hand === 0 && h.strength === 0.2).length;
+  let state = r.controls.state();
+  assert.equal(ticks(state), 1, 'a soft tick as it arrives');
+  assert.equal(state.aim, null, 'no words in front of you at the body');
+  r.tick(r.frame(off(), at));
+  r.tick(r.frame(off(), at));
+  state = r.controls.state();
+  assert.equal(ticks(state), 0, 'once, not on every frame');
+  r.tick(r.frame(off(), hand(pose(0.25, 0.45, -0.35))));
+  r.tick(r.frame(off(), hand(pose(0.4, 0.8, -0.2))));
+  r.tick(r.frame(off(), away));
+  assert.equal(r.controls.state().aim, "E · Pixel's terminal", 'away from it the aim words come back');
 });

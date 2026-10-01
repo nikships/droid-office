@@ -8,7 +8,7 @@ import { magnum, MUZZLE_AT, Muzzle } from '../world/gun';
 import { LOST_MS, type NativeInputFrame } from './input';
 
 type Hand = 0 | 1;
-type Hold = 'ladder' | 'pole' | 'gun' | 'body' | null;
+type Hold = 'ladder' | 'pole' | 'gun' | null;
 
 export interface PhysicalClimber {
   readonly active: boolean;
@@ -21,18 +21,14 @@ export interface PhysicalClimber {
 }
 
 /**
- * Shot workers lying on the floor with their sessions running (main.ts, over world/casualties.ts).
- * A free hand grips one and hauls it back up into its chair to revive it.
+ * Shot workers lying on the floor with their server-owned revival windows open (main.ts, over
+ * world/casualties.ts and native/downed.ts). The use action with a free hand at one revives it.
  */
 export interface DownedBodies {
-  /** The body a hand at `point` (world) can take hold of, or null. */
-  within(point: THREE.Vector3): string | null;
-  /** It is `lift` of the way back up (0 lying → 1 in its chair). False once it can't be held. */
-  haul(id: string, lift: number): boolean;
-  /** Let go before it was back up: it slumps back down. */
-  letGo(id: string): void;
-  /** Hauled all the way up: back in its chair with its session untouched. */
-  revive(id: string): void;
+  /** The body a free hand's use action lands on: touched by its grip at `grip`, or pointed at along `ray` (world); null for none. */
+  at(grip: THREE.Vector3, ray: THREE.Ray | null): string | null;
+  /** The use action at it: ask the server to revive it. False when that can't happen now. */
+  revive(id: string): boolean;
 }
 
 export interface NativePhysicalHooks {
@@ -47,7 +43,7 @@ export interface NativePhysicalHooks {
   canDraw(): boolean;
   gunChanged(held: boolean, quiet: boolean): void;
   fireGun(origin: THREE.Vector3, direction: THREE.Vector3): void;
-  /** Shot workers lying on the floor that a free hand can haul back into their chairs (main.ts). */
+  /** Shot workers lying on the floor that a free hand's use action revives (main.ts). */
   bodies?: DownedBodies;
 }
 
@@ -63,10 +59,6 @@ interface Motion {
   armed: boolean;
   hold: Hold;
   lost: number | null;
-  /** The body this hand is hauling, the lowest native-space height its grip has been at since, and the last quarter of the haul it buzzed. */
-  body: string | null;
-  haulFrom: number;
-  haulStep: number;
 }
 
 const MAX_STEP = 0.35;
@@ -75,8 +67,6 @@ const CONTACT_OFFSET = new THREE.Vector3(0, 0.025, -0.075);
 /** The shared model's +Z bore points along the OpenXR aim pose's -Z. */
 const MODEL_TO_AIM = new THREE.Quaternion(0, 1, 0, 0);
 const HANDS = [0, 1] as const;
-/** How far a hand lifts a body (native-space meters, from the lowest point of its grip) to get it back into its chair. */
-export const HAUL_LIFT = 0.42;
 /** Recoil: the muzzle flips up about the fist and the frame slides back, recovering in RECOIL_MS. */
 const RECOIL_MS = 240;
 const RECOIL_PITCH = 0.3;
@@ -174,9 +164,6 @@ export class NativePhysical {
       armed: false,
       hold: null,
       lost: null,
-      body: null,
-      haulFrom: 0,
-      haulStep: 0,
     };
   }
 
@@ -189,7 +176,7 @@ export class NativePhysical {
   }
 
   get hint(): string | null {
-    if (this.gunHand !== null) return 'Hold grip · trigger to fire · release behind your back to holster';
+    // The gun in hand says what it does by itself: no words float in front of you while you hold it.
     if (!this.hooks.climber.physical) return null;
     return this.hooks.climber.grip === 'ladder' ? 'Hold a rung or rail · pull down to climb · release both grips to let go' : 'Hold grip on the pole · move sideways to turn · release both grips to step off';
   }
@@ -206,13 +193,11 @@ export class NativePhysical {
   /** A floor change keeps the existing climb journey, but never carries a weapon from the old scene. */
   worldChanged(): void {
     this.cancelGun();
-    for (const hand of HANDS) this.letGoBody(hand);
     this.reanchor();
   }
 
   reset(): void {
     this.cancelGun();
-    for (const hand of HANDS) this.letGoBody(hand);
     if (this.motion.some((m) => m.hold === 'ladder' || m.hold === 'pole')) this.hooks.climber.letGoPhysical();
     for (const m of this.motion) {
       m.hold = null;
@@ -289,7 +274,6 @@ export class NativePhysical {
           hands++;
         }
       }
-      if (m.hold === 'body' && this.allowed && continuous) this.haul(hand, m);
       m.time = frame.time;
       m.local.copy(this.local);
       m.world.copy(this.position);
@@ -335,16 +319,6 @@ export class NativePhysical {
         return true;
       }
     }
-    // A shot worker lying on the floor: take hold of it to haul it back up into its chair.
-    const body = this.hooks.bodies?.within(m.world) ?? null;
-    if (body !== null && !this.motion.some((other) => other.body === body)) {
-      m.hold = 'body';
-      m.body = body;
-      m.haulFrom = m.local.y;
-      m.haulStep = 0;
-      this.pulse(hand, 0.5, 30);
-      return true;
-    }
     if (this.gunHand === null && this.hooks.canDraw() && inBackHolster(m.world, this.head, this.headRotation)) {
       this.drawGun(hand);
       return true;
@@ -357,10 +331,6 @@ export class NativePhysical {
     const held = m.hold;
     if (!held) return false;
     m.hold = null;
-    if (held === 'body') {
-      this.letGoBody(hand);
-      return true;
-    }
     if (held === 'gun') {
       if (m.valid && this.headValid && inBackHolster(m.world, this.head, this.headRotation)) this.cancelGun(false);
       else if (m.valid) this.dropGun();
@@ -404,41 +374,24 @@ export class NativePhysical {
   }
 
   /**
-   * The hand hauling a body: it comes up with the hand's rise above the lowest point its grip
-   * has been since it took hold, measured in native space so moving the rig never lifts it. A
-   * tick on each quarter gives it weight; all the way up, it is back in its chair.
+   * The use action (trigger) with a free hand at a shot worker lying on the floor: its tracked grip
+   * touching the body, or its ray pointing at it from close by. It revives the worker: the server
+   * owns the revival window, and the body gets back up when the server says so. A firm pulse in
+   * that hand answers at once. False when the hand holds something or is at no body.
    */
-  private haul(hand: Hand, m: Motion): void {
-    const bodies = this.hooks.bodies;
-    const id = m.body;
-    if (!bodies || id === null) return;
-    m.haulFrom = Math.min(m.haulFrom, this.local.y);
-    const lift = THREE.MathUtils.clamp((this.local.y - m.haulFrom) / HAUL_LIFT, 0, 1);
-    if (lift >= 1) {
-      m.hold = null;
-      m.body = null;
-      bodies.revive(id);
-      this.pulse(hand, 0.9, 60);
-      return;
-    }
-    if (!bodies.haul(id, lift)) {
-      // Collected, finished off or gone: nothing left in the hand.
-      m.hold = null;
-      m.body = null;
-      return;
-    }
-    const step = Math.floor(lift * 4);
-    if (step > m.haulStep) this.pulse(hand, 0.25 + 0.1 * step, 18);
-    m.haulStep = step;
+  useAtBody(hand: Hand, ray: THREE.Ray | null): boolean {
+    const id = this.bodyAt(hand, ray);
+    if (id === null || !this.hooks.bodies!.revive(id)) return false;
+    this.pulse(hand, 0.9, 60);
+    return true;
   }
 
-  /** Lets go of a body this hand holds, so it slumps back down. */
-  private letGoBody(hand: Hand): void {
+  /** The body a free hand with a tracked, stable grip is at: touching it, or pointing at it along `ray`. */
+  bodyAt(hand: Hand, ray: THREE.Ray | null): string | null {
     const m = this.motion[hand];
-    if (m.hold === 'body') m.hold = null;
-    const id = m.body;
-    m.body = null;
-    if (id !== null) this.hooks.bodies?.letGo(id);
+    const bodies = this.hooks.bodies;
+    if (!bodies || m.hold || !this.allowed || !m.valid || !m.stable) return null;
+    return bodies.at(m.world, ray);
   }
 
   /** Debug staging: which hand is scripted (see NativeControls.stage), or null. */
@@ -449,7 +402,6 @@ export class NativePhysical {
   cancelHand(hand: Hand): void {
     const m = this.motion[hand];
     if (m.hold === 'gun') this.cancelGun();
-    else if (m.hold === 'body') this.letGoBody(hand);
     else if (m.hold) {
       m.hold = null;
       if (!this.motion.some((other) => other.hold === 'ladder' || other.hold === 'pole')) this.hooks.climber.letGoPhysical();

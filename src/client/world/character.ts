@@ -1249,6 +1249,10 @@ const STATUS_BULB: Record<string, string> = {
   offline: '#6c757d',
 };
 
+/** A downed worker's light between heartbeats, and at the peak of one (see Worker.pulse). */
+const DEAD_BULB = new THREE.Color(STATUS_BULB.exited);
+const PULSE_RED = new THREE.Color('#ff1f2d');
+
 /** Status pill on a worker's task card: [text, background, text color]. */
 const TASK_CHIP: Record<string, [string, string, string]> = {
   starting: ['⏳ STARTING', STATUS_BULB.starting, '#2b2d42'],
@@ -1775,6 +1779,22 @@ export class Worker {
     }
     this.bubbleKey = 'dead';
     for (const p of this.pupils) p.position.y = 0.62;
+  }
+
+  /**
+   * Down, in the headset: its light glows red with each heartbeat (`beat`, 0 → 1), its last ember
+   * dimmer as its revival window runs out (`life`, 1 → 0), and its body swells a little with the
+   * beat. (0, 0) puts the light out. Revive puts it all back.
+   */
+  pulse(beat: number, life: number) {
+    if (!this.dead) return;
+    // In steps, so the headset is sent a changed material only when the light visibly changes.
+    const glow = Math.round(THREE.MathUtils.clamp(0.15 * life + 0.85 * beat, 0, 1) * 64) / 64;
+    this.bulb.color.copy(DEAD_BULB).lerp(PULSE_RED, glow);
+    this.bulb.emissive.copy(PULSE_RED).multiplyScalar(glow);
+    const swell = Math.round(beat * 32) / 32;
+    this.bulbMesh.scale.setScalar(1 + swell * 0.35);
+    this.body.scale.setScalar(1 + swell * 0.035);
   }
 
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */

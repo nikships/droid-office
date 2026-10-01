@@ -908,19 +908,22 @@ export class OfficeSound {
 
   /**
    * One heartbeat from a shot worker lying on the floor, from its chest: a low lub-dub that is
-   * only really heard up close. Its session is still running.
+   * only really heard up close. Its session is still running; `strength` (0 → 1) fades as its
+   * revival window runs out.
    */
-  heartbeat(at: Pos) {
+  heartbeat(at: Pos, strength = 1) {
     const ctx = this.ctx;
     if (!ctx) return;
     this.count('heartbeat');
     const out = this.panner(at, 0.8, 1.6);
     out.connect(this.ambience);
     const t0 = ctx.currentTime + 0.005;
-    for (const [delay, freq, level] of [
+    const k = Math.max(0.05, Math.min(1, strength));
+    for (const [delay, freq, loud] of [
       [0, 58, 0.55],
       [0.17, 72, 0.4],
     ] as const) {
+      const level = loud * k;
       const o = ctx.createOscillator();
       o.type = 'sine';
       o.frequency.setValueAtTime(freq, t0 + delay);
@@ -935,7 +938,7 @@ export class OfficeSound {
     }
   }
 
-  /** A worker hauled back up into its chair comes round: a sharp gasp, from its head. */
+  /** A shot worker comes round as a hand revives it: a sharp gasp, from its head. */
   gasp(at: Pos) {
     const ctx = this.ctx;
     if (!ctx) return;

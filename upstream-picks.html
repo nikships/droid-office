@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upstream picks — what to pull into droid-office</title>
+<style>
+  :root {
+    --bg: #101318; --panel: #181c24; --panel2: #1e242e; --ink: #e6e9ef;
+    --muted: #98a2b3; --line: #2a3140; --acc: #4f8cff; --acc2: #7dd3a8;
+    --warn: #e8b04b; --chip: #262d3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding-bottom: 120px;
+  }
+  header {
+    position: sticky; top: 0; z-index: 20; background: rgba(16,19,24,.97);
+    border-bottom: 1px solid var(--line); padding: 14px 22px;
+    backdrop-filter: blur(6px);
+  }
+  header h1 { margin: 0 0 2px; font-size: 17px; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  button {
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 13px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--acc); }
+  button.primary { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  input[type="search"] {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 8px; padding: 7px 11px; width: 230px; font-size: 13px;
+  }
+  .count { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+  main { max-width: 1020px; margin: 0 auto; padding: 18px 22px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    margin: 16px 0; overflow: hidden;
+  }
+  .group-head {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    background: var(--panel2); border-bottom: 1px solid var(--line);
+  }
+  .group-head h2 { margin: 0; font-size: 14.5px; }
+  .group-head .hint { color: var(--muted); font-size: 12px; }
+  .group-head .mini { margin-left: auto; padding: 4px 10px; font-size: 12px; }
+  .item {
+    display: grid; grid-template-columns: 26px 1fr; gap: 10px;
+    padding: 11px 16px; border-top: 1px solid var(--line); cursor: pointer;
+  }
+  .item:first-of-type { border-top: none; }
+  .item:hover { background: #1b212b; }
+  .item.checked { background: #1a2432; }
+  .item.hidden { display: none; }
+  .item input { width: 17px; height: 17px; margin-top: 3px; accent-color: var(--acc); cursor: pointer; }
+  .item .title { font-weight: 600; font-size: 13.5px; }
+  .item .desc { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .chip {
+    background: var(--chip); border: 1px solid var(--line); border-radius: 20px;
+    padding: 1px 9px; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace;
+  }
+  .chip.dep { color: var(--warn); border-color: #4a3c1e; }
+  .chip.small { color: var(--acc2); }
+  .chip.medium { color: var(--acc); }
+  .chip.large { color: #e08c8c; }
+  .depnote { color: var(--warn); font-size: 11.5px; margin-top: 5px; }
+  .footbar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+    background: rgba(16,19,24,.97); border-top: 1px solid var(--line);
+    padding: 12px 22px; display: flex; gap: 10px; align-items: center;
+    backdrop-filter: blur(6px);
+  }
+  .toast {
+    position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--acc2); color: #0c1512; padding: 9px 18px; border-radius: 9px;
+    font-weight: 600; opacity: 0; transition: .25s; pointer-events: none; z-index: 40;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #preview {
+    width: 100%; height: 150px; background: #0c0f14; color: var(--acc2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    font: 11.5px/1.5 ui-monospace, monospace; margin-top: 12px; resize: vertical;
+  }
+  details.preview { margin: 10px 0 0; }
+  details.preview summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Upstream picks — AgentSystemLabs/agent-office → droid-office</h1>
+  <div class="sub">54 upstream commits triaged. Multiplayer, hosting/deploy, minigames and the castle/maps are excluded. Everything below is a granular slice — pick exactly what you want, then hit <b>Copy selection</b> and paste it back to me.</div>
+  <div class="toolbar">
+    <input type="search" id="filter" placeholder="Filter items…">
+    <button onclick="setAll(true)">Select all</button>
+    <button onclick="setAll(false)">Clear all</button>
+    <span class="count" id="count"></span>
+  </div>
+</header>
+
+<main id="groups"></main>
+
+<div class="footbar">
+  <button class="primary" onclick="copySelection()">Copy selection</button>
+  <button onclick="togglePreview()">Show/hide copy preview</button>
+  <span class="count" id="footcount"></span>
+</div>
+<div class="toast" id="toast">Copied to clipboard</div>
+
+<script>
+const GROUPS = [
+{
+  name: "Workers & status",
+  hint: "worker management, PR status, restart resilience, per-account sign-ins",
+  items: [
+    { id:"w-prhelper", title:"workerPr helper: where a worker's work stands on GitHub",
+      desc:"Resolves open/merged from the desk PR, the worktree branch's PR, and the queue task's PR. Pure shared helper (moved to shared/status.ts) — the foundation for the badges and auto send-home.",
+      commit:"857ec9a", size:"small" },
+    { id:"w-bubble-merged", title:"Worker bubble: 🎉 MERGED pill + purple outline",
+      desc:"A worker whose PR merged gets the PR board's merged-purple outline on their bubble/card and a 🎉 MERGED pill in place of the status pill while resting — the 'time to send it home' cue. Repaints live on pulls/queue updates.",
+      commit:"857ec9a", size:"medium", dep:"needs the workerPr helper" },
+    { id:"w-bubble-open", title:"Worker bubble: green 🔀 PR #N open badge",
+      desc:"Same mechanism extended to open PRs in GitHub's green, so you can see at a glance whose desk has a live pull request.",
+      commit:"857ec9a", size:"small", dep:"needs the workerPr helper" },
+    { id:"w-queue-limit", title:"Queue 'workers at once' counts only its own running tasks",
+      desc:"Fixes the queue being held hostage by workers resumed idle after a restart or hired by hand — the limit now counts queue tasks with status 'running' instead of every agent at a non-station desk.",
+      commit:"857ec9a", size:"small" },
+    { id:"w-lom-setting", title:"Setting: 'workers whose PR merged go home by themselves'",
+      desc:"Leave-on-merge toggle in Settings (🏠 Go home / 🪑 Stay until sent home), persisted in .agent-office/leave-on-merge.json, broadcast to everyone.",
+      commit:"ce83c7a", size:"medium", dep:"needs workerPr helper" },
+    { id:"w-lom-detect", title:"landedWorkers: detect who is free to go",
+      desc:"Agent workers (not board agents/shells/meetings) whose PR is merged, none open, at rest and with no viewers. PR fetch gains headRefOid to validate the merge.",
+      commit:"ce83c7a", size:"medium", dep:"needs the leave-on-merge setting" },
+    { id:"w-lom-auto", title:"Debounced auto send-home when work lands",
+      desc:"1.5s-debounced sweep on worker/PR-list/queue updates sends landed workers home with a toast; turning the setting on also sweeps workers whose PR already merged.",
+      commit:"ce83c7a", size:"medium", dep:"needs leave-on-merge setting + landedWorkers" },
+    { id:"w-lom-landed", title:"Merged PR head counts as delivered work",
+      desc:"Worktree inspection no longer counts the merged PR's head commit (and everything before it) as unpushed — a worktree whose branch GitHub deleted isn't 'kept' forever.",
+      commit:"ce83c7a", size:"small" },
+    { id:"w-branch-track", title:"Track the branch a worktree is actually on",
+      desc:"worktree.branch stays live (synced at rest, on exit, at office start, when PR lists arrive) and 'made' remembers the office's original branch — so the office follows workers that git branch -m or switch themselves.",
+      commit:"722a5ba", size:"medium" },
+    { id:"w-branch-follow", title:"PR badge, O key and send-home follow the worker's new branch",
+      desc:"Commits/push/gh pr create use the live branch, and the queue rewrites task.branch when a worker's branch moved so PR↔worker matching keeps working.",
+      commit:"722a5ba", size:"medium", dep:"needs branch tracking" },
+    { id:"w-branch-kill", title:"Send-home deletes the worker's own branch — safely",
+      desc:"A branch the worker made goes with it; the office branch is kept when it holds commits nothing else has; a pre-existing branch (main) is never deleted.",
+      commit:"722a5ba", size:"medium", dep:"needs branch tracking" },
+    { id:"w-branch-rename", title:"Follow a renamed office branch (git branch -m)",
+      desc:"Reads the reflog rename line so a renamed branch counts as the office's own; a deleted branch only takes the worktree, never falls into the rename trap.",
+      commit:"722a5ba", size:"medium", dep:"needs branch tracking" },
+    { id:"w-branch-holds", title:"'Holds work?' check counts the office branch too",
+      desc:"Commits made on office/… before switching away aren't considered delivered — the auto send-home keeps them and the dialog warns instead of silently losing work.",
+      commit:"722a5ba", size:"small", dep:"needs branch tracking" },
+    { id:"w-upgrade-keep", title:"Terminal host survives office restarts",
+      desc:"Adds a systemd KillMode=process drop-in before in-app upgrades so PTYs outlive the office process instead of dying with it.",
+      commit:"2d780d2", size:"small" },
+    { id:"w-upgrade-carry", title:"Workers cut off mid-turn carry on after restart",
+      desc:"A worker that was mid-turn gets a 'the office restarted and interrupted you — continue' prompt on restore instead of sitting idle; Ctrl+C still stops work on purpose.",
+      commit:"2d780d2", size:"medium" },
+    { id:"w-upgrade-persist", title:"Persist midTurn in workers.json",
+      desc:"Records who was mid-turn (with a fallback read for old workers.json files) so a restore knows to carry on; the carry-on prompt isn't recorded as new task history.",
+      commit:"2d780d2", size:"small", dep:"needs the carry-on feature" },
+    { id:"w-signins-homes", title:"Per-account credential homes",
+      desc:"Each account gets .agent-office/homes/<id>/ with its own CLAUDE_CONFIG_DIR, GH_CONFIG_DIR, GIT_CONFIG_GLOBAL — concurrent sign-ins never touch global state, and machine-wide API-key env vars are stripped.",
+      commit:"12ba9a0", size:"large" },
+    { id:"w-signins-flows", title:"Server-driven sign-in flows",
+      desc:"Headless claude auth login (URL + pasted code), gh auth login --web device flow, token-paste paths with validation, login re-checks with caching/throttling, 15-min flow expiry.",
+      commit:"12ba9a0", size:"large", dep:"needs credential homes" },
+    { id:"w-signins-window", title:"🔐 Your sign-ins window",
+      desc:"Status cards per sign-in (who you're signed in as), step-by-step flow with copy/open-link buttons, token rows, sign-out / use-my-own-office, danger chip when you still need to sign in.",
+      commit:"12ba9a0", size:"medium", dep:"needs sign-in flows" },
+    { id:"w-signins-gate", title:"Gate Claude-dependent actions on your sign-in",
+      desc:"Hiring a Claude worker, queueing a task, calling a meeting or opening a board-agent station checks your sign-in first and opens the sign-in window with the reason instead of failing.",
+      commit:"12ba9a0", size:"medium", dep:"needs sign-in flows" },
+    { id:"w-signins-owner", title:"Worker ownership fixed at hire",
+      desc:"Workers, queue tasks and meetings record who spawned them (persisted in workers.json) and run with that person's sign-ins — a queued task spawns as whoever queued it.",
+      commit:"12ba9a0", size:"medium", dep:"needs credential homes" },
+    { id:"w-signins-gh", title:"GitHub writes run as whoever clicks",
+      desc:"Comments, merges, closes, labels, claim, 'Open PR', reviews and the Changes window's commit/push/PR use the clicker's gh login and git name — board reads stay on the machine's gh.",
+      commit:"12ba9a0", size:"medium", dep:"needs credential homes" },
+    { id:"w-signins-misc", title:"Sign-in niceties: 'you' markers, own-plan limits meter, lifecycle cleanup, desk shells run as you",
+      desc:"Issue/PR detail marks your own comments when signed in; the ⏳ usage meter counts your own Claude plan; revoked accounts get their home folder cleaned up; 🐚 desk shells inherit your sign-ins so claude/gh auth login work there too.",
+      commit:"12ba9a0", size:"small", dep:"needs credential homes" },
+  ]
+},
+{
+  name: "Worktrees",
+  hint: "fresh bases, worker-made branches, multi-repo workspaces",
+  items: [
+    { id:"t-fetch", title:"Fetch origin before making worktrees",
+      desc:"git fetch --no-tags origin <branch> with a 15s timeout, deduped so a burst of hires shares one fetch, errors logged once.",
+      commit:"1b70be3", size:"medium" },
+    { id:"t-startpoint", title:"Worktrees start from what's on GitHub, not a stale local HEAD",
+      desc:"Base = origin/<branch> when HEAD is strictly behind it; when both moved on it starts from origin and toasts a note ('starts from origin/main, without the N commits on main that origin doesn't have').",
+      commit:"1b70be3", size:"medium", dep:"needs the fetch step" },
+    { id:"t-freshhire", title:"Hiring and meetings wait for a fresh fetch",
+      desc:"worker.spawn / meeting.start defer until fetchBase() resolves (and re-check the client/floor is still there).",
+      commit:"1b70be3", size:"small", dep:"needs the fetch step" },
+    { id:"t-queuefetch", title:"Queue seats worktree tasks only after the fetch",
+      desc:"The queue re-pumps after fetchBase resolves so tasks don't get worktrees cut from stale bases.",
+      commit:"1b70be3", size:"small", dep:"needs the fetch step" },
+    { id:"t-changesbase", title:"Changes window diffs against the newer of base branch and its origin copy",
+      desc:"PRs merged upstream (never pulled locally) no longer appear as the worker's changes — a standalone correctness fix.",
+      commit:"1b70be3", size:"small" },
+    { id:"t-multi-workspace", title:"Multi-repo workspace: one worktree per repository per worker",
+      desc:".agent-office/worktrees/<slug>/ holds a worktree of each project, all on office/<slug>, created all-or-nothing; rejects two checkouts of the same repo and >8 extras.",
+      commit:"02e4c44", size:"large" },
+    { id:"t-multi-picker", title:"🗂️ 'Also work in' repo picker when hiring / asking",
+      desc:"Pick extra projects' repos when hiring a worker or sending a board task; guards for worktree agents only (no stations/meetings), warns on own-floor/gone floors.",
+      commit:"02e4c44", size:"medium", dep:"needs multi-repo workspaces" },
+    { id:"t-multi-brief", title:"Workspace brief: worker.repos prompt as CLAUDE.md + AGENTS.md",
+      desc:"A 🗂️ 'Across repositories' prompt template tells the worker which folder is which project, to commit per project, and how to reference owner/repo#n issues.",
+      commit:"02e4c44", size:"small", dep:"needs multi-repo workspaces (prompt template system optional)" },
+    { id:"t-multi-ceiling", title:"Shield the floor's checkout from git run in the workspace",
+      desc:"GIT_CEILING_DIRECTORIES in the worker env so git inside the workspace can't silently operate on the enclosing floor checkout.",
+      commit:"02e4c44", size:"small", dep:"needs multi-repo workspaces" },
+    { id:"t-multi-prs", title:"One PR per repository, each listing the others",
+      desc:"openPrs creates/updates a PR per repo with an 'agent-office:related' cross-link block (kept fresh via gh pr edit); Closes #n on the home PR, 'Part of home#n' elsewhere; per-PR toasts and dirty warnings.",
+      commit:"02e4c44", size:"large", dep:"needs multi-repo workspaces" },
+    { id:"t-multi-changes", title:"Changes window gets a tab per repository",
+      desc:"Per-repo watch/unwatch/diff/commit/discard/PR, each diffing and PRing against its own floor's branch.",
+      commit:"02e4c44", size:"large", dep:"needs multi-repo workspaces" },
+    { id:"t-multi-home", title:"Send-home clears every worktree, then the workspace",
+      desc:"Clears each repo's worktree with warnings that name the repo ('its worktree of api'); leave-on-merge waits for every repository's PR to land and a failed check never strands a worker.",
+      commit:"02e4c44", size:"medium", dep:"needs multi-repo workspaces (+ leave-on-merge for the second half)" },
+    { id:"t-multi-prune", title:"agent-office prune understands workspaces and foreign worktrees",
+      desc:"Keeps another floor's workspace branches while that office lists the worker, deletes emptied workspace folders, sees office/* branches checked out outside the worktrees dir.",
+      commit:"02e4c44", size:"medium", dep:"needs multi-repo workspaces" },
+  ]
+},
+{
+  name: "Terminals",
+  hint: "input editing, screenshots, Esc handling",
+  items: [
+    { id:"m-keys", title:"Terminals edit like your own: Shift+Enter, Ctrl+⌫, ⌘⌫/⌘⌦, ⌘←/→",
+      desc:"Shift+Enter types a newline in agent prompts, Ctrl+Backspace deletes a word, ⌘⌫/⌘⌦ delete to line start/end, ⌘←/→ jump to line start/end. Pure tested keymap module (naturalKey) across Claude/Codex/OpenCode.",
+      commit:"0538d4b", size:"small" },
+    { id:"m-escbtn", title:"⎋ Esc button in the terminal header",
+      desc:"Sends \\x1b to the PTY so menus like Claude's /skills can be closed on any keyboard/phone; disabled while the worker is asleep.",
+      commit:"14f2d8f", size:"small" },
+    { id:"m-escpos", title:"Ctrl+[ / Ctrl+] matched by key position; AltGr no longer closes the terminal",
+      desc:"Matches e.code BracketLeft/BracketRight so non-US layouts (ü, å…) work, and AltGr combos no longer accidentally close the window.",
+      commit:"14f2d8f", size:"small" },
+    { id:"m-esctip", title:"Tip when Esc closes the terminal but the program wanted Esc",
+      desc:"Scans the xterm buffer for 'Esc to close'-style text and toasts 'use ⎋ Esc at the top or Ctrl+[' when you bail out with Esc. Widens the shared dom.ts modal API (onClose gets a byEsc flag).",
+      commit:"14f2d8f", size:"small" },
+    { id:"m-escwrap", title:"Terminal header wraps on narrow windows; help copy updated",
+      desc:"Name and ✕ stay on the first row on phones instead of pushing ✕ off-screen; HUD help row names the new keys.",
+      commit:"14f2d8f", size:"small" },
+    { id:"m-drop", title:"Drop or paste screenshots into a worker's terminal",
+      desc:"Drag-and-drop overlay on the open terminal ('📎 Drop screenshots or files here') plus clipboard screenshot paste, routed to the same upload path.",
+      commit:"c718980", size:"small" },
+    { id:"m-drop-upload", title:"Drop upload endpoint + per-worker store",
+      desc:"POST /api/term/drop with same-origin check and a 25 MB cap (413 with a friendly message); files land in .agent-office/drops/<worker>/ with 0700/0600 modes and path-traversal guards.",
+      commit:"c718980", size:"medium", dep:"needs the drop/paste UI" },
+    { id:"m-drop-safe", title:"Safe drop names + shell-escaped paths typed at the cursor",
+      desc:"Filenames are NFKD-normalized and stripped of shell metacharacters (pasted images get a picture extension so agents see an image), and the path is paste-typed into the terminal shell-escaped — Claude/Codex turn it into [Image #1].",
+      commit:"c718980", size:"small", dep:"needs the drop upload" },
+    { id:"m-drop-clean", title:"Drops cleaned up with the worker's lifecycle",
+      desc:"A worker's drop folder is deleted when it goes home and departed workers' folders are pruned at startup.",
+      commit:"c718980", size:"small", dep:"needs the drop store" },
+  ]
+},
+{
+  name: "Boards & labels",
+  hint: "issue/PR filtering and label management",
+  items: [
+    { id:"b-labelfilter", title:"Click a column header to filter by label",
+      desc:"Headers become buttons opening a label picker (with per-label counts); OR-semantics filter with chips, ✕ clear and shown/total counts. Filters persist per floor and board in localStorage and survive live GitHub refreshes.",
+      commit:"bdac1ca", size:"medium" },
+    { id:"b-priority", title:"Stop sorting issues by priority label",
+      desc:"Behavior change: issues keep gh's newest-first order instead of a priorityRank sort — you filter by a priority label instead. Flagging it explicitly since it changes what you see.",
+      commit:"bdac1ca", size:"small" },
+    { id:"b-caps", title:"Column caps moved into the column model (Closed 40 / Merged 30 / Closed-PR 20)",
+      desc:"Refactor that makes the caps apply after filtering instead of before.",
+      commit:"bdac1ca", size:"small", dep:"goes with the label filter" },
+    { id:"b-labelbtn", title:"🏷️ button on every board card to change labels",
+      desc:"Small label affordance on issue/PR cards (doesn't open the card) wired to a label-picker dialog.",
+      commit:"de41d88", size:"small" },
+    { id:"b-labeldialog", title:"Label-picker dialog",
+      desc:"Fetches the repo's labels: checkbox rows with colored chips + descriptions (its labels first, rest A–Z), filter box (Enter ticks the first match), +/− change summary, Cmd/Ctrl+Enter saves, busy/error/timeout states.",
+      commit:"de41d88", size:"medium", dep:"needs the label button or window entry" },
+    { id:"b-labelapply", title:"Apply label changes on GitHub (gh api) + cached /api/gh/labels endpoint",
+      desc:"Server-side adds/removes on issues/N/labels tolerating missing labels, a 60s-cached repo-labels endpoint, and a gh.labels/gh.labeled protocol pair with caps and a floor toast '🏷️ who labeled #N: +x −y'.",
+      commit:"de41d88", size:"medium", dep:"needs the label dialog" },
+    { id:"b-labeloverlay", title:"Fresh labels win over stale fetched lists",
+      desc:"Locally-changed labels overlay lists fetched before the change and are forgotten once a newer fetch arrives — no flicker back to stale labels.",
+      commit:"de41d88", size:"small", dep:"needs label apply" },
+    { id:"b-labelwindows", title:"Edit labels from the issue/PR windows; show all labels",
+      desc:"'🏷️ Edit' / '🏷️ Add labels' in both detail windows, which now show every label (previously capped at 5/6) and re-render immediately on save.",
+      commit:"de41d88", size:"small", dep:"needs the label dialog" },
+    { id:"b-titlefilter", title:"Filter board columns by title",
+      desc:"'Filter by title…' box under each column header; every typed word must match, any order, any case; combines with the label filter (labelled ∩ word-matching).",
+      commit:"52fd37f", size:"small" },
+    { id:"b-titleux", title:"Title filter UX: counts, focus/caret survival across refreshes, per-column re-render",
+      desc:"n/total counts and highlighted columns while filtering; text, focus and caret survive GitHub refreshes because typing only re-renders its own column's list.",
+      commit:"52fd37f", size:"small", dep:"needs the title filter" },
+  ]
+},
+{
+  name: "Providers: Grok, Muse, DeepSeek",
+  hint: "the muse/grok code and the new ACP provider",
+  items: [
+    { id:"p-grok", title:"Grok as a hireable provider (launch + resume)",
+      desc:"Spawn with sanitized args (--no-alt-screen --trust --leader-socket), --session-id on fresh hires, --resume on restore; user launch args that conflict are stripped.",
+      commit:"1dcdc52", size:"medium" },
+    { id:"p-grok-home", title:"Isolated GROK_HOME with office hook helper",
+      desc:"<dataDir>/grok-home holds only the office's hooks; GROK_AUTH_PATH reuses your ~/.grok login but the user's ~/.grok/hooks is never written.",
+      commit:"1dcdc52", size:"medium", dep:"needs the grok provider" },
+    { id:"p-grok-hooks", title:"Grok hook events → live desk status + acted-out actions",
+      desc:"/hooks/grok endpoint: SessionStart/UserPromptSubmit/Tool/Notification/Stop events drive working/needs_input/done, set the activity line, map tools to WorkerAction poses, and drop child-session events so subagents can't overwrite the desk status.",
+      commit:"1dcdc52", size:"medium", dep:"needs the grok provider" },
+    { id:"p-grok-models", title:"Grok model catalogue (grok models → picker)",
+      desc:"Validated, TTL-cached catalogue served at /api/agents/grok/models and lazily loaded into the model select with loading/unavailable hints.",
+      commit:"1dcdc52", size:"medium", dep:"needs the grok provider" },
+    { id:"p-muse", title:"Muse Code as a hireable provider (launch + resume)",
+      desc:"Spawn with --trust-workspace/--model/--reasoning-effort; since 'muse resume' takes no prompt, a pendingPrompt is pasted via the office prompt() once SessionStart fires.",
+      commit:"1dcdc52", size:"medium" },
+    { id:"p-muse-home", title:"Isolated Muse XDG tree with hooks + linked login",
+      desc:"<dataDir>/muse-home/{config,share,state} with the office's hook registrations and a safe subset of your own defaults; your ~/.config/muse/auth.json is symlinked in.",
+      commit:"1dcdc52", size:"medium", dep:"needs the muse provider" },
+    { id:"p-muse-hooks", title:"Muse hooks → live status incl. PermissionRequest",
+      desc:"Same live pipeline as Grok, plus 'Wants permission: <tool>' activity + needs_input on Muse's PermissionRequest and PostToolUseFailure events.",
+      commit:"1dcdc52", size:"medium", dep:"needs the muse provider" },
+    { id:"p-choice", title:"Model/effort plumbing for Grok and Muse",
+      desc:"Validation (Grok id ≤64, Muse ≤128), --effort / --reasoning-effort through queue, meetings, spawn and restore; Muse gets a free-text model input; modelBadge shows raw ids + effort; grok/muse usage explicitly marked 'untracked' in the UI.",
+      commit:"1dcdc52", size:"medium", dep:"needs the providers" },
+    { id:"p-scrub", title:"Scrub GROK_*/MUSE_* env vars across workers",
+      desc:"One worker's provider credentials/env can't leak into another worker's process.",
+      commit:"1dcdc52", size:"small" },
+    { id:"p-dsh", title:"DeepSeek Harness as a provider, over ACP (DshSession)",
+      desc:"DSH has no TUI: a spawned dsh child speaks JSON-RPC over stdio (initialize → session/new or session/resume), serialized prompts, timeouts, 4MB frame bounds, per-frame error isolation. 900 lines of tests with a fake ACP agent.",
+      commit:"0378130", size:"large" },
+    { id:"p-dsh-render", title:"ACP → terminal renderer (markdown, tool rows, design tokens)",
+      desc:"ACP updates render as ANSI into the existing xterm so scrollback/sharing/search/reconnect keep working: markdown agent/thought chunks, tool_call rows with icons and bounded output, 'Worked · N tool calls' turn ends.",
+      commit:"0378130", size:"large", dep:"needs the dsh provider" },
+    { id:"p-dsh-status", title:"DSH status, acted-out actions and session-id into workers",
+      desc:"Protocol state drives starting/working/needs_input/done; tool kinds map to WorkerAction poses; session ids persist for resume; 'exited with code N — press R to resume' notices.",
+      commit:"0378130", size:"medium", dep:"needs the dsh provider" },
+    { id:"p-dsh-perm", title:"Permission approvals answered from the terminal",
+      desc:"session/request_permission renders an approval card with the full command/path (never truncated to the model's description) and a numbered choice; Enter = allow-once only, Esc/Ctrl+C rejects/cancels; paste bursts don't count as Enter.",
+      commit:"0378130", size:"medium", dep:"needs the dsh provider" },
+    { id:"p-dsh-input", title:"Typed-line input handling for the DSH terminal",
+      desc:"Line-buffered keystrokes with echo/backspace, escape-sequence swallowing, control/bidi char dropping, 20k cap, paste detection.",
+      commit:"0378130", size:"small", dep:"needs the dsh provider" },
+    { id:"p-dsh-model", title:"DSH model/effort via session/set_config_option",
+      desc:"Matches typed input against the live catalog's opaque route tuples; a rejected/stale model degrades to the profile default with a notice instead of failing the launch.",
+      commit:"0378130", size:"small", dep:"needs the dsh provider" },
+    { id:"p-dsh-persist", title:"DSH session persistence under the office dir + resume",
+      desc:"dsh-patch.yml redirects session persistence to <dataDir>/dsh-sessions so the office lists/resumes exactly the sessions it started; restores survive office restarts.",
+      commit:"0378130", size:"medium", dep:"needs the dsh provider" },
+    { id:"p-dsh-usage", title:"Usage reporting: new Usage.contextSize field + usage UI for DSH",
+      desc:"ACP's context occupancy renders as '$… · 12k / 200k context', a usage-panel row aggregating desks, and 'metrics waiting' rows; backward-compatible optional field on Usage.",
+      commit:"0378130", size:"medium", dep:"needs the dsh provider" },
+    { id:"p-dsh-hardening", title:"Terminal-escape security hardening + no-PTY lifecycle hardening",
+      desc:"escapeText strips OSC/CSI/C1/bidi escapes from everything written to the terminal and the markdown link matcher is ReDoS-safe; WorkerManager handles auth/wake/resume/resize/kill for PTY-less workers (--dsh-profile config included).",
+      commit:"0378130", size:"small", dep:"needs the dsh provider (escapeText is portable alone)" },
+    { id:"p-waiting", title:"providerWaitingLabel: one 'waiting for metrics' label everywhere",
+      desc:"Collapses three copy-pasted waiting suffixes (worker list, queue cards, terminal cost line) into one helper.",
+      commit:"0378130", size:"small" },
+  ]
+},
+{
+  name: "Prompts & defaults",
+  hint: "customizable office prompts, default worker model",
+  items: [
+    { id:"pr-lib", title:"Central prompt template library (shared/prompts.ts)",
+      desc:"Every prompt the office generates (issue.hand/ask/meeting, pull.review/fixMerge/fixConflicts/ask/panel, queue worktree note, station briefs, all meeting patterns, office namer) becomes a {{placeholder}} template with metadata and a fillPrompt() that never re-interprets substituted text.",
+      commit:"06b3fa5", size:"large" },
+    { id:"pr-store", title:"Building-wide prompts store (.agent-office/prompts.json)",
+      desc:"OfficePrompts persists rewrites + the default worker: restore-to-default by saving the default text, 20k cap, 'rewritten by X · at' attribution, silently drops entries the office can no longer use.",
+      commit:"06b3fa5", size:"medium", dep:"needs the prompt library" },
+    { id:"pr-editor", title:"Prompt editor UI in Settings ('📝 Edit/Read the prompts…')",
+      desc:"Grouped nav, dirty/rewritten marks, admin-only textarea, clickable {{placeholder}} chips that insert at the cursor, live warnings for unknown/missing placeholders, drafts survive accidental closes, ↺ Default / Undo / Save.",
+      commit:"06b3fa5", size:"medium", dep:"needs prompt store + protocol" },
+    { id:"pr-protocol", title:"Prompts wire protocol + broadcast",
+      desc:"PromptsState in floor.hello, prompts.set / prompts.agent client messages, admin-only handling, floor toast '📝 … rewrote the … prompt'.",
+      commit:"06b3fa5", size:"medium", dep:"needs the prompt store" },
+    { id:"pr-consumers", title:"Server + client prompt consumers",
+      desc:"Meetings, queue worktree note, station briefs, the task namer, issue hand-offs, PR review/fix/ask and meeting presets all render through the templates — defaults render byte-identical to the old hardcoded strings.",
+      commit:"06b3fa5", size:"medium", dep:"needs the prompt library" },
+    { id:"pr-default", title:"Office default worker in Settings (provider/model/effort)",
+      desc:"Every unpicked start — board agents, dropped cards, office-queue add, meetings — uses the chosen default instead of a per-desk memory; 'Back to <agent>' resets it.",
+      commit:"06b3fa5", size:"medium" },
+    { id:"pr-picker", title:"Start windows show 'Claude Code · Opus · High' with ✏️ Edit",
+      desc:"agentFields() picker rework: a one-line default summary with an Edit button revealing provider/model/effort for a one-off, used by hire, ask, queue add, issue drop and the meeting form.",
+      commit:"06b3fa5", size:"medium", dep:"pairs well with the default worker" },
+    { id:"pr-localstorage", title:"Drop per-desk localStorage model memory",
+      desc:"Removes rememberedChoice/preferredProvider per desk — the office default replaces it (flagged because it's a behavior removal).",
+      commit:"06b3fa5", size:"small", dep:"only alongside the default worker" },
+    { id:"pr-misc", title:"Lazy OpenCode model suggestions + agentProviders() helper",
+      desc:"Model catalogue fetched only when its field becomes visible/focused; the hireable-providers list moves into one agents.ts helper.",
+      commit:"06b3fa5", size:"small" },
+  ]
+},
+{
+  name: "Projects & floors",
+  hint: "removing projects, setup flow",
+  items: [
+    { id:"f-remove", title:"Remove a project: 🗑 beside its floor in the elevator",
+      desc:"Building.remove takes a floor out of floors.json (checkout and .agent-office data stay on disk so re-adding moves back in); closeFloor evacuates everyone to the next floor/lobby and stops its workers; confirm dialog for admins.",
+      commit:"2f6a01e", size:"medium" },
+    { id:"f-remove-client", title:"Client survives its floor vanishing",
+      desc:"Modals close, movement cancels, you land in the elevator car; carried issue cards stay on the old board with a toast.",
+      commit:"2f6a01e", size:"small", dep:"needs floor removal" },
+    { id:"f-local", title:"The start-in project is removable too (and re-add reuses the checkout)",
+      desc:"Removal of the office's own checkout is remembered across restarts (local-floor.json); re-adding the same repo re-uses the office's own checkout instead of cloning a second copy.",
+      commit:"3a2baa7", size:"medium", dep:"needs floor removal" },
+    { id:"f-setup", title:"First-start terminal walkthrough (setup.ts)",
+      desc:"On a TTY with no floors: asks where to clone projects (suggests ~/Workspace, ~/code…), offers gh auth login when not signed in, lists your GitHub repos to clone as floors. Enter skips.",
+      commit:"3a2baa7", size:"large" },
+    { id:"f-setupcmd", title:"agent-office setup command",
+      desc:"Non-interactive variant: --projects <dir>, --project <owner/repo> (repeatable), --home <dir>; refuses while the office is running.",
+      commit:"3a2baa7", size:"medium" },
+    { id:"f-folder", title:"📁 Change folder for the workspace dir, right in the elevator",
+      desc:"Admins edit floor.projectsDir inline where the first project is cloned, with server-side error display (relative path, unwritable).",
+      commit:"3a2baa7", size:"small" },
+    { id:"f-noproject", title:"Start with no project by default",
+      desc:"A [dir] argument still starts out as a floor but is now removable; the banner only claims 'open for <dir>' when that floor still exists.",
+      commit:"3a2baa7", size:"small", dep:"needs floor removal" },
+  ]
+},
+{
+  name: "Settings & UX",
+  hint: "command palette, settings layout, desk signs, small quality-of-life",
+  items: [
+    { id:"u-palette", title:"Command palette (Ctrl/⌘+K)",
+      desc:"Fuzzy-ranked palette (pure tested matcher: exact > prefix > word-start > inside > multi-word > scattered subsequence) over workers, 'Hire a worker' at the nearest free desk, queue, Settings, boards, every PR and issue, services, teammates; layout-aware hotkey; Enter acts, Shift+Enter walks your avatar there first (the walk-then part depends on the back-office/nav code from 4575f6f).",
+      commit:"69a8d7f", size:"medium" },
+    { id:"u-settings", title:"Settings with categories down the side",
+      desc:"Two-pane Settings (You / Sound & voice / Notifications / Building / Workers), each setting card labeled with its scope — 'Just you' / 'This floor' / 'Everyone' — reopens at the last-used category, full keyboard navigation, phone layout flips categories to a top row.",
+      commit:"000ad9f", size:"medium" },
+    { id:"u-signs-model", title:"Desk sign labels: shared model + colors + presets",
+      desc:"DeskLabel {text,color,by,at}, 7 named sign colors, LABEL_IDEAS presets, cleanLabel() validation, canLabel (real desks only).",
+      commit:"4575f6f", size:"small" },
+    { id:"u-signs-store", title:"Desk signs persisted server-side (.agent-office/floorplan.json)",
+      desc:"FloorPlanStore.label() hangs/takes down a sign with validation and toast feedback; tolerant of corrupt files.",
+      commit:"4575f6f", size:"small", dep:"needs the sign model" },
+    { id:"u-signs-dialog", title:"Desk-sign dialog: label a desk (L at a desk)",
+      desc:"Text input with live preview, 7 color swatches (last color remembered), one-click LABEL_IDEAS, Save / Take it down / Cancel.",
+      commit:"4575f6f", size:"medium", dep:"needs the sign store" },
+    { id:"u-signs-3d", title:"3D signs hanging over the desks",
+      desc:"Ceiling-hung boards with canvas-texture faces (auto-fit text, two-line split, correct ink), back-to-back desks share one face, incremental diffing with geometry/texture disposal. 3D-world code.",
+      commit:"4575f6f", size:"medium", dep:"needs the sign dialog; 3D rendering code" },
+    { id:"u-modals", title:"Every modal can be closed",
+      desc:"Welcome elevator panel, first character picker (closes with the look/name picked so far) and the upgrade/restart dialog get ✕ + Esc; the restart still auto-reloads onto the new version after dismissing.",
+      commit:"85ade62", size:"small" },
+    { id:"u-return", title:"Come back where you left: same floor, same spot",
+      desc:"Position and floor persist across visits; a floor that's gone sends you to the roof instead of dropping you nowhere.",
+      commit:"745a5d1", size:"small" },
+    { id:"u-bookshelf", title:"Bookshelf of the project's docs (optional, 3D-heavy)",
+      desc:"Every Markdown file in the project readable in the office — a book in your hands, server-side docs index (src/server/docs.ts is reusable without the 3D part). Flagged: mostly world/character code.",
+      commit:"ad2fad4", size:"large" },
+    { id:"u-loading", title:"Loading screen while the world loads (extractable from the models commit)",
+      desc:"src/client/ui/loading.ts — progress/loading overlay before the office appears. Lives inside the blender-models/dog commit but is a standalone UI module; the rest of that commit is models/dogs and skipped.",
+      commit:"888ad67", size:"small" },
+    { id:"u-queueform", title:"Task queue form: prompt on its own full-width row",
+      desc:"Provider/model/effort on one line under the prompt instead of cramped beside it, hints on their own muted line, label+picker pairs stack on phones. Almost pure CSS.",
+      commit:"a8fa16f", size:"small" },
+  ]
+},
+{
+  name: "Performance & 2D fallback",
+  hint: "/lite view, frame-rate detection",
+  items: [
+    { id:"pf-lite", title:"2D /lite view for phones and slow computers",
+      desc:"The floor's workers as cards (waiting ones first), each with its terminal, plus boards, queue, meeting room and new-task/hire flows — entirely without three.js. Reconnect/version handling reloads stale pages.",
+      commit:"3cbf451", size:"large" },
+    { id:"pf-keypad", title:"Terminal phone keypad + prompt send box",
+      desc:"Nine keys (1/2/3, ↑↓, ⏎, ⇥, Esc, ^C) with application-cursor-mode awareness and a 'Reply, or tell it what to do next…' box; smaller font on narrow screens. Lives in terminal.ts and works everywhere.",
+      commit:"3cbf451", size:"medium", dep:"part of /lite" },
+    { id:"pf-slowframes", title:"Slow frame detection → offer /lite",
+      desc:"SlowFrames watches the render loop (8s warmup, hidden-tab stall handling) and offers the 2D view once if averaging ≥50ms/frame for 10s; unit-tested.",
+      commit:"3cbf451", size:"small" },
+    { id:"pf-offer", title:"Sensible /lite offer policy",
+      desc:"Touch-only devices get offered at startup; 'Stay in 3D' is remembered; ?3d suppresses re-offering.",
+      commit:"3cbf451", size:"small" },
+    { id:"pf-webgl", title:"WebGL unavailable → fall back to /lite automatically",
+      desc:"makeRenderer() try/catches WebGLRenderer creation and redirects to /lite?why=webgl.",
+      commit:"3cbf451", size:"small" },
+    { id:"pf-shared", title:"Extract terminal theme + machine/meeting helpers into shared modules",
+      desc:"TERM_THEME → ui/termtheme.ts (shared by terminal window and desk laptops), officeFull/pressureNote → shared/machine.ts, meetingStage → shared/meetings.ts — so UI can be used without importing three.js world code. Clean refactors on their own.",
+      commit:"3cbf451", size:"small" },
+    { id:"pf-lite-login", title:"Sign-in and identity keep working from /lite",
+      desc:"Login redirect preserves /lite (/login?next=/lite), name-only profiles accepted, tab title counts waiting workers across floors like the 3D office.",
+      commit:"3cbf451", size:"small", dep:"part of /lite" },
+  ]
+}
+];
+
+const body = document.getElementById('groups');
+const state = {};
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+for (const g of GROUPS) {
+  const sec = el('section');
+  const head = el('div', 'group-head');
+  const wrap = el('div');
+  wrap.appendChild(el('h2', null, g.name));
+  wrap.appendChild(el('div', 'hint', g.hint));
+  head.appendChild(wrap);
+  const mini = el('button', 'mini', 'select group');
+  mini.onclick = (ev) => {
+    ev.stopPropagation();
+    const anyOff = g.items.some(it => !state[it.id]);
+    for (const it of g.items) setItem(it.id, anyOff);
+  };
+  head.appendChild(mini);
+  sec.appendChild(head);
+
+  for (const it of g.items) {
+    state[it.id] = false;
+    const row = el('label', 'item');
+    row.dataset.id = it.id;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.id = it.id;
+    cb.onchange = () => setItem(it.id, cb.checked);
+    row.appendChild(cb);
+    const right = el('div');
+    right.appendChild(el('div', 'title', it.title));
+    right.appendChild(el('div', 'desc', it.desc));
+    const meta = el('div', 'meta');
+    meta.appendChild(el('span', 'chip', '↻ ' + it.commit));
+    meta.appendChild(el('span', 'chip ' + it.size, it.size));
+    if (it.dep) meta.appendChild(el('span', 'chip dep', '⚑ ' + it.dep));
+    right.appendChild(meta);
+    row.appendChild(right);
+    sec.appendChild(row);
+  }
+  body.appendChild(sec);
+}
+
+function setItem(id, on) {
+  state[id] = on;
+  const row = document.querySelector(`.item[data-id="${id}"]`);
+  if (!row) return;
+  row.querySelector('input').checked = on;
+  row.classList.toggle('checked', on);
+  refresh();
+}
+
+function setAll(on) {
+  for (const g of GROUPS) for (const it of g.items) setItem(it.id, on);
+}
+
+function selectedItems() {
+  const out = [];
+  for (const g of GROUPS) {
+    for (const it of g.items) if (state[it.id]) out.push({ group: g.name, ...it });
+  }
+  return out;
+}
+
+function buildText() {
+  const sel = selectedItems();
+  const lines = [];
+  lines.push(`Pull these into droid-office (${sel.length} selected):`);
+  let group = null;
+  for (const it of sel) {
+    if (it.group !== group) { group = it.group; lines.push('', `## ${group}`); }
+    lines.push(`- [${it.commit}] ${it.title}${it.dep ? ` (dep: ${it.dep})` : ''}`);
+    lines.push(`  ${it.desc}`);
+  }
+  return lines.join('\n');
+}
+
+function refresh() {
+  const n = selectedItems().length;
+  document.getElementById('count').textContent = `${n} of ${Object.keys(state).length} selected`;
+  document.getElementById('footcount').textContent = `${n} selected`;
+  const prev = document.getElementById('preview');
+  if (prev) prev.value = buildText();
+}
+
+function togglePreview() {
+  let prev = document.getElementById('preview');
+  if (prev) { prev.remove(); return; }
+  const d = el('details', 'preview');
+  d.open = true;
+  d.appendChild(el('summary', null, 'Copy preview'));
+  prev = document.createElement('textarea');
+  prev.id = 'preview';
+  d.appendChild(prev);
+  document.querySelector('main').prepend(d);
+  refresh();
+}
+
+async function copySelection() {
+  const text = buildText();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Copied to clipboard');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    toast('Copied to clipboard');
+  }
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+document.getElementById('filter').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  for (const row of document.querySelectorAll('.item')) {
+    const it = findItem(row.dataset.id);
+    const hay = (it.title + ' ' + it.desc + ' ' + it.commit + ' ' + (it.dep || '')).toLowerCase();
+    row.classList.toggle('hidden', q !== '' && !hay.includes(q));
+  }
+});
+
+function findItem(id) {
+  for (const g of GROUPS) for (const it of g.items) if (it.id === id) return it;
+  return { title: '', desc: '', commit: '' };
+}
+
+refresh();
+</script>
+</body>
+</html>

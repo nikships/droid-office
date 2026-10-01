@@ -79,9 +79,11 @@ while keeping the handle at the grip origin. The live display-frame grip still p
 The runtime defines aim as the controller's pointing direction, distinct from grip; see the
 [controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
 Shots start at the transformed
-model muzzle and reuse desktop solid occlusion. Shot picking ignores hidden scene subtrees,
-invisible materials, name sprites and glow points; visible furniture and glass still block
-shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
+model muzzle and reuse desktop solid occlusion and the shared downed state. Downed workers
+can be revived through the use action at the body within 30 seconds; otherwise the medics collect
+them and their owned worktrees and branches are deleted without a confirmation menu.
+Shot picking ignores hidden scene subtrees, invisible materials, name sprites
+and glow points; visible furniture and glass still block shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.
 The native app does not draw the gun through the desktop `7` shortcut.
@@ -93,32 +95,40 @@ struck worker sprays blood back out of the contact point with a wet hit sound, a
 shoves it along the bullet at once before it sprawls out on the far side of its chair. It lands
 with its length flat along the floor, resting on it.
 
-**A shot never opens anything in the headset.** The desktop's bleed-out dialog (kill or revive)
-is not used in native mode: no dialog, workspace or toast appears, nothing freezes, and the gun
-stays live. What happens next is a physical act at the body (`native/downed.ts`):
+**A shot never opens anything in the headset.** The owner's shot design holds (`gun-spec.md`,
+[medic sequence](medic-sequence.md)): a hit sends `worker.shoot`, the server starts the worker's
+persisted 30-second revival window, and on expiry dismisses it, deletes its owned worktrees and
+branches, and the medics collect the body. No dialog, workspace, toast, hint text or countdown
+appears at any point; nothing freezes, the gun stays live and you stay free to move. What follows
+plays out at the body (`native/downed.ts`, `world/casualties.ts`):
 
-- **A stray shot only drops a worker.** It lies on the floor with its session running for as
-  long as it is left there, with a heartbeat heard up close (and felt in a controller whose grip
-  comes within about 0.65 m of its chest) that slows as it bleeds. Several workers can be down at
-  once, each in its own casualty scene. A trigger at a downed worker's desk opens nothing.
-- **Finishing it off takes a second, aimed shot into the body** once it has lain still for
-  `FINISH_AFTER` (0.8 s). A double or triple tap only drops it: pulls as fast as the revolver
-  allows need at least `FALL_TIME + FINISH_AFTER` (about 1.55 s). That shot stops its heart and
-  sends the ordinary `{ t: 'worker.kill', workerId }` once, with the office's default worktree
-  handling (a worktree that has work on it is kept). The siren, elevator and medic carry
-  ([medic sequence](medic-sequence.md)) are the confirmation, when its removal arrives; the
-  server's send-home and worktree toasts for that worker are left out on this client.
-- **Reviving is done by hand.** A fresh grip with a tracked controller within 0.4 m of the body
-  takes hold of it (never through the aim-pose fallback). The body comes up toward its chair with
-  the hand's rise in native space (rig motion never lifts it), measured from the lowest point
-  the grip reached, with a haptic tick each quarter. At `HAUL_LIFT` (0.42 m) it is back in its
-  seat with its session untouched, gasps and hops, and the hand gets a firm pulse. Letting go
-  earlier, losing tracking for `LOST_MS` or a floor change drops it back to the floor (a thud
-  when dropped from 30% of the way or more). A finished body cannot be hauled.
+- **The hit lands at once, where it struck.** The worker is knocked out of its chair along the
+  bullet in the shot's own frame, without waiting for the server's echo (`PendingShots` keeps
+  that local fall standing through unrelated updates until the downed state arrives, and lets
+  the body get back up if it never does, after `SHOT_ECHO_MS`). Other clients see it fall when
+  the server's state reaches them. A trigger at a downed worker's desk opens and says nothing.
+- **The body keeps the window's time.** Its heartbeat, heard up close and felt in a controller
+  whose grip comes within about 0.7 m of its chest, starts at a beat every 0.75 s and drags out
+  to one every 2 s while fading to a quarter of its strength as the server's deadline
+  (`downedUntil`) nears. Its antenna bulb, the worker's own status light, flashes red with each
+  beat over an ember that dims with the time left, and its body swells slightly with the beat.
+  The blood pool spreads to 40% in two seconds, then creeps out to full size exactly at the
+  deadline. When the window closes the heart stops and the bulb goes dark; the siren and the
+  medics follow. The server's dismissal toasts for a worker shot on this floor are left out on
+  this client (they are tagged with its `workerId`); warnings still show.
+- **Reviving is the use action at the body.** The trigger of a free hand (not holding the gun
+  or a card) revives the worker when its tracked grip is within `REVIVE_TOUCH` (0.45 m) of any
+  part of the body, or when its pointing ray passes within 0.3 m of the body no more than
+  `REVIVE_RANGE` (2.4 m, the owner's walk-up distance) away. Physical gestures never use the
+  aim-pose fallback: the hand's grip must be tracked and stable. A hand arriving at a body feels a
+  soft tick (and from there its heartbeat), and the aim words stay away while a hand is at one.
+  On the trigger the hand gets a firm pulse, the
+  worker gasps and stirs, `worker.revive` goes out, and when the server confirms the body gets
+  back up into its chair over 0.7 s and hops, its session untouched. A refused or unanswered
+  revival lets it slump back down within 2.5 s. Revival through the gun hand is impossible: its
+  trigger fires.
 
-Workers still down go back to their seats quietly on a floor change, a lost connection or
-entering WebXR; a body already finished off stays down for its medics. Desktop and WebXR keep the
-dialog.
+Desktop and WebXR keep the owner's flow unchanged: E within 2.4 m, with the countdown hint.
 
 The gun model is shared with desktop. The desktop wrist no longer adds a large resting tilt
 to its bore. Native attachment rendering uses actual display-loop grip transforms, rather
@@ -211,14 +221,17 @@ real furniture/glass occlusion. The headset log confirmed every trigger pull thr
 solid meshes before intersecting, so a direct muzzle ray never visits a sprite at all. Native
 shots also set the shared ray camera and record the chosen solid locally for diagnosis.
 The camera-less muzzle regression passes; the fix still needs wearer confirmation.
-The shot-in-the-world flow is covered by `tests/native-downed.test.ts` (a single shot and
-rapid pulls never send a kill, the aimed second shot sends exactly one, several bodies keep their
-own state, the heartbeat stops when finished, hauling and slumping, a real worker resting flat
-on the floor for 16 falls) and `tests/native-shot-stage.test.ts` (real office desks: the trigger
-path drops a seated worker from five sides at 4 cm to 2.2 m and sends nothing; staged finishes
-only for disposable Target workers; a staged haul revives through the grip path). The grip
-haul's tracking, loss and release rules are in `tests/native-physical.test.ts`. A debuggable
-build can stage a shot or a haul on the headset through the same paths; see
+The shot-in-the-world flow is covered by `tests/native-downed.test.ts` (the heartbeat slows
+and fades with the server's deadline and stops there, the bulb flashes and goes out, the pool
+reaches full size at the deadline, touch and pointing reach rules, the stir, rise and slump, a
+window closing under a stirring body, pending local falls, the desktop unchanged, and a real
+worker resting flat on the floor for 16 falls), `tests/native-physical.test.ts` (the use action
+at a body through tracked grips only, never through the gun hand, an open workspace or a refused
+revival) and `tests/native-shot-stage.test.ts` (real office desks against a stand-in for the
+server's window: the trigger path drops a Target worker from five sides at 4 cm to 2.2 m and sends
+only `worker.shoot`; staged shots refuse anyone but Target workers; a free hand revives by
+touching or pointing; nothing revives after the window). A debuggable build can stage a shot or a
+revival on the headset through the same paths; see
 [debug staging](vr-native-android.md#debug-shot-staging).
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic

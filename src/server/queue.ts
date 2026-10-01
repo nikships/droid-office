@@ -303,7 +303,7 @@ export class TaskQueue {
     return this.tasks
       .filter((t) => t.status === 'done' && t.workerId && byId.has(t.workerId))
       .map((t) => ({ t, w: byId.get(t.workerId!)! }))
-      .filter(({ w }) => FINISHED.has(w.status) && w.viewers.length === 0)
+      .filter(({ w }) => w.downedUntil === undefined && FINISHED.has(w.status) && w.viewers.length === 0)
       .sort((a, b) => Number(!!b.t.pr) - Number(!!a.t.pr) || (a.t.finishedAt ?? 0) - (b.t.finishedAt ?? 0))[0];
   }
 
