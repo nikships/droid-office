@@ -125,7 +125,7 @@ import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativePuppet } from './native/puppet';
 import { NativeScene } from './native/scene';
-import { ShotStage, type ShotOutcome, type StageReviveOptions, type StageShotOptions, matchWorker } from './native/stage';
+import { ShotStage, TargetStage, type ShotOutcome, type StageReviveOptions, type StageShotOptions, type StageTargetOptions, matchWorker } from './native/stage';
 import { bodyAt, PendingShots, REVIVE_TOUCH, SHOT_ECHO_MS } from './native/downed';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
 import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
@@ -144,6 +144,8 @@ let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
 /** Debug-only shot and revival staging for headset captures (native/stage.ts); inert unless the host is debuggable. */
 let shotStage: ShotStage | null = null;
+/** Debug-only practice targets for those staged shots: hired through the office, and sent home again (native/stage.ts). */
+let targetStage: TargetStage | null = null;
 /** Debug builds of the headset app only: synthetic controllers for headless captures (__office.puppet). */
 let nativePuppet: NativePuppet | null = null;
 function headsetActive() {
@@ -5520,7 +5522,10 @@ if (nativeMode) {
     worker: (key) =>
       matchWorker(
         key,
-        [...workerViews].map(([id, v]) => ({ id, name: store.workers.get(id)?.name ?? id, root: v.model.root })),
+        [...workerViews].map(([id, v]) => {
+          const w = store.workers.get(id);
+          return { id, name: w?.name ?? id, root: v.model.root, kind: w?.kind, worktree: w?.worktree, repos: w?.repos, meeting: w?.meeting };
+        }),
       ),
     downed: (id) => {
       const chest = casualties.dying(id) ? casualties.chest(id) : null;
@@ -5554,11 +5559,22 @@ if (nativeMode) {
     },
     now: () => performance.now(),
   });
+  targetStage = new TargetStage({
+    crew: () => [...store.workers.values()],
+    taken: (deskId) => !!store.workerAtDesk(deskId) || departures.seated(deskId),
+    you: () => ({ x: player.pos.x, z: player.pos.z }),
+    present: (id) => workerViews.has(id),
+    hire: (deskId) => net.send({ t: 'worker.spawn', deskId, kind: 'shell', target: true }),
+    sendHome: (id) => net.send({ t: 'worker.kill', workerId: id }),
+    officeNow: () => store.officeNow(),
+    lastToast: () => document.querySelector('#toasts .toast:last-child')?.textContent ?? '',
+  });
   nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
   (window as any).officeNative = {
     frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean }, host?: { debuggable?: boolean }) => {
       // Only a debuggable Android build says so (OfficeActivity passes BuildConfig.DEBUG).
       if (shotStage) shotStage.debuggable = host?.debuggable === true;
+      if (targetStage) targetStage.debuggable = host?.debuggable === true;
       // Only a debug build of the headset app reports the capture puppet. The host cannot change
       // while this page lives, so a manual frame() call without events never withdraws it.
       if (events?.puppet === true) nativePuppet?.host(true);
@@ -5676,12 +5692,15 @@ void whoami().then(() => {
   nativeUi,
   puppet: nativePuppet?.api,
   ball,
-  // Debuggable headset builds only (inert otherwise): stage a shot or a revival through the real controller path.
-  ...(shotStage
+  // Debuggable headset builds only (inert otherwise): hire a practice target, stage a shot or a
+  // revival through the real controller path, and send the target home again.
+  ...(shotStage && targetStage
     ? {
+        stageTarget: (options?: StageTargetOptions) => targetStage!.hire(options),
         stageShot: (options: StageShotOptions) => shotStage!.run(options),
         stageRevive: (options: StageReviveOptions) => shotStage!.revive(options),
         releaseShot: (revive?: boolean) => shotStage!.release(revive !== false),
+        dismissTarget: (worker: string) => targetStage!.dismiss(worker),
       }
     : {}),
 };

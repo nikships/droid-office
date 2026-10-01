@@ -228,10 +228,13 @@ window closing under a stirring body, pending local falls, the desktop unchanged
 worker resting flat on the floor for 16 falls), `tests/native-physical.test.ts` (the use action
 at a body through tracked grips only, never through the gun hand, an open workspace or a refused
 revival) and `tests/native-shot-stage.test.ts` (real office desks against a stand-in for the
-server's window: the trigger path drops a Target worker from five sides at 4 cm to 2.2 m and sends
-only `worker.shoot`; staged shots refuse anyone but Target workers; a free hand revives by
-touching or pointing; nothing revives after the window). A debuggable build can stage a shot or a
-revival on the headset through the same paths; see
+server's window: the trigger path drops a practice target from five sides at 4 cm to 2.2 m and
+sends only `worker.shoot`; staged shots refuse anything but a practice target, even an agent or a
+worktree shell named `Target <n>`; a free hand revives by touching or pointing; nothing revives
+after the window) and `tests/practice-targets.test.ts` (the office names only a plain shell hired
+with `target: true` `Target <n>`; the staging hires one at the desk clearest of real work and sends
+only it home, never while it lies inside its window). A debuggable build can hire a practice
+target and stage a shot or a revival on the headset through the same paths; see
 [debug staging](vr-native-android.md#debug-shot-staging).
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic

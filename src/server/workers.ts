@@ -14,6 +14,7 @@ import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentE
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
+import { nextTargetName, targetHireError } from '../shared/targets.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { isBusy } from '../shared/status.js';
@@ -425,6 +426,7 @@ export class WorkerManager {
    * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
    * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
+   * `target` hires a practice target: a plain shell the office names "Target <n>" (see shared/targets.ts).
    */
   spawn(
     deskId: string,
@@ -437,6 +439,7 @@ export class WorkerManager {
     effort?: AgentEffort,
     meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
     repos: RepoSource[] = [],
+    target = false,
   ): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && provider === undefined ? this.officeDefault : undefined;
@@ -450,6 +453,8 @@ export class WorkerManager {
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
+    const notTarget = target ? targetHireError({ kind, worktree, repos: repos.length, station: !!seat.station, meeting: !!seat.room || !!meeting }) : undefined;
+    if (notTarget) return notTarget;
     if (seat.station && !prompt?.trim()) return 'Tell the board agent what to do';
     if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
     if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
@@ -465,7 +470,7 @@ export class WorkerManager {
     if (full) return full;
     const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')));
     const agent = seat.station && STATION_AGENT[seat.station];
-    const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const name = agent ? agent.name : target ? nextTargetName(used) : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'] = meeting?.worktree;
     let others: WorkerRepo[] | undefined;

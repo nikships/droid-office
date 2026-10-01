@@ -12,12 +12,17 @@
 // grip is under it.
 //
 // Every shot now starts the server's 30-second revival window, after which the worker is dismissed
-// and its worktrees deleted: staged shots are refused for anyone not named "Target …", and
-// release() asks the server to revive the staged worker.
+// and its worktrees deleted: staged shots are refused for anyone but a practice target (a shell the
+// office hired as "Target <n>", see shared/targets.ts), and release() asks the server to revive the
+// staged worker. window.__office.stageTarget hires one through the office, and dismissTarget sends
+// only such a worker home again.
 //
 // No DOM or WebGL at import time, so tests load it in Node.
 
 import * as THREE from 'three';
+import { DESK_BY_ID, DESKS } from '../../shared/layout';
+import type { WorkerKind } from '../../shared/protocol';
+import { isPracticeTarget } from '../../shared/targets';
 import { MUZZLE_AT } from '../world/gun';
 import type { PlayerController } from '../player';
 import type { NativeHand, Pose7 } from './input';
@@ -181,9 +186,6 @@ export interface ShotReport {
   distance: number | null;
 }
 
-/** Only a disposable worker named like this may be shot by a staged shot: every shot starts its dismissal clock. */
-export const DISPOSABLE = /^target\b/i;
-
 export interface StageShotOptions {
   /** A worker's name (any case) or id. */
   worker: string;
@@ -280,8 +282,8 @@ export interface ShotStageHooks {
     recenter(): void;
   };
   player: Pick<PlayerController, 'pos' | 'facing' | 'vy' | 'grounded' | 'stepOffset' | 'street' | 'groundBelow' | 'blockedAt' | 'seat' | 'stand'>;
-  /** A worker by name (any case) or id, with its model's root. */
-  worker(key: string): { id: string; name: string; root: THREE.Object3D } | null;
+  /** A worker by name (any case) or id, with its model's root and what the office says it is. */
+  worker(key: string): { id: string; name: string; root: THREE.Object3D; kind?: WorkerKind; worktree?: unknown; repos?: readonly unknown[]; meeting?: string } | null;
   /** The worker shot down, or null when it is up, getting back up, or gone. */
   downed(id: string): DownedState | null;
   /** Whether a bullet from `muzzle` along `direction` would strike worker `id` first. */
@@ -426,8 +428,8 @@ export class ShotStage {
     if (refused) return Promise.resolve({ ok: false, reason: refused });
     const w = this.hooks.worker(String(options.worker ?? ''));
     if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(options.worker)} on this floor` });
-    // Every shot starts the server's dismissal clock: only disposable workers may be staged.
-    if (!DISPOSABLE.test(w.name)) return Promise.resolve({ ok: false, reason: `staged shots hit only disposable workers named "Target …", not ${w.name}: a shot dismisses a worker and deletes its worktrees 30 s later unless revived` });
+    // Every shot starts the server's dismissal clock: only practice targets may be staged.
+    if (!isPracticeTarget(w)) return Promise.resolve({ ok: false, reason: `staged shots hit only practice targets (stageTarget hires one), not ${w.name}: a shot dismisses a worker and deletes its worktrees 30 s later unless revived` });
     if (this.hooks.downed(w.id)) return Promise.resolve({ ok: false, reason: `${w.name} is already down: stageRevive revives it` });
     const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const gap = num(options.gap, 1.2);
@@ -622,5 +624,167 @@ export class ShotStage {
     placeAvatar(player, at);
     player.facing = facing;
     this.hooks.controls.recenter();
+  }
+}
+
+/** A worker on this floor, as the office describes it (WorkerInfo). */
+export interface CrewMember {
+  id: string;
+  name: string;
+  kind: WorkerKind;
+  deskId: string;
+  worktree?: unknown;
+  repos?: readonly unknown[];
+  meeting?: string;
+  /** The office's revival deadline (office-clock ms), while it is shot down. */
+  downedUntil?: number;
+}
+
+/** What TargetStage needs from main.ts: the floor's workers, the office's answers and two messages to it. */
+export interface TargetStageHooks {
+  /** Every worker on this floor. */
+  crew(): readonly CrewMember[];
+  /** Whether a seat is in use: a worker there, or one sent home still packing up there. */
+  taken(deskId: string): boolean;
+  /** Where you stand on this floor. */
+  you(): { x: number; z: number };
+  /** Whether the worker's figure is in the scene, so a staged shot can find it. */
+  present(id: string): boolean;
+  /** Asks the office for a practice target at a desk (worker.spawn with kind shell and target). */
+  hire(deskId: string): void;
+  /** Asks the office to send a worker home (worker.kill). */
+  sendHome(id: string): void;
+  /** The office's clock, for revival deadlines. */
+  officeNow(): number;
+  /** The latest message the office showed, to say why it refused. */
+  lastToast(): string;
+}
+
+export interface StageTargetOptions {
+  /** The free desk (or bean bag) to seat it at. Default: the free desk farthest from every other worker on the floor. */
+  desk?: string;
+  /** Give up after this many milliseconds. Default 8000. */
+  timeoutMs?: number;
+}
+
+export interface StageTargetResult {
+  ok: boolean;
+  reason?: string;
+  /** Its name, as the office gave it ("Target 1 🐚"). */
+  worker?: string;
+  workerId?: string;
+  desk?: string;
+  /** Meters to the nearest other worker on the floor (null: nobody else is here). */
+  clearance?: number | null;
+}
+
+export interface StageDismissResult {
+  ok: boolean;
+  reason?: string;
+  worker?: string;
+  workerId?: string;
+  /** The office has taken it off the floor. */
+  gone?: boolean;
+}
+
+/**
+ * The free desk for a practice target: the one farthest from every other worker on the floor, so
+ * a bore aimed at it crosses nobody else; between equally clear desks, the one nearest you.
+ */
+export function pickTargetDesk(free: readonly { id: string; x: number; z: number }[], others: readonly { x: number; z: number }[], you: { x: number; z: number }): { id: string; clearance: number | null } | null {
+  let best: { id: string; clearance: number; near: number } | null = null;
+  for (const d of free) {
+    // With nobody else on the floor every desk is as clear as the next.
+    const clearance = others.length ? Math.min(...others.map((o) => Math.hypot(o.x - d.x, o.z - d.z))) : 0;
+    const near = Math.hypot(you.x - d.x, you.z - d.z);
+    if (best === null || clearance > best.clearance + 0.01 || (clearance > best.clearance - 0.01 && near < best.near)) best = { id: d.id, clearance, near };
+  }
+  return best && { id: best.id, clearance: others.length ? Math.round(best.clearance * 100) / 100 : null };
+}
+
+/**
+ * window.__office.stageTarget's and dismissTarget's engine (debuggable builds only): hires a
+ * practice target through the office for a staged shot, and sends one home again afterwards. It
+ * never sends anyone else home, and never one lying shot within its revival window.
+ */
+export class TargetStage {
+  /** Set from the Android host's frame call; a release build never sets it. */
+  debuggable = false;
+
+  constructor(
+    private hooks: TargetStageHooks,
+    private pollMs = 100,
+  ) {}
+
+  /** Hires a practice target at a free desk and resolves once it sits there, ready to be shot. */
+  hire(options: StageTargetOptions = {}): Promise<StageTargetResult> {
+    if (!this.debuggable) return Promise.resolve({ ok: false, reason: 'staging needs a debuggable native build' });
+    const crew = this.hooks.crew();
+    let free = DESKS.filter((d) => !this.hooks.taken(d.id));
+    if (options.desk !== undefined) {
+      const seat = DESK_BY_ID.get(String(options.desk));
+      if (!seat || seat.station || seat.room) return Promise.resolve({ ok: false, reason: `${JSON.stringify(options.desk)} is not a desk or a bean bag` });
+      if (this.hooks.taken(seat.id)) return Promise.resolve({ ok: false, reason: `${seat.id} is taken` });
+      free = [seat];
+    }
+    const others = crew.flatMap((w) => DESK_BY_ID.get(w.deskId) ?? []);
+    const picked = pickTargetDesk(free, others, this.hooks.you());
+    if (!picked) return Promise.resolve({ ok: false, reason: 'every desk on this floor is taken' });
+    const { id: desk, clearance } = picked;
+    const before = new Set(crew.map((w) => w.id));
+    const toast = this.hooks.lastToast();
+    this.hooks.hire(desk);
+    return this.until<StageTargetResult>(
+      options.timeoutMs,
+      () => {
+        const there = this.hooks.crew().find((w) => w.deskId === desk && !before.has(w.id));
+        if (!there) return null;
+        if (!isPracticeTarget(there)) return { ok: false, reason: `${there.name} took ${desk} first` };
+        if (!this.hooks.present(there.id)) return null;
+        return { ok: true, worker: there.name, workerId: there.id, desk, clearance };
+      },
+      () => {
+        const said = this.hooks.lastToast();
+        return { ok: false, desk, reason: `the office did not seat a practice target at ${desk}${said && said !== toast ? `: ${said}` : ''}` };
+      },
+    );
+  }
+
+  /** Sends a practice target home, and resolves once the office has taken it off the floor. */
+  dismiss(key: string, options: { timeoutMs?: number } = {}): Promise<StageDismissResult> {
+    if (!this.debuggable) return Promise.resolve({ ok: false, reason: 'staging needs a debuggable native build' });
+    const w = matchWorker(String(key ?? ''), this.hooks.crew());
+    if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(key)} on this floor` });
+    if (!isPracticeTarget(w)) return Promise.resolve({ ok: false, reason: `dismissTarget sends home only practice targets, not ${w.name}` });
+    const named = { worker: w.name, workerId: w.id };
+    if (w.downedUntil !== undefined) {
+      if (w.downedUntil > this.hooks.officeNow()) return Promise.resolve({ ok: false, ...named, reason: `${w.name} is shot down with its revival window open: revive it first (releaseShot() or stageRevive)` });
+      // Its window has closed: the office is dismissing it already, and the medics collect it.
+      return this.until<StageDismissResult>(
+        options.timeoutMs,
+        () => (this.hooks.crew().some((c) => c.id === w.id) ? null : { ok: true, ...named, gone: true }),
+        () => ({ ok: false, ...named, reason: 'its revival window closed and the office is still dismissing it' }),
+      );
+    }
+    this.hooks.sendHome(w.id);
+    return this.until<StageDismissResult>(
+      options.timeoutMs,
+      () => (this.hooks.crew().some((c) => c.id === w.id) ? null : { ok: true, ...named, gone: true }),
+      () => ({ ok: false, ...named, reason: `the office has not sent ${w.name} home yet: ${this.hooks.lastToast()}` }),
+    );
+  }
+
+  /** Polls `check` until it answers or the time is up. */
+  private until<R>(timeoutMs: number | undefined, check: () => R | null, timedOut: () => R): Promise<R> {
+    const limit = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) ? Math.max(500, timeoutMs) : 8000;
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const timer = setInterval(() => {
+        const answer = check();
+        if (answer === null && Date.now() - started < limit) return;
+        clearInterval(timer);
+        resolve(answer ?? timedOut());
+      }, this.pollMs);
+    });
   }
 }

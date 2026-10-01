@@ -10,6 +10,7 @@ import { loadSettings } from '../src/client/state.js';
 import { Casualties, FALL_TIME, REVIVE_WINDOW, RISE_TIME } from '../src/client/world/casualties.js';
 import { Worker } from '../src/client/world/character.js';
 import { gunHit } from '../src/client/world/gun.js';
+import type { WorkerKind } from '../src/shared/protocol.js';
 import { buildOffice, type Office } from '../src/client/world/office.js';
 
 // Headset shots against the real office and real seated workers, through the controller path:
@@ -84,7 +85,7 @@ const idle = (): NativeHand => ({ active: false, aim: pose(0, 0, 0), grip: pose(
  * and worker.shoot, the use action at the body and worker.revive. `server` stands in for the
  * office: it owns each shot worker's revival window and answers on the next poll.
  */
-function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) {
+function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true, office: { kind?: WorkerKind; worktree?: unknown } = { kind: 'shell' }) {
   const camera = new THREE.PerspectiveCamera();
   const player = new PlayerController(camera, new EventTarget() as unknown as HTMLElement, f.office.colliders);
   player.pos.set(f.middle.x + 3, 0, f.middle.z + 3);
@@ -185,7 +186,7 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true) 
   stage = new ShotStage({
     controls,
     player,
-    worker: (key) => matchWorker(key, [{ id: f.id, name: f.name, root: f.worker.root }]),
+    worker: (key) => matchWorker(key, [{ id: f.id, name: f.name, root: f.worker.root, ...office }]),
     downed: (id) => {
       const chest = casualties.dying(id) ? casualties.chest(id) : null;
       if (!chest) return null;
@@ -263,14 +264,22 @@ test('native: a held gun drops a Target worker through the trigger path at every
     }
 });
 
-test('native: staged shots refuse anyone not named Target, and a worker already down', async (t) => {
+test('native: staged shots refuse anyone but a practice target, and a worker already down', async (t) => {
   const pixel = seat(t, 1, 'Pixel');
   const p = headset(t, pixel);
   const refused = await p.stageShot({ worker: 'Pixel' });
   assert.equal(refused.ok, false);
-  assert.match(refused.reason ?? '', /Target/);
+  assert.match(refused.reason ?? '', /practice target/);
   assert.deepEqual(p.sent, []);
   assert.equal(p.shots.length, 0);
+  // The name alone is not enough: an agent, or a shell with a worktree of its own, is real work.
+  for (const [i, office] of [{ kind: 'agent' as const }, { kind: 'shell' as const, worktree: { path: '/w', branch: 'office/target-1', base: 'main' } }, {}].entries()) {
+    const named = headset(t, seat(t, 6 + i, 'Target 7'), true, office);
+    const no = await named.stageShot({ worker: 'Target 7' });
+    assert.equal(no.ok, false, JSON.stringify(office));
+    assert.match(no.reason ?? '', /practice target/);
+    assert.deepEqual(named.sent, []);
+  }
 
   const target = seat(t, 2, 'Target 2');
   const h = headset(t, target);
