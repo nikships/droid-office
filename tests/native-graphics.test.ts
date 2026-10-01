@@ -115,4 +115,10 @@ test('the menu reports the bound targets while a new foveation choice is still b
     'Currently applied: full detail everywhere (no runtime foveation). Fallback: foveation profile rejected.',
   );
   assert.equal(nativeFoveationStatus({ foveation: { level: 'high', setting: 'performance', eyeTracked: false, pending: false, fallback: '' } }), 'Currently applied: High runtime level, fixed at the centre.');
+  // Filtered targets: the reduced areas are rebuilt smoothly; unfiltered ones and older APKs say nothing about it.
+  assert.equal(nativeFoveationStatus({ foveation: { level: 'high', setting: 'performance', eyeTracked: true, filtered: true, fallback: '' } }), 'Currently applied: High runtime level, follows your eyes, smoothed periphery.');
+  assert.equal(
+    nativeFoveationStatus({ foveation: { level: 'medium', eyeTracked: false, filtered: false, fallback: 'filtered targets rejected' } }),
+    'Currently applied: Medium runtime level, fixed at the centre. Fallback: filtered targets rejected.',
+  );
 });

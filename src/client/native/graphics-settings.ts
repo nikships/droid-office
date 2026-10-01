@@ -53,7 +53,9 @@ export function nativeFoveationStatus(metrics: unknown): string | null {
   if (f.level === 'none') return `Currently applied: Off (full detail everywhere).${pending}`;
   const level = FOVEATION_LEVELS[f.level] ?? f.level;
   const tracked = f.eyeTracked === true ? 'follows your eyes' : 'fixed at the centre';
-  return `Currently applied: ${level} runtime level, ${tracked}.${fallback}${pending}`;
+  // Filtered targets rebuild the lower-detail areas smoothly instead of in the driver's blocks; older APKs do not report it.
+  const smoothed = f.filtered === true ? ', smoothed periphery' : '';
+  return `Currently applied: ${level} runtime level, ${tracked}${smoothed}.${fallback}${pending}`;
 }
 
 export interface NativeEyeSize {

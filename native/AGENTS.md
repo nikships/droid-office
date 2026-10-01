@@ -37,7 +37,12 @@ of creating a second office state or a separate worker/board implementation.
   apply `XR_FB_foveation_configuration` / `XR_META_foveation_eye_tracked` profiles with
   `xrUpdateSwapchainFB`. Never write QCOM texture foveation state or focal points from the app,
   and never foveate depth, the sharp-screen layer or the Android Surface panels. Cite the
-  specification or working Android XR code next to each foveation call.
+  specification or working Android XR code next to each foveation call. Never submit the
+  driver's upscaled blocks: render into the foveated swapchains and draw the submitted,
+  unfoveated ones with the filter pass (`foveation_filter_shader.h`), falling back to direct
+  submission only when that cannot be created. Keep world-pass output independent of bin
+  density: no `gl_PointSize` (points are quads) and derivative-based shading divided by the
+  measured step.
 - World resolution is a multiplier of the recommended eye size, bounded by both runtime axes
   and GLES limits. Allocate the selected eye size; do not relabel recommended resolution as
   the maximum or force default frames through maximum-size targets. Replace targets on the

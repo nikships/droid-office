@@ -228,7 +228,7 @@ export function openNativeGraphicsSettings(): void {
         ? 'Foveated rendering is unavailable on this headset. The world keeps full detail at the selected resolution.'
         : current.foveation === 'off'
           ? 'Off renders the whole eye at full detail at the selected world resolution. This uses more GPU time.'
-          : 'The headset lowers detail away from where you look, following your eyes when eye tracking is allowed and centred otherwise. A wider sharp area uses more GPU time.';
+          : 'The headset lowers detail away from where you look, following your eyes when eye tracking is allowed and centred otherwise, and the app smooths the lower-detail areas. A wider sharp area uses more GPU time.';
     const applied = nativeFoveationStatus(metrics);
     setText(foveationNote, applied ? `${foveationText} ${applied}` : foveationText);
     const runtime = m.runtime && typeof m.runtime === 'object' ? (m.runtime as Record<string, { value?: number }>) : {};

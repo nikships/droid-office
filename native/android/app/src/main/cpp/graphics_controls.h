@@ -51,13 +51,16 @@ inline RenderSize renderSize(const ResolutionLimits &limits, float scale) {
  * they have no foveation support at all; LOW, MEDIUM or HIGH creates them with it and applies that
  * level's profile, with the eye-tracked struct when eyeTracked, as their first profile. On Galaxy
  * XR the runtime keeps the first profile a new swapchain receives, so a change is a new target.
+ * filtered: the world renders into those foveated swapchains, which are never submitted, and a
+ * filtered reconstruction draws the submitted, unfoveated swapchains (foveation_filter_shader.h).
  */
 struct TargetFoveation {
     int level = 0;
     bool eyeTracked = false;
+    bool filtered = false;
     bool foveated() const { return level != 0; }
     bool operator==(const TargetFoveation &other) const {
-        return level == other.level && eyeTracked == other.eyeTracked;
+        return level == other.level && eyeTracked == other.eyeTracked && filtered == other.filtered;
     }
     bool operator!=(const TargetFoveation &other) const { return !(*this == other); }
 };

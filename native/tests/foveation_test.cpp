@@ -1,11 +1,14 @@
 #include "foveation.h"
+#include "foveation_filter_shader.h"
 #include "foveation_overlay_shader.h"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <vector>
 using namespace office;
 
 namespace {
@@ -15,6 +18,7 @@ FoveationSupport full() {
     FoveationSupport s;
     s.fbFoveation = s.configuration = s.updateState = s.qcomTexture = true;
     s.metaEyeTracked = s.systemEyeTracked = s.eyePermission = s.eyeGaze = true;
+    s.filter = true;
     return s;
 }
 
@@ -75,8 +79,19 @@ void plans() {
          {FoveationQuality::Clarity, FoveationQuality::Balanced, FoveationQuality::Performance}) {
         const auto target = policy.desired(q);
         assert(target.foveated() && target.eyeTracked && target.level == foveationLevel(q));
+        assert(target.filtered && "every level is filtered when the reconstruction is available");
     }
-    assert(*policy.fallback() == 0);
+    assert(!off.filtered && "Off renders the submitted swapchains directly");
+    assert(policy.filterAvailable() && *policy.fallback() == 0);
+
+    auto noFilter = full();
+    noFilter.filter = false;
+    FoveationPolicy unfiltered(noFilter);
+    assert(!unfiltered.filterAvailable());
+    const auto direct = unfiltered.desired(FoveationQuality::Performance);
+    assert(direct.foveated() && direct.eyeTracked && !direct.filtered);
+    assert(direct != policy.desired(FoveationQuality::Performance));
+    assert(!unfiltered.filterFailed(direct) && "nothing to drop without the reconstruction");
 
     // Every setting change is a different target, so the world swapchains are recreated.
     for (auto a : kQualities)
@@ -166,6 +181,147 @@ void samples() {
     assert(s.frames == 0 && s.valid == 0 && s.invalid == 0 && s.failed == 0 && !s.centerValid);
 }
 
+void filterDegrade() {
+    FoveationPolicy policy(full());
+    const auto filtered = policy.desired(FoveationQuality::Balanced);
+    assert(filtered.filtered);
+    assert(!policy.filterFailed(policy.desired(FoveationQuality::Off)) &&
+           "Off targets are never filtered");
+    assert(policy.filterFailed(filtered) && "unfiltered targets are tried next");
+    assert(!policy.filterAvailable() && *policy.fallback());
+    assert(!policy.filterFailed(filtered) && "dropped once");
+    const auto direct = policy.desired(FoveationQuality::Balanced);
+    assert(direct.foveated() && direct.eyeTracked && !direct.filtered &&
+           direct.level == XR_FOVEATION_LEVEL_MEDIUM_FB);
+    // The eye-tracked fallback keeps filtering.
+    FoveationPolicy eye(full());
+    assert(eye.rejected(eye.desired(FoveationQuality::Clarity)));
+    const auto fixed = eye.desired(FoveationQuality::Clarity);
+    assert(fixed.filtered && !fixed.eyeTracked && fixed.foveated());
+    const std::string reason = eye.fallback();
+    assert(eye.filterFailed(fixed) && reason == eye.fallback() && "the first reason is kept");
+    // The runtime left the never-submitted swapchains unfoveated: same fallback, own reason.
+    FoveationPolicy bare(full());
+    assert(bare.filterFailed(bare.desired(FoveationQuality::Performance),
+                             "filtered swapchain not foveated"));
+    assert(std::string(bare.fallback()) == "filtered swapchain not foveated");
+    assert(!bare.desired(FoveationQuality::Performance).filtered);
+}
+
+// One axis of a low-density bin as the driver stores it: each low-density pixel repeated over
+// `step` full-resolution pixels, starting `phase` pixels into the first block.
+std::vector<float> upscaled(const std::vector<float> &samples, int step, int phase) {
+    std::vector<float> out(samples.size() * size_t(step));
+    for (size_t x = 0; x < out.size(); ++x)
+        out[x] = samples[std::min(samples.size() - 1, (x + size_t(phase)) / size_t(step))];
+    return out;
+}
+
+// GL_LINEAR between texel centres (i + 0.5), clamped at the edges.
+float linearTap(const std::vector<float> &image, float at) {
+    const float t = at - .5f;
+    const int i = int(std::floor(t));
+    const float f = t - float(i);
+    const auto texel = [&](int k) {
+        return image[size_t(std::clamp(k, 0, int(image.size()) - 1))];
+    };
+    return texel(i) * (1 - f) + texel(i + 1) * f;
+}
+
+// The resolve fragment along one axis: the decoded step picks the taps (filterTaps,
+// filterTapOffset), averaged with equal weights.
+std::vector<float> resolved(const std::vector<float> &image, float step) {
+    std::vector<float> out(image.size());
+    const int n = filterTaps(step);
+    for (size_t x = 0; x < image.size(); ++x) {
+        float sum = 0;
+        for (int i = 0; i < n; ++i)
+            sum += linearTap(image, float(x) + .5f + filterTapOffset(i, n, step));
+        out[x] = sum / float(n);
+    }
+    return out;
+}
+
+void filter() {
+    // Steps round to half pixels; anything past the range reads as the coarsest.
+    for (float sx : {1.f, 1.5f, 2.f, 3.f, 4.f, 8.f, 8.5f})
+        for (float sy : {1.f, 2.f, 4.f, 8.5f}) {
+            const auto back = decodeDensitySteps(encodeDensitySteps(sx, sy));
+            assert(near(back[0], sx) && near(back[1], sy));
+        }
+    assert(encodeDensitySteps(1.f, 1.f) == 0 && "full density is code 0");
+    assert(near(decodeDensitySteps(encodeDensitySteps(1.1f, .2f))[0], 1.f));
+    assert(near(decodeDensitySteps(encodeDensitySteps(.2f, 1.f))[0], 1.f));
+    assert(near(decodeDensitySteps(encodeDensitySteps(-4.f, 1.f))[0], 4.f));
+    assert(near(decodeDensitySteps(encodeDensitySteps(64.f, 1.f))[0], 8.5f));
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    assert(near(decodeDensitySteps(encodeDensitySteps(nan, 1.f))[0], 8.5f));
+    assert(encodeDensitySteps(8.5f, 8.5f) == 255);
+
+    assert(filterTaps(1.f) == 1 && filterTaps(1.2f) == 1 && filterTaps(nan) == 1);
+    assert(filterTaps(2.f) == 2 && filterTaps(3.f) == 3 && filterTaps(8.5f) == kMaxFilterTaps);
+    assert(near(filterTapOffset(0, 1, 4.f), 0));
+    assert(near(filterTapOffset(0, 2, 2.f), -.5f) && near(filterTapOffset(1, 2, 2.f), .5f));
+    assert(near(filterTapOffset(0, 3, 3.f), -1.f) && near(filterTapOffset(2, 3, 3.f), 1.f));
+
+    // Full density is copied, so the sharp region loses nothing.
+    const std::vector<float> edge{0, 0, 0, 1, 1, 1, .3f, .3f, .8f, .1f, .1f, 1, 1, 1, 0, 0};
+    const auto copied = resolved(edge, 1.f);
+    for (size_t i = 0; i < edge.size(); ++i)
+        assert(near(copied[i], edge[i]));
+
+    for (int step : {2, 3, 4, 6, 8}) {
+        for (int phase = 0; phase < step; ++phase) {
+            const auto blocks = upscaled(edge, step, phase);
+            const auto out = resolved(blocks, float(step));
+            float largestStep = 0, largestBlockStep = 0;
+            for (size_t x = size_t(2 * step); x + size_t(2 * step) < out.size(); ++x) {
+                largestStep = std::max(largestStep, std::abs(out[x + 1] - out[x]));
+                largestBlockStep = std::max(largestBlockStep, std::abs(blocks[x + 1] - blocks[x]));
+            }
+            // A 0 -> 1 edge between two low-density pixels is a single full-height step in the
+            // driver's blocks. Filtered, it is spread over at least three output pixels: half
+            // pixel steps for half density, a third or less for anything coarser.
+            assert(near(largestBlockStep, 1.f));
+            assert(largestStep <= (step == 2 ? .5f : 1.f / 3.f) + .001f);
+            // Flat regions stay flat.
+            const auto flat =
+                resolved(upscaled(std::vector<float>(8, .25f), step, phase), float(step));
+            for (float v : flat)
+                assert(near(v, .25f));
+        }
+    }
+
+    for (bool multiview : {true, false}) {
+        const auto s = foveationFilterShaders(multiview);
+        const auto again = foveationFilterShaders(multiview);
+        assert(s.vertex == again.vertex && s.densityFragment == again.densityFragment &&
+               s.resolveFragment == again.resolveFragment);
+        for (const std::string *stage : {&s.vertex, &s.densityFragment, &s.resolveFragment})
+            assert(stage->rfind("#version 300 es\n", 0) == 0);
+        assert((s.vertex.find("num_views = 2") != std::string::npos) == multiview);
+        assert((s.vertex.find("gl_ViewID_OVR") != std::string::npos) == multiview);
+        assert(s.densityFragment.find("gl_ViewID_OVR") == std::string::npos);
+        assert(s.resolveFragment.find("gl_ViewID_OVR") == std::string::npos);
+        assert(s.densityFragment.find("dFdx(fc.x)") != std::string::npos);
+        assert(s.densityFragment.find("dFdy(fc.y)") != std::string::npos);
+        // The shader's code matches encodeDensitySteps/decodeDensitySteps and the tap table.
+        assert(s.densityFragment.find("/ " + std::to_string(kDensityStepQuantum)) !=
+               std::string::npos);
+        assert(s.densityFragment.find("level.x * " + std::to_string(float(kDensityStepLevels))) !=
+               std::string::npos);
+        assert(s.resolveFragment.find("code / " + std::to_string(kDensityStepLevels)) !=
+               std::string::npos);
+        assert(s.resolveFragment.find("stepPx < 1.25 ? 1 : (stepPx < 2.25 ? 2 : " +
+                                      std::to_string(kMaxFilterTaps)) != std::string::npos);
+        assert(s.resolveFragment.find("((float(i) + 0.5) / float(n) - 0.5) * stepPx") !=
+               std::string::npos);
+        assert((s.resolveFragment.find("sampler2DArray source") != std::string::npos) == multiview);
+        assert(s.resolveFragment.find("pixel = vec4(c.rgb, 1.0);") != std::string::npos &&
+               "full density is a copy");
+    }
+}
+
 void overlay() {
     assert(densityBand(1.f) == 0 && densityBand(1.2f) == 0);
     assert(densityBand(2.f) == 1 && densityBand(-2.f) == 1);
@@ -221,7 +377,9 @@ int main() {
     degrade();
     eyeTrackedFrames();
     samples();
+    filterDegrade();
+    filter();
     overlay();
-    std::cout << "runtime foveation targets, fallbacks, eye-tracked results and overlay checks "
-                 "passed\n";
+    std::cout << "runtime foveation targets, fallbacks, eye-tracked results, filter and overlay "
+                 "checks passed\n";
 }

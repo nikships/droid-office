@@ -31,6 +31,8 @@ struct FoveationSupport {
     // XR_EXT_eye_gaze_interaction enabled and bound. Not a spec dependency; logged because
     // Godot found Galaxy XR needs it for eye-tracked foveation (godotengine/godot#113778).
     bool eyeGaze = false;
+    // The filtered reconstruction's programs compiled (foveation_filter.h).
+    bool filter = false;
 };
 
 /** Levels need the configuration extension; the profile is applied with xrUpdateSwapchainFB. */
@@ -95,6 +97,12 @@ inline const char *foveationLevelName(const TargetFoveation &foveation) {
  * runtime rejects something: eye-tracked -> the same level fixed -> swapchains without foveation
  * support (full resolution everywhere). Each step is kept for the rest of the session.
  *
+ * A foveated level is filtered whenever the reconstruction is available: the world renders into
+ * runtime-foveated swapchains that are never submitted, and the submitted swapchains, created
+ * without foveation support, receive a filtered copy (foveation_filter_shader.h). Unfiltered, the
+ * runtime's scaled bins are submitted as the driver upscaled them, in hard blocks. If the extra
+ * swapchains cannot be created, the targets fall back to unfiltered for the session.
+ *
  * Every change of the result is a new set of world swapchains with that profile applied first,
  * as Meta (ovrRenderer_Create, then ovrRenderer_SetFoveation) and Godot
  * (on_main_swapchains_created -> update_profile) apply theirs. A swapchain created without
@@ -111,6 +119,7 @@ class FoveationPolicy {
     /** World swapchains may carry XrSwapchainCreateInfoFoveationFB{SCALED_BIN}. */
     bool swapchainFoveation() const { return runtimeFoveation(support) && !swapchainRejected; }
     bool eyeTrackedAvailable() const { return eyeTrackedFoveation(support) && !eyeTrackedRejected; }
+    bool filterAvailable() const { return support.filter && !filterRejected; }
 
     TargetFoveation desired(FoveationQuality quality) const {
         TargetFoveation foveation;
@@ -118,7 +127,23 @@ class FoveationPolicy {
             return foveation;
         foveation.level = foveationLevel(quality);
         foveation.eyeTracked = eyeTrackedAvailable();
+        foveation.filtered = filterAvailable();
         return foveation;
+    }
+
+    /**
+     * Filtered targets could not be created (their second set of swapchains, or validation), or
+     * the runtime left their foveated swapchains, which are never submitted, without foveation.
+     * Returns true when unfiltered targets are worth trying instead.
+     */
+    bool filterFailed(const TargetFoveation &foveation,
+                      const char *why = "filtered targets rejected") {
+        if (!foveation.filtered || filterRejected)
+            return false;
+        filterRejected = true;
+        if (!*reason)
+            reason = why;
+        return true;
     }
 
     /**
@@ -168,7 +193,7 @@ class FoveationPolicy {
 
   private:
     FoveationSupport support;
-    bool swapchainRejected = false, eyeTrackedRejected = false;
+    bool swapchainRejected = false, eyeTrackedRejected = false, filterRejected = false;
     const char *reason = "";
 };
 
