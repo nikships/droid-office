@@ -1,5 +1,6 @@
 import type { AgentEffort, AgentProvider, WorkerStatus } from '../../shared/protocol';
 import { h, openModal, STATUS_LABEL } from './dom';
+import { controlHintsShown } from '../native/mode';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 import { repoPicker } from './prompt';
@@ -85,7 +86,8 @@ export function openAsk(opts: AskOptions) {
       wtRow,
       repos.element,
     ),
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
+    // The headset app names no keys; a keyboard paired to it still sends with Enter.
+    h('footer', {}, h('span.grow', {}, controlHintsShown() ? 'Enter to send · Shift+Enter for a new line' : ''), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
   pick(to);

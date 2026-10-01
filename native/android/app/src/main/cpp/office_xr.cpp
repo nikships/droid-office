@@ -14,6 +14,7 @@
 #include "refresh_policy.h"
 #include "rig_presentation.h"
 #include "scene_renderer.h"
+#include "status_layout.h"
 #include "xr_input.h"
 #include "xr_math.h"
 #include "xr_performance.h"
@@ -163,6 +164,7 @@ class Office {
     XrSwapchain statusSwapchain = XR_NULL_HANDLE;
     std::string previousStatus;
     bool previousStatusVisible = false;
+    office::status::CounterReveal counterReveal;
     XrPosef panelPose{{0, 0, 0, 1}, {0, 0, -1.5f}};
     bool panelPlaced = false;
     bool previousPanelOpen = true;
@@ -842,7 +844,8 @@ class Office {
                 instance, "xrGetFoveationEyeTrackedStateMETA");
             fovea.metaEyeTracked = getFoveationState != nullptr;
         }
-        // World + sharp screens + workspace + two pointers + the status shutdown handshake.
+        // World + sharp screens + workspace + two pointers + the status shutdown handshake,
+        // which uses one status column while the workspace is open (status_layout.h).
         sharpScreensAvailable = systemProperties.graphicsProperties.maxLayerCount >= 6;
         LOG("LAYER_CAPACITY max=%u sharpScreens=%d",
             systemProperties.graphicsProperties.maxLayerCount, sharpScreensAvailable);
@@ -935,8 +938,8 @@ class Office {
             env->ExceptionClear();
             throw std::runtime_error("Unable to create workspace panel");
         }
-        panelInfo.width = 1024;
-        panelInfo.height = 192;
+        panelInfo.width = office::status::kWidth;
+        panelInfo.height = office::status::kHeight;
         jobject statusSurface = nullptr;
         check(function<PFN_xrCreateSwapchainAndroidSurfaceKHR>(
                   instance, "xrCreateSwapchainAndroidSurfaceKHR")(session, &panelInfo,
@@ -945,8 +948,9 @@ class Office {
         activityClass = env->GetObjectClass(activity);
         env->CallVoidMethod(
             activity,
-            env->GetMethodID(activityClass, "onStatusSurface", "(Landroid/view/Surface;II)V"),
-            statusSurface, 1024, 192);
+            env->GetMethodID(activityClass, "onStatusSurface", "(Landroid/view/Surface;IIII)V"),
+            statusSurface, office::status::kWidth, office::status::kHeight,
+            office::status::kMessageWidth, office::status::kCounterLeft);
         env->DeleteLocalRef(activityClass);
         env->DeleteLocalRef(statusSurface);
         if (env->ExceptionCheck()) {
@@ -1747,14 +1751,29 @@ class Office {
             panel.size = {1.8f, 1.2f};
             panel.subImage.swapchain = panelSwapchain;
             panel.subImage.imageRect.extent = {2400, 1600};
-            auto status = office::structure<XrCompositionLayerQuad>(XR_TYPE_COMPOSITION_LAYER_QUAD);
-            status.space = viewSpace;
-            status.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-            status.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-            status.pose = {{0, 0, 0, 1}, {0, -.4f, -1.4f}};
-            status.size = {.9f, .16875f};
-            status.subImage.swapchain = statusSwapchain;
-            status.subImage.imageRect.extent = {1024, 192};
+            // Both status quads show columns of the one status Surface (status_layout.h).
+            auto statusMessage =
+                office::structure<XrCompositionLayerQuad>(XR_TYPE_COMPOSITION_LAYER_QUAD);
+            statusMessage.space = viewSpace;
+            statusMessage.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            statusMessage.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            statusMessage.pose = office::status::kMessagePose;
+            statusMessage.size = office::status::kMessageSize;
+            statusMessage.subImage.swapchain = statusSwapchain;
+            statusMessage.subImage.imageRect = {
+                {0, 0}, {office::status::kMessageWidth, office::status::kHeight}};
+            auto statusCounter = statusMessage;
+            statusCounter.pose = office::status::counterPose();
+            statusCounter.size = office::status::kCounterSize;
+            statusCounter.subImage.imageRect = {
+                {office::status::kCounterLeft, 0},
+                {office::status::kCounterWidth, office::status::kHeight}};
+            const bool counterClear =
+                counterReveal.visible(office::status::counterCovered(head, inputFrame.hands),
+                                      frame.predictedDisplayTime / 1e9);
+            const auto statusLayers = office::status::layers(
+                statusProducerVisible, controls.panelOpen, controls.statusCounter,
+                controls.statusMessage, counterClear);
             std::array<XrCompositionLayerQuad, 2> pointers;
             std::vector<const XrCompositionLayerBaseHeader *> layers;
             if (valid) {
@@ -1775,8 +1794,10 @@ class Office {
             // VIEW-space status does not depend on valid application eye poses. Drain a pending
             // Canvas post even when the world is temporarily invalid or shouldRender is false,
             // until the UI-thread producer shutdown acknowledgment arrives.
-            if (statusProducerVisible)
-                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&status));
+            if (statusLayers.message)
+                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&statusMessage));
+            if (statusLayers.counter)
+                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&statusCounter));
             auto end = office::structure<XrFrameEndInfo>(XR_TYPE_FRAME_END_INFO);
             end.displayTime = frame.predictedDisplayTime;
             end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;

@@ -1,15 +1,12 @@
 /**
- * The on-panel keyboard's keys, and what each press does: the bytes it types into a worker's
- * terminal, or the edit it makes to a text field. Pure, so tests run it in Node.
+ * The sign-in panel keyboard's keys (native/keyboard.ts), and the edit each press makes to a text
+ * field. Pure, so tests run it in Node.
  *
- * A press is described as a KeyLike (the same shape a real KeyboardEvent has), so the terminal
- * gets exactly the bytes a physical keyboard would send (vr/physical-keys.ts), including
- * Ctrl+Enter and Shift+Enter for workers that bind them (term-keys.ts).
+ * A press is described as a KeyLike (the same shape a real KeyboardEvent has), so the page's own
+ * handlers see the press a physical keyboard would make.
  */
 
-import { modifiedEnter } from '../term-keys';
-import { keyBytes, type KeyLike } from '../vr/physical-keys';
-import { isPaletteKey, type PaletteKey } from '../../shared/palette';
+import type { KeyLike } from '../vr/physical-keys';
 
 export type { KeyLike };
 
@@ -77,17 +74,6 @@ export function shiftedLabel(def: KeyDef): string {
   return SHIFTED[def.id] ?? def.id.toUpperCase();
 }
 
-/** How the panel names the command palette's shortcut: its keyboard has Ctrl and no ⌘. */
-export const COMMANDS_SHORTCUT = 'Ctrl+K';
-
-/**
- * Whether a press is the panel keyboard's Ctrl+K and the page won't open the palette for it by itself:
- * main.ts listens for ⌘K on a Mac-reported platform and Ctrl+K everywhere else.
- */
-export function nativeCommandsKey(e: PaletteKey, mac: boolean): boolean {
-  return mac && isPaletteKey(e, false);
-}
-
 /** The press a key makes with the latched modifiers, as a KeyboardEvent would describe it. */
 export function pressOf(id: string, mods: ReadonlySet<Modifier>): KeyLike {
   const shift = mods.has('shift');
@@ -118,21 +104,6 @@ export function codeOf(key: string): string {
     '/': 'Slash',
   };
   return named[base] ?? base;
-}
-
-/**
- * The bytes a press types into a worker's terminal, or null when it types nothing there.
- * `appCursor` is the terminal's application cursor mode (DECCKM), which shells and TUIs switch on:
- * then, as in xterm, the bare arrows, Home and End send `ESC O x` instead of `ESC [ x`.
- */
-export function terminalBytes(k: KeyLike, csiEnter: boolean, appCursor = false): string | null {
-  if (k.key === 'Enter') {
-    const enter = modifiedEnter(csiEnter, { ctrl: k.ctrlKey, shift: k.shiftKey, alt: k.altKey, meta: k.metaKey });
-    if (enter !== undefined) return enter;
-  }
-  const bytes = keyBytes(k);
-  if (appCursor && bytes && /^\x1b\[[ABCDHF]$/.test(bytes)) return `\x1bO${bytes[2]}`;
-  return bytes;
 }
 
 /** A text field's value and selection, the way HTMLInputElement reports them. */

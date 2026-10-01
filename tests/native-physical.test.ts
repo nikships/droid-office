@@ -73,7 +73,6 @@ function fixture(t: TestContext, at = new THREE.Vector3()) {
     reachOf: () => 4,
     reachAnim() {},
     onTarget() {},
-    aimLabel: () => null,
     physical: {
       player,
       climber,
@@ -228,6 +227,29 @@ test('held pole stays still until tangential hand motion; grip release steps off
   r.tick(r.frame(grip(-0.08, 0)));
   for (let i = 0; i < 20; i++) r.tick(r.frame(grip(-0.08, 0)));
   assert.equal(r.climber.active, false);
+});
+
+/** Every string in the renderer's control state. */
+function texts(value: unknown, path = 'state'): string[] {
+  if (typeof value === 'string') return [`${path}=${value}`];
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([k, v]) => texts(v, `${path}.${k}`));
+}
+
+test('a held gun, ladder or pole puts no instruction text in front of you', (t) => {
+  const gun = fixture(t);
+  gun.draw();
+  assert.deepEqual(texts(gun.controls.state()), [], 'the gun in your hand explains itself');
+  const ladder = fixture(t, new THREE.Vector3(LADDER.x, 0, LADDER.z));
+  const rung = (squeeze: number) => hand(pose(FLOOR.minX + 0.16 - LADDER.x, 1.2, 0.1), { squeeze });
+  ladder.tick(ladder.frame(rung(0)), ladder.frame(rung(1)));
+  assert.equal(ladder.climber.physical, true);
+  assert.deepEqual(texts(ladder.controls.state()), []);
+  const spot: PoleSpot = POLES[0];
+  const pole = fixture(t, new THREE.Vector3(spot.x, 0, spot.z + 0.6));
+  pole.tick(pole.frame(hand(pose(0, 1.2, -0.6))), pole.frame(hand(pose(0, 1.2, -0.6), { squeeze: 1 })));
+  assert.equal(pole.climber.grip, 'pole');
+  assert.deepEqual(texts(pole.controls.state()), []);
 });
 
 test('back holster excludes the front and follows horizontal heading without head pitch', () => {

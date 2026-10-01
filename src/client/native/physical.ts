@@ -136,12 +136,6 @@ export class NativePhysical {
     return this.gunHand !== null;
   }
 
-  get hint(): string | null {
-    if (this.gunHand !== null) return 'Hold grip · trigger to fire · release behind your back to holster';
-    if (!this.hooks.climber.physical) return null;
-    return this.hooks.climber.grip === 'ladder' ? 'Hold a rung or rail · pull down to climb · release both grips to let go' : 'Hold grip on the pole · move sideways to turn · release both grips to step off';
-  }
-
   /** Forget velocities on a recenter or rig jump; a held grip remains held. */
   reanchor(): void {
     for (const m of this.motion) {

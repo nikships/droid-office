@@ -57,12 +57,6 @@ export function updateNativeGraphicsMetrics(next: unknown) {
   repaint?.();
 }
 
-/** The closed-workspace compositor hint includes the same measured counter. */
-export function nativeGraphicsAim(aim: string): string {
-  if (!getNativeGraphicsSettings().fps) return aim;
-  return [nativeFpsCounter(metrics).text, aim].filter(Boolean).join(' · ');
-}
-
 export function openNativeGraphicsSettings(): void {
   if (modal) return;
   const status = h('p.ng-status', { role: 'status', 'aria-live': 'polite' });
@@ -177,7 +171,11 @@ export function openNativeGraphicsSettings(): void {
     h('p.setting-note', {}, 'Keeps nearby terminal screens at full resolution independently of world detail. Turning this off saves GPU time and uses the normal world rendering.'),
     h('p.setting-note', {}, 'Balanced foveation and recommended resolution are the defaults.'),
     h('label.choice.ng-fps', {}, fps, h('span', {}, 'Always show the FPS counter')),
-    h('p.setting-note', {}, 'The counter uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.'),
+    h(
+      'p.setting-note',
+      {},
+      'The counter sits small and faint at the lower-left edge of your view, and steps aside while a controller is in front of it. It uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.',
+    ),
   );
   const el = h(
     'section.modal.native-graphics',

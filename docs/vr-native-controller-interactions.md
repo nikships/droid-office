@@ -36,13 +36,13 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 | Y, left secondary | Open/close Find anything |
 | A, right primary | Jump in the office |
 | B, right secondary | Go back one workspace step; return a carried card when in the office |
-| Right stick click | Show/hide keyboard while workspace is open |
 | Either trigger | Pointer selection, shared world actions, use a held object, or fire a held gun |
 | Either grip | Grab/hold/release a nearby object, ladder, pole or back-holstered gun |
 
 Movement and turning retain their hands if one controller disconnects. The left stick never
 inherits right-stick teleport/turn, and the right stick never inherits left-stick movement.
-The controls panel and settings describe the same roles. Grip never opens, closes or navigates
+The Controls window and settings describe the same roles; no other native text names a control,
+as in Half-Life: Alyx, where the world and the controllers explain themselves. Grip never opens, closes or navigates
 a menu, and no longer returns a ray-picked issue card.
 
 ## Physical interactions

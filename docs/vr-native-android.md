@@ -235,8 +235,42 @@ The original desktop windows, including terminals, are displayed through a 2400Ã
 Surface compositor layer. This preserves text resolution independently of world foveation.
 Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
-The headset UI includes a controller-operated keyboard, larger targets and adjustable terminal text.
-A smaller compositor panel carries interaction hints and feedback when the workspace closes.
+The headset UI has larger targets and adjustable terminal text, and no on-screen keyboard: a
+keyboard paired to the headset types into the open terminal or the focused field, because
+`OfficeActivity.dispatchKeyEvent` forwards its keys to the page. Only the sign-in page docks a
+controller keyboard, for the office password (`src/client/login.ts`).
+Every launch and page reload starts in the office with the workspace closed. Nothing opens Home
+by itself; the left controller's Menu button does (`native/ui.ts`, `tests/native-launch.test.ts`).
+Before the office page sends its first packet, the panel shows the app's own connection screen,
+and that packet closes it.
+With the workspace closed, one small Android Surface shows only the FPS counter, when that
+Graphics setting is on, and each toast while it lasts. The renderer shows its two columns as
+separate head-locked quads (`status_layout.h`). A toast sits in a card fitted to its text,
+1.4 m ahead and about 16 degrees below the line of sight. The counter has no card: it is faint
+text, 0.7 degrees tall (Android XR's 14 dp minimum), facing the eyes from the lower-left edge of
+the view. It starts about 31 degrees left of the line of sight, on a line 27 degrees below it,
+so it never lands on the face of a worker the player looks at. It hides while a tracked
+controller is in front of it, so no text is drawn across the player's hand, and returns 0.3 s
+after the hand moves away. The native page names no controls:
+no aim labels, carry, climbing or gun hints, "press E" toasts, key legends or world signs
+(`controlHintsShown` in `src/client/native/mode.ts`). Boards state only what is so: the empty
+Services board says that no web servers are running, without the desktop line on how it fills,
+and the DroidProxy refresh key on the machine monitor carries only its â†» glyph. The Controls
+window, opened on purpose, still lists the controller roles. Desktop and WebXR keep their hints.
+No name, status bubble, task card, light or pitch floats over a character either
+(`floatingTagsShown`): a worker wears no antenna or status bulb, and its headset band runs from
+ear cup to ear cup. A worker's name, engine, state and task are printed on its seat's nameplate
+(`src/client/world/nameplate.ts`): a three-sided sign on its desk, a plate on the back of its
+bean bag or meeting chair, or a screen set into the front of a board agent's kiosk. Its state
+reads like a device's status light, a colored dot and a word ("READY"). A status lamp on the
+seat, a lit dome in a dark collar, glows in the worker's status color, breathing while it works
+and blinking while it waits on someone: on top of the desk sign, on the plate's top edge, or on
+the kiosk counter's front corner. A teammate wears a name badge on their shirt. A kiosk has no
+"Ask me" sign: its screen shows the agent's name, its board and its state. The first trigger pull
+at the kiosk greets the agent, which looks up while the screen says what it does; the screen goes
+back to the nameplate once you ask it something or walk away, and the next pull opens the ask
+form.
+A board's problem says only what is wrong (`worldNotice`), never what to type to fix it.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.
@@ -289,7 +323,9 @@ controller fallback. Both profiles bind the physical Menu action on the left con
 
 A real UI freeze was traced to the hidden status panel's Canvas producer filling an unconsumed
 BufferQueue and blocking Android's UI thread. The installed fix stops that producer while its
-quad is hidden and keeps consuming the quad until the UI thread acknowledges shutdown. The
+quads are hidden and keeps consuming the Surface until the UI thread acknowledges shutdown. While
+the producer runs, at least one status quad is submitted: the toast column, transparent without a
+toast, does that alone while the counter is off or covered and while the workspace is open. The
 WebView's scene packets and control heartbeat then continued advancing while opening and
 closing the workspace. Native FPS alone would have concealed this freeze.
 

@@ -149,7 +149,7 @@ public final class OfficeActivity extends Activity {
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         TextView text = new TextView(this);
-        text.setText("Opening Droid Office XR… Use Galaxy XR motion controllers to continue.");
+        text.setText("Opening Droid Office XR…");
         setContentView(text);
         if (checkSelfPermission("android.permission.EYE_TRACKING_FINE") !=
             PackageManager.PERMISSION_GRANTED) {
@@ -243,14 +243,19 @@ public final class OfficeActivity extends Activity {
         });
     }
 
-    public void onStatusSurface(Surface surface, int width, int height) {
+    /**
+     * The renderer shows [0, messageWidth) as the toast and [counterLeft, width) as the FPS
+     * counter.
+     */
+    public void onStatusSurface(Surface surface, int width, int height, int messageWidth,
+                                int counterLeft) {
         runOnUiThread(() -> {
             if (destroyed) {
                 surface.release();
                 return;
             }
             statusSurface = surface;
-            statusPanel = new NativeStatusPanel(surface, width, height);
+            statusPanel = new NativeStatusPanel(surface, width, height, messageWidth, counterLeft);
             statusPanel.setVisible(sessionVisible && statusLayerVisible);
             nativeStatusVisible(sessionVisible && statusLayerVisible);
         });
@@ -265,6 +270,8 @@ public final class OfficeActivity extends Activity {
             nativeStatusVisible(sessionVisible && visible);
             try {
                 JSONObject status = new JSONObject(packet);
+                // "aim" keeps its name across app and office versions; it carries only the FPS
+                // counter now, never an aim label or control hint.
                 statusPanel.setText(status.optString("aim"), status.optString("message"));
             } catch (JSONException invalid) {
                 Log.w("OfficeXR", "Invalid status packet");
@@ -383,14 +390,6 @@ public final class OfficeActivity extends Activity {
         manual.addView(connect);
         addAddressKeyboard(manual, address);
         form.addView(manual);
-        TextView controls = new TextView(context);
-        controls.setText(
-            "Point with a motion controller and press the trigger to select. "
-            + "Use its thumbstick to scroll. Pair a Bluetooth keyboard for terminal work.");
-        controls.setTextColor(Color.LTGRAY);
-        controls.setTextSize(18);
-        controls.setPadding(0, 16, 0, 0);
-        form.addView(controls);
         ScrollView scroll = new ScrollView(context);
         scroll.setFillViewport(true);
         scroll.addView(form);

@@ -1,45 +1,25 @@
 /**
- * The headset panel's own keyboard, for controller input: a docked QWERTY board under the page that
- * types into whatever has focus, without the system's on-screen keyboard or an IME.
+ * The sign-in page's keyboard on the headset panel (login.ts), for controller input: a docked
+ * QWERTY board under the page that types into whatever has focus, without the system's on-screen
+ * keyboard or an IME. Signing in to an office from the headset needs its password before anything
+ * else works, and there may be no other keyboard. The office page itself has no on-screen keyboard:
+ * a keyboard paired to the headset types there.
  *
  * Keys never take focus (pointerdown is cancelled), so the caret stays where it was. Where a key
  * goes:
  * - a text field (input, textarea): edited in place, caret and selection included, with the
  *   `keydown`, `input`, `change` and `keyup` events the page's own handlers listen for;
- * - the open worker terminal: the bytes a physical keyboard would send, through xterm, so Ctrl
- *   chords, Alt as meta, cursor keys and Ctrl/Shift+Enter reach the worker unchanged;
- * - anything else (a button, the menu, a dialog): a synthetic `keydown`/`keyup`, so the page's
- *   own shortcuts and dialogs behave as with a real key, and then the default a browser would
- *   give it (Tab moves focus, Enter and Space press a button).
+ * - anything else (a button, the form): a synthetic `keydown`/`keyup`, so the page's own
+ *   handlers behave as with a real key, and then the default a browser would give it (Tab moves
+ *   focus, Enter and Space press a button).
  *
  * Ctrl, Alt and Shift latch for the next key; tap one twice to lock it, a third time to let go.
  */
 
 import './keyboard.css';
-import type { TerminalSink } from '../ui/terminal';
 import { toast } from '../ui/dom';
 import { KeyActivations, PanelClipboard, sameTextSelection } from './keyboard-actions';
-import { KEYBOARD_ROWS, codeOf, editText, insertText, pressOf, shiftedLabel, terminalBytes, type KeyDef, type KeyLike, type Modifier, type TextEdit } from './keys';
-
-export interface KeyboardOptions {
-  /** The worker terminal that's open, if any. */
-  terminal?: () => TerminalSink | null;
-  /** Where it remembers whether it was left open. */
-  storageKey?: string;
-  onVisibility?: (shown: boolean) => void;
-}
-
-export interface PanelKeyboard {
-  readonly element: HTMLElement;
-  shown(): boolean;
-  show(on: boolean): void;
-  toggle(): void;
-  /** Presses a key by its id in KEYBOARD_ROWS (`a`, `Enter`, `mod:ctrl`), as a tap on it would. */
-  press(id: string): void;
-  /** Types a whole press, modifiers and all, wherever focus is (the keyboard's latches aside). */
-  type(k: KeyLike): void;
-  dispose(): void;
-}
+import { KEYBOARD_ROWS, codeOf, editText, insertText, pressOf, shiftedLabel, type KeyDef, type KeyLike, type Modifier, type TextEdit } from './keys';
 
 const TEXT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number', '']);
 const REPEATS = new Set(['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
@@ -48,9 +28,9 @@ const REPEAT_EVERY = 60;
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
-/** A focused text field the keyboard edits itself; xterm's hidden textarea isn't one. */
+/** A focused text field the keyboard edits itself. */
 function textField(el: Element | null): Field | null {
-  if (el instanceof HTMLTextAreaElement) return el.closest('.xterm') ? null : el;
+  if (el instanceof HTMLTextAreaElement) return el;
   if (el instanceof HTMLInputElement && TEXT_TYPES.has(el.type)) return el;
   return null;
 }
@@ -84,8 +64,8 @@ function selectionOf(f: Field): { start: number; end: number; dir: 'forward' | '
   }
 }
 
-export function mountKeyboard(opts: KeyboardOptions = {}): PanelKeyboard {
-  const storageKey = opts.storageKey ?? 'droid-office.panel-keyboard';
+/** Docks the keyboard under the page, showing; its Hide key folds it into a Keyboard button that brings it back. */
+export function mountKeyboard() {
   const latched = new Set<Modifier>();
   const locked = new Set<Modifier>();
   /** Fields typed into since they took focus, which get a `change` when they lose it, like a browser's. */
@@ -228,13 +208,6 @@ export function mountKeyboard(opts: KeyboardOptions = {}): PanelKeyboard {
     }
   }
 
-  function typeIntoTerminal(t: TerminalSink, k: KeyLike) {
-    // The desktop's ways out of a terminal, which xterm would otherwise type.
-    if ((k.key === 'Escape' && k.shiftKey) || (k.ctrlKey && !k.altKey && k.key === ']')) return t.close();
-    const bytes = terminalBytes(k, t.csiEnter(), t.appCursor());
-    if (bytes !== null) t.input(bytes);
-  }
-
   function typeElsewhere(el: Element | null, k: KeyLike) {
     const target = el instanceof HTMLElement && el !== document.body ? el : document.body;
     const go = fire(target, 'keydown', k);
@@ -263,8 +236,6 @@ export function mountKeyboard(opts: KeyboardOptions = {}): PanelKeyboard {
     const active = document.activeElement;
     const field = textField(active);
     if (field) return typeIntoField(field, k);
-    const term = opts.terminal?.();
-    if (term && (active?.closest('.xterm') || term.holdsKeys())) return typeIntoTerminal(term, k);
     typeElsewhere(active, k);
   }
 
@@ -313,19 +284,21 @@ export function mountKeyboard(opts: KeyboardOptions = {}): PanelKeyboard {
   toggleBtn.addEventListener('mousedown', noFocus);
   toggleBtn.addEventListener('click', () => show(true));
 
-  const onFocusOut = (e: FocusEvent) => {
-    const f = textField(e.target as Element);
-    if (!f || !dirty.has(f)) return;
-    dirty.delete(f);
-    f.dispatchEvent(new Event('change', { bubbles: true }));
-  };
-  document.addEventListener('focusout', onFocusOut, true);
+  document.addEventListener(
+    'focusout',
+    (e) => {
+      const f = textField(e.target as Element);
+      if (!f || !dirty.has(f)) return;
+      dirty.delete(f);
+      f.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    true,
+  );
 
   const root = document.documentElement;
-  const height = new ResizeObserver(() => root.style.setProperty('--native-kb-h', `${isShown ? board.offsetHeight : 0}px`));
-  height.observe(board);
-
   let isShown = false;
+  new ResizeObserver(() => root.style.setProperty('--native-kb-h', `${isShown ? board.offsetHeight : 0}px`)).observe(board);
+
   function show(on: boolean) {
     isShown = on;
     board.classList.toggle('open', on);
@@ -338,36 +311,6 @@ export function mountKeyboard(opts: KeyboardOptions = {}): PanelKeyboard {
       locked.clear();
       paintMods();
     }
-    try {
-      localStorage.setItem(storageKey, on ? '1' : '0');
-    } catch {
-      // storage blocked
-    }
-    opts.onVisibility?.(on);
   }
-  let saved = false;
-  try {
-    saved = localStorage.getItem(storageKey) === '1';
-  } catch {
-    // storage blocked
-  }
-  show(saved);
-
-  return {
-    element: board,
-    shown: () => isShown,
-    show,
-    toggle: () => show(!isShown),
-    press,
-    type,
-    dispose() {
-      stopRepeat();
-      height.disconnect();
-      document.removeEventListener('focusout', onFocusOut, true);
-      board.remove();
-      toggleBtn.remove();
-      document.body.classList.remove('native-kb-open');
-      root.style.removeProperty('--native-kb-h');
-    },
-  };
+  show(true);
 }

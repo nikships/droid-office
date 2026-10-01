@@ -1,3 +1,5 @@
+import { controlHintsShown } from '../native/mode';
+
 type Attrs = Record<string, string | number | boolean | EventListener | undefined | null>;
 type Child = Node | string | number | null | undefined | false;
 
@@ -164,6 +166,11 @@ export function toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): 
     setTimeout(() => el.remove(), 300);
   }, 3500);
   return el;
+}
+
+/** A toast that only says which control does something: none in the headset app (native/mode.ts controlHintsShown). */
+export function hintToast(text: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  if (controlHintsShown()) toast(text, level);
 }
 
 export function timeAgo(iso: string | number): string {

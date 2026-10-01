@@ -26,7 +26,8 @@ struct ControlState {
     bool teleportValid = false;
     std::vector<Haptic> haptics;
     std::string status = "{\"aim\":\"\",\"message\":\"\"}";
-    bool statusVisible = false;
+    // statusVisible: either part has text. The counter and toast are composited separately.
+    bool statusVisible = false, statusCounter = false, statusMessage = false;
     uint64_t revision = 0;
     // These are presentation metadata, never player/server state. The receipt clock is
     // native steady_clock, assigned atomically with the validated snapshot.

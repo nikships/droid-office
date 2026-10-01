@@ -81,7 +81,7 @@ import { Voice } from './voice';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -125,8 +125,11 @@ import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativeScene } from './native/scene';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
-import { getNativeGraphicsSettings, nativeGraphicsAim, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
+import { Nameplate } from './world/nameplate';
+import { getNativeGraphicsSettings, setNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
 import { nativeGraphicsPacket } from './native/graphics-settings';
+import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
 import { captureVrKeys } from './vr/physical-keys';
@@ -137,6 +140,8 @@ const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
 const nativeMode = isNativeMode();
+/** Names, status bubbles and pitches float over characters; the headset app prints them on seats' nameplates instead (see plateAt). */
+const floatingTags = floatingTagsShown();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
@@ -211,7 +216,10 @@ noOutline(office.group);
 noOutline(holiday.group);
 
 // ---- Board agents -------------------------------------------------------------------------------
-/** What each board agent is for: its board's icon, what it offers on the card over its head, and an example ask. */
+/**
+ * What each board agent is for: its board's icon, what it offers on the card over its head, and an
+ * example ask. The headset app shows the offer on its kiosk's screen only once you talk to it.
+ */
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
@@ -223,12 +231,82 @@ const idleAgents = STATIONS.map((def) => {
   const agent = STATION_AGENT[kind];
   const model = new Worker(agent.name, agent.color);
   model.setStatus('idle', false);
-  model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
+  if (floatingTags) model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
+  // Its nameplate says which board it's for (see seatIdleAgents).
+  else model.setRole(def.label);
   const view = office.desks.get(def.id)!;
   view.vacancy.children[0].add(model.root);
   noOutline(model.root);
   return { model, view };
 });
+
+// ---- Nameplates (the headset app) ----------------------------------------------------------------
+/**
+ * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
+ * there, what it is and how it's doing, printed where it sits instead of floating over its head. A
+ * kiosk's is the screen set into its front.
+ */
+const plates = new Map<string, Nameplate>();
+
+/** The nameplate on `deskId`'s seat, made the first time it's asked for; null where tags float (desktop, WebXR). */
+function plateAt(deskId: string): Nameplate | null {
+  if (floatingTags) return null;
+  let plate = plates.get(deskId);
+  const desk = office.desks.get(deskId);
+  if (!plate && desk) {
+    plate = new Nameplate(desk.plate);
+    desk.plate.anchor.add(plate.root);
+    plates.set(deskId, plate);
+  }
+  return plate ?? null;
+}
+
+/** A board agent waiting at its kiosk has the kiosk's screen, and gives it up while someone's hired there. */
+function seatIdleAgents() {
+  if (floatingTags) return;
+  for (const a of idleAgents) a.model.setPlate(a.view.vacancy.visible ? plateAt(a.view.def.id) : null);
+}
+
+/**
+ * The kiosk whose agent you've started talking to, in the headset app. Nothing says what a board
+ * agent is for until then: its kiosk's screen shows its pitch (STATION_INFO) from your hello until
+ * you ask it something or walk away.
+ */
+let talkingTo: string | null = null;
+/** How far (meters) from a kiosk you can walk before its agent stops talking to you. */
+const TALK_LEAVE = 3.5;
+
+/** Whoever stands at a kiosk: the agent hired there, or the one waiting to be asked. */
+function agentAt(deskId: string): Worker | undefined {
+  const w = store.workerAtDesk(deskId);
+  return (w && workerViews.get(w.id)?.model) || idleAgents.find((a) => a.view.def.id === deskId)?.model;
+}
+
+/** Hello at a kiosk: its agent looks up with a little hop, and the kiosk's screen shows its pitch. */
+function startTalking(deskId: string) {
+  const kind = DESK_BY_ID.get(deskId)?.station;
+  const plate = plateAt(deskId);
+  if (!kind || !plate) return;
+  if (talkingTo !== deskId) stopTalking();
+  talkingTo = deskId;
+  const info = STATION_INFO[kind];
+  plate.pitch({ heading: `${info.icon} ${STATION_AGENT[kind].name}`, title: info.offer, body: info.does });
+  agentAt(deskId)?.cheer(0.6);
+}
+
+/** The kiosk's screen goes back to the agent's nameplate. */
+function stopTalking() {
+  if (!talkingTo) return;
+  plates.get(talkingTo)?.pitch(null);
+  talkingTo = null;
+}
+
+/** Each frame: the nameplates' lamps, and the agent you're talking to letting you go once you walk off. */
+function updatePlates(dt: number) {
+  for (const plate of plates.values()) plate.update(dt);
+  const def = talkingTo ? DESK_BY_ID.get(talkingTo) : undefined;
+  if (talkingTo && (!def || upTop || Math.hypot(player.pos.x - def.x, player.pos.z - def.z) > TALK_LEAVE)) stopTalking();
+}
 
 // Boards: each draws onto a canvas texture, redrawn whenever what it shows changes.
 /** How much of its light a wall board gives off in the dark room: dim, but its text stays easy to read. */
@@ -329,7 +407,7 @@ const tvIdle = (() => {
     g.fillText('OFFICE TV', 116, 376);
     g.fillStyle = '#8c8c8c';
     g.font = `500 30px ${MONO}`;
-    g.fillText('CLICK “SHARE SCREEN” TO PUT SOMETHING UP HERE', 116, 432);
+    if (controlHintsShown()) g.fillText('CLICK “SHARE SCREEN” TO PUT SOMETHING UP HERE', 116, 432);
     t.needsUpdate = true;
   };
   const t = new THREE.CanvasTexture(c);
@@ -517,10 +595,10 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
   if (!it) return;
   if ((it.kind === 'desk' || it.kind === 'station') && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
-    if (w?.downedUntil !== undefined) return toast(`Walk closer to ${w.name}'s body to revive`);
+    if (w?.downedUntil !== undefined) return hintToast(`Walk closer to ${w.name}'s body to revive`);
   }
   if (it.kind === 'coffee') {
-    toast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
+    hintToast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
     return;
   }
   if (it.kind === 'elevator' && it.floorId) {
@@ -583,7 +661,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
         return;
       }
       decorArmed = { id: d.id, until: now + 6000 };
-      toast(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}. E again to take it down`);
+      toast(withControlHint(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}`, '. E again to take it down'));
       return;
     }
     if (it.kind === 'tv' || it.kind === 'cabinet' || it.kind === 'bookshelf' || it.kind === 'ball' || it.kind === 'golf') {
@@ -1225,7 +1303,7 @@ function teeOff() {
   if (vr.active) return toast("The golf tee isn't in VR yet — hop on the desktop for that one", 'warn');
   const other = teeTaken();
   if (other) return toast(`${other} is on the tee — wait your turn`, 'warn');
-  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
+  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (walkingTo) stopWalking();
@@ -1413,18 +1491,19 @@ const puffs: Puff[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
-  if (nativeControls?.active) return toast('Hold grip behind your back to draw the gun', 'info');
+  // The headset draws it physically, from the holster behind your back (native/physical.ts).
+  if (nativeControls?.active) return;
   if (gunOut) {
     holsterGun();
     return;
   }
   if (vr.active) return toast("The gun isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (golf.active) return toast('Your hands are full: put the club back first (E)', 'warn');
+  if (golf.active) return toast(withControlHint('Your hands are full: put the club back first', ' (E)'), 'warn');
   if (climber.active) return toast('Your hands are full: both hands on the climb', 'warn');
-  if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
-  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
+  if (hanger.active) return toast(withControlHint('Your hands are full: hang the picture first', ' (or F to stop)'), 'warn');
+  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
-  if (holdingBall()) return toast('Your hands are full: drop the ball first (Q)', 'warn');
+  if (holdingBall()) return toast(withControlHint('Your hands are full: drop the ball first', ' (Q)'), 'warn');
   gunOut = true;
   hands.holdGun(true);
   me.setGun(true);
@@ -2252,6 +2331,7 @@ function syncWorkers() {
       desk.chair.rotation.y = 0;
       v = { model, laptop, deskId: w.deskId, status: '', acked: true };
       workerViews.set(w.id, v);
+      model.setPlate(plateAt(w.deskId));
     }
     if (v.status !== w.status || v.acked !== w.acked) {
       // It just finished or started waiting on you (not already so when this page first saw it): ding, and notify if you're away.
@@ -2275,12 +2355,21 @@ function syncWorkers() {
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
-    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
     const deskDef = DESK_BY_ID.get(w.deskId);
+    if (floatingTags) v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
+    else {
+      // Its nameplate has a line of its own for what it is, under its name: a board agent's says
+      // which board it's for first, as it did while it waited at its kiosk (see idleAgents).
+      const provider = providerLabel(w.provider, store.project);
+      const engine = w.kind === 'shell' ? 'Shell' : engineBadge ? `${provider} · ${engineBadge}` : provider;
+      v.model.setRole(deskDef?.station ? `${deskDef.label} · ${engineBadge ?? provider}` : engine);
+      v.model.setTask(meetingCard(w) ?? w.task);
+    }
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
-    v.laptop.setPlaceholder(w.lost ? `🌿 ${w.name}'s worktree was deleted — press E to fix it` : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    const lost = withControlHint(`🌿 ${w.name}'s worktree was deleted`, ' — press E to fix it');
+    v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? withControlHint(`💤 ${w.name} is asleep`, ` — press R to ${again}`) : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
       arrivals.forget(v.model);
       casualties.shoot(w.id, v.model, desk.seatAnchor);
@@ -2289,6 +2378,7 @@ function syncWorkers() {
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
+    v.model.setPlate(null);
     const desk = office.desks.get(v.deskId);
     // A shot worker: the medics take the body instead of the send-home walk-out.
     if (casualties.dying(id)) {
@@ -2349,6 +2439,7 @@ function arrangeSeats() {
   const free = vacantSeats(store.workers.values(), (id) => departures.seated(id));
   for (const [id, desk] of office.desks) desk.vacancy.visible = free.has(id);
   const appeared = office.setBeanbags(beanbagsOut((id) => !free.has(id)));
+  seatIdleAgents();
   // One came out right where you're standing (on the office floor, not down in the garage): you end up on top of it.
   const p = player.pos;
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
@@ -2460,7 +2551,7 @@ function promptAtDesk(deskId: string) {
   } else if (w.lost) {
     fixLostWorktree(w);
   } else if (isAsleep(w.status)) {
-    toast(`${w.name} is asleep — press R to resume first`, 'warn');
+    toast(withControlHint(`${w.name} is asleep`, ' — press R to resume first'), 'warn');
   } else if (w.kind === 'shell') {
     openPrompt({
       title: `🐚 Run in ${w.name}`,
@@ -2534,7 +2625,10 @@ function hireAtDesk(deskId: string) {
 function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
-  if (w.downedUntil !== undefined) return toast(`Walk up to ${w.name} and press E to revive — otherwise the medics take it and delete its worktree and branch`, 'warn');
+  if (w.downedUntil !== undefined) {
+    const revive = controlHintsShown() ? `Walk up to ${w.name} and press E to revive — otherwise` : `${w.name} is down: unless it's revived,`;
+    return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
+  }
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
   const session = w.kind === 'shell' ? 'shared shell' : `${providerLabel(w.provider, store.project)} session`;
   if (w.meeting) {
@@ -2873,7 +2967,7 @@ function askStation(deskId: string) {
   // Nobody there yet: asking hires the agent.
   if (!w && officeIsFull()) return;
   const subtitle = !w
-    ? `${info.does}, in a terminal of my own: press O at the kiosk to watch.`
+    ? `${withControlHint(`${info.does}, in a terminal of my own`, ': press O at the kiosk to watch')}.`
     : isAsleep(w.status)
       ? `The ${name} is asleep: this wakes it up, and it carries on where it left off.`
       : isBusy(w.status)
@@ -2887,7 +2981,10 @@ function askStation(deskId: string) {
     warning: w ? undefined : pressureNote(store.machine),
     providerOption: !w,
     deskId,
-    onSubmit: (text, o) => net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort }),
+    onSubmit: (text, o) => {
+      stopTalking();
+      net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort });
+    },
   });
 }
 
@@ -3016,7 +3113,7 @@ function goToNextWaiting() {
   if (headsetActive()) headsetControls().faceAvatar();
   const waiting = waitingInOrder(store.workers.values());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
-  nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
+  nextToast = toast(withControlHint(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}`, '. E opens its terminal'));
 }
 
 /** The waiting worker you're standing at, if any: N skips it while anyone else is waiting. */
@@ -3320,7 +3417,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if ((target.kind === 'desk' || target.kind === 'station') && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
     if (w?.downedUntil !== undefined) {
-      if (key === 'E' && !reviveNearby()) toast(`Walk closer to ${w.name}'s body to revive`, 'info');
+      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}'s body to revive`, 'info');
       return;
     }
   }
@@ -3345,6 +3442,9 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   }
   if (target.kind === 'station' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
+    // In the headset app you say hello first: the agent looks up and its pitch lights its counter
+    // display. Asking it something comes next. One waiting on an answer goes straight to it.
+    if (key === 'E' && !floatingTags && talkingTo !== target.deskId && w?.status !== 'needs_input') return startTalking(target.deskId);
     if (key === 'E' || key === 'P') return askStation(target.deskId);
     if (key === 'O' && w) return openWorkerTerminal(w.id);
     if (key === 'X' && w) return killWorker(w.id);
@@ -3537,7 +3637,7 @@ let windFrom = 0;
 /** E at the ball: it's yours, if nobody beats you to it. */
 function takeBall() {
   if (vr.active) return toast("The basketball isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (carrying) return toast('Your hands are full: put the card back first (Q)', 'warn');
+  if (carrying) return toast(withControlHint('Your hands are full: put the card back first', ' (Q)'), 'warn');
   if (ball.holder) return;
   reach();
   sound.ball('bounce', ball.at, 1.5);
@@ -3725,7 +3825,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
         take: () => {
           putBack();
           dropBall();
-          toast('☕ Bring the mug to your mouth, or press trigger. Let go to put it down.');
+          hintToast('☕ Bring the mug to your mouth, or press trigger. Let go to put it down.');
         },
         use: () => {
           if (item.empty) return;
@@ -3756,7 +3856,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
       item: { issue: issue.number, title: issue.title },
       take: () => {
         pickUp(issue);
-        toast(`✋ Holding #${issue.number}: trigger or free-hand tap to pin, queue or meet. Let go to return it.`);
+        hintToast(`✋ Holding #${issue.number}: trigger or free-hand tap to pin, queue or meet. Let go to return it.`);
       },
       use,
       release: (aim) => {
@@ -3792,7 +3892,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
+  toast(withControlHint(`✋ You took #${it.number} off the board`, ': take it to an empty desk, a worker or the 📋 queue and press E'));
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -3859,10 +3959,10 @@ function onQueue(issue: number): boolean {
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
-  if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
+  if (w.downedUntil !== undefined) return controlHintsShown() ? `Walk up to ${w.name}'s body and press E to revive first` : `${w.name} is down`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
-  if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
-  if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
+  if (w.lost) return withControlHint(`${w.name}'s worktree was deleted`, ' — press E at its desk to fix it');
+  if (isAsleep(w.status)) return withControlHint(`${w.name} is asleep`, ' — press R to resume first');
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
   return '';
 }
@@ -5242,6 +5342,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   }
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
+  updatePlates(dt);
   departures.update(dt, t);
   arrivals.update(dt);
   casualties.update(dt, t);
@@ -5394,14 +5495,7 @@ if (nativeMode) {
     togglePanel: () => nativeUi?.togglePanel(),
     panelOpen: () => nativeUi?.panelState().open === true,
     openCommands: () => nativeUi?.openCommands(),
-    toggleKeyboard: () => nativeUi?.toggleKeyboard(),
     back: () => nativeUi?.back(),
-    aimLabel: (it, note) => {
-      if (it.kind === 'gong') return 'Merge gong · strike the disc with a controller';
-      if (it.kind === 'ladder') return 'Ladder · hold grip on a rail or rung and pull down to climb';
-      if (it.kind === 'pole') return 'Fire pole · hold grip on the pole to slide or turn';
-      return vrHooks.aimLabel(it, note);
-    },
     physical: {
       player,
       climber,
@@ -5438,7 +5532,7 @@ if (nativeMode) {
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
         control: control ? { ...control, graphics: nativeGraphicsPacket(getNativeGraphicsSettings()) } : control,
-        panel: { ...nativeUi?.panelState(), status: { aim: nativeGraphicsAim(control?.aim ?? ''), message } },
+        panel: { ...nativeUi?.panelState(), status: nativeStatus(metrics, getNativeGraphicsSettings().fps, message) },
       };
     },
     reset: () => nativeScene?.reset(),
@@ -5505,6 +5599,7 @@ void whoami().then(() => {
   arcade,
   cabinet,
   workerViews,
+  plates,
   departures,
   arrivals,
   scene,
