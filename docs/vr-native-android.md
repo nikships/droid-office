@@ -195,7 +195,10 @@ level.
 
 `FRAME_METRICS` carries `foveationSupported`, `foveationEnabled` and `foveationLevel` for the
 bound targets. The details are a separate `FOVEATION_METRICS` line, because together they
-exceeded Android's 1024-byte log record, and the page receives them as `foveation`: `setting`,
+exceeded Android's 1024-byte log record, and the page receives them as `foveation`. Every
+metrics line is also fitted into one record (`log_record.h`): a longer one has its fractions
+rounded to three decimals and then its longest text (such as `graphicsError`) shortened, so the
+keys stay valid JSON; the page's copy keeps every value whole. The `foveation` fields: `setting`,
 the bound `level` (`none`, `low`, `medium` or `high`), `eyeTracked`, `eyeTrackedAvailable`,
 `filtered` and `filterAvailable` (the reconstruction above), `pending` (the setting asks for other targets, which follow within about 250 ms), the profile
 `create`/`update` results, per-window `frames`/`validFrames`/`invalidFrames`/`failedFrames`,
@@ -425,7 +428,8 @@ It follows Godot's working Vulkan path:
   records the pass, and ends it with per-eye offsets in `vkCmdEndRenderPass2`.
 
 A density overlay colours each fragment by its `gl_FragSizeEXT` area: green 1 px, yellow 2, orange
-4, red 8, magenta larger. A white cross marks where the applied offset puts the map's centre. The
+4, red 8, magenta larger. A white cross marks the map's centre: the eye's optical axis (from its
+asymmetric field of view, not the image centre) plus the applied offset. The
 Android Surface workspace panel and status card are still created in the Vulkan session; the
 panel shows the controls and the status card shows the live eye state.
 
@@ -463,9 +467,13 @@ The log lines, all with tag `OfficeXR`:
 - `FOVEATION_VK` runs per frame, rate-limited: every change, the first frames after a mode change,
   and one per second. It gives the update and state results, flags, `valid`, both centres and the
   applied offsets.
-- `FRAME_METRICS` has `renderer`, `msaa` and a `foveation` window summary (queries, successes,
-  valid frames, last result, centres and their spread, offsets). `RUNTIME_METRICS` and
-  `SCENE_METRICS` keep the shape `harness/metrics.sh` reads.
+- `FRAME_METRICS` has `renderer` and `msaa` besides the keys `harness/metrics.sh` reads.
+  `FOVEATION_METRICS` has the window summary (queries, successes, valid frames, last result,
+  centres and their spread, offsets); the page receives it as `foveation`. In M1 the summary
+  sat inside `FRAME_METRICS`, which then passed Android's 1023-byte log record and lost its world
+  size. `RUNTIME_METRICS` and `SCENE_METRICS` keep the shape `harness/metrics.sh` reads.
+- `VIEW_FOV` gives each eye's field of view in degrees and its optical axis in pixels, after
+  focus.
 
 Eye-tracked foveation is proven only when all of these appear together:
 

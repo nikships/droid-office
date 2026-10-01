@@ -10,6 +10,7 @@
 #include "frame_metrics.h"
 #include "input_renderer.h"
 #include "json.hpp"
+#include "log_record.h"
 #include "panel_pointer.h"
 #include "refresh_policy.h"
 #include "rig_presentation.h"
@@ -1826,7 +1827,10 @@ class Office {
                         std::vector<int>(sharpPlan.viewRect[0], sharpPlan.viewRect[0] + 4),
                         std::vector<int>(sharpPlan.viewRect[1], sharpPlan.viewRect[1] + 4)};
                 }
-                const auto report = frameMetrics.dump(-1, ' ', true);
+                // One log record each (log_record.h); the pulled metrics keep every value whole.
+                const auto report = office::fitLogJson(
+                    frameMetrics,
+                    office::logJsonBudget(std::strlen("FRAME_METRICS  gl_error=ffffffff")));
                 auto counters = performance->sampleJson();
                 auto runtime = nlohmann::json::parse(counters);
                 auto combined = std::move(frameMetrics);
@@ -1881,7 +1885,10 @@ class Office {
                     latestMetrics = combined.dump(-1, ' ', true);
                 }
                 LOG("FRAME_METRICS %s gl_error=%x", report.c_str(), glGetError());
-                LOG("FOVEATION_METRICS %s", fovea.dump(-1, ' ', true).c_str());
+                LOG("FOVEATION_METRICS %s",
+                    office::fitLogJson(fovea,
+                                       office::logJsonBudget(std::strlen("FOVEATION_METRICS ")))
+                        .c_str());
                 // Some Android log routes truncate long records. Keep every counter in
                 // the pulled metrics and log the critical display/GPU counters together.
                 nlohmann::json displayMetrics = nlohmann::json::object();
@@ -1895,8 +1902,14 @@ class Office {
                     if (runtime.contains(name))
                         displayMetrics[name] = runtime[name];
                 }
-                LOG("RUNTIME_METRICS %s", displayMetrics.dump().c_str());
-                LOG("SCENE_METRICS %s", sceneMetrics.dump().c_str());
+                LOG("RUNTIME_METRICS %s",
+                    office::fitLogJson(displayMetrics,
+                                       office::logJsonBudget(std::strlen("RUNTIME_METRICS ")))
+                        .c_str());
+                LOG("SCENE_METRICS %s",
+                    office::fitLogJson(sceneMetrics,
+                                       office::logJsonBudget(std::strlen("SCENE_METRICS ")))
+                        .c_str());
                 metrics.reset();
             }
         }

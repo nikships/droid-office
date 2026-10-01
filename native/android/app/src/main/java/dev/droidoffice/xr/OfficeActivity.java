@@ -291,7 +291,8 @@ public final class OfficeActivity extends Activity {
                      + "Left X: status card    Left Y: centre axis flip\n"
                      + "Left menu: this panel\n\n"
                      + "Overlay: green 1 px, yellow 2 px, orange 4 px, red 8 px, magenta larger "
-                     + "fragments. White cross: commanded density centre.");
+                     + "fragments. White cross: the density map's centre (the eye's optical "
+                     + "axis plus the applied offset).");
         panelRoot.removeAllViews();
         panelRoot.addView(text);
     }

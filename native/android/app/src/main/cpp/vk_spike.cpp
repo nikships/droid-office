@@ -1,6 +1,7 @@
 #include "vk_spike.h"
 #include "frame_metrics.h"
 #include "json.hpp"
+#include "log_record.h"
 #include "vk_spike_gpu.h"
 #include "vk_spike_logic.h"
 #include "xr_input.h"
@@ -131,6 +132,7 @@ class Spike {
     double sweepStart = 0, lastFps = 0;
     uint64_t frames = 0;
     size_t roomTriangles = 0;
+    bool viewFovLogged = false; // VIEW_FOV once per focus, as the GLES office logs it
     std::array<Edge, 2> trigger, primary, secondary, menu;
 };
 
@@ -807,10 +809,13 @@ void Spike::report(const XrFrameState &frame, bool gazeValid) {
     foveation["subsampled"] = (acceptedFlags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) != 0;
     foveation["overlay"] = options.overlay;
     foveation["blockers"] = gates.blockers();
-    out["foveation"] = foveation;
     lastFps = out.value("fps", 0.);
-    const auto report = out.dump(-1, ' ', true);
-    LOG("FRAME_METRICS %s", report.c_str());
+    // Each line fits one log record (log_record.h): with the foveation summary inside it,
+    // FRAME_METRICS passed 1023 bytes and lost its world size. The summary has its own line, as
+    // the GLES office's FOVEATION_METRICS, and the pulled metrics keep it as `foveation`.
+    LOG("FRAME_METRICS %s", fitLogJson(out, logJsonBudget(std::strlen("FRAME_METRICS "))).c_str());
+    LOG("FOVEATION_METRICS %s",
+        fitLogJson(foveation, logJsonBudget(std::strlen("FOVEATION_METRICS "))).c_str());
     auto runtime = nlohmann::json::parse(performance->sampleJson());
     nlohmann::json display = nlohmann::json::object();
     for (const char *key :
@@ -822,7 +827,8 @@ void Spike::report(const XrFrameState &frame, bool gazeValid) {
           "/perfmetrics_android/device/gpu_utilization"})
         if (runtime.contains(key))
             display[key] = runtime[key];
-    LOG("RUNTIME_METRICS %s", display.dump().c_str());
+    LOG("RUNTIME_METRICS %s",
+        fitLogJson(display, logJsonBudget(std::strlen("RUNTIME_METRICS "))).c_str());
     nlohmann::json scene{{"renderer", "vulkan-spike"},
                          {"objects", 4},
                          {"visible", 4},
@@ -831,8 +837,10 @@ void Spike::report(const XrFrameState &frame, bool gazeValid) {
                          {"gpuMs", gpu.gpuMs()},
                          {"packetsApplied", 0},
                          {"pendingUploads", 0}};
-    LOG("SCENE_METRICS %s", scene.dump().c_str());
+    LOG("SCENE_METRICS %s",
+        fitLogJson(scene, logJsonBudget(std::strlen("SCENE_METRICS "))).c_str());
     auto combined = out;
+    combined["foveation"] = foveation;
     combined["runtime"] = runtime;
     combined["scene"] = scene;
     if (host.publishMetrics)
@@ -848,6 +856,8 @@ void Spike::loop() {
             if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
                 state = reinterpret_cast<XrEventDataSessionStateChanged *>(&event)->state;
                 const bool regained = state == XR_SESSION_STATE_FOCUSED && !host.focused->load();
+                if (regained)
+                    viewFovLogged = false;
                 host.focused->store(state == XR_SESSION_STATE_FOCUSED);
                 LOG("STATE %d", state);
                 visibility(state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED);
@@ -901,6 +911,27 @@ void Spike::loop() {
         constexpr auto validViews =
             XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT;
         const bool poseValid = count == 2 && (viewState.viewStateFlags & validViews) == validViews;
+        if (poseValid && !viewFovLogged) {
+            // Each eye's FOV in degrees (left, right, down, up) and its optical axis in pixels:
+            // the density map's centre without offsets, where the debug cross sits.
+            viewFovLogged = true;
+            constexpr float degrees = 57.2957795f;
+            std::array<std::array<float, 2>, 2> axis{};
+            for (int i = 0; i < 2; ++i) {
+                const auto &fov = views[i].fov;
+                axis[i] =
+                    opticalAxisPixel(static_cast<int>(worldWidth), static_cast<int>(worldHeight),
+                                     std::tan(fov.angleLeft), std::tan(fov.angleRight),
+                                     std::tan(fov.angleDown), std::tan(fov.angleUp));
+            }
+            const auto &l = views[0].fov, &r = views[1].fov;
+            LOG("VIEW_FOV left=%.2f,%.2f,%.2f,%.2f right=%.2f,%.2f,%.2f,%.2f axis0=(%.1f,%.1f) "
+                "axis1=(%.1f,%.1f) image=%ux%u",
+                l.angleLeft * degrees, l.angleRight * degrees, l.angleDown * degrees,
+                l.angleUp * degrees, r.angleLeft * degrees, r.angleRight * degrees,
+                r.angleDown * degrees, r.angleUp * degrees, axis[0][0], axis[0][1], axis[1][0],
+                axis[1][1], worldWidth, worldHeight);
+        }
         const bool focused = host.focused->load();
         XrPosef head = views[0].pose;
         head.position = scale(add(views[0].pose.position, views[1].pose.position), .5f);
@@ -937,11 +968,18 @@ void Spike::loop() {
                 const auto projection = office::projection(views[i].fov, .05f, 100.f);
                 const auto viewProj = multiply(projection, inverse(views[i].pose));
                 std::copy(viewProj.begin(), viewProj.end(), record.uniforms.viewProj[i]);
-                const auto marker = markerPixel(foveation.offsets[i], static_cast<int>(worldWidth),
-                                                static_cast<int>(worldHeight));
+                // The cross marks the density map's centre: this eye's optical axis plus the
+                // applied offset (none: the axis itself).
+                const auto &fov = views[i].fov;
+                const auto axis =
+                    opticalAxisPixel(static_cast<int>(worldWidth), static_cast<int>(worldHeight),
+                                     std::tan(fov.angleLeft), std::tan(fov.angleRight),
+                                     std::tan(fov.angleDown), std::tan(fov.angleUp));
+                const auto marker =
+                    markerPixel(foveation.applied ? foveation.offsets[i] : Offset{}, axis);
                 record.uniforms.marker[i][0] = marker[0];
                 record.uniforms.marker[i][1] = marker[1];
-                record.uniforms.marker[i][2] = foveation.applied ? 1.f : 0.f;
+                record.uniforms.marker[i][2] = gpu.densityMap() ? 1.f : 0.f;
             }
             record.uniforms.viewport[0] = static_cast<float>(worldWidth);
             record.uniforms.viewport[1] = static_cast<float>(worldHeight);

@@ -227,11 +227,27 @@ inline Offset centreOffset(float cx, float cy, Flip flip, int width, int height,
             roundToGranularity(cy * height * .5f, granularityY)};
 }
 
-/** Where a density-map offset puts the map's centre in framebuffer pixels (top-left origin):
+/** A view's optical axis (view direction, tangents 0, 0) in framebuffer pixels, top-left
+ *  origin, from its XrFovf tangents (left and down negative). An asymmetric FOV puts it off the
+ *  image centre. Row 0 is the image's top ("the top-left corner ... coordinate origin",
+ *  XR_KHR_vulkan_enable2) and view +y is up, so the axis row is up / (up - down) of the height.
+ *  Image centre for a degenerate FOV. */
+inline std::array<float, 2> opticalAxisPixel(int width, int height, float left, float right,
+                                             float down, float up) {
+    if (!(right > left) || !(up > down) || !std::isfinite(right - left) ||
+        !std::isfinite(up - down))
+        return {width * .5f, height * .5f};
+    return {width * (-left / (right - left)), height * (up / (up - down))};
+}
+
+/** Where a density-map offset puts the map's centre in framebuffer pixels (top-left origin).
+ *  The runtime builds each eye's map around its optical axis, not the image centre (M1 headset
+ *  run: with offsets none the full-density patch stays on the axis, and a cross at the image
+ *  centre sat about 235 px left of it in the asymmetric left eye). An offset then shifts the map:
  *  "applying a positive offset in the x component will shift the fragment density map to the
  *  right relative to the framebuffer" (Vulkan spec, Fetch Density Value). */
-inline std::array<float, 2> markerPixel(Offset offset, int width, int height) {
-    return {width * .5f + offset.x, height * .5f + offset.y};
+inline std::array<float, 2> markerPixel(Offset offset, const std::array<float, 2> &axis) {
+    return {axis[0] + offset.x, axis[1] + offset.y};
 }
 
 /** Diagnostic only, never used to place the fovea: a view-space gaze direction (OpenXR view

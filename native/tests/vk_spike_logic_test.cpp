@@ -1,6 +1,8 @@
+#include "log_record.h"
 #include "vk_spike_logic.h"
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -73,9 +75,28 @@ void offsets() {
         assert(o.x % 16 == 0 && o.y % 24 == 0);
         assert(std::abs(o.x) <= 1076 + 8 && std::abs(o.y) <= 1252 + 12);
     }
-    // A positive offset moves the map right and down in framebuffer pixels.
-    const auto marker = markerPixel({64, -32}, 2000, 1000);
+    // A positive offset moves the map right and down in framebuffer pixels, from the axis.
+    const auto marker = markerPixel({64, -32}, {1000, 500});
     assert(marker[0] == 1064 && marker[1] == 468);
+    assert((markerPixel({}, {1250.5f, 980}) == std::array<float, 2>{1250.5f, 980}));
+}
+
+void opticalAxis() {
+    // A symmetric FOV has its axis at the image centre.
+    auto axis = opticalAxisPixel(2000, 1000, -1, 1, -1, 1);
+    assert(axis[0] == 1000 && axis[1] == 500);
+    // A left eye that sees farther left (tan 1.5) than right (tan 0.9) has its axis right of the
+    // centre: 1.5 / 2.4 of the width, NDC x +0.25, as the M1 capture showed.
+    axis = opticalAxisPixel(1856, 2160, -1.5f, .9f, -1, 1);
+    assert(std::abs(axis[0] - 1856 * .625f) < 1e-3f && axis[1] == 1080);
+    // Row 0 is the top and +y is up: a view that sees farther down has its axis above centre.
+    axis = opticalAxisPixel(1000, 1000, -1, 1, -1.5f, .5f);
+    assert(std::abs(axis[1] - 250) < 1e-3f);
+    // A degenerate FOV falls back to the image centre.
+    axis = opticalAxisPixel(800, 600, 1, -1, -1, 1);
+    assert(axis[0] == 400 && axis[1] == 300);
+    axis = opticalAxisPixel(800, 600, -1, std::numeric_limits<float>::infinity(), -1, 1);
+    assert(axis[0] == 400 && axis[1] == 300);
 }
 
 void gaze() {
@@ -268,10 +289,49 @@ void room() {
 }
 } // namespace
 
+/** The spike's FOVEATION_METRICS line (vk_spike.cpp report) at its widest fits one log record
+ *  without shortening, and FRAME_METRICS no longer carries it. */
+void foveationLine() {
+    FoveationWindow window;
+    FoveationFrame frame;
+    frame.updated = frame.queried = frame.valid = frame.applied = true;
+    frame.updateResult = -2147483647;
+    frame.stateResult = -2147483647;
+    frame.flags = ~0ull;
+    frame.centres = {{{-0.123456789f, -0.987654321f}, {-0.000123456789f, -0.55555555f}}};
+    frame.offsets = {{{-2147483647, -2147483647}, {-2147483647, -2147483647}}};
+    for (int i = 0; i < 1000; ++i) {
+        window.add(frame);
+        frame.centres[0][0] = -frame.centres[0][0] * .999f;
+    }
+    auto foveation = window.json();
+    foveation["api"] = "vulkan-fdm";
+    foveation["level"] = levelName(2);
+    foveation["eyeTracked"] = true;
+    foveation["query"] = true;
+    foveation["offsetsMode"] = name(Offsets::Sweep);
+    foveation["offsetsUsable"] = true;
+    foveation["offsetsSynthetic"] = true;
+    foveation["flip"] = name(Flip::XY);
+    foveation["profile"] = name(ProfileMode::PerFrame);
+    foveation["granularity"] = {4294967295u, 4294967295u};
+    foveation["densitySize"] = {4294967295u, 4294967295u};
+    foveation["subsampled"] = true;
+    foveation["overlay"] = true;
+    EyeGates none;
+    foveation["blockers"] = none.blockers();
+    const auto full = foveation.dump(-1, ' ', true);
+    const size_t budget = office::logJsonBudget(std::strlen("FOVEATION_METRICS "));
+    assert(full.size() <= budget);
+    assert(office::fitLogJson(foveation, budget) == full);
+}
+
 int main() {
     options();
     rounding();
     offsets();
+    opticalAxis();
+    foveationLine();
     gaze();
     sweep();
     logGate();

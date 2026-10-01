@@ -64,8 +64,12 @@ covers, using `CXX` (default `c++`), and runs it:
   meshes, malformed asset rejection and animated button transforms.
 - `native/tests/vk_spike_logic_test.cpp` covers the pure logic of the debug-only Vulkan
   foveation spike (`vk_spike_logic.h`): option parsing, foveation centre to density map offset
-  rounding and flips, the synthetic sweep, the log rate limit, the per-window summary, the
-  eye-tracking gates and the test room mesh.
+  rounding and flips, the optical axis the density map is centred on, the synthetic sweep, the
+  log rate limit, the per-window summary and its log line size, the eye-tracking gates and the
+  test room mesh.
+- `native/tests/log_record_test.cpp` covers `log_record.h`: metrics lines fit Android's
+  1023-byte log record with every key `harness/metrics.sh` reads, rounding fractions before
+  shortening the longest strings, never splitting a UTF-8 character.
 
 Three registered suites are required on every host run:
 

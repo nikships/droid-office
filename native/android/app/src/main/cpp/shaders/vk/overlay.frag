@@ -25,8 +25,8 @@ void main() {
                  : area <= 8 ? vec3(0.9, 0.05, 0.05)
                              : vec3(0.85, 0.0, 0.85);
     float alpha = frame.viewport.z;
-    // White cross where the applied offset puts the density map's centre (framebuffer pixels,
-    // top-left origin, as gl_FragCoord).
+    // White cross at the density map's centre: the eye's optical axis plus the applied offset
+    // (framebuffer pixels, top-left origin, as gl_FragCoord).
     vec4 m = frame.marker[gl_ViewIndex];
     if (m.z > 0.5) {
         vec2 d = abs(gl_FragCoord.xy - m.xy);
