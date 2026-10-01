@@ -906,6 +906,58 @@ export class OfficeSound {
     thump.stop(t0 + 0.22);
   }
 
+  /**
+   * One heartbeat from a shot worker lying on the floor, from its chest: a low lub-dub that is
+   * only really heard up close. Its session is still running.
+   */
+  heartbeat(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('heartbeat');
+    const out = this.panner(at, 0.8, 1.6);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    for (const [delay, freq, level] of [
+      [0, 58, 0.55],
+      [0.17, 72, 0.4],
+    ] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq, t0 + delay);
+      o.frequency.exponentialRampToValueAtTime(freq * 0.6, t0 + delay + 0.12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + delay);
+      g.gain.exponentialRampToValueAtTime(level, t0 + delay + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.14);
+      o.connect(g).connect(out);
+      o.start(t0 + delay);
+      o.stop(t0 + delay + 0.16);
+    }
+  }
+
+  /** A worker hauled back up into its chair comes round: a sharp gasp, from its head. */
+  gasp(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('gasp');
+    const out = this.panner(at, 1.5, 1.2);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    const n = this.noise(this.buf.white);
+    const f = biquad(ctx, 'bandpass', 900, 2.2);
+    f.frequency.setValueAtTime(700, t0);
+    f.frequency.exponentialRampToValueAtTime(1900, t0 + 0.32);
+    const g = ctx.createGain();
+    envelope(g.gain, t0, [
+      [0.05, 0.32],
+      [0.26, 0.22],
+      [0.36, 0],
+    ]);
+    n.connect(f).connect(g).connect(out);
+    n.start(t0);
+    n.stop(t0 + 0.4);
+  }
+
   /** A missed shot cracking into the wall or floor, from where it hit. */
   impact(at: Pos) {
     const ctx = this.ctx;

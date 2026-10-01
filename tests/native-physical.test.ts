@@ -4,11 +4,11 @@ import * as THREE from 'three';
 import { Climber } from '../src/client/climb.js';
 import { NativeControls, type NativeHooks } from '../src/client/native/controls.js';
 import { type NativeHand, type NativeInputFrame, type Pose7, LOST_MS } from '../src/client/native/input.js';
-import { gongContact, inBackHolster, onLadder } from '../src/client/native/physical.js';
+import { type DownedBodies, gongContact, HAUL_LIFT, inBackHolster, onLadder } from '../src/client/native/physical.js';
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import { GONG_TOUCH } from '../src/client/world/gong.js';
-import { BREECH_AT, MUZZLE_AT } from '../src/client/world/gun.js';
+import { MUZZLE_AT } from '../src/client/world/gun.js';
 import { FLOOR, GONG, LADDER, POLES, SLAB, WALL_HEIGHT, type PoleSpot } from '../src/shared/layout.js';
 
 const pose = (x: number, y: number, z: number): Pose7 => [x, y, z, 0, 0, 0, 1];
@@ -47,7 +47,7 @@ function fixture(t: TestContext, at = new THREE.Vector3()) {
   let strikes = 0;
   let uses = 0;
   let travels = 0;
-  const shots: { origin: THREE.Vector3; direction: THREE.Vector3; breech: THREE.Vector3 }[] = [];
+  const shots: { origin: THREE.Vector3; direction: THREE.Vector3 }[] = [];
   const gunEvents: boolean[] = [];
   t.mock.method(performance, 'now', () => time);
   const gong = new THREE.Group();
@@ -85,7 +85,7 @@ function fixture(t: TestContext, at = new THREE.Vector3()) {
       grabPole: (spot) => climber.twirl(spot, true),
       canDraw: () => !climber.active,
       gunChanged: (held) => gunEvents.push(held),
-      fireGun: (bore) => shots.push({ origin: bore.muzzle.clone(), direction: bore.direction.clone(), breech: bore.breech.clone() }),
+      fireGun: (origin, direction) => shots.push({ origin: origin.clone(), direction: direction.clone() }),
     },
   };
   const controls = new NativeControls(scene, camera, hooks);
@@ -256,7 +256,6 @@ test('gun draws on a fresh back grip, aims from the canonical muzzle, and grip r
   const muzzle = r.gun()!.localToWorld(MUZZLE_AT.clone());
   assert.ok(r.shots[0].origin.distanceTo(muzzle) < 1e-9, 'the bullet left the muzzle as aimed, before the kick');
   assert.ok(r.shots[0].direction.distanceTo(new THREE.Vector3(0, 0, -1)) < 1e-9);
-  assert.ok(r.shots[0].breech.distanceTo(r.gun()!.localToWorld(BREECH_AT.clone())) < 1e-9, 'the shot is traced from the breech behind the fist');
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { trigger: 1 })));
   assert.equal(r.shots.length, 1, 'a released grip cannot fire');
   assert.equal(r.controls.holdingGun, false);
@@ -329,18 +328,114 @@ for (const activeHand of [0, 1] as const) {
   });
 }
 
-test('a shot body still waiting for its dialog keeps the trigger dead, without the trigger clicking anything else', (t) => {
+test("the trigger stays live after a hit: nothing holds the next shot but the revolver's own 350 ms", (t) => {
   const r = fixture(t);
-  let canFire = false;
-  r.hooks.physical!.canFire = () => canFire;
   r.draw();
   for (const z of [0.1, -0.1, -0.3]) r.tick(r.frame(hand(pose(0.25, 1.2, z), { squeeze: 1 })));
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
-  assert.equal(r.shots.length, 0);
-  assert.equal(r.uses(), 0, 'the held gun still owns the trigger');
-  canFire = true;
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1 })));
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
+  assert.equal(r.shots.length, 1, 'a second pull inside 350 ms is the hammer still coming back');
   r.advance(400);
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1 })));
   r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1, trigger: 1 })));
-  assert.equal(r.shots.length, 1, 'it fires again once the dialog resolves');
+  assert.equal(r.shots.length, 2);
+  assert.equal(r.uses(), 0, 'the held gun owns the trigger');
+});
+
+/** A body lying on the floor at `at` that the fixture's hands can haul, recording what happens to it. */
+function body(r: ReturnType<typeof fixture>, at = new THREE.Vector3(0.2, 0.2, -0.4)) {
+  const log = { hauls: [] as number[], letGo: 0, revived: 0, held: true };
+  const bodies: DownedBodies = {
+    within: (point) => (log.held && point.distanceTo(at) <= 0.4 ? 'w1' : null),
+    haul: (id, lift) => {
+      assert.equal(id, 'w1');
+      log.hauls.push(lift);
+      return log.held;
+    },
+    letGo: () => void log.letGo++,
+    revive: () => {
+      log.revived++;
+      log.held = false;
+    },
+  };
+  r.hooks.physical!.bodies = bodies;
+  return log;
+}
+
+test("a free hand grips a body on the floor and hauls it back up into its chair with the hand's rise", (t) => {
+  const r = fixture(t);
+  const log = body(r);
+  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
+  assert.equal(r.controls.state().hands[0].holding, true, 'the left hand holds the body');
+  // Dipping lower first only moves where the haul starts from.
+  r.tick(r.frame(off(), at(0.2, { squeeze: 1 })));
+  const rise = [0.3, 0.4, 0.5, 0.58];
+  for (const y of rise) r.tick(r.frame(off(), at(y, { squeeze: 1 })));
+  const last = log.hauls.at(-1)!;
+  assert.ok(Math.abs(last - (0.58 - 0.2) / HAUL_LIFT) < 1e-6, `it is ${last.toFixed(2)} of the way up`);
+  assert.ok(
+    log.hauls.every((lift, i) => i === 0 || lift >= log.hauls[i - 1]),
+    'it rises with the hand',
+  );
+  assert.equal(log.revived, 0);
+  r.controls.state();
+  r.tick(r.frame(off(), at(0.2 + HAUL_LIFT + 0.01, { squeeze: 1 })));
+  assert.equal(log.revived, 1, 'all the way up: back in its chair');
+  const state = r.controls.state();
+  assert.equal(state.hands[0].holding, false, 'nothing left in the hand');
+  assert.ok(
+    state.haptics.some((h) => h.hand === 0 && h.strength >= 0.9),
+    'a firm buzz as it comes back up',
+  );
+  r.tick(r.frame(off(), at(0.7)));
+  assert.equal(log.letGo, 0, 'letting go afterwards drops nothing');
+  assert.equal(r.uses(), 0);
+});
+
+test('letting go mid-haul, losing tracking or a world change drops the body; an untracked grip never takes hold', (t) => {
+  const r = fixture(t);
+  const log = body(r);
+  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
+  r.tick(r.frame(off(), at(0.35, { squeeze: 1 })));
+  r.tick(r.frame(off(), at(0.35)));
+  assert.equal(log.letGo, 1, 'released early, it slumps back');
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1, active: false })));
+  assert.equal(log.letGo, 1, 'a brief loss keeps hold');
+  r.advance(LOST_MS + 50);
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1, active: false })));
+  assert.equal(log.letGo, 2, 'a controller lost for good lets go');
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
+  r.controls.clearGrab();
+  assert.equal(log.letGo, 3, 'a floor change lets go');
+  r.tick(r.frame(off(), at(0.25)));
+  const before = log.hauls.length;
+  r.tick(r.frame(off(), at(0.25, { gripTracked: false })));
+  r.tick(r.frame(off(), at(0.25, { gripTracked: false, squeeze: 1 })));
+  r.tick(r.frame(off(), at(0.6, { gripTracked: false, squeeze: 1 })));
+  assert.equal(log.hauls.length, before, 'an aim pose without a tracked grip never hauls');
+  assert.equal(log.revived, 0);
+});
+
+test('a body that can no longer be held (finished off, collected) leaves the hand at once', (t) => {
+  const r = fixture(t);
+  const log = body(r);
+  const at = (y: number, patch: Partial<NativeHand> = {}) => hand(pose(0.2, y, -0.4), patch);
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25)));
+  r.tick(r.frame(off(), at(0.25, { squeeze: 1 })));
+  log.held = false;
+  r.tick(r.frame(off(), at(0.3, { squeeze: 1 })));
+  assert.equal(r.controls.state().hands[0].holding, false);
+  r.tick(r.frame(off(), at(0.7, { squeeze: 1 })));
+  assert.equal(log.revived, 0);
 });

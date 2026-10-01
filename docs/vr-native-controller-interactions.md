@@ -38,7 +38,7 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 | B, right secondary | Go back one workspace step; return a carried card when in the office |
 | Right stick click | Show/hide keyboard while workspace is open |
 | Either trigger | Pointer selection, shared world actions, use a held object, or fire a held gun |
-| Either grip | Grab/hold/release a nearby object, ladder, pole or back-holstered gun |
+| Either grip | Grab/hold/release a nearby object, ladder, pole, back-holstered gun or a shot worker on the floor |
 
 Movement and turning retain their hands if one controller disconnects. The left stick never
 inherits right-stick teleport/turn, and the right stick never inherits left-stick movement.
@@ -78,26 +78,47 @@ the grip-local rotation from the runtime's aim and grip orientations, mapping th
 while keeping the handle at the grip origin. The live display-frame grip still places the gun.
 The runtime defines aim as the controller's pointing direction, distinct from grip; see the
 [controller pose reference](https://developers.meta.com/horizon/documentation/unreal/unreal-controllers-overview/).
-Shots are traced along the whole bore, as Half-Life: Alyx traces its pistol: from the breech
-behind the fist, through the transformed model muzzle and on (`traceShot` in `world/gun.ts`).
-A worker the trace starts inside is struck at once; a barrel pressed into or through a worker
-strikes it where the barrel enters. Furniture the barrel itself is stuck through, such as a chair
-back, does not stop the bullet; anything solid beyond the muzzle does. Shots reuse desktop
-solid occlusion, local casualty effects and explicit worker confirmation. Shot picking ignores
-hidden scene subtrees, invisible materials, name sprites and glow points; visible furniture and
-glass still block shots.
-
-A shot shows its muzzle flash at full brightness in its own 30 Hz update and kicks the gun model
-up about the fist and back, settling within 0.24 s on the input clock; the bullet leaves along
-the bore as aimed, before the kick. The holding controller gets a full-strength 70 ms pulse. A
-struck worker sprays blood back out of the contact point with a wet hit sound, and the shot
-shoves it along the bullet at once before it sprawls out on the far side of its chair. In the
-headset, the bleed-out dialog waits until the body has landed (about one second of gameplay),
-because the workspace panel opens in front of the face; the trigger stays dead until that
-dialog resolves. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
+Shots start at the transformed
+model muzzle and reuse desktop solid occlusion. Shot picking ignores hidden scene subtrees,
+invisible materials, name sprites and glow points; visible furniture and glass still block
+shots. Releasing grip in the holster puts it away. Releasing elsewhere detaches it into
 the world, falls to the floor and disappears after a short landing interval. Tracking/focus
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.
 The native app does not draw the gun through the desktop `7` shortcut.
+
+A shot shows its muzzle flash at full brightness in its own 30 Hz update and kicks the gun model
+up about the fist and back, settling within 0.24 s on the input clock; the bullet leaves the
+muzzle as aimed, before the kick. The holding controller gets a full-strength 70 ms pulse. A
+struck worker sprays blood back out of the contact point with a wet hit sound, and the shot
+shoves it along the bullet at once before it sprawls out on the far side of its chair. It lands
+with its length flat along the floor, resting on it.
+
+**A shot never opens anything in the headset.** The desktop's bleed-out dialog (kill or revive)
+is not used in native mode: no dialog, workspace or toast appears, nothing freezes, and the gun
+stays live. What happens next is a physical act at the body (`native/downed.ts`):
+
+- **A stray shot only drops a worker.** It lies on the floor with its session running for as
+  long as it is left there, with a heartbeat heard up close (and felt in a controller whose grip
+  comes within about 0.65 m of its chest) that slows as it bleeds. Several workers can be down at
+  once, each in its own casualty scene. A trigger at a downed worker's desk opens nothing.
+- **Finishing it off takes a second, aimed shot into the body** once it has lain still for
+  `FINISH_AFTER` (0.8 s). A double or triple tap only drops it: pulls as fast as the revolver
+  allows need at least `FALL_TIME + FINISH_AFTER` (about 1.55 s). That shot stops its heart and
+  sends the ordinary `{ t: 'worker.kill', workerId }` once, with the office's default worktree
+  handling (a worktree that has work on it is kept). The siren, elevator and medic carry
+  ([medic sequence](medic-sequence.md)) are the confirmation, when its removal arrives; the
+  server's send-home and worktree toasts for that worker are left out on this client.
+- **Reviving is done by hand.** A fresh grip with a tracked controller within 0.4 m of the body
+  takes hold of it (never through the aim-pose fallback). The body comes up toward its chair with
+  the hand's rise in native space (rig motion never lifts it), measured from the lowest point
+  the grip reached, with a haptic tick each quarter. At `HAUL_LIFT` (0.42 m) it is back in its
+  seat with its session untouched, gasps and hops, and the hand gets a firm pulse. Letting go
+  earlier, losing tracking for `LOST_MS` or a floor change drops it back to the floor (a thud
+  when dropped from 30% of the way or more). A finished body cannot be hauled.
+
+Workers still down go back to their seats quietly on a floor change, a lost connection or
+entering WebXR; a body already finished off stays down for its medics. Desktop and WebXR keep the
+dialog.
 
 The gun model is shared with desktop. The desktop wrist no longer adds a large resting tilt
 to its bore. Native attachment rendering uses actual display-loop grip transforms, rather
@@ -131,13 +152,15 @@ real furniture/glass occlusion. The headset log confirmed every trigger pull thr
 solid meshes before intersecting, so a direct muzzle ray never visits a sprite at all. Native
 shots also set the shared ray camera and record the chosen solid locally for diagnosis.
 The camera-less muzzle regression passes; the fix still needs wearer confirmation.
-A later report, point-blank shots doing nothing, was the muzzle inside the worker's body:
-three.js culls a closed mesh's inner faces, so the ray left through its back into the chair
-behind it. `tests/gun-point-blank.test.ts` seats a real worker at real office desks and fires
-through the trigger path from five sides with the muzzle 15 cm and 3 cm in, 2 cm and 5 cm off,
-30 cm off and 2.2 m away, plus point-blank through a chair back and a gun buried whole. Each
-fails with the old muzzle-only ray. A debuggable build can stage such a shot on the headset
-through the same path; see [debug shot staging](vr-native-android.md#debug-shot-staging).
+The shot-in-the-world flow is covered by `tests/native-downed.test.ts` (a single shot and
+rapid pulls never send a kill, the aimed second shot sends exactly one, several bodies keep their
+own state, the heartbeat stops when finished, hauling and slumping, a real worker resting flat
+on the floor for 16 falls) and `tests/native-shot-stage.test.ts` (real office desks: the trigger
+path drops a seated worker from five sides at 4 cm to 2.2 m and sends nothing; staged finishes
+only for disposable Target workers; a staged haul revives through the grip path). The grip
+haul's tracking, loss and release rules are in `tests/native-physical.test.ts`. A debuggable
+build can stage a shot or a haul on the headset through the same paths; see
+[debug staging](vr-native-android.md#debug-shot-staging).
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic
 replay or browser render establishes physical headset ergonomics or worn-view sharpness.

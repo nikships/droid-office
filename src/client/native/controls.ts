@@ -372,9 +372,24 @@ export class NativeControls {
   }
 
   /**
+   * A rumble in every tracked controller whose grip is within `radius` meters of `point` (world),
+   * such as a downed worker's heartbeat felt by a hand reaching for it. The hands it buzzed.
+   */
+  pulseNear(point: THREE.Vector3, radius: number, strength: number, ms: number): (0 | 1)[] {
+    const buzzed: (0 | 1)[] = [];
+    for (const s of this.hands) {
+      if (!s.connected || s.lostAt !== null || s.input?.gripTracked === false) continue;
+      if (s.grip.getWorldPosition(_l).distanceTo(point) > radius) continue;
+      this.pulse(s.idx, strength, ms);
+      buzzed.push(s.idx);
+    }
+    return buzzed;
+  }
+
+  /**
    * Debug staging only: `script` replaces one hand's samples as they are replayed, until it
-   * returns null, so a staged shot runs the same draw, trigger and shot path as a held controller.
-   * Its gun is drawn at the scripted world pose. Null hands the controller back.
+   * returns null, so a staged shot or haul runs the same draw, trigger, grip and shot path as a
+   * held controller. A staged gun is drawn at the scripted world pose. Null hands the controller back.
    */
   stage(script: StagedHand | null): void {
     this.staged = script;

@@ -2,11 +2,17 @@
 
 The casualty presentation is shared by the desktop scene and the installed native client.
 `src/client/world/casualties.ts` handles only local visuals and sound callbacks. A shot does
-not stop a worker or its PTY. The existing kill dialog sends `worker.kill` only after explicit
-confirmation, and the collection starts when that worker's removal arrives. Revive restores
-an unconfirmed worker to its seat with its session untouched. Given the bullet's direction, the
-hit shoves the body along it and leans it away from the shooter in the first frame, easing into
-the fall, and the body sprawls out on the side the bullet was heading.
+not stop a worker or its PTY. On the desktop the kill dialog sends `worker.kill` only after
+explicit confirmation. In the headset nothing opens: a second, aimed shot into the body once it
+has lain still sends it (see the gun section of
+[the controller interactions](vr-native-controller-interactions.md)). Either way the collection
+starts when that worker's removal arrives, and is the confirmation. Revive (the dialog's button,
+or in the headset hauling the body back up into its chair by hand) restores an unconfirmed
+worker to its seat with its session untouched. Each body has its own scene, so several can be
+down at once. Given the bullet's direction, the hit shoves the body along it and leans it away
+from the shooter in the first frame, easing into the fall, and the body sprawls out on the side
+the bullet was heading. It lands with its length flat along the floor and its lowest point on
+it, so the medics, a reaching hand and the blood pool all meet it at floor level.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
 turning into the fallen worker's orientation. They approach its torso rather than its foot

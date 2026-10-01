@@ -261,8 +261,8 @@ export async function startServer(cfg: Config) {
       c.ws.send(json);
     }
   };
-  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info') => {
-    if (floor) toFloor(floor, { t: 'toast', text, level });
+  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
+    if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
   const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}) }))];
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
@@ -1429,10 +1429,10 @@ export async function startServer(cfg: Config) {
         const { floor, info } = w;
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const done = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
-        toastFloor(floor, `${who} sent ${info.name} home`);
+        toastFloor(floor, `${who} sent ${info.name} home`, 'info', info.id);
         void done.then(({ note, error }) => {
-          if (note) toastFloor(floor, note);
-          if (error) toastFloor(floor, error, 'warn');
+          if (note) toastFloor(floor, note, 'info', info.id);
+          if (error) toastFloor(floor, error, 'warn', info.id);
         });
         break;
       }

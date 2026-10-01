@@ -85,8 +85,9 @@ test('one shot drops it out of its chair with a thud, and it bleeds out where it
   // Sideways out of the chair into the open (not forward under the desk), down on the floorboards, tipped over.
   assert.ok(Math.abs(Math.abs(model.root.position.x) - 0.65) < 0.01);
   assert.ok(Math.abs(model.root.position.z - 5) < 0.01);
-  assert.ok(Math.abs(model.root.position.y - -0.07) < 0.01);
-  assert.ok(Math.abs(model.root.rotation.x) > 1, 'flat on the floor');
+  assert.ok(Math.abs(model.root.position.y) < 0.01, 'a body with nothing below its origin rests it on the floor');
+  const along = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion);
+  assert.ok(Math.abs(along.y) < 1e-6, 'flat on the floor, its length along it');
   assert.ok(model.root.parent !== seat, 'out of its seat');
 });
 

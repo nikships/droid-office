@@ -380,34 +380,47 @@ instead of bypassing verification.
 ### Debug shot staging
 
 A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
-each `officeNative.frame` call; a release build passes `false`. Only then does the page's
-`window.__office.stageShot(options)` do anything; otherwise it resolves `{ ok: false }`.
-It is for headset captures over the WebView DevTools socket, and changes no normal gameplay.
+each `officeNative.frame` call; a release build passes `false`. Only then do the page's
+`window.__office.stageShot(options)` and `stageHaul(options)` do anything; otherwise they
+resolve `{ ok: false }`. They are for headset captures over the WebView DevTools socket, and
+change no normal gameplay.
 
 `stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
-raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, traced bore,
+raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
 casualty and effects therefore run the code a held controller drives. The head remains the
 headset's own; the rig is turned and placed so the worker is in front of it. The staged gun is
-drawn at its scripted world pose, because no real grip is under it. Options:
+drawn at its scripted world pose, because no real grip is under it. Without `angle` or `pitch`,
+the first approach whose line of fire reaches the worker before anything else is used. Options:
 
 | Option | Meaning (default) |
 | --- | --- |
 | `worker` | Id or name of a worker on this floor, in any case; `Pixel` finds `Pixel 🐚` or a lone `Pixel (shell)` |
-| `gap` | Meters from the muzzle to the body surface along the bore; negative presses it in (`0.03`) |
-| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`) |
-| `pitch` | Degrees the shot slopes down (by default, so the gun sits just under the headset's eye line) |
+| `gap` | Meters from the muzzle to the body surface along the bore (`1.2`; `0.6` at a body on the floor) |
+| `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides); at a body on the floor, around it from the open floor beside it (`0`, then other clear sides) |
+| `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line; `55` over a body on the floor) |
+| `finish` | Shoot a worker that is already down, which finishes it off once it has lain still 0.8 s. Refused unless its name starts with `Target` (`false`) |
 | `reach` | Meters from the headset back from the gun's fist (`0.42`) |
-| `height` | Aim point in meters up the worker's own body (`0.62`) |
+| `height` | Aim point in meters up a seated worker's own body (`0.62`) |
 | `hand` | `'right'` or `'left'` (`'right'`) |
 | `freezeMs` | Stop advancing gameplay this long after the shot, holding that frame (none) |
 | `holdMs` | Keep aiming this long after the shot when not frozen (`1500`) |
 | `timeoutMs` | Resolve `{ ok: false, reason }` if no shot fires by then (`8000`) |
 
-It resolves after the shot, or once frozen, with `hit`, `struck`, `buried`, `solid`, `distance`,
-`muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. `__office.releaseShot()`
-unfreezes, puts the gun away and quietly revives the worker; pass `false` to leave the worker
-down and let its dialog open. A freeze releases itself after 30 seconds. Staged shots never
-confirm a kill.
+It resolves after the shot, or once frozen, with `hit`, `struck`, `outcome` (`'miss'`, `'down'`,
+`'hit'` for a body already down, or `'finished'` when the kill was sent), `solid`, `distance`,
+`angle`, `pitch`, `muzzle`, `surface` and `frozenAfterMs`, or `{ ok: false, reason }`. A worker
+that is down is refused without `finish: true`, and `finish` is refused for any worker whose name
+does not start with `Target`: hire a disposable shell worker named `Target 1` for that.
+
+`stageHaul` scripts the other hand (`left` by default) gripping a worker lying on the floor and
+lifting it, through the same grip and haul code: the rig stands half a meter off its chest on the
+open floor beside it. Options: `worker`, `hand`, `lift` (meters the hand rises, `0.5`; `0.42`
+brings it all the way back), `riseMs` (`700`), `holdMs` (`300`), `freezeMs` (after the grip
+closes) and `timeoutMs`. It resolves once the hand lets go (or once frozen) with `revived`.
+
+`__office.releaseShot()` unfreezes, hands the controller back (a staged gun goes away; a gun
+held in the other hand stays) and quietly stands the staged worker back up if it is down and
+was not finished off; pass `false` to leave it down. A freeze releases itself after 30 seconds.
 
 ## Acceptance status
 

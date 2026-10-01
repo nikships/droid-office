@@ -1312,7 +1312,12 @@ export type ServerMsg =
   | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string }
   | { t: 'rtc'; from: string; data: unknown }
   | ({ t: 'chat' } & ChatLine)
-  | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error' }
+  /**
+   * A line for the toast stack. `workerId` names the worker it is about, when one is: a client
+   * already showing that in its world (the headset's medics carrying off a worker it finished off)
+   * can leave the text out.
+   */
+  | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
   | { t: 'team'; state: TeamState }
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'services'; state: ServicesState }

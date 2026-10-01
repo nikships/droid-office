@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BREECH_AT, BloodSpray, GUN_LEN, MUZZLE_AT, Muzzle, Puff, boreOf, disposeGun, magnum } from '../src/client/world/gun.js';
+import { BloodSpray, GUN_LEN, MUZZLE_AT, Muzzle, Puff, disposeGun, magnum } from '../src/client/world/gun.js';
 import { recoilAt } from '../src/client/native/physical.js';
 
 test('a magnum points down +z with its grip around the origin', () => {
@@ -68,18 +68,6 @@ test('a worker hit sprays out of the wound toward the shooter and clears within 
   assert.ok(toward > spray.group.children.length / 2, 'most of it flies back out at the shooter');
   assert.equal(spray.update(0.5), false, 'cleared');
   spray.dispose();
-});
-
-test('the bore runs from the breech behind the fist through the muzzle', () => {
-  const gun = magnum();
-  gun.position.set(1, 2, 3);
-  gun.rotation.set(0.3, -0.8, 0.2);
-  const bore = boreOf(gun);
-  assert.ok(BREECH_AT.z < 0 && BREECH_AT.y === MUZZLE_AT.y, 'the breech sits on the bore axis behind the fist');
-  assert.ok(bore.muzzle.distanceTo(gun.localToWorld(MUZZLE_AT.clone())) < 1e-9);
-  assert.ok(bore.breech.distanceTo(gun.localToWorld(BREECH_AT.clone())) < 1e-9);
-  assert.ok(bore.direction.distanceTo(new THREE.Vector3(0, 0, 1).transformDirection(gun.matrixWorld)) < 1e-9);
-  disposeGun(gun);
 });
 
 test('recoil kicks in full on the shot and settles within a quarter second', () => {
