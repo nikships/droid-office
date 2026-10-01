@@ -145,7 +145,9 @@ bool BridgeState::submit(const std::string &packet, std::string &scene, std::str
                 auto aim = statusText(status.value("aim", std::string{}));
                 auto message = statusText(status.value("message", std::string{}));
                 next.status = Json{{"aim", aim}, {"message", message}}.dump(-1, ' ', true);
-                next.statusVisible = !aim.empty() || !message.empty();
+                next.statusCounter = !aim.empty();
+                next.statusMessage = !message.empty();
+                next.statusVisible = next.statusCounter || next.statusMessage;
             }
         }
         {

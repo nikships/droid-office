@@ -122,12 +122,20 @@ Every launch and page reload starts in the office with the workspace closed. Not
 by itself; the left controller's Menu button does (`native/ui.ts`, `tests/native-launch.test.ts`).
 Before the office page sends its first packet, the panel shows the app's own connection screen,
 and that packet closes it.
-With the workspace closed, a smaller head-locked compositor panel shows only the FPS counter,
-when that Graphics setting is on, and each toast while it lasts. Its card fits the text, so the
-counter alone is a small label rather than a full-width bar. The native page names no controls:
+With the workspace closed, one small Android Surface shows only the FPS counter, when that
+Graphics setting is on, and each toast while it lasts. The renderer shows its two columns as
+separate head-locked quads (`status_layout.h`). A toast sits in a card fitted to its text,
+1.4 m ahead and about 16 degrees below the line of sight. The counter has no card: it is faint
+text, 0.7 degrees tall (Android XR's 14 dp minimum), facing the eyes from the lower-left edge of
+the view. It starts about 31 degrees left of the line of sight, on a line 27 degrees below it,
+so it never lands on the face of a worker the player looks at. It hides while a tracked
+controller is in front of it, so no text is drawn across the player's hand, and returns 0.3 s
+after the hand moves away. The native page names no controls:
 no aim labels, carry, climbing or gun hints, "press E" toasts, key legends or world signs
-(`controlHintsShown` in `src/client/native/mode.ts`). The Controls window, opened on purpose,
-still lists the controller roles. Desktop and WebXR keep their hints.
+(`controlHintsShown` in `src/client/native/mode.ts`). Boards state only what is so: the empty
+Services board says that no web servers are running, without the desktop line on how it fills,
+and the DroidProxy refresh key on the machine monitor carries only its ↻ glyph. The Controls
+window, opened on purpose, still lists the controller roles. Desktop and WebXR keep their hints.
 No name, status bubble, task card, light or pitch floats over a character either
 (`floatingTagsShown`): a worker wears no antenna or status bulb, and its headset band runs from
 ear cup to ear cup. A worker's name, engine, state and task are printed on its seat's nameplate
@@ -194,7 +202,9 @@ controller fallback. Both profiles bind the physical Menu action on the left con
 
 A real UI freeze was traced to the hidden status panel's Canvas producer filling an unconsumed
 BufferQueue and blocking Android's UI thread. The installed fix stops that producer while its
-quad is hidden and keeps consuming the quad until the UI thread acknowledges shutdown. The
+quads are hidden and keeps consuming the Surface until the UI thread acknowledges shutdown. While
+the producer runs, at least one status quad is submitted: the toast column, transparent without a
+toast, does that alone while the counter is off or covered and while the workspace is open. The
 WebView's scene packets and control heartbeat then continued advancing while opening and
 closing the workspace. Native FPS alone would have concealed this freeze.
 

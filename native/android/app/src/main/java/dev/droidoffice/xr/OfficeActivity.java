@@ -242,14 +242,19 @@ public final class OfficeActivity extends Activity {
         });
     }
 
-    public void onStatusSurface(Surface surface, int width, int height) {
+    /**
+     * The renderer shows [0, messageWidth) as the toast and [counterLeft, width) as the FPS
+     * counter.
+     */
+    public void onStatusSurface(Surface surface, int width, int height, int messageWidth,
+                                int counterLeft) {
         runOnUiThread(() -> {
             if (destroyed) {
                 surface.release();
                 return;
             }
             statusSurface = surface;
-            statusPanel = new NativeStatusPanel(surface, width, height);
+            statusPanel = new NativeStatusPanel(surface, width, height, messageWidth, counterLeft);
             statusPanel.setVisible(sessionVisible && statusLayerVisible);
             nativeStatusVisible(sessionVisible && statusLayerVisible);
         });

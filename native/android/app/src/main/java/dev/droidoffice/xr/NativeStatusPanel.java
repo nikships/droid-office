@@ -18,20 +18,22 @@ import android.view.Surface;
 import java.util.Objects;
 
 /**
- * Draws the closed-workspace status lines into a small Surface whose BufferQueue the OpenXR
- * runtime owns: the FPS counter when its setting is on, then the latest transient toast. The
- * page sends no aim labels or control hints here. Every method runs on the main thread. The
- * Surface is never released here.
+ * Draws the closed-workspace status into a small Surface whose BufferQueue the OpenXR runtime
+ * owns: the latest transient toast in the left column and the FPS counter, when its setting is
+ * on, in the right column. The native renderer shows each column as its own quad: the toast
+ * below the line of sight, the counter small and faint at the lower-left edge of the view
+ * (status_layout.h). The page sends no aim labels or control hints here. Every method runs on
+ * the main thread. The Surface is never released here.
  *
- * <p>Frames are premultiplied RGBA from a software Canvas: a rounded, semi-opaque dark card
- * fitted around the text and centered in the buffer, fully transparent outside it, and fully
- * transparent when there is no text.
+ * <p>Frames are premultiplied RGBA from a software Canvas: the toast in a rounded, semi-opaque
+ * dark card fitted around its text and centered in its column, the counter as bare, faint,
+ * left-aligned text with a soft shadow, and everything else fully transparent.
  */
 public final class NativeStatusPanel {
     private static final String TAG = "OfficeXR";
     private static final float TEXT_PX = 28f;
     private static final int PADDING_PX = 20;
-    private static final int LINE_GAP_PX = 8;
+    private static final int COUNTER_PADDING_PX = 12;
     private static final int MESSAGE_LINES = 2;
     private static final float CORNER_PX = 22f;
     private static final float INSET_PX = 1.5f;
@@ -40,12 +42,15 @@ public final class NativeStatusPanel {
     private static final int MAX_RETRIES = 3;
     private static final int BACKGROUND = Color.argb(222, 11, 15, 22);
     private static final int BORDER = Color.argb(70, 170, 190, 215);
-    private static final int COUNTER_COLOR = Color.rgb(184, 208, 236);
+    private static final int COUNTER_COLOR = Color.argb(150, 184, 208, 236);
+    private static final int COUNTER_SHADOW = Color.argb(150, 0, 0, 0);
     private static final int MESSAGE_COLOR = Color.rgb(246, 248, 252);
 
     private final Surface surface;
     private final int width;
     private final int height;
+    private final int messageWidth;
+    private final int counterLeft;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextPaint counterPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint messagePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
@@ -68,16 +73,24 @@ public final class NativeStatusPanel {
     private long lastDrawAt = -1;
     private int failures;
 
-    public NativeStatusPanel(Surface surface, int width, int height) {
+    /** The toast column is [0, messageWidth), the counter column [counterLeft, width). */
+    public NativeStatusPanel(Surface surface, int width, int height, int messageWidth,
+                             int counterLeft) {
         this.surface = Objects.requireNonNull(surface, "surface");
-        if (width <= 2 * PADDING_PX || height <= 2 * PADDING_PX)
-            throw new IllegalArgumentException("Status panel too small: " + width + "x" + height);
+        if (!Rules.columnsFit(width, height, messageWidth, counterLeft, PADDING_PX,
+                              COUNTER_PADDING_PX))
+            throw new IllegalArgumentException("Status panel columns do not fit: " + width + "x" +
+                                               height + " split " + messageWidth + "/" +
+                                               counterLeft);
         this.width = width;
         this.height = height;
+        this.messageWidth = messageWidth;
+        this.counterLeft = counterLeft;
         counterPaint.setSubpixelText(true);
         counterPaint.setTextSize(TEXT_PX);
         counterPaint.setTypeface(Typeface.DEFAULT);
         counterPaint.setColor(COUNTER_COLOR);
+        counterPaint.setShadowLayer(3f, 0f, 1f, COUNTER_SHADOW);
         messagePaint.setSubpixelText(true);
         messagePaint.setTextSize(TEXT_PX);
         messagePaint.setTypeface(Typeface.create(Typeface.DEFAULT, 500, false));
@@ -106,7 +119,7 @@ public final class NativeStatusPanel {
         }
     }
 
-    /** The FPS counter line (empty when its setting is off) and the transient message lines. */
+    /** The FPS counter line (empty when its setting is off) and the transient toast lines. */
     public void setText(String counter, String message) {
         if (closed || (Objects.equals(counter, rawCounter) && Objects.equals(message, rawMessage)))
             return;
@@ -158,10 +171,14 @@ public final class NativeStatusPanel {
         if (!surface.isValid())
             return false;
         if (layoutsStale) {
-            int textWidth = width - 2 * PADDING_PX;
-            counterLayout = counter.isEmpty() ? null : layout(counter, counterPaint, textWidth, 1);
+            counterLayout = counter.isEmpty()
+                                ? null
+                                : layout(counter, counterPaint,
+                                         width - counterLeft - 2 * COUNTER_PADDING_PX, 1);
             messageLayout =
-                message.isEmpty() ? null : layout(message, messagePaint, textWidth, MESSAGE_LINES);
+                message.isEmpty()
+                    ? null
+                    : layout(message, messagePaint, messageWidth - 2 * PADDING_PX, MESSAGE_LINES);
             layoutsStale = false;
         }
         Canvas canvas;
@@ -201,40 +218,43 @@ public final class NativeStatusPanel {
         int canvasHeight = canvas.getHeight();
         if (canvasWidth != width || canvasHeight != height)
             canvas.scale(canvasWidth / (float)width, canvasHeight / (float)height);
-        int counterHeight = counterLayout == null ? 0 : counterLayout.getHeight();
-        int messageHeight = messageLayout == null ? 0 : messageLayout.getHeight();
-        int gap = counterLayout != null && messageLayout != null ? LINE_GAP_PX : 0;
-        int contentHeight = counterHeight + gap + messageHeight;
-        // Horizontal extent of the inked lines inside the layouts' shared text width, which
-        // also covers right-to-left lines that ALIGN_NORMAL places at the right edge.
+        if (messageLayout != null)
+            paintMessage(canvas);
+        if (counterLayout != null) {
+            canvas.save();
+            canvas.clipRect(counterLeft + COUNTER_PADDING_PX, COUNTER_PADDING_PX,
+                            width - COUNTER_PADDING_PX, height - COUNTER_PADDING_PX);
+            canvas.translate(
+                counterLeft + COUNTER_PADDING_PX,
+                Rules.contentTop(height, COUNTER_PADDING_PX, counterLayout.getHeight()));
+            counterLayout.draw(canvas);
+            canvas.restore();
+        }
+    }
+
+    private void paintMessage(Canvas canvas) {
+        int contentHeight = messageLayout.getHeight();
+        // Horizontal extent of the inked lines inside the layout's text width, which also
+        // covers right-to-left lines that ALIGN_NORMAL places at the right edge.
         float inkLeft = Float.MAX_VALUE;
         float inkRight = -Float.MAX_VALUE;
-        for (StaticLayout lines : new StaticLayout[] {counterLayout, messageLayout}) {
-            if (lines == null)
-                continue;
-            for (int line = 0; line < lines.getLineCount(); line++) {
-                inkLeft = Math.min(inkLeft, lines.getLineLeft(line));
-                inkRight = Math.max(inkRight, lines.getLineRight(line));
-            }
+        for (int line = 0; line < messageLayout.getLineCount(); line++) {
+            inkLeft = Math.min(inkLeft, messageLayout.getLineLeft(line));
+            inkRight = Math.max(inkRight, messageLayout.getLineRight(line));
         }
         if (inkRight < inkLeft)
             inkLeft = inkRight = 0;
-        float[] box =
-            Rules.card(width, height, PADDING_PX, INSET_PX, inkRight - inkLeft, contentHeight);
+        float[] box = Rules.card(messageWidth, height, PADDING_PX, INSET_PX, inkRight - inkLeft,
+                                 contentHeight);
         card.set(box[0], box[1], box[2], box[3]);
         canvas.drawRoundRect(card, CORNER_PX, CORNER_PX, fill);
         canvas.drawRoundRect(card, CORNER_PX, CORNER_PX, stroke);
-        int top = Rules.contentTop(height, PADDING_PX, contentHeight);
         canvas.save();
         canvas.clipRect(card.left + PADDING_PX, PADDING_PX, card.right - PADDING_PX,
                         height - PADDING_PX);
-        canvas.translate(card.left + PADDING_PX - inkLeft, top);
-        if (counterLayout != null) {
-            counterLayout.draw(canvas);
-            canvas.translate(0, counterHeight + gap);
-        }
-        if (messageLayout != null)
-            messageLayout.draw(canvas);
+        canvas.translate(card.left + PADDING_PX - inkLeft,
+                         Rules.contentTop(height, PADDING_PX, contentHeight));
+        messageLayout.draw(canvas);
         canvas.restore();
     }
 
@@ -302,9 +322,20 @@ public final class NativeStatusPanel {
         }
 
         /**
-         * The card around the text: {left, top, right, bottom}. It is the text's ink width plus
-         * padding, centered in the buffer, and never wider or taller than the buffer less its
-         * inset, so a short FPS counter gets a small card rather than a full-width bar.
+         * Whether the toast column [0, messageWidth) and the counter column [counterLeft, width)
+         * each leave room for text inside their padding without overlapping.
+         */
+        static boolean columnsFit(int width, int height, int messageWidth, int counterLeft,
+                                  int padding, int counterPadding) {
+            return height > 2 * Math.max(padding, counterPadding) && messageWidth > 2 * padding &&
+                counterLeft >= messageWidth && width - counterLeft > 2 * counterPadding;
+        }
+
+        /**
+         * The toast card around its text: {left, top, right, bottom} in a column this wide. It
+         * is the text's ink width plus padding, centered in the column, and never wider or
+         * taller than the column less its inset, so a short toast gets a small card rather than
+         * a full-width bar.
          */
         static float[] card(int width, int height, int padding, float inset, float textWidth,
                             int textHeight) {

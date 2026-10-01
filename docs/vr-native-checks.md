@@ -52,6 +52,11 @@ covers, using `CXX` (default `c++`), and runs it:
   part of the controller-only app build.
 - `native/tests/controller_model_test.cpp` with `controller_model.cpp`: both bundled Samsung
   meshes, malformed asset rejection and animated button transforms.
+- `native/tests/controller_attachment_test.cpp` for the header-only `controller_attachment.h`:
+  grip-attached objects, their validity rules and per-item placement.
+- `native/tests/status_layout_test.cpp` for the header-only `status_layout.h`: the status
+  Surface's toast and FPS counter columns, the counter's lower-left placement and text size,
+  the controller cover test and which status layers a frame composites.
 
 Two registered suites are required on every host run:
 
@@ -102,7 +107,7 @@ otherwise `javac` and `java` come from `PATH`.
 The discovery rules check the versioned DNS-SD TXT contract, HTTP/HTTPS and port validation,
 IPv4 preference and IPv6 formatting, unsuitable addresses and display names. The catalog checks
 bounded discovery, serialized resolutions, network identities, lost services, failed resolutions,
-and callbacks from a previous picker session. The full runner registers twelve checks.
+and callbacks from a previous picker session. The full runner registers fourteen checks.
 
 Without `--android-sdk`, the summary lists the Java tests as `NOT RUN`. With
 `--require-java`, a missing `--android-sdk` is an error rather than a smaller run. CI passes

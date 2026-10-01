@@ -4,6 +4,7 @@ import type { MachineState, ProxyProvider, ProxyState } from '../../shared/proto
 import { MACHINE_MONITOR, PROXY_REFRESH } from '../../shared/layout';
 import { SANS, MONO } from '../fonts';
 import { fillGlyphText } from './glyph';
+import { controlHintsShown } from '../native/mode';
 
 const MUTED = '#8c8c8c';
 
@@ -173,8 +174,10 @@ export class MachineTexture {
     g.stroke();
     g.textAlign = 'center';
     g.fillStyle = p.refreshing ? MUTED : '#eeeeee';
-    g.font = `600 22px ${MONO}`;
-    g.fillText(p.refreshing ? 'READING…' : '↻ REFRESH', bx + bw / 2, by + bh / 2 + 8);
+    // In the headset app the button carries only its glyph, like a physical key.
+    const labelled = controlHintsShown() || p.refreshing;
+    g.font = labelled ? `600 22px ${MONO}` : `600 34px ${MONO}`;
+    g.fillText(p.refreshing ? 'READING…' : labelled ? '↻ REFRESH' : '↻', bx + bw / 2, by + bh / 2 + (labelled ? 8 : 12));
 
     const rowsTop = top + 80;
     const bottom = H - 20;

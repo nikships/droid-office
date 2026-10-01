@@ -161,7 +161,11 @@ export function openNativeGraphicsSettings(): void {
     ]),
     h('p.setting-note', {}, 'Higher detail outside your gaze uses more GPU time. This setting applies when foveation is on. Balanced, recommended resolution and Low detail are the defaults.'),
     h('label.choice.ng-fps', {}, fps, h('span', {}, 'Always show the FPS counter')),
-    h('p.setting-note', {}, 'The counter uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.'),
+    h(
+      'p.setting-note',
+      {},
+      'The counter sits small and faint at the lower-left edge of your view, and steps aside while a controller is in front of it. It uses the native application’s measured frame rate. Display refresh and delayed office updates are reported separately. The app always requests 90 Hz.',
+    ),
   );
   const el = h(
     'section.modal.native-graphics',

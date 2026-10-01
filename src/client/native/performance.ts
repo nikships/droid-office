@@ -39,8 +39,9 @@ export interface NativeStatusText {
 }
 
 /**
- * What the status panel in front of you shows while the workspace is closed: the FPS counter when
- * its setting is on, and the latest toast while it lasts. Nothing else persists there, and no
+ * What the status panel shows while the workspace is closed: the FPS counter when its setting is
+ * on, faint at the lower-left edge of the view, and the latest toast below the line of sight while
+ * it lasts (native/android/app/src/main/cpp/status_layout.h). Nothing else persists there, and no
  * control is named (native/mode.ts controlHintsShown).
  */
 export function nativeStatus(metrics: unknown, counter: boolean, toast: string): NativeStatusText {

@@ -392,10 +392,12 @@ export class ServicesBoardTexture {
       g.textAlign = 'center';
       g.fillStyle = '#eeeeee';
       g.font = `700 44px ${MONO}`;
-      g.fillText('No web servers running', W / 2, H / 2 - 20);
+      // The headset app's board states only what is so; the line on how it fills is desktop help.
+      const help = controlHintsShown();
+      g.fillText('No web servers running', W / 2, help ? H / 2 - 20 : H / 2 + 14);
       g.fillStyle = 'rgba(140, 140, 140, .9)';
       g.font = `500 28px ${SANS}`;
-      g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
+      if (help) g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;
