@@ -16,9 +16,15 @@ const BORE_Y = 0.086;
 
 /** The closest rendered solid struck by a bullet; only registered workers can be targets. */
 export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
-  for (const hit of ray.intersectObjects([office, ...workers.keys()], true)) {
-    // Raycaster includes hidden descendants and material-invisible meshes. Name tags, light
-    // points and other billboards are presentation, rather than solid bullet blockers.
+  // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
+  // would throw before any worker could react. Only rendered meshes can absorb a bullet.
+  const solids = new Set<THREE.Mesh>();
+  for (const root of [office, ...workers.keys()])
+    root.traverseVisible((object) => {
+      if (object instanceof THREE.Mesh) solids.add(object);
+    });
+  for (const hit of ray.intersectObjects([...solids], false)) {
+    // Raycaster includes material-invisible meshes; a multi-material mesh can hide one face.
     if (!(hit.object instanceof THREE.Mesh)) continue;
     const material = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
     if (!material?.visible || material.opacity <= 0) continue;

@@ -748,3 +748,24 @@ worker/board views, including valid-gaze movement and invalid-gaze fallback. Kee
 input replay evidence separate from physical headset use.
 Performance hints request sustained CPU/GPU levels, but cannot guarantee that the runtime
 will maintain 90 Hz. See the [OpenXR performance-level API](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrPerfSettingsSetPerformanceLevelEXT.html).
+
+### Controller and medic wrap-up (2026-09-30)
+
+The final locally signed v0.1.301 APK (code 301) is installed on Galaxy XR `R3GYB022DBM`.
+Its SHA-256, reproduced by pulling the installed `base.apk`, is
+`361c511efdcacba365886a61bfe52abf52939c001efa7a94a76bd8e9e831593a`.
+Release signing verification and 16 KB alignment passed with the existing certificate and
+lineage. The original first-install timestamp, selected office and sign-in were preserved.
+Launch loaded the updated laptop-served client, both Samsung controller meshes and the
+recommended-resolution foveated world/sharp-screen targets; requesting 90 Hz succeeded.
+This launch smoke check does not establish a new sustained FPS measurement.
+
+The controller/shot fixes and medic redesign are documented in
+[controller interactions](vr-native-controller-interactions.md) and
+[medic sequence](medic-sequence.md). Local lint, typecheck, 703 tests with coverage and
+production build passed; the final camera-less shot refinement then passed its 21 affected
+regressions and a rebuild. No pipeline completion was awaited, as requested by the owner.
+The office server on 4761, its hook listener and Vite on 4762 were shut down at wrap-up.
+The staged final client remains in
+`/tmp/office-xr-toolchain/release-v0.1.297/local-desktop/dist/public`; the local signed APK
+and installation evidence are in `/tmp/office-xr-toolchain/release-v0.1.301/`.

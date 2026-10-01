@@ -10,13 +10,13 @@ board and elevator interactions are the priority; further mini-game support is d
 
 The native OpenXR implementation is in `native/android`. It now renders the original
 populated office on the real headset with multiview, tile MSAA and gaze-driven foveation.
-The native work is merged into `main`, and the latest published release is
-[v0.1.289](https://github.com/nikships/droid-office/releases/tag/v0.1.289).
-Its exact APK is installed; pulling the installed bytes reproduced the published checksum,
-with the existing release signature and retained app data. The matching `v0.1.289` desktop server is running detached on the
-laptop. The headset reconnected over Wi-Fi, and an authenticated observer verified its
-original profile and existing shared shell in the same world. Both floor PTY hosts and their
-worker processes survived the server replacement without restarting.
+The native work is merged into `main`. Final wrap-up on 2026-09-30 installed a locally signed
+**v0.1.301** APK (code 301), with the existing release certificate, retained app data and an
+installed-byte checksum matching the local artifact. The final laptop-served client includes
+the physical controller controls, corrected gun alignment/hit detection and redesigned medics.
+It loaded on the headset before shutdown. At the owner's request, the laptop office server
+and remaining Vite test server are now stopped. Start the laptop server again before using
+the headset; the saved office and sign-in remain available. CI completion was not awaited.
 
 The two worn-headset screenshots from 2026-09-30 identified terminal glyph clipping and
 blurry in-world laptop text. The new release fits Nerd Font icons to the shared monospace
@@ -40,9 +40,15 @@ shared desktop/native gun model, and separates left/right face-button and stick-
 Right Menu is reserved for Android XR; left Menu owns the workspace and grip never navigates
 menus. Desktop and WebXR control schemes remain authoritative for their own clients.
 The shared gun model, native display-loop attachments and physical-input replay checks are
-integrated; publication and headset installation are in progress. See the
+integrated and installed. The wearer's upward-barrel capture led to aim-relative grip placement;
+the later shooting failure was confirmed as a camera-dependent sprite raycast crash. Bullets
+now intersect visible solid meshes without visiting labels. See the
 [controller interaction contract](vr-native-controller-interactions.md) for the exact mapping
-and validation limits. The requested medic-sequence redesign is being developed separately.
+and validation limits. The [medic redesign](medic-sequence.md) is also integrated: supported
+scoop pickup, synchronized lift, chair withdrawal and a carry-out with contact poses.
+Combined local lint, typecheck, 703 tests with coverage and production build passed; all
+21 gun/physical regression tests passed again after the final camera-less raycast fix.
+The signed release build passed verification. Final worn shooting/medic feedback remains open.
 
 The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.

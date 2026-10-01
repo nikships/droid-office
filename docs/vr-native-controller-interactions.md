@@ -104,16 +104,20 @@ attachments on the same controller. Browser captures at 1600×1019 and 1280×720
 scrollable control rows with the keyboard open. Native login captures at 1280×720 and 1024×600
 also keep the submit button above the keyboard; the compact card now scrolls when necessary.
 The controller release passed all 689 tests with coverage, 13 native host checks, both Android
-variants and [CI](https://github.com/nikships/droid-office/actions/runs/36798298291). A locally
-signed v0.1.297 from the same source is installed with retained app data and a matching staged
-laptop server. This APK's bytes differ from the CI-published artifact; their source and signing
-identity match. The owner is reviewing the controls. Their first gun capture exposed an upward
+variants and [CI](https://github.com/nikships/droid-office/actions/runs/36798298291). The final
+locally signed v0.1.301 is installed with retained app data; its installed bytes match the local
+artifact and its signing identity matches the earlier release. The laptop-served client was
+updated before the office/test servers were stopped at the owner's request. CI completion for
+this wrap-up was not awaited. The owner has reviewed the controls. Their first gun capture exposed an upward
 barrel caused by treating grip and aim orientations as identical; aim-relative attachment
 regressions now cover both hands, wrist pitch/yaw/roll, handle position and shot alignment.
 A second wearer capture showed muzzle smoke without a worker reaction. The shared raycast
 now filters invisible blockers and UI billboards, with regressions for hidden workers and
-real furniture/glass occlusion. Native shots also set the ray camera for sprite intersection
-and record the chosen solid locally for diagnosis. This fix still needs wearer confirmation.
+real furniture/glass occlusion. The headset log confirmed every trigger pull threw a null
+`matrixWorld` error in the camera-dependent sprite raycast. Shot picking now collects visible
+solid meshes before intersecting, so a direct muzzle ray never visits a sprite at all. Native
+shots also set the shared ray camera and record the chosen solid locally for diagnosis.
+The camera-less muzzle regression passes; the fix still needs wearer confirmation.
 A wearer still needs to
 confirm comfortable holster reach, rung acquisition, pole release and striking feel. No synthetic
 replay or browser render establishes physical headset ergonomics or worn-view sharpness.

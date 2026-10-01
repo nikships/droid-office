@@ -68,6 +68,10 @@ test('UI billboards and glow points are not solid shot targets or blockers', () 
   f.office.updateMatrixWorld(true);
   assert.ok(f.ray.intersectObject(f.office, true).some((hit) => hit.object === label));
   assert.ok(f.ray.intersectObject(f.office, true).some((hit) => hit.object === glow));
+  f.ray.camera = null;
+  label.raycast = () => {
+    assert.fail('a direct muzzle ray must not intersect a camera-dependent name sprite');
+  };
   assert.equal(gunHit(f.ray, f.office, f.workers)?.hit.object, f.body);
 });
 
