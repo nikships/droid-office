@@ -102,9 +102,8 @@ hot spot: up to about half the surfaces' own color on the gun, what it is pointe
 desk under it, softening out to 1.4 m, so nothing at the muzzle clips to white and the floor and
 walls beyond keep their look. Guns seen across the room keep the physical light. The holding
 controller gets a full-strength 70 ms pulse. A
-struck worker sprays blood back out of the contact point with a wet hit sound, and the shot
-shoves it along the bullet at once before it sprawls out on the far side of its chair. It lands
-with its length flat along the floor, resting on it.
+struck worker sprays blood back out of the contact point with a wet hit sound and reels from the
+shot in the world, where the shooter is looking (below).
 
 **A shot never opens anything in the headset.** The owner's shot design holds (`gun-spec.md`,
 [medic sequence](medic-sequence.md)): a hit sends `worker.shoot`, the server starts the worker's
@@ -113,11 +112,26 @@ branches, and the medics collect the body. No dialog, workspace, toast, hint tex
 appears at any point; nothing freezes, the gun stays live and you stay free to move. What follows
 plays out at the body (`native/downed.ts`, `world/casualties.ts`):
 
-- **The hit lands at once, where it struck.** The worker is knocked out of its chair along the
-  bullet in the shot's own frame, without waiting for the server's echo (`PendingShots` keeps
-  that local fall standing through unrelated updates until the downed state arrives, and lets
-  the body get back up if it never does, after `SHOT_ECHO_MS`). Other clients see it fall when
-  the server's state reaches them. A trigger at a downed worker's desk opens and says nothing.
+- **The hit lands at once, where it struck, and the body reels from it in view.** In the shot's
+  own frame, without waiting for the server's echo, the hit snaps the worker back and throws it
+  up out of its chair along the bullet, arms flung up; it staggers back away from the shot onto
+  its feet beside the chair within about 0.25 s, turning to face it, then goes over backwards,
+  arms flying out, and lands on its back with a thud at 0.75 s; its head bounces once and it lies
+  still by about 1.05 s, face up, arms flung out on the floor (`reelTilt`, `Casualties.reel`).
+  It is never driven in under its desk, and goes round the back of its chair rather than through
+  it. Where its feet come down (0.85 to 1.25 m from its seat) and which way its head goes are
+  chosen for the shooter's eyes (`Casualties.reeling`): rays from the headset's eyes, and from
+  12 cm to either side, past its own desk and chair and the desks and workers within 3.5 m must
+  reach its body and flung-out arms, nothing may stand over it, and of those it prefers near
+  where it sat in the shooter's view, lying across the view rather than end on, nearest its
+  chair. So from a standing shot 1-1.5 m beside a seated worker no part of the reaction strays
+  further from the middle of a view on the target than the seated worker itself, and in a level
+  view it never sinks lower than it sat; from behind, it goes out sideways round the desk, within
+  40 degrees of the middle (`tests/native-shot-reaction.test.ts`). `PendingShots` keeps that local
+  fall standing through unrelated updates until the downed state arrives, and lets the body get
+  back up if it never does, after `SHOT_ECHO_MS`. Other clients, which know no bullet, see the
+  desktop's sideways tumble when the server's state reaches them. A trigger at a downed worker's
+  desk opens and says nothing.
 - **The body keeps the window's time.** Its heartbeat, heard up close and felt in a controller
   whose grip comes within about 0.7 m of its chest, starts at a beat every 0.75 s and drags out
   to one every 2 s while fading to a quarter of its strength as the server's deadline
@@ -237,7 +251,12 @@ The shot-in-the-world flow is covered by `tests/native-downed.test.ts` (the hear
 and fades with the server's deadline and stops there, the bulb flashes and goes out, the pool
 reaches full size at the deadline, touch and pointing reach rules, the stir, rise and slump, a
 window closing under a stirring body, pending local falls, the desktop unchanged, and a real
-worker resting flat on the floor for 16 falls), `tests/native-physical.test.ts` (the use action
+worker resting flat on the floor for 16 falls), `tests/native-shot-reaction.test.ts` (real
+workers at three real desks shot from both sides and both back diagonals at 1, 1.25 and 1.5 m:
+out of the chair by 0.3 s, a thud at 0.75 s, still by 1.1 s, away from the shooter and within
+1.5 m of the seat, at least 80% of it in plain sight past the furniture round it, the view
+bounds above, the arms flung up, out and back in, and a reeled body collected by the medics),
+`tests/native-physical.test.ts` (the use action
 at a body through tracked grips only, never through the gun hand, an open workspace or a refused
 revival) and `tests/native-shot-stage.test.ts` (real office desks against a stand-in for the
 server's window: the trigger path drops a practice target from five sides at 4 cm to 2.2 m and

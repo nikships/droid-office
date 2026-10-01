@@ -1609,8 +1609,9 @@ function resolveGunShot() {
  * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
  * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
  * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. No menu opens anywhere. In the headset it goes down at once, knocked out
- * of its chair along the bullet, without waiting for the server (native/downed.ts PendingShots).
+ * session still running. No menu opens anywhere. In the headset it goes down at once, reeling back
+ * out of its chair along the bullet and over onto the floor where the shooter can see it, without
+ * waiting for the server (native/downed.ts PendingShots).
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): ShotOutcome {
   const hit = result?.hit;
@@ -1635,7 +1636,8 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): 
   if (!v || !w || !desk || w.downedUntil !== undefined) return 'hit';
   if (nativeMode) {
     arrivals.forget(v.model);
-    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction)) {
+    // It reels from the hit where the shooter (the headset's eyes) can see it go down.
+    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction, camera.getWorldPosition(new THREE.Vector3()))) {
       pendingShots.add(workerId, performance.now());
       // Should the server never echo it, the body gets back up rather than lying there for good.
       window.setTimeout(syncWorkers, SHOT_ECHO_MS + 50);

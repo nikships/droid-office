@@ -216,7 +216,7 @@ test('the blood pool geometry is shared and the constants sanity-check', () => {
   assert.ok(FADE_TIME > 0 && FADE_TIME < 2);
 });
 
-test('a shot shoves the body along the bullet at once and sprawls it out on the far side', () => {
+test("the headset's own shot reels the body back along the bullet at once and lays it out on the far side", () => {
   for (const sign of [-1, 1]) {
     const { seat, lands, casualties, model, frames } = rig();
     // The seat faces -z (yaw π): its sideways axis is world x. The bullet travels along `sign` x.
@@ -225,20 +225,26 @@ test('a shot shoves the body along the bullet at once and sprawls it out on the 
     assert.equal(casualties.shoot('w1', model, seat, direction), true);
     frames(1, 1 / 30);
     const moved = model.root.position.clone().sub(from);
-    assert.ok(moved.x * sign > 0.06, `the first frame after the hit already shoves it ${moved.x.toFixed(3)} m along the bullet`);
+    assert.ok(moved.x * sign > 0.06, `the first frame after the hit already throws it ${moved.x.toFixed(3)} m along the bullet`);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion);
-    assert.ok(up.x * sign > 0.2, 'and leans it away from the shooter');
+    assert.ok(up.x * sign > 0.2, 'and snaps it back away from the shooter');
+    frames(12, 1 / 30);
+    assert.equal(lands.length, 0, 'staggering back on its feet first');
+    assert.ok((model.root.position.x - from.x) * sign > 0.7, 'well out of its chair, away from the shot');
     frames(60, 1 / 30);
-    assert.equal(lands.length, 1);
-    assert.ok((lands[0].x - from.x) * sign > 0.5, 'it lands out on the side the bullet was heading');
+    assert.equal(lands.length, 1, 'then over onto its back with one thud');
+    assert.ok((lands[0].x - from.x) * sign > 0.8, 'it lands out on the side the bullet was heading');
+    const along = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion);
+    assert.ok(Math.abs(along.y) < 1e-6 && along.x * sign > 0, 'flat, its head away from the shooter');
+    assert.ok(new THREE.Vector3(0, 0, 1).applyQuaternion(model.root.quaternion).y > 0.8, 'face up');
   }
 });
 
-test('the hit shove peaks at once and has gone by the time the body lands', async () => {
-  const { jolt } = await import('../src/client/world/casualties.js');
-  assert.equal(jolt(-0.01), 0);
-  assert.ok(jolt(1 / 30) > 0.6, 'most of it shows in the first headset frame');
-  assert.ok(Math.abs(jolt(0.07) - 1) < 1e-9);
-  assert.ok(jolt(0.3) < 0.1);
-  assert.ok(jolt(FALL_TIME) < 0.001, 'nothing left to jump out of when it lands');
+test('a shot the server told of (no bullet: the desktop, another headset) keeps the sideways tumble', () => {
+  const { seat, casualties, model, frames } = rig();
+  casualties.shoot('w1', model, seat);
+  frames(4, 1 / 60);
+  assert.ok(model.root.position.y > 0.4, 'up in an arc out of the chair, not reeling back along a bullet');
+  frames(60, 1 / 60);
+  assert.ok(Math.abs(Math.abs(model.root.position.x) - 0.65) < 0.01, 'out to one side of its chair');
 });

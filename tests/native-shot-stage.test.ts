@@ -163,7 +163,7 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true, 
         const workerId = result?.workerId ?? null;
         let outcome: ShotOutcome = workerId === null ? 'miss' : 'hit';
         if (workerId !== null && !server.has(workerId)) {
-          if (casualties.shoot(workerId, f.worker, f.desk.seatAnchor, direction)) pending.add(workerId, time);
+          if (casualties.shoot(workerId, f.worker, f.desk.seatAnchor, direction, camera.getWorldPosition(new THREE.Vector3()))) pending.add(workerId, time);
           send({ t: 'worker.shoot', workerId });
           outcome = 'down';
         }

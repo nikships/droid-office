@@ -1930,6 +1930,21 @@ export class Worker {
     this.body.scale.setScalar(1 + swell * 0.035);
   }
 
+  /**
+   * Down, reeling from a shot in the headset: its arms thrown up and forward by the hit (`flail`,
+   * 0 → 1), or flung out to its sides and back, down onto the floor it lies on (`splay`, 0 → 1);
+   * (0, 0) is arms at its sides. Nothing while it is up; revive puts them back.
+   */
+  limp(flail: number, splay: number) {
+    if (!this.dead) return;
+    const f = THREE.MathUtils.clamp(flail, 0, 1);
+    const s = THREE.MathUtils.clamp(splay, 0, 1);
+    const pitch = -1.35 * f + 1.1 * s;
+    const out = 0.45 * f + 0.8 * s;
+    this.armL.rotation.set(pitch, 0, -out);
+    this.armR.rotation.set(pitch, 0, out);
+  }
+
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */
   revive() {
     if (!this.dead) return;
