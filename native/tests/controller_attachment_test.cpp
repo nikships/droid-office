@@ -23,14 +23,6 @@ XrQuaternionf axisAngle(XrVector3f axis, float angle) {
     return {axis.x * s, axis.y * s, axis.z * s, std::cos(angle / 2)};
 }
 
-/** The input layer with the tracked-grip flag the root adds to HandInput. */
-struct TrackedHand : HandInput {
-    bool gripTracked = true;
-};
-struct TrackedFrame {
-    std::array<TrackedHand, 2> hands;
-};
-
 AttachmentFrame usable(int64_t now = 5000 * ms) {
     AttachmentFrame f;
     f.focused = f.poseValid = f.shouldRender = f.controlsActive = true;
@@ -39,9 +31,10 @@ AttachmentFrame usable(int64_t now = 5000 * ms) {
     return f;
 }
 
-TrackedFrame hands() {
-    TrackedFrame frame;
+InputFrame hands() {
+    InputFrame frame;
     frame.hands[0].active = frame.hands[1].active = true;
+    frame.hands[0].gripTracked = frame.hands[1].gripTracked = true;
     frame.hands[0].grip = {axisAngle({1, 0, 0}, -.5f), {-.2f, 1.1f, -.3f}};
     frame.hands[1].grip = {axisAngle({0, 0, 1}, .8f), {.25f, 1.05f, -.35f}};
     return frame;
@@ -105,7 +98,7 @@ void muzzleFollowsBothGripsUnderRigMotion() {
 void invalidFramesHide() {
     const auto input = hands();
     const Matrix rig = transform({yaw(.2f), {1, 0, 1}});
-    auto invalid = [&](AttachmentFrame f, const TrackedFrame &in) {
+    auto invalid = [&](AttachmentFrame f, const InputFrame &in) {
         auto poses = attachmentPoses(in, rig, f);
         return !poses.valid[0] && !poses.valid[1];
     };
@@ -140,9 +133,12 @@ void invalidFramesHide() {
     one.hands[0].gripTracked = false;
     auto poses = attachmentPoses(one, rig, usable());
     assert(!poses.valid[0] && poses.valid[1]);
-    // The current HandInput (without the flag) reports only located controllers as active.
+    // Active aim fallback is insufficient; only the input layer's tracked grip may attach.
     InputFrame plain;
     plain.hands[1].active = true;
+    poses = attachmentPoses(plain, rig, usable());
+    assert(!poses.valid[0] && !poses.valid[1]);
+    plain.hands[1].gripTracked = true;
     poses = attachmentPoses(plain, rig, usable());
     assert(!poses.valid[0] && poses.valid[1]);
 }

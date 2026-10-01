@@ -32,15 +32,6 @@ constexpr int64_t kAttachmentStaleNs = 250'000'000;
  */
 constexpr float kGripHeldSqueeze = 0.6f;
 
-namespace detail {
-template <class Hand>
-auto gripTracked(const Hand &hand, int) -> decltype(static_cast<bool>(hand.gripTracked)) {
-    return hand.gripTracked;
-}
-/** An input layer without the flag reports only located controllers as active. */
-template <class Hand> bool gripTracked(const Hand &, long) { return true; }
-} // namespace detail
-
 /**
  * grip[h] = rig * the current tracked grip pose, the same transform the native controller model
  * is drawn with. Invalid unless the session is focused and rendering, the control snapshot is
@@ -48,9 +39,8 @@ template <class Hand> bool gripTracked(const Hand &, long) { return true; }
  * attached objects instead of drawing an older pose. held[h] additionally needs hand h's squeeze
  * at kGripHeldSqueeze or more, for objects that are only carried while the grip is squeezed.
  */
-template <class Input = InputFrame>
-SceneControllerPoses attachmentPoses(const Input &input, const Matrix &rig,
-                                     const AttachmentFrame &frame) {
+inline SceneControllerPoses attachmentPoses(const InputFrame &input, const Matrix &rig,
+                                            const AttachmentFrame &frame) {
     SceneControllerPoses out;
     const int64_t age = frame.nowNs - frame.receivedNs;
     const bool fresh = frame.receivedNs > 0 && age >= -1'000'000 && age <= kAttachmentStaleNs;
@@ -58,7 +48,7 @@ SceneControllerPoses attachmentPoses(const Input &input, const Matrix &rig,
         frame.focused && frame.poseValid && frame.shouldRender && frame.controlsActive && fresh;
     for (int h = 0; h < 2; h++) {
         const auto &hand = input.hands[size_t(h)];
-        out.valid[h] = usable && hand.active && detail::gripTracked(hand, 0);
+        out.valid[h] = usable && hand.active && hand.gripTracked;
         if (!out.valid[h])
             continue;
         out.held[h] = hand.squeeze >= kGripHeldSqueeze;
