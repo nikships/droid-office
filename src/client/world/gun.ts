@@ -239,12 +239,66 @@ export function disposeGun(prop: THREE.Group) {
   });
 }
 
+/** How a muzzle flash lights its surroundings, at the flash's peak. */
+export interface FlashLight {
+  color: string;
+  /** three.js point light intensity. */
+  intensity: number;
+  /** Meters beyond which it lights nothing. */
+  distance: number;
+  /** three.js decay exponent: 2 is physical, 0 lights everything within `distance` alike. */
+  decay: number;
+  /** Meters ahead of the muzzle along the bore. */
+  ahead: number;
+}
+
+/** A flash seen from across the room: a hard physical light right at the barrel, thrown on the walls. */
+const ROOM_FLASH: FlashLight = { color: '#ffb347', intensity: 14, distance: 7, decay: 2, ahead: 0.1 };
+
+/**
+ * A flash seen down the barrel of a gun in your own hand (native/physical.ts). The physical light
+ * above falls off with the square of the distance, so in the headset it clipped everything within
+ * an arm's length of the muzzle to white: the gun itself, the chair in front of it and the worker.
+ * This one has no hot spot: a warm pool of up to about half the surfaces' own color round the shot
+ * (the gun, what it is pointed at, the desk under it), softening out to 1.4 m, whatever is right
+ * at the muzzle. The floor and the walls beyond stay as they were, rather than washing pink.
+ */
+export const HELD_FLASH: FlashLight = { color: '#ffb347', intensity: 1.5, distance: 1.4, decay: 0, ahead: 0.35 };
+
+/** A held gun's light level where Sky.lightAt has nothing to say: indoors in the office. */
+export const INDOOR_LIGHT = 0.4;
+/** How much of its own color a held gun shows at a clear day's light level. */
+const HELD_FILL = 0.85;
+
+/**
+ * The fill a held gun gets at `level` (Sky.lightAt, 0–1), as a share of its own color: the curve
+ * Hands.setLight lights the desktop's first-person fist and gun with. Indoors that is about half,
+ * like the native hand renderer's ambient term (0.55), so the gun reads as steel and walnut in the
+ * hand that holds it; the office's night light alone gives it a tenth, and it goes navy.
+ */
+export function heldGunFill(level: number): number {
+  return HELD_FILL * (0.25 + 0.75 * THREE.MathUtils.clamp(Number.isFinite(level) ? level : INDOOR_LIGHT, 0, 1));
+}
+
+/**
+ * Lights a gun from magnum() like the hand holding it: each of its toon batches glows with
+ * heldGunFill(level) of its own color, under whatever the room adds (lamps, the moon, a flash).
+ */
+export function lightHeldGun(gun: THREE.Object3D, level: number): void {
+  const fill = heldGunFill(level);
+  gun.traverse((o) => {
+    const material = (o as THREE.Mesh).material;
+    if (material instanceof THREE.MeshToonMaterial) material.emissive.copy(material.color).multiplyScalar(fill);
+  });
+}
+
 /** How long a muzzle flash lasts, in seconds. */
 const FLASH_TIME = 0.09;
 
 /**
  * The flash at the muzzle when it fires: a star of crossed additive planes round a white-hot core,
- * and a point light that throws it on the walls. fire() pops it; update() fades it back to nothing.
+ * and a point light that throws it round the shot (`flash`). fire() pops it; update() fades it
+ * back to nothing.
  */
 export class Muzzle {
   readonly group = new THREE.Group();
@@ -254,7 +308,7 @@ export class Muzzle {
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
 
-  constructor() {
+  constructor(private flash: FlashLight = ROOM_FLASH) {
     this.group.position.copy(MUZZLE_AT);
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
     this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive('#fff6d8', 0));
@@ -274,8 +328,8 @@ export class Muzzle {
       this.group.add(blade);
       this.star.push(blade);
     }
-    this.light = new THREE.PointLight('#ffb347', 0, 7, 2);
-    this.light.position.z = 0.1;
+    this.light = new THREE.PointLight(flash.color, 0, flash.distance, flash.decay);
+    this.light.position.z = flash.ahead;
     this.group.add(this.light);
   }
 
@@ -308,7 +362,7 @@ export class Muzzle {
     this.core.scale.setScalar(0.6 + 0.4 * k);
     for (const b of this.star) b.material.opacity = k * 0.9;
     this.group.scale.setScalar(1 + (1 - k) * 0.6);
-    this.light.intensity = 14 * k * k;
+    this.light.intensity = this.flash.intensity * k * k;
   }
 
   dispose() {

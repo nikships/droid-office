@@ -1,7 +1,8 @@
 // Practice targets: disposable shell workers that exist to be shot. A `worker.spawn` with
 // `target: true` hires one, and the office names it "Target <n>". No other hire is ever given that
-// name and workers are never renamed, so the name alone tells a practice target from real work:
-// tools that may only shoot disposable workers (the headset's capture staging, for one) check it.
+// name and workers are never renamed. Tools that may only shoot disposable workers (the headset's
+// capture staging, for one) never go by that name, though: they shoot only worker ids they were
+// given or hired themselves, and each must still be a plain shell (isDisposableShell).
 
 import type { WorkerKind } from './protocol.js';
 
@@ -35,9 +36,17 @@ export function targetHireError(o: { kind: WorkerKind; worktree: boolean; repos:
 }
 
 /**
- * Whether a worker is a practice target the office hired: a shell named "Target <n>", with no
- * worktree, other repositories or meeting of its own. Only these may be shot by tools.
+ * Whether a worker is nothing but a plain shell: no agent, worktree, other repositories or meeting
+ * of its own, so a tool's shot (dismissed 30 s later unless revived) destroys no real work.
+ */
+export function isDisposableShell(w: { kind?: WorkerKind; worktree?: unknown; repos?: readonly unknown[]; meeting?: string }): boolean {
+  return w.kind === 'shell' && !w.worktree && !w.repos?.length && !w.meeting;
+}
+
+/**
+ * Whether a worker is the office's answer to a practice target hire: a plain shell named
+ * "Target <n>". It tells that answer apart on the floor; it never lets a tool shoot anyone.
  */
 export function isPracticeTarget(w: { name: string; kind?: WorkerKind; worktree?: unknown; repos?: readonly unknown[]; meeting?: string }): boolean {
-  return w.kind === 'shell' && targetNumber(w.name) !== null && !w.worktree && !w.repos?.length && !w.meeting;
+  return isDisposableShell(w) && targetNumber(w.name) !== null;
 }

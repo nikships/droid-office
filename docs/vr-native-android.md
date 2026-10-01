@@ -385,29 +385,35 @@ instead of bypassing verification.
 
 A debuggable build (`assembleDebug`) passes `{"debuggable":true}` as the fourth argument of
 each `officeNative.frame` call; a release build passes `false`. Only then do the page's
-`window.__office.stageTarget(options)`, `stageShot(options)`, `stageRevive(options)` and
-`dismissTarget(worker)` do anything; otherwise they resolve `{ ok: false }`. They are for headset
-captures over the WebView DevTools socket, and change no normal gameplay.
+`window.__office.stageTarget(options)`, `allowTargets(ids)`, `stageShot(options)`,
+`stageRevive(options)` and `dismissTarget(worker)` do anything; otherwise they resolve
+`{ ok: false }`. They are for headset captures over the WebView DevTools socket, and change no
+normal gameplay.
 
 **Every shot is real.** A hit sends `worker.shoot`, which starts the server's 30-second revival
 window; when it runs out the worker is dismissed and its owned worktrees and branches deleted.
-`stageShot` is therefore refused for anything but a practice target: a plain shell (no agent, no
-worktree, no other repositories, no meeting) that the office named `Target <n>`. Only a
-`worker.spawn` with `target: true` gets that name (`src/shared/targets.ts`), and workers are never
-renamed, so the name marks a disposable worker for the harness's own guards too. A capture goes:
+`stageShot` and `dismissTarget` therefore go by a list of **worker ids, never by name**
+(`TargetAllowlist` in `src/client/native/stage.ts`): the practice targets this page hired with
+`stageTarget`, and the ids a capture harness lists from its own target list with `allowTargets`.
+A listed worker must still be a plain shell (no agent, no worktree, no other repositories, no
+meeting). The office names a `worker.spawn` with `target: true` `Target <n>`
+(`src/shared/targets.ts`), but that name only tells the office's answer to the hire apart on the
+floor; it never lets anything be shot. A capture goes:
 
 ```js
-const t = await __office.stageTarget();          // { ok, worker: 'Target 1 🐚', workerId, desk, clearance }
-await __office.stageShot({ worker: 'Target 1' }); // or the capture puppet's draw and trigger
-await __office.stageRevive({ worker: 'Target 1' }); // or releaseShot(), well inside the window
-await __office.dismissTarget('Target 1');          // { ok, gone: true }
+const t = await __office.stageTarget();            // { ok, worker: 'Target 1 🐚', workerId, desk, clearance }
+__office.allowTargets(['93e35222c41a']);           // or list a harness's target ids: { ok, targets }
+await __office.stageShot({ worker: t.workerId });  // or the capture puppet's draw and trigger
+await __office.stageRevive({ worker: t.workerId }); // or releaseShot(), well inside the window
+await __office.dismissTarget(t.workerId);          // { ok, gone: true }; off the list again
 ```
 
 `stageTarget` hires one at `desk` (a free desk or bean bag), or by default at the free desk
 farthest from every other worker on the floor (the nearest of equally clear ones), so a bore aimed
 at it crosses nobody else; `clearance` is the meters to the nearest other worker. It resolves once
-the target sits there, or with the office's refusal (`timeoutMs`, `8000`). `dismissTarget` sends
-home only a practice target, and refuses one lying shot inside its revival window: revive it first.
+the target sits there, or with the office's refusal (`timeoutMs`, `8000`), and lists its id.
+`dismissTarget` sends home only a listed target, and refuses one lying shot inside its revival
+window: revive it first.
 
 `stageShot` scripts one controller's samples inside `NativeControls`: a back-holster draw, a
 raise to a pose aimed at the named worker, and one trigger pull. The draw, trigger, muzzle ray,
@@ -419,7 +425,7 @@ is used. Options:
 
 | Option | Meaning (default) |
 | --- | --- |
-| `worker` | Id or name of a practice target on this floor, in any case; `target 1` finds `Target 1 🐚` |
+| `worker` | Id or name of a worker on this floor, in any case (`target 1` finds `Target 1 🐚`); its id must be listed |
 | `gap` | Meters from the muzzle to the body surface along the bore (`1.2`) |
 | `angle` | Degrees around the worker from in front of its face, positive toward its left (`70`, then other clear sides) |
 | `pitch` | Degrees the shot slopes down (so the gun sits just under the headset's eye line) |

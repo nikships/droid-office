@@ -88,9 +88,20 @@ the world, falls to the floor and disappears after a short landing interval. Tra
 loss cancels it without inventing a throw. Releasing grip suppresses a simultaneous trigger.
 The native app does not draw the gun through the desktop `7` shortcut.
 
+The held gun is lit like the hand that holds it, not only by the night office: its own fill is
+the desktop first-person hands' curve (`0.25 + 0.75 × Sky.lightAt`, about half its color
+indoors, near the native hand renderer's 0.55 ambient), so it reads as steel and walnut in every
+frame instead of going navy with the room (`heldGunFill`, `lightHeldGun` in `world/gun.ts`).
+
 A shot shows its muzzle flash at full brightness in its own 30 Hz update and kicks the gun model
-up about the fist and back, settling within 0.24 s on the input clock; the bullet leaves the
-muzzle as aimed, before the kick. The holding controller gets a full-strength 70 ms pulse. A
+about 15° up about the wrist (below and behind the fist) and 3 cm back in that same update. The
+hand then brings it down in a critically damped return: still about 6° up 133 ms on, back on the
+aim by 0.3 s and exactly home at 0.34 s on the input clock. The bullet leaves the muzzle as aimed,
+before the kick. The held gun's flash light (`HELD_FLASH`) is a warm pool round the shot with no
+hot spot: up to about half the surfaces' own color on the gun, what it is pointed at and the
+desk under it, softening out to 1.4 m, so nothing at the muzzle clips to white and the floor and
+walls beyond keep their look. Guns seen across the room keep the physical light. The holding
+controller gets a full-strength 70 ms pulse. A
 struck worker sprays blood back out of the contact point with a wet hit sound, and the shot
 shoves it along the bullet at once before it sprawls out on the far side of its chair. It lands
 with its length flat along the floor, resting on it.
@@ -229,11 +240,12 @@ worker resting flat on the floor for 16 falls), `tests/native-physical.test.ts` 
 at a body through tracked grips only, never through the gun hand, an open workspace or a refused
 revival) and `tests/native-shot-stage.test.ts` (real office desks against a stand-in for the
 server's window: the trigger path drops a practice target from five sides at 4 cm to 2.2 m and
-sends only `worker.shoot`; staged shots refuse anything but a practice target, even an agent or a
-worktree shell named `Target <n>`; a free hand revives by touching or pointing; nothing revives
+sends only `worker.shoot`; staged shots go by listed worker ids, never by name: an unlisted shell
+named `Target <n>` is refused, and so is a listed agent or worktree shell, while a listed plain
+shell by any name can be staged; a free hand revives by touching or pointing; nothing revives
 after the window) and `tests/practice-targets.test.ts` (the office names only a plain shell hired
-with `target: true` `Target <n>`; the staging hires one at the desk clearest of real work and sends
-only it home, never while it lies inside its window). A debuggable build can hire a practice
+with `target: true` `Target <n>`; the staging hires one at the desk clearest of real work, lists
+its id, and sends only listed targets home, never while one lies inside its window). A debuggable build can hire a practice
 target and stage a shot or a revival on the headset through the same paths; see
 [debug staging](vr-native-android.md#debug-shot-staging).
 A wearer still needs to

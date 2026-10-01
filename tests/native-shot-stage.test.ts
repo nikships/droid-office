@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { NativeControls, type NativeHooks } from '../src/client/native/controls.js';
 import { bodyAt, PendingShots } from '../src/client/native/downed.js';
 import type { NativeHand, NativeInputFrame, Pose7 } from '../src/client/native/input.js';
-import { ShotStage, type ShotOutcome, type StageReviveOptions, type StageReviveResult, type StageShotOptions, type StageShotResult, matchWorker, stageAim } from '../src/client/native/stage.js';
+import { ShotStage, TargetAllowlist, type ShotOutcome, type StageReviveOptions, type StageReviveResult, type StageShotOptions, type StageShotResult, matchWorker, stageAim } from '../src/client/native/stage.js';
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import { Casualties, FALL_TIME, REVIVE_WINDOW, RISE_TIME } from '../src/client/world/casualties.js';
@@ -85,7 +85,8 @@ const idle = (): NativeHand => ({ active: false, aim: pose(0, 0, 0), grip: pose(
  * and worker.shoot, the use action at the body and worker.revive. `server` stands in for the
  * office: it owns each shot worker's revival window and answers on the next poll.
  */
-function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true, office: { kind?: WorkerKind; worktree?: unknown } = { kind: 'shell' }) {
+/** `listed`: the seated worker's id is on the staging's target list (TargetAllowlist), as a harness would put it. */
+function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true, office: { kind?: WorkerKind; worktree?: unknown } = { kind: 'shell' }, listed = true) {
   const camera = new THREE.PerspectiveCamera();
   const player = new PlayerController(camera, new EventTarget() as unknown as HTMLElement, f.office.colliders);
   player.pos.set(f.middle.x + 3, 0, f.middle.z + 3);
@@ -183,26 +184,31 @@ function headset(t: TestContext, f: ReturnType<typeof seat>, debuggable = true, 
   const controls = new NativeControls(f.scene, camera, hooks);
   controls.start();
   t.after(() => controls.stop());
-  stage = new ShotStage({
-    controls,
-    player,
-    worker: (key) => matchWorker(key, [{ id: f.id, name: f.name, root: f.worker.root, ...office }]),
-    downed: (id) => {
-      const chest = casualties.dying(id) ? casualties.chest(id) : null;
-      if (!chest) return null;
-      const open = chest.clone().sub(f.desk.seatAnchor.getWorldPosition(new THREE.Vector3())).setY(0);
-      const until = server.get(id);
-      return { state: until !== undefined && until <= time ? 'closed' : casualties.roused(id) ? 'roused' : casualties.lyingFor(id) === null ? 'falling' : 'lying', chest, open };
+  const targets = new TargetAllowlist();
+  if (listed) targets.allow([f.id]);
+  stage = new ShotStage(
+    {
+      controls,
+      player,
+      worker: (key) => matchWorker(key, [{ id: f.id, name: f.name, root: f.worker.root, ...office }]),
+      downed: (id) => {
+        const chest = casualties.dying(id) ? casualties.chest(id) : null;
+        if (!chest) return null;
+        const open = chest.clone().sub(f.desk.seatAnchor.getWorldPosition(new THREE.Vector3())).setY(0);
+        const until = server.get(id);
+        return { state: until !== undefined && until <= time ? 'closed' : casualties.roused(id) ? 'roused' : casualties.lyingFor(id) === null ? 'falling' : 'lying', chest, open };
+      },
+      lineOfFire: (muzzle, direction, id) => gunHit(new THREE.Raycaster(muzzle, direction), f.office.group, new Map([...f.workers, [f.worker.root, f.id]]))?.workerId === id,
+      blocked: () => null,
+      eye: () => camera.position.clone(),
+      clearPanel() {},
+      revive: (id) => {
+        if (!hooks.physical!.bodies!.revive(id) && server.has(id)) send({ t: 'worker.revive', workerId: id });
+      },
+      now: () => time,
     },
-    lineOfFire: (muzzle, direction, id) => gunHit(new THREE.Raycaster(muzzle, direction), f.office.group, new Map([...f.workers, [f.worker.root, f.id]]))?.workerId === id,
-    blocked: () => null,
-    eye: () => camera.position.clone(),
-    clearPanel() {},
-    revive: (id) => {
-      if (!hooks.physical!.bodies!.revive(id) && server.has(id)) send({ t: 'worker.revive', workerId: id });
-    },
-    now: () => time,
-  });
+    targets,
+  );
   stage.debuggable = debuggable;
   /** One Java poll: three 90 Hz samples from a still, tracked headset, then a gameplay update; the office answers. */
   const poll = () => {
@@ -264,22 +270,30 @@ test('native: a held gun drops a Target worker through the trigger path at every
     }
 });
 
-test('native: staged shots refuse anyone but a practice target, and a worker already down', async (t) => {
+test('native: staged shots hit only listed worker ids that are plain shells, never by name, and not a worker already down', async (t) => {
   const pixel = seat(t, 1, 'Pixel');
-  const p = headset(t, pixel);
+  const p = headset(t, pixel, true, { kind: 'shell' }, false);
   const refused = await p.stageShot({ worker: 'Pixel' });
   assert.equal(refused.ok, false);
-  assert.match(refused.reason ?? '', /practice target/);
+  assert.match(refused.reason ?? '', /listed by worker id/);
   assert.deepEqual(p.sent, []);
   assert.equal(p.shots.length, 0);
-  // The name alone is not enough: an agent, or a shell with a worktree of its own, is real work.
+  // A target's name is not enough: a shell called "Target 9" that nobody listed is refused.
+  const unlisted = headset(t, seat(t, 9, 'Target 9'), true, { kind: 'shell' }, false);
+  assert.match((await unlisted.stageShot({ worker: 'Target 9' })).reason ?? '', /listed by worker id/);
+  assert.deepEqual(unlisted.sent, []);
+  // Nor is a listed id: an agent, a shell with a worktree of its own, or a worker the office has not described is real work.
   for (const [i, office] of [{ kind: 'agent' as const }, { kind: 'shell' as const, worktree: { path: '/w', branch: 'office/target-1', base: 'main' } }, {}].entries()) {
     const named = headset(t, seat(t, 6 + i, 'Target 7'), true, office);
     const no = await named.stageShot({ worker: 'Target 7' });
     assert.equal(no.ok, false, JSON.stringify(office));
-    assert.match(no.reason ?? '', /practice target/);
+    assert.match(no.reason ?? '', /plain shells/);
     assert.deepEqual(named.sent, []);
   }
+  // The id is what counts: a listed plain shell by any name (the critics' Byte) can be staged.
+  const byte = headset(t, seat(t, 10, 'Byte'));
+  assert.equal((await byte.stageShot({ worker: 'Byte' })).outcome, 'down');
+  byte.stage.release();
 
   const target = seat(t, 2, 'Target 2');
   const h = headset(t, target);

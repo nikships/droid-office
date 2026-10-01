@@ -5511,6 +5511,8 @@ if (nativeMode) {
         at: (grip, ray) => (trip || upTop ? null : bodyAt(casualties, grip, ray)),
         revive: reviveBody,
       },
+      // The held gun is lit like the desktop's first-person hands are (Hands.setLight).
+      lightAt: (p) => sky.lightAt(p),
     },
     setCarrying: (card) => nativeUi?.setCarrying(card),
   });
@@ -5559,16 +5561,21 @@ if (nativeMode) {
     },
     now: () => performance.now(),
   });
-  targetStage = new TargetStage({
-    crew: () => [...store.workers.values()],
-    taken: (deskId) => !!store.workerAtDesk(deskId) || departures.seated(deskId),
-    you: () => ({ x: player.pos.x, z: player.pos.z }),
-    present: (id) => workerViews.has(id),
-    hire: (deskId) => net.send({ t: 'worker.spawn', deskId, kind: 'shell', target: true }),
-    sendHome: (id) => net.send({ t: 'worker.kill', workerId: id }),
-    officeNow: () => store.officeNow(),
-    lastToast: () => document.querySelector('#toasts .toast:last-child')?.textContent ?? '',
-  });
+  // Both stages go by one list of worker ids, never by name (see TargetAllowlist).
+  targetStage = new TargetStage(
+    {
+      crew: () => [...store.workers.values()],
+      taken: (deskId) => !!store.workerAtDesk(deskId) || departures.seated(deskId),
+      you: () => ({ x: player.pos.x, z: player.pos.z }),
+      present: (id) => workerViews.has(id),
+      hire: (deskId) => net.send({ t: 'worker.spawn', deskId, kind: 'shell', target: true }),
+      sendHome: (id) => net.send({ t: 'worker.kill', workerId: id }),
+      officeNow: () => store.officeNow(),
+      lastToast: () => document.querySelector('#toasts .toast:last-child')?.textContent ?? '',
+    },
+    100,
+    shotStage.targets,
+  );
   nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
   (window as any).officeNative = {
     frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean }, host?: { debuggable?: boolean }) => {
@@ -5692,8 +5699,9 @@ void whoami().then(() => {
   nativeUi,
   puppet: nativePuppet?.api,
   ball,
-  // Debuggable headset builds only (inert otherwise): hire a practice target, stage a shot or a
-  // revival through the real controller path, and send the target home again.
+  // Debuggable headset builds only (inert otherwise): hire a practice target or list a harness's
+  // target ids, stage a shot or a revival through the real controller path, and send the target
+  // home again.
   ...(shotStage && targetStage
     ? {
         stageTarget: (options?: StageTargetOptions) => targetStage!.hire(options),
@@ -5701,6 +5709,7 @@ void whoami().then(() => {
         stageRevive: (options: StageReviveOptions) => shotStage!.revive(options),
         releaseShot: (revive?: boolean) => shotStage!.release(revive !== false),
         dismissTarget: (worker: string) => targetStage!.dismiss(worker),
+        allowTargets: (ids: string[]) => targetStage!.allow(ids),
       }
     : {}),
 };

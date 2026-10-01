@@ -8,7 +8,7 @@ import { type DownedBodies, gongContact, inBackHolster, onLadder } from '../src/
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import { GONG_TOUCH } from '../src/client/world/gong.js';
-import { MUZZLE_AT } from '../src/client/world/gun.js';
+import { INDOOR_LIGHT, MUZZLE_AT, heldGunFill } from '../src/client/world/gun.js';
 import { FLOOR, GONG, LADDER, POLES, SLAB, WALL_HEIGHT, type PoleSpot } from '../src/shared/layout.js';
 
 const pose = (x: number, y: number, z: number): Pose7 => [x, y, z, 0, 0, 0, 1];
@@ -264,6 +264,56 @@ test('gun draws on a fresh back grip, aims from the canonical muzzle, and grip r
   for (let i = 0; i < 35; i++) r.tick(r.frame());
   assert.equal(r.gun(), undefined, 'drop lands and disappears, resetting the holster');
   assert.deepEqual(r.gunEvents, [true, false]);
+});
+
+test('a shot kicks the held gun up about the wrist in its own frame, still up 133 ms on, back on the aim by 0.3 s', (t) => {
+  const r = fixture(t);
+  r.draw();
+  const aimed = pose(0.25, 1.2, -0.3);
+  for (const z of [0.1, -0.1, -0.3]) r.tick(r.frame(hand(pose(0.25, 1.2, z), { squeeze: 1 })));
+  const gun = r.gun()!;
+  const rest = gun.getWorldPosition(new THREE.Vector3());
+  const muzzleRise = () => THREE.MathUtils.radToDeg(Math.asin(new THREE.Vector3(0, 0, 1).transformDirection(gun.matrixWorld).y));
+  assert.ok(Math.abs(muzzleRise()) < 1e-6);
+  r.tick(r.frame(hand(aimed, { squeeze: 1, trigger: 1 })));
+  assert.equal(r.shots.length, 1);
+  assert.ok(muzzleRise() > 13, `the shot's own frame shows the kick (${muzzleRise().toFixed(1)} deg)`);
+  const kicked = gun.getWorldPosition(new THREE.Vector3());
+  assert.ok(kicked.y > rest.y + 0.005, 'the fist rides up round the wrist');
+  assert.ok(kicked.z > rest.z + 0.02, 'and slides back toward you');
+  // frame() adds 11 ms: these land 133 ms and 300 ms after the shot.
+  r.advance(122);
+  r.tick(r.frame(hand(aimed, { squeeze: 1 })));
+  assert.ok(muzzleRise() > 4 && muzzleRise() < 9, `still coming down 133 ms on (${muzzleRise().toFixed(1)} deg)`);
+  r.advance(156);
+  r.tick(r.frame(hand(aimed, { squeeze: 1 })));
+  assert.ok(muzzleRise() < 0.5, `back on the aim by 0.3 s (${muzzleRise().toFixed(2)} deg)`);
+  r.advance(100);
+  r.tick(r.frame(hand(aimed, { squeeze: 1 })));
+  assert.ok(gun.getWorldPosition(new THREE.Vector3()).distanceTo(rest) < 1e-9, 'home exactly, in the fist');
+});
+
+test('the held gun is lit like the hand holding it, for how lit it is where it is', (t) => {
+  const r = fixture(t);
+  const levels: THREE.Vector3[] = [];
+  let level = INDOOR_LIGHT;
+  r.hooks.physical!.lightAt = (p) => {
+    levels.push(p.clone());
+    return level;
+  };
+  r.draw();
+  const steel = () => {
+    let m: THREE.MeshToonMaterial | null = null;
+    r.gun()!.traverse((o) => {
+      if (o.name === 'gun-steel') m = (o as THREE.Mesh).material as THREE.MeshToonMaterial;
+    });
+    return m as unknown as THREE.MeshToonMaterial;
+  };
+  assert.ok(Math.abs(steel().emissive.g - steel().color.g * heldGunFill(INDOOR_LIGHT)) < 1e-9, 'lit from the frame it is drawn');
+  assert.ok(levels.length > 0 && levels.every((p) => p.distanceTo(r.gun()!.getWorldPosition(new THREE.Vector3())) < 0.5), 'asked where the gun is');
+  level = 0.05;
+  r.tick(r.frame(hand(pose(0.25, 1.2, -0.3), { squeeze: 1 })));
+  assert.ok(Math.abs(steel().emissive.g - steel().color.g * heldGunFill(0.05)) < 1e-9, 'out on a dark street it dims with your hands');
 });
 
 test('back release holsters immediately; menus, fallback poses, loss and focus reset never fire or leave a ghost gun', (t) => {

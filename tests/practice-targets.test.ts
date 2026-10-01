@@ -156,6 +156,7 @@ test('stageTarget hires a practice target through the office, clear of real work
   const inert = staging(o, false);
   assert.match((await inert.stage.hire()).reason ?? '', /debuggable/);
   assert.match((await inert.stage.dismiss('Pixel')).reason ?? '', /debuggable/);
+  assert.match(inert.stage.allow(['x']).reason ?? '', /debuggable/);
   assert.equal(o.workers.list().length, 1, 'a release build hires nothing');
 
   const { stage, sentHome } = staging(o);
@@ -186,6 +187,18 @@ test('stageTarget hires a practice target through the office, clear of real work
   assert.equal(gone.ok, true, gone.reason);
   assert.equal(gone.gone, true);
   assert.deepEqual(sentHome, [target.id]);
+  assert.deepEqual(stage.targets.list(), [], 'a target sent home is off the list');
+
+  // Staging goes by worker id, never by name: a practice target hired some other way is not on the
+  // list until a harness lists its id, and a listed agent is still real work.
+  const other = info(o.hire('desk-9'));
+  assert.equal(other.name, 'Target 1 🐚');
+  assert.match((await stage.dismiss(other.id)).reason ?? '', /listed by worker id/);
+  assert.match(stage.allow('not a list').reason ?? '', /array/);
+  assert.deepEqual(stage.allow([other.id, pixel.id, 7, '']).targets, [other.id, pixel.id]);
+  assert.match((await stage.dismiss('Pixel')).reason ?? '', /plain shells/);
+  assert.equal((await stage.dismiss(other.id)).ok, true);
+  assert.deepEqual(sentHome, [target.id, other.id]);
   assert.deepEqual(
     o.workers.list().map((w) => w.name),
     ['Pixel'],

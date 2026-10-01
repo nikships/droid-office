@@ -12,17 +12,18 @@
 // grip is under it.
 //
 // Every shot now starts the server's 30-second revival window, after which the worker is dismissed
-// and its worktrees deleted: staged shots are refused for anyone but a practice target (a shell the
-// office hired as "Target <n>", see shared/targets.ts), and release() asks the server to revive the
-// staged worker. window.__office.stageTarget hires one through the office, and dismissTarget sends
-// only such a worker home again.
+// and its worktrees deleted: staged shots are refused for anyone but a listed target, by worker id
+// and never by name (TargetAllowlist), that is still a plain shell, and release() asks the server
+// to revive the staged worker. window.__office.stageTarget hires a practice target through the
+// office and lists it, allowTargets lists a capture harness's own target ids, and dismissTarget
+// sends only a listed target home again.
 //
 // No DOM or WebGL at import time, so tests load it in Node.
 
 import * as THREE from 'three';
 import { DESK_BY_ID, DESKS } from '../../shared/layout';
 import type { WorkerKind } from '../../shared/protocol';
-import { isPracticeTarget } from '../../shared/targets';
+import { isDisposableShell, isPracticeTarget } from '../../shared/targets';
 import { MUZZLE_AT } from '../world/gun';
 import type { PlayerController } from '../player';
 import type { NativeHand, Pose7 } from './input';
@@ -399,6 +400,41 @@ const _z = new THREE.Vector3(0, 0, 1);
 const _m = new THREE.Matrix4();
 
 /**
+ * The workers the staging hooks may shoot or send home, by worker id and never by name (names are
+ * the office's to give, and say nothing about whose work a worker holds): the practice targets
+ * this page hired itself (TargetStage.hire), and the ids a capture harness lists from its own
+ * target list (window.__office.allowTargets). A listed worker must still be a plain shell.
+ */
+export class TargetAllowlist {
+  private ids = new Set<string>();
+
+  /** Lists these worker ids (non-empty strings; anything else is ignored) and returns every listed id. */
+  allow(ids: readonly unknown[]): string[] {
+    for (const id of ids) if (typeof id === 'string' && id.trim()) this.ids.add(id.trim());
+    return this.list();
+  }
+
+  forget(id: string): void {
+    this.ids.delete(id);
+  }
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+
+  list(): string[] {
+    return [...this.ids];
+  }
+
+  /** Why `act` may not be done to this worker, or null when it is a listed plain shell. */
+  refuse(w: { id: string; name: string; kind?: WorkerKind; worktree?: unknown; repos?: readonly unknown[]; meeting?: string }, act: string): string | null {
+    if (!this.ids.has(w.id)) return `${act} only practice targets listed by worker id (stageTarget's own hires, or allowTargets), not ${w.name} (${w.id})`;
+    if (!isDisposableShell(w)) return `${act} only practice targets that are plain shells: ${w.name} (${w.id}) holds an agent, a worktree, other repositories or a meeting`;
+    return null;
+  }
+}
+
+/**
  * window.__office.stageShot's and stageRevive's engine: one staged act at a time. The page reports
  * every shot (shot()) and each gameplay poll (tick()); a frozen stage tells the page to stop
  * advancing gameplay, so the headset keeps drawing that instant until release(). The server's
@@ -420,7 +456,11 @@ export class ShotStage {
   private done: ((r: StageShotResult & StageReviveResult) => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private hooks: ShotStageHooks) {}
+  constructor(
+    private hooks: ShotStageHooks,
+    /** The worker ids it may shoot; shared with the page's TargetStage. */
+    readonly targets = new TargetAllowlist(),
+  ) {}
 
   /** Stages, fires and reports one shot; resolves once it has fired (and frozen, with freezeMs). */
   run(options: StageShotOptions): Promise<StageShotResult> {
@@ -428,8 +468,9 @@ export class ShotStage {
     if (refused) return Promise.resolve({ ok: false, reason: refused });
     const w = this.hooks.worker(String(options.worker ?? ''));
     if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(options.worker)} on this floor` });
-    // Every shot starts the server's dismissal clock: only practice targets may be staged.
-    if (!isPracticeTarget(w)) return Promise.resolve({ ok: false, reason: `staged shots hit only practice targets (stageTarget hires one), not ${w.name}: a shot dismisses a worker and deletes its worktrees 30 s later unless revived` });
+    // Every shot starts the server's dismissal clock: only listed targets may be staged, by id.
+    const unlisted = this.targets.refuse(w, 'staged shots hit');
+    if (unlisted) return Promise.resolve({ ok: false, reason: `${unlisted}: a shot dismisses a worker and deletes its worktrees 30 s later unless revived` });
     if (this.hooks.downed(w.id)) return Promise.resolve({ ok: false, reason: `${w.name} is already down: stageRevive revives it` });
     const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const gap = num(options.gap, 1.2);
@@ -714,7 +755,16 @@ export class TargetStage {
   constructor(
     private hooks: TargetStageHooks,
     private pollMs = 100,
+    /** The worker ids staged shots may hit and dismiss() may send home; shared with the page's ShotStage. */
+    readonly targets = new TargetAllowlist(),
   ) {}
+
+  /** window.__office.allowTargets: lists a capture harness's own target worker ids, and says which are listed. */
+  allow(ids: unknown): { ok: boolean; reason?: string; targets?: string[] } {
+    if (!this.debuggable) return { ok: false, reason: 'staging needs a debuggable native build' };
+    if (!Array.isArray(ids)) return { ok: false, reason: 'allowTargets wants an array of worker ids' };
+    return { ok: true, targets: this.targets.allow(ids) };
+  }
 
   /** Hires a practice target at a free desk and resolves once it sits there, ready to be shot. */
   hire(options: StageTargetOptions = {}): Promise<StageTargetResult> {
@@ -739,8 +789,10 @@ export class TargetStage {
       () => {
         const there = this.hooks.crew().find((w) => w.deskId === desk && !before.has(w.id));
         if (!there) return null;
+        // The office's answer to this hire, told apart from anyone else seated there meanwhile.
         if (!isPracticeTarget(there)) return { ok: false, reason: `${there.name} took ${desk} first` };
         if (!this.hooks.present(there.id)) return null;
+        this.targets.allow([there.id]);
         return { ok: true, worker: there.name, workerId: there.id, desk, clearance };
       },
       () => {
@@ -755,21 +807,30 @@ export class TargetStage {
     if (!this.debuggable) return Promise.resolve({ ok: false, reason: 'staging needs a debuggable native build' });
     const w = matchWorker(String(key ?? ''), this.hooks.crew());
     if (!w) return Promise.resolve({ ok: false, reason: `no worker named ${JSON.stringify(key)} on this floor` });
-    if (!isPracticeTarget(w)) return Promise.resolve({ ok: false, reason: `dismissTarget sends home only practice targets, not ${w.name}` });
+    const unlisted = this.targets.refuse(w, 'dismissTarget sends home');
+    if (unlisted) return Promise.resolve({ ok: false, reason: unlisted });
     const named = { worker: w.name, workerId: w.id };
     if (w.downedUntil !== undefined) {
       if (w.downedUntil > this.hooks.officeNow()) return Promise.resolve({ ok: false, ...named, reason: `${w.name} is shot down with its revival window open: revive it first (releaseShot() or stageRevive)` });
       // Its window has closed: the office is dismissing it already, and the medics collect it.
       return this.until<StageDismissResult>(
         options.timeoutMs,
-        () => (this.hooks.crew().some((c) => c.id === w.id) ? null : { ok: true, ...named, gone: true }),
+        () => {
+          if (this.hooks.crew().some((c) => c.id === w.id)) return null;
+          this.targets.forget(w.id);
+          return { ok: true, ...named, gone: true };
+        },
         () => ({ ok: false, ...named, reason: 'its revival window closed and the office is still dismissing it' }),
       );
     }
     this.hooks.sendHome(w.id);
     return this.until<StageDismissResult>(
       options.timeoutMs,
-      () => (this.hooks.crew().some((c) => c.id === w.id) ? null : { ok: true, ...named, gone: true }),
+      () => {
+        if (this.hooks.crew().some((c) => c.id === w.id)) return null;
+        this.targets.forget(w.id);
+        return { ok: true, ...named, gone: true };
+      },
       () => ({ ok: false, ...named, reason: `the office has not sent ${w.name} home yet: ${this.hooks.lastToast()}` }),
     );
   }
