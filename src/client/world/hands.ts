@@ -525,8 +525,9 @@ export class Hands {
       r.position.x -= 0.16 * e;
       r.position.y += (0.09 + kick * 0.09) * e;
       r.position.z -= (0.2 - kick * 0.06) * e;
-      r.rotation.x += (0.3 + kick * 0.5) * e;
-      r.rotation.y += 0.15 * e;
+      // The gun's canonical bore is straight along the view. The relaxed wrist's tilt used
+      // to make it point above and sideways from the crosshair, even before recoil.
+      r.rotation.set(kick * 0.18 * e, 0, 0);
       g.muzzle.update(dt);
     }
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.

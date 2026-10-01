@@ -8,6 +8,7 @@ import { usageLabel, usageTitle } from './usage';
 import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
 import { whereabouts } from './whereabouts';
 import { DESK_BY_ID } from '../../shared/layout';
+import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
 
 /** What the people list last showed, so it's only drawn again when something in it changed. */
 let peopleKey = '';
@@ -195,10 +196,9 @@ export function openHelp() {
 }
 
 function openNativeHelp() {
-  const rows: [string, string][] = [
-    ['Look & move', 'Look around naturally. Hold A or push the left stick forward to aim a teleport, then release to land. The right stick turns. Settings offers smooth glide and smooth turn.'],
-    ['Controllers', 'Galaxy XR motion controllers are required. Aim at an object or a workspace button and press the trigger to use it. Grip grabs nearby objects and returns a held issue card; it does not open the workspace.'],
-    ['Workspace', 'The left controller’s Menu button opens or hides your workspace. Back to the office closes the workspace and keyboard.'],
+  const rows: readonly (readonly [string, string])[] = [
+    ['Controllers', 'Galaxy XR motion controllers are required. Look around naturally; the headset tracks your head directly.'],
+    ...NATIVE_CONTROL_ROWS,
     ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates. The panel keyboard’s Ctrl+K also opens it outside a terminal or text field.'],
     ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
     [

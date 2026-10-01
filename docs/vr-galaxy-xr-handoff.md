@@ -34,11 +34,15 @@ Balanced foveation, 45.007 fps Off in sampled loading windows) despite a 90 Hz d
 is not a 90 FPS preset. Original settings were restored. Fully resident required-view timing
 and the owner's physical sharpness review remain open.
 
-The next requested controller work replaces native one-press gong, ladder and pole actions
+The current controller update replaces native one-press gong, ladder and pole actions
 with physical strikes and held-grip movement, adds a rear-holstered held-grip gun and a new
 shared desktop/native gun model, and separates left/right face-button and stick-click jobs.
 Right Menu is reserved for Android XR; left Menu owns the workspace and grip never navigates
 menus. Desktop and WebXR control schemes remain authoritative for their own clients.
+The shared gun model, native display-loop attachments and physical-input replay checks are
+integrated; publication and headset installation are in progress. See the
+[controller interaction contract](vr-native-controller-interactions.md) for the exact mapping
+and validation limits. The requested medic-sequence redesign is being developed separately.
 
 The owner wore the installed combined APK on 2026-09-29 and reported that it looked good,
 with one concrete defect: worker laptop terminal screens remained pixelated at high settings.

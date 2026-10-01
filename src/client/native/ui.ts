@@ -14,7 +14,7 @@
  */
 
 import './native.css';
-import { STATUS_LABEL, closeAllModals, h, modalOpen, onModalChange } from '../ui/dom';
+import { STATUS_LABEL, closeAllModals, closeTopModal, h, modalOpen, onModalChange } from '../ui/dom';
 import { actionIcon, actionLabel, actionOffered, hudActions, onHudRender, type HudAction } from '../ui/menu';
 import { closeFloorMenu, floorMenuOpen } from '../ui/floormenu';
 import { paletteOpen } from '../ui/palette';
@@ -94,6 +94,8 @@ export interface NativeUi {
   /** Shows the home screen, or with false clears the panel: every window, the menu, the floor list and the keyboard. */
   setPanelOpen(open: boolean): void;
   togglePanel(): void;
+  /** B goes back one workspace step; it never shares grip's object release. */
+  back(): void;
   showHome(on: boolean): void;
   keyboard: PanelKeyboard;
   toggleKeyboard(): void;
@@ -235,6 +237,13 @@ export function initNativeUi(opts: NativeUiOptions = {}): NativeUi {
     },
     setPanelOpen,
     togglePanel: () => setPanelOpen(!panelState().open),
+    back: () => {
+      if (keyboard.shown()) keyboard.show(false);
+      else if (modalOpen()) closeTopModal();
+      else if (floorMenuOpen()) closeFloorMenu();
+      else setPanelOpen(false);
+      soon();
+    },
     showHome,
     keyboard,
     toggleKeyboard: () => keyboard.toggle(),

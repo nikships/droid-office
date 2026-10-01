@@ -203,7 +203,7 @@ void ControllerRenderer::update(const InputFrame &frame) {
     for (int h = 0; h < 2; h++) {
         auto &model = models[h];
         const auto &hand = frame.hands[h];
-        model.active = hand.active;
+        model.active = hand.active && hand.gripTracked;
         if (!model.active)
             continue;
         model.grip = transform(hand.grip);

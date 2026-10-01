@@ -961,7 +961,7 @@ export class Person {
       return;
     }
     const prop = magnum();
-    prop.position.set(0, -0.38, 0.03);
+    prop.position.set(0, -0.38, 0);
     // The muzzle down the arm, out of the fist: aiming the arm aims the gun.
     prop.rotation.x = Math.PI / 2;
     prop.scale.setScalar(0.01);

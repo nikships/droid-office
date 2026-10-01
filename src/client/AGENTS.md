@@ -27,6 +27,10 @@ protocol while the installed OpenXR app draws the world. Native controller input
 change the desktop or WebXR control schemes. Panel layout rules and browser check sizes are
 in [vr-native-ui-polish.md](../../docs/vr-native-ui-polish.md).
 
+Read [the controller interaction contract](../../docs/vr-native-controller-interactions.md) before
+changing native buttons, physical grabs, climbing or the gun. Preserve shared Climber floor
+travel and shot confirmations; scene cleanup must not abort a pending climb arrival.
+
 Use `headsetActive()` / `headsetControls()` for gameplay guards shared by WebXR and native
 XR. Desktop walking paths do not advance while native controls own the avatar; palette
 actions must follow the existing headset action path instead of waiting for desktop walking.

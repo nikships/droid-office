@@ -67,8 +67,8 @@ XrInput::XrInput(XrInstance i, XrSession s, bool gaze) : instance(i), session(s)
     squeeze = action("grab", XR_ACTION_TYPE_FLOAT_INPUT);
     stick = action("stick", XR_ACTION_TYPE_VECTOR2F_INPUT);
     stickClick = action("stick_click", XR_ACTION_TYPE_BOOLEAN_INPUT);
-    primary = action("teleport", XR_ACTION_TYPE_BOOLEAN_INPUT);
-    secondary = action("next_worker", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    primary = action("primary_button", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    secondary = action("secondary_button", XR_ACTION_TYPE_BOOLEAN_INPUT);
     menu = action("menu", XR_ACTION_TYPE_BOOLEAN_INPUT);
     vibration = action("feedback", XR_ACTION_TYPE_VIBRATION_OUTPUT);
     auto bind = [&](const char *profile, const std::vector<XrActionSuggestedBinding> &bindings) {
@@ -210,7 +210,8 @@ InputFrame XrInput::sample(XrSpace base, XrTime time, XrPosef head) {
         hand.active = controller && pose(aim, aims[h], paths[h], base, time, hand.aim);
         if (!hand.active)
             continue;
-        if (!pose(grip, grips[h], paths[h], base, time, hand.grip))
+        hand.gripTracked = pose(grip, grips[h], paths[h], base, time, hand.grip, true);
+        if (!hand.gripTracked)
             hand.grip = hand.aim;
         hand.trigger = scalar(trigger, h);
         hand.squeeze = scalar(squeeze, h);
@@ -265,6 +266,8 @@ std::string XrInput::json(const std::vector<InputFrame> &frames) {
             out += hand.active ? "true" : "false";
             out += ",\"ui\":";
             out += hand.ui ? "true" : "false";
+            out += ",\"gripTracked\":";
+            out += hand.gripTracked ? "true" : "false";
             out += ",\"aim\":";
             poseJson(out, hand.aim);
             out += ",\"grip\":";

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { GRAVITY, STEP } from '../player';
 import type { PlayerController } from '../player';
 
-type Body = Pick<PlayerController, 'pos' | 'vy' | 'grounded' | 'stepOffset' | 'street' | 'groundBelow' | 'blockedAt'>;
+type Body = Pick<PlayerController, 'pos' | 'vy' | 'grounded' | 'stepOffset' | 'street' | 'groundBelow' | 'blockedAt'> & Partial<Pick<PlayerController, 'limitCeiling'>>;
 
 /** First arc point at or below the floor it's over, when it's somewhere standable (VRSession.findLanding). */
 export function findLanding(player: Body, pts: readonly THREE.Vector3[]): THREE.Vector3 | null {
@@ -47,6 +47,7 @@ export function applyGravity(player: Body, dt: number): void {
   } else if (player.pos.y > g + 0.02) {
     player.grounded = false;
   }
+  player.limitCeiling?.(g);
 }
 
 /** Puts the avatar on a landing (VRSession.placeAvatar). */

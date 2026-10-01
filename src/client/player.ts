@@ -461,8 +461,7 @@ export class PlayerController {
     const ground = Math.max(groundAt(this.colliders, this.pos.x, this.pos.z, this.pos.y), this.street);
     const jump = this.enabled && k.has('Space') && this.grounded;
     if (jump) {
-      this.vy = JUMP_V * this.jumpBoost;
-      this.grounded = false;
+      this.jump();
     } else if (this.grounded && this.pos.y > ground && this.pos.y - ground <= STEP + 0.02) {
       // Walking down a stair: stay on your feet rather than falling a step.
       this.stepOffset += this.pos.y - ground;
@@ -611,6 +610,21 @@ export class PlayerController {
   /** The floor under (x, z) for feet at `y`, or -Infinity past the edge of everything. */
   groundBelow(x: number, z: number, y: number): number {
     return groundAt(this.colliders, x, z, y);
+  }
+
+  /** The same jump for keyboard and headset controls. */
+  jump(): void {
+    if (!this.grounded || this.rig || this.seat) return;
+    this.vy = JUMP_V * this.jumpBoost;
+    this.grounded = false;
+  }
+
+  /** Keep the avatar's head below solid ceilings when native gravity owns the body. */
+  limitCeiling(ground: number): void {
+    const ceiling = ceilingAt(this.colliders, this.pos.x, this.pos.z, this.pos.y);
+    if (this.pos.y + HEIGHT <= ceiling) return;
+    this.pos.y = Math.max(ground, ceiling - HEIGHT);
+    this.vy = Math.min(this.vy, 0);
   }
 
   /** What stands in your way at (x, z) with your feet at `y`, or null. */

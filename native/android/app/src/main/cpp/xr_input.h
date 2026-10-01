@@ -9,7 +9,7 @@ namespace office {
 /** One motion controller slot. Tracked hands are not an input source for the native client. */
 struct HandInput {
     bool active = false, primary = false, secondary = false, menu = false, stickClick = false,
-         ui = false;
+         ui = false, gripTracked = false;
     float trigger = 0, squeeze = 0;
     XrVector2f stick{};
     XrPosef aim{{0, 0, 0, 1}, {0, 0, 0}}, grip{{0, 0, 0, 1}, {0, 0, 0}};

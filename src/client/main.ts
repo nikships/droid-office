@@ -1312,24 +1312,24 @@ const whoosh = h('div', { id: 'whoosh' });
 $('app').append(whoosh);
 
 /** E at the ladder: onto it, facing the wall. */
-function grabLadder() {
+function grabLadder(physical = false) {
   if (trip || climber.active) return;
   if (!floorThere(1) && !floorThere(-1)) return toast('No other floors yet — add a project in the elevator', 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (walkingTo) stopWalking();
-  climber.grabLadder();
+  climber.grabLadder(physical);
 }
 
 /** E at a fire pole: down it, if there's a floor below; else (on the bottom floor) a spin round it. */
-function usePole(i: number) {
+function usePole(i: number, physical = false) {
   const spot = POLES[i];
   if (trip || climber.active || !spot) return;
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (walkingTo) stopWalking();
-  if (office.stack.polesGoDown()) climber.slide(spot);
-  else climber.twirl(spot);
+  if (office.stack.polesGoDown()) climber.slide(spot, physical);
+  else climber.twirl(spot, physical);
 }
 
 /**
@@ -1416,6 +1416,7 @@ const puffs: Puff[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
+  if (nativeControls?.active) return toast('Hold grip behind your back to draw the gun', 'info');
   if (gunOut) {
     holsterGun();
     return;
@@ -1436,6 +1437,7 @@ function toggleGun() {
 
 /** The gun back in its holster. */
 function holsterGun(quiet = false) {
+  nativeControls?.cancelGun();
   if (!gunOut) return;
   gunOut = false;
   hands.holdGun(false);
@@ -1462,8 +1464,22 @@ function fireGun(ndc: THREE.Vector2) {
       smoke.wisp(tip);
     }
   }
-  if (upTop) return;
   raycaster.setFromCamera(ndc, camera);
+  resolveGunShot();
+}
+
+/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and confirmation. */
+function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
+  sound.gunshot();
+  smoke.wisp(origin);
+  raycaster.set(origin, direction);
+  raycaster.near = 0;
+  raycaster.far = Infinity;
+  resolveGunShot();
+}
+
+function resolveGunShot() {
+  if (upTop) return;
   const byRoot = new Map<THREE.Object3D, string>();
   for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
   // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
@@ -4487,7 +4503,7 @@ window.addEventListener('keydown', (e) => {
   }
   // On the ladder, E gets you off it (and nothing else is in reach); W, S and Space climb.
   if (climber.active && (e.code === 'KeyE' || e.code === 'KeyF' || e.code in DESK_KEYS)) {
-    if (e.code === 'KeyE') climber.letGo();
+    if (e.code === 'KeyE' && !nativeControls?.active) climber.letGo();
     return;
   }
   // At the golf tee, E puts the club back (Space swings, see Golfer); nothing else is in reach, and no emotes mid-swing.
@@ -5133,13 +5149,13 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   // Walked into a pole's hole: you grab the pole on your way down it. (In VR the keys are
   // off all session, so the headset counts as having the controls here.)
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
-  if (hole && !climber.active && !trip && !player.seat && (player.enabled || inVR) && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
+  if (hole && !nativeControls?.active && !climber.active && !trip && !player.seat && (player.enabled || inVR) && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
   arcade.update(camera, dt);
   cabinet.update(camera, dt);
   // Pulled away from the tee (sat down, off up the ladder, into the elevator, into the headset): the club goes back.
   if (golf.active && (trip || hanger.active || climber.active || player.seat || upTop || inVR)) golf.stop();
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof, into the headset): it goes back.
-  if (gunOut && (trip || hanger.active || climber.active || upTop || inVR)) holsterGun(true);
+  if (gunOut && (trip || hanger.active || climber.active || upTop || (inVR && !nativeControls?.holdingGun))) holsterGun(true);
   golf.update(dt);
   balls.update(dt);
   office.tee.ball.visible = golf.doing !== 'watch' && now > teeEmptyUntil;
@@ -5381,6 +5397,34 @@ if (nativeMode) {
     ...vrHooks,
     useE: vrUseE,
     togglePanel: () => nativeUi?.togglePanel(),
+    panelOpen: () => nativeUi?.panelState().open === true,
+    openCommands: () => nativeUi?.openCommands(),
+    toggleKeyboard: () => nativeUi?.toggleKeyboard(),
+    back: () => nativeUi?.back(),
+    aimLabel: (it, note) => {
+      if (it.kind === 'gong') return 'Merge gong · strike the disc with a controller';
+      if (it.kind === 'ladder') return 'Ladder · hold grip on a rail or rung and pull down to climb';
+      if (it.kind === 'pole') return 'Fire pole · hold grip on the pole to slide or turn';
+      return vrHooks.aimLabel(it, note);
+    },
+    physical: {
+      player,
+      climber,
+      gong: office.gong.group,
+      strikeGong: hitGong,
+      ladderAvailable: () => !trip && !upTop && !!(floorThere(1) || floorThere(-1)),
+      poles: () => (trip || upTop ? [] : office.stack.poles()),
+      grabLadder: () => grabLadder(true),
+      grabPole: (spot) => usePole(POLES.indexOf(spot), true),
+      canDraw: () => !trip && !upTop && !climber.active && !golf.active && !hanger.active && !carrying && !readingNow() && !holdingBall(),
+      gunChanged: (held, quiet) => {
+        gunOut = held;
+        if (held) sound.gunDraw();
+        else if (!quiet) sound.gunHolster();
+        hintKey = 'stale';
+      },
+      fireGun: fireNativeGun,
+    },
     setCarrying: (card) => nativeUi?.setCarrying(card),
   });
   nativeScene = new NativeScene(scene, camera);

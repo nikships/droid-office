@@ -4,9 +4,9 @@
 // Motion controllers are the only native input; tracked hands are ignored. C++ samples the
 // controllers and head at the display rate; Java hands every sample to consume() at about 30 Hz,
 // and update() replays them in order, so an edge between two JS ticks still counts once.
-// Everything else is VRSession's: grabs, teleport arc, snap/smooth turn, glide, room-scale follow
-// through the player's collision, ladder and pole stepping, and the same hooks into main.ts's
-// desktop dispatch. The left menu button is the only menu action; grip never opens or closes it.
+// Grabs, teleport arcs, turning and collision reuse the desktop/WebXR helpers. Native face buttons
+// have fixed left/right jobs; physical.ts owns tracked-grip strikes, climbing and the gun.
+// Left Menu owns the workspace. Right Menu belongs to Android XR; grip never navigates menus.
 //
 // A controller that drops out for less than LOST_MS keeps its held buttons, grab and carried card
 // and fires nothing until it returns. A controller that connects (or reconnects after that) with
@@ -30,6 +30,7 @@ import { RayAccel } from '../vr/pick';
 import { SnapTurn, sampleParabola, xrRayDirection, yawForFacing } from '../vr/session';
 import { LOST_MS, MAX_QUEUE, type NativeHand, type NativeInputFrame, type Pose7, SQUEEZE_OFF, SQUEEZE_ON, STALE_MS, TRIGGER_OFF, TRIGGER_ON, pressLatch, readFrame, webStick } from './input';
 import { applyGravity, findLanding, placeAvatar, rigFor, snapGround, stepToward } from './locomotion';
+import { NativePhysical, type NativePhysicalHooks } from './physical';
 
 /** VRSession's private stick thresholds: a push, and where a pushed stick re-arms. */
 const STICK_ON = 0.7;
@@ -64,6 +65,11 @@ export interface NativeHooks {
   pickRoot?: () => THREE.Object3D | null;
   /** The ☰ menu (VRUiSink.toggleMenu): only the left controller's menu button calls it. */
   togglePanel: () => void;
+  panelOpen?: () => boolean;
+  openCommands?: () => void;
+  toggleKeyboard?: () => void;
+  back?: () => void;
+  physical?: NativePhysicalHooks;
   /** The issue card in hand, for the panel's sticky hint (VRUiSink.setCarrying). */
   setCarrying?: (card: CarriedIssue | null) => void;
   /** Virtual moves carry head-placed panels (VRUiSink.carryAlong). */
@@ -112,6 +118,7 @@ interface HandSlot {
   connected: boolean;
   /** Sample time (ms) when a connected controller stopped reporting; null while it is tracked. */
   lostAt: number | null;
+  gripLostAt: number | null;
   /** Native-space poses as children of the rig: their world matrices are the real device poses. */
   aim: THREE.Group;
   grip: THREE.Group;
@@ -121,9 +128,11 @@ interface HandSlot {
   hover: { it: Interactable; near: boolean; hit: THREE.Intersection } | null;
   hoverFresh: boolean;
   uiConsumed: boolean;
-  teleportHeld: boolean;
-  wasN: boolean;
+  wasPrimary: boolean;
+  wasSecondary: boolean;
+  wasClick: boolean;
   wasMenu: boolean;
+  teleportReady: boolean;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -160,6 +169,7 @@ export class NativeControls {
   private headLocal = new THREE.Vector3(0, 1.6, 0);
   private headQuat = new THREE.Quaternion();
   private headSeen = false;
+  private headTracked = false;
   private needsRebase = false;
   private hands: [HandSlot, HandSlot];
   private raycaster = new THREE.Raycaster();
@@ -175,6 +185,7 @@ export class NativeControls {
   private stickSlot: 0 | 1 = 0;
   private glideActive = false;
   private grab: VRGrab | null;
+  private physical: NativePhysical | null;
   private rayAccel = new RayAccel();
   private queue: NativeInputFrame[] = [];
   private lastTime = -Infinity;
@@ -200,6 +211,7 @@ export class NativeControls {
     this.raycaster.layers.enable(SOURCE_LAYER);
     this.grab = hooks.grab ? new VRGrab(scene, hooks.grab) : null;
     this.hands = [this.slot(0), this.slot(1)];
+    this.physical = hooks.physical ? new NativePhysical(scene, [this.hands[0].grip, this.hands[1].grip], hooks.physical, (hand, strength, ms) => this.pulse(hand, strength, ms)) : null;
     this.carriedRoot.name = 'native-carried-issue';
     this.carriedRoot.position.set(0, 0.05, -0.06);
     this.rig.visible = false;
@@ -216,6 +228,7 @@ export class NativeControls {
       handed: idx === 0 ? 'left' : 'right',
       connected: false,
       lostAt: null,
+      gripLostAt: null,
       aim: new THREE.Group(),
       grip: new THREE.Group(),
       input: null,
@@ -224,9 +237,11 @@ export class NativeControls {
       hover: null,
       hoverFresh: false,
       uiConsumed: false,
-      teleportHeld: false,
-      wasN: false,
+      wasPrimary: false,
+      wasSecondary: false,
+      wasClick: false,
       wasMenu: false,
+      teleportReady: true,
     };
     this.rig.add(s.aim, s.grip);
     return s;
@@ -244,6 +259,7 @@ export class NativeControls {
     this.lastAvatar.copy(player.pos);
     this.needsRebase = true;
     this.headSeen = false;
+    this.headTracked = false;
     this.queue = [];
     this.lastTime = -Infinity;
     this.lastInputAt = performance.now();
@@ -264,6 +280,7 @@ export class NativeControls {
     if (!this.on) return;
     this.jumpPresentation();
     const { player } = this.hooks;
+    this.physical?.reset();
     this.clearGrab();
     this.on = false;
     this.rayAccel.reset();
@@ -295,6 +312,8 @@ export class NativeControls {
   /** Session paused or focus lost: forget queued samples and every controller's input, return a ray-picked card, leave the rig where it is. */
   reset(): void {
     this.jumpPresentation();
+    this.physical?.reset();
+    this.headTracked = false;
     this.clearCarriedIssue(true);
     this.queue = [];
     this.lastInputAt = performance.now();
@@ -333,6 +352,15 @@ export class NativeControls {
   clearGrab(): void {
     this.grab?.clear();
     this.clearCarriedIssue(true);
+    this.physical?.worldChanged();
+  }
+
+  get holdingGun(): boolean {
+    return this.physical?.holdingGun === true;
+  }
+
+  cancelGun(): void {
+    this.physical?.cancelGun();
   }
 
   /** The original pickUp/putDown/putBack dispatch calls this when its single carry slot changes. */
@@ -459,13 +487,13 @@ export class NativeControls {
     for (const f of frames) this.replay(f);
     const rigged = !!player.rig;
     if (rigged) {
-      player.climbInput = this.climbDir();
+      player.climbInput = 0;
       player.rig?.(dt);
     } else {
       player.climbInput = 0;
       if (!player.seat) applyGravity(player, dt);
     }
-    if (player.seat && !rigged && (this.glideIntent() || this.hands.some((s) => s.teleportHeld) || this.stickAiming)) player.stand();
+    if (player.seat && !rigged && (this.glideIntent() || this.stickAiming)) player.stand();
     const aiming = this.teleportAiming();
     for (const s of this.hands) {
       if (aiming) s.hover = null;
@@ -483,6 +511,7 @@ export class NativeControls {
     _h.y -= 0.08;
     this.grab?.update(_h, performance.now());
     this.syncCarrying();
+    this.physical?.update(dt);
     this.updateFade(dt);
     const aim = this.hands[1].hover ?? this.hands[0].hover ?? null;
     const note = aim?.near ? this.hooks.noteUnder(aim) : null;
@@ -507,7 +536,7 @@ export class NativeControls {
       connected: s.connected,
       ui: s.uiConsumed,
       hover: s.hover ? { point: [s.hover.hit.point.x, s.hover.hit.point.y, s.hover.hit.point.z], near: s.hover.near } : null,
-      holding: this.ownsCarry(s.idx),
+      holding: this.ownsObject(s.idx),
     });
     return {
       v: 1,
@@ -531,6 +560,7 @@ export class NativeControls {
   /** One native sample: poses in, then every edge VRSession resolves per event or per frame. */
   private replay(f: NativeInputFrame): void {
     this.now = f.time;
+    this.headTracked = f.headTracked !== false;
     if (f.headTracked !== false) {
       _e.set(f.head[0], f.head[1], f.head[2]);
       const jumped = this.headSeen && _e.distanceTo(this.headLocal) > HEAD_JUMP;
@@ -544,11 +574,13 @@ export class NativeControls {
     }
     for (const s of this.hands) this.applyHand(s, f.hands[s.idx]);
     this.rig.updateMatrixWorld(true);
+    this.physical?.sample(f, this.headWorldFull(_h), this.headWorldQuat(_q), !this.worldBlocked(), (hand) => this.ownsCarry(hand));
     for (const s of this.hands) this.controllerEdges(s);
     this.pollButtons();
     // A lost turn controller reads as a centered stick, which would re-arm the snap and turn
     // again when it returns still pushed, so the snap only sees tracked sticks.
-    if (this.hooks.settings.vr.turn === 'snap' && this.turnSlot()?.lostAt == null) {
+    const turn = this.turnSlot();
+    if (this.hooks.settings.vr.turn === 'snap' && turn && turn.lostAt === null) {
       const dYaw = this.snap.update(this.turnStick().x);
       if (dYaw !== 0) {
         this.jumpPresentation();
@@ -574,16 +606,25 @@ export class NativeControls {
       s.connected = true;
       s.triggerDown = h.trigger >= TRIGGER_OFF;
       s.squeezeDown = h.squeeze >= SQUEEZE_OFF;
-      s.wasN = h.b || h.stickClick === true;
+      s.wasPrimary = h.a;
+      s.wasSecondary = h.b;
+      s.wasClick = h.stickClick === true;
       s.wasMenu = h.menu;
+      s.teleportReady = h.stick[1] < STICK_ON;
     }
     s.lostAt = null;
     s.input = h;
     setPose(s.aim, h.aim);
-    setPose(s.grip, h.grip);
+    if (h.gripTracked !== false) {
+      setPose(s.grip, h.grip);
+      s.gripLostAt = null;
+    } else {
+      s.gripLostAt ??= this.now;
+      if (this.now - s.gripLostAt >= LOST_MS) this.cancelCarry(s.idx);
+    }
     s.hoverFresh = false;
     // A controller holding an object is never on a panel: its ray aims the card at the world (VRSession skips routeRay).
-    s.uiConsumed = h.ui && !this.ownsCarry(s.idx);
+    s.uiConsumed = h.ui && !this.ownsObject(s.idx);
   }
 
   /**
@@ -603,54 +644,60 @@ export class NativeControls {
   private controllerEdges(s: HandSlot): void {
     const h = s.input;
     if (!s.connected || !h) return;
+    const squeeze = pressLatch(s.squeezeDown, h.squeeze, SQUEEZE_ON, SQUEEZE_OFF);
+    const was = s.squeezeDown;
+    const owned = this.physical?.owns(s.idx) === true;
+    s.squeezeDown = squeeze;
+    if (squeeze && !was) this.onSqueeze(s);
+    else if (!squeeze && was) {
+      this.physical?.gripRelease(s.idx);
+      if (h.gripTracked === false) this.cancelCarry(s.idx);
+      else this.grab?.release(s.idx, this.grabAim(s));
+    }
     const trigger = pressLatch(s.triggerDown, h.trigger, TRIGGER_ON, TRIGGER_OFF);
     const pressed = trigger && !s.triggerDown;
     s.triggerDown = trigger;
-    if (pressed) {
+    if (pressed && !(owned && !squeeze)) {
       this.pulse(s.idx, 0.15, 10);
       this.tapE(s);
     }
-    const squeeze = pressLatch(s.squeezeDown, h.squeeze, SQUEEZE_ON, SQUEEZE_OFF);
-    const was = s.squeezeDown;
-    s.squeezeDown = squeeze;
-    if (squeeze && !was) this.onSqueeze(s);
-    else if (!squeeze && was) this.grab?.release(s.idx, this.grabAim(s));
   }
 
   private disconnect(s: HandSlot): void {
-    if (this.grab?.owns(s.idx)) this.clearGrab();
-    if (this.carriedOwner === s.idx) this.clearCarriedIssue(true);
+    this.physical?.cancelHand(s.idx);
+    this.cancelCarry(s.idx);
     this.dropHand(s, true);
   }
 
   private dropHand(s: HandSlot, cancel: boolean): void {
     s.connected = false;
     s.lostAt = null;
+    s.gripLostAt = null;
     s.input = null;
     s.hover = null;
     s.hoverFresh = false;
     s.uiConsumed = false;
     s.triggerDown = false;
     s.squeezeDown = false;
-    s.teleportHeld = false;
-    s.wasN = false;
+    s.wasPrimary = false;
+    s.wasSecondary = false;
+    s.wasClick = false;
     s.wasMenu = false;
+    s.teleportReady = true;
     if (this.stickAiming && this.stickSlot === s.idx) this.stickAiming = false;
     if (cancel) this.hooks.cancelRay?.(s.idx);
   }
 
   /** The tap itself: E on whatever that ray hovers, through the shared dispatch (VRSession.tapE). */
   private tapE(s: HandSlot): void {
-    if (s.uiConsumed) return;
+    if (this.physical?.trigger(s.idx, this.now)) return;
+    if (s.uiConsumed || this.worldBlocked()) return;
+    if (s.input?.gripTracked === false && this.ownsCarry(s.idx)) return;
     if (this.grab?.use(s.idx, this.grabAim(s))) return;
     const hover = this.freshHover(s);
-    if (this.hooks.player.rig) {
-      this.hooks.reachAnim();
-      this.hooks.useE(hover?.it ?? null, hover ? this.hooks.noteUnder(hover) : null);
-      this.pulse(s.idx, 0.4, 25);
-      return;
-    }
+    if (this.hooks.player.rig) return;
     if (!hover?.near) return;
+    if (hover.it.kind === 'gong' || hover.it.kind === 'ladder' || hover.it.kind === 'pole') return;
     this.hooks.reachAnim();
     this.useWithHand(s.idx, hover.it, this.hooks.noteUnder(hover), this.hooks.spotUnder?.(hover) ?? null);
     this.hooks.setCarrying?.(this.hooks.carrying());
@@ -658,19 +705,15 @@ export class NativeControls {
   }
 
   /**
-   * Squeeze grabs a nearby object; otherwise, holding an issue card, it puts the card back.
+   * Squeeze holds a physical object. Buttons and triggers handle workspace navigation.
    * It never opens, closes or toggles the menu or a window: the left menu button does that.
    */
   private onSqueeze(s: HandSlot): void {
-    if (this.grab?.held) return;
-    if (!s.uiConsumed && !this.hooks.player.rig && !this.teleportAiming() && this.grab?.begin(s.idx, s.handed, s.grip)) {
+    if (s.uiConsumed || this.worldBlocked() || s.input?.gripTracked === false || this.ownsCarry(s.idx) || this.teleportAiming()) return;
+    if (this.physical?.gripPress(s.idx)) return;
+    if (this.grab?.held || this.physical?.owns(s.idx)) return;
+    if (!this.hooks.player.rig && this.grab?.begin(s.idx, s.handed, s.grip)) {
       this.pulse(s.idx, 0.4, 25);
-      return;
-    }
-    if (this.hooks.carrying()) {
-      this.hooks.putBack();
-      this.hooks.setCarrying?.(this.hooks.carrying());
-      this.pulse(s.idx, 0.3, 20);
     }
   }
 
@@ -694,6 +737,19 @@ export class NativeControls {
 
   private ownsCarry(idx: 0 | 1): boolean {
     return !!this.grab?.owns(idx) || (this.carriedIssue !== null && this.carriedOwner === idx);
+  }
+
+  private ownsObject(idx: 0 | 1): boolean {
+    return this.ownsCarry(idx) || this.physical?.owns(idx) === true;
+  }
+
+  private cancelCarry(idx: 0 | 1): void {
+    if (this.grab?.owns(idx)) this.grab.clear();
+    if (this.carriedOwner === idx) this.clearCarriedIssue(true);
+  }
+
+  private worldBlocked(): boolean {
+    return !this.headTracked || this.hooks.modalOpen() || this.hooks.panelOpen?.() === true || this.fade !== 'idle';
   }
 
   private clearCarriedIssue(returnToBoard: boolean): void {
@@ -720,20 +776,21 @@ export class NativeControls {
 
   private carriedAim(): string | null {
     const card = this.hooks.carrying();
-    if (!card) return this.aimText;
+    if (!card) return this.physical?.hint ?? this.aimText;
     const title = card.title.length > 52 ? `${card.title.slice(0, 51)}…` : card.title;
     return `Holding #${card.issue} · ${title} · ${this.aimText ?? 'Aim at a desk or queue to place. Put back in Home.'}`;
   }
 
   private jumpPresentation(): void {
     this.presentationEpoch = (this.presentationEpoch + 1) >>> 0;
+    this.physical?.reanchor();
   }
 
   /** The ray's world hover for the current sample, raycast once per sample and only when asked. */
   private freshHover(s: HandSlot): HandSlot['hover'] {
     if (s.hoverFresh) return s.hover;
     s.hoverFresh = true;
-    if (!s.connected || s.lostAt !== null || s.uiConsumed || this.teleportAiming()) {
+    if (!s.connected || s.lostAt !== null || s.uiConsumed || this.physical?.owns(s.idx) || this.worldBlocked() || this.teleportAiming()) {
       s.hover = null;
       return null;
     }
@@ -751,46 +808,55 @@ export class NativeControls {
   }
 
   /**
-   * Controller buttons (VRSession.pollButtons): B/Y or stick click is N, A hold aims a teleport and
-   * its release fires it, left stick forward aims one with glide off. Only the left controller's
-   * menu button toggles ☰. A lost controller keeps its latches and fires nothing.
+   * Fixed left/right roles: X next worker, Y commands, left stick-click sprint; A jump,
+   * B back, right stick-click keyboard. Right stick-forward aims and releases a teleport.
+   * Left Menu owns the workspace; right Menu is reserved by Android XR.
    */
   private pollButtons(): void {
-    const rigged = !!this.hooks.player.rig;
     for (const s of this.hands) {
       const pad = this.pad(s);
       if (!pad) continue;
-      const n = pad.b || pad.stickClick === true;
-      if (n && !s.wasN) this.hooks.nextWaiting();
-      s.wasN = n;
       if (s.idx === 0) {
         if (pad.menu && !s.wasMenu) {
           this.hooks.togglePanel();
           this.pulse(s.idx, 0.3, 20);
         }
         s.wasMenu = pad.menu;
-      }
-      const held = !rigged && pad.a;
-      if (s.uiConsumed) {
-        s.teleportHeld = false;
+        if (pad.a && !s.wasPrimary && !this.hooks.player.rig && !this.hooks.modalOpen() && !this.holdingGun) this.hooks.nextWaiting();
+        if (pad.b && !s.wasSecondary) this.hooks.openCommands?.();
       } else {
-        if (s.teleportHeld && !held) this.fireTeleport(s);
-        s.teleportHeld = held;
+        if (pad.a && !s.wasPrimary && !s.uiConsumed && !this.worldBlocked() && !this.teleportAiming()) this.hooks.player.jump();
+        if (pad.b && !s.wasSecondary) {
+          if (this.hooks.panelOpen?.() || this.hooks.modalOpen()) this.hooks.back?.();
+          else if (this.hooks.carrying()) {
+            this.clearGrab();
+            if (this.hooks.carrying()) this.hooks.putBack();
+          }
+        }
+        if (pad.stickClick && !s.wasClick && this.hooks.panelOpen?.()) this.hooks.toggleKeyboard?.();
       }
+      s.wasPrimary = pad.a;
+      s.wasSecondary = pad.b;
+      s.wasClick = pad.stickClick === true;
     }
-    const move = this.slotFor('left') ?? this.slotFor('right');
-    if (!rigged && !this.hooks.settings.vr.glide && move && !move.uiConsumed && this.pad(move)) {
-      const y = this.stickOf(move).y;
-      if (this.stickAiming && move.idx !== this.stickSlot) {
+    const teleport = this.slotFor('right');
+    if (teleport && this.pad(teleport)) {
+      const y = this.stickOf(teleport).y;
+      const allowed = !this.hooks.player.rig && !teleport.uiConsumed && !this.worldBlocked() && !this.ownsObject(1);
+      if (!allowed) {
         this.stickAiming = false;
+        teleport.teleportReady = y > -STICK_OFF;
       } else if (this.stickAiming && y > -STICK_OFF) {
         this.stickAiming = false;
-        this.fireTeleport(move);
-      } else if (!this.stickAiming && y < -STICK_ON) {
+        teleport.teleportReady = true;
+        this.fireTeleport(teleport);
+      } else if (!this.stickAiming && teleport.teleportReady && y < -STICK_ON && Math.abs(this.stickOf(teleport).x) < STICK_OFF) {
         this.stickAiming = true;
-        this.stickSlot = move.idx;
+        this.stickSlot = 1;
+      } else if (y > -STICK_OFF) {
+        teleport.teleportReady = true;
       }
-    } else if (!move || move.lostAt === null) {
+    } else if (!teleport || teleport.lostAt === null) {
       this.stickAiming = false;
     }
   }
@@ -813,24 +879,17 @@ export class NativeControls {
   }
 
   private moveStick(): { x: number; y: number } {
-    const slot = this.slotFor('left') ?? this.slotFor('right');
-    return slot?.uiConsumed ? { x: 0, y: 0 } : this.stickOf(slot);
+    const slot = this.slotFor('left');
+    return slot?.uiConsumed || this.worldBlocked() ? { x: 0, y: 0 } : this.stickOf(slot);
   }
 
   private turnSlot(): HandSlot | undefined {
-    return this.slotFor('right') ?? this.slotFor('left');
+    return this.slotFor('right');
   }
 
   private turnStick(): { x: number; y: number } {
     const slot = this.turnSlot();
-    return slot?.uiConsumed ? { x: 0, y: 0 } : this.stickOf(slot);
-  }
-
-  private climbDir(): number {
-    const y = this.moveStick().y;
-    if (y < -0.35) return 1;
-    if (y > 0.35) return -1;
-    return 0;
+    return slot?.uiConsumed || this.worldBlocked() || this.hooks.player.rig || this.stickAiming ? { x: 0, y: 0 } : this.stickOf(slot);
   }
 
   private glideIntent(): boolean {
@@ -840,13 +899,13 @@ export class NativeControls {
   }
 
   private teleportAiming(): boolean {
-    return this.stickAiming || this.hands.some((s) => s.teleportHeld);
+    return this.stickAiming;
   }
 
-  /** The controller holding the teleport aim: A wins over the stick. */
+  /** The right controller owns teleport even while the other hand is tracking. */
   private aimingSlot(): HandSlot | undefined {
     const stick = this.stickAiming ? this.hands[this.stickSlot] : undefined;
-    return this.hands.find((s) => s.connected && s.teleportHeld) ?? (stick?.connected ? stick : undefined);
+    return stick?.connected ? stick : undefined;
   }
 
   /** The arc and landing marker for native to draw while a teleport is aimed. */
@@ -896,7 +955,7 @@ export class NativeControls {
   private updateGlide(dt: number): void {
     this.glideActive = false;
     if (!this.hooks.settings.vr.glide) return;
-    const move = this.slotFor('left') ?? this.slotFor('right');
+    const move = this.slotFor('left');
     if (move?.uiConsumed) return;
     const { player } = this.hooks;
     if (player.seat) return;
@@ -907,7 +966,7 @@ export class NativeControls {
     if (_f.lengthSq() < 1e-6) _f.set(0, 0, -1);
     _f.normalize();
     _l.set(-_f.z, 0, _f.x);
-    const speed = 4.6 * player.speedBoost;
+    const speed = (move && this.pad(move)?.stickClick ? 7.5 : 4.6) * player.speedBoost;
     let dx = (_l.x * s.x - _f.x * s.y) * speed * dt;
     let dz = (_l.z * s.x - _f.z * s.y) * speed * dt;
     const staggerT = performance.now() / 1000;
@@ -922,7 +981,7 @@ export class NativeControls {
     const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.1));
     for (let i = 0; i < steps; i++) player.stepTo(player.pos.x + dx / steps, player.pos.z + dz / steps);
     this.glideActive = true;
-    snapGround(player);
+    if (player.grounded) snapGround(player);
   }
 
   /** Room-scale into the avatar, desktop moves into the rig (VRSession.followHead). */
@@ -938,7 +997,7 @@ export class NativeControls {
       if (Math.hypot(_h.x - player.pos.x, _h.z - player.pos.z) > 1e-4) {
         roomMoved = true;
         stepToward(player, _h.x, _h.z);
-        snapGround(player);
+        if (player.grounded) snapGround(player);
       }
     }
     this.origin.y = player.pos.y;

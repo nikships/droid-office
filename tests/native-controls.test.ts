@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { NativeControls, type NativeHooks } from '../src/client/native/controls.js';
 import { LOST_MS, MAX_QUEUE, type NativeHand, type NativeInputFrame, type Pose7, readFrame, webStick } from '../src/client/native/input.js';
-import { findLanding, rigFor, stepToward } from '../src/client/native/locomotion.js';
+import { applyGravity, findLanding, rigFor, stepToward } from '../src/client/native/locomotion.js';
 import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import type { GrabHooks, Grabbable } from '../src/client/vr/grab.js';
@@ -79,7 +79,7 @@ function rig(t: TestContext, colliders: Collider[] = [], hooks: Partial<NativeHo
   player.pos.set(0, 0, 0);
   player.facing = 0;
   const scene = new THREE.Scene();
-  const target: Interactable = { kind: 'gong', x: 0, z: -2, radius: 1.5 };
+  const target: Interactable = { kind: 'tv', x: 0, z: -2, radius: 1.5 };
   const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.2));
   box.position.set(0, 1.2, 2);
   box.userData.interact = target;
@@ -302,20 +302,36 @@ test('panel scrolling consumes both sticks without turning, walking or climbing'
   assert.ok(Math.abs(wrap(r.controls.state().yaw - yaw) + SNAP_ANGLE) < 1e-6, 'the stick turns again when it leaves the panel');
 });
 
-test('B, Y and stick click are N once per press; only the left menu button toggles the panel', (t) => {
+test('face buttons have distinct roles and only left Menu opens the workspace', (t) => {
   const r = rig(t);
+  let commands = 0,
+    back = 0,
+    keyboard = 0,
+    panelOpen = false;
+  r.hooks.openCommands = () => commands++;
+  r.hooks.back = () => back++;
+  r.hooks.toggleKeyboard = () => keyboard++;
+  r.hooks.panelOpen = () => panelOpen;
   r.controls.start();
   r.tick(r.frame({ left: controller(), right: controller() }));
-  r.tick(r.frame({ right: controller({ b: true }) }), r.frame({ right: controller({ b: true }) }), r.frame({ right: controller() }), r.frame({ right: controller({ stickClick: true }) }));
-  assert.equal(r.calls.next, 2, 'B and stick click are N, once per press');
-  r.tick(r.frame({ left: controller() }), r.frame({ left: controller({ b: true }) }), r.frame({ left: controller() }));
-  assert.equal(r.calls.next, 3, 'Y (left secondary) is N as well');
-  r.tick(r.frame({ left: controller() }), r.frame({ left: controller({ menu: true }) }), r.frame({ left: controller({ menu: true }) }));
-  assert.equal(r.calls.panel, 1, 'the left menu button toggles the panel once per press');
-  r.tick(r.frame({ left: controller() }), r.frame({ left: controller({ menu: true }) }));
-  assert.equal(r.calls.panel, 2, 'and again on the next press');
-  r.tick(r.frame({ right: controller() }), r.frame({ right: controller({ menu: true }) }), r.frame({ right: controller() }), r.frame({ right: controller({ menu: true }) }));
-  assert.equal(r.calls.panel, 2, 'a right-slot menu value is ignored');
+  r.tick(r.frame({ left: controller({ a: true }), right: controller({ b: true, stickClick: true }) }));
+  assert.equal(r.calls.next, 1, 'only X calls the next waiting worker');
+  assert.equal(back, 0, 'B in the world with no card does nothing');
+  assert.equal(keyboard, 0, 'keyboard shortcut requires the workspace');
+  r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ left: controller({ b: true }), right: controller({ a: true }) }));
+  assert.equal(commands, 1, 'Y opens commands');
+  assert.ok(r.player.vy > 0, 'A jumps');
+  assert.equal(r.calls.next, 1, 'Y and A do not also call N');
+  panelOpen = true;
+  r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ left: controller({ stickClick: true }), right: controller({ b: true, stickClick: true }) }));
+  assert.equal(back, 1);
+  assert.equal(keyboard, 1, 'right click toggles the keyboard once');
+  r.tick(r.frame({ left: controller({ menu: true }), right: controller({ menu: true, b: true, stickClick: true }) }));
+  assert.equal(r.calls.panel, 1, 'only left Menu toggles the workspace');
+  assert.equal(back, 1);
+  assert.equal(keyboard, 1);
+  r.tick(r.frame({ left: controller(), right: controller() }), r.frame({ right: controller({ menu: true }) }));
+  assert.equal(r.calls.panel, 1, 'right Menu stays reserved');
 });
 
 test('tracked hands are ignored: no E, N, menu, grab, teleport, glide or turn, and no connected slot', (t) => {
@@ -342,22 +358,23 @@ test('tracked hands are ignored: no E, N, menu, grab, teleport, glide or turn, a
   assert.ok(Math.hypot(r.player.pos.x, r.player.pos.z) < 1e-6, 'a hand never glides the avatar');
 });
 
-test('controller A hold aims and its release teleports; left stick forward (+y) does the same with glide off', (t) => {
+test('right stick forward aims and releases teleport in either movement mode; A and left stick do not', (t) => {
   const r = rig(t);
   r.hooks.settings.vr.fade = false;
   r.controls.start();
   const down = pose(0, 1.2, 0, new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5, 0, 0)).toArray());
-  r.tick(r.frame({ right: controller({ aim: down, a: true }) }));
-  assert.ok(r.controls.state().teleport?.valid);
-  r.tick(r.frame({ right: controller({ aim: down }) }));
-  const first = r.player.pos.clone();
-  assert.ok(first.z > 1, `teleported forward: ${first.z}`);
-  r.tick(r.frame({ left: controller({ aim: down, stick: [0, 1] }) }));
-  assert.ok(r.controls.state().teleport, 'stick forward aims');
-  r.tick(r.frame({ left: controller({ aim: down, stick: [0, 0] }) }));
-  assert.ok(r.player.pos.z > first.z + 1, 'released past center: teleported again');
-  r.tick(r.frame({ left: controller({ aim: down, stick: [0, -1] }) }));
-  assert.equal(r.controls.state().teleport, null, 'stick back does not aim');
+  r.tick(r.frame({ left: controller(), right: controller({ aim: down }) }));
+  for (const glide of [false, true]) {
+    r.hooks.settings.vr.glide = glide;
+    const before = r.player.pos.clone();
+    r.tick(r.frame({ left: controller(), right: controller({ aim: down, stick: [0, 1] }) }));
+    assert.ok(r.controls.state().teleport?.valid);
+    r.tick(r.frame({ left: controller(), right: controller({ aim: down }) }));
+    assert.ok(r.player.pos.distanceTo(before) > 1, 'right stick release travels');
+  }
+  r.hooks.settings.vr.glide = false;
+  r.tick(r.frame({ left: controller({ aim: down, a: true, stick: [0, 1] }), right: controller({ aim: down, a: true }) }));
+  assert.equal(r.controls.state().teleport, null, 'A/X and left stick never start a teleport');
 });
 
 test('glide moves along the head direction with collision; smooth turn rotates about the head', (t) => {
@@ -513,18 +530,22 @@ test('the sample queue is bounded, ordered and ignores samples while inactive', 
   assert.equal(r.controls.state().stats.queued, 0);
 });
 
-test('the ladder: stick up climbs through climbInput and trigger lets go with nothing aimed', (t) => {
+test('native climbing never substitutes stick direction or trigger activation for a physical grip', (t) => {
   const r = rig(t);
   r.controls.start();
   const seen: number[] = [];
   r.player.rig = () => seen.push(r.player.climbInput);
   r.tick(r.frame({ left: controller({ stick: [0, 1] }) }));
   r.tick(r.frame({ left: controller({ stick: [0, -1] }) }));
-  assert.deepEqual(seen, [1, -1]);
-  const away = pose(0, 1.2, 0, quatYaw(Math.PI));
-  r.tick(r.frame({ right: controller({ aim: away }) }), r.frame({ right: controller({ aim: away, trigger: 1 }) }));
-  assert.deepEqual(r.calls.e, [null], 'E lets go on the ladder');
+  assert.deepEqual(seen, [0, 0]);
+  r.tick(r.frame({ right: controller() }), r.frame({ right: controller({ trigger: 1 }) }));
+  assert.deepEqual(r.calls.e, [], 'trigger does not release a physical climb');
   r.player.rig = null;
+  for (const kind of ['gong', 'ladder', 'pole'] as const) {
+    r.target.kind = kind;
+    r.tick(r.frame({ right: controller({ aim: pose(0, 1.2, 0) }) }), r.frame({ right: controller({ aim: pose(0, 1.2, 0), trigger: 1 }) }));
+  }
+  assert.deepEqual(r.calls.e, [], 'these objects require physical interactions');
 });
 
 test('stop hands the avatar back to the desktop controls', (t) => {
@@ -538,6 +559,17 @@ test('stop hands the avatar back to the desktop controls', (t) => {
   assert.equal(r.controls.consume([r.frame()]), 0);
   r.controls.update(1 / 30);
   assert.equal(r.controls.state().active, false);
+});
+
+test('native jump uses the desktop boost and respects the same solid ceiling', (t) => {
+  const r = rig(t, [{ minX: -1, maxX: 1, minZ: -1, maxZ: 1, bottom: 1.9, top: 2.2 }]);
+  r.player.jumpBoost = 1.4;
+  r.player.jump();
+  assert.equal(r.player.grounded, false);
+  assert.ok(r.player.vy > 6.4);
+  for (let i = 0; i < 8; i++) applyGravity(r.player, 1 / 90);
+  assert.ok(r.player.pos.y <= 0.2 + 1e-9, 'head stays below the overhead slab');
+  assert.ok(r.player.vy <= 0, 'ceiling stops the upward jump');
 });
 
 test('locomotion helpers: rigFor puts any head pose over the feet, findLanding refuses walls', (t) => {
@@ -687,7 +719,9 @@ test('the held-card controller yields its panel ray while the free one can still
   assert.equal(state.hands[1].ui, false);
   assert.equal(state.hands[1].holding, true);
   r.tick(r.frame({ left: controller({ ui: true }), right: controller({ squeeze: 1 }) }));
-  assert.equal(r.card(), null, 'grip returns the ray-picked card through the original Put back');
+  assert.equal(r.card()?.issue, 23, 'grip does not return cards or navigate the workspace');
+  r.tick(r.frame({ right: controller() }), r.frame({ right: controller({ b: true }) }));
+  assert.equal(r.card(), null, 'B returns the card through the original Put back');
   assert.equal(r.calls.panel, 0, 'and never toggles the menu');
   assert.equal(r.visual(), undefined);
 });
@@ -769,7 +803,7 @@ test('a faded teleport commits its new epoch with the new rig while the view is 
   assert.ok(r.controls.state().fade < 1);
 });
 
-test('grip never opens, closes or toggles the menu or a window: it only grabs or returns a card', (t) => {
+test('grip never opens, closes or navigates a workspace, even with a carried card', (t) => {
   let card: CarriedIssue | null = null;
   const r = rig(t, [], { carrying: () => card });
   r.hooks.putBack = () => {
@@ -786,7 +820,7 @@ test('grip never opens, closes or toggles the menu or a window: it only grabs or
   assert.equal(r.calls.putBack, 0, 'with nothing carried there is nothing to put back');
   card = { issue: 3, title: 'Held' };
   r.tick(r.frame({ right: controller() }), r.frame({ right: controller({ squeeze: 1 }) }));
-  assert.equal(r.calls.putBack, 1, 'grip returns a carried card');
+  assert.equal(r.calls.putBack, 0, 'grip does not return a carried card');
   assert.equal(r.calls.panel, 0);
 });
 
@@ -820,43 +854,45 @@ test('a controller first seen with its buttons held is not a press', (t) => {
   assert.deepEqual([r.calls.e.length, r.calls.panel, r.calls.next], [0, 0, 0]);
 });
 
-test('a brief loss keeps a held A aim and a grabbed object; nothing fires while it is lost', (t) => {
+test('a brief loss preserves a right-stick teleport and the other hand grab without firing either', (t) => {
   const g = grabRig(t);
   g.hooks.settings.vr.fade = false;
   g.controls.start();
-  g.tick(g.frame());
   const near = pose(0.2, 1.2, -0.4);
-  g.tick(g.frame({ right: controller({ grip: near }) }), g.frame({ right: controller({ grip: near, squeeze: 1 }) }));
-  assert.equal(g.controls.state().hands[1].holding, true);
   const down = pose(0, 1.2, 0, new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5, 0, 0)).toArray());
-  g.tick(g.frame({ left: controller({ aim: down, a: true }), right: controller({ grip: near, squeeze: 1 }) }));
-  assert.ok(g.controls.state().teleport, 'A aims');
+  g.tick(g.frame({ left: controller({ grip: near }), right: controller({ aim: down }) }));
+  g.tick(g.frame({ left: controller({ grip: near, squeeze: 1 }), right: controller({ aim: down, stick: [0, 1] }) }));
+  assert.equal(g.controls.state().hands[0].holding, true);
+  assert.ok(g.controls.state().teleport);
   const feet = g.player.pos.clone();
-  g.tick(g.frame({ left: off(), right: off() }));
-  assert.ok(g.player.pos.distanceTo(feet) < 1e-9, 'losing the aiming controller does not teleport');
-  assert.equal(g.controls.state().hands[1].holding, true, 'the grab survives a blip');
-  assert.equal(g.released.length, 0, 'and is not released');
-  g.tick(g.frame({ left: controller({ aim: down, a: true }), right: controller({ grip: near, squeeze: 1 }) }));
-  assert.ok(g.controls.state().teleport, 'the aim resumes with the controller');
-  g.tick(g.frame({ left: controller({ aim: down }), right: controller({ grip: near, squeeze: 1 }) }));
-  assert.ok(g.player.pos.distanceTo(feet) > 0.5, 'releasing A after the blip teleports');
+  g.tick(g.frame());
+  assert.ok(g.player.pos.distanceTo(feet) < 1e-9);
+  assert.equal(g.released.length, 0);
+  g.tick(g.frame({ left: controller({ grip: near, squeeze: 1 }), right: controller({ aim: down, stick: [0, 1] }) }));
+  assert.ok(g.controls.state().teleport, 'aim resumes through brief tracking loss');
+  g.tick(g.frame({ left: controller({ grip: near, squeeze: 1 }), right: controller({ aim: down }) }));
+  assert.ok(g.player.pos.distanceTo(feet) > 0.5, 'intentional release travels');
 });
 
-test('stick-forward aim cancels, not fires, when the aiming controller is lost', (t) => {
+test('long tracking loss cancels teleport and never transfers left/right stick roles', (t) => {
   const r = rig(t);
   r.hooks.settings.vr.fade = false;
   r.controls.start();
   const down = pose(0, 1.2, 0, new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5, 0, 0)).toArray());
-  r.tick(r.frame({ left: controller({ aim: down, stick: [0, 1] }), right: controller({ aim: down }) }));
-  assert.ok(r.controls.state().teleport, 'left stick forward aims');
+  r.tick(r.frame({ left: controller(), right: controller({ aim: down }) }));
+  r.tick(r.frame({ left: controller(), right: controller({ aim: down, stick: [0, 1] }) }));
   const feet = r.player.pos.clone();
-  r.tick(r.frame({ left: off(), right: controller({ aim: down }) }));
-  r.tick(r.frame({ left: off(), right: controller({ aim: down }), time: r.time() + LOST_MS }));
-  assert.ok(r.player.pos.distanceTo(feet) < 1e-9, 'the right controller does not inherit and fire the left aim');
+  r.tick(r.frame({ left: controller({ aim: down, stick: [0, 1] }) }));
+  r.tick(r.frame({ left: controller({ aim: down, stick: [0, 1] }), time: r.time() + LOST_MS }));
+  assert.ok(r.player.pos.distanceTo(feet) < 1e-9, 'left controller never inherits right teleport');
   assert.equal(r.controls.state().teleport, null);
   r.tick(r.frame({ right: controller({ aim: down, stick: [0, 1] }) }));
-  assert.ok(r.controls.state().teleport, 'with no left controller the right stick aims');
-  r.tick(r.frame({ left: controller({ aim: down }), right: controller({ aim: down, stick: [0, 1] }) }));
-  assert.ok(r.player.pos.distanceTo(feet) < 1e-9, 'a left controller taking over the move stick cancels the right aim');
-  assert.equal(r.controls.state().teleport, null);
+  assert.equal(r.controls.state().teleport, null, 'reconnecting with pushed stick is not a fresh aim');
+  r.tick(r.frame({ right: controller({ aim: down }) }), r.frame({ right: controller({ aim: down, stick: [0, 1] }) }));
+  assert.ok(r.controls.state().teleport);
+  r.hooks.settings.vr.glide = true;
+  r.tick(r.frame({ right: controller({ aim: down }) }));
+  const moved = r.player.pos.clone();
+  r.tick(r.frame({ right: controller({ stick: [0, -1] }) }));
+  assert.ok(r.player.pos.distanceTo(moved) < 1e-9, 'right stick never takes over locomotion');
 });

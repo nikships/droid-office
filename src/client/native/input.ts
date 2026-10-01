@@ -16,6 +16,8 @@ export interface NativeHand {
   active: boolean;
   aim: Pose7;
   grip: Pose7;
+  /** A real, tracked grip pose. An aim fallback cannot drive physical interactions. */
+  gripTracked?: boolean;
   /** Controller trigger (0..1). */
   trigger: number;
   /** Controller squeeze (0..1). */
@@ -105,6 +107,7 @@ function readHand(v: unknown): NativeHand | null {
     active: true,
     aim,
     grip,
+    gripTracked: h.gripTracked !== false,
     trigger: clamp01(h.trigger),
     squeeze: clamp01(h.squeeze),
     stick: [Math.max(-1, Math.min(1, stick[0])), Math.max(-1, Math.min(1, stick[1]))],
