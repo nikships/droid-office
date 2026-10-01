@@ -18,12 +18,14 @@ import android.view.Surface;
 import java.util.Objects;
 
 /**
- * Draws the aim hint and toast lines into a small Surface whose BufferQueue the OpenXR
- * runtime owns. Every method runs on the main thread. The Surface is never released here.
+ * Draws the closed-workspace status lines into a small Surface whose BufferQueue the OpenXR
+ * runtime owns: the FPS counter when its setting is on, then the latest transient toast. The
+ * page sends no aim labels or control hints here. Every method runs on the main thread. The
+ * Surface is never released here.
  *
  * <p>Frames are premultiplied RGBA from a software Canvas: a rounded, semi-opaque dark card
- * inset from the buffer edges, fully transparent outside it, and fully transparent when there
- * is no text.
+ * fitted around the text and centered in the buffer, fully transparent outside it, and fully
+ * transparent when there is no text.
  */
 public final class NativeStatusPanel {
     private static final String TAG = "OfficeXR";
@@ -38,25 +40,25 @@ public final class NativeStatusPanel {
     private static final int MAX_RETRIES = 3;
     private static final int BACKGROUND = Color.argb(222, 11, 15, 22);
     private static final int BORDER = Color.argb(70, 170, 190, 215);
-    private static final int AIM_COLOR = Color.rgb(184, 208, 236);
+    private static final int COUNTER_COLOR = Color.rgb(184, 208, 236);
     private static final int MESSAGE_COLOR = Color.rgb(246, 248, 252);
 
     private final Surface surface;
     private final int width;
     private final int height;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final TextPaint aimPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint counterPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint messagePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF card = new RectF();
     private final Runnable draw = this::drawNow;
 
-    private String rawAim;
+    private String rawCounter;
     private String rawMessage;
-    private String aim = "";
+    private String counter = "";
     private String message = "";
-    private StaticLayout aimLayout;
+    private StaticLayout counterLayout;
     private StaticLayout messageLayout;
     private boolean layoutsStale;
     private boolean visible;
@@ -72,10 +74,10 @@ public final class NativeStatusPanel {
             throw new IllegalArgumentException("Status panel too small: " + width + "x" + height);
         this.width = width;
         this.height = height;
-        aimPaint.setSubpixelText(true);
-        aimPaint.setTextSize(TEXT_PX);
-        aimPaint.setTypeface(Typeface.DEFAULT);
-        aimPaint.setColor(AIM_COLOR);
+        counterPaint.setSubpixelText(true);
+        counterPaint.setTextSize(TEXT_PX);
+        counterPaint.setTypeface(Typeface.DEFAULT);
+        counterPaint.setColor(COUNTER_COLOR);
         messagePaint.setSubpixelText(true);
         messagePaint.setTextSize(TEXT_PX);
         messagePaint.setTypeface(Typeface.create(Typeface.DEFAULT, 500, false));
@@ -104,16 +106,17 @@ public final class NativeStatusPanel {
         }
     }
 
-    public void setText(String aim, String message) {
-        if (closed || (Objects.equals(aim, rawAim) && Objects.equals(message, rawMessage)))
+    /** The FPS counter line (empty when its setting is off) and the transient message lines. */
+    public void setText(String counter, String message) {
+        if (closed || (Objects.equals(counter, rawCounter) && Objects.equals(message, rawMessage)))
             return;
-        rawAim = aim;
+        rawCounter = counter;
         rawMessage = message;
-        String nextAim = Rules.clean(aim, false);
+        String nextCounter = Rules.clean(counter, false);
         String nextMessage = Rules.clean(message, true);
-        if (nextAim.equals(this.aim) && nextMessage.equals(this.message))
+        if (nextCounter.equals(this.counter) && nextMessage.equals(this.message))
             return;
-        this.aim = nextAim;
+        this.counter = nextCounter;
         this.message = nextMessage;
         layoutsStale = true;
         needsDraw = true;
@@ -127,7 +130,7 @@ public final class NativeStatusPanel {
         visible = false;
         scheduled = false;
         handler.removeCallbacks(draw);
-        aimLayout = null;
+        counterLayout = null;
         messageLayout = null;
     }
 
@@ -156,7 +159,7 @@ public final class NativeStatusPanel {
             return false;
         if (layoutsStale) {
             int textWidth = width - 2 * PADDING_PX;
-            aimLayout = aim.isEmpty() ? null : layout(aim, aimPaint, textWidth, 1);
+            counterLayout = counter.isEmpty() ? null : layout(counter, counterPaint, textWidth, 1);
             messageLayout =
                 message.isEmpty() ? null : layout(message, messagePaint, textWidth, MESSAGE_LINES);
             layoutsStale = false;
@@ -192,25 +195,43 @@ public final class NativeStatusPanel {
 
     private void paint(Canvas canvas) {
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        if (aimLayout == null && messageLayout == null)
+        if (counterLayout == null && messageLayout == null)
             return;
         int canvasWidth = canvas.getWidth();
         int canvasHeight = canvas.getHeight();
         if (canvasWidth != width || canvasHeight != height)
             canvas.scale(canvasWidth / (float)width, canvasHeight / (float)height);
-        card.set(INSET_PX, INSET_PX, width - INSET_PX, height - INSET_PX);
+        int counterHeight = counterLayout == null ? 0 : counterLayout.getHeight();
+        int messageHeight = messageLayout == null ? 0 : messageLayout.getHeight();
+        int gap = counterLayout != null && messageLayout != null ? LINE_GAP_PX : 0;
+        int contentHeight = counterHeight + gap + messageHeight;
+        // Horizontal extent of the inked lines inside the layouts' shared text width, which
+        // also covers right-to-left lines that ALIGN_NORMAL places at the right edge.
+        float inkLeft = Float.MAX_VALUE;
+        float inkRight = -Float.MAX_VALUE;
+        for (StaticLayout lines : new StaticLayout[] {counterLayout, messageLayout}) {
+            if (lines == null)
+                continue;
+            for (int line = 0; line < lines.getLineCount(); line++) {
+                inkLeft = Math.min(inkLeft, lines.getLineLeft(line));
+                inkRight = Math.max(inkRight, lines.getLineRight(line));
+            }
+        }
+        if (inkRight < inkLeft)
+            inkLeft = inkRight = 0;
+        float[] box =
+            Rules.card(width, height, PADDING_PX, INSET_PX, inkRight - inkLeft, contentHeight);
+        card.set(box[0], box[1], box[2], box[3]);
         canvas.drawRoundRect(card, CORNER_PX, CORNER_PX, fill);
         canvas.drawRoundRect(card, CORNER_PX, CORNER_PX, stroke);
-        int aimHeight = aimLayout == null ? 0 : aimLayout.getHeight();
-        int messageHeight = messageLayout == null ? 0 : messageLayout.getHeight();
-        int gap = aimLayout != null && messageLayout != null ? LINE_GAP_PX : 0;
-        int top = Rules.contentTop(height, PADDING_PX, aimHeight + gap + messageHeight);
+        int top = Rules.contentTop(height, PADDING_PX, contentHeight);
         canvas.save();
-        canvas.clipRect(PADDING_PX, PADDING_PX, width - PADDING_PX, height - PADDING_PX);
-        canvas.translate(PADDING_PX, top);
-        if (aimLayout != null) {
-            aimLayout.draw(canvas);
-            canvas.translate(0, aimHeight + gap);
+        canvas.clipRect(card.left + PADDING_PX, PADDING_PX, card.right - PADDING_PX,
+                        height - PADDING_PX);
+        canvas.translate(card.left + PADDING_PX - inkLeft, top);
+        if (counterLayout != null) {
+            counterLayout.draw(canvas);
+            canvas.translate(0, counterHeight + gap);
         }
         if (messageLayout != null)
             messageLayout.draw(canvas);
@@ -278,6 +299,21 @@ public final class NativeStatusPanel {
                 }
             }
             return out.toString();
+        }
+
+        /**
+         * The card around the text: {left, top, right, bottom}. It is the text's ink width plus
+         * padding, centered in the buffer, and never wider or taller than the buffer less its
+         * inset, so a short FPS counter gets a small card rather than a full-width bar.
+         */
+        static float[] card(int width, int height, int padding, float inset, float textWidth,
+                            int textHeight) {
+            float cardWidth =
+                Math.min(width - 2 * inset, (float)Math.ceil(Math.max(0, textWidth)) + 2 * padding);
+            float cardHeight = Math.min(height - 2 * inset, Math.max(0, textHeight) + 2 * padding);
+            float left = (width - cardWidth) / 2;
+            float top = (height - cardHeight) / 2;
+            return new float[] {left, top, left + cardWidth, top + cardHeight};
         }
 
         /** Top of the text block: vertically centered, never above the padding. */

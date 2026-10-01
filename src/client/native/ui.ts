@@ -28,7 +28,7 @@ import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { CarriedIssue, WorkerInfo } from '../../shared/protocol';
 import { isTyping } from '../player';
 import { mountKeyboard, type PanelKeyboard } from './keyboard';
-import { COMMANDS_SHORTCUT, nativeCommandsKey } from './keys';
+import { nativeCommandsKey } from './keys';
 import { workerReposLine } from './panel-text';
 import { isNativeSearch } from './mode';
 import { nativePerformanceLabel } from './performance';
@@ -358,7 +358,6 @@ function buildHome(actions: HomeActions) {
     { type: 'button', title: COMMANDS_TITLE, 'aria-keyshortcuts': 'Control+K', onclick: () => actions.openCommands() },
     h('span', { 'aria-hidden': 'true' }, '🔎'),
     h('span', {}, 'Find anything'),
-    h('span.key', { 'aria-hidden': 'true' }, COMMANDS_SHORTCUT),
   );
   const kbBtn = h('button.btn.nh-kb', { type: 'button', onclick: () => actions.toggleKeyboard() }, '⌨️ Keyboard');
   const closeBtn = h('button.btn.nh-close', { type: 'button', title: 'Hide the panel and go back to the office', onclick: () => actions.close() }, 'Back to the office');
@@ -512,7 +511,7 @@ function buildHome(actions: HomeActions) {
   };
   const setCarrying = (card: CarriedIssue | null) => {
     carried.classList.toggle('hidden', !card);
-    carriedText.textContent = card ? `Holding #${card.issue} · ${card.title}. Aim at a desk or the queue and press the trigger to place it.` : '';
+    carriedText.textContent = card ? `Holding #${card.issue} · ${card.title}` : '';
   };
   return { el, render, updatePerformance, setCarrying };
 }
@@ -526,7 +525,7 @@ const NATIVE_GRAPHICS_ACTION: HudAction = {
   run: openNativeGraphicsSettings,
 };
 
-const COMMANDS_TITLE = `Find a worker, issue, pull request, service, board, teammate or action and open it (${COMMANDS_SHORTCUT} on the panel keyboard)`;
+const COMMANDS_TITLE = 'Find a worker, issue, pull request, service, board, teammate or action and open it';
 
 /** Adds headset choices to the original menu without replacing its shared action callbacks. */
 function decorateNativeMenu(openCommands: () => void) {
@@ -550,7 +549,7 @@ function decorateNativeMenu(openCommands: () => void) {
         },
       },
       h('span.mi-icon', { 'aria-hidden': 'true' }, '🔎'),
-      h('span.mi-label', {}, 'Find anything', h('small', {}, `Command palette · ${COMMANDS_SHORTCUT}`)),
+      h('span.mi-label', {}, 'Find anything', h('small', {}, 'Command palette')),
     ),
   );
   column.append(
@@ -577,7 +576,7 @@ function decorateNativeMenu(openCommands: () => void) {
     }
   }
   const foot = menu.querySelector('.menu-foot');
-  if (foot) foot.textContent = 'Pin an action to keep it on the top bar. Use the left controller’s Menu button to open or close the workspace.';
+  if (foot) foot.textContent = 'Pin an action to keep it on the top bar.';
   // The desktop's T shortcut; on the panel, tap the chat field.
   for (const small of menu.querySelectorAll('.menu-toggle small')) {
     if (small.textContent === 'T opens it either way') small.textContent = 'Messages for everyone here';

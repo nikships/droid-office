@@ -49,12 +49,6 @@ export function updateNativeGraphicsMetrics(next: unknown) {
   repaint?.();
 }
 
-/** The closed-workspace compositor hint includes the same measured counter. */
-export function nativeGraphicsAim(aim: string): string {
-  if (!getNativeGraphicsSettings().fps) return aim;
-  return [nativeFpsCounter(metrics).text, aim].filter(Boolean).join(' · ');
-}
-
 export function openNativeGraphicsSettings(): void {
   if (modal) return;
   const status = h('p.ng-status', { role: 'status', 'aria-live': 'polite' });

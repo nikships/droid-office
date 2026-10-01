@@ -6,6 +6,7 @@ import { officePrompt } from './prompts';
 import { mergeCommand, pullPromptVars } from '../../shared/prompts';
 import { issueMeeting } from './meeting';
 import { h, openModal, timeAgo, type Modal } from './dom';
+import { withControlHint } from '../native/mode';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
 import { providerPicker } from './provider';
@@ -257,7 +258,7 @@ function commentBox(kind: 'issue' | 'pull', number: number, itemUrl: string, net
   const waitKey = `${kind}#${number}`;
   let busy = false;
   let timer = 0;
-  const ta = h('textarea', { rows: 4, placeholder: 'Leave a comment. Markdown works; ⌘/Ctrl+Enter posts it.', 'aria-label': 'Comment' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: 4, placeholder: `${withControlHint('Leave a comment. Markdown works', '; ⌘/Ctrl+Enter posts it')}.`, 'aria-label': 'Comment' }) as HTMLTextAreaElement;
   ta.value = pref<string>(draftKey, '');
   const shown = h('div.gh-compose-preview.hidden');
   const write = h('button.btn.on', { type: 'button' }, 'Write');

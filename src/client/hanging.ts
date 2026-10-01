@@ -4,7 +4,7 @@ import type { Net } from './net';
 import type { PlayerController } from './player';
 import { store } from './state';
 import { openHangDialog, openPicture, type HangChoice } from './ui/decor';
-import { toast } from './ui/dom';
+import { hintToast, toast } from './ui/dom';
 import { Ghost, aimAtWall, brokenTexture, holdPicture, loadPicture, type Gallery } from './world/gallery';
 import type { Office } from './world/office';
 
@@ -172,7 +172,7 @@ export class Hanger {
     if (ndc && this.player.view === 'third') this.mouse.copy(ndc);
     this.update();
     const at = this.at;
-    if (!at) return toast('Aim at a wall to hang it there');
+    if (!at) return hintToast('Aim at a wall to hang it there');
     if (!at.ok) return toast("Something's already on the wall there", 'warn');
     const spot = { wall: at.wall, u: at.u, y: at.y, w: at.w, h: at.h };
     if (cur.moving) {

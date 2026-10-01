@@ -8,6 +8,8 @@ import { usageLabel, usageTitle } from './usage';
 import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
 import { whereabouts } from './whereabouts';
 import { DESK_BY_ID } from '../../shared/layout';
+import { COMMANDS_SHORTCUT } from '../native/keys';
+import { controlHintsShown } from '../native/mode';
 import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
 
 /** What the people list last showed, so it's only drawn again when something in it changed. */
@@ -87,7 +89,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
       ),
     );
   }
-  if (!workers.length) ul.append(h('li.empty', {}, 'Walk up to a desk and press E to hire one'));
+  if (!workers.length) ul.append(h('li.empty', {}, controlHintsShown() ? 'Walk up to a desk and press E to hire one' : 'Walk up to a desk to hire one'));
   // The count is the workers hired onto desks and bean bags (and a meeting's table): the board agents
   // standing at the Issues, PR and queue kiosks are listed but aren't counted.
   const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
@@ -199,7 +201,7 @@ function openNativeHelp() {
   const rows: readonly (readonly [string, string])[] = [
     ['Controllers', 'Galaxy XR motion controllers are required. Look around naturally; the headset tracks your head directly.'],
     ...NATIVE_CONTROL_ROWS,
-    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates. The panel keyboard’s Ctrl+K also opens it outside a terminal or text field.'],
+    ['Find anything', `Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates. The panel keyboard’s ${COMMANDS_SHORTCUT} also opens it outside a terminal or text field.`],
     ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
     [
       'Terminal',

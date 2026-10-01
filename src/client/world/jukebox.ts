@@ -3,6 +3,7 @@ import { ANISOTROPY } from './texture-quality';
 import { JUKEBOX } from '../../shared/layout';
 import { mesh, roundedBox, textSprite, toon, toonUnique } from './toon';
 import { MONO } from '../fonts';
+import { controlHintsShown } from '../native/mode';
 import type { Collider, Interactable } from './office';
 
 // The lounge jukebox: a cherry-red cabinet with a rounded top, a neon tube round its face that
@@ -94,7 +95,8 @@ export function buildJukebox(): JukeboxView {
     g.fillText(on ? '♪ NOW PLAYING ♪' : 'JUKEBOX', 256, 70);
     g.fillStyle = on ? '#eeeeee' : '#8c8c8c';
     let size = 58;
-    const text = on ? title : 'press E to play';
+    // Idle in the headset, the jukebox says only what it is: you find out what it does by using it.
+    const text = on ? title : controlHintsShown() ? 'press E to play' : '';
     do g.font = `600 ${size--}px ${MONO}`;
     while (g.measureText(text).width > 470 && size > 26);
     g.fillText(text, 256, 160);

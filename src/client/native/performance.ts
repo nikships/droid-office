@@ -29,3 +29,20 @@ export function nativePerformanceLabel(metrics: unknown): NativePerformanceLabel
   if (m.fps < 89 || Number(m.missedPeriods) > 0) return { text: `${hz} · Frame rate below 90 fps`, warning: true };
   return { text: hz, warning: false };
 }
+
+/** The closed-workspace status panel's two lines, under the packet names installed apps read. */
+export interface NativeStatusText {
+  /** The FPS counter, or ''. Named `aim` for the installed apps, which once showed aim hints here. */
+  aim: string;
+  /** The latest transient toast, or ''. */
+  message: string;
+}
+
+/**
+ * What the status panel in front of you shows while the workspace is closed: the FPS counter when
+ * its setting is on, and the latest toast while it lasts. Nothing else persists there, and no
+ * control is named (native/mode.ts controlHintsShown).
+ */
+export function nativeStatus(metrics: unknown, counter: boolean, toast: string): NativeStatusText {
+  return { aim: counter ? nativeFpsCounter(metrics).text : '', message: toast };
+}

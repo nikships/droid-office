@@ -42,7 +42,8 @@ The following mapping is Droid Office's choice, rather than an asserted universa
 
 Movement and turning retain their hands if one controller disconnects. The left stick never
 inherits right-stick teleport/turn, and the right stick never inherits left-stick movement.
-The controls panel and settings describe the same roles. Grip never opens, closes or navigates
+The Controls window and settings describe the same roles; no other native text names a control,
+as in Half-Life: Alyx, where the world and the controllers explain themselves. Grip never opens, closes or navigates
 a menu, and no longer returns a ray-picked issue card.
 
 ## Physical interactions

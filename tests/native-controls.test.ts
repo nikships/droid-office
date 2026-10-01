@@ -105,7 +105,6 @@ function rig(t: TestContext, colliders: Collider[] = [], hooks: Partial<NativeHo
     reachOf: () => 3,
     reachAnim: () => {},
     onTarget: () => {},
-    aimLabel: () => 'Ring the gong',
     togglePanel: () => calls.panel++,
     cancelRay: (i) => calls.cancel.push(i),
     carryAlong: (d) => calls.carryAlong.push(d),
@@ -123,6 +122,13 @@ function rig(t: TestContext, colliders: Collider[] = [], hooks: Partial<NativeHo
     controls.update(1 / 30);
   };
   return { controls, player, camera, scene, hooks: full, calls, tick, frame, time: () => time, advance: (ms) => (clock += ms), target };
+}
+
+/** Every string in the renderer's control state, outside the carried card's own title. */
+function texts(value: unknown, path = 'state'): string[] {
+  if (typeof value === 'string') return [`${path}=${value}`];
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([k, v]) => (path === 'state.carrying' && k === 'title' ? [] : texts(v, `${path}.${k}`)));
 }
 
 function wrap(a: number): number {
@@ -262,6 +268,16 @@ test('a controller trigger taps E once per press, even when press and release la
   assert.equal(r.calls.e.length, 2, 'aimed away: nothing to use');
   assert.ok(r.controls.state().haptics.length > 0, 'controller presses request haptics');
   assert.equal(r.controls.state().haptics.length, 0, 'haptics drain');
+});
+
+test('aiming at something in reach labels nothing: the headset names no controls', (t) => {
+  const targets: (Interactable | null)[] = [];
+  const r = rig(t, [], { onTarget: (it) => targets.push(it) });
+  r.controls.start();
+  r.tick(r.frame({ right: controller({ aim: pose(0, 1.2, 0) }) }));
+  assert.equal(targets.at(-1), r.target, 'the aimed target still drives use');
+  assert.equal(r.controls.state().hands[1].hover?.near, true, 'the ray still shows its in-reach dot');
+  assert.deepEqual(texts(r.controls.state()), []);
 });
 
 test('a ray on a compositor panel yields: no E, no teleport, no squeeze grab or menu', (t) => {
@@ -634,7 +650,8 @@ test('a ray pickup attaches the original issue card to its selecting hand and pu
   const state = r.sent.at(-1);
   assert.equal(state?.pose?.hand, 'left');
   assert.deepEqual(state?.pose?.position, visual.parent!.getWorldPosition(new THREE.Vector3()).toArray());
-  assert.match(r.controls.state().aim ?? '', /Holding #42.*Shared issue card/);
+  assert.deepEqual(r.controls.state().carrying, { issue: 42, title: 'Shared issue card' });
+  assert.deepEqual(texts(r.controls.state()), [], 'the card in hand says what it is; no aim or carry text reaches the status panel');
   r.tick(r.frame({ left: controller({ grip: pose(-0.3, 1.1, -0.4) }), right: controller() }));
   assert.equal(r.visual(), visual, 'a hand update moves the same card instead of allocating another');
 });

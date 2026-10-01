@@ -11,8 +11,9 @@ const code = (k: { key: string }) => ({ ...k, code: `Key${k.key.toUpperCase()}` 
 
 // ---- Command palette on the panel ----
 
-test('the panel keyboard can type the palette shortcut it shows', () => {
+test('the panel keyboard can type the palette shortcut the Controls window names', () => {
   assert.equal(COMMANDS_SHORTCUT, 'Ctrl+K');
+  assert.match(readFileSync(new URL('../src/client/ui/hud.ts', import.meta.url), 'utf8'), /panel keyboard’s \$\{COMMANDS_SHORTCUT\}/);
   const ids = KEYBOARD_ROWS.flat().map((k) => k.id);
   assert.ok(ids.includes('mod:ctrl') && ids.includes('k'));
   assert.ok(!ids.includes('mod:meta'), 'the panel keyboard has no ⌘, so it must never advertise ⌘K');

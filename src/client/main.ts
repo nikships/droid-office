@@ -81,7 +81,7 @@ import { Voice } from './voice';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL, type Modal } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL, type Modal } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -125,7 +125,9 @@ import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
 import { NativeScene } from './native/scene';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
-import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
+import { controlHintsShown, withControlHint } from './native/mode';
+import { getNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
+import { nativeStatus } from './native/performance';
 import { attachVrUi, type VrUiHandle } from './vr/attach';
 import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
 import { captureVrKeys } from './vr/physical-keys';
@@ -328,7 +330,7 @@ const tvIdle = (() => {
     g.fillText('OFFICE TV', 116, 376);
     g.fillStyle = '#8c8c8c';
     g.font = `500 30px ${MONO}`;
-    g.fillText('CLICK “SHARE SCREEN” TO PUT SOMETHING UP HERE', 116, 432);
+    if (controlHintsShown()) g.fillText('CLICK “SHARE SCREEN” TO PUT SOMETHING UP HERE', 116, 432);
     t.needsUpdate = true;
   };
   const t = new THREE.CanvasTexture(c);
@@ -514,7 +516,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
   // Aiming at nothing (the ladder's let-go fires this way too): E lands on nothing, as on desktop.
   if (!it) return;
   if (it.kind === 'coffee') {
-    toast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
+    hintToast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
     return;
   }
   if (it.kind === 'elevator' && it.floorId) {
@@ -577,7 +579,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
         return;
       }
       decorArmed = { id: d.id, until: now + 6000 };
-      toast(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}. E again to take it down`);
+      toast(withControlHint(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}`, '. E again to take it down'));
       return;
     }
     if (it.kind === 'tv' || it.kind === 'cabinet' || it.kind === 'bookshelf' || it.kind === 'ball' || it.kind === 'golf') {
@@ -1220,7 +1222,7 @@ function teeOff() {
   if (vr.active) return toast("The golf tee isn't in VR yet — hop on the desktop for that one", 'warn');
   const other = teeTaken();
   if (other) return toast(`${other} is on the tee — wait your turn`, 'warn');
-  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
+  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (walkingTo) stopWalking();
@@ -1416,18 +1418,19 @@ const puffs: Puff[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
-  if (nativeControls?.active) return toast('Hold grip behind your back to draw the gun', 'info');
+  // The headset draws it physically, from the holster behind your back (native/physical.ts).
+  if (nativeControls?.active) return;
   if (gunOut) {
     holsterGun();
     return;
   }
   if (vr.active) return toast("The gun isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (golf.active) return toast('Your hands are full: put the club back first (E)', 'warn');
+  if (golf.active) return toast(withControlHint('Your hands are full: put the club back first', ' (E)'), 'warn');
   if (climber.active) return toast('Your hands are full: both hands on the climb', 'warn');
-  if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
-  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
+  if (hanger.active) return toast(withControlHint('Your hands are full: hang the picture first', ' (or F to stop)'), 'warn');
+  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
-  if (holdingBall()) return toast('Your hands are full: drop the ball first (Q)', 'warn');
+  if (holdingBall()) return toast(withControlHint('Your hands are full: drop the ball first', ' (Q)'), 'warn');
   gunOut = true;
   hands.holdGun(true);
   me.setGun(true);
@@ -2314,7 +2317,8 @@ function syncWorkers() {
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
-    v.laptop.setPlaceholder(w.lost ? `🌿 ${w.name}'s worktree was deleted — press E to fix it` : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    const lost = withControlHint(`🌿 ${w.name}'s worktree was deleted`, ' — press E to fix it');
+    v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? withControlHint(`💤 ${w.name} is asleep`, ` — press R to ${again}`) : w.status === 'exited' ? `${w.name} exited` : 'booting…');
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
@@ -2494,7 +2498,7 @@ function promptAtDesk(deskId: string) {
   } else if (w.lost) {
     fixLostWorktree(w);
   } else if (isAsleep(w.status)) {
-    toast(`${w.name} is asleep — press R to resume first`, 'warn');
+    toast(withControlHint(`${w.name} is asleep`, ' — press R to resume first'), 'warn');
   } else if (w.kind === 'shell') {
     openPrompt({
       title: `🐚 Run in ${w.name}`,
@@ -3048,7 +3052,7 @@ function goToNextWaiting() {
   if (headsetActive()) headsetControls().faceAvatar();
   const waiting = waitingInOrder(store.workers.values());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
-  nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
+  nextToast = toast(withControlHint(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}`, '. E opens its terminal'));
 }
 
 /** The waiting worker you're standing at, if any: N skips it while anyone else is waiting. */
@@ -3562,7 +3566,7 @@ let windFrom = 0;
 /** E at the ball: it's yours, if nobody beats you to it. */
 function takeBall() {
   if (vr.active) return toast("The basketball isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (carrying) return toast('Your hands are full: put the card back first (Q)', 'warn');
+  if (carrying) return toast(withControlHint('Your hands are full: put the card back first', ' (Q)'), 'warn');
   if (ball.holder) return;
   reach();
   sound.ball('bounce', ball.at, 1.5);
@@ -3750,7 +3754,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
         take: () => {
           putBack();
           dropBall();
-          toast('☕ Bring the mug to your mouth, or press trigger. Let go to put it down.');
+          hintToast('☕ Bring the mug to your mouth, or press trigger. Let go to put it down.');
         },
         use: () => {
           if (item.empty) return;
@@ -3781,7 +3785,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
       item: { issue: issue.number, title: issue.title },
       take: () => {
         pickUp(issue);
-        toast(`✋ Holding #${issue.number}: trigger or free-hand tap to pin, queue or meet. Let go to return it.`);
+        hintToast(`✋ Holding #${issue.number}: trigger or free-hand tap to pin, queue or meet. Let go to return it.`);
       },
       use,
       release: (aim) => {
@@ -3817,7 +3821,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
+  toast(withControlHint(`✋ You took #${it.number} off the board`, ': take it to an empty desk, a worker or the 📋 queue and press E'));
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -3885,8 +3889,8 @@ function onQueue(issue: number): boolean {
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
-  if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
-  if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
+  if (w.lost) return withControlHint(`${w.name}'s worktree was deleted`, ' — press E at its desk to fix it');
+  if (isAsleep(w.status)) return withControlHint(`${w.name} is asleep`, ' — press R to resume first');
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
   return '';
 }
@@ -5395,12 +5399,6 @@ if (nativeMode) {
     openCommands: () => nativeUi?.openCommands(),
     toggleKeyboard: () => nativeUi?.toggleKeyboard(),
     back: () => nativeUi?.back(),
-    aimLabel: (it, note) => {
-      if (it.kind === 'gong') return 'Merge gong · strike the disc with a controller';
-      if (it.kind === 'ladder') return 'Ladder · hold grip on a rail or rung and pull down to climb';
-      if (it.kind === 'pole') return 'Fire pole · hold grip on the pole to slide or turn';
-      return vrHooks.aimLabel(it, note);
-    },
     physical: {
       player,
       climber,
@@ -5437,7 +5435,7 @@ if (nativeMode) {
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
         control: control ? { ...control, graphics: getNativeGraphicsSettings() } : control,
-        panel: { ...nativeUi?.panelState(), status: { aim: nativeGraphicsAim(control?.aim ?? ''), message } },
+        panel: { ...nativeUi?.panelState(), status: nativeStatus(metrics, getNativeGraphicsSettings().fps, message) },
       };
     },
     reset: () => nativeScene?.reset(),

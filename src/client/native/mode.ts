@@ -12,3 +12,18 @@ export function isNativePath(path: string): boolean {
   const q = noHash.indexOf('?');
   return q >= 0 && isNativeSearch(noHash.slice(q));
 }
+
+/**
+ * Whether the page's text names the controls that do things: key letters, "press E", "(Q)",
+ * "hold grip". The headset app's page (`/?native=1`) never does. As in Half-Life: Alyx, its world
+ * and the controllers in your hands explain themselves; the Controls window, opened on purpose, is
+ * the one place that lists them. Desktop and WebXR keep every hint.
+ */
+export function controlHintsShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {
+  return !isNativeSearch(search);
+}
+
+/** `text`, followed by `hint` (the control that does it) wherever control hints are shown. */
+export function withControlHint(text: string, hint: string): string {
+  return controlHintsShown() ? text + hint : text;
+}

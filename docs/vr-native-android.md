@@ -115,7 +115,12 @@ Surface compositor layer. This preserves text resolution independently of world 
 Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
 The headset UI includes a controller-operated keyboard, larger targets and adjustable terminal text.
-A smaller compositor panel carries interaction hints and feedback when the workspace closes.
+With the workspace closed, a smaller head-locked compositor panel shows only the FPS counter,
+when that Graphics setting is on, and each toast while it lasts. Its card fits the text, so the
+counter alone is a small label rather than a full-width bar. The native page names no controls:
+no aim labels, carry, climbing or gun hints, "press E" toasts, key legends or world signs
+(`controlHintsShown` in `src/client/native/mode.ts`). The Controls window, opened on purpose,
+still lists the controller roles. Desktop and WebXR keep their hints.
 On Galaxy XR, the workspace's virtual display also requests 90 Hz using Android's
 [virtual display configuration](https://developer.android.com/reference/android/hardware/display/VirtualDisplayConfig.Builder).
 The connected headset reports that display at 90 Hz; its previous default was 60 Hz.

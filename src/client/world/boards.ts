@@ -5,6 +5,7 @@ import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, Work
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
+import { controlHintsShown, withControlHint } from '../native/mode';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
@@ -281,7 +282,7 @@ export class BoardTexture {
     g.textBaseline = 'middle';
     g.fillStyle = '#8c8c8c';
     g.font = `500 20px ${MONO}`;
-    g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
+    if (controlHintsShown()) g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
   }
@@ -515,7 +516,7 @@ export class QueueBoardTexture {
       g.fillText('Nothing queued', W / 2, H / 2 - 10);
       g.fillStyle = '#8c8c8c';
       g.font = `500 28px ${SANS}`;
-      g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
+      g.fillText(withControlHint('Add issues from the 📌 Issues board', ', or press E here'), W / 2, H / 2 + 44);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;

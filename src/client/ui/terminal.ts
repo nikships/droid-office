@@ -5,7 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
 import { TERM_THEME } from '../world/laptop';
-import { h, openModal, STATUS_LABEL, timeAgo, toast, type Modal } from './dom';
+import { h, hintToast, openModal, STATUS_LABEL, timeAgo, toast, type Modal } from './dom';
 import { usageLabel, usageTitle } from './usage';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep } from '../../shared/status';
@@ -323,7 +323,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (e.shiftKey || !host.contains(document.activeElement)) return true;
       if (!escHinted) {
         escHinted = true;
-        toast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
+        hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
       }
       return false;
     },

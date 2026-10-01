@@ -70,6 +70,23 @@ public final class NativeStatusPanelRulesTest {
         equal(20, Rules.contentTop(192, 20, 400));
         equal(76, Rules.contentTop(192, 20, 40));
         equal(96, Rules.contentTop(192, 20, 0));
+        // A short FPS counter gets a small centered card, not a full-width bar.
+        float[] counter = Rules.card(1024, 192, 20, 1.5f, 199.4f, 33);
+        equal(240f, counter[2] - counter[0]);
+        equal(73f, counter[3] - counter[1]);
+        equal(512f, (counter[0] + counter[2]) / 2);
+        equal(96f, (counter[1] + counter[3]) / 2);
+        // The text, placed by contentTop, sits one padding inside the card, to the half pixel.
+        check(Math.abs(Rules.contentTop(192, 20, 33) - (counter[1] + 20)) <= 0.5f);
+        // Text as wide or tall as the buffer fills it, less the inset, and never more.
+        float[] full = Rules.card(1024, 192, 20, 1.5f, 5000f, 400);
+        equal(1.5f, full[0]);
+        equal(1.5f, full[1]);
+        equal(1022.5f, full[2]);
+        equal(190.5f, full[3]);
+        float[] none = Rules.card(1024, 192, 20, 1.5f, -3f, -1);
+        equal(40f, none[2] - none[0]);
+        equal(40f, none[3] - none[1]);
     }
 
     private static void timing() {

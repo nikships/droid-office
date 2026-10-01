@@ -61,7 +61,6 @@ export interface NativeHooks {
   reachOf: (kind: InteractKind) => number;
   reachAnim: () => void;
   onTarget: (it: Interactable | null, note: GhIssue | null, spot?: BoardSpot | null) => void;
-  aimLabel: (it: Interactable, note: GhIssue | null) => string | null;
   pickRoot?: () => THREE.Object3D | null;
   /** The ☰ menu (VRUiSink.toggleMenu): only the left controller's menu button calls it. */
   togglePanel: () => void;
@@ -70,14 +69,12 @@ export interface NativeHooks {
   toggleKeyboard?: () => void;
   back?: () => void;
   physical?: NativePhysicalHooks;
-  /** The issue card in hand, for the panel's sticky hint (VRUiSink.setCarrying). */
+  /** The issue card in hand, for Home's held-card row (VRUiSink.setCarrying). */
   setCarrying?: (card: CarriedIssue | null) => void;
   /** Virtual moves carry head-placed panels (VRUiSink.carryAlong). */
   carryAlong?: (delta: THREE.Vector3) => void;
   /** A lost controller cancels that controller's panel press (VRUiSink.cancelRay). */
   cancelRay?: (hand: 0 | 1) => void;
-  /** What E would do to the target, for a panel-side aim bar (also in state().aim). */
-  setAim?: (text: string | null) => void;
 }
 
 type Vec3 = [number, number, number];
@@ -106,7 +103,6 @@ export interface NativeControlsState {
   head: { pos: Vec3; dir: Vec3 };
   hands: [NativeHandState, NativeHandState];
   teleport: { hand: 0 | 1; points: number[]; marker: Vec3; valid: boolean } | null;
-  aim: string | null;
   carrying: CarriedIssue | null;
   haptics: { hand: 0 | 1; strength: number; ms: number }[];
   stats: { queued: number; dropped: number; rejected: number };
@@ -179,7 +175,6 @@ export class NativeControls {
   private fadeHold = false;
   private pendingTeleport: THREE.Vector3 | null = null;
   private snap = new SnapTurn();
-  private aimText: string | null = null;
   private stickAiming = false;
   /** The slot whose stick started the current stick aim. */
   private stickSlot: 0 | 1 = 0;
@@ -298,10 +293,6 @@ export class NativeControls {
     this.rig.visible = false;
     player.climbInput = 0;
     for (const s of this.hands) this.dropHand(s, true);
-    if (this.aimText !== null) {
-      this.aimText = null;
-      this.hooks.setAim?.(null);
-    }
     this.hooks.setCarrying?.(null);
     player.clearKeys();
     player.enabled = !this.hooks.modalOpen();
@@ -517,11 +508,6 @@ export class NativeControls {
     const note = aim?.near ? this.hooks.noteUnder(aim) : null;
     const spot = aim?.near ? (this.hooks.spotUnder?.(aim) ?? null) : null;
     this.hooks.onTarget(aim?.near ? aim.it : null, note, spot);
-    const label = !player.rig && aim?.near ? this.hooks.aimLabel(aim.it, note) : null;
-    if (label !== this.aimText) {
-      this.aimText = label;
-      this.hooks.setAim?.(label);
-    }
     this.writeCamera();
   }
 
@@ -550,7 +536,6 @@ export class NativeControls {
       head: { pos: [_h.x, _h.y, _h.z], dir: [_d.x, _d.y, _d.z] },
       hands: [hand(this.hands[0]), hand(this.hands[1])],
       teleport: this.arc,
-      aim: this.carriedAim(),
       carrying: this.hooks.carrying(),
       haptics,
       stats: { queued: this.queue.length, dropped: this.dropped, rejected: this.rejected },
@@ -772,13 +757,6 @@ export class NativeControls {
     } finally {
       this.interactionHand = null;
     }
-  }
-
-  private carriedAim(): string | null {
-    const card = this.hooks.carrying();
-    if (!card) return this.physical?.hint ?? this.aimText;
-    const title = card.title.length > 52 ? `${card.title.slice(0, 51)}…` : card.title;
-    return `Holding #${card.issue} · ${title} · ${this.aimText ?? 'Aim at a desk or queue to place. Put back in Home.'}`;
   }
 
   private jumpPresentation(): void {

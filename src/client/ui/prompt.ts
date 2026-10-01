@@ -1,5 +1,6 @@
 import type { AgentEffort, AgentProvider, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
 import { h, openModal, type Modal } from './dom';
+import { controlHintsShown } from '../native/mode';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 
@@ -425,7 +426,7 @@ export function shootDialog(opts: ShootOptions): Modal {
       list,
       status,
     ),
-    h('footer', {}, h('span.grow', {}, 'Esc revives'), revive, kill),
+    h('footer', {}, h('span.grow', {}, controlHintsShown() ? 'Esc revives' : ''), revive, kill),
   ) as HTMLFormElement;
   if (wt) pick('keep');
   let killed = false;
