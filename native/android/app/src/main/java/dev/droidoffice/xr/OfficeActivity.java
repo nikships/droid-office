@@ -58,6 +58,7 @@ public final class OfficeActivity extends Activity {
     private native void nativeReset();
     private native void nativeOverlay(boolean visible);
     private native void nativeStatusVisible(boolean visible);
+    private native void nativeCapturePuppet(boolean hostDebug);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService bridge = Executors.newSingleThreadExecutor(
         task -> new Thread(() -> {
@@ -140,6 +141,9 @@ public final class OfficeActivity extends Activity {
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Debug builds only: the page may stage synthetic controllers for headless captures.
+        // Native also requires its own debug build; release builds ignore the puppet entirely.
+        nativeCapturePuppet(BuildConfig.DEBUG);
         services = new OfficeWebServices(
             this, () -> serverOrigin, this::showFeedback, this::showWebDialog);
         discovery = new OfficeDiscovery(this, handler, this::showNearbyOffices, message -> {

@@ -91,6 +91,24 @@ to its bore. Native attachment rendering uses actual display-loop grip transform
 than presenting a controller-held model at the bridge's lower scene update rate. Removing
 the attachment tag on a drop returns it to ordinary world transforms.
 
+## Capture puppet (debug builds only)
+
+Physical controllers are not tracked while nobody holds them, so a headless capture shows no
+controllers, held gun or hand at a button. Debug builds accept synthetic controllers from the
+page (`window.__office.puppet`, `src/client/native/puppet.ts`): `set`, `update`, `clear` and
+timed `script` steps give each hand grip and aim poses in LOCAL_FLOOR, head, heading or world
+space, plus trigger, squeeze, stick and buttons. The page sends them in the control packet's
+`puppet` field. `capture_puppet.h` fills only the slots the runtime reports as untracked, in the
+display loop with that frame's head pose, before the controller models, rays, button animation,
+attachments, panel pointer and the page's samples read the frame; native marks those samples
+`puppet: true`. A tracked controller always wins. The puppet counts as a tracked grip only in
+debug builds, disappears with focus or pose loss and after 250 ms without a fresh packet.
+
+The native `OFFICE_CAPTURE_PUPPET` definition comes only from the Gradle debug build type, and
+the Java host must also pass `BuildConfig.DEBUG`; native reports `puppet: true` in its frame
+events only then. Release builds never parse the field or apply a puppet
+(`capture_puppet_release`). Captures that use it are synthetic input, not physical evidence.
+
 ## Validation status
 
 Implemented replay checks cover asymmetric buttons, teleport without hand fallback, physical

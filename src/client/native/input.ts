@@ -31,6 +31,8 @@ export interface NativeHand {
   /** The ray is on a compositor panel: native owns the pointer, the world yields. */
   ui: boolean;
   stickClick?: boolean;
+  /** Debug builds only: native filled this slot from the capture puppet (synthetic input, native/puppet.ts). */
+  puppet?: boolean;
 }
 
 export interface NativeInputFrame {
@@ -116,6 +118,7 @@ function readHand(v: unknown): NativeHand | null {
     menu: h.menu === true,
     ui: h.ui === true,
     stickClick: h.stickClick === true,
+    ...(h.puppet === true ? { puppet: true } : {}),
   };
 }
 

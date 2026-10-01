@@ -26,4 +26,9 @@ target_include_directories(office_xr PRIVATE "${OFFICE_DEPS}")
 # The development APK also needs the same real-time frame budget as a release.
 target_compile_options(office_xr PRIVATE -O2)
 target_compile_definitions(office_xr PRIVATE XR_USE_PLATFORM_ANDROID XR_USE_GRAPHICS_API_OPENGL_ES)
+# Debug-only capture puppet (capture_puppet.h). app/build.gradle turns it on for the debug build type.
+option(OFFICE_CAPTURE_PUPPET "Accept the page's synthetic capture controllers (debug builds only)" OFF)
+if(OFFICE_CAPTURE_PUPPET)
+    target_compile_definitions(office_xr PRIVATE OFFICE_CAPTURE_PUPPET=1)
+endif()
 target_link_libraries(office_xr PRIVATE OpenXR::openxr_loader android log EGL GLESv3)

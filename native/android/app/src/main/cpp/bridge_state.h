@@ -1,7 +1,9 @@
 #pragma once
+#include "capture_puppet.h"
 #include "graphics_controls.h"
 #include "xr_math.h"
 #include <array>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -33,6 +35,8 @@ struct ControlState {
     uint32_t presentationEpoch = 0;
     int64_t receivedNs = 0;
     GraphicsControls graphics;
+    // Debug builds only (capture_puppet.h); always inactive unless allowPuppet(true) was called.
+    PuppetState puppet;
 };
 /** Parsing happens on the bridge worker. The render thread only copies a small snapshot. */
 class BridgeState {
@@ -40,9 +44,15 @@ class BridgeState {
     bool submit(const std::string &packet, std::string &scene, std::string &error);
     ControlState read();
     void reset();
+    /**
+     * Debug builds only: read the page's capture puppet from control packets. Release builds
+     * (no OFFICE_CAPTURE_PUPPET) ignore the request, and the field is never parsed.
+     */
+    void allowPuppet(bool allowed);
 
   private:
     std::mutex mutex;
     ControlState state;
+    std::atomic<bool> puppetAllowed{false};
 };
 } // namespace office

@@ -52,6 +52,13 @@ covers, using `CXX` (default `c++`), and runs it:
   part of the controller-only app build.
 - `native/tests/controller_model_test.cpp` with `controller_model.cpp`: both bundled Samsung
   meshes, malformed asset rejection and animated button transforms.
+- `native/tests/capture_puppet_test.cpp` with `bridge_state.cpp`, compiled twice: as
+  `capture_puppet_debug` with `-DOFFICE_CAPTURE_PUPPET=1` (the debug APK) and as
+  `capture_puppet_release` without it (the release APK). The release run proves the bridge never
+  reads the debug capture puppet and the display-frame merge never applies it, even when the
+  Java host asks; the debug run checks the BuildConfig.DEBUG gate, the puppet parser and
+  malformed-input isolation. Both check the merge: untracked slots only, freshness, focus,
+  head and heading spaces, and attachments at the puppet grip.
 
 Two registered suites are required on every host run:
 

@@ -289,6 +289,8 @@ std::string XrInput::json(const std::vector<InputFrame> &frames) {
             out += hand.menu ? "true" : "false";
             out += ",\"stickClick\":";
             out += hand.stickClick ? "true" : "false";
+            if (hand.puppet)
+                out += ",\"puppet\":true";
             out += '}';
         }
         out += "]}";

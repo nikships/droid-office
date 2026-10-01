@@ -462,6 +462,12 @@ export class NativeControls {
     }
   }
 
+  /** The latest native head pose in LOCAL_FLOOR, or null before the first sample (the capture puppet's head space). */
+  headPose(): Pose7 | null {
+    if (!this.on || !this.headSeen) return null;
+    return [this.headLocal.x, this.headLocal.y, this.headLocal.z, this.headQuat.x, this.headQuat.y, this.headQuat.z, this.headQuat.w];
+  }
+
   /** Head look direction in the world, for the ears. */
   lookDir(out: THREE.Vector3): THREE.Vector3 {
     return out.set(0, 0, -1).applyQuaternion(this.headWorldQuat(_q));

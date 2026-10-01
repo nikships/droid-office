@@ -123,6 +123,7 @@ import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/m
 import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
 import { VRSession, type VRHooks } from './vr/session';
 import { NativeControls } from './native/controls';
+import { NativePuppet } from './native/puppet';
 import { NativeScene } from './native/scene';
 import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
 import { getNativeGraphicsSettings, nativeGraphicsAim, updateNativeGraphicsMetrics } from './native/graphics';
@@ -139,6 +140,8 @@ const nativeMode = isNativeMode();
 let nativeControls: NativeControls | null = null;
 let nativeScene: NativeScene | null = null;
 let nativeUi: NativeUi | null = null;
+/** Debug builds of the headset app only: synthetic controllers for headless captures (__office.puppet). */
+let nativePuppet: NativePuppet | null = null;
 function headsetActive() {
   return vr.active || nativeControls?.active === true;
 }
@@ -5422,8 +5425,13 @@ if (nativeMode) {
     setCarrying: (card) => nativeUi?.setCarrying(card),
   });
   nativeScene = new NativeScene(scene, camera);
+  nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
   (window as any).officeNative = {
-    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean }) => {
+    frame: (frames: unknown[], metrics?: unknown, events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean }) => {
+      // Only a debug build of the headset app reports the capture puppet. The host cannot change
+      // while this page lives, so a manual frame() call without events never withdraws it.
+      if (events?.puppet === true) nativePuppet?.host(true);
+      nativePuppet?.observe(frames);
       if (events?.sceneReset) nativeScene?.reset();
       if (events?.resetInput) nativeControls?.reset();
       if (events?.recenter) nativeControls?.rebase();
@@ -5433,10 +5441,11 @@ if (nativeMode) {
       nativeUi?.updatePerformance(metrics);
       updateNativeGraphicsMetrics(metrics);
       const control = nativeControls?.state();
+      const puppet = nativePuppet?.packet() ?? null;
       const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
       return {
         scene: events?.sceneReady === false ? null : nativeScene?.drain(),
-        control: control ? { ...control, graphics: getNativeGraphicsSettings() } : control,
+        control: control ? { ...control, graphics: getNativeGraphicsSettings(), ...(puppet ? { puppet } : {}) } : control,
         panel: { ...nativeUi?.panelState(), status: { aim: nativeGraphicsAim(control?.aim ?? ''), message } },
       };
     },
@@ -5530,6 +5539,7 @@ void whoami().then(() => {
   native: nativeControls,
   nativeScene,
   nativeUi,
+  puppet: nativePuppet?.api,
   ball,
 };
 (window as any).__voice = voice;

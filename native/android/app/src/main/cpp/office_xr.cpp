@@ -1,4 +1,5 @@
 #include "bridge_state.h"
+#include "capture_puppet.h"
 #include "controller_attachment.h"
 #include "cursor_swapchain.h"
 #ifndef NDEBUG
@@ -46,6 +47,8 @@ std::thread renderThread;
 std::atomic<bool> stopping{false};
 std::atomic<bool> focused{false}, rebaseRequested{false};
 std::atomic<bool> overlayOpen{false};
+// Debug builds only: capturePuppetEnabled(BuildConfig.DEBUG) from the Java host.
+std::atomic<bool> puppetEnabled{false};
 // Keep consuming the status BufferQueue until the UI thread acknowledges that its producer
 // stopped. Otherwise a pending Canvas dequeue can block that thread, freezing office updates.
 std::atomic<bool> statusProducerVisible{false};
@@ -745,6 +748,7 @@ class Office {
         office::FrameMetrics metrics;
         office::PanelHover hover;
         office::RigPresentation presentation;
+        unsigned puppetHands = 0;
         while (!stopping) {
             auto event = office::structure<XrEventDataBuffer>(XR_TYPE_EVENT_DATA_BUFFER);
             while (xrPollEvent(instance, &event) == XR_SUCCESS) {
@@ -876,6 +880,23 @@ class Office {
                 for (auto &hand : inputFrame.hands)
                     hand.active = false;
             auto controls = bridge.read();
+            if constexpr (office::kCapturePuppetBuild) {
+                // Debug builds only: synthetic controllers fill untracked slots before the
+                // pointer, models, rays, attachments and the page's samples read this frame.
+                office::PuppetFrame puppetFrame;
+                puppetFrame.enabled = puppetEnabled;
+                puppetFrame.tracking = focused && poseValid;
+                puppetFrame.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        Clock::now().time_since_epoch())
+                                        .count();
+                puppetFrame.receivedNs = controls.receivedNs;
+                puppetFrame.head = head;
+                const auto driven = office::applyPuppet(inputFrame, controls.puppet, puppetFrame);
+                if (driven != puppetHands) {
+                    puppetHands = driven;
+                    LOG("CAPTURE_PUPPET hands=%u (synthetic input)", driven);
+                }
+            }
             // Slider release/presets select an actual target size. Keep the old targets until
             // the selection settles, and create unfoveated targets for Off: QCOM texture
             // foveation cannot be disabled once enabled on an existing texture.
@@ -1460,8 +1481,18 @@ Java_dev_droidoffice_xr_OfficeActivity_nativeReadEvents(JNIEnv *env, jobject) {
         std::string("{\"resetInput\":") + (focused ? "false" : "true") +
         ",\"recenter\":" + (rebaseRequested.exchange(false) ? "true" : "false") +
         ",\"sceneReady\":" + (sceneReady ? "true" : "false") +
-        ",\"sceneReset\":" + (sceneReset ? "true" : "false") + "}";
+        ",\"sceneReset\":" + (sceneReset ? "true" : "false") +
+        (puppetEnabled ? ",\"puppet\":true}" : "}");
     return env->NewStringUTF(events.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_droidoffice_xr_OfficeActivity_nativeCapturePuppet(JNIEnv *, jobject, jboolean hostDebug) {
+    const bool enabled = office::capturePuppetEnabled(hostDebug);
+    puppetEnabled = enabled;
+    bridge.allowPuppet(enabled);
+    LOG("CAPTURE_PUPPET build=%d host=%d enabled=%d", office::kCapturePuppetBuild,
+        static_cast<int>(hostDebug), enabled);
 }
 
 extern "C" JNIEXPORT void JNICALL

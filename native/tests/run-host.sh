@@ -42,7 +42,8 @@ OPENXR_SHA256=622419d2f6741c3443a3beb4779af0764318edd01830de967f24c741ebcded73
 ANDROID_PLATFORM=android-35
 
 # Host C++ tests: "name|test source|production sources (space separated, may be empty for a
-# header-only subject)", relative to native/. Every native/tests/*_test.cpp must appear here.
+# header-only subject)|extra compiler flags (optional)", relative to native/. Every
+# native/tests/*_test.cpp must appear here. A test may be registered twice with different flags.
 CPP_TESTS=(
   "bridge_state|tests/bridge_state_test.cpp|android/app/src/main/cpp/bridge_state.cpp"
   "xr_performance|tests/xr_performance_test.cpp|android/app/src/main/cpp/xr_performance.cpp"
@@ -52,6 +53,9 @@ CPP_TESTS=(
   "hand_mesh|tests/hand_mesh_test.cpp|"
   "controller_model|tests/controller_model_test.cpp|android/app/src/main/cpp/controller_model.cpp"
   "controller_attachment|tests/controller_attachment_test.cpp|"
+  # The same source as the debug APK (puppet compiled in) and as the release APK (ignored).
+  "capture_puppet_debug|tests/capture_puppet_test.cpp|android/app/src/main/cpp/bridge_state.cpp|-DOFFICE_CAPTURE_PUPPET=1"
+  "capture_puppet_release|tests/capture_puppet_test.cpp|android/app/src/main/cpp/bridge_state.cpp|"
 )
 # Java rules tests: "test class|production class", both in dev.droidoffice.xr. The test source is
 # looked up in JAVA_TEST_DIRS and must be in exactly one of them; the production source is
@@ -313,7 +317,7 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_stack_use_after_return=1}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 
 for entry in "${CPP_TESTS[@]}"; do
-  IFS='|' read -r name test sources <<<"$entry"
+  IFS='|' read -r name test sources flags <<<"$entry"
   label="c++ $name"
   files=("$NATIVE/$test")
   for source in $sources; do files+=("$NATIVE/$source"); done
@@ -325,8 +329,10 @@ for entry in "${CPP_TESTS[@]}"; do
     continue
   fi
   binary="$out/$name-test"
-  if ! step "$label compile" "$out/$name-compile.log" "$cxx" "${cxxflags[@]}" -I "$ANDROID/app/src/main/cpp" \
-    -I "$json_include" -I "$openxr_include" "${files[@]}" -o "$binary"; then
+  extra=()
+  if [ -n "$flags" ]; then read -r -a extra <<<"$flags"; fi
+  if ! step "$label compile" "$out/$name-compile.log" "$cxx" "${cxxflags[@]}" ${extra[@]+"${extra[@]}"} \
+    -I "$ANDROID/app/src/main/cpp" -I "$json_include" -I "$openxr_include" "${files[@]}" -o "$binary"; then
     record FAIL "$label (compile)"
     continue
   fi
