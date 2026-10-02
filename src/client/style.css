@@ -592,36 +592,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
   .shot-meter { bottom: 246px; }
 }
 
-/* Invite teammates */
-.team h4 { margin: 18px 0 8px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); }
-.team h4 .count { color: var(--text-tertiary); }
-.team .note { margin: 8px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-.team code { font: 12px var(--font-mono); background: var(--surface-hover); border-radius: var(--radius-xs); padding: 1px 4px; word-break: break-all; }
-.invite-row { display: flex; gap: 8px; }
-.invite-row input { flex: 1; min-width: 0; }
-.team-status { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 13px; background: var(--surface-raised); }
-.team-status.ok { border-color: rgba(60, 207, 145, .4); color: var(--success); background: rgba(60, 207, 145, .06); }
-.team-status.error { border-color: rgba(239, 68, 68, .45); color: var(--danger); background: rgba(239, 68, 68, .06); }
-.team-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 18px; }
-.team-head h4 { margin: 0; }
+/* Tunnel-command rows (the Services board) */
 .os-tabs { display: flex; gap: 4px; }
 .os-tabs .btn { padding: 3px 10px; }
 .cmd { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; }
 .cmd pre { flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--font-mono); background: #060606; color: #e6e6e6; border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; user-select: all; }
-.team-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.team-list li { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-.team-list .name { flex: 1; }
-.team-list .keys { font: 400 11px var(--font-mono); color: var(--text-secondary); }
-.team-list .btn { padding: 3px 10px; }
-.accounts .dot { background: #3a3f46; }
-.accounts .dot.on { background: var(--success); }
-.accounts .you { color: var(--text-secondary); font-weight: 500; }
-.accounts .invite-row select { font: inherit; border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0 8px; background: var(--surface-raised); color: var(--text); }
-.accounts .cmd { margin-top: 10px; }
-.accounts .team-head .btn { padding: 3px 10px; }
-.role { font: 500 10px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; padding: 1px 6px; border-radius: var(--radius-xs); border: 1px solid var(--border-strong); background: var(--surface-raised); color: var(--text-secondary); }
-.role.admin { border-color: rgba(242, 184, 75, .4); background: rgba(242, 184, 75, .1); color: var(--warning); }
-
 /* Services board */
 .svc-count { margin-left: 6px; background: var(--accent-muted); color: var(--accent); border-radius: var(--radius-xs); padding: 0 5px; font: 600 10px/1.5 var(--font-mono); }
 .svc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

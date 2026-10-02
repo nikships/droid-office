@@ -448,7 +448,7 @@ public final class OfficeActivity extends Activity {
         title.setTextColor(Color.WHITE);
         TextView description = new TextView(context);
         description.setText("Start Droid Office on your laptop, then select it below. "
-                            + "Use the same Wi-Fi. You'll sign in with the office password.");
+                            + "Use the same Wi-Fi.");
         description.setTextSize(20);
         description.setTextColor(Color.LTGRAY);
         description.setPadding(0, 16, 0, 20);

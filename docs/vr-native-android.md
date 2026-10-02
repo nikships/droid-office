@@ -373,8 +373,8 @@ Its producer stops before `xrEndSession`, following the
 [Android Surface swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrCreateSwapchainAndroidSurfaceKHR.html).
 The headset UI has larger targets and adjustable terminal text, and no on-screen keyboard: a
 keyboard paired to the headset types into the open terminal or the focused field, because
-`OfficeActivity.dispatchKeyEvent` forwards its keys to the page. Only the sign-in page docks a
-controller keyboard, for the office password (`src/client/login.ts`).
+`OfficeActivity.dispatchKeyEvent` forwards its keys to the page. Only the picker's manual
+address entry docks a controller keyboard.
 Every launch and page reload starts in the office with the workspace closed. Nothing opens Home
 by itself; the left controller's Menu button does (`native/ui.ts`, `tests/native-launch.test.ts`).
 Before the office page sends its first packet, the panel shows the app's own connection screen,
@@ -404,7 +404,7 @@ color, breathing while it works and blinking while it waits on someone: on the d
 the block's end, on the plate's top edge, or on the kiosk counter's front corner. The title bar
 across the top of its laptop's screen says the rest, as a terminal window's does: its name and
 engine on the left, and what it's on and its state, a colored dot and a word ("READY"), on the
-right (`Laptop.setTitle` in `src/client/world/laptop.ts`). A teammate wears a name badge on their
+right (`Laptop.setTitle` in `src/client/world/laptop.ts`). You wear a name badge on your
 shirt. A board agent's kiosk has a screen set into its front instead, and no "Ask me" sign: its
 screen shows the agent's name, its board and its state. The first trigger pull
 at the kiosk greets the agent, which looks up while the screen says what it does; the screen goes
@@ -462,13 +462,10 @@ Held board cards keep the original card geometry and text, with a 28 cm width, p
 5 cm above and 6 cm forward of the controller grip. Their text face points back along the
 controller's grip axis toward the holder in a neutral forward-pointing pose. The card follows
 wrist pitch, yaw and roll; it does not rotate itself toward the headset. Both physical near
-grabs and ray/window pickups use the same grip-relative placement. The carry message sends
-the grip's world pose so peers apply that placement once. A post-release review found and
-fixed ray/window pickups sending the already-offset card pose, which placed peers' copies
-another 5 cm up and 6 cm forward. Both new left/right regressions failed before the fix and
-passed after it, comparing owner and peer positions and rotations across wrist poses.
-These checks establish transform consistency. Readability at a comfortable holding angle,
-controller occlusion and the feel of the 30 Hz held-object stream still need physical review.
+grabs and ray/window pickups use the same grip-relative placement. Held objects stay local:
+there is no carry channel and no held-object stream. These checks establish transform
+consistency. Readability at a comfortable holding angle and controller occlusion still need
+physical review.
 
 | Controller action | Office behavior |
 | --- | --- |
@@ -602,8 +599,8 @@ thermal state alone or stopping the app to cool it. Use focused 1–2 minute che
 
 The WebView loads only the office origin the user selects. There is no privileged JavaScript
 interface and no certificate-error bypass. User-selected external issue, PR and documentation
-links open through Android's browser. Microphone requests require the chosen office origin,
-recent user input and Android permission.
+links open through Android's browser. WebView media requests (microphone or camera) are
+denied; the app requests no `RECORD_AUDIO` permission.
 
 ### Vulkan eye-tracked foveation spike (debug builds)
 
@@ -699,8 +696,8 @@ adb install -r native/android/app/build/outputs/apk/debug/app-debug.apk
 
 Set `ANDROID_HOME` and `JAVA_HOME` for the installed SDK and supported JDK if needed.
 The app is `dev.droidoffice.xr`; its launcher name is **Droid Office XR**. Select the
-laptop under **Nearby offices**, then sign in with the normal office account or password.
-The laptop must run a build containing the native page adapter.
+laptop under **Nearby offices**. The laptop must run a build containing the native page
+adapter.
 
 ### Connect to your laptop
 
@@ -709,14 +706,18 @@ The laptop must run a build containing the native page adapter.
    Wi-Fi network on the laptop and headset.
 2. Open **Droid Office XR** on the headset. Under **Nearby offices**, point at your laptop
    and press the controller trigger. The picker includes the laptop name and server address.
-3. Sign in with the server's existing office password or account. The installed app retains
-   the normal office session and player profile.
+   The office has no login: over loopback (the USB forwarding setup below) the page opens
+   straight in.
+
+> The installed app cannot yet send the per-start LAN token (`?t=`) the office requires
+> from Wi-Fi clients, so connecting over Wi-Fi currently fails at the gate with a 401.
+> Device pairing ([the headset protocol](headset-protocol.md)) will give the app its own
+> credential; until then, use USB forwarding.
 
 After a successful page load, the app saves that office and automatically opens it on its next
 ordinary launch. **Change office** returns to the picker, and **Reconnect to last office** retries
 the saved address. A failed or offline connection returns to the picker without replacing that
-saved office. If the laptop's IP changes, select its newly discovered address; a new origin may
-require signing in again.
+saved office. If the laptop's IP changes, select its newly discovered address.
 
 **Enter an office address** reveals the controller keyboard for a manual connection, for example
 `http://192.168.1.26:4600`. Use your laptop's actual LAN address and port. This also works with older
@@ -729,7 +730,7 @@ validation stays enabled.
 The laptop advertises `_droidoffice._tcp.` using DNS-SD; the headset uses
 [Android network service discovery](https://developer.android.com/develop/connectivity/wifi/use-nsd).
 The announcement contains a display name, address and port, with TXT `v=1` and `scheme=http|https`.
-Passwords, session tokens, project paths and worker details are absent. Discovery stops on
+The LAN token, project paths and worker details are absent. Discovery stops on
 connection, app pause, hidden XR session and destruction; callbacks and resolutions are bounded
 and run outside the rendering loop. The picker scrolls, and its manual keyboard stays collapsed
 until requested. `--no-discovery` or `DROID_OFFICE_DISCOVERY=0` disables the laptop advertisement.
@@ -769,10 +770,9 @@ adb shell am start -n dev.droidoffice.xr/.OfficeActivity \
 ```
 
 For Wi-Fi, use the laptop's reachable hostname or LAN address. The server must listen on
-that interface, and both devices must be able to reach it. Voice requires a secure WebView
-origin: localhost for USB, or HTTPS for Wi-Fi. The app trusts system CAs and CAs explicitly
-installed by the device owner, so a development certificate can use normal Android trust
-instead of bypassing verification.
+that interface, and both devices must be able to reach it. The app trusts system CAs and CAs
+explicitly installed by the device owner, so a development certificate can use normal
+Android trust instead of bypassing verification.
 
 ### Debug shot staging
 

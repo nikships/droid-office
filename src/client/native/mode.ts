@@ -35,7 +35,7 @@ export function withControlHint(text: string, hint: string): string {
  * headset app (`/?native=1`) floats no name, state, light or pitch over anyone, as in Half-Life:
  * Alyx: a worker wears no antenna; its name and engine are engraved on its seat's nameplate
  * (world/nameplate.ts), whose status lamp and the worker's body show how it's doing, and the title
- * bar of its laptop's screen says its state and task (world/laptop.ts setTitle); a teammate wears a
+ * bar of its laptop's screen says its state and task (world/laptop.ts setTitle); the owner wears a
  * name badge; and a board agent's kiosk screen shows its state, and its pitch only once you greet it.
  */
 export function floatingTagsShown(search: string = typeof location === 'undefined' ? '' : location.search): boolean {

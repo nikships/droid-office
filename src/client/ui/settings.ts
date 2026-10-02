@@ -561,7 +561,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     ],
     notify: [
       native ? card('Desktop notifications', h('p.setting-note', {}, NATIVE_SETTINGS.notify)) : card('Desktop notifications', notifyRow, notifyNote),
-      card('Team notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus),
+      card('Channel notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus),
     ],
     building: [
       card('Holiday theme', themeRow, themeNote),

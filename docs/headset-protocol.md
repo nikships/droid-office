@@ -33,7 +33,13 @@ headset. The server never streams a scene, a pose or a physics state to it.
 
 ## 2. What exists today
 
-### 2.1 Authentication (existing)
+> Track A has landed since this section was written: office passwords, sessions, cookies and
+> login pages are gone. Authentication today is a random per-start LAN token (loopback
+> connects freely; every other request carries `?t=<token>`), with the join URL and its QR
+> code printed at startup. The table below describes the pre-A6 cookie contract the B2
+> pairing design replaces; B2 reconciles the details with the QR-token reality.
+
+### 2.1 Authentication (existing at the baseline, since replaced)
 
 Sources: `src/server/auth.ts` (`Auth`, `Session`, `COOKIE_NAME`, `cookieName`, `parseCookies`),
 `src/server/server.ts:629–681` (`readGuess`, `signedIn`, `login`, `loginOptions`), `:713–767`
@@ -95,11 +101,12 @@ identity.
 
 ### 2.4 Why the browser contract is not enough
 
-A native client could POST the password, keep the cookie and open `/ws` with `Cookie` and a
-fabricated `Origin`. That works today but is the wrong long-term contract: it stores a
-password-equivalent session, imitates a browser to pass a browser protection, inherits every
-owner power, and gets a browser-shaped bootstrap full of state the headset ignores. The Unity
-feasibility spike may use it once to measure networking; nothing shipped uses it.
+At the baseline a native client could POST the password, keep the cookie and open `/ws` with
+`Cookie` and a fabricated `Origin`. That was the wrong long-term contract: it stored a
+password-equivalent session, imitated a browser to pass a browser protection, inherited every
+owner power, and got a browser-shaped bootstrap full of state the headset ignores. Track A
+deleted that contract; today a spike would use the per-start LAN-token join URL instead, once,
+to measure networking. Nothing shipped uses either.
 
 ## 3. Proposed: server identity
 
@@ -112,19 +119,25 @@ feasibility spike may use it once to measure networking; nothing shipped uses it
 
 ## 4. Proposed: device pairing and device tokens
 
+> Track A landed first: there are no passwords, sessions or cookies anymore, and pairing
+> opens from the laptop page with no sign-in step. When B2 is built it reconciles this
+> section with that reality (approval without a login, no cookie-plus-Bearer duality, no
+> password management to forbid). The pairing flows, token store and revocation below are
+> unchanged by that.
+
 ### 4.1 Requirements
 
-1. Pairing is opened deliberately by the signed-in owner on the laptop. It is never open by
+1. Pairing is opened deliberately by the owner on the laptop page. It is never open by
    default.
 2. Pairing runs over HTTPS. An office serving HTTP refuses to pair and says how to start with
    `--self-signed`. (Decision B-D1 below.)
 3. The headset verifies the server's certificate either through platform trust or by pinning
    the certificate fingerprint learned during pairing. It never accepts an unverified
    certificate silently.
-4. A device gets a revocable token with fewer powers than the owner's browser session.
+4. A device gets a revocable token with fewer powers than the owner's browser access.
 5. Tokens never appear in URLs, TXT records, logs, crash reports, screenshots or the WebSocket
    subprotocol.
-6. Cookie authentication and its Origin check are unchanged for browsers.
+6. Browser authentication (the per-start LAN token and its Origin check) is unchanged.
 
 ### 4.2 Flow A: QR code (preferred if the headset can read it)
 

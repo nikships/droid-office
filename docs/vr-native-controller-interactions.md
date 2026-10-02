@@ -230,8 +230,7 @@ the hole even where it is nearer than the panel, a gun held in front of the pane
 there, one behind it stays hidden, and the seal keeps anything drawn later out of the hole.
 `layer_occlusion_test.cpp` covers the hole's corners against `panelHit` and when the status
 card yields. Browser captures at 1600×1019 and 1280×720 show clean,
-scrollable control rows with the keyboard open. Native login captures at 1280×720 and 1024×600
-also keep the submit button above the keyboard; the compact card now scrolls when necessary.
+scrollable control rows with the keyboard open.
 The controller release passed all 689 tests with coverage, 13 native host checks, both Android
 variants and [CI](https://github.com/nikships/droid-office/actions/runs/36798298291). The final
 locally signed v0.1.301 is installed with retained app data; its installed bytes match the local

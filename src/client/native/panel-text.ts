@@ -37,7 +37,7 @@ export const NATIVE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
 export const NATIVE_SETTINGS = {
   viewTitle: 'Headset view',
   viewMode: 'First person, head-tracked',
-  view: 'The headset draws the office around you and your head movement is the camera. There is no third-person or mouse-look mode here; those are desktop views. Everyone on the desktop shares the same office, workers and boards with you.',
+  view: 'The headset draws the office around you and your head movement is the camera. There is no third-person or mouse-look mode here; those are desktop views. The desktop shows the same office, workers and boards.',
   movementTitle: 'Headset movement',
   movementControls:
     'Motion controllers only. The left controller’s Menu button opens the app’s native settings; Office workspace opens the shared terminals and tools. The right Menu button belongs to Android XR. Left stick moves (click to sprint), right stick turns or aims a teleport. X goes to a waiting worker; Y opens Find anything; A jumps; B goes back. Triggers use what they point at; grip holds objects. A keyboard paired to the headset types into the open terminal or field, or the laptop you are at when the workspace is closed. See Controls for climbing, the pole and the gun.',

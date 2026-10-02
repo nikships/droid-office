@@ -1,6 +1,6 @@
 # Droid Office
 
-A 3D multiplayer office in the browser where a team hires claude, opencode, codex and droid workers at desks and shares their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
+A 3D office in the browser where its owner hires claude, opencode, codex and droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
 Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files). Read [docs/vr-webxr.md](docs/vr-webxr.md) before touching WebXR code.
 
@@ -8,7 +8,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 
 | Work | Plan |
 | --- | --- |
-| Removing multiplayer, accounts, voice, chat or presence | [docs/single-owner.md](docs/single-owner.md) |
+| The single-owner shape (why there is no multiplayer, accounts, voice, chat or presence) | [docs/single-owner.md](docs/single-owner.md) (implemented) |
 | Device pairing, bearer auth, headset protocol messages, terminal grids, layout export | [docs/headset-protocol.md](docs/headset-protocol.md) |
 | The Unity headset app (`native/unity/`) | [docs/unity-headset.md](docs/unity-headset.md) |
 

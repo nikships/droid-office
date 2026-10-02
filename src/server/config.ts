@@ -39,7 +39,7 @@ export interface Config {
   weather?: Weather;
 }
 
-const HELP = `droid-office — a 3D office for your team and its Droid / Claude Code / OpenCode / Codex / Grok / Muse workers
+const HELP = `droid-office — a 3D office where you hire Droid / Claude Code / OpenCode / Codex / Grok / Muse workers at desks and work in their live terminals
 
 Usage:
   droid-office [options]

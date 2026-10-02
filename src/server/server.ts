@@ -1481,7 +1481,7 @@ export async function startServer(cfg: Config) {
         const url = str(msg.url, 4096).trim();
         const err = webhook.set(url, who);
         warn(c, err);
-        if (!err) toastAll(url ? `📣 ${who} set up team notifications` : `${who} turned off team notifications`);
+        if (!err) toastAll(url ? `📣 ${who} set up channel notifications` : `${who} turned off channel notifications`);
         break;
       }
       case 'notify.test':

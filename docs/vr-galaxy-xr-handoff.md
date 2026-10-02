@@ -16,7 +16,7 @@ installed-byte checksum matching the local artifact. The final laptop-served cli
 the physical controller controls, corrected gun alignment/hit detection and redesigned medics.
 It loaded on the headset before shutdown. At the owner's request, the laptop office server
 and remaining Vite test server are now stopped. Start the laptop server again before using
-the headset; the saved office and sign-in remain available. CI completion was not awaited.
+the headset; the saved office remains available. CI completion was not awaited.
 
 The two worn-headset screenshots from 2026-09-30 identified terminal glyph clipping and
 blurry in-world laptop text. The new release fits Nerd Font icons to the shared monospace
@@ -79,7 +79,7 @@ reopens the last successfully connected office on ordinary launch. Fourteen chec
 published APK passed on the real headset, including Wi-Fi discovery, failed-connection recovery
 and wrapped, scrollable office rows at a synthetic 1280×720 viewport.
 Reviewed Android picker and keyboard captures have no overlapping text. Start the current
-desktop server on the same Wi-Fi, select the laptop and sign in once; see
+desktop server on the same Wi-Fi, select the laptop and open it; see
 [connection instructions](vr-native-android.md#connect-to-your-laptop). The browser QR route remains
 separate from the installed app's nearby picker.
 
@@ -194,14 +194,14 @@ does.
 ```bash
 # Office server on the Mac (build first: node bin/droid-office.js runs dist/)
 npm run build
-node bin/droid-office.js /Users/nanand/agent-office --password dev --port 4600
+node bin/droid-office.js /Users/nanand/agent-office --port 4600
 
 # Headset reaches the office at http://localhost:4600 (localhost is a secure context, so WebXR
-# runs without HTTPS), and DevTools comes back to the Mac on :9333
+# runs without HTTPS, and loopback needs no LAN token), and DevTools comes back to the Mac on :9333
 adb -s R3GYB022DBM reverse tcp:4600 tcp:4600
 adb -s R3GYB022DBM forward tcp:9333 localabstract:chrome_devtools_remote
 
-# Open the office tab in the headset's Chrome, then log in once (password dev)
+# Open the office tab in the headset's Chrome (no login over loopback)
 adb -s R3GYB022DBM shell am start -a android.intent.action.VIEW -d http://localhost:4600/ com.android.chrome
 ```
 

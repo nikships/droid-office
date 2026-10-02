@@ -62,11 +62,6 @@ collect it and its owned worktrees and branches are deleted.
 - Laptop shuts and shrinks as it does today.
 - Blood pool is gone with the body. No permanent stain.
 
-### Multiplayer
-
-- Every client on the floor sees downed workers and their medic pickups.
-- Any nearby user can revive them before the shared deadline.
-
 ### Edge cases
 
 - Multiple bodies have independent deadlines; repeated shots do not extend them.

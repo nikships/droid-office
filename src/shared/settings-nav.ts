@@ -27,7 +27,7 @@ export const SETTINGS_CARDS = [
   { pane: 'sound', title: 'Office sounds', scope: 'you' },
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },
-  { pane: 'notify', title: 'Team notifications (Slack / Discord)', scope: 'office' },
+  { pane: 'notify', title: 'Channel notifications (Slack / Discord)', scope: 'office' },
   { pane: 'building', title: 'Holiday theme', scope: 'office' },
   { pane: 'building', title: 'Outside', scope: 'office' },
   { pane: 'building', title: 'Jira', scope: 'office' },

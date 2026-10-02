@@ -431,8 +431,8 @@ export class Nameplate {
 }
 
 /**
- * A teammate's name badge, clipped to the front of their shirt: a white card with a dark band, in
- * the headset app, where nobody's name floats over their head. Faces +z, `width` meters across.
+ * The owner's name badge, clipped to the front of their shirt: a white card with a dark band, in
+ * the headset app, where no name floats over anyone's head. Faces +z, `width` meters across.
  */
 export function nameBadge(name: string, width = 0.24, height = 0.08): THREE.Mesh {
   const canvas = document.createElement('canvas');

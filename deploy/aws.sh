@@ -387,7 +387,7 @@ cmd_up() {
   need ssh-keygen
 
   # What to install. The office starts with no project (never the checkout this script is in):
-  # everyone picks theirs in its elevator, unless --project names a first one.
+  # you pick yours in its elevator, unless --project names a first one.
   if [[ -z "$APP_REPO" ]]; then
     APP_REPO=$(github_https "$(git -C "$SCRIPT_DIR/.." remote get-url origin 2>/dev/null || true)" || echo "https://github.com/nikships/droid-office")
   fi

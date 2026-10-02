@@ -1,7 +1,8 @@
 # Single-owner office: removing multiplayer
 
-**Status:** planned, not implemented. Baseline `28cf00f` on `main`. Line numbers below refer to
-that commit; when lines move, use the named symbol.
+**Status:** IMPLEMENTED on branch `feat/single-owner-track-a` (commits A1–A8), merged to
+`main`. Baseline `c459938` on `main`. Line numbers below refer to that commit; when lines move,
+use the named symbol. This file stays as the record of what was removed and why.
 
 Related plans: [headset protocol](headset-protocol.md) (the server contract a standalone headset
 uses) and [Unity headset app](unity-headset.md) (the headset client itself). This plan is

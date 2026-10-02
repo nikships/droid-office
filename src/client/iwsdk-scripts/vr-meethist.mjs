@@ -1,6 +1,6 @@
 // IWSDK agent script: the VR meeting view's earlier meetings. Seeds a running
 // meeting (no seats) plus one earlier: rows 0-1 exist, row 2 doesn't, and tapping
-// the past row does nothing (read-only, like the chat lines).
+// the past row does nothing (read-only history).
 export default async function run({ frame }) {
   await frame.evaluate(() => window.__vrtest?.seedMeetingBusy?.('zzz busy meeting'));
   await frame.evaluate(() => window.__vrtest?.seedMeetingPast?.('zzz earlier meeting'));

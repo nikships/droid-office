@@ -992,7 +992,7 @@ never counts.
 | Entry | Value |
 | --- | --- |
 | Permissions | `INTERNET`, `android.permission.EYE_TRACKING_FINE`, `VIBRATE` if Unity's haptics path needs it, plus whatever QR tracking needs if U0 adopts it |
-| Not requested | `RECORD_AUDIO` (the current app requests it for voice), hand tracking, storage (pickers use the system photo and document pickers) |
+| Not requested | `RECORD_AUDIO` (neither the current app nor this one uses the microphone), hand tracking, storage (pickers use the system photo and document pickers) |
 | Features | `android.software.xr.api.openxr` and `android.hardware.xr.input.controller` required; `android.hardware.xr.input.eye_tracking` not required at install but needed for foveation. The current app's `glEsVersion` requirement is dropped |
 | XR properties | `PROPERTY_XR_ACTIVITY_START_MODE` = `XR_ACTIVITY_START_MODE_FULL_SPACE_UNMANAGED` and `PROPERTY_XR_BOUNDARY_TYPE_RECOMMENDED` = `XR_BOUNDARY_TYPE_LARGE`, as the current app; checked against what Unity's Android XR build writes in U0 |
 | Backup | `allowBackup="false"`, as today (tokens must not leave the device) |
@@ -1132,7 +1132,7 @@ with an art contributor from U6; they are planning ranges.
 | Milestone | Contents | Exit | Estimate |
 | --- | --- | --- | --- |
 | **U0 Spike** | Section 20 | Spike report with numbers and decisions U-D1 to U-D9 | 1–2 weeks |
-| **U1 Skeleton** | Project, assemblies, `AGENTS.md`, generated protocol, store, connection (development-only cookie path until B2, then pairing), greybox office from layout JSON, rig, teleport, snap turn, agents as placeholder robots with lamps and nameplates | Walk the greybox office and watch live agent states change as they do on the laptop | 2–3 weeks |
+| **U1 Skeleton** | Project, assemblies, `AGENTS.md`, generated protocol, store, connection (development-only LAN-token join URL until B2, then pairing), greybox office from layout JSON, rig, teleport, snap turn, agents as placeholder robots with lamps and nameplates | Walk the greybox office and watch live agent states change as they do on the laptop | 2–3 weeks |
 | **U2 Terminals** | Overview and focused terminals (grid, needs B5), paired keyboard, quick-answer pad, poke keyboard, scrolling and history, resize ownership, desk panel Prompt | Answer a `needs_input` agent entirely from the headset; terminal surfaces pass review | 2–3 weeks |
 | **U3 Physical core** | Gloves and poses, grab, fetch, throw, poke buttons, hold-to-confirm, haptics and sounds; issue board and cards; handing cards to agents; hiring kiosk and bell; queue tray and shredder; elevator; ladder; poles; results everywhere (needs B4) | Scenarios 1–8 of section 19 pass on device | 3–5 weeks |
 | **U4 Tablet and settings** | Tablet, holster, pages, back-of-hand display, every setting, lobby and pairing, failure states | Every tablet surface passes review; every setting works and persists | 2–3 weeks |
@@ -1253,7 +1253,7 @@ After U8 ships and the owner has used it for a week without returning to the old
 | Foveation level cannot change at runtime on Galaxy XR | Settings feel broken | U0 item 3; "applies on next launch" fallback with honest copy |
 | Terminal text not sharp enough | The main work surface fails | U0 item 5; MSDF renderer; composition layer option; text size settings |
 | Networking under IL2CPP (pinning, headers, throughput) | Connection unreliable | U0 item 8 with two implementations |
-| Server changes (Tracks A and B) slip | Unity blocked | Development cookie path for U1 only; Track B commits are small and ordered |
+| Server changes (Tracks A and B) slip | Unity blocked | Development LAN-token path for U1 only; Track B commits are small and ordered |
 | Layout drift between browser and headset | Hires at wrong seats | Generated layout JSON, hash in `welcome`, test |
 | Protocol drift | Silent breakage | Generated C# types and a CI test that fails on drift |
 | Art and animation effort | Schedule | Greybox-first; art replaces placeholders without touching gameplay; U6 scoped by owner sign-off |
@@ -1279,4 +1279,99 @@ After U8 ships and the owner has used it for a week without returning to the old
 
 ## 25. Spike report
 
-Filled in when U0 ends.
+### 25.1 Offline evidence, 2026-10-02
+
+**U0 remains open.** The Galaxy XR is unavailable until the next device session.
+The owner authorized continued offline implementation and delegated Unity/version
+choices. This partial report precedes U1. It is not physical U0 acceptance.
+No sustained-90-Hz, readability, comfort, haptic or cold-start claim is made.
+
+The isolated project is `native/unity-spike/`. Unity MCP connected, and unity-cli
+controlled the explicitly selected spike Editor. `adb devices -l` reported no
+device. The stray root Unity project and current APK remain outside this work.
+
+| Component | Resolved pin |
+| --- | --- |
+| Unity / URP | 6000.3.25f1 / 17.3.0 |
+| XR Management / OpenXR | 4.7.0 / 1.17.1 |
+| Android XR / Android XR Extensions | 1.3.2 / 1.4.0 at `06516b81049d6050007e7f5354c9c628d345e930` |
+| Composition Layers / XRI / Input | 2.6.0 / 3.6.1 / 1.20.0 |
+| glTFast / Draco / Collections | 6.19.0 / 5.4.3 / 2.6.7 |
+| Newtonsoft / uGUI / Test Framework | 3.2.2 / 2.0.0 / 1.6.0 |
+| OkHttp JVM / Okio JVM / Kotlin stdlib | 5.3.2 / 3.16.4 / 2.2.21, SHA-256-pinned |
+
+**Compatibility fix:** Extensions 1.4 fails against Collections 2.6.8 because that
+release removed the `Unsafe` DLL it uses. glTFast 6.20 requires Collections 2.6.8,
+so pin both glTFast 6.19 and Collections 2.6.7. This compiles with .NET Standard,
+without a vendor source patch. Fine Eye also requires Android XR's AR Face and
+AR Session features; no hand tracking or face manager is added to the scene.
+
+Local results:
+
+- Initial isolated EditMode run: **12 passed, 0 failed**, 0.0488668 s. A final
+  rerun follows the build and visual fixes.
+- Greybox: **16 desks, 12 synthetic robots, 2 terminals**, imported MacBook at
+  every desk. Editor frame advancement was verified, not inferred from a still.
+  This is not a live-agent scene.
+- Terminal A/B: identical **2160×1200** raster source, **120×40** characters,
+  **0.9×0.5 m** panels, **4 Hz** updates. This is a TMP raster reference, not the
+  production MSDF cell renderer. Capture validation found panel-facing and
+  source-framing errors, now being corrected before the final build.
+- Managed `ClientWebSocket` fails the self-signed synthetic WSS handshake with
+  `UNITYTLS_X509VERIFY_FLAG_NOT_TRUSTED`, despite its per-socket pin callback.
+  The separate SPKI hash matches OpenSSL. No global trust bypass was added.
+- OkHttp's host JVM probe received **33,959,444,480 bytes in 15.014 s**, three
+  connections, **2,261.791 MB/s on host loopback**. HTTPS succeeded; actual HTTPS
+  and WSS handshakes rejected incorrect pins. Control-pong counts were
+  **25, 25, 24**. These numbers do not measure Wi-Fi, Android JNI or headset
+  main-thread cost.
+- APK build is pending. Early builds exposed the required AR Face/AR Session
+  features and an Android-only assembly reference missing from the Editor build.
+  Failed builds are not counted as passes. Final size and manifest inspection
+  will be recorded below.
+
+### 25.2 All thirteen checks
+
+| # | Offline evidence | Physical status |
+| --- | --- | --- |
+| 1 | Pinned stack compiles in Editor; Vulkan/ARM64/IL2CPP/GameActivity configured; Android build being repaired | NOT RUN |
+| 2 | Display Utilities request and actual-rate polling implemented | NOT RUN |
+| 3 | Fine-eye permission and gaze-only requests instrumented; API readback is not relabelled as bound swapchain state | NOT RUN |
+| 4 | 10 s warmup + 120 s buffered CSV; missing metrics NaN/-1 | NOT RUN |
+| 5 | Eye 1.0, eye 1.25 and quad-underlay raster alternatives implemented | Owner readability/occlusion NOT RUN |
+| 6 | Touch grip/input/capacitive support logs implemented | NOT RUN |
+| 7 | Amplitude/duration impulse probes implemented | Felt feedback NOT RUN |
+| 8 | Managed WSS fails; OkHttp JVM headers, HTTPS/WSS, wrong pins, pongs and reconnect pass | Android JNI/IL2CPP NOT RUN |
+| 9 | QR API and coarse scene-understanding permission identified in pinned package; sample not integrated | NOT RUN |
+| 10 | Java discovery, AES-GCM Keystore, picker and browser-intent probes implemented | NOT RUN |
+| 11 | No release-key use or install over the owner's current app | NOT RUN |
+| 12 | Mirror-Z/yaw and glTFast mirror-X adapter tests pass; imported mesh present | Browser/device visual comparison NOT RUN |
+| 13 | APK size pending | Cold start NOT RUN |
+
+Reproduction instructions are in `native/unity-spike/Tools/DEVICE-CHECKS.md`.
+Evidence, TLS fixture keys, captures and APKs are ignored. The synthetic fixture
+uses no office credentials.
+
+### 25.3 Working decisions
+
+| Decision | Choice, with limits |
+| --- | --- |
+| U-D1 | Keep eye-buffer and quad-underlay alternatives until the owner reads both on device. |
+| U-D2 | Prefer per-client pinned OkHttp for Android; retain a replaceable transport seam until Android throughput and stripping pass. Managed WS is usable for development loopback without TLS. |
+| U-D3 | LFS for large art from U6; no repository-wide hook/LFS change here. |
+| U-D4 | Local Unity checks recorded per change; no CI or licence-secret changes in this lane. |
+| U-D5 | Gloves in U3; tracked proxies are diagnostics, not final art. |
+| U-D6 | QR remains unproven. Reconcile admission with Track B before shipping pairing UI. |
+| U-D7 / U-D8 / U-D9 | Gun off by default, coffee in U6, jump as a setting, under delegated scope decisions. |
+| U-D10 | 2.5 m/s working smooth-move default; device comfort check pending. |
+
+Track A has advanced: the current server uses loopback admission and a per-start
+LAN token, not cookies. U1 snapshots actual protocol/layout sources with commit
+and content hashes, starts with a development-only loopback connection, and does
+not add server authentication or protocol changes. Track B's proposed generator
+and exporter remain Track B-owned; temporary generators live in
+`native/unity/Tools/`. They do not claim negotiated protocol-2 support.
+
+The owner authorized implementation beyond the offline U0 report. U1 and later
+phases can progress locally, but physical milestone exits and device-dependent
+decisions remain open. Final local build/test outcomes will amend this report.

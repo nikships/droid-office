@@ -22,7 +22,7 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Office sounds', 'sound', 'you'],
     ['Jukebox', 'sound', 'you'],
     ['Desktop notifications', 'notify', 'you'],
-    ['Team notifications (Slack / Discord)', 'notify', 'office'],
+    ['Channel notifications (Slack / Discord)', 'notify', 'office'],
     ['Holiday theme', 'building', 'office'],
     ['Outside', 'building', 'office'],
     ['Jira', 'building', 'office'],

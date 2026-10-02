@@ -643,7 +643,7 @@ export class Person {
     this.body.add(this.badge);
   }
 
-  /** Who they are, as everyone else sees it: the tag over their head, or the badge on their shirt. */
+  /** Who they are: the tag over their head, or the badge on their shirt. */
   private get tag(): THREE.Object3D | null {
     return this.label ?? this.badge;
   }

@@ -3,7 +3,7 @@
 The native Galaxy XR app ([vr-native-android.md](vr-native-android.md)) shows the office page's
 DOM at `/?native=1` on a 2400×1600 compositor panel, which the page sees as a 1600×1019 CSS
 viewport at device pixel ratio 1.5. `body.native-xr` switches on the panel presentation in
-`src/client/native/native.css` and `src/client/login.css`; the desktop page keeps
+`src/client/native/native.css`; the desktop page keeps
 its own layout and never loads those rules' effects.
 
 ## Layout rules
@@ -11,9 +11,9 @@ its own layout and never loads those rules' effects.
 - **Targets.** Every control is at least 44×44 CSS px, and lists and rows are at least 48 px
   tall. That includes the queue's move/remove buttons and the meeting room's worker count
   steppers, which are compact on the desktop.
-- **Text.** Panel text is at least 12 CSS px. Small desktop eyebrows (queue, team, changes,
-  search headings), the search status, elevator and floor-list subtitles, and the terminal's
-  "typing" note are raised on the panel.
+- **Text.** Panel text is at least 12 CSS px. Small desktop eyebrows (queue, changes,
+  search headings), the search status, and elevator and floor-list subtitles are raised on
+  the panel.
 - **No lost text.** Names and descriptions wrap rather than being cut off. The Home floor
   name and meta, the worker names, and the terminal window's title wrap. A worker's subtitle
   (agent, desk, branch, task) shows up to three lines; the row's tooltip carries the full text.
@@ -21,12 +21,10 @@ its own layout and never loads those rules' effects.
   stays readable; the row wraps instead.
 - **No on-screen keyboard.** The office page docks no keyboard and remembers none: a keyboard
   paired to the headset types into the open terminal or the focused field. Windows, the ☰ menu,
-  the floor list and the terminal use the panel's full height. Only the sign-in page docks a
-  controller keyboard (`native/keyboard.ts`), for the office password.
+  the floor list and the terminal use the panel's full height.
 - **Feedback on top.** Toasts stack above office windows (`z-index: 75`), wrap at up to
   900 px, and take no taps. The desktop layers are unchanged.
-- **Desktop-only hints.** The ☰ menu hides shortcut letters. The chat placeholder and the
-  chat panel's description drop "T". Tooltips say what a control does and never which key or
+- **Desktop-only hints.** The ☰ menu hides shortcut letters. Tooltips say what a control does and never which key or
   button does it (`nativeTooltipText`).
 - **Tooltips.** Titles show in a panel tooltip at the bottom left instead of an
   operating-system tooltip. A tap shows it for 2.8 s.
@@ -67,14 +65,13 @@ Menu button opens APK-native settings; **Office workspace** opens the page's off
 Trigger at an occupied desk opens its shared terminal. Trigger also points/clicks; grip is for
 grabbing objects, never workspace navigation. B goes back through windows or closes a panel.
 The workspace starts closed on every launch and reload. Text goes in
-from a keyboard paired to the headset; the sign-in page's keyboard is operated with the
-controller ray and trigger. Hand gestures and fingertip input are outside the native app’s
+from a keyboard paired to the headset. Hand gestures and fingertip input are outside the native app’s
 supported scheme.
 
 ## Checking the panel
 
 Use a browser session at 1600×1019 with device scale 1.5, and at 1280×720. Open
-`/?native=1`, sign in with the panel keyboard, and check that the office page arrives with the
+`/?native=1` and check that the office page arrives with the
 workspace closed and no keyboard. Then open office navigation, the ☰
 menu (scrolled to its end), the floor list, a shell worker's terminal, and text size −/+. Open
 the command palette with Y or the paired keyboard; type, choose with Enter and close with Esc

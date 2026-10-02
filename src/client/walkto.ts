@@ -1,6 +1,6 @@
-// The way over to a teammate you clicked in the sidebar: round the furniture downstairs (see
-// shared/nav.ts), and up the stairs to the boss's office or out through the balcony doors when that's
-// where they are.
+// The way over to a spot you picked (a waiting worker, a palette hit): round the furniture
+// downstairs (see shared/nav.ts), and up the stairs to the boss's office or out through the
+// balcony doors when that's where it is.
 
 import { BALCONY, BALCONY_DOOR, FLOOR, LOFT, STAIRS, WALL_T } from '../shared/layout';
 import { route } from '../shared/nav';

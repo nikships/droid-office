@@ -222,7 +222,7 @@ export interface VRHooks {
   hudRefresh: () => void;
   /** How close you must be to use each kind of thing: the same REACH as the mouse. */
   reachOf: (kind: InteractKind) => number;
-  /** The reach-out animation + 'act' message, so everyone sees the arm. */
+  /** The reach-out animation on your own hands and character. */
   reachAnim: () => void;
   /** Mirror the controller's target into the desktop hint state (for the flat mirror). */
   onTarget: (it: Interactable | null, note: GhIssue | null, spot?: BoardSpot | null) => void;

@@ -53,8 +53,9 @@ menu's ❓ row brings it back).
 | ≡ on the left controller | Leaves VR. Chrome treats it as its exit gesture, and the office never sees the press |
 
 Trigger is the controller `select` event, fired at once. A hand-tracked pinch counts only at
-a full pinch (see "Input" below) and resolves per frame into tap, hold or menu. Every VR move goes through the avatar and the normal `move` messages, so
-desktop users see the VR user walk, glide, turn and teleport like anyone else.
+a full pinch (see "Input" below) and resolves per frame into tap, hold or menu. Every VR move
+goes through the avatar, so walking, gliding, turning and teleporting animate the same way a
+desktop move does.
 
 ### Held coffee and issue cards
 
@@ -76,16 +77,15 @@ existing carry actions, and meeting opens the VR meeting prompt with the issue n
 title and instructions filled in. Releasing elsewhere returns the card to its board.
 There is no throwing physics.
 
-Peers see the same object, hand pose and empty/placed coffee state over `peer.carrying`.
-Pose updates are capped at 20 Hz and do not repaint the people list or boards. Session end,
-loss of the holding input source, loss of tracking, floor changes and network disconnects
-clear held objects; session/floor/network transitions also remove placed mugs. Desktop
-coffee, issue carrying and controls are unchanged.
+Held objects are local to the headset: nothing about them goes over the network.
+Session end, loss of the holding input source, loss of tracking, floor changes and network
+disconnects clear held objects; session/floor/network transitions also remove placed mugs.
+Desktop coffee, issue carrying and controls are unchanged.
 
 ### Physical keyboard
 
 A Bluetooth keyboard paired to the headset types while presenting. Keys go to the open
-prompt (hire, ask, chat, search, comment…) first, else to the focused world-space terminal.
+prompt (hire, ask, search, comment…) first, else to the focused world-space terminal.
 In a prompt, Enter sends, Escape cancels, ←/→/Home/End move and Backspace/Delete edit. In a
 terminal, keys arrive as xterm bytes, including Ctrl chords (Ctrl+C), Alt as meta,
 modified arrows, Home/End, PageUp/PageDown and Shift+Tab. In a Droid worker's terminal,
@@ -94,12 +94,12 @@ Ctrl+Enter queues and Shift+Enter adds a newline, the same as the desktop termin
 type nothing and a toast says where they go.
 
 No key reaches a desktop keybind while presenting: E doesn't interact, N doesn't jump, WASD
-doesn't walk, T/Enter don't open chat, Tab doesn't open ☰. The boundary is one capture-phase
+doesn't walk, Tab doesn't open ☰. The boundary is one capture-phase
 `keydown`/`keyup` listener on `window` (`src/client/vr/physical-keys.ts`), registered before
 every other key listener. While `vr.active` it stops every key event there. Typeable keys
 also lose their browser default. ⌘/Meta chords, function keys and bare modifiers keep their
 browser behavior. On session enter, the focused DOM element is blurred, so an IME can't
-compose into the chat box behind the headset.
+compose into a DOM field behind the headset.
 
 The world-space keyboard is the fallback for hand-only users. It opens with every prompt
 and terminal until a physical key types, then it tucks away and stays hidden for later
@@ -154,7 +154,7 @@ Persisted in the existing settings store (`Settings.vr`, localStorage) like ever
 ## World-space UI
 
 E in VR opens panels floating in the office, not DOM modals: the ☰ menu (hire, queue,
-board, services, floors, jukebox, bar, chat, people, meeting, settings), worker terminals (ask,
+board, services, floors, jukebox, bar, find, meeting, settings), worker terminals (ask,
 wake, send-home, ⌨ keyboard toggle), the prompt + QWERTY keyboard,
 the controls card, and a toast mirror. Both rays press independently (two-handed typing),
 held keys repeat like a desktop board, and the prompt + keyboard ride teleports along.
@@ -166,9 +166,9 @@ terminal, prompt and keyboard stay where they opened so you can lean in.
 Destructive acts confirm with tap-twice (detail ✕, queue rows, PR review): the first tap
 arms red, the second fires. Per view: hire (free desks, worktree toggle, shell shortcut),
 queue (add, pause, tap-twice remove + requeue, trailing tap-twice clear), board detail (hand, queue, comment, close,
-PR review panel, tap-twice ✓ merge at the dialog's defaults), jukebox (tunes + pasted streams), people (tap a row to walk over),
+PR review panel, tap-twice ✓ merge at the dialog's defaults), jukebox (tunes + pasted streams),
 meeting (call with a pattern picker), settings (locomotion, sound mutes),
-chat (🔎 searches the chat and every terminal; a terminal hit opens it at the line),
+find (🔎 searches every terminal; a hit opens it at the line),
 changes (a focused terminal's checkout: files, commit, tap-twice discard, open-a-PR).
 
 ## What VR reuses, and what it skips
@@ -198,10 +198,10 @@ Known gaps:
   `local-floor` → `bounded-floor` → `local` fallback chain, error strings.
 - `src/client/vr/session.ts` — `VRSession`: the dolly rig, rays + cursor dots, input mapping,
   teleport arc, snap/smooth turn, glide, room-scale follow, in-headset fade.
-- `src/client/vr/grab.ts` — single-owner physical grabs, object use/release, placement and
-  throttled poses. `Grabbable` supplies domain callbacks; world meshes opt in with
-  `userData.grabbable`. `world/held-object.ts` shares local/peer object geometry and offsets,
-  and `shared/carry.ts` validates carry messages before the server stores or relays them.
+- `src/client/vr/grab.ts` — local physical grabs, object use/release and placement.
+  `Grabbable` supplies domain callbacks; world meshes opt in with `userData.grabbable`.
+  `world/held-object.ts` holds the shared object geometry and offsets. Held objects never
+  leave the headset: there is no carry channel.
 - `src/client/vr/attach.ts` — builds the world-space UI and routes rays to it; `panel.ts`
   (canvas panels, per-ray presses), `menu.ts`, `terminal-panel.ts`, `prompt.ts`,
   `keyboard.ts`, `controls.ts`, `toast.ts`, `math.ts` (ray/panel math), `preview.ts`
@@ -372,14 +372,14 @@ calling VR done:
 13. **Galaxy XR grab acceptance is pending.** With hands, pick up coffee, move it, sip once,
     put it on a desk and pick the empty cup back up. With both hands and controllers, take an
     issue note, pin it, queue it, hand it to a desk and open a meeting with its issue preset.
-    Observe the held/placed poses from a second client. Check hand tracking loss, controller
-    disconnect, session exit, floor changes and network reconnect for orphaned objects.
+    Check hand tracking loss, controller disconnect, session exit, floor changes and network
+    reconnect for orphaned objects.
     Confirm grabbing never also teleports or opens the menu, and ordinary teleport/menu/panel
     gestures still work away from objects. Node tests and browser checks do not satisfy this
     physical-headset requirement.
 
 `tests/vr-grab.test.ts` covers physical reach, ownership, controller and pinch event routing,
-mouth use, placement/re-grab, peer rendering, cleanup, and wire validation.
+mouth use, placement/re-grab and cleanup.
 
 The cab's geometry, picking, press animation, list updates and touch debounce have Node tests
 in `tests/elevator.test.ts` and `tests/vr.test.ts`. In an active IWSDK session, after visiting
