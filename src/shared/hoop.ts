@@ -1,6 +1,6 @@
-// The basketball hoop on every floor, and its ball. The office keeps who has the ball and how it
+// The basketball hoop on every floor, and its ball. The office keeps whether it's held and how it
 // was last thrown (see server/court.ts); every page works out the rest itself, flying and bouncing it
-// the same way from that throw (simulate below), so everyone on the floor sees the same shot.
+// the same way from that throw (simulate below), so every page sees the same shot.
 
 import { BALCONY, FLOOR, LOFT, WALL_HEIGHT } from './layout.js';
 
@@ -32,7 +32,7 @@ export const BALL = {
   maxSpeed: 16,
 } as const;
 
-/** A throw: where the ball left someone's hands, how fast, who threw it, and how long ago (ms) as the office sent it. */
+/** A throw: where the ball left someone's hands, how fast, and how long ago (ms) as the office sent it. */
 export interface BallShot {
   x: number;
   y: number;
@@ -40,16 +40,15 @@ export interface BallShot {
   vx: number;
   vy: number;
   vz: number;
-  by: string;
   elapsed: number;
 }
 
 /**
- * The ball on a floor: in someone's hands (`holder`, a PeerInfo id), or loose where `shot` left it
- * (flying, bouncing or lying still by now), or neither: waiting under the hoop.
+ * The ball on a floor: in someone's hands (`held`), or loose where `shot` left it (flying,
+ * bouncing or lying still by now), or neither: waiting under the hoop.
  */
 export interface BallState {
-  holder?: string;
+  held?: boolean;
   shot?: BallShot;
 }
 

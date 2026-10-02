@@ -174,9 +174,8 @@ export function ballMesh(r: number = BALL.r): THREE.Mesh {
   return m;
 }
 
-/** How a basket went in: who threw it, from how far, and whether it touched anything on the way. */
+/** How a basket went in: from how far, and whether it touched anything on the way. */
 export interface Basket {
-  by: string;
   distance: number;
   swish: boolean;
   bank: boolean;
@@ -191,16 +190,18 @@ const axis = new THREE.Vector3();
 const spin = new THREE.Quaternion();
 
 /**
- * The floor's basketball, as everyone on the floor sees it: in someone's hands, flying from a throw
- * (worked out the same way on every page, from the throw the office passed on), or lying where it
- * stopped. `set` takes the office's word for it; `throwNow` is your own throw, before the office hears.
+ * The floor's basketball: in your hands, flying from a throw (worked out the same way on every
+ * page, from the throw the office passed on), or lying where it stopped. `set` takes the office's
+ * word for it; `takeNow` and `throwNow` are your own take and throw, before the office hears.
  */
 export class Basketball {
   readonly group = new THREE.Group();
   readonly interactable: Interactable = { kind: 'ball', x: BALL.home.x, y: 0, z: BALL.home.z, radius: 1.4 };
   readonly interactables = [this.interactable];
-  /** Who has it (a peer id), or null while it's loose. */
-  holder: string | null = null;
+  /** In your own hands (taken optimistically, confirmed or cleared by the office). */
+  holding = false;
+  /** Held elsewhere (another of your windows has it): hidden until it's loose. */
+  heldAway = false;
   private ball: THREE.Mesh;
   /** What rays pick it by: off while it's in someone's hands. */
   private pick: THREE.Mesh;
@@ -214,11 +215,9 @@ export class Basketball {
   private last = new THREE.Vector3(BALL.home.x, BALL.r, BALL.home.z);
   /** It bounced off something (for the sounds). */
   onHit: ((hit: BallHit, at: THREE.Vector3) => void) | null = null;
-  /** Someone threw it (not you: yours you know about): their character's arms go up. */
-  onThrow: ((by: string) => void) | null = null;
   onBasket: ((b: Basket) => void) | null = null;
-  /** A throw of `by`'s came to nothing: it stopped, or somebody took it, without going in. */
-  onMiss: ((by: string) => void) | null = null;
+  /** A throw came to nothing: it stopped, or somebody took it, without going in. */
+  onMiss: (() => void) | null = null;
 
   constructor(private colliders: () => readonly Solid[]) {
     this.ball = ballMesh();
@@ -237,19 +236,25 @@ export class Basketball {
 
   /** Loose and not flying about any more. */
   get still(): boolean {
-    return !this.holder && (!this.sim || this.sim.still);
+    return !this.holding && !this.heldAway && (!this.sim || this.sim.still);
   }
 
   /** The office's word on where the ball is, as of `now` (performance.now()). */
   set(state: BallState, now: number) {
-    if (state.holder) {
-      if (this.holder === state.holder) return;
+    if (state.held) {
+      // In someone's hands: yours if you're holding it, hidden elsewhere otherwise.
+      if (this.holding) {
+        this.heldAway = false;
+        return;
+      }
       this.endThrow();
-      this.holder = state.holder;
+      this.heldAway = true;
       this.sim = null;
       return;
     }
-    this.holder = null;
+    this.heldAway = false;
+    // Loose, or a throw: your take didn't land. Let it go.
+    this.holding = false;
     const s = state.shot;
     if (!s) {
       this.endThrow();
@@ -262,21 +267,21 @@ export class Basketball {
     this.start(s, now - s.elapsed);
     // Catch up with it quietly: what it hit before you saw it is over and done with.
     simulate(this.sim!, (now - this.t0) / 1000, this.solids);
-    if (this.sim!.t < 0.3) this.onThrow?.(s.by);
     this.settled = this.sim!.scored || this.sim!.still || this.sim!.lost;
   }
 
   /** You throw it (or drop it): it's out of your hands now, whatever the office says in a moment. */
   throwNow(s: Omit<BallShot, 'elapsed'>, now: number) {
     this.endThrow();
-    this.holder = null;
+    this.holding = false;
     this.start({ ...s, elapsed: 0 }, now);
   }
 
-  /** You (`id`) take it, before the office says so. */
-  takeNow(id: string) {
+  /** You take it, before the office says so. */
+  takeNow() {
     this.endThrow();
-    this.holder = id;
+    this.holding = true;
+    this.heldAway = false;
     this.sim = null;
   }
 
@@ -290,25 +295,31 @@ export class Basketball {
 
   /** A throw is over (someone took it, or threw again): if it hadn't gone in, that's a miss. */
   private endThrow() {
-    if (this.shot && !this.settled && !this.sim?.scored) this.onMiss?.(this.shot.by);
+    if (this.shot && !this.settled && !this.sim?.scored) this.onMiss?.();
     this.settled = true;
     this.shot = null;
   }
 
   /**
-   * Moves the ball on to `now`: flying or rolling along, or in the hands of whoever has it
-   * (`handsOf` says where those are, or null when they're not in view).
+   * Moves the ball on to `now`: flying or rolling along, in your hands (`handsOf` says where
+   * those are, or null when they're not in view), or hidden while it's held elsewhere.
    */
-  update(now: number, handsOf: (id: string, out: THREE.Vector3) => THREE.Vector3 | null) {
+  update(now: number, handsOf: (out: THREE.Vector3) => THREE.Vector3 | null) {
     const it = this.interactable;
     const pos = this.group.position;
-    if (this.holder) {
-      const at = handsOf(this.holder, tmp);
+    if (this.holding) {
+      const at = handsOf(tmp);
       this.group.visible = !!at;
       if (at) pos.copy(at);
       it.off = true;
       this.pick.visible = false;
       this.last.copy(pos);
+      return;
+    }
+    if (this.heldAway) {
+      this.group.visible = false;
+      it.off = true;
+      this.pick.visible = false;
       return;
     }
     const s = this.sim;
@@ -321,12 +332,12 @@ export class Basketball {
       if (s.scored && !was && this.shot) {
         this.settled = true;
         const distance = Math.hypot(this.shot.x - HOOP.rim.x, this.shot.z - HOOP.rim.z);
-        this.onBasket?.({ by: this.shot.by, distance, swish: !s.touched.rim && !s.touched.board, bank: s.touched.board, three: distance > THREE_POINT });
+        this.onBasket?.({ distance, swish: !s.touched.rim && !s.touched.board, bank: s.touched.board, three: distance > THREE_POINT });
       }
       const gone = s.lost || (s.still && outOfReach(s));
       if ((s.still || s.lost) && !this.settled) {
         this.settled = true;
-        if (this.shot) this.onMiss?.(this.shot.by);
+        if (this.shot) this.onMiss?.();
       }
       // Out of reach (or out of the building) for a moment, it turns up back under the hoop.
       if (gone && (now - this.t0) / 1000 > s.t + RETURN_AFTER) {
@@ -357,5 +368,5 @@ export class Basketball {
 }
 
 function same(a: BallShot, b: BallShot): boolean {
-  return a.by === b.by && a.x === b.x && a.y === b.y && a.z === b.z && a.vx === b.vx && a.vy === b.vy && a.vz === b.vz;
+  return a.x === b.x && a.y === b.y && a.z === b.z && a.vx === b.vx && a.vy === b.vy && a.vz === b.vz;
 }

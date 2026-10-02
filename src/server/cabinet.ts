@@ -93,13 +93,11 @@ const GAMES_KEPT = 100;
 /** Players an Allowance keeps track of before it forgets the ones back to a full allowance. */
 const PLAYERS_KEPT = 256;
 
-/** Whose game it is (an account, or a name on the shared password) and how it shows on the table. */
+/** Whose game it is (the connection id that started it) and how it shows on the table. */
 export interface Player {
   owner: string;
   name: string;
   color: string;
-  /** The connection it's played over: a new name on it is the same player to the office. */
-  connection?: string;
 }
 
 /**
@@ -127,8 +125,7 @@ export function clearPoints(before: number, lines: number, pieces: number): numb
 
 /**
  * Something a player can only do so often: `burst` times in a row, and then again as it comes back
- * at `perSecond`. It's kept under each thing they go by (their account or name, and their
- * connection), so a new game, a new name or a new connection doesn't start them over.
+ * at `perSecond`. It's kept under their owner key (see Player), so a new game doesn't start them over.
  */
 class Allowance {
   private readonly used = new Map<string, { left: number; at: number }>();
@@ -208,7 +205,7 @@ export class Arcade {
 
   /** `player` steps up to the cabinet: back to game `resume` if it's theirs and waiting for them, else a new game. Says which. */
   start(player: Player, resume?: unknown): string {
-    const keys = [player.owner, ...(player.connection ? [`connection:${player.connection}`] : [])];
+    const keys = [player.owner];
     const was = typeof resume === 'string' ? this.games.get(resume) : undefined;
     if (was && was.owner === player.owner && !was.playing) {
       was.playing = true;

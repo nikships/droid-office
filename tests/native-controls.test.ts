@@ -8,7 +8,6 @@ import { PlayerController } from '../src/client/player.js';
 import { loadSettings } from '../src/client/state.js';
 import type { GrabHooks, Grabbable } from '../src/client/vr/grab.js';
 import { SNAP_ANGLE } from '../src/client/vr/session.js';
-import { HeldObjectView } from '../src/client/world/held-object.js';
 import type { Collider, Interactable } from '../src/client/world/office.js';
 import { FLOOR, SLAB } from '../src/shared/layout.js';
 import type { CarriedIssue, CarriedObject } from '../src/shared/protocol.js';
@@ -654,10 +653,8 @@ test('a ray pickup attaches the original issue card to its selecting hand and pu
 });
 
 for (const hand of ['left', 'right'] as const) {
-  test(`ray-picked ${hand} cards match their peer's position and wrist orientation`, (t) => {
+  test(`ray-picked ${hand} cards publish their grip position and wrist orientation`, (t) => {
     const r = carriedRig(t);
-    const peer = new HeldObjectView();
-    t.after(() => peer.dispose());
     r.tick(r.frame({ [hand]: controller({ trigger: 1 }), [hand === 'left' ? 'right' : 'left']: controller() }));
     const local = r.visual()!.children[0];
     for (const [pitch, yaw, roll] of [
@@ -670,12 +667,10 @@ for (const hand of ['left', 'right'] as const) {
       r.tick(r.frame({ [hand]: controller({ grip: pose(-0.25, 1.35, -0.45, rotation.toArray()) }), [hand === 'left' ? 'right' : 'left']: controller() }));
       const carried = r.sent.at(-1)!;
       assert.equal(carried.pose?.hand, hand);
-      peer.pose(carried);
-      const remote = peer.root.getObjectByProperty('isMesh', true)!;
-      assert.ok(remote.getWorldPosition(new THREE.Vector3()).distanceTo(local.getWorldPosition(new THREE.Vector3())) < 1e-9, 'the peer applies the grip offset exactly once');
-      const localRotation = local.getWorldQuaternion(new THREE.Quaternion());
-      assert.ok(remote.getWorldQuaternion(new THREE.Quaternion()).angleTo(localRotation) < 1e-7, 'peers see the same readable face and wrist roll');
-      assert.ok(localRotation.angleTo(r.visual()!.parent!.getWorldQuaternion(new THREE.Quaternion())) < 1e-7, 'the card stays rigidly attached to its owning grip');
+      const grip = r.visual()!.parent!;
+      assert.deepEqual(carried.pose?.position, grip.getWorldPosition(new THREE.Vector3()).toArray(), 'the published pose is the grip frame');
+      assert.ok(new THREE.Quaternion().fromArray(carried.pose!.quaternion).angleTo(grip.getWorldQuaternion(new THREE.Quaternion())) < 1e-7, 'the published pose carries the wrist roll');
+      assert.ok(local.getWorldQuaternion(new THREE.Quaternion()).angleTo(grip.getWorldQuaternion(new THREE.Quaternion())) < 1e-7, 'the card stays rigidly attached to its owning grip');
     }
   });
 }

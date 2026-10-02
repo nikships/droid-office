@@ -56,9 +56,9 @@ import { DrunkVision } from './world/drunk';
 import { Booze, type Stage as Feeling } from './booze';
 import { djFrame, djTime } from './dnb';
 import { openBar } from './ui/bar';
-import { DRINK_BY_ID, ROOF, ROOF_NAME, type Drink, type DrinkId } from '../shared/rooftop';
-import { BACKSWING_TIME, IMPACT, Person, type PrBadge, Worker, type Stage } from './world/character';
-import { GolfBalls, PIN_DISTANCE, TEE_BALL, fly, pinText, type Flight, type Hit, type Shot } from './world/golf';
+import { DRINK_BY_ID, ROOF, ROOF_NAME, type Drink } from '../shared/rooftop';
+import { Person, type PrBadge, Worker, type Stage } from './world/character';
+import { GolfBalls, PIN_DISTANCE, fly, pinText, type Flight, type Hit, type Shot } from './world/golf';
 import { Golfer } from './golf';
 import { Hands } from './world/hands';
 import { Basketball, IN_HANDS } from './world/hoop';
@@ -416,11 +416,10 @@ function mountBoard(mesh: THREE.Mesh, texture: THREE.Texture, render: () => void
 /** The issue card in your hands, taken off this floor's issues board (see Carrying an issue card), or null. */
 let carrying: CarriedIssue | null = null;
 let physicalCarry: CarriedObject | null = null;
-/** Issues whose cards someone on this floor is carrying around, so they're missing from the board. */
+/** Issues whose cards are missing from the board: the one in your hands, if any. */
 function offBoard(): Set<number> {
   const off = new Set<number>();
   if (carrying) off.add(carrying.issue);
-  for (const p of store.peers.values()) if (p.carrying && p.carrying.kind !== 'coffee' && p.id !== store.you && store.onMyFloor(p)) off.add(p.carrying.issue);
   return off;
 }
 const issuesTex = new BoardTexture('issues');
@@ -430,13 +429,6 @@ const renderIssuesBoard = () => {
   issuesTex.render(off.size ? { ...store.issues, items: store.issues.items.filter((i) => !off.has(i.number)) } : store.issues);
 };
 mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'jiraBoard']);
-let carriedOff = '';
-store.on('peers', () => {
-  const k = [...offBoard()].join(',');
-  if (k === carriedOff) return;
-  carriedOff = k;
-  renderIssuesBoard();
-});
 const pullsTex = new BoardTexture('pulls');
 const renderPullsBoard = () => pullsTex.render(store.pulls, store.workers);
 mountBoard(office.boardMeshes.pulls, pullsTex.texture, renderPullsBoard, ['pulls']);
@@ -850,8 +842,6 @@ const vrHooks: VRHooks = {
     pick: (point) => pickVrGrab(point),
     changed: (item) => {
       physicalCarry = item;
-      const state = item ?? carrying;
-      net.carry(state);
       me.carry(item?.pose ? null : carrying);
       vrUi?.setCarrying(carrying);
       nativeUi?.setCarrying(carrying);
@@ -1375,7 +1365,7 @@ store.on('jukebox', () => {
   sound.setJukebox(j.on ? { track: j.track, url: j.url, startedAt: j.startedAt, since: j.since } : null);
   office.jukebox.show(j.on, trackTitle(j));
 });
-// The arcade cabinet next to it: BLOCKFALL up close, and on its screen for everyone else on the floor.
+// The arcade cabinet next to it: BLOCKFALL up close, and on its screen.
 const cabinet = new Cabinet(office.cabinet.screen, net, { openTerminal: (id) => openWorkerTerminal(id), sound: (kind, lines) => sound.arcade(kind, lines) });
 const notifier = new DesktopNotifier(
   () => settings.notify,
@@ -1402,17 +1392,14 @@ function saveGolfRecord(r: { best: number | null; holes: number }) {
     // private window: it's only for this visit then
   }
 }
-/** Until when (performance.now()) the tee has no ball on it: someone just hit it, and is teeing up the next. */
-let teeEmptyUntil = 0;
-/** A shot off the tee on this floor, by you or someone else: where it goes is worked out the same way everywhere. */
+/** A shot off the tee: where it goes is worked out the same way everywhere. */
 function shotHere(shot: Shot): Flight {
   return fly(shot, player.street, office.stack.state.index);
 }
 const golf = new Golfer(player, me, camera, {
-  holding: (on) => net.send({ t: 'act', golf: on }),
+  holding: () => undefined,
   hit: (shot) => {
-    net.send({ t: 'golf', ...shot });
-    balls.launch(shotHere(shot), store.profile.name, true);
+    balls.launch(shotHere(shot));
     sound.golf('hit');
   },
   ball: () => balls.mine,
@@ -1422,21 +1409,16 @@ const golf = new Golfer(player, me, camera, {
     hintKey = 'stale';
   },
 });
-balls.onHit = (hit: Hit, mine: boolean) => {
-  // Your own ball's heard wherever it lands (the camera's following it); anyone else's from where it is.
-  const at = mine ? undefined : hit.at;
-  if (hit.kind === 'cup') sound.golf('cup', at);
-  else if (hit.kind === 'bounce') sound.golf(hit.lie === 'sand' || hit.lie === 'rough' ? 'thud' : 'bounce', at, hit.speed);
-  else sound.golf(hit.kind, at, hit.speed);
+balls.onHit = (hit: Hit) => {
+  // Your ball's heard wherever it lands (the camera's following it).
+  if (hit.kind === 'cup') sound.golf('cup');
+  else if (hit.kind === 'bounce') sound.golf(hit.lie === 'sand' || hit.lie === 'rough' ? 'thud' : 'bounce', undefined, hit.speed);
+  else sound.golf(hit.kind, undefined, hit.speed);
 };
-balls.onRest = (f: Flight, who: string, mine: boolean) => {
+balls.onRest = (f: Flight) => {
   if (f.holed) {
     confetti.burst(GOLF_HOLE.x, player.street + 1.2, GOLF_HOLE.z, 260, 1.4);
     sound.golf('cheer');
-  }
-  if (!mine) {
-    if (f.holed) toast(`${who} got a hole in one!`);
-    return;
   }
   const rec = golfRecord();
   if (f.holed) {
@@ -1449,19 +1431,11 @@ balls.onRest = (f: Flight, who: string, mine: boolean) => {
   saveGolfRecord(rec);
 };
 
-/** Who's at the tee on this floor already, if anyone. */
-function teeTaken(): string | null {
-  for (const p of store.peers.values()) if (p.id !== store.you && p.golfing && store.onMyFloor(p)) return p.name;
-  return null;
-}
-
 /** E at the tee: take a club out and step up to the ball. */
 function teeOff() {
   if (golf.active || trip || climber.active) return;
   // The golf camera and the tee stance take over the player rig, which the headset and VR climbing own.
   if (vr.active) return toast("The golf tee isn't in VR yet — hop on the desktop for that one", 'warn');
-  const other = teeTaken();
-  if (other) return toast(`${other} is on the tee — wait your turn`, 'warn');
   if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
@@ -1472,22 +1446,6 @@ function teeOff() {
   golf.start();
 }
 
-/** Someone else on the floor hit one: their swing, then their ball, off the same tee. */
-function theirShot(id: string, shot: Shot) {
-  const p = store.peers.get(id);
-  if (!p || !store.onMyFloor(p) || upTop) return;
-  remotes.get(id)?.person.golfSwing(shot.power);
-  const floor = store.floor;
-  setTimeout(
-    () => {
-      if (store.floor !== floor || upTop) return;
-      balls.launch(shotHere(shot), p.name, false);
-      teeEmptyUntil = performance.now() + 1800;
-      sound.golf('hit', TEE_BALL);
-    },
-    (BACKSWING_TIME + IMPACT) * 1000,
-  );
-}
 sky.onThunder = (delay, loud) => sound.thunder(delay, loud);
 const hanger = new Hanger(net, camera, canvas, player, office, gallery);
 scene.add(hanger.ghost.group);
@@ -1894,10 +1852,6 @@ net.onMessage((msg) => {
         if (notice) toast(notice, 'warn');
       } else if (!store.floor) arrive();
       if (voice.inVoice || voice.sharing) net.send({ t: 'voice', voice: voice.inVoice, muted: voice.muted, sharing: voice.sharing });
-      if (player.seat) net.send({ t: 'sit', seat: player.seat.key });
-      if (carrying) net.carry(carrying);
-      if (shownDrink) net.send({ t: 'act', drink: shownDrink });
-      if (golf.active) net.send({ t: 'act', golf: true });
       // The office let go of the ball for you while you were away.
       ballNews(false);
       // After a reconnect the server has forgotten which terminal we had open, and what we're doing.
@@ -1960,44 +1914,6 @@ net.onMessage((msg) => {
       break;
     case 'chat':
       sayBubble(msg.from, msg.text);
-      break;
-    case 'peer.act': {
-      const r = remotes.get(msg.id);
-      if (msg.drink !== undefined) {
-        // A drink from the rooftop bar in their hand, or put down.
-        const p = store.peers.get(msg.id);
-        if (p) {
-          if (msg.drink) p.drink = msg.drink;
-          else delete p.drink;
-        }
-        if (msg.drink) r?.person.reach();
-        r?.person.holdDrink(msg.drink ? (DRINK_BY_ID.get(msg.drink) ?? null) : null);
-        break;
-      }
-      if (msg.golf !== undefined) {
-        // A club out at the tee, or back in the bag.
-        const p = store.peers.get(msg.id);
-        if (p) {
-          if (msg.golf) p.golfing = true;
-          else delete p.golfing;
-        }
-        r?.person.setGolf(msg.golf);
-        break;
-      }
-      if (msg.smoke === undefined) {
-        r?.person.reach();
-        break;
-      }
-      const p = store.peers.get(msg.id);
-      if (p) p.smoking = msg.smoke;
-      r?.person.setSmoking(msg.smoke);
-      break;
-    }
-    case 'peer.emote':
-      remotes.get(msg.id)?.person.emote(msg.emote);
-      break;
-    case 'golf':
-      theirShot(msg.id, { yaw: msg.yaw, loft: msg.loft, power: msg.power });
       break;
     case 'gong':
       gongRang(msg.why, msg.pr);
@@ -2368,7 +2284,8 @@ function syncPeers() {
     r.person.setGolf(!!peer.golfing);
     r.person.holdDrink(peer.drink ? (DRINK_BY_ID.get(peer.drink) ?? null) : null);
     r.person.carry(peer.carrying?.kind !== 'coffee' && !peer.carrying?.pose ? peer.carrying : null);
-    r.held.pose(peer.carrying);
+    // No carry poses come over the wire any more; the held view stays empty until A5 removes remotes.
+    r.held.set(null);
     r.person.read(!!peer.reading);
     r.person.sit(peer.seat ? (seatAt(peer.seat)?.hips ?? null) : null);
     r.person.setDoing(whereabouts(peer));
@@ -2386,7 +2303,7 @@ function syncPeers() {
 }
 store.on('peers', syncPeers);
 store.on('carrying', () => {
-  for (const [id, r] of remotes) r.held.pose(store.peers.get(id)?.carrying);
+  for (const [, r] of remotes) r.held.set(null);
 });
 
 function sayBubble(from: string, text: string) {
@@ -3762,8 +3679,6 @@ function blowHorn() {
 let feeling: Feeling = 0;
 let nextHiccup = 0;
 let nextSip = 0;
-/** The drink in your hand everyone else was last told about. */
-let shownDrink: DrinkId | null = null;
 const FEELINGS = ['😌 You feel sober again', '🥴 You’re feeling a little tipsy', '🌀 Whoa… is the city spinning?', '🤪 You’re wasted. Maybe have some water'];
 
 /** Every frame: how drunk you are, the glass in your hand, hiccups and the odd sip. */
@@ -3774,11 +3689,6 @@ function drinking(now: number) {
   const glass = booze.holding(secs);
   me.holdDrink(glass);
   hands.holdDrink(glass);
-  const id = glass?.id ?? null;
-  if (id !== shownDrink) {
-    shownDrink = id;
-    net.send({ t: 'act', drink: id });
-  }
   if (glass && player.view === 'first' && now > nextSip) {
     if (nextSip) hands.sip();
     nextSip = now + 9000 + Math.random() * 9000;
@@ -3818,7 +3728,6 @@ function setSmoking(on: boolean) {
   smokeBreakUntil = on ? performance.now() + SMOKE_BREAK_MS : 0;
   me.setSmoking(on);
   hands.setSmoking(on);
-  net.send({ t: 'act', smoke: on });
 }
 
 /** Out on the balcony (a little slack at the door), where smoking is allowed. */
@@ -3855,22 +3764,22 @@ function ballNews(answer: boolean) {
   ball.set(store.ball, performance.now());
   hintKey = '';
 }
-const holdingBall = () => ball.holder === store.you;
+const holdingBall = () => ball.holding;
 /** Baskets of yours in a row, and whether your last throw was a shot at the hoop (a miss of a pass or a drop doesn't count). */
 let streak = 0;
 let shooting = false;
 /** When you started winding up a shot (performance.now()), or 0. */
 let windFrom = 0;
 
-/** E at the ball: it's yours, if nobody beats you to it. */
+/** E at the ball: it's yours, if it isn't held. */
 function takeBall() {
   if (vr.active) return toast("The basketball isn't in VR yet — hop on the desktop for that one", 'warn');
   if (carrying) return toast(withControlHint('Your hands are full: put the card back first', ' (Q)'), 'warn');
-  if (ball.holder) return;
+  if (ball.holding || ball.heldAway) return;
   reach();
   sound.ball('bounce', ball.at, 1.5);
   holsterGun(true);
-  ball.takeNow(store.you);
+  ball.takeNow();
   ballPending++;
   net.send({ t: 'ball.take' });
   hintKey = '';
@@ -3924,7 +3833,7 @@ function dropBall() {
   if (!holdingBall()) return;
   windFrom = 0;
   const f = player.view === 'first' ? player.camYaw + Math.PI : player.facing;
-  const from = handsOf(store.you, new THREE.Vector3()) ?? camera.localToWorld(new THREE.Vector3(0, -0.25, -0.45));
+  const from = ownHands(new THREE.Vector3()) ?? camera.localToWorld(new THREE.Vector3(0, -0.25, -0.45));
   shooting = false;
   release(from, f, 0, 0.25);
 }
@@ -3932,18 +3841,17 @@ function dropBall() {
 function release(from: THREE.Vector3, heading: number, pitch: number, speed: number) {
   const c = Math.cos(pitch);
   const s = { x: from.x, y: from.y, z: from.z, vx: Math.sin(heading) * c * speed, vy: Math.sin(pitch) * speed, vz: Math.cos(heading) * c * speed };
-  ball.throwNow({ ...s, by: store.you }, performance.now());
+  ball.throwNow(s, performance.now());
   ballPending++;
   net.send({ t: 'ball.throw', ...s });
   hintKey = '';
 }
 
-/** Where the ball is in `id`'s hands, or null when you can't see it there (your own, in first person, is in your view instead). */
-function handsOf(id: string, out: THREE.Vector3): THREE.Vector3 | null {
-  const who = id === store.you ? (player.view === 'first' ? null : me) : (remotes.get(id)?.person ?? null);
-  if (!who) return null;
-  who.root.updateMatrixWorld();
-  return who.root.localToWorld(out.copy(IN_HANDS));
+/** Where the ball is in your hands, or null when you can't see it there (in first person, it's in your view instead). */
+function ownHands(out: THREE.Vector3): THREE.Vector3 | null {
+  if (player.view === 'first') return null;
+  me.root.updateMatrixWorld();
+  return me.root.localToWorld(out.copy(IN_HANDS));
 }
 
 ball.onHit = (hit, at) => {
@@ -3952,22 +3860,17 @@ ball.onHit = (hit, at) => {
     sound.ball('score', HOOP.rim, hit.speed);
   } else if (hit.speed > 0.6) sound.ball(hit.kind, at, hit.speed);
 };
-ball.onThrow = (by) => remotes.get(by)?.person.shoot();
-ball.onMiss = (by) => {
-  if (by === store.you && shooting) streak = 0;
+ball.onMiss = () => {
+  if (shooting) streak = 0;
 };
 ball.onBasket = (b) => {
-  const mine = b.by === store.you;
   const points = b.three ? 3 : 2;
-  const peer = store.peers.get(b.by);
   const how = b.swish ? 'SWISH! ' : b.bank ? 'BANK! ' : '';
-  popScore(mine ? `${how}+${points}` : `${clip(peer?.name ?? 'Someone', 16)} ${how}+${points}`, mine ? store.profile.color : (peer?.color ?? '#ff6b1a'));
-  if (mine) {
-    streak++;
-    const said = b.swish ? 'Swish!' : b.bank ? 'Off the glass!' : 'In off the rim!';
-    toast(`${said} +${points} from ${b.distance.toFixed(1)} m${streak > 1 ? ` · ${streak} in a row` : ''}`);
-  }
-  if (b.three || (mine && streak >= 3)) confetti.burst(HOOP.rim.x + 0.3, HOOP.rim.y, HOOP.rim.z, 140, 0.7);
+  popScore(`${how}+${points}`, store.profile.color);
+  streak++;
+  const said = b.swish ? 'Swish!' : b.bank ? 'Off the glass!' : 'In off the rim!';
+  toast(`${said} +${points} from ${b.distance.toFixed(1)} m${streak > 1 ? ` · ${streak} in a row` : ''}`);
+  if (b.three || streak >= 3) confetti.burst(HOOP.rim.x + 0.3, HOOP.rim.y, HOOP.rim.z, 140, 0.7);
 };
 
 /** Points floating up off the hoop, and fading. */
@@ -3991,15 +3894,14 @@ function updateScorePops(dt: number) {
   }
 }
 
-/** Every frame: the ball flies on (or goes wherever whoever has it goes), and your hands and everyone's arms hold it. */
+/** Every frame: the ball flies on (or goes wherever your hands go), and your hands hold it. */
 function updateBall(now: number, dt: number) {
-  ball.update(now, handsOf);
+  ball.update(now, ownHands);
   const mine = holdingBall();
   if (!mine) windFrom = 0;
   me.holdBall(mine);
   hands.holdBall(mine);
   hands.windUp(windFrom ? meter((now - windFrom) / 1000) : 0);
-  for (const [id, r] of remotes) r.person.holdBall(ball.holder === id);
   updateScorePops(dt);
   renderShotMeter(now);
 }
@@ -4104,10 +4006,8 @@ function setCarrying(card: CarriedIssue | null) {
   carrying = card;
   me.carry(card);
   hands.carry(card);
-  net.carry(card);
   nativeControls?.syncCarrying();
   nativeUi?.setCarrying(card);
-  carriedOff = [...offBoard()].join(',');
   renderIssuesBoard();
   hintKey = '';
 }
@@ -4196,16 +4096,14 @@ function cantTakeCard(w: WorkerInfo): string {
 }
 
 // ---- Sitting ----------------------------------------------------------------------------------------
-/** The free place on a seat nearest you, or null when everyone else on your floor has taken them all. */
+/** The free place on a seat nearest you. */
 function freePlace(seat: SeatDef): SeatPlace | null {
-  const taken = new Set<string>();
-  for (const p of store.peers.values()) if (p.seat && p.id !== store.you && store.onMyFloor(p)) taken.add(p.seat);
   let best: SeatPlace | null = null;
   let bestD = Infinity;
   for (let i = 0; i < seat.places.length; i++) {
     const place = seatPlace(seat, i);
     const d = Math.hypot(place.x - player.pos.x, place.z - player.pos.z);
-    if (!taken.has(place.key) && d < bestD) {
+    if (d < bestD) {
       best = place;
       bestD = d;
     }
@@ -4234,7 +4132,7 @@ function useSeat(seatId: string) {
   if (seat.tv && tvShowing()) watchShare();
 }
 
-/** Sits down on a free place on a seat; false when everyone else has taken them all. */
+/** Sits down on a free place on a seat. */
 function sitOn(seatId: string): boolean {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return false;
@@ -4245,7 +4143,6 @@ function sitOn(seatId: string): boolean {
   }
   player.sit(place);
   me.sit(place.hips);
-  net.send({ t: 'sit', seat: place.key });
   return true;
 }
 
@@ -4257,7 +4154,6 @@ function standUp() {
 /** On your feet again, by E or by walking off. */
 function gotUp() {
   me.sit(null);
-  net.send({ t: 'sit' });
 }
 player.onStand = gotUp;
 
@@ -4461,8 +4357,6 @@ function hintFor(it: Interactable): Hint {
     case 'gong':
       return { k: '', parts: [title('🎉 Merge gong'), aside('rings when a PR merges'), key('E', 'Bang it')] };
     case 'golf': {
-      const other = teeTaken();
-      if (other) return { k: `taken|${other}`, parts: [title('Golf tee'), aside(`${clip(other, 24)} is teeing off`)] };
       const { best, holes } = golfRecord();
       const about = [holes ? `${holes} hole${holes === 1 ? '' : 's'} in one` : '', best !== null ? `your best ${pinText(best)} from the pin` : `the pin's ${Math.round(PIN_DISTANCE)} m out`].filter(Boolean).join(' · ');
       return { k: about, parts: [title('Golf tee'), aside(about), key('E', 'Tee off')] };
@@ -4474,11 +4368,6 @@ function hintFor(it: Interactable): Hint {
     }
     case 'cabinet': {
       const c = store.cabinet;
-      const f = store.cabinetFrame;
-      if (c.player && c.player.id !== store.you) {
-        const who = c.player.name;
-        return { k: `${who}|${f?.score}`, parts: [title('🕹️ Arcade'), aside(`▶ ${clip(who, 24)} is playing${f ? ` · ${scoreText(f.score)}` : ''}`), key('E', 'Watch')] };
-      }
       const left = cabinet.leftAt;
       const best = c.scores[0];
       const about = left !== null ? `your game's paused at ${scoreText(left)}` : best ? `🏆 ${clip(best.name, 24)} · ${scoreText(best.score)}` : 'no high score yet';
@@ -4749,23 +4638,17 @@ function renderCrosshair() {
 }
 
 // ---- Reaching out ---------------------------------------------------------------------------------
-let lastActSent = 0;
-/** Plays the reach on your hands and your character, and shows it to everyone else. */
+/** Plays the reach on your hands and your character. */
 function reach() {
   if (player.view === 'first') hands.reach();
   me.reach();
-  const now = performance.now();
-  if (now - lastActSent > 120) {
-    lastActSent = now;
-    net.send({ t: 'act' });
-  }
 }
 
 // ---- Emotes ---------------------------------------------------------------------------------------
-/** The same limit the server keeps, so an emote you see yourself do is one everyone else sees too. */
+/** One emote at a time, so mashing the keys doesn't stack animations on your character. */
 const emoteLimit = new EmoteBucket();
 let emoteWarnedAt = 0;
-/** Plays an emote on your character and your hands, and shows it to everyone else on the floor. */
+/** Plays an emote on your character and your hands. */
 function emote(id: EmoteId) {
   const now = performance.now();
   if (!emoteLimit.take(now)) {
@@ -4778,7 +4661,6 @@ function emote(id: EmoteId) {
   me.emote(id);
   hands.emote(id);
   if (player.view === 'first') popEmoji(id);
-  net.send({ t: 'emote', emote: id });
 }
 const emoteWheel = new EmoteWheel(emote, (open) => (player.mouseLook = !open));
 $('hud').append(emoteWheel.el);
@@ -5489,7 +5371,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   if (gunOut && (trip || hanger.active || climber.active || upTop || (inVR && !nativeControls?.holdingGun))) holsterGun(true);
   golf.update(dt);
   balls.update(dt);
-  office.tee.ball.visible = golf.doing !== 'watch' && now > teeEmptyUntil;
+  office.tee.ball.visible = golf.doing !== 'watch';
   me.root.position.copy(player.pos);
   me.root.position.y += player.stepOffset;
   me.root.rotation.y = player.facing;

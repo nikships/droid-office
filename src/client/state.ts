@@ -280,9 +280,9 @@ class Store {
   jukebox: JukeboxState & { since: number } = { on: false, track: JUKEBOX_TUNES[0].id, startedAt: 0, elapsed: 0, since: 0 };
   /** The office's clock minus performance.now(), from the quickest ping (see 'pong'); for the jukebox. */
   private clock?: { offset: number; rtt: number };
-  /** Who's at the arcade cabinet on your floor, and the building's high scores. */
+  /** Your game on the arcade cabinet on your floor, and the building's high scores. */
   cabinet: CabinetState = { player: null, scores: [] };
-  /** The game on the cabinet as its player last sent it; null while nobody plays. */
+  /** Your game on the cabinet as you last sent it; null while you're not playing. */
   cabinetFrame: CabinetFrame | null = null;
   usage: UsageState = { total: zeroUsage(), today: zeroUsage(), day: '', pauseHiring: false };
   /** The Claude plan's 5-hour and weekly limits. */
@@ -497,14 +497,10 @@ class Store {
         this.emit('jukebox');
         break;
       case 'cabinet':
-        // Nobody at it any more: the last game's screen goes with them.
-        if (!msg.state.player || msg.state.player.id !== this.cabinet.player?.id) this.cabinetFrame = null;
+        // No game of yours any more, or a new one: the last game's screen goes with it.
+        if (!msg.state.player || msg.state.player.game !== this.cabinet.player?.game) this.cabinetFrame = null;
         this.cabinet = msg.state;
         this.emit('cabinet');
-        break;
-      case 'cabinet.frame':
-        this.cabinetFrame = msg.frame;
-        this.emit('cabinetFrame');
         break;
       case 'pong': {
         // The answer that came back quickest says best how the two clocks line up.

@@ -1,4 +1,4 @@
-import type { CarriedObject, ClientMsg, ServerMsg } from '../shared/protocol';
+import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { lastFloor, spotParams, store, type Profile, type Spot } from './state';
 import { leaveTo } from './leave';
 
@@ -83,9 +83,5 @@ export class Net {
 
   send(msg: ClientMsg) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
-  }
-
-  carry(item: CarriedObject | null) {
-    this.send({ t: 'carry', ...item });
   }
 }

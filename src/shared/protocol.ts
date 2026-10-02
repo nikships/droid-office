@@ -4,7 +4,6 @@ import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
-import type { EmoteId } from './emotes.js';
 import type { BallState } from './hoop.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
@@ -1074,23 +1073,6 @@ export type GongWhy = 'hit' | 'merged' | 'queue';
 
 export type ClientMsg =
   | { t: 'move'; x: number; y: number; z: number; rotY: number; moving: boolean }
-  /**
-   * You reached out to use something; everyone else sees your character's arm do it. With `smoke`,
-   * you lit a cigarette (or put it out) on the balcony instead; with `golf`, you took a club out at
-   * the tee (or put it back); with `drink`, you took a drink from the rooftop bar (or finished it, null).
-   */
-  | { t: 'act'; smoke?: boolean; golf?: boolean; drink?: DrinkId | null }
-  /**
-   * You hit a golf ball off the tee: its heading (0 is south, toward +x from there), loft (radians)
-   * and power (0–1). Everyone on your floor works out where it goes the same way (world/golf.ts fly).
-   */
-  | { t: 'golf'; yaw: number; loft: number; power: number }
-  /** You sat down in a place on a couch, a beanbag, a chair or the bench (see seatAt in layout), or got up again (no seat). */
-  | { t: 'sit'; seat?: string }
-  /** You picked an issue card up off the board (or put it down again, no issue): everyone sees it in your hands. */
-  | { t: 'carry'; issue?: number; title?: string; kind?: 'issue' | 'coffee'; empty?: boolean; pose?: CarryPose }
-  /** An emote (hold G, or 1–6): everyone else on your floor sees your character do it. Rate limited, see EmoteBucket. */
-  | { t: 'emote'; emote: EmoteId }
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
@@ -1206,14 +1188,14 @@ export type ClientMsg =
   | { t: 'jukebox.stop' }
   /**
    * Step up to the arcade cabinet on your floor to carry on with `game` (one the office started for
-   * you), or to start a new game, even while you're at it; the office answers with `cabinet`, naming
-   * who got it and their game.
+   * this connection), or to start a new game, even while you're at it; the office answers with
+   * `cabinet`, naming your game. Each connection plays its own game.
    */
   | { t: 'cabinet.play'; game?: string }
   | { t: 'cabinet.leave' }
   /**
-   * Your game as it looks now, for everyone else on the floor to watch over your shoulder. It's also
-   * how your score gets on the high-score table: the office follows the game frame by frame.
+   * Your game as it looks now. It's how your score gets on the high-score table: the office follows
+   * the game frame by frame.
    */
   | { t: 'cabinet.frame'; frame: CabinetFrame }
   /**
@@ -1234,9 +1216,9 @@ export type ClientMsg =
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** Where the office looks for checkouts from now on (admins only); '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
-  /** Pick up the floor's basketball (or catch it): yours if nobody else has it. */
+  /** Pick up the floor's basketball (or catch it): yours if it isn't held. */
   | { t: 'ball.take' }
-  /** Throw the basketball in your hands from (x, y, z) at (vx, vy, vz) m/s, or drop it; everyone on the floor sees it fly. */
+  /** Throw the basketball in your hands from (x, y, z) at (vx, vy, vz) m/s, or drop it; every window flies it the same way. */
   | { t: 'ball.throw'; x: number; y: number; z: number; vx: number; vy: number; vz: number }
   /** Rewrite one of the office's prompts (admins only); null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
@@ -1307,10 +1289,6 @@ export type ServerMsg =
   | { t: 'peer.update'; peer: PeerInfo; carryOnly?: boolean }
   | { t: 'peer.move'; id: string; x: number; y: number; z: number; rotY: number; moving: boolean }
   | { t: 'peer.leave'; id: string }
-  | { t: 'peer.act'; id: string; smoke?: boolean; golf?: boolean; drink?: DrinkId | null }
-  /** Someone on your floor hit a golf ball off the tee (see the client's 'golf'). */
-  | { t: 'golf'; id: string; yaw: number; loft: number; power: number }
-  | { t: 'peer.emote'; id: string; emote: EmoteId }
   | { t: 'worker.update'; worker: WorkerInfo }
   | { t: 'worker.remove'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
@@ -1349,10 +1327,8 @@ export type ServerMsg =
   /** The basketball on your floor was picked up, thrown, or put back under the hoop. */
   | { t: 'ball'; ball: BallState }
   | { t: 'jukebox'; state: JukeboxState }
-  /** Who's at the arcade cabinet on your floor now, and the building's high scores. */
+  /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }
-  /** The game on your floor's cabinet, as its player sees it (sent to everyone else on the floor). */
-  | { t: 'cabinet.frame'; frame: CabinetFrame }
   | { t: 'usage'; state: UsageState }
   | { t: 'limits'; state: PlanLimits }
   | { t: 'queue'; state: QueueState }

@@ -34,17 +34,3 @@ test('mashing the keys never gets more through than the burst plus the refill', 
   for (let t = 0; t <= 10_000; t += 50) if (b.take(1_000_000 + t)) passed++;
   assert.equal(passed, EMOTE_BURST + Math.floor(10_000 / EMOTE_EVERY));
 });
-
-test("the server's more lenient bucket lets through everything the page's does, even bunched up on the way", () => {
-  const page = new EmoteBucket();
-  const server = new EmoteBucket(EMOTE_EVERY * 0.8);
-  // Sent as fast as the page allows for ten seconds. The opening burst is held up on the wire and
-  // arrives late, all at once; the next one gets there straight away.
-  let sent = 0;
-  for (let t = 1_000_000; t <= 1_010_000; t += 50) {
-    if (!page.take(t)) continue;
-    const delay = sent++ < EMOTE_BURST ? 300 : 0;
-    assert.ok(server.take(t + delay), `emote ${sent} sent at ${t} arrives at ${t + delay}`);
-  }
-  assert.ok(sent > EMOTE_BURST + 3);
-});

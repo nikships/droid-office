@@ -35,7 +35,7 @@ import { ChatLog } from './history.js';
 import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
-import { DESK_BY_ID, elevatorSpot, seatHere, streetBelow } from '../shared/layout.js';
+import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { loginPath } from '../shared/return-to.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
@@ -43,11 +43,9 @@ import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES } from '../shared/drops.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { lookFromSeed, sanitizeLook } from '../shared/avatar.js';
-import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
-import { ROOF, isDrink } from '../shared/rooftop.js';
-import { readCarry, sameCarry } from '../shared/carry.js';
+import { ROOF } from '../shared/rooftop.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -90,18 +88,13 @@ interface Client {
   /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
   stale: Set<string>;
   lastMoveAt: number;
-  lastActAt: number;
   lastGongAt: number;
-  /** When they last hit a golf ball off the balcony. */
-  lastGolfAt: number;
   /** When they last blew the DJ's air horn on the roof. */
   lastHornAt: number;
-  emotes: EmoteBucket;
-  /** At the arcade cabinet on their floor, playing `game` (see Arcade); `frame` is it as it looks now. */
+  /** At the arcade cabinet on their floor, playing their own `game` (see Arcade); `frame` is it as it looks now. */
   playing: boolean;
   game?: string;
   frame?: CabinetFrame;
-  lastFrameAt: number;
   /** Cleared at each heartbeat ping and set again by the pong; still clear at the next one means gone. */
   isAlive: boolean;
 }
@@ -218,7 +211,7 @@ export async function startServer(cfg: Config) {
   // follows every game and puts the scores up itself (see Arcade).
   const highScores = new HighScores(cfg.dataDir);
   const arcade = new Arcade(highScores, (first) => {
-    for (const f of floors.values()) cabinetChanged(f);
+    cabinetScoresChanged();
     if (first) toastFloor(floors.get(first.floor), `🏆 ${first.score.name} set a new arcade high score: ${scoreText(first.score.score)}`);
   });
   /** What the office is called where it has no project of its own to go by (webhooks, invites). */
@@ -540,14 +533,14 @@ export async function startServer(cfg: Config) {
     },
   );
 
-  /** Who's playing the arcade cabinet on a floor. */
-  const cabinetPlayer = (floor: Floor): Client | undefined => [...clients.values()].find((c) => c.playing && c.floor === floor.id);
-  const cabinetState = (floor: Floor | undefined): CabinetState => {
-    const p = floor && cabinetPlayer(floor);
-    return { player: p ? { id: p.id, name: p.peer.name, game: p.game ?? '' } : null, scores: highScores.top() };
+  /** The cabinet as `c` sees it: their own game (or none), plus the building's high scores. */
+  const cabinetState = (c: Client): CabinetState => {
+    return { player: c.playing && c.game ? { game: c.game } : null, scores: highScores.top() };
   };
-  const cabinetChanged = (floor: Floor | undefined) => {
-    if (floor) toFloor(floor, { t: 'cabinet', state: cabinetState(floor) });
+  const sendCabinet = (c: Client) => sendTo(c, { t: 'cabinet', state: cabinetState(c) });
+  /** The high-score table changed: every connection gets its own game plus the new scores. */
+  const cabinetScoresChanged = () => {
+    for (const c of clients.values()) sendCabinet(c);
   };
   /** `c` stepped away from the cabinet (or left the floor, or the office): their game waits, with its score so far on the table. */
   const stopPlaying = (c: Client, floor = floorOf(c)) => {
@@ -556,11 +549,11 @@ export async function startServer(cfg: Config) {
     c.playing = false;
     c.game = undefined;
     c.frame = undefined;
-    cabinetChanged(floor);
+    sendCabinet(c);
   };
 
   /** Everything on a floor, for whoever just arrived there. */
-  const floorView = (floor: Floor | undefined): FloorView => ({
+  const floorView = (floor: Floor | undefined, c: Client): FloorView => ({
     floor: floor?.id ?? null,
     project: floor?.project ?? null,
     workers: floor?.workers.list() ?? [],
@@ -574,10 +567,10 @@ export async function startServer(cfg: Config) {
     meeting: floor?.meetings.state() ?? { current: null, past: [] },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
-    cabinet: { ...cabinetState(floor), frame: (floor && cabinetPlayer(floor)?.frame) ?? null },
+    cabinet: { ...cabinetState(c), frame: c.frame ?? null },
   });
   /** The rooftop bar: nobody works up there, so it has none of a floor's things. */
-  const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
+  const roofView = (c: Client): FloorView => ({ ...floorView(undefined, c), floor: ROOF });
   const screensOf = (c: Client, floor: Floor | undefined) => {
     for (const { workerId, frame } of floor?.workers.fullScreens() ?? []) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
@@ -1021,14 +1014,9 @@ export async function startServer(cfg: Config) {
       attached: new Set(),
       stale: new Set(),
       lastMoveAt: 0,
-      lastActAt: 0,
       lastGongAt: 0,
-      lastGolfAt: 0,
       lastHornAt: 0,
-      // A little more lenient than the page's own, so emotes it let through aren't dropped for arriving bunched up.
-      emotes: new EmoteBucket(EMOTE_EVERY * 0.8),
       playing: false,
-      lastFrameAt: 0,
       isAlive: true,
       peer: {
         id,
@@ -1075,7 +1063,7 @@ export async function startServer(cfg: Config) {
       theme: themes.state(),
       leaveOnMerge: leaveOnMerge.state(),
       prompts: prompts.state(),
-      ...(onRoof ? roofView() : floorView(floor)),
+      ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
     broadcast({ t: 'peer.join', peer: client.peer }, id);
@@ -1140,7 +1128,7 @@ export async function startServer(cfg: Config) {
     c.floor = floor.id;
     Object.assign(c.peer, { floor: floor.id });
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(floor) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(floor, c) });
     screensOf(c, floor);
     arrived(c, left);
     floor.arrived();
@@ -1155,7 +1143,7 @@ export async function startServer(cfg: Config) {
     c.floor = ROOF;
     c.peer.floor = ROOF;
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...roofView() });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...roofView(c) });
     arrived(c, left);
     floorsChanged();
   };
@@ -1165,7 +1153,7 @@ export async function startServer(cfg: Config) {
     const left = leave(c);
     c.floor = null;
     delete c.peer.floor;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(undefined) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(undefined, c) });
     arrived(c, left);
   };
 
@@ -1209,11 +1197,6 @@ export async function startServer(cfg: Config) {
     stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
     Object.assign(c.peer, { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY, moving: false });
-    delete c.peer.seat;
-    delete c.peer.golfing;
-    // An issue card belongs to the board it came off, which is on the floor they left; a drink stays at the bar.
-    delete c.peer.carrying;
-    delete c.peer.drink;
     return { was, ballLeft, spot };
   };
 
@@ -1274,69 +1257,6 @@ export async function startServer(cfg: Config) {
         p.rotY = num(msg.rotY);
         p.moving = !!msg.moving;
         toNeighbors(c, { t: 'peer.move', id: c.id, x: p.x, y: p.y, z: p.z, rotY: p.rotY, moving: p.moving }, true);
-        break;
-      }
-      case 'act': {
-        if (msg.drink !== undefined) {
-          // A drink from the rooftop bar, which stays up there.
-          const drink = isDrink(msg.drink) && c.floor === ROOF ? msg.drink : undefined;
-          if (drink === c.peer.drink) break;
-          if (drink) c.peer.drink = drink;
-          else delete c.peer.drink;
-          broadcast({ t: 'peer.act', id: c.id, drink: drink ?? null }, c.id, true);
-          break;
-        }
-        if (typeof msg.smoke === 'boolean') {
-          if (msg.smoke === !!c.peer.smoking) break;
-          c.peer.smoking = msg.smoke;
-          broadcast({ t: 'peer.act', id: c.id, smoke: msg.smoke }, c.id, true);
-          break;
-        }
-        if (typeof msg.golf === 'boolean') {
-          // The tee's on an office floor's balcony; there's none up on the roof.
-          const golf = msg.golf && c.floor !== ROOF;
-          if (golf === !!c.peer.golfing) break;
-          if (golf) c.peer.golfing = true;
-          else delete c.peer.golfing;
-          broadcast({ t: 'peer.act', id: c.id, golf }, c.id, true);
-          break;
-        }
-        const now = Date.now();
-        if (now - c.lastActAt < 100) break;
-        c.lastActAt = now;
-        toNeighbors(c, { t: 'peer.act', id: c.id }, true);
-        break;
-      }
-      case 'golf': {
-        const now = Date.now();
-        const [yaw, loft, power] = [num(msg.yaw), num(msg.loft), num(msg.power)];
-        if (!c.peer.golfing || now - c.lastGolfAt < 800 || Math.abs(yaw) > 2 || loft < 0 || loft > 1.6 || power < 0 || power > 1) break;
-        c.lastGolfAt = now;
-        toNeighbors(c, { t: 'golf', id: c.id, yaw, loft, power });
-        break;
-      }
-      case 'emote':
-        if (isEmote(msg.emote) && c.emotes.take(Date.now())) toNeighbors(c, { t: 'peer.emote', id: c.id, emote: msg.emote }, true);
-        break;
-      case 'sit': {
-        // Everyone sees them sit down (or get up), and anyone who comes in later finds them sitting.
-        // Only on a seat where they are: the roof's up on the roof, the office's on a floor.
-        const key = str(msg.seat, 40);
-        const seat = seatHere(key, c.floor === ROOF) ? key : undefined;
-        if (seat === c.peer.seat) break;
-        if (seat) c.peer.seat = seat;
-        else delete c.peer.seat;
-        broadcast({ t: 'peer.update', peer: c.peer }, c.id);
-        break;
-      }
-      case 'carry': {
-        const carrying = readCarry(msg, c.peer);
-        if (carrying === undefined) break;
-        if (JSON.stringify(carrying) === JSON.stringify(c.peer.carrying ?? null)) break;
-        const carryOnly = sameCarry(c.peer.carrying, carrying);
-        if (carrying) c.peer.carrying = carrying;
-        else delete c.peer.carrying;
-        toNeighbors(c, { t: 'peer.update', peer: c.peer, ...(carryOnly ? { carryOnly: true } : {}) });
         break;
       }
       case 'profile': {
@@ -2027,19 +1947,15 @@ export async function startServer(cfg: Config) {
       case 'cabinet.play': {
         const floor = here();
         if (!floor || (c.playing && msg.game === c.game)) break;
-        const at = cabinetPlayer(floor);
-        if (at && at !== c) {
-          warn(c, `${at.peer.name} is on the arcade — press E there to watch`);
-          sendTo(c, { t: 'cabinet', state: cabinetState(floor) });
-          break;
-        }
         // Already at it: that game's over, and this is the next one.
         if (c.playing) arcade.leave(c.game, floor.id);
-        c.game = arcade.start({ owner: c.accountId ? `account:${c.accountId}` : `name:${who}`, name: who, color: c.peer.color, connection: c.id }, msg.game);
+        // INTERIM until A5/A6: score names still come from the peer, until connections carry their own identity.
+        c.game = arcade.start({ owner: c.id, name: who, color: c.peer.color }, msg.game);
+        if (typeof msg.game === 'string' && msg.game && c.game !== msg.game) warn(c, "🕹️ Your paused game didn't survive the restart, so here's a new one");
         if (c.game !== msg.game && !arcade.counts(c.game)) warn(c, "🕹️ That's a lot of new games in a row, so this one won't go on the high-score table");
         c.playing = true;
         c.frame = undefined;
-        cabinetChanged(floor);
+        sendCabinet(c);
         break;
       }
       case 'cabinet.leave':
@@ -2049,13 +1965,9 @@ export async function startServer(cfg: Config) {
         const floor = floorOf(c);
         const frame = checkFrame(msg.frame);
         if (!c.playing || !floor || !frame) break;
-        // Every frame counts towards the score, even one that comes too soon after the last to pass on.
+        // Every frame counts towards the score: the office follows the game frame by frame.
         if (arcade.frame(c.game, frame, floor.id) === 'void') warn(c, "🕹️ The office couldn't follow this game, so its score won't go on the high-score table");
         c.frame = frame;
-        const now = Date.now();
-        if (now - c.lastFrameAt < 40) break;
-        c.lastFrameAt = now;
-        toNeighbors(c, { t: 'cabinet.frame', frame }, true);
         break;
       }
       case 'jukebox.stop': {

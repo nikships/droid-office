@@ -40,9 +40,9 @@ const TEE_UP_MAX = 6;
 export type GolfStage = 'aim' | 'charge' | 'swing' | 'watch';
 
 export interface GolfHooks {
-  /** You're at the tee with a club, or put it back: everyone else sees it. */
+  /** You're at the tee with a club, or put it back. */
   holding(on: boolean): void;
-  /** You hit it: off it goes, here and for everyone else. */
+  /** You hit it: off it goes. */
   hit(shot: Shot): void;
   /** Your ball on its way, or where it stopped (`still` seconds ago), for the camera to follow. */
   ball(): { at: THREE.Vector3; flight: Flight; still: number } | null;

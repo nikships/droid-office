@@ -75,37 +75,42 @@ test('the office only passes on throws from inside the building, no faster than 
   assert.ok(!throwOk({ ...ok, x: 60 }), 'out in the street');
 });
 
-test('the court: one person has the ball at a time, and only they can throw it', () => {
+test('the court: the ball is held or loose, and only its holder can throw it', () => {
   let now = 1_000_000;
   const c = new Court(() => now);
   assert.deepEqual(c.state(), {}, 'under the hoop to start with');
-  assert.ok(c.take('ann'));
-  assert.ok(!c.take('bob'), 'Ann has it');
-  assert.deepEqual(c.state(), { holder: 'ann' });
+  assert.ok(c.take('conn-a'));
+  assert.ok(!c.take('conn-b'), 'held already');
+  assert.deepEqual(c.state(), { held: true });
   const throwAt = { x: -12, y: 1.4, z: 10, vx: -5, vy: 6, vz: 0 };
-  assert.ok(!c.throw('bob', throwAt), "it isn't Bob's to throw");
-  assert.ok(c.throw('ann', throwAt));
+  assert.ok(!c.throw('conn-b', throwAt), "it isn't conn-b's to throw");
+  assert.ok(c.throw('conn-a', throwAt));
   now += 400;
-  assert.deepEqual(c.state(), { shot: { ...throwAt, by: 'ann', elapsed: 400 } });
-  assert.ok(c.take('bob'), 'Bob catches the rebound');
-  assert.ok(!c.throw('bob', { ...throwAt, vx: 1e6 }), 'not that fast');
+  assert.deepEqual(c.state(), { shot: { ...throwAt, elapsed: 400 } });
+  assert.ok(c.take('conn-b'), 'conn-b catches the rebound');
+  assert.deepEqual(c.state(), { held: true });
+  assert.ok(!c.throw('conn-b', { ...throwAt, vx: 1e6 }), 'not that fast');
 });
 
-test('the court: leaving the floor with the ball puts it back under the hoop', () => {
+test('the court: a second connection contends for the ball, and leaving with it puts it back', () => {
   const c = new Court();
-  assert.ok(c.take('ann'));
-  assert.ok(!c.left('bob'), "Bob didn't have it");
-  assert.ok(c.left('ann'));
+  assert.ok(c.take('conn-a'));
+  assert.ok(!c.take('conn-b'), 'held by the other connection');
+  assert.ok(!c.left('conn-b'), "conn-b didn't have it");
+  assert.deepEqual(c.state(), { held: true });
+  assert.ok(c.left('conn-a'));
   assert.deepEqual(c.state(), {});
+  assert.ok(c.take('conn-b'), 'free again after conn-a left');
+  assert.deepEqual(c.state(), { held: true });
 });
 
 test('the court: nobody grabs the ball over and over faster than a person could', () => {
   let now = 1_000_000;
   const c = new Court(() => now);
   const drop = { x: -12, y: 1.4, z: 10, vx: 0, vy: 0, vz: 0 };
-  assert.ok(c.take('ann'));
-  assert.ok(c.throw('ann', drop));
-  assert.ok(!c.take('ann'), 'straight back again is too soon');
+  assert.ok(c.take('conn-a'));
+  assert.ok(c.throw('conn-a', drop));
+  assert.ok(!c.take('conn-a'), 'straight back again is too soon');
   now += 200;
-  assert.ok(c.take('ann'));
+  assert.ok(c.take('conn-a'));
 });

@@ -519,8 +519,6 @@ interface Flying {
   trail: THREE.Line;
   /** The next of `flight.hits` still to happen. */
   next: number;
-  who: string;
-  mine: boolean;
   /** Seconds since it stopped, or -1 while it's still going. */
   still: number;
   label: THREE.Sprite | null;
@@ -532,36 +530,33 @@ const LABEL_SECONDS = 14;
 /** At most this many balls lying about: the oldest go first. */
 const MAX_BALLS = 12;
 
-/** The balls in the air or lying where they stopped, everyone's, played back along their flights. */
+/** Your balls in the air or lying where they stopped, played back along their flights. */
 export class GolfBalls {
   readonly group = new THREE.Group();
   private balls: Flying[] = [];
-  /** It hit something: `mine` if it's your ball. */
-  onHit: ((hit: Hit, mine: boolean) => void) | null = null;
+  /** It hit something. */
+  onHit: ((hit: Hit) => void) | null = null;
   /** It stopped (or went in). */
-  onRest: ((flight: Flight, who: string, mine: boolean) => void) | null = null;
+  onRest: ((flight: Flight) => void) | null = null;
 
-  /** Sends a ball off along `flight`, hit by `who`. */
-  launch(flight: Flight, who: string, mine: boolean): void {
+  /** Sends a ball off along `flight`. */
+  launch(flight: Flight): void {
     const ball = golfBall();
     ball.position.set(flight.path[0], flight.path[1], flight.path[2]);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(flight.path, 3));
     geo.setDrawRange(0, 1);
-    const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: mine ? '#ffd166' : '#fffaf3', transparent: true, opacity: 0.85 }));
+    const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#ffd166', transparent: true, opacity: 0.85 }));
     trail.frustumCulled = false;
     this.group.add(ball, trail);
-    this.balls.push({ flight, t: 0, ball, trail, next: 0, who, mine, still: -1, label: null });
+    this.balls.push({ flight, t: 0, ball, trail, next: 0, still: -1, label: null });
     while (this.balls.length > MAX_BALLS) this.drop(this.balls[0]);
   }
 
   /** Your ball still on its way (or just stopped), for the camera to follow. */
   get mine(): { at: THREE.Vector3; flight: Flight; still: number } | null {
-    for (let i = this.balls.length - 1; i >= 0; i--) {
-      const b = this.balls[i];
-      if (b.mine) return { at: b.ball.position, flight: b.flight, still: b.still };
-    }
-    return null;
+    const b = this.balls.at(-1);
+    return b ? { at: b.ball.position, flight: b.flight, still: b.still } : null;
   }
 
   update(dt: number): void {
@@ -576,16 +571,16 @@ export class GolfBalls {
         const p = f.path;
         b.ball.position.set(p[i0 * 3] + (p[i1 * 3] - p[i0 * 3]) * k, p[i0 * 3 + 1] + (p[i1 * 3 + 1] - p[i0 * 3 + 1]) * k, p[i0 * 3 + 2] + (p[i1 * 3 + 2] - p[i0 * 3 + 2]) * k);
         b.trail.geometry.setDrawRange(0, i1 + 1);
-        while (b.next < f.hits.length && f.hits[b.next].t <= b.t) this.onHit?.(f.hits[b.next++], b.mine);
+        while (b.next < f.hits.length && f.hits[b.next].t <= b.t) this.onHit?.(f.hits[b.next++]);
         if (b.t >= f.seconds) {
           b.still = 0;
           // In the cup, it's out of sight.
           b.ball.visible = !f.holed;
-          const text = `${b.mine ? '' : `${b.who} · `}${f.holed ? '⛳ ' : ''}${lieText(f)}`;
+          const text = `${f.holed ? '⛳ ' : ''}${lieText(f)}`;
           b.label = textSprite(text, { bg: f.holed ? '#ee6018' : '#0a0a0a', color: f.holed ? '#ffffff' : '#eeeeee', size: 44, border: '#2f2f2f' });
           b.label.position.copy(f.rest).add(new THREE.Vector3(0, f.holed ? 1.2 : 0.7, 0));
           this.group.add(b.label);
-          this.onRest?.(f, b.who, b.mine);
+          this.onRest?.(f);
         }
         continue;
       }

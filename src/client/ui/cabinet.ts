@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from '../world/texture-quality';
-import { GAME, type CabinetFrame } from '../../shared/cabinet';
+import { GAME } from '../../shared/cabinet';
 import { DESK_BY_ID } from '../../shared/layout';
 import type { WorkerInfo } from '../../shared/protocol';
 import type { Net } from '../net';
@@ -13,7 +13,7 @@ import { Blocks, H, W, paintScreen, type ScreenView } from './blocks';
 /** What the cabinet makes a noise about: a piece landing, lines clearing (how many), the game ending. */
 export type CabinetSound = 'land' | 'clear' | 'over';
 
-/** Your game goes out to everyone watching at most this often (ms). */
+/** Your game goes out to the office at most this often (ms). */
 const FRAME_MS = 90;
 
 /** Keys for the game, by `code`. */
@@ -38,13 +38,12 @@ const KEYS: Record<string, 'left' | 'right' | 'down' | 'turn' | 'back' | 'drop' 
 
 /**
  * The arcade cabinet in the lounge. Press E there and the camera glides up to its screen, where you
- * play BLOCKFALL (ui/blocks.ts) on the keyboard. Everyone else on the floor sees your game on the
- * cabinet as you play, and can walk up and press E to watch it up close. One of your workers needing
- * input pauses it and says who; walking away leaves it paused for when you come back. Its score goes
- * on the building's high-score table when you walk away and when the game ends.
+ * play BLOCKFALL (ui/blocks.ts) on the keyboard. One of your workers needing input pauses it and
+ * says who; walking away leaves it paused for when you come back. Its score goes on the building's
+ * high-score table when you walk away and when the game ends.
  */
 export class Cabinet {
-  private mode: 'play' | 'watch' | null = null;
+  private mode: 'play' | null = null;
   private modal: Modal | null = null;
   private readonly view: ScreenZoom;
   /** Your game: the one you're playing, or the one you left paused. */
@@ -56,8 +55,6 @@ export class Cabinet {
   private sent = { version: -1, at: 0 };
   /** The worker whose question paused your game. */
   private waiting: WorkerInfo | null = null;
-  /** Who you're watching. */
-  private watching = '';
   /** What the cabinet in the office shows. */
   private readonly picture = document.createElement('canvas');
   private readonly texture = new THREE.CanvasTexture(this.picture);
@@ -68,8 +65,6 @@ export class Cabinet {
   private dirty = true;
   private painted = -1;
   private blink = -1;
-  /** The last frame from whoever's playing, to hear what changed. */
-  private heard: CabinetFrame | null = null;
 
   constructor(
     screen: THREE.Mesh,
@@ -87,7 +82,6 @@ export class Cabinet {
     // Canvas text only picks up the office's font once it has loaded.
     void document.fonts.ready.then(() => (this.dirty = true));
     store.on('cabinet', () => this.onState());
-    store.on('cabinetFrame', () => this.onFrame());
     store.on('workers', () => this.onWorkers());
     // Clicked off into another window: the game waits for you.
     window.addEventListener('blur', () => {
@@ -109,14 +103,12 @@ export class Cabinet {
     return this.game && !this.game.over && this.mode !== 'play' ? this.game.score : null;
   }
 
-  /** E at the cabinet: play, or carry on with the game you left; watch whoever's on it already. */
+  /** E at the cabinet: play, or carry on with the game you left. */
   play() {
     if (this.modal || !store.floor) return;
-    const p = store.cabinet.player;
-    if (p && p.id !== store.you) return this.open('watch');
     if (!this.game || this.game.over) this.newGame();
     this.ask(this.game!.id);
-    this.open('play');
+    this.open();
   }
 
   /** One of your workers started waiting on an answer: your game stops for it, and says who. */
@@ -128,7 +120,7 @@ export class Cabinet {
     this.dirty = true;
   }
 
-  /** Runs the game, sends it to everyone watching, keeps the screens drawn and moves the camera. Call it once the player has placed the camera. */
+  /** Runs the game, sends it to the office for the score, keeps the screens drawn and moves the camera. Call it once the player has placed the camera. */
   update(camera: THREE.PerspectiveCamera, dt: number) {
     const g = this.game;
     const now = performance.now();
@@ -166,8 +158,8 @@ export class Cabinet {
   }
 
   /**
-   * Your game as it looks now, to everyone watching, unless they've seen it already. The office goes
-   * by these for your score too, so the last one goes out before you step away.
+   * Your game as it looks now, unless the office has seen it already. The office goes by these for
+   * your score, so the last one goes out before you step away.
    */
   private sendFrame() {
     const g = this.game;
@@ -182,12 +174,11 @@ export class Cabinet {
     this.game?.pause(false);
   }
 
-  private open(mode: 'play' | 'watch') {
-    this.mode = mode;
-    this.watching = mode === 'watch' ? (store.cabinet.player?.name ?? '') : '';
-    const board = h('canvas', { 'aria-label': mode === 'play' ? GAME : `${this.watching} playing ${GAME}` });
-    const stop = h('button.btn', { type: 'button' }, mode === 'play' ? '✕ Stop playing' : '✕ Stop watching');
-    const tip = mode === 'play' ? '← → move · ↑ turn · ↓ faster · Space drop · C hold · P pause' : `👀 Watching ${this.watching}`;
+  private open() {
+    this.mode = 'play';
+    const board = h('canvas', { 'aria-label': GAME });
+    const stop = h('button.btn', { type: 'button' }, '✕ Stop playing');
+    const tip = '← → move · ↑ turn · ↓ faster · Space drop · C hold · P pause';
     const call = h('div.cabinet-call.hidden', { role: 'status' });
     const box = h('div.arcade.cabinet', { role: 'dialog', 'aria-label': GAME }, h('div.arcade-screen', {}, board), call, h('div.arcade-bar', {}, h('span', {}, GAME), h('span.tip', {}, tip), stop));
 
@@ -205,10 +196,8 @@ export class Cabinet {
     this.call = call;
     fit();
     window.addEventListener('resize', fit);
-    if (mode === 'play') {
-      window.addEventListener('keydown', onKey, true);
-      window.addEventListener('keyup', onKeyUp, true);
-    }
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKeyUp, true);
     this.modal = openModal(box, {
       backdropCloses: false,
       onClose: () => {
@@ -224,13 +213,10 @@ export class Cabinet {
 
   /** Stepped away: your game waits, paused, with its score on the table so far. */
   private closed() {
-    const was = this.mode;
     this.mode = null;
     this.modal = this.board = this.call = null;
     this.waiting = null;
-    this.watching = '';
     this.dirty = true;
-    if (was !== 'play') return;
     const g = this.game;
     // A game you never got going isn't worth coming back to.
     if (g && !g.pieces && !g.score) this.game = null;
@@ -276,16 +262,11 @@ export class Cabinet {
     else if (k === 'pause') g.pause(true);
   }
 
-  /** Who's at the cabinet changed. */
+  /** Your game on the cabinet changed. */
   private onState() {
     const p = store.cabinet.player;
-    this.heard = store.cabinetFrame;
     if (this.mode === 'play') {
-      // Someone else got there first: watch them instead.
-      if (p && p.id !== store.you) {
-        this.modal?.close();
-        this.open('watch');
-      } else if (!p) {
+      if (!p) {
         // The office forgot (a dropped connection): still here.
         this.ask(this.game?.id ?? '');
       } else if (this.game) {
@@ -297,23 +278,8 @@ export class Cabinet {
         this.asked = '';
         this.game.id = p.game;
       }
-    } else if (this.mode === 'watch' && (!p || p.id === store.you || p.name !== this.watching)) {
-      if (!p) toast(`${this.watching} stepped away from the arcade`);
-      this.modal?.close();
     }
     this.dirty = true;
-  }
-
-  /** Someone else's game moved on: hear it land, clear lines and end. */
-  private onFrame() {
-    const f = store.cabinetFrame;
-    const was = this.heard;
-    this.heard = f;
-    this.dirty = true;
-    if (!f || !was) return;
-    if (f.lines > was.lines) this.opts.sound('clear', f.lines - was.lines);
-    else if (f.pieces > was.pieces) this.opts.sound('land');
-    if (f.state === 'over' && was.state !== 'over') this.opts.sound('over');
   }
 
   /** The worker that paused your game got its answer from someone else. */
@@ -342,11 +308,10 @@ export class Cabinet {
 
   /** Nobody's game on the screen, just the high scores. */
   private idle(): boolean {
-    const p = store.cabinet.player;
-    return !(this.mode === 'play' && this.game) && !(p && p.id !== store.you && store.cabinetFrame);
+    return !(this.mode === 'play' && this.game);
   }
 
-  /** What the screen shows: your game, someone else's, or the high scores with nobody playing. */
+  /** What the screen shows: your game, or the high scores with nobody playing. */
   private screen(t: number): ScreenView {
     const c = store.cabinet;
     const g = this.game;
@@ -362,15 +327,12 @@ export class Cabinet {
         t,
       };
     }
-    if (c.player && c.player.id !== store.you) {
-      return { frame: store.cabinetFrame, player: c.player.name, scores: c.scores, mine: c.player.game, note: 'Back in a moment', prompt: store.cabinetFrame ? undefined : `▶ ${c.player.name.toUpperCase()}`, t };
-    }
     const left = this.leftAt !== null;
     const prompt = !controlHintsShown() ? undefined : left ? 'PRESS E TO CARRY ON' : 'PRESS E TO PLAY';
     return { frame: null, scores: c.scores, mine: g?.id, prompt, t };
   }
 
-  /** Draws the screen up close while you play or watch, and on the cabinet otherwise (the close one covers it). */
+  /** Draws the screen up close while you play, and on the cabinet otherwise (the close one covers it). */
   private paint(now: number) {
     this.dirty = false;
     if (this.game) this.painted = this.game.version;

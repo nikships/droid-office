@@ -33,7 +33,7 @@ export interface GrabHooks {
   ground: (point: THREE.Vector3) => number;
 }
 
-/** One carry slot, matching peer.carrying. Either hand can own it, never both. */
+/** One local carry slot. Either hand can own it, never both. */
 export class VRGrab {
   private view: HeldObjectView;
   private target: Grabbable | null = null;

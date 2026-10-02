@@ -1,6 +1,6 @@
-// The arcade cabinet in the lounge: what its screen shows while someone plays, shared by the browser
-// that plays (which sends it), the office (which passes it on to everyone else on the floor) and the
-// browsers that watch. And its high-score table, which is the whole building's (see server/cabinet.ts).
+// The arcade cabinet in the lounge: what its screen shows while someone plays, sent by the browser
+// that plays so the office can follow the game for the score. And its high-score table, which is the
+// whole building's (see server/cabinet.ts).
 
 /** The game on the cabinet (see client/ui/blocks.ts). */
 export const GAME = 'BLOCKFALL';
@@ -47,13 +47,13 @@ export interface HighScore {
   at: number;
 }
 
-/** Who's at the cabinet on your floor (and which game they're on), and the building's high scores. */
+/** Your game on the cabinet on your floor (each connection plays its own), and the building's high scores. */
 export interface CabinetState {
-  player: { id: string; name: string; game: string } | null;
+  player: { game: string } | null;
   scores: HighScore[];
 }
 
-/** The cabinet for someone walking onto the floor: its screen too, when a game's on. */
+/** The cabinet for someone walking onto the floor: their own game too, when one's on. */
 export interface CabinetView extends CabinetState {
   frame: CabinetFrame | null;
 }

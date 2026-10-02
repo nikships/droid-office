@@ -4,26 +4,27 @@ import { throwOk, type BallState } from '../shared/hoop.js';
 const EVERY = 150;
 
 /**
- * A floor's basketball: who has it in their hands, or how it was last thrown. The office only keeps
- * track of that much; each page flies the ball from the throw itself (see shared/hoop.ts), so where
- * it lands is the same for everyone without the office working it out.
+ * A floor's basketball: whether it's held, or how it was last thrown. The office only keeps track
+ * of that much; each page flies the ball from the throw itself (see shared/hoop.ts), so where it
+ * lands is the same everywhere without the office working it out. Internally the holder key is the
+ * connection id, so one connection's take, throw and leave stay precise.
  */
 export class Court {
   private holder: string | undefined;
-  private shot: { x: number; y: number; z: number; vx: number; vy: number; vz: number; by: string; at: number } | undefined;
+  private shot: { x: number; y: number; z: number; vx: number; vy: number; vz: number; at: number } | undefined;
   private last = new Map<string, number>();
 
   constructor(private now = () => Date.now()) {}
 
-  /** The ball as it is now, for the floor's pages. */
+  /** The ball as it is now, for the floor's pages: held or not, never by whom. */
   state(): BallState {
-    if (this.holder) return { holder: this.holder };
+    if (this.holder) return { held: true };
     if (!this.shot) return {};
     const { at, ...s } = this.shot;
     return { shot: { ...s, elapsed: Math.max(0, this.now() - at) } };
   }
 
-  /** `id` picks the ball up (or catches it): only if nobody else has it. Says whether anything changed. */
+  /** `id` picks the ball up (or catches it): only if it isn't held. Says whether anything changed. */
   take(id: string): boolean {
     if (this.holder || this.tooSoon(id)) return false;
     this.holder = id;
@@ -35,7 +36,7 @@ export class Court {
   throw(id: string, s: { x: number; y: number; z: number; vx: number; vy: number; vz: number }): boolean {
     if (this.holder !== id || !throwOk(s)) return false;
     this.holder = undefined;
-    this.shot = { x: s.x, y: s.y, z: s.z, vx: s.vx, vy: s.vy, vz: s.vz, by: id, at: this.now() };
+    this.shot = { x: s.x, y: s.y, z: s.z, vx: s.vx, vy: s.vy, vz: s.vz, at: this.now() };
     return true;
   }
 

@@ -444,7 +444,7 @@ export class NativeControls {
     const now = performance.now();
     if (now - this.carryPublishedAt < 50) return;
     this.carryPublishedAt = now;
-    // CarryPose is the grip frame; peer HeldObjectView adds the same card offset as this view.
+    // CarryPose is the grip frame; the held-card view adds the same card offset as this view.
     const position = anchor.getWorldPosition(new THREE.Vector3());
     const quaternion = anchor.getWorldQuaternion(new THREE.Quaternion());
     this.hooks.grab?.changed({ ...card, pose: { hand: this.carriedOwner === 0 ? 'left' : 'right', position: position.toArray(), quaternion: quaternion.toArray() } });

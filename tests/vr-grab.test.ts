@@ -4,8 +4,7 @@ import * as THREE from 'three';
 import { GRAB_HOLD_MS, GRAB_REACH, VRGrab, type Grabbable } from '../src/client/vr/grab.js';
 import { VRSession, type VRHooks, type VRUiSink } from '../src/client/vr/session.js';
 import { HeldObjectView } from '../src/client/world/held-object.js';
-import { readCarry, sameCarry } from '../src/shared/carry.js';
-import type { CarriedObject, CarryPose, PeerInfo } from '../src/shared/protocol.js';
+import type { CarriedObject, CarryPose } from '../src/shared/protocol.js';
 import { store, loadSettings } from '../src/client/state.js';
 
 const pose = (): CarryPose => ({ hand: 'right', position: [0, 1, 0], quaternion: [0, 0, 0, 1] });
@@ -140,7 +139,7 @@ test('issue use dispatches the aimed action and clears the physical hold when co
   assert.deepEqual(r.released, [], 'a completed domain action is not dispatched twice');
 });
 
-test('issue release and lifecycle cleanup run once, clear the wire, and detach geometry', (t) => {
+test('issue release and lifecycle cleanup run once, clear the hold, and detach geometry', (t) => {
   const r = rig(t, false);
   r.grab.begin(1, 'right', r.hand);
   const aim = { it: { kind: 'meeting' as const, x: 0, z: 0, radius: 1 }, note: null };
@@ -179,88 +178,42 @@ test('a placed mug is cleared on lifecycle cleanup and does not block a distant 
   assert.equal(r.view.root.parent, null);
 });
 
-test('peer held-object views render the transmitted pose and leave legacy cards to the avatar', (t) => {
+test('the local held-object view shows a card or a mug, and hides when empty', (t) => {
   canvas(t);
   const view = new HeldObjectView();
   t.after(() => view.dispose());
-  view.pose({ kind: 'coffee', empty: false, pose: pose() });
-  assert.deepEqual(view.root.position.toArray(), [0, 1, 0]);
+  view.set({ issue: 6, title: 'Grab' });
   assert.equal(view.root.visible, true);
-  view.pose({ issue: 6, title: 'Grab', pose: { ...pose(), hand: 'left' } });
+  view.set({ kind: 'coffee', empty: false, pose: pose() });
   assert.equal(view.root.visible, true);
-  view.pose({ issue: 6, title: 'Grab' });
+  view.set({ kind: 'coffee', empty: true, pose: pose() });
+  assert.equal(view.root.visible, true);
+  view.set(null);
   assert.equal(view.root.visible, false);
-  view.pose(null);
-  assert.equal(view.root.visible, false);
 });
 
-test('carry protocol preserves desktop messages and validates coffee, poses and clear', () => {
-  const peer = { x: 0, y: 0, z: 0 };
-  assert.deepEqual(readCarry({ issue: 6, title: 'Grab' }, peer), { issue: 6, title: 'Grab' });
-  assert.equal(readCarry({ t: 'carry' }, peer), null);
-  const coffee = { kind: 'coffee' as const, empty: false, pose: pose() };
-  assert.deepEqual(readCarry(coffee, peer), coffee);
-  const card = { issue: 6, title: 'Grab', pose: pose() };
-  assert.deepEqual(readCarry(card, peer), card);
-  assert.equal(readCarry({ ...card, pose: { ...pose(), placed: true } }, peer), undefined);
-  const normal = readCarry({ ...card, pose: { ...pose(), quaternion: [0, 0, 0, 1.1] } }, peer);
-  assert.deepEqual(normal?.pose?.quaternion, [0, 0, 0, 1]);
-  assert.equal(readCarry({ ...coffee, pose: { ...pose(), position: [8, 1, 0] } }, peer), undefined);
-  assert.ok(readCarry({ ...coffee, pose: { ...pose(), position: [8, 1, 0], placed: true } }, peer));
-});
-
-test('carry protocol rejects malformed and unbounded client input', () => {
-  const peer = { x: 0, y: 0, z: 0 };
-  for (const value of [
-    null,
-    [],
-    { kind: 'other' },
-    { kind: 'coffee' },
-    { kind: 'coffee', pose: pose(), empty: 'yes' },
-    { issue: 0, title: 'No' },
-    { issue: -6, title: 'No' },
-    { issue: 1.2, title: 'No' },
-    { issue: 6 },
-    { kind: 'issue' },
-    ...[
-      null,
-      [],
-      { ...pose(), hand: 'none' },
-      { ...pose(), placed: 1 },
-      { ...pose(), position: [NaN, 1, 0] },
-      { ...pose(), position: [Infinity, 1, 0] },
-      { ...pose(), position: [0, 1] },
-      { ...pose(), position: [0, 1001, 0], placed: true },
-      { ...pose(), position: [10001, 0, 0], placed: true },
-      { ...pose(), quaternion: [0, 0, 0, 0] },
-      { ...pose(), quaternion: [0, 0, 0, 2] },
-    ].map((p) => ({ kind: 'coffee', empty: false, pose: p })),
-  ]) {
-    assert.equal(readCarry(value, peer), undefined, JSON.stringify(value));
-  }
-  const truncated = readCarry({ issue: 6, title: 'x'.repeat(201), extra: 'not forwarded' }, peer);
-  assert.deepEqual(truncated, { issue: 6, title: 'x'.repeat(200) });
-});
-
-test('pose-only peer updates bypass people and board redraws while keeping snapshots current', (t) => {
-  let peers = 0;
-  let poses = 0;
-  t.after(store.on('peers', () => peers++));
-  t.after(store.on('carrying', () => poses++));
-  const item: CarriedObject = { issue: 6, title: 'Grab', pose: pose() };
-  const peer = { id: 'other', carrying: item } as PeerInfo;
-  store.apply({ t: 'peer.update', peer });
-  store.apply({ t: 'peer.update', peer: { ...peer, carrying: { ...item, pose: { ...pose(), position: [1, 1, 0] } } }, carryOnly: true });
-  assert.equal(peers, 1);
-  assert.equal(poses, 1);
-  assert.deepEqual(store.peers.get('other')?.carrying?.pose?.position, [1, 1, 0]);
-  assert.equal(sameCarry(item, { ...item, pose: pose() }), true);
-  assert.equal(sameCarry(item, { issue: 7, title: 'Other', pose: pose() }), false);
-  assert.equal(sameCarry(item, { issue: 6, title: 'Grab' }), false);
-  assert.equal(sameCarry(item, null), false);
-  assert.equal(sameCarry(item, { kind: 'coffee', empty: false, pose: pose() }), false);
-  assert.equal(sameCarry({ kind: 'coffee', empty: false, pose: pose() }, { kind: 'coffee', empty: true, pose: pose() }), true);
-  store.apply({ t: 'peer.leave', id: 'other' });
+test('a card handoff and coffee drink-and-place complete locally, with no peers or messages', (t) => {
+  assert.equal(store.peers.size, 0);
+  // A card: grab it, hand it to the queue, and the hold clears exactly once.
+  const card = rig(t, false);
+  card.grab.begin(0, 'left', card.hand);
+  const aim = { it: { kind: 'queue' as const, x: 0, z: 0, radius: 1 }, note: null };
+  assert.equal(card.grab.use(0, aim), true);
+  assert.deepEqual(card.used, [aim]);
+  assert.equal(card.grab.held, false);
+  assert.equal(card.sent.at(-1), null);
+  assert.deepEqual(card.released, [], 'a completed domain action is not dispatched twice');
+  // Coffee: grab it, sip by trigger, place it upright, pick it up empty, put it away.
+  const cup = rig(t);
+  cup.grab.begin(1, 'right', cup.hand);
+  assert.equal(cup.grab.use(1, null), true);
+  assert.equal(cup.target.item.kind === 'coffee' && cup.target.item.empty, true);
+  cup.grab.release(1, null);
+  assert.equal(cup.sent.at(-1)?.pose?.placed, true);
+  cup.hand.position.copy(cup.view.root.position);
+  assert.equal(cup.grab.begin(1, 'right', cup.hand), true);
+  cup.grab.clear();
+  assert.equal(cup.sent.at(-1), null);
   assert.equal(store.peers.size, 0);
 });
 

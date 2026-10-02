@@ -3,7 +3,7 @@ import type { CarriedObject } from '../../shared/protocol';
 import { HeldCard } from './card';
 import { coffeeMug } from './character';
 
-/** Shared geometry and offsets for local XR attachments and peer carry poses. */
+/** Shared geometry and offsets for local XR attachments. */
 export class HeldObjectView {
   readonly root = new THREE.Group();
   private cardRoot = new THREE.Group();
@@ -22,13 +22,6 @@ export class HeldObjectView {
     this.card.set(item && item.kind !== 'coffee' ? item : null);
     this.mug.visible = item?.kind === 'coffee';
     this.mug.children[1].visible = item?.kind === 'coffee' && !item.empty;
-  }
-
-  pose(item: CarriedObject | null | undefined): void {
-    this.set(item?.pose ? item : null);
-    if (!item?.pose) return;
-    this.root.position.fromArray(item.pose.position);
-    this.root.quaternion.fromArray(item.pose.quaternion);
   }
 
   dispose(): void {

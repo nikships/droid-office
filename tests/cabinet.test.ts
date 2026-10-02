@@ -167,8 +167,8 @@ test('a paused game stands still, and a piece with no room to come in ends it', 
 
 // ---- The office following games: scores it saw played, and nothing else --------------------------
 
-const ada: Player = { owner: 'name:Ada', name: 'Ada', color: '#ef476f' };
-const grace: Player = { owner: 'account:grace', name: 'Grace', color: '#06d6a0' };
+const ada: Player = { owner: 'conn-ada', name: 'Ada', color: '#ef476f' };
+const grace: Player = { owner: 'conn-grace', name: 'Grace', color: '#06d6a0' };
 const CELLS = '0'.repeat(WELL_COLS * WELL_ROWS);
 const frame = (f: Partial<CabinetFrame> = {}): CabinetFrame => ({ cells: CELLS, next: 1, hold: 0, score: 0, lines: 0, level: 1, pieces: 0, state: 'play', ...f });
 
@@ -309,7 +309,7 @@ test('a forged score never makes the table', (t) => {
   assert.equal(arcade.frame(down, frame({ pieces: 2, score: 60 }), 'f1'), 'ok');
   assert.equal(arcade.frame(down, frame({ pieces: 3, score: 40 }), 'f1'), 'void');
   // Lines cleared one at a time, scored as if they'd all gone at once.
-  const linus: Player = { owner: 'name:Linus', name: 'Linus', color: '#ffd166' };
+  const linus: Player = { owner: 'conn-linus', name: 'Linus', color: '#ffd166' };
   const singles = arcade.start(linus);
   for (const [pieces, lines] of [
     [3, 1],
@@ -386,12 +386,12 @@ test('a game going faster than anyone plays is off the table', (t) => {
   }
   assert.ok(caught > PIECE_BURST && caught < 20, `caught at piece ${caught}`);
   // Walking away doesn't save up time to spend in one go.
-  const banked = arcade.start({ ...grace, owner: 'account:grace2' });
+  const banked = arcade.start({ ...grace, owner: 'conn-grace2' });
   tick(1000);
   assert.equal(arcade.frame(banked, frame({ pieces: 4, score: 80 }), 'f1'), 'ok');
   arcade.leave(banked, 'f1');
   tick(60 * 60_000);
-  assert.equal(arcade.start({ ...grace, owner: 'account:grace2' }, banked), banked);
+  assert.equal(arcade.start({ ...grace, owner: 'conn-grace2' }, banked), banked);
   assert.equal(arcade.frame(banked, frame({ pieces: 4 + PIECES_PER_SECOND * 60, score: 80 * 60 }), 'f1'), 'void');
   tick(RECORD_EVERY);
   assert.deepEqual(
@@ -412,19 +412,39 @@ test("a burst of pieces is the player's, not each new game's", (t) => {
     Array.from({ length: 10 }, () => burst(ada)),
     ['ok', ...new Array(9).fill('void')],
   );
-  // Nor does another connection signed in as the same person get a burst of its own, or a new name on the same connection.
-  assert.equal(burst({ ...grace, connection: 'c1' }), 'ok');
-  assert.equal(burst({ ...grace, connection: 'c2' }), 'void');
-  assert.equal(burst({ owner: 'name:Eve', name: 'Eve', color: '#4f86f7', connection: 'c3' }), 'ok');
-  assert.equal(burst({ owner: 'name:Mallory', name: 'Mallory', color: '#4f86f7', connection: 'c3' }), 'void');
+  // A second connection plays with its own allowance; the same owner again shares theirs.
+  const eve: Player = { owner: 'conn-eve', name: 'Eve', color: '#4f86f7' };
+  const mallory: Player = { owner: 'conn-mallory', name: 'Mallory', color: '#4f86f7' };
+  assert.equal(burst(eve), 'ok');
+  assert.equal(burst(eve), 'void');
+  assert.equal(burst(mallory), 'ok');
   // Once it has come back, another burst: that's playing fast, not replaying.
   tick((PIECE_BURST / PIECES_PER_SECOND) * 1000);
-  assert.equal(burst({ ...grace, connection: 'c2' }), 'ok');
+  assert.equal(burst(eve), 'ok');
   tick(RECORD_EVERY);
   assert.deepEqual(
     table.top().map((s) => s.name),
-    ['Ada', 'Grace', 'Eve', 'Grace'],
+    ['Ada', 'Eve', 'Mallory', 'Eve'],
   );
+});
+
+test('two connections play independent games, and resuming an unknown game starts a new one', (t) => {
+  const { arcade, tick } = arcadeFor(t);
+  const a: Player = { owner: 'conn-a', name: 'Ada', color: '#ef476f' };
+  const b: Player = { owner: 'conn-b', name: 'Ada', color: '#ef476f' };
+  const ga = arcade.start(a);
+  const gb = arcade.start(b);
+  assert.notEqual(ga, gb);
+  tick(3000);
+  assert.equal(arcade.frame(ga, frame({ pieces: 4, score: 80 }), 'f1'), 'ok');
+  assert.equal(arcade.frame(gb, frame({ pieces: 4, score: 80 }), 'f1'), 'ok');
+  // Asking to carry on with the other connection's waiting game starts a new game instead.
+  arcade.leave(ga, 'f1');
+  const again = arcade.start(b, ga);
+  assert.notEqual(again, ga);
+  // Its own waiting game is still there to carry on with.
+  assert.equal(arcade.start(a, ga), ga);
+  assert.equal(arcade.frame(ga, frame({ pieces: 5, score: 100 }), 'f1'), 'ok');
 });
 
 test('new games started one after another stop going on the table, until they slow down', (t) => {
@@ -553,7 +573,7 @@ test('a flood of scores changes the table at most every RECORD_EVERY ms, and the
   assert.equal(table.top()[0].score, 200);
   assert.equal(news.length, 2);
   // Games ending on three floors at once: one change to the table, and one leader.
-  const games = [arcade.start(grace), arcade.start({ ...ada, owner: 'name:Linus', name: 'Linus' }), arcade.start({ ...ada, owner: 'name:Ken', name: 'Ken' })];
+  const games = [arcade.start(grace), arcade.start({ ...ada, owner: 'conn-linus', name: 'Linus' }), arcade.start({ ...ada, owner: 'conn-ken', name: 'Ken' })];
   tick(5000);
   games.forEach((g, i) => assert.equal(arcade.frame(g, frame({ pieces: 5, score: 250 + i * 10, state: 'over' }), `f${i + 1}`), 'ok'));
   tick(1);
