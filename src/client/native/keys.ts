@@ -1,6 +1,6 @@
 /**
- * The sign-in panel keyboard's keys (native/keyboard.ts), and the edit each press makes to a text
- * field. Pure, so tests run it in Node.
+ * The headset panel keyboard's keys, and the edit each press makes to a text field. Pure, so
+ * tests run it in Node.
  *
  * A press is described as a KeyLike (the same shape a real KeyboardEvent has), so the page's own
  * handlers see the press a physical keyboard would make.

@@ -35,7 +35,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | --- | --- |
 | Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `npm ci` |
 | Add or change a dependency (updates `package-lock.json`; commit both files) | `npm install <pkg>` |
-| Dev: Vite with hot reload on :5173, server on :4600, password `dev` | `npm run dev` |
+| Dev: Vite with hot reload on :5173, server on :4600 | `npm run dev` |
 | Build `dist/public` (client) and `dist/server` (server) | `npm run build` |
 | Lint and format check with Biome (`biome.jsonc`); any warning fails | `npm run lint` |
 | Rewrite files in the Biome format | `npm run format` |
@@ -43,7 +43,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | All tests | `npm test` |
 | All tests with the coverage thresholds in its script (Node 22.8+) | `npm run test:coverage` |
 | One test file | `node --import tsx --test tests/<name>.test.ts` |
-| Run the built office against a project | `node bin/droid-office.js <project> --password dev` |
+| Run the built office against a project | `node bin/droid-office.js <project>` |
 
 `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
 

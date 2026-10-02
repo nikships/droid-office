@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
+import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { usageLabel, usageTitle } from './usage';
@@ -29,7 +30,7 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
   const name = f.name || 'That file';
   if (f.size > DROP_MAX_BYTES) throw new Error(`${name} is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`);
   const q = new URLSearchParams({ floor: store.floor ?? '', worker: workerId, name: f.name });
-  const res = await fetch(`/api/term/drop?${q}`, { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f });
+  const res = await fetch(withToken(`/api/term/drop?${q}`), { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f });
   const r = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
   if (!res.ok || !r.path) throw new Error(r.error ?? `${name} could not be dropped into the terminal`);
   return r.path;

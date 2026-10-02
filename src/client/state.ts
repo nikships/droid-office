@@ -1,5 +1,4 @@
 import type {
-  AccountsState,
   Arrival,
   FloorInfo,
   FloorView,
@@ -11,7 +10,6 @@ import type {
   MeetingState,
   NotifyState,
   PlanLimits,
-  Me,
   ProjectInfo,
   ProjectsDirState,
   PromptsState,
@@ -22,7 +20,6 @@ import type {
   ServerMsg,
   ServicesState,
   SkyState,
-  TeamState,
   ThemeState,
   UpgradeState,
   Usage,
@@ -44,15 +41,12 @@ export type Topic =
   | 'pulls'
   | 'project'
   | 'screens'
-  | 'team'
   | 'upgrade'
   | 'services'
   | 'decor'
   | 'usage'
   | 'limits'
   | 'queue'
-  | 'me'
-  | 'accounts'
   | 'notify'
   | 'machine'
   | 'proxy'
@@ -261,9 +255,6 @@ class Store {
   repos: { list: RepoChoice[]; error?: string; loading: boolean; at: number } = { list: [], loading: false, at: 0 };
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: true };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: true };
-  /** Whether this office can invite teammates (deployed with deploy/aws.sh). */
-  invites = false;
-  team: TeamState | null = null;
   upgrade: UpgradeState = { available: false, phase: 'idle' };
   services: ServicesState = { items: [], port: 4600 };
   /** Pictures on the walls. */
@@ -286,10 +277,6 @@ class Store {
   jiraBoard: JiraBoardState | null = null;
   /** The meeting room: the meeting at the table, and the ones before. */
   meeting: MeetingState = { current: null, past: [] };
-  /** Who you're signed in as (see /api/whoami). */
-  me: Me = { admin: false };
-  /** Everyone's accounts; only admins get these. */
-  accounts: AccountsState | null = null;
   /** The office's Slack / Discord webhook. */
   notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
@@ -374,11 +361,9 @@ class Store {
         this.arrival = msg.arrival;
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
-        this.invites = msg.invites;
         this.upgrade = msg.upgrade;
         this.usage = msg.usage;
         this.limits = msg.limits;
-        this.me = msg.me;
         this.notify = msg.notify;
         this.machine = msg.machine;
         this.proxy = msg.proxy ?? { accounts: [], at: 0 };
@@ -388,7 +373,7 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.prompts = msg.prompts ?? { custom: {} };
         this.enter(msg);
-        for (const t of ['upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'usage', 'limits', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -434,18 +419,6 @@ class Store {
       case 'gh.pulls':
         this.pulls = msg.state;
         this.emit('pulls');
-        break;
-      case 'team':
-        this.team = msg.state;
-        this.emit('team');
-        break;
-      case 'me':
-        this.me = msg.me;
-        this.emit('me');
-        break;
-      case 'accounts':
-        this.accounts = msg.state;
-        this.emit('accounts');
         break;
       case 'upgrade':
         this.upgrade = msg.state;

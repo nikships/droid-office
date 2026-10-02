@@ -393,7 +393,7 @@ export class WorkerManager {
     return this.agentPath;
   }
 
-  /** What an agent starts on when whoever starts it doesn't pick, when an admin set one in Settings (else the office's --agent). */
+  /** What an agent starts on when whoever starts it doesn't pick, when one was set in Settings (else the office's --agent). */
   get officeDefault(): AgentChoice | undefined {
     const picked = this.prompts?.agent();
     return picked && (picked.provider !== 'custom' || this.defaultProvider === 'custom') ? picked : undefined;

@@ -55,7 +55,7 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
   const home = mkdtempSync(path.resolve('tests/.arrival-'));
   const project = path.join(home, 'shop');
   mkdirSync(project, { recursive: true });
-  const cfg = loadConfig(['--home', home, '--projects', home, '--password', 'arrival-test-password', '--host', '127.0.0.1', '--no-discovery', '--weather', 'clear', project]);
+  const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--no-discovery', '--weather', 'clear', project]);
   cfg.port = 0;
   const office = await startServer(cfg);
   const base = `http://127.0.0.1:${(office.server.address() as AddressInfo).port}`;
@@ -66,12 +66,9 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
     await delay(100);
     rmSync(home, { recursive: true, force: true });
   });
-  const login = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'arrival-test-password' }) });
-  assert.equal(login.status, 200);
-  const cookie = login.headers.get('set-cookie')!.split(';')[0];
 
   const open = async (query: string) => {
-    const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?${query}`, { headers: { cookie, origin: base } });
+    const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?${query}`, { headers: { origin: base } });
     t.after(() => ws.terminate());
     const seen: Record<string, unknown>[] = [];
     ws.on('message', (data) => seen.push(JSON.parse(String(data)) as Record<string, unknown>));
@@ -94,7 +91,7 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
   assert.ok(floorId && floorId !== ROOF, `expected a project floor, got ${String(floorId)}`);
   assert.match(String(fresh.welcome.connection), /^[0-9a-f]{10}$/);
   assert.deepEqual({ ...(fresh.welcome.arrival as Arrival), at: typeof (fresh.welcome.arrival as Arrival).at === 'object' ? 'spot' : undefined }, { floor: floorId, at: 'spot', via: 'elevator' });
-  for (const key of ['you', 'peers', 'chat']) assert.ok(!(key in (fresh.welcome as Record<string, unknown>)), `welcome has no ${key}`);
+  for (const key of ['you', 'peers', 'chat', 'me', 'invites']) assert.ok(!(key in (fresh.welcome as Record<string, unknown>)), `welcome has no ${key}`);
   const floors = fresh.welcome.floors as Record<string, unknown>[];
   assert.ok(floors.length >= 1);
   for (const f of floors) assert.ok(!('people' in f), 'floors carry no people count');
@@ -120,9 +117,9 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
   assert.ok(!('peers' in requested), 'floor.enter carries no peers');
 
   // Search answers terminal hits only, with the more flag and no chat branch.
-  const searched = await (await fetch(`${base}/api/search?q=zzz-nothing-here&floor=${floorId}`, { headers: { cookie } })).json();
+  const searched = await (await fetch(`${base}/api/search?q=zzz-nothing-here&floor=${floorId}`)).json();
   assert.deepEqual(searched, { q: 'zzz-nothing-here', terminals: [], more: false });
-  const short = await (await fetch(`${base}/api/search?q=x&floor=${floorId}`, { headers: { cookie } })).json();
+  const short = await (await fetch(`${base}/api/search?q=x&floor=${floorId}`)).json();
   assert.deepEqual(short, { q: 'x', terminals: [], more: false });
 
   // The last floor off the building leaves the arrival out in the lobby.

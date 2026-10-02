@@ -1,6 +1,7 @@
 import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhReviewComment, ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { AVATAR_COLORS, store, words, workerForPull } from '../state';
+import { withToken } from '../token';
 import { issuePrompt, issueVars, type BoardActions } from './boards';
 import { officePrompt } from './prompts';
 import { mergeCommand, pullPromptVars } from '../../shared/prompts';
@@ -17,7 +18,8 @@ import { providerPicker } from './provider';
 
 /** The board windows ask about the floor you're on. */
 function onFloor(url: string): string {
-  return store.floor ? `${url}${url.includes('?') ? '&' : '?'}floor=${encodeURIComponent(store.floor)}` : url;
+  const u = store.floor ? `${url}${url.includes('?') ? '&' : '?'}floor=${encodeURIComponent(store.floor)}` : url;
+  return withToken(u);
 }
 
 async function getJson<T>(url: string): Promise<T> {

@@ -37,8 +37,8 @@ test('the manifest supplies the favicon, both PNG sizes and a separate maskable 
   assert.equal(pngSize('/icons/apple-touch-icon.png'), '180x180');
 });
 
-for (const page of ['index', 'login', 'join', 'claim']) {
-  test(`${page} advertises the same manifest, theme color and Apple icon before sign-in`, () => {
+for (const page of ['index']) {
+  test(`${page} advertises the same manifest, theme color and Apple icon`, () => {
     const head = readFileSync(new URL(`${page}.html`, client), 'utf8').split('</head>')[0];
     assert.match(head, /<link rel="manifest" href="\/manifest\.webmanifest"\s*\/>/);
     assert.match(head, /<meta name="theme-color" content="#020202"\s*\/>/);

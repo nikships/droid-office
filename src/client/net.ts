@@ -1,6 +1,6 @@
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { lastFloor, spotParams, store, type Profile, type Spot } from './state';
-import { leaveTo } from './leave';
+import { lanToken } from './token';
 
 type Handler = (msg: ServerMsg) => void;
 
@@ -37,6 +37,9 @@ export class Net {
     if (floor) q.set('floor', floor);
     const at = spotParams(floor, this.where());
     if (at) for (const [k, v] of Object.entries(at)) q.set(k, v);
+    // A page opened over the LAN carries this start's token (?t=); loopback needs none.
+    const t = lanToken();
+    if (t) q.set('t', t);
     const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
     this.ws = ws;
     ws.onopen = () => {
@@ -53,21 +56,11 @@ export class Net {
       }
       for (const h of this.handlers) h(msg);
     };
-    ws.onclose = async () => {
+    ws.onclose = () => {
       if (this.ws !== ws) return;
       this.up = false;
       this.statusHandlers.forEach((h) => h(false));
       if (this.closedByUs) return;
-      // Session expired? Go back to the door.
-      try {
-        const res = await fetch('/api/whoami', { cache: 'no-store' });
-        if (res.status === 401) {
-          leaveTo('/login');
-          return;
-        }
-      } catch {
-        // offline; keep retrying
-      }
       const delay = this.restartExpected ? 1000 : Math.min(8000, 500 * 2 ** this.retry++);
       setTimeout(() => this.connect(), delay);
     };

@@ -6,7 +6,7 @@ import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type
 import { THEME_PICKS } from '../../shared/theme';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
-import { agentFields, choiceLabel, officeChoice } from './provider';
+import { agentFields, officeChoice } from './provider';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { NATIVE_SETTINGS } from '../native/panel-text';
 import { hotReloadSettings } from './hot-reload';
@@ -36,17 +36,7 @@ const card = (title: SettingsCardTitle, ...body: Node[]) => {
 let lastPane: SettingsPane = 'you';
 
 /** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
-export function openSettings(
-  net: Net,
-  settings: Settings,
-  onChange: (s: Settings) => void,
-  onCharacter: () => void,
-  previewSound: () => void,
-  notifier: DesktopNotifier,
-  onSignOut: () => void,
-  outside?: { now: string; live: boolean },
-  first?: SettingsPane,
-) {
+export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, outside?: { now: string; live: boolean }, first?: SettingsPane) {
   const native = document.body.classList.contains('native-xr');
   const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
   const note = h('p.setting-note');
@@ -290,7 +280,7 @@ export function openSettings(
   hookTest.addEventListener('click', () => net.send({ t: 'notify.test' }));
   hookRemove.addEventListener('click', () => net.send({ t: 'notify.webhook', url: '' }));
 
-  // The worker a new one starts on when whoever starts it sends no provider. Admins pick it.
+  // The worker a new one starts on when whoever starts it sends no provider.
   const agent = agentFields(store.project, 'office-agent', officeChoice(store.project));
   let agentTouched = false;
   agent.element.addEventListener('change', () => (agentTouched = true));
@@ -298,23 +288,16 @@ export function openSettings(
   const agentSave = h('button.btn.primary', { type: 'button' }, 'Save');
   const agentBack = h('button.btn', { type: 'button' });
   const agentActions = h('div.seg', { style: 'margin-top:8px' }, agentSave, agentBack);
-  const agentNow = h('p.outside-now');
   const agentNote = h('p.setting-note');
   const paintAgent = () => {
-    const admin = store.me.admin;
     const picked = store.prompts.agent;
     const now = officeChoice(store.project);
-    agent.element.classList.toggle('hidden', !admin);
-    agentActions.classList.toggle('hidden', !admin);
-    agentNow.classList.toggle('hidden', admin);
-    agentNow.textContent = choiceLabel(now);
     agentBack.classList.toggle('hidden', !picked);
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(now);
     agentNote.textContent =
       'What a worker starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a provider. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
-      (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.') +
-      (admin ? '' : ' Admins can change it.');
+      (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.');
   };
   paintAgent();
   agentSave.addEventListener('click', () => {
@@ -327,20 +310,19 @@ export function openSettings(
     net.send({ t: 'prompts.agent', choice: null });
   });
 
-  // The prompts the office writes for workers by itself, for the whole office. Admins rewrite them.
+  // The prompts the office writes for workers by itself, for the whole office.
   const promptsOpen = h('button.btn', { type: 'button', onclick: () => openPromptEditor(net) });
   const promptsNote = h('p.setting-note');
   const paintPrompts = () => {
     const n = rewrittenPrompts();
-    promptsOpen.textContent = store.me.admin ? 'Edit the prompts…' : 'Read the prompts…';
+    promptsOpen.textContent = 'Edit the prompts…';
     promptsNote.textContent =
       'What Hand to a worker, Review and the boards’ other buttons tell a worker, the note the queue adds to a task, the board agents’ briefs, the meeting room’s parts and the sign writer’s instructions. ' +
-      (n ? `${n} of them rewritten.` : 'All as the office wrote them.') +
-      (store.me.admin ? '' : ' Admins can rewrite them.');
+      (n ? `${n} of them rewritten.` : 'All as the office wrote them.');
   };
   paintPrompts();
 
-  // The most workers the office runs at once, across every floor. Admins set it.
+  // The most workers the office runs at once, across every floor.
   const limitInput = h('input', { type: 'text', inputmode: 'numeric', 'aria-label': 'Most workers at once', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const limitSave = h('button.btn.primary', { type: 'button' }, 'Set limit');
   const limitClear = h('button.btn', { type: 'button' });
@@ -348,8 +330,6 @@ export function openSettings(
   const limitNote = h('p.setting-note');
   const paintLimit = () => {
     const m = store.machine;
-    const admin = store.me.admin;
-    limitRow.classList.toggle('hidden', !admin);
     limitInput.placeholder = m.ceiling ? `1 to ${m.ceiling}` : 'e.g. 6';
     limitClear.textContent = m.ceiling ? `Back to ${m.ceiling}` : 'No limit';
     limitClear.classList.toggle('hidden', !m.set);
@@ -359,7 +339,7 @@ export function openSettings(
         : `At most ${m.limit} worker${m.limit === 1 ? '' : 's'} at once, across every floor (${m.workers} now), shells and board agents too. Hiring past that is refused.`;
     const from = m.set ? ` Set by ${m.set.by} ${timeAgo(m.set.at)}.` : '';
     const cap = m.ceiling ? ` The office was started with --max-workers ${m.ceiling}, so it can't go any higher.` : '';
-    limitNote.textContent = now + from + cap + (admin ? '' : ' Admins can change it.');
+    limitNote.textContent = now + from + cap;
   };
   paintLimit();
   const saveLimit = () => {
@@ -408,7 +388,7 @@ export function openSettings(
   };
   paintLeave();
 
-  // Where the elevator looks for existing git projects on the office's machine. Admins move it.
+  // Where the elevator looks for existing git projects on the office's machine.
   const dirInput = h('input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const dirSave = h('button.btn.primary', { type: 'button' }, 'Save');
   const dirDefault = h('button.btn', { type: 'button' }, 'Use the default');
@@ -417,14 +397,12 @@ export function openSettings(
   const dirNote = h('p.setting-note');
   const paintDir = () => {
     const { dir, custom, by, at } = store.projectsDir;
-    const admin = store.me.admin;
     dirInput.value = dir;
-    dirRow.classList.toggle('hidden', !admin);
-    dirActions.classList.toggle('hidden', !admin || !custom);
+    dirActions.classList.toggle('hidden', !custom);
     dirNote.textContent =
       `The elevator lists the git projects it finds in ${dir} on the office’s machine (up to four folders deep) and opens the one you pick as a floor, right where it is. Nothing is cloned or copied.` +
       (custom && by && at ? ` Set by ${by} ${timeAgo(at)}.` : '') +
-      (admin ? ' Floors you already have stay where they are when you move it.' : ' An admin can move it.');
+      ' Floors you already have stay where they are when you move it.';
   };
   paintDir();
   const saveDir = () => {
@@ -438,7 +416,7 @@ export function openSettings(
   });
   dirDefault.addEventListener('click', () => net.send({ t: 'floor.projectsDir', dir: '' }));
 
-  // Jira: the office's one account (admins connect it; a read-only token is enough), and the epic this floor's issue board shows.
+  // Jira: the office's one account (a read-only token is enough), and the epic this floor's issue board shows.
   const jiraSite = h('input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const jiraEmail = h('input', { type: 'email', placeholder: 'Email of the account the token belongs to', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const jiraToken = h('input', { type: 'password', placeholder: 'API token (read-only is enough)', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
@@ -463,11 +441,10 @@ export function openSettings(
   let epicCard: HTMLElement | null = null;
   const paintJira = () => {
     const { connection, epic } = store.jira;
-    const admin = store.me.admin;
     const onFloor = !!store.floor;
-    jiraForm.classList.toggle('hidden', !admin || (!!connection && !editingJira));
+    jiraForm.classList.toggle('hidden', !!connection && !editingJira);
     jiraCancel.classList.toggle('hidden', !connection);
-    jiraActions.classList.toggle('hidden', !admin || !connection || editingJira);
+    jiraActions.classList.toggle('hidden', !connection || editingJira);
     jiraConnect.disabled = jiraBusy === 'connect';
     jiraConnect.textContent = jiraBusy === 'connect' ? 'Checking…' : 'Connect';
     jiraNote.classList.toggle('bad', !!jiraError);
@@ -475,13 +452,11 @@ export function openSettings(
       ? `⚠️ ${jiraError}`
       : connection
         ? `🎫 Reading ${connection.site} as ${connection.name === connection.email ? connection.email : `${connection.name} (${connection.email})`}, set up by ${connection.by} ${timeAgo(connection.at)}. The office only reads Jira; it never changes a ticket.`
-        : admin
-          ? 'Connect the office to Jira Cloud: a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. A read-only token (scope read:jira-work) is enough, since the office only reads. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.'
-          : 'The office isn’t connected to Jira. An admin can connect it.';
+        : 'Connect the office to Jira Cloud: a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. A read-only token (scope read:jira-work) is enough, since the office only reads. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.';
     const showEpic = !!connection && onFloor;
     epicCard?.classList.toggle('hidden', !showEpic);
-    epicRow.classList.toggle('hidden', !admin || !showEpic);
-    epicActions.classList.toggle('hidden', !admin || !showEpic || !epic);
+    epicRow.classList.toggle('hidden', !showEpic);
+    epicActions.classList.toggle('hidden', !showEpic || !epic);
     epicSave.disabled = jiraBusy === 'epic';
     epicSave.textContent = jiraBusy === 'epic' ? 'Checking…' : 'Set epic';
     if (!epicInput.value && epic) epicInput.value = epic.key;
@@ -491,9 +466,7 @@ export function openSettings(
       ? `⚠️ ${epicError}`
       : epic
         ? `This floor’s issue board has a Jira tab for ${epic.key}${epic.summary ? ` (“${epic.summary}”)` : ''}: all of its tickets, in To Do, In Progress and Done. Set by ${epic.by} ${timeAgo(epic.at)}.`
-        : admin
-          ? 'Give this floor a Jira epic and its issue board gets a Jira tab with all of the epic’s tickets, in To Do, In Progress and Done.'
-          : 'This floor has no Jira epic. An admin can set one.';
+        : 'Give this floor a Jira epic and its issue board gets a Jira tab with all of the epic’s tickets, in To Do, In Progress and Done.';
   };
   const offSetup = onJiraSetup((msg) => {
     if (msg.step === 'connect') {
@@ -556,10 +529,7 @@ export function openSettings(
     net.send({ t: 'jira.epic', key: '' });
   });
 
-  const account = store.me.account;
-  const signOut = h('button.btn', { type: 'button' }, 'Sign out');
-  signOut.addEventListener('click', onSignOut);
-  const character = h('button.btn', { type: 'button' }, account ? 'Change your look' : 'Change your look & name');
+  const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
   paintJira();
   const sourceReload = hotReloadSettings();
@@ -584,7 +554,6 @@ export function openSettings(
         fadeRow,
         h('p.setting-note', {}, 'A blink through black as you land, or a straight cut when it’s off.'),
       ),
-      card('Signed in', h('div.volume', {}, signOut), h('p.setting-note', {}, account ? `As ${account.name}, with your own account (${account.role}).` : 'With the shared office password.')),
     ],
     sound: [
       card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done.')),
@@ -616,7 +585,7 @@ export function openSettings(
       card('Workspace folder', dirRow, dirActions, dirNote),
       card('Source hot reload', sourceReload.element),
     ],
-    workers: [card('Default worker', agentNow, agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
+    workers: [card('Default worker', agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
   };
 
   // The categories down the side, the one picked on the right. On a phone the row is across the top.
@@ -667,10 +636,10 @@ export function openSettings(
   const offNotify = store.on('notify', paintHook);
   const offTheme = store.on('theme', paintTheme);
   const offLeave = store.on('leaveOnMerge', paintLeave);
-  const offLimit = [store.on('machine', paintLimit), store.on('me', paintLimit)];
-  const offDir = [store.on('projectsDir', paintDir), store.on('me', paintDir)];
-  const offJira = [store.on('jira', paintJira), store.on('me', paintJira), offSetup];
-  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts), store.on('me', paintAgent), store.on('me', paintPrompts)];
+  const offLimit = [store.on('machine', paintLimit)];
+  const offDir = [store.on('projectsDir', paintDir)];
+  const offJira = [store.on('jira', paintJira), offSetup];
+  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts)];
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {

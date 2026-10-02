@@ -19,7 +19,6 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Your character', 'you', null],
     ['Camera view', 'you', 'you'],
     ['VR (headset browser)', 'you', 'you'],
-    ['Signed in', 'you', null],
     ['Office sounds', 'sound', 'you'],
     ['Jukebox', 'sound', 'you'],
     ['Desktop notifications', 'notify', 'you'],

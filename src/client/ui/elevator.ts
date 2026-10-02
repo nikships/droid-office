@@ -10,7 +10,7 @@ import { confirmDialog } from './prompt';
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
 // git checkouts already in the office's workspace folder and makes the one you pick a new floor, right
 // where it is: nothing is cloned or copied. The first time the office runs there are no floors, and
-// this is where you start. Admins can take a floor off the building here too; its checkout stays on disk.
+// this is where you start. A floor can be taken off the building here too; its checkout stays on disk.
 
 export interface ElevatorOptions {
   net: Net;
@@ -66,7 +66,7 @@ export function openElevator(opts: ElevatorOptions): void {
   const refreshBtn = h('button.btn', { type: 'button', title: 'Look in the workspace folder again' }, '↻');
   const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
 
-  // Where checkouts are looked for. Admins can move it right here: the first project is when it matters.
+  // Where checkouts are looked for. It can be moved right here: the first project is when it matters.
   const dirInput = h('input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const dirSave = h('button.btn.primary', { type: 'button' }, 'Save');
   const dirCancel = h('button.btn', { type: 'button' }, 'Cancel');
@@ -126,10 +126,9 @@ export function openElevator(opts: ElevatorOptions): void {
     return btn;
   };
 
-  /** The floor's button, with a 🗑 beside it for admins to take it off the building. */
+  /** The floor's button, with a 🗑 beside it to take it off the building. */
   const floorRow = (f: FloorInfo, i: number) => {
     const btn = floorButton(f, i);
-    if (!store.me.admin) return btn;
     const off = h('button.btn.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
     off.addEventListener('click', () => confirmRemove(f));
     return h('div.floor-row', {}, btn, off);
@@ -139,7 +138,6 @@ export function openElevator(opts: ElevatorOptions): void {
     const next = store.floors.find((o) => o.id !== f.id);
     const workers = f.workers ? `Its ${f.workers} worker${f.workers === 1 ? '' : 's'} stop${f.workers === 1 ? 's' : ''}. ` : '';
     const ride = f.id === store.floor ? `You ride the elevator to ${next ? next.name : 'the lobby'}. ` : '';
-    // The office was started in it: its accounts and password live in that .droid-office too, and stay.
     const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
     confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its checkout stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
   };
@@ -233,23 +231,18 @@ export function openElevator(opts: ElevatorOptions): void {
               ? ''
               : q
                 ? 'Nothing matches. Type the full path of a checkout in the workspace folder to add one that isn’t listed.'
-                : `No git projects in ${store.projectsDir.dir}.${store.me.admin ? ' Change the folder below.' : ' An admin can change the folder.'}`,
+                : `No git projects in ${store.projectsDir.dir}. Change the folder below.`,
         ),
       );
     if (matches.length > SHOWN) rows.push(h('p.empty', { style: 'padding:8px 10px' }, `…and ${matches.length - SHOWN} more — type to narrow it down`));
     listEl.replaceChildren(...rows);
     const pick = choice();
-    const change = store.me.admin ? h('button.btn.dir-change', { type: 'button', title: 'Look for projects in another folder on the office’s machine' }, 'Change folder') : null;
-    change?.addEventListener('click', () => editDir(true));
+    const change = h('button.btn.dir-change', { type: 'button', title: 'Look for projects in another folder on the office’s machine' }, 'Change folder');
+    change.addEventListener('click', () => editDir(true));
     statusEl.replaceChildren(
       adding
         ? h('p.note.busy', {}, `⏳ Adding ${adding}…`)
-        : h(
-            'p.note',
-            {},
-            `Looking in ${store.projectsDir.dir || 'the workspace folder'} for git projects. The new floor works in the checkout where it is: nothing is cloned or copied.${store.me.admin ? ' Pick another folder here or in ⚙️ Settings.' : ''}`,
-            change,
-          ),
+        : h('p.note', {}, `Looking in ${store.projectsDir.dir || 'the workspace folder'} for git projects. The new floor works in the checkout where it is: nothing is cloned or copied. Pick another folder here or in ⚙️ Settings.`, change),
       ...[r.error, error].filter(Boolean).map((e) => h('p.err', {}, e)),
     );
     addBtn.disabled = !!adding || !pick || store.floors.some((f) => f.dir === pick);
@@ -322,13 +315,7 @@ export function openElevator(opts: ElevatorOptions): void {
     h('div.body', {}, intro, floorsEl, addEl),
     h('footer', {}, h('span.grow', {}, setup ? withControlHint('Your office, one floor per project', ' · Esc to look around first') : withControlHint('Pick a floor', ' · Esc to stay here')), addBtn),
   );
-  const unsubs = [
-    store.on('floors', () => (renderFloors(), renderAdd())),
-    store.on('repos', renderAdd),
-    store.on('projectsDir', () => (editDir(false), renderAdd())),
-    store.on('floor', renderFloors),
-    store.on('me', () => (renderFloors(), renderAdd())),
-  ];
+  const unsubs = [store.on('floors', () => (renderFloors(), renderAdd())), store.on('repos', renderAdd), store.on('projectsDir', () => (editDir(false), renderAdd())), store.on('floor', renderFloors)];
   const modal = openModal(el, {
     doing: '🛗 at the elevator',
     // A stray click shouldn't lose the first-run panel; ✕ and Esc still close it.

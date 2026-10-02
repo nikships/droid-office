@@ -20,8 +20,8 @@ const drafts = new Map<PromptId, string>();
 const norm = (text: string) => text.replace(/\r\n?/g, '\n').trim();
 
 /**
- * The office's prompts, to read and (for admins) rewrite: what the boards' buttons send workers, the
- * queue's worktree note, the board agents' briefs, the meeting room's parts and the sign writer's
+ * The office's prompts, to read and rewrite: what the boards' buttons send workers, the queue's
+ * worktree note, the board agents' briefs, the meeting room's parts and the sign writer's
  * instructions. A list down the side, grouped by where they're used; the one picked, with its
  * placeholders, on the right.
  */
@@ -86,30 +86,24 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
 
   const paint = () => {
     const def = PROMPTS[current];
-    const admin = store.me.admin;
     const edit = store.prompts.custom[current];
     heading.textContent = def.label;
     status.textContent = dirty(current) ? 'Not saved yet' : edit ? `Rewritten by ${edit.by} ${timeAgo(edit.at)}` : 'The default';
     status.classList.toggle('dirty', dirty(current));
     used.textContent = def.used + (def.optional ? ' Leave it empty to send nothing.' : '');
-    ta.readOnly = !admin;
     const names = Object.entries(def.vars);
     vars.replaceChildren(
       ...(names.length
         ? [
-            h('span.prompt-vars-head', {}, admin ? 'Placeholders (click one to put it in):' : 'Placeholders:'),
-            ...names.map(([name, desc]) => h('button.prompt-var', { type: 'button', title: desc, disabled: !admin, onclick: () => insert(`{{${name}}}`) }, h('code', {}, `{{${name}}}`), h('small', {}, desc))),
+            h('span.prompt-vars-head', {}, 'Placeholders (click one to put it in):'),
+            ...names.map(([name, desc]) => h('button.prompt-var', { type: 'button', title: desc, onclick: () => insert(`{{${name}}}`) }, h('code', {}, `{{${name}}}`), h('small', {}, desc))),
           ]
         : [h('span.prompt-vars-head', {}, 'No placeholders: it’s sent just as it’s written.')]),
     );
-    reset.classList.toggle('hidden', !admin);
     reset.toggleAttribute('disabled', norm(ta.value) === def.text);
-    undo.classList.toggle('hidden', !admin || !dirty(current));
-    save.classList.toggle('hidden', !admin);
+    undo.classList.toggle('hidden', !dirty(current));
     save.toggleAttribute('disabled', !dirty(current));
-    note.textContent = admin
-      ? 'For the whole office, on every floor: GitHub and GitLab floors fill in their own commands. A rewritten prompt is used from the next time it’s sent.'
-      : 'Only admins can change the office’s prompts. This is what they say now.';
+    note.textContent = 'For the whole office, on every floor: GitHub and GitLab floors fill in their own commands. A rewritten prompt is used from the next time it’s sent.';
     paintItems();
     paintWarnings();
   };
@@ -156,14 +150,12 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
     if (!drafts.has(current) && ta.value !== saved(current)) ta.value = saved(current);
     paint();
   });
-  const offMe = store.on('me', paint);
   const modal = openModal(el, {
     doing: '📝 reading the office’s prompts',
     // A click beside it shouldn't throw away what you're writing.
     backdropCloses: false,
     onClose: () => {
       offPrompts();
-      offMe();
     },
   });
   close.addEventListener('click', () => modal.close());

@@ -4,10 +4,10 @@ import http from 'node:http';
 import path from 'node:path';
 import type { ServiceInfo } from '../shared/protocol.js';
 
-// Finds the web servers workers start (npm run dev, python -m http.server, ...) so teammates can
+// Finds the web servers workers start (npm run dev, python -m http.server, ...) so the owner can
 // reach them through the office: every few seconds, list the TCP ports this user's processes
 // listen on, and credit each one to the worker whose terminal started it. Servers no worker
-// started (yours, from your own terminal) aren't listed.
+// started (from another terminal) aren't listed.
 
 const SCAN_MS = 4000;
 /** A port that stopped listening this recently still gets a "stopped" page instead of the office. */

@@ -41,10 +41,10 @@ test('legacy hosts can toggle the workspace, and right Menu stays reserved for A
   assert.match(controls, /if \(pad\.menu && !s\.wasMenu\) \{\n\s*this\.hooks\.togglePanel\(\);/);
 });
 
-test('the office page has no on-screen keyboard; only the sign-in page mounts one', () => {
+test('no page mounts an on-screen keyboard; the office page has none', () => {
   const importsPanelKeyboard = (path: string, src: string) => [...src.matchAll(/from '(\.{1,2}\/[^']*)'/g)].some((m) => relative(ROOT, join(ROOT, path, '..', m[1])) === 'native/keyboard');
   const mounts = files.filter(({ path, src }) => importsPanelKeyboard(path, src)).map((f) => f.path);
-  assert.deepEqual(mounts, ['login.ts']);
+  assert.deepEqual(mounts, []);
   assert.doesNotMatch(file('native/ui.ts'), /keyboard\(|toggleKeyboard|\.native-kb/);
   assert.doesNotMatch(file('native/controls.ts'), /toggleKeyboard/);
 });
@@ -53,7 +53,6 @@ test('no page brings back a keyboard it remembers from an earlier visit', () => 
   // The headset's stored droid-office.native-keyboard = '1' must not show a keyboard at the next launch.
   const remembering = files.filter(({ path, src }) => path.endsWith('.ts') && /native-keyboard|panel-keyboard/.test(src)).map((f) => f.path);
   assert.deepEqual(remembering, []);
-  assert.doesNotMatch(file('native/keyboard.ts'), /localStorage|sessionStorage/);
 });
 
 test('a first launch with no saved look comes straight in, with no character window', () => {

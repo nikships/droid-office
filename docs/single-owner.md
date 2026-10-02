@@ -481,7 +481,7 @@ npm run test:coverage
 
 When startup, pages, `bin`, `files` or the installer change (A6, A8), also run the
 workflow's "Pack the release" and "Install it with install.sh and start it" steps, including
-the readiness check on `/login.html`.
+the readiness check on `/` (A6 deleted the `/login.html` page the old check used).
 
 For A7 (and A2 if `native/` TypeScript changes), run the native host checks and both
 `assembleDebug` and `assembleRelease`. Linux Vulkan validation is reported as NOT RUN on

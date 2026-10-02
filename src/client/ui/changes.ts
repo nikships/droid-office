@@ -1,6 +1,7 @@
 import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store, words } from '../state';
+import { withToken } from '../token';
 import { h, openModal, type Modal } from './dom';
 import { confirmDialog, openPrompt } from './prompt';
 
@@ -82,7 +83,7 @@ function renderDiff(text: string, truncated: boolean): HTMLElement {
 /** Where one side of a changed picture loads from. The file's signature makes a new URL whenever it changes. */
 function imageUrl(workerId: string, repo: string | undefined, f: ChangedFile, side: 'old' | 'new'): string {
   const q = new URLSearchParams({ floor: store.floor ?? '', worker: workerId, path: f.path, side, v: f.sig, ...(repo ? { repo } : {}) });
-  return `/api/changes/file?${q}`;
+  return withToken(`/api/changes/file?${q}`);
 }
 
 /** A changed picture, before and after; new and deleted files only have the one side. */

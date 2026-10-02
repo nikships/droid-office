@@ -1,4 +1,3 @@
-import { randomBytes, scryptSync } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,23 +19,11 @@ export interface Config {
   port: number;
   /** Advertise this office to nearby Galaxy XR apps over DNS-SD, unless bound only to loopback. */
   discovery: boolean;
-  /** Plaintext password, only when known: from --password, or generated and not yet claimed. */
-  password?: string;
-  passwordGenerated: boolean;
-  /** scrypt(password, salt): what logins are checked against and sessions are keyed on. */
-  verifier: Buffer;
-  salt: Buffer;
-  secret: string;
-  /** One-time token that lets the first visitor see the generated password (then never again). */
-  claimToken?: string;
-  claimed: boolean;
-  /** Forget the plaintext password for good once it has been shown. */
-  markClaimed(): void;
   agentCmd: string;
   agentArgs: string[];
   tls?: { cert: string; key: string };
   trustProxy: boolean;
-  /** Address teammates SSH-tunnel to (set by deploy/aws.sh); enables invites from the office. */
+  /** This machine's public address (set by deploy/aws.sh): the Services board's owner SSH hint. */
   publicHost?: string;
   /** Daily tracked Claude Code spend budget, USD. Other providers' spend is excluded. */
   budget?: number;
@@ -59,7 +46,6 @@ Usage:
   droid-office [dir] [options]
   droid-office setup [--projects <dir>] [--project <repo>]...
   droid-office prune [dir] [--dry-run] [--force]
-  droid-office accounts [list|invite|revoke|role|password] ...
 
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
@@ -72,7 +58,7 @@ which folder your projects are in and which of them to open first.
 Started from anywhere, the office keeps its data in --home. Given a [dir] (or
 started in a project where an office already ran), it keeps its data in
 <dir>/.droid-office as it always has, and that project starts out as a floor
-(an admin can take it off in the elevator like any other).
+(it can be taken off in the elevator like any other).
 
 Commands:
   setup                   Pick the folder your projects are in and which of them
@@ -81,8 +67,6 @@ Commands:
   prune                   Remove leftover worker worktrees (.droid-office/worktrees/)
                           and their office/* branches. Anything with uncommitted
                           changes or unpushed commits is kept unless --force is given.
-  accounts                Invite, list and revoke people's own accounts, and switch
-                          the shared password off or on (see accounts --help)
 
 Options:
       --home <dir>        Where the office keeps its data when no [dir] is given
@@ -97,14 +81,6 @@ Options:
   -H, --host <addr>       Address to bind (default 0.0.0.0)
       --no-discovery      Disable local-network discovery for the Galaxy XR app
                           (also DROID_OFFICE_DISCOVERY=0; enabled by default)
-      --password <pw>     Office password (env DROID_OFFICE_PASSWORD).
-                          Without one, a random password is generated once and
-                          saved in <dir>/.droid-office/config.json
-      --claim-token <t>   Show the generated password exactly once, at /claim?t=<t>
-                          (env DROID_OFFICE_CLAIM_TOKEN). After that only a hash
-                          is kept and the password is never displayed again.
-      --reset-password    Forget the generated password (a new one is made on the
-                          next start) and exit
       --agent <cmd>       Default agent command (default "droid", env DROID_OFFICE_AGENT)
       --agent-args <str>  Extra args for the configured agent, e.g. "--model opus"
                           Workers can also select Droid, Claude Code, OpenCode, Codex, Grok or Muse in the UI
@@ -119,8 +95,8 @@ Options:
                           day (env DROID_OFFICE_BUDGET_PAUSE=1)
       --max-workers <n>   Run at most this many workers at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
-                          is refused. Admins can lower the limit from ⚙️
-                          Settings, but not raise it past this
+                          is refused. It can be lowered from ⚙️
+                          Settings, but not raised past this
       --webhook <url>     Post to this Slack or Discord webhook when a worker
                           needs input or finishes (env DROID_OFFICE_WEBHOOK).
                           Also settable from ⚙️ Settings in the office; "" turns it off
@@ -208,15 +184,12 @@ export function loadConfig(argv: string[]): Config {
   let port = Number(process.env.PORT) || 4600;
   let host = '0.0.0.0';
   let discovery = process.env.DROID_OFFICE_DISCOVERY !== '0';
-  let password = process.env.DROID_OFFICE_PASSWORD || '';
   let agentCmd = process.env.DROID_OFFICE_AGENT || 'droid';
   let agentArgs: string[] = splitArgs(process.env.DROID_OFFICE_AGENT_ARGS || '');
   let tlsCert = '';
   let tlsKey = '';
   let selfSigned = false;
   let trustProxy = false;
-  let claimToken = process.env.DROID_OFFICE_CLAIM_TOKEN || '';
-  let resetPassword = false;
   let budget = process.env.DROID_OFFICE_BUDGET || '';
   let budgetPause = !!process.env.DROID_OFFICE_BUDGET_PAUSE && process.env.DROID_OFFICE_BUDGET_PAUSE !== '0';
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
@@ -242,9 +215,6 @@ export function loadConfig(argv: string[]): Config {
       case '--no-discovery':
         discovery = false;
         break;
-      case '--password':
-        password = takeValue(argv, i++, a);
-        break;
       case '--agent':
         agentCmd = takeValue(argv, i++, a);
         break;
@@ -264,12 +234,6 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--trust-proxy':
         trustProxy = true;
-        break;
-      case '--claim-token':
-        claimToken = takeValue(argv, i++, a);
-        break;
-      case '--reset-password':
-        resetPassword = true;
         break;
       case '--budget':
         budget = takeValue(argv, i++, a);
@@ -307,7 +271,7 @@ export function loadConfig(argv: string[]): Config {
   }
 
   // An office already runs in this project (started here before there were floors): carry on with
-  // it, its workers and its password, rather than open an empty building somewhere else.
+  // it and its workers, rather than open an empty building somewhere else.
   const cwd = process.cwd();
   if (!project && !homeGiven && cwd !== home && existsSync(path.join(cwd, '.droid-office', 'config.json'))) project = cwd;
   if (project && !existsSync(project)) {
@@ -340,47 +304,10 @@ export function loadConfig(argv: string[]): Config {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   if (project) excludeFromGit(dir);
 
+  // The file's presence says an office ran here (see above); it keeps no secrets. LAN access
+  // is a per-start token in memory (see lan.ts), and old password state left here is dropped.
   const cfgPath = path.join(dataDir, 'config.json');
-  let stored: { password?: string; verifier?: string; salt?: string; secret?: string; claimedAt?: number } = {};
-  try {
-    stored = JSON.parse(readFileSync(cfgPath, 'utf8'));
-  } catch {
-    // first run
-  }
-  const save = () => writeFileSync(cfgPath, JSON.stringify(stored, null, 2), { mode: 0o600 });
-  if (!stored.secret) stored.secret = randomBytes(32).toString('hex');
-  if (!stored.salt) stored.salt = randomBytes(16).toString('hex');
-  const salt = Buffer.from(stored.salt, 'hex');
-  const hash = (pw: string) => scryptSync(pw, salt, 32);
-
-  if (resetPassword) {
-    delete stored.password;
-    delete stored.verifier;
-    delete stored.claimedAt;
-    save();
-    console.log('droid-office: password forgotten — a new one is generated on the next start');
-    process.exit(0);
-  }
-
-  let verifier: Buffer;
-  let passwordGenerated = false;
-  if (password) {
-    verifier = hash(password);
-  } else {
-    passwordGenerated = true;
-    if (stored.verifier) {
-      verifier = Buffer.from(stored.verifier, 'hex');
-      password = stored.password ?? '';
-    } else {
-      // New password (or a legacy plaintext one): keep the plaintext only until it's been shown.
-      password = stored.password ?? randomBytes(9).toString('base64url');
-      stored.password = password;
-      verifier = hash(password);
-      stored.verifier = verifier.toString('hex');
-      delete stored.claimedAt;
-    }
-  }
-  save();
+  writeFileSync(cfgPath, '{}\n', { mode: 0o600 });
 
   let tls: Config['tls'];
   if (tlsCert || tlsKey) {
@@ -402,20 +329,6 @@ export function loadConfig(argv: string[]): Config {
     host,
     port,
     discovery,
-    password: password || undefined,
-    passwordGenerated,
-    verifier,
-    salt,
-    secret: stored.secret,
-    claimToken: claimToken || undefined,
-    claimed: !!stored.claimedAt,
-    markClaimed() {
-      stored.claimedAt = Date.now();
-      delete stored.password;
-      save();
-      this.claimed = true;
-      this.password = undefined;
-    },
     agentCmd,
     agentArgs,
     tls,

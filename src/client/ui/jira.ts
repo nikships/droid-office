@@ -1,6 +1,7 @@
 import { ticketColumns, ticketPrompt, type JiraComment, type JiraTicket, type JiraTicketDetail } from '../../shared/jira';
 import type { ServerMsg } from '../../shared/protocol';
 import { store } from '../state';
+import { withToken } from '../token';
 import { h, openModal, timeAgo } from './dom';
 import { markdown } from './markdown';
 
@@ -28,7 +29,7 @@ export function onJiraSetup(fn: (msg: SetupMsg) => void): () => void {
 
 async function ticketDetail(key: string): Promise<JiraTicketDetail> {
   const floor = store.floor ? `&floor=${encodeURIComponent(store.floor)}` : '';
-  const r = await fetch(`/api/jira/ticket?key=${encodeURIComponent(key)}${floor}`, { credentials: 'same-origin' });
+  const r = await fetch(withToken(`/api/jira/ticket?key=${encodeURIComponent(key)}${floor}`), { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.json() as Promise<JiraTicketDetail>;
 }

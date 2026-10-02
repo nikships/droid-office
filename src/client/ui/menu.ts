@@ -18,7 +18,7 @@ export interface HudAction {
   on?: () => boolean;
   /** Stands out: an update to install, a worker waiting. */
   tone?: () => 'primary' | 'danger' | undefined;
-  /** Only offered some of the time (Invite, Accounts, Upgrade). */
+  /** Only offered some of the time (Upgrade, the rooftop bar, Enter VR). */
   shown?: () => boolean;
   /** Up on the top bar by itself while true, pinned or not: a meeting is on, an update is out. */
   status?: () => boolean;
@@ -69,7 +69,7 @@ export function onHudRender(fn: () => void): () => void {
   };
 }
 
-/** Whether an action is offered right now (Invite, Accounts and Upgrade come and go). */
+/** Whether an action is offered right now (Upgrade, the rooftop bar and Enter VR come and go). */
 export function actionOffered(a: HudAction): boolean {
   return a.shown?.() ?? true;
 }
@@ -308,7 +308,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
     },
     true,
   );
-  for (const t of ['workers', 'issues', 'pulls', 'services', 'queue', 'meeting', 'upgrade', 'me', 'floors'] as Topic[]) store.on(t, render);
+  for (const t of ['workers', 'issues', 'pulls', 'services', 'queue', 'meeting', 'upgrade', 'floors'] as Topic[]) store.on(t, render);
   applyPanels();
   render();
   return { refresh: render, toggleMenu };

@@ -778,67 +778,6 @@ export interface FloorView {
   ball: BallState;
 }
 
-export type AccountRole = 'admin' | 'member';
-
-/** Who this browser is signed in as. */
-export interface Me {
-  /** Your own account; missing when you came in with the shared office password. */
-  account?: { name: string; role: AccountRole };
-  /** May invite, list and revoke accounts. */
-  admin: boolean;
-}
-
-export interface AccountInfo {
-  id: string;
-  name: string;
-  role: AccountRole;
-  createdAt: number;
-  createdBy: string;
-  lastSeenAt?: number;
-  /** In the office right now. */
-  online: boolean;
-}
-
-/** A single-use link that makes a named account: /join#<token>. */
-export interface AccountInvite {
-  id: string;
-  token: string;
-  /** The name the account gets; when missing, whoever opens the link picks one. */
-  name?: string;
-  role: AccountRole;
-  createdBy: string;
-  createdAt: number;
-  expiresAt: number;
-}
-
-/** Per-person accounts, for admins (see server/accounts.ts). */
-export interface AccountsState {
-  accounts: AccountInfo[];
-  invites: AccountInvite[];
-  /** Whether the shared office password still lets people in. */
-  sharedPassword: boolean;
-}
-
-export interface TeamMember {
-  /** GitHub username (or the name deploy/aws.sh invited a key file under). */
-  name: string;
-  keys: number;
-}
-
-/** Who may SSH-tunnel into the office. Only offices deployed with deploy/aws.sh manage this. */
-export interface TeamState {
-  /** Why invites can't be managed from the office, when they can't. */
-  unavailable?: string;
-  error?: string;
-  /** user@host teammates tunnel to, e.g. office@203.0.113.7 */
-  ssh?: string;
-  /** The office's port on the box (tunnel destination). */
-  port: number;
-  /** SHA256 fingerprint of the box's ED25519 host key, to check on first connect. */
-  fingerprint?: string;
-  members: TeamMember[];
-}
-
 /** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
 export interface ServiceInfo {
   port: number;
@@ -860,7 +799,7 @@ export interface ServicesState {
   items: ServiceInfo[];
   /** The office's port on its machine. Service tunnels end there and the office relays them. */
   port: number;
-  /** user@host teammates tunnel to (offices deployed with deploy/aws.sh), e.g. office@203.0.113.7 */
+  /** user@host the owner tunnels with (offices deployed with deploy/aws.sh), e.g. ubuntu@203.0.113.7 */
   ssh?: string;
 }
 
@@ -1087,27 +1026,16 @@ export type ClientMsg =
   | { t: 'notify.webhook'; url: string }
   /** Post a test message through the webhook; the outcome comes back as a toast. */
   | { t: 'notify.test' }
-  /** Admins: the most workers the office runs at once, across every floor; null takes the limit off. */
+  /** The most workers the office runs at once, across every floor; null takes the limit off. */
   | { t: 'machine.limit'; limit: number | null }
-  /** Admins: connect the office to Jira Cloud with one account's email and API token (read-only is enough); answered with `jira.setup`. */
+  /** Connect the office to Jira Cloud with one account's email and API token (read-only is enough); answered with `jira.setup`. */
   | { t: 'jira.connect'; site: string; email: string; token: string }
-  /** Admins: forget the office's Jira connection. */
+  /** Forget the office's Jira connection. */
   | { t: 'jira.disconnect' }
-  /** Admins: show a Jira epic on the floor you're on ('' removes it); answered with `jira.setup`. */
+  /** Show a Jira epic on the floor you're on ('' removes it); answered with `jira.setup`. */
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
-  | { t: 'team.get' }
-  | { t: 'team.invite'; github: string }
-  | { t: 'team.remove'; name: string }
-  /** The rest of the accounts messages are for admins only. */
-  | { t: 'accounts.get' }
-  | { t: 'accounts.invite'; name?: string; role: AccountRole }
-  | { t: 'accounts.cancel'; inviteId: string }
-  | { t: 'accounts.revoke'; accountId: string }
-  | { t: 'accounts.role'; accountId: string; role: AccountRole }
-  /** Let the shared office password sign people in, or stop it. */
-  | { t: 'accounts.shared'; on: boolean }
   /**
    * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
    * floor's repository of a worker across repositories; none follows its own.
@@ -1155,21 +1083,21 @@ export type ClientMsg =
   | { t: 'floor.repos'; refresh?: boolean }
   /** Make an existing checkout (its full path, in the workspace folder) a new floor, where it is; answered with `floor.added`. */
   | { t: 'floor.add'; dir: string }
-  /** Take a floor off the building (admins only). Its checkout stays on disk; everyone on it rides to another floor. */
+  /** Take a floor off the building. Its checkout stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
   /** Dress the building up for a holiday, take the decorations down ('off'), or follow the calendar ('auto'). */
   | { t: 'theme.set'; pick: ThemePick }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
-  /** Where the office looks for checkouts from now on (admins only); '' goes back to the default. */
+  /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Pick up the floor's basketball (or catch it): yours if it isn't held. */
   | { t: 'ball.take' }
   /** Throw the basketball in your hands from (x, y, z) at (vx, vy, vz) m/s, or drop it; every window flies it the same way. */
   | { t: 'ball.throw'; x: number; y: number; z: number; vx: number; vy: number; vz: number }
-  /** Rewrite one of the office's prompts (admins only); null puts the default back. */
+  /** Rewrite one of the office's prompts; null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
-  /** Pick the worker a new one starts on when nobody picks (admins only); null goes back to the office's --agent. */
+  /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
   /** Read DroidProxy's limits again now (E at the machine monitor); answered with `proxy`, or a toast when it can't yet. */
   | { t: 'proxy.refresh' }
@@ -1200,14 +1128,11 @@ export type ServerMsg =
       floors: FloorInfo[];
       /** Where the office looks for checkouts to add as floors, on the office's machine. */
       projectsDir: ProjectsDirState;
-      /** Whether teammates can be invited from the office (see TeamState). */
-      invites: boolean;
       /** The running server's version; a change after a reconnect means the office was upgraded. */
       version: string;
       upgrade: UpgradeState;
       usage: UsageState;
       limits: PlanLimits;
-      me: Me;
       notify: NotifyState;
       machine: MachineState;
       proxy: ProxyState;
@@ -1257,7 +1182,6 @@ export type ServerMsg =
    * revival window ran out) can leave the text out.
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
-  | { t: 'team'; state: TeamState }
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
@@ -1274,7 +1198,7 @@ export type ServerMsg =
   /** The office's Jira connection or this floor's epic changed. */
   | { t: 'jira'; state: JiraFloorState }
   | { t: 'jira.board'; state: JiraBoardState | null }
-  /** To the admin setting Jira up: done, or why not. */
+  /** To whoever is setting Jira up: done, or why not. */
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
   | { t: 'proxy'; state: ProxyState }
@@ -1285,13 +1209,5 @@ export type ServerMsg =
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
   | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }
-  /** Sent to whoever asked for the invite. */
-  | { t: 'team.invited'; github: string; name?: string; keys?: number; error?: string }
-  /** Sent to admins, when asked and whenever accounts change. */
-  | { t: 'accounts'; state: AccountsState }
-  /** Sent to whoever made the invite. */
-  | { t: 'accounts.invited'; invite?: AccountInvite; error?: string }
-  /** Your role changed. */
-  | { t: 'me'; me: Me }
   /** `now` is the office's clock as it answered, which the jukebox keeps time by. */
   | { t: 'pong'; at: number; now: number };

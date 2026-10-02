@@ -3,61 +3,8 @@ import assert from 'node:assert/strict';
 import { KEYBOARD_ROWS, codeOf, editText, insertText, pressOf, shiftedLabel, type KeyLike, type Modifier, type TextState } from '../src/client/native/keys.js';
 import { isNativePath, isNativeSearch } from '../src/client/native/mode.js';
 import { TERM_FONT_DESKTOP, TERM_FONT_MAX, TERM_FONT_MIN, TERM_FONT_NATIVE, clampTermFont, onTermFontSize, setTermFontSize, stepTermFont, termFontSize, useNativeTermFont } from '../src/client/ui/term-font.js';
-import { RETURN_PARAM, loginPath, safeReturnTo } from '../src/shared/return-to.js';
-
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
 const at = (value: string, start: number, end = start, dir: TextState['dir'] = 'none'): TextState => ({ value, start, end, dir });
-
-// ---- Sign-in return ----
-
-test('the sign-in page returns to same-origin office paths', () => {
-  assert.equal(safeReturnTo('/?native=1'), '/?native=1');
-  assert.equal(safeReturnTo('/?native=1#board'), '/?native=1#board');
-  assert.equal(safeReturnTo('/share?id=abc%20d'), '/share?id=abc%20d');
-  assert.equal(safeReturnTo('/'), '/');
-});
-
-test('the sign-in page never returns to another site or a non-page', () => {
-  const bad = [
-    'https://evil.example/',
-    '//evil.example/',
-    '/\\evil.example',
-    '\\\\evil.example',
-    '/\t/evil.example',
-    '/\n/evil.example',
-    ' /x',
-    'javascript:alert(1)',
-    'evil.example',
-    '',
-    '/login',
-    '/login?next=/',
-    '/login.html',
-    '/join?x=1',
-    '/claim',
-    '/api/workers',
-    '/api',
-    '/é',
-    `/${'a'.repeat(600)}`,
-    null,
-    undefined,
-    42,
-    ['/'],
-  ];
-  for (const raw of bad) assert.equal(safeReturnTo(raw), '/', JSON.stringify(raw));
-  assert.equal(safeReturnTo('//evil', '/?native=1'), '/?native=1');
-  // Paths that only start like a blocked one are still pages.
-  assert.equal(safeReturnTo('/loginx'), '/loginx');
-  assert.equal(safeReturnTo('/apix'), '/apix');
-});
-
-test('loginPath remembers where to come back to, round-tripping through URLSearchParams', () => {
-  assert.equal(loginPath('/'), '/login');
-  assert.equal(loginPath('//evil.example'), '/login');
-  const p = loginPath('/?native=1');
-  assert.equal(p, '/login?next=%2F%3Fnative%3D1');
-  const back = new URL(p, 'https://office.test').searchParams.get(RETURN_PARAM);
-  assert.equal(safeReturnTo(back), '/?native=1');
-});
 
 // ---- Native mode ----
 
@@ -118,7 +65,7 @@ test('terminal text size clamps, steps and defaults per mode', (t) => {
 
 // ---- Keys ----
 
-test('the sign-in keyboard has the full key set, its modifiers and Hide', () => {
+test('the panel keyboard has the full key set, its modifiers and Hide', () => {
   const ids = new Set(KEYBOARD_ROWS.flat().map((k) => k.id));
   for (const id of ['Escape', 'Tab', 'Enter', 'Backspace', 'Delete', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'mod:ctrl', 'mod:alt', 'mod:shift', 'hide']) {
     assert.ok(ids.has(id), id);

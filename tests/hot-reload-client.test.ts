@@ -7,7 +7,7 @@ import { hotReloadSettings } from '../src/client/ui/hot-reload.js';
 
 const script = readFileSync(new URL('../src/client/public/office-reload.js', import.meta.url), 'utf8');
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-const status = (overrides: Partial<HotReloadState & { admin: boolean }> = {}) => ({ available: true, enabled: true, phase: 'idle', revision: 'one', restartRequired: false, admin: true, ...overrides });
+const status = (overrides: Partial<HotReloadState> = {}) => ({ available: true, enabled: true, phase: 'idle', revision: 'one', restartRequired: false, ...overrides });
 
 class Element {
   children: (Element | string)[] = [];
@@ -232,7 +232,7 @@ test('401 stops polling', async () => {
   assert.equal(b.timers.size, 0);
 });
 
-test('admin can retry and disable from the broken page without game code', async () => {
+test('retry and disable work from the broken page without game code', async () => {
   const b = browser();
   b.setState({ phase: 'error', error: 'Build failed' });
   b.boot();
@@ -251,18 +251,13 @@ test('admin can retry and disable from the broken page without game code', async
   assert.equal(b.banner(), undefined);
 });
 
-test('members see status and restart warning but cannot operate admin buttons', async () => {
+test('a restart warning shows with working buttons', async () => {
   const b = browser();
-  b.setState({ admin: false, restartRequired: true });
+  b.setState({ restartRequired: true });
   b.boot();
   await flush();
   assert.match(b.banner()!.textContent, /Restart the local office/);
-  for (const button of buttons(b.banner()!)) {
-    assert.equal(button.style.display, 'none');
-    assert.equal(button.disabled, true);
-    button.click();
-  }
-  assert.equal(b.calls.length, 1);
+  for (const button of buttons(b.banner()!)) assert.equal(button.disabled, false);
 });
 
 test('disable stays available during a build, retry does not', async () => {
@@ -299,7 +294,7 @@ function settingsBrowser(t: TestContext, revision = 'one') {
   return b;
 }
 
-test('settings poll independently and admin controls enable, retry and disable', async (t) => {
+test('settings poll independently and the controls enable, retry and disable', async (t) => {
   const b = settingsBrowser(t);
   b.setState({ enabled: false });
   const card = hotReloadSettings();
@@ -330,16 +325,14 @@ test('settings poll independently and admin controls enable, retry and disable',
   assert.equal(b.timers.size, 0);
 });
 
-test('settings show unavailable reasons and member restrictions', async (t) => {
+test('settings show unavailable reasons and disable the controls', async (t) => {
   const b = settingsBrowser(t);
-  b.setState({ admin: false, available: false, reason: 'Local source checkout missing', enabled: false });
+  b.setState({ available: false, reason: 'Local source checkout missing', enabled: false });
   const card = hotReloadSettings();
   t.after(card.dispose);
   await flush();
   const root = card.element as unknown as Element;
   assert.match(root.textContent, /Local source checkout missing/);
-  assert.match(root.textContent, /Only office admins/);
-  assert.equal((root.children[1] as Element).hidden, true);
   assert.ok(buttons(root).every((button) => button.disabled));
 });
 

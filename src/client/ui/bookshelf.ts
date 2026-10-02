@@ -1,4 +1,5 @@
 import { isDocPath, resolveDocLink, type DocFile, type DocList, type DocText } from '../../shared/docs';
+import { withToken } from '../token';
 import { clip, h, openModal, setDoing, timeAgo, toast } from './dom';
 import { markdownFile } from './markdown';
 
@@ -140,7 +141,7 @@ function rememberRead(floor: string, path: string) {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const r = await fetch(url, { credentials: 'same-origin' });
+  const r = await fetch(withToken(url), { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -276,7 +277,7 @@ export function openBookshelf(deps: ShelfDeps) {
     }
     for (const img of body.querySelectorAll<HTMLImageElement>('img[src]')) {
       const to = resolveDocLink(path, img.getAttribute('src') ?? '');
-      if (to) img.src = `/api/docs/picture?${q({ path: to.path })}`;
+      if (to) img.src = withToken(`/api/docs/picture?${q({ path: to.path })}`);
     }
     toc.replaceChildren(h('option', { value: '' }, '☰ Contents'), ...heads.map((x) => h('option', { value: x.anchor }, `${' '.repeat(x.level - 1)}${clip(x.text, 60)}`)));
     toc.hidden = heads.length < 3;

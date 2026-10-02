@@ -5,6 +5,7 @@ import { FLOOR, LOFT } from '../../shared/layout';
 import type { Interactable } from './office';
 import { toon } from './toon';
 import { SANS } from '../fonts';
+import { withToken } from '../token';
 
 // ---- Pictures -------------------------------------------------------------------------------------
 
@@ -24,7 +25,7 @@ const holds = new Map<string, number>();
 
 /** The office fetches images for us, so a picture shows up whatever its host allows. */
 export function imageUrl(url: string): string {
-  return `/api/image?url=${encodeURIComponent(url)}`;
+  return withToken(`/api/image?url=${encodeURIComponent(url)}`);
 }
 
 async function fetchPicture(url: string): Promise<Picture> {

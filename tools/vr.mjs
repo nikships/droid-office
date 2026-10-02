@@ -49,7 +49,7 @@ function officeIsUp() {
 }
 
 if (!(await officeIsUp())) {
-  console.error(`\n  Nothing is running on localhost:${officePort}. Start the office first, e.g. npm start -- --password dev\n`);
+  console.error(`\n  Nothing is running on localhost:${officePort}. Start the office first, e.g. npm start\n`);
   process.exit(1);
 }
 
@@ -96,7 +96,7 @@ server.listen(httpsPort, '0.0.0.0', () => {
   console.log(`\n  🕶️  Open this in the headset browser (same Wi-Fi as this machine):\n\n     ${url}\n`);
   console.log(renderUnicodeCompact(url, { border: 2 }).replace(/^/gm, '    '));
   console.log('\n  1. The browser warns about the certificate once: tap Advanced, then Proceed.');
-  console.log('  2. Sign in, then press 🕶️ Enter VR on the top bar.');
+  console.log('  2. Press 🕶️ Enter VR on the top bar.');
   const others = addrs.slice(1).map((a) => `https://${a.address}:${httpsPort}`);
   if (others.length) console.log(`\n  Other addresses of this machine: ${others.join('  ')}`);
   console.log(`\n  Forwarding to the office on localhost:${officePort}. Ctrl+C to stop.\n`);

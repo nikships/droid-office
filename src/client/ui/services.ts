@@ -10,7 +10,7 @@ export function serviceUrl(port: number): string {
 
 /**
  * One command that tunnels localhost:<port> to the office, which relays it to the worker's
- * server, and opens it once the tunnel is up. It uses the same SSH access as the office itself.
+ * server, and opens it once the tunnel is up, over the owner's SSH access to its machine.
  */
 export function serviceTunnel(s: ServicesState, port: number, os: Os): string {
   const open = openCommand(serviceUrl(port), os);
@@ -29,7 +29,7 @@ export function openServices() {
   const body = h('div.body.services');
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const tabs = h('div.os-tabs');
-  const footer = h('footer', {}, h('span.grow', {}, 'Tunnels go through the office, so the office password still guards every page. Keep the terminal open while you look.'));
+  const footer = h('footer', {}, h('span.grow', {}, 'Tunnels go through the office: your SSH access to its machine is what guards every page. Keep the terminal open while you look.'));
   const el = h('div.modal', { role: 'dialog', 'aria-label': 'Services', style: 'width:min(760px,100%)' }, h('header', {}, h('h2', {}, 'Services'), tabs, close), body, footer);
 
   const pick = async (svc: ServiceInfo) => {
@@ -105,7 +105,7 @@ export function openServices() {
     }
     body.append(
       s.ssh
-        ? h('p.note', {}, 'It uses the same SSH access as the office. Not invited yourself (you set the office up)? Run ', h('code', {}, 'deploy/aws.sh service <port>'), ' instead.')
+        ? h('p.note', {}, 'It tunnels as ', h('code', {}, s.ssh), ', your SSH access to the office’s machine. Or run ', h('code', {}, 'deploy/aws.sh service <port>'), ' instead.')
         : h('p.note', {}, 'Replace ', h('code', {}, 'you@your-server'), " with how you SSH to the office's machine. If the office runs on this computer, just click Open."),
     );
   };

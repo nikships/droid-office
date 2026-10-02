@@ -2,6 +2,9 @@
 (() => {
   const revision = document.querySelector('meta[name="office-revision"]')?.content.trim();
   if (!revision) return; // Vite owns reloads on the development page.
+  // A page opened over the LAN carries this start's token (?t=); loopback needs none.
+  const query = typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('t') || '';
+  const api = query ? `/api/hot-reload?t=${encodeURIComponent(query)}` : '/api/hot-reload';
 
   let state;
   let busy = false;
@@ -62,13 +65,11 @@
     if (state.restartRequired) messages.push('Server source changed. Restart the local office to apply it; rebuilding the client does not restart the server.');
     if (!state.available) messages.push(state.reason || 'Source builds are unavailable.');
     if (failure) messages.push(failure);
-    if (!state.admin) messages.push('An office admin can retry or disable source reload.');
     message.textContent = messages.join(' ');
     detail.textContent = [state.error, runtimeError].filter(Boolean).join('\n\n');
     detail.style.display = detail.textContent ? 'block' : 'none';
-    retry.style.display = disable.style.display = state.admin ? 'inline-block' : 'none';
-    retry.disabled = busy || !state.admin || !state.available || state.phase === 'building';
-    disable.disabled = busy || !state.admin;
+    retry.disabled = busy || !state.available || state.phase === 'building';
+    disable.disabled = busy;
     retry.style.opacity = retry.disabled ? '0.5' : '1';
     disable.style.opacity = disable.disabled ? '0.5' : '1';
   };
@@ -81,7 +82,7 @@
     const timeout = setTimeout(() => controller.abort(), 8000);
     paint();
     try {
-      const response = await fetch('/api/hot-reload', {
+      const response = await fetch(api, {
         method: body ? 'POST' : 'GET',
         credentials: 'same-origin',
         cache: 'no-store',

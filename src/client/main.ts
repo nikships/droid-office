@@ -42,7 +42,7 @@ import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
-import { guardLeaving, leaveTo } from './leave';
+import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveProfile, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
@@ -90,8 +90,6 @@ import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
 import { copy, guessOs } from './ui/clipboard';
-import { openTeam, routeTeamMessage } from './ui/team';
-import { openAccounts, routeAccountsMessage } from './ui/accounts';
 import { openServices, serviceTunnel, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
@@ -1750,8 +1748,6 @@ net.onMessage((msg) => {
     vrChanges = msg.state;
     vrUi?.menu.refresh();
   }
-  routeTeamMessage(msg);
-  routeAccountsMessage(msg);
   routePullMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
@@ -3170,8 +3166,6 @@ function paletteEntries(): PaletteEntry[] {
   });
   out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a worker', keywords: ['backlog', 'tasks'], open: showQueue }));
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
-  if (store.invites) out.push({ icon: '👥', kind: 'Action', title: 'Invite teammates', keywords: ['team', 'add people'], open: () => openTeam(net) });
-  else if (store.me.admin) out.push({ icon: '👥', kind: 'Action', title: 'Invite people', detail: 'Accounts', keywords: ['invite teammates', 'accounts', 'team'], open: () => openAccounts(net) });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
 
@@ -4776,7 +4770,6 @@ const hud = mountHud(
       status: () => hanger.active,
       run: () => (hanger.active ? hanger.cancel() : startHanging()),
     },
-    { id: 'team', icon: '👥', label: 'Invite teammates', section: 'Together', shown: () => store.invites, run: () => openTeam(net) },
     // Up on the top bar — but only where this browser can do immersive VR. Elsewhere
     // (desktop Chrome without XR) the probe says no and the bar stays exactly as it was. On an
     // insecure origin (http:// over the LAN) it shows dimmed with the reason: a headset opening
@@ -4798,7 +4791,6 @@ const hud = mountHud(
         void vr.toggle();
       },
     },
-    { id: 'accounts', icon: '🔑', label: 'Accounts', section: 'Together', shown: () => store.me.admin, title: () => 'Invite people, see who has an account, revoke them', run: () => openAccounts(net) },
     { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
     { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
     {
@@ -4861,15 +4853,9 @@ function showSettings(pane?: SettingsPane) {
     editProfile,
     () => sound.ding('done'),
     notifier,
-    signOut,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
   );
-}
-
-async function signOut() {
-  await fetch('/api/logout', { method: 'POST' }).catch(() => {});
-  leaveTo('/login');
 }
 
 function editProfile() {
@@ -5389,26 +5375,17 @@ function boot() {
   startLoop();
 }
 
-/** Who you're signed in as. With an account of your own, your name is that account's. */
-async function whoami() {
-  try {
-    const res = await fetch('/api/whoami', { cache: 'no-store' });
-    if (res.status === 401) leaveTo('/login');
-    const { me } = (await res.json()) as { me?: typeof store.me };
-    if (me) store.me = me;
-  } catch {
-    // the welcome message says it too
-  }
-}
-
 guardLeaving();
 // The world is built. Come down once it has drawn, or at the cap if this page never gets that far.
 loading.until([]);
-void whoami().then(() => {
+{
+  // The sign-in page's remembered name, from before there was no signing in: gone once, here.
+  try {
+    localStorage.removeItem('droid-office.login-name');
+  } catch {
+    // storage blocked
+  }
   const saved = loadProfile();
-  if (saved && store.me.account) saved.name = store.me.account.name;
-  if (store.me.account) store.profile.name = store.me.account.name;
-  store.emit('me');
   if (saved?.look) {
     store.profile = { ...saved, look: saved.look };
     showMyProfile(store.profile);
@@ -5430,7 +5407,7 @@ void whoami().then(() => {
       net.connect();
     });
   }
-});
+}
 
 // Debug handle for quick checks from the console / headless screenshots.
 (window as any).__office = {

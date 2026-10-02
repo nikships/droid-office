@@ -7,13 +7,11 @@ import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
-import { Auth, type Session } from './auth.js';
-import { Accounts } from './accounts.js';
+import { lanAllowed, mintLanToken } from './lan.js';
 import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
 import { agentProviders, configuredProvider, DROID_MODEL_MAX, OPEN_CODE_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { createGrokModelCatalogue, createOpenCodeModelCatalogue } from './models.js';
-import { Team } from './team.js';
 import { Upgrader } from './upgrade.js';
 import { Services } from './services.js';
 import { ImageProxy } from './decor.js';
@@ -30,13 +28,12 @@ import { Themes } from './theme.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
-import { RELAY_LOGIN, relayRequest, relayUpgrade, signInPage, stoppedPage, tunneledPort } from './relay.js';
+import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { Arrival, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
-import { loginPath } from '../shared/return-to.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES } from '../shared/drops.js';
@@ -76,16 +73,11 @@ interface Client {
   /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this. */
   floor: string | null;
   /**
-   * Display provenance only: the name (its account's, or ?name=) and color this connection's toasts,
-   * createdBy and score names are written with. Nothing routes or filters by it; A6 re-sources names.
+   * Display provenance only: the name (?name=, or the `profile` message) and color this
+   * connection's toasts, createdBy and score names are written with. Nothing routes or filters
+   * by it; every connection is the owner.
    */
   peer: { name: string; color: string };
-  /** Signed in with this account; none means the shared office password. */
-  accountId?: string;
-  /** Whether this person was last told they're an admin (see `me`). */
-  admin: boolean;
-  /** Signed out while connected; whatever it still sends is dropped until the socket closes. */
-  out?: boolean;
   attached: Set<string>;
   /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
   stale: Set<string>;
@@ -109,20 +101,6 @@ function findPublicDir(): string {
   throw new Error(`Client bundle not found (looked in ${candidates.join(', ')}). Run \`npm run build\`.`);
 }
 
-function clientIp(req: http.IncomingMessage, trustProxy: boolean): string {
-  if (trustProxy) {
-    const fwd = req.headers['x-forwarded-for'];
-    // The rightmost hop is the one our proxy appended; anything left of it is client-controlled.
-    if (typeof fwd === 'string' && fwd) return fwd.split(',').pop()!.trim();
-  }
-  return req.socket.remoteAddress ?? '?';
-}
-
-function isSecure(req: http.IncomingMessage, cfg: Config): boolean {
-  if (cfg.tls) return true;
-  return cfg.trustProxy && req.headers['x-forwarded-proto'] === 'https';
-}
-
 function readBody(req: http.IncomingMessage, limit = 1024 * 1024): Promise<string> {
   return readBytes(req, limit).then((b) => b.toString('utf8'));
 }
@@ -144,9 +122,9 @@ function readBytes(req: http.IncomingMessage, limit: number): Promise<Buffer> {
 }
 
 /**
- * Whether the page asking is the office itself, so another site can't open a socket with a visitor's cookie.
- * Cookie-authed upgrades always need the Origin to match: relaxing that would let any site a visitor
- * has open ride their session.
+ * Whether the page asking is the office itself. Loopback requests bypass the LAN token (they are the
+ * office's own machine), so upgrades and owner writes always need the Origin to match too: without
+ * that, any site the owner has open could drive their office over loopback.
  */
 function sameOrigin(req: http.IncomingMessage, cfg: Config): boolean {
   const origin = req.headers.origin;
@@ -189,9 +167,6 @@ function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
 }
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-const TOO_MANY_ATTEMPTS = 'Too many attempts. Try again in a few minutes.';
-/** WebSocket close code for a session that stopped counting: the account was revoked, or the shared password switched off. */
-const SIGNED_OUT = 4001;
 /** The most lines per worker's terminal a search answers with. */
 const SEARCH_TERMINAL_HITS = 25;
 
@@ -202,8 +177,8 @@ export async function startServer(cfg: Config) {
   // Frozen at startup, outside the game bundle: a bad source edit cannot remove recovery.
   const reloadScriptFile = [path.join(publicDir, 'office-reload.js'), ...(appDir ? [path.join(appDir, 'src/client/public/office-reload.js')] : [])].find(existsSync);
   const reloadScript = reloadScriptFile ? readFileSync(reloadScriptFile, 'utf8') : '';
-  const accounts = new Accounts(cfg.dataDir);
-  const auth = new Auth(cfg.verifier, cfg.salt, cfg.secret, accounts);
+  // This start's LAN token (see lan.ts): in memory only, a new one next start.
+  const lanToken = mintLanToken();
   const clients = new Map<string, Client>();
   // The arcade's high scores: one table for the whole building, on every floor's cabinet. The office
   // follows every game and puts the scores up itself (see Arcade).
@@ -212,7 +187,7 @@ export async function startServer(cfg: Config) {
     cabinetScoresChanged();
     if (first) toastFloor(floors.get(first.floor), `🏆 ${first.score.name} set a new arcade high score: ${scoreText(first.score.score)}`);
   });
-  /** What the office is called where it has no project of its own to go by (webhooks, invites). */
+  /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
   const modelCommand = configuredProvider(cfg.agentCmd) === 'opencode' ? cfg.agentCmd : 'opencode';
   const openCodeModels = createOpenCodeModelCatalogue(modelCommand.includes('/') ? path.resolve(modelCommand) : modelCommand, cfg.dir);
@@ -414,7 +389,7 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`droid-office: --webhook: ${err}`);
   }
 
-  // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings, admins).
+  // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
@@ -515,14 +490,17 @@ export async function startServer(cfg: Config) {
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
 
-  const team = new Team(cfg.publicHost, cfg.port);
+  // The owner SSHes to a deployed office as the box's own user (deploy/aws.sh tunnels as ubuntu,
+  // never as the old restricted team user): the Services board's tunnel hint comes straight from
+  // the box's public address, no team membership involved.
+  const ownerSsh = cfg.publicHost ? `ubuntu@${cfg.publicHost}` : undefined;
 
   // Web servers the workers start, for the Services board and service tunnels (see relay.ts).
   // One scan covers every floor; each floor's board lists its own workers' servers.
   const servicesState = (floor: Floor | undefined, items = services.list()): ServicesState => ({
     items: floor ? items.filter((s) => floor.workers.get(s.workerId)) : [],
     port: cfg.port,
-    ssh: team.ssh,
+    ssh: ownerSsh,
   });
   const services = new Services(
     () => [...floors.values()].flatMap((f) => f.workers.owners()),
@@ -601,73 +579,25 @@ export async function startServer(cfg: Config) {
   /** A file of the client bundle, or undefined when it's missing, a folder, or outside the bundle. */
   const publicFile = (p: string): string | undefined => hotReload.file(p);
 
-  const serveIndex = (res: http.ServerResponse) => {
+  const serveIndex = (res: http.ServerResponse, token: string | null) => {
     let html = readFileSync(path.join(hotReload.publicDir, 'index.html'), 'utf8');
     html = html.replace(/<meta\b[^>]*name=["']office-revision["'][^>]*>/gi, '').replace(/<script\b[^>]*src=["']\/api\/hot-reload\/client\.js["'][^>]*>\s*<\/script>/gi, '');
-    const recovery = `<meta name="office-revision" content="${hotReload.state().revision}"><script src="/api/hot-reload/client.js" defer></script>`;
+    // A <script> tag can't append the LAN token itself, so the page carries it into the URL.
+    const recovery = `<meta name="office-revision" content="${hotReload.state().revision}"><script src="/api/hot-reload/client.js${token ? `?t=${encodeURIComponent(token)}` : ''}" defer></script>`;
     // Also inject when a source edit deletes the original tags (or even the head).
     html = /<head\b[^>]*>/i.test(html) ? html.replace(/<head\b[^>]*>/i, (head) => head + recovery) : recovery + html;
     res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
     res.end(html);
   };
 
-  /**
-   * A password, claim-token or invite guess: counts it against the IP, then reads the small JSON
-   * body. Undefined once it has already answered (rate limited, or a bad body).
-   */
-  const readGuess = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<{ ip: string; body: Record<string, unknown> } | undefined> => {
-    const ip = clientIp(req, cfg.trustProxy);
-    // Counted before the body is read, so parallel guesses can't all slip under the limit.
-    if (!auth.allowAttempt(ip)) return void send(res, 429, { error: TOO_MANY_ATTEMPTS });
-    try {
-      const body = JSON.parse(await readBody(req, 4096));
-      if (body && typeof body === 'object') return { ip, body };
-    } catch {
-      // answered below
-    }
-    send(res, 400, { error: 'Bad request' });
-  };
-  const signedIn = (req: http.IncomingMessage, accountId?: string) => ({ 'set-cookie': auth.cookie(req, auth.issue(accountId), isSecure(req, cfg)) });
-
-  /** With a name, that person's own account; without one, the shared office password (while it's on). */
-  const login = async (req: http.IncomingMessage, res: http.ServerResponse) => {
-    const guess = await readGuess(req, res);
-    if (!guess) return;
-    const name = str(guess.body.name, 64).trim();
-    const password = str(guess.body.password, 512);
-    if (name) {
-      const account = await accounts.check(name, password);
-      if (!account) return send(res, 401, { error: 'Wrong name or password' });
-      auth.recordSuccess(guess.ip);
-      return send(res, 200, { ok: true }, signedIn(req, account.id));
-    }
-    if (!accounts.sharedPassword) return send(res, 401, { error: 'Sign in with your name and your own password' });
-    if (!(await auth.checkPassword(password))) {
-      return send(res, 401, { error: accounts.any ? 'Wrong password. With an account of your own, type your name too.' : 'Wrong password' });
-    }
-    auth.recordSuccess(guess.ip);
-    return send(res, 200, { ok: true }, signedIn(req));
-  };
-  /** Which fields the sign-in forms ask for. */
-  const loginOptions = () => ({ accounts: accounts.any, shared: accounts.sharedPassword });
-
-  /**
-   * An invite link: `peek` says who it's for; otherwise it makes the account and signs it in.
-   * Counted like a password guess, since the token is one.
-   */
-  const join = async (req: http.IncomingMessage, res: http.ServerResponse) => {
-    const guess = await readGuess(req, res);
-    if (!guess) return;
-    const token = str(guess.body.token, 128);
-    const invite = accounts.findInvite(token);
-    if (!invite) return send(res, 410, { error: 'This invite link has expired or was already used. Ask whoever sent it for a new one.' });
-    auth.recordSuccess(guess.ip);
-    if (guess.body.peek === true) return send(res, 200, { name: invite.name, role: invite.role, by: invite.createdBy, project: officeName });
-    const r = await accounts.join(token, str(guess.body.name, 64), str(guess.body.password, 1024));
-    if (typeof r === 'string') return send(res, 400, { error: r });
-    console.log(`  ${r.name} joined the office with an invite from ${r.createdBy}`);
-    accountsChanged();
-    return send(res, 200, { ok: true, name: r.name }, signedIn(req, r.id));
+  /** Off the machine without this start's token: APIs get JSON, pages get a pointer to the join link. */
+  const refuseHttp = (res: http.ServerResponse, api: boolean) => {
+    const hint = 'Open the join link from the office’s terminal (it prints a QR code on startup).';
+    if (api) return send(res, 401, { error: `This office needs its join link (?t=). ${hint}` });
+    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
+    res.end(
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join link needed · Droid Office</title></head><body style="font:16px/1.5 system-ui,sans-serif;color:#2b2d42;background:#bfe3ff;display:grid;place-items:center;min-height:100vh;margin:0"><main style="background:#fffaf3;border:3px solid #2b2d42;border-radius:18px;padding:28px 32px;max-width:440px;margin:16px"><h1 style="margin:0 0 8px;font-size:22px">🔒 Join link needed</h1><p style="margin:0">This office only opens with its join link. ${hint}</p></main></body></html>`,
+    );
   };
 
   /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
@@ -681,15 +611,6 @@ export async function startServer(cfg: Config) {
 
   const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     try {
-      // A service tunnel (localhost:5173 -> the office): relay to that worker's server.
-      const tunneled = tunneledPort(req, cfg.port);
-      const svc = tunneled ? services.lookup(tunneled) : undefined;
-      if (tunneled && svc) {
-        if (req.method === 'POST' && req.url === RELAY_LOGIN) return await login(req, res);
-        if (!auth.fromAnyCookie(req)) return signInPage(res, tunneled, loginOptions());
-        if (svc === 'gone') return stoppedPage(res, tunneled);
-        return relayRequest(req, res, svc);
-      }
       let url: URL;
       let p: string;
       try {
@@ -698,28 +619,18 @@ export async function startServer(cfg: Config) {
       } catch {
         return send(res, 400, { error: 'Bad request' });
       }
-      if (p === '/api/login' && req.method === 'POST') return await login(req, res);
-      if (p === '/api/login' && req.method === 'GET') return send(res, 200, loginOptions());
-      if (p === '/api/join' && req.method === 'POST') return await join(req, res);
-      // One-time reveal of the generated password. After this the plaintext is gone for good.
-      const claimable = !!cfg.claimToken && !cfg.claimed && !!cfg.password;
-      if (p === '/api/claim' && req.method === 'GET') return send(res, 200, { claimable });
-      if (p === '/api/claim' && req.method === 'POST') {
-        const guess = await readGuess(req, res);
-        if (!guess) return;
-        if (!claimable) return send(res, 410, { error: 'This office has already been claimed. Sign in with the password you saved.' });
-        if (!auth.checkToken(str(guess.body.token, 256), cfg.claimToken!)) return send(res, 403, { error: 'That claim link is not valid.' });
-        const password = cfg.password!;
-        cfg.markClaimed();
-        auth.recordSuccess(guess.ip);
-        console.log('  the office password was claimed — it will not be shown again');
-        return send(res, 200, { password }, signedIn(req));
+      // A service tunnel (localhost:5173 -> the office): relay to that worker's server. SSH tunnels
+      // arrive over loopback; anything else needs the token like any other request.
+      const tunneled = tunneledPort(req, cfg.port);
+      const svc = tunneled ? services.lookup(tunneled) : undefined;
+      if (tunneled && svc) {
+        if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, true);
+        if (svc === 'gone') return stoppedPage(res, tunneled);
+        return relayRequest(req, res, svc);
       }
-      if (p === '/api/logout' && req.method === 'POST') {
-        return send(res, 200, { ok: true }, { 'set-cookie': auth.clearCookie(req) });
-      }
-      if (p === '/api/health') return send(res, 200, { ok: true });
-
+      // The client bundle's static files: hashed scripts, models, fonts and icons. They carry no
+      // office data, and <script> tags, stylesheets and 3D loaders can't append the LAN token, so
+      // they load openly; the office itself (below) always needs it.
       if (p.startsWith('/assets/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, true);
@@ -727,42 +638,30 @@ export async function startServer(cfg: Config) {
         return;
       }
       // In a source checkout props can change under the same name; releases keep immutable caching.
-      if (p.startsWith('/props/')) {
+      if (p.startsWith('/props/') || p.startsWith('/xr-hands/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, !hotReload.state().available);
         res.writeHead(404).end();
         return;
       }
-      if (p === '/login' || p === '/login.html') return serveFile(res, path.join(hotReload.publicDir, 'login.html'), false);
-      if (p === '/claim' || p === '/claim.html') return serveFile(res, path.join(hotReload.publicDir, 'claim.html'), false);
-      if (p === '/join' || p === '/join.html') return serveFile(res, path.join(hotReload.publicDir, 'join.html'), false);
-      if (p === '/favicon.svg') return serveFile(res, path.join(hotReload.publicDir, 'favicon.svg'), false);
-      // Auth-page and app-install assets must also load without a session.
-      if (p === '/factory-glyph.svg') return serveFile(res, path.join(hotReload.publicDir, 'factory-glyph.svg'), false);
-      if (p === '/manifest.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
+      if (p === '/favicon.svg' || p === '/factory-glyph.svg' || p === '/manifest.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, false);
         res.writeHead(404).end();
         return;
       }
+      // Everything else needs this start's token from off the machine (loopback connects freely).
+      if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, p.startsWith('/api/'));
 
-      const session = auth.fromRequest(req);
-      if (!session) {
-        if (p.startsWith('/api/')) return send(res, 401, { error: 'Not logged in' });
-        res.writeHead(302, { location: loginPath(url.pathname + url.search) }).end();
-        return;
-      }
-      if (p === '/api/whoami') return send(res, 200, { ok: true, me: meOf(session.account?.id) });
+      if (p === '/api/health') return send(res, 200, { ok: true });
       if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
         return res.end(reloadScript);
       }
       if (p === '/api/hot-reload') {
-        const admin = meOf(session.account?.id).admin;
-        const state = () => ({ ...hotReload.state(), admin });
+        const state = () => hotReload.state();
         if (req.method === 'GET') return send(res, 200, state());
         if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' }, { allow: 'GET, POST' });
-        if (!admin) return send(res, 403, { error: 'Only admins can change source hot reload' });
         if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Use source hot reload from the office itself' });
         let body: { enabled?: unknown; rebuild?: unknown } | null;
         try {
@@ -914,7 +813,7 @@ export async function startServer(cfg: Config) {
         }
         return send(res, 404, { error: 'Not found' });
       }
-      if (p === '/' || p === '/index.html') return serveIndex(res);
+      if (p === '/' || p === '/index.html') return serveIndex(res, url.searchParams.get('t'));
       const file = publicFile(p);
       if (file) return serveFile(res, file, false);
       res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
@@ -930,12 +829,6 @@ export async function startServer(cfg: Config) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   server.on('upgrade', (req, socket, head) => {
     socket.on('error', () => socket.destroy());
-    const tunneled = tunneledPort(req, cfg.port);
-    const svc = tunneled ? services.lookup(tunneled) : undefined;
-    if (tunneled && svc) {
-      if (svc !== 'gone' && auth.fromAnyCookie(req)) return relayUpgrade(req, socket, head, svc);
-      return refuseUpgrade(socket);
-    }
     let url: URL;
     try {
       url = new URL(req.url ?? '/', 'http://x');
@@ -943,43 +836,19 @@ export async function startServer(cfg: Config) {
       socket.destroy();
       return;
     }
-    // The socket is the office page's own: cookie session plus a matching Origin (see sameOrigin).
-    const session = url.pathname === '/ws' && sameOrigin(req, cfg) ? auth.fromRequest(req) : undefined;
-    if (!session) return refuseUpgrade(socket);
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, session));
+    const tunneled = tunneledPort(req, cfg.port);
+    const svc = tunneled ? services.lookup(tunneled) : undefined;
+    if (tunneled && svc) {
+      if (svc !== 'gone' && lanAllowed(req, url, lanToken)) return relayUpgrade(req, socket, head, svc);
+      return refuseUpgrade(socket);
+    }
+    // The socket is the office page's own: this start's token (or loopback) plus a matching
+    // Origin (see sameOrigin). One check per connection; nothing per message.
+    if (url.pathname !== '/ws' || !sameOrigin(req, cfg) || !lanAllowed(req, url, lanToken)) return refuseUpgrade(socket);
+    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url));
   });
 
-  /** Who a connection is: its account's current name and role, or an admin guest on the shared password. */
-  const meOf = (accountId: string | undefined): Me => {
-    const a = accounts.get(accountId);
-    return a ? { account: { name: a.name, role: a.role }, admin: a.role === 'admin' } : { admin: !accountId };
-  };
-  /** Still signed in: the account wasn't revoked, and the shared password wasn't switched off. */
-  const stillIn = (c: Client) => (c.accountId ? !!accounts.get(c.accountId) : accounts.sharedPassword);
-  const signOut = (c: Client) => {
-    c.out = true;
-    c.ws.close(SIGNED_OUT, 'Signed out');
-  };
-  const onlineAccounts = () => new Set([...clients.values()].map((c) => c.accountId).filter((id): id is string => !!id));
-  /** Tells each admin what the accounts are now, and everyone whether they're (still) an admin. */
-  const accountsChanged = () => {
-    let state: ReturnType<Accounts['state']> | undefined;
-    for (const c of clients.values()) {
-      if (c.out) continue;
-      if (!stillIn(c)) {
-        signOut(c);
-        continue;
-      }
-      const me = meOf(c.accountId);
-      if (me.admin !== c.admin) {
-        c.admin = me.admin;
-        sendTo(c, { t: 'me', me });
-      }
-      if (me.admin) sendTo(c, { t: 'accounts', state: (state ??= accounts.state(onlineAccounts())) });
-    }
-  };
-
-  const onConnection = (ws: WebSocket, url: URL, session: Session) => {
+  const onConnection = (ws: WebSocket, url: URL) => {
     const id = randomBytes(5).toString('hex');
     // Back on the floor they were on before a reload, a restart or closing the tab, else the first floor.
     const wanted = url.searchParams.get('floor');
@@ -996,17 +865,13 @@ export async function startServer(cfg: Config) {
       via: !onRoof && !floor ? 'lobby' : saved ? 'saved' : landing.gone ? 'roof' : 'elevator',
       ...(landing.gone ? { removed: true } : {}),
     };
-    const account = session.account;
-    // An account's name is its own; on the shared password the connection picks one.
-    const name = account?.name ?? (str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`);
+    // The connection names itself (?name=, or the `profile` message): display provenance only.
+    const name = str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`;
     const colorParam = url.searchParams.get('color') ?? '';
-    const me = meOf(account?.id);
     const client: Client = {
       id,
       ws,
       floor: onRoof ? ROOF : (floor?.id ?? null),
-      accountId: account?.id,
-      admin: me.admin,
       attached: new Set(),
       stale: new Set(),
       lastGongAt: 0,
@@ -1016,7 +881,6 @@ export async function startServer(cfg: Config) {
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
     };
     clients.set(id, client);
-    if (account) accounts.seen(account.id);
     ws.on('pong', () => (client.isAlive = true));
 
     sendTo(client, {
@@ -1025,12 +889,10 @@ export async function startServer(cfg: Config) {
       arrival,
       floors: floorInfos(),
       projectsDir: building.projectsDirState(),
-      invites: team.available,
       version: upgrader.version,
       upgrade: upgrader.state,
       usage: ledger.state(),
       limits: limits.state,
-      me,
       notify: webhook.state(),
       machine: machine.state(),
       proxy: proxy.current,
@@ -1041,7 +903,6 @@ export async function startServer(cfg: Config) {
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
-    if (account) accountsChanged(); // now online
     floorsChanged();
     if (floor) {
       floor.arrived();
@@ -1058,7 +919,7 @@ export async function startServer(cfg: Config) {
       } catch {
         return;
       }
-      if (!msg || typeof msg !== 'object' || client.out) return;
+      if (!msg || typeof msg !== 'object') return;
       handleMessage(client, msg);
     });
     ws.on('close', () => {
@@ -1069,7 +930,6 @@ export async function startServer(cfg: Config) {
         f.changes.unwatchAll(id);
         if (f.court.left(id)) ballChanged(f);
       }
-      if (account) accountsChanged();
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
@@ -1078,7 +938,6 @@ export async function startServer(cfg: Config) {
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
   const ballChanged = (floor: Floor) => toFloor(floor, { t: 'ball', ball: floor.court.state() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
-  const teamChanged = async () => broadcast({ t: 'team', state: await team.state() });
 
   /**
    * Takes `c` to another floor: they get the new floor's everything. They arrive in the
@@ -1186,7 +1045,7 @@ export async function startServer(cfg: Config) {
     const fetching = all.map((f) => f.workers.fetchBase()).filter((p): p is Promise<void> => p !== undefined);
     if (!fetching.length) return go();
     void Promise.all(fetching).then(() => {
-      if (c.out || c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) return;
+      if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) return;
       go();
     });
   };
@@ -1207,9 +1066,9 @@ export async function startServer(cfg: Config) {
     };
     switch (msg.t) {
       case 'profile': {
-        // Display provenance only (see Client.peer): an account's name is its own.
+        // Display provenance only (see Client.peer).
         const name = str(msg.name, 24).trim();
-        if (name && !c.accountId) c.peer.name = name;
+        if (name) c.peer.name = name;
         if (COLOR_RE.test(msg.color)) c.peer.color = msg.color;
         break;
       }
@@ -1243,8 +1102,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'floor.remove': {
-        // Everyone's workers on it stop: admins do it.
-        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can take a floor off the building');
         const id = str(msg.floor, 64);
         const r = building.remove(id, who);
         if (typeof r === 'string') return warn(c, r);
@@ -1255,8 +1112,7 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'floor.projectsDir': {
-        // It's a folder on the office's machine that decides which checkouts anyone can add as a floor: admins pick it.
-        const err = meOf(c.accountId).admin ? building.setProjectsDir(str(msg.dir, 1024), who) : 'Only admins can move the workspace folder';
+        const err = building.setProjectsDir(str(msg.dir, 1024), who);
         warn(c, err);
         if (err) break;
         const state = building.projectsDirState();
@@ -1657,7 +1513,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'prompts.set': {
-        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can change the office’s prompts');
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
         const was = !!prompts.state().custom[msg.id];
         const err = prompts.setPrompt(msg.id, msg.text === null ? null : str(msg.text, PROMPT_MAX + 1), who);
@@ -1669,7 +1524,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'prompts.agent': {
-        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can pick the office’s default worker');
         const ch = msg.choice;
         if (ch !== null && (!ch || typeof ch !== 'object')) return;
         const choice = ch && {
@@ -1683,7 +1537,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'machine.limit': {
-        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can change the worker limit');
         const limit = msg.limit === null ? undefined : parseWorkerLimit(msg.limit);
         if (msg.limit !== null && limit === undefined) return warn(c, `The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
         const err = machine.setLimit(limit, who);
@@ -1694,7 +1547,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'jira.connect': {
-        if (!meOf(c.accountId).admin) return sendTo(c, { t: 'jira.setup', step: 'connect', error: 'Only admins can connect the office to Jira' });
         void jira.connect(str(msg.site, 300), str(msg.email, 254), str(msg.token, 2000), who).then((error) => {
           sendTo(c, { t: 'jira.setup', step: 'connect', ok: !error, error });
           if (error) return;
@@ -1705,7 +1557,6 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'jira.disconnect': {
-        if (!meOf(c.accountId).admin) return warn(c, 'Only admins can disconnect the office from Jira');
         if (!jira.connection()) break;
         jira.disconnect();
         console.log(`  ${who} disconnected the office from Jira`);
@@ -1716,7 +1567,6 @@ export async function startServer(cfg: Config) {
       case 'jira.epic': {
         const floor = here();
         if (!floor) break;
-        if (!meOf(c.accountId).admin) return sendTo(c, { t: 'jira.setup', step: 'epic', error: "Only admins can set a floor's Jira epic" });
         if (!str(msg.key, 40).trim()) {
           floor.jira.clearEpic();
           toastFloor(floor, `${who} took the Jira epic off this floor`);
@@ -1786,36 +1636,6 @@ export async function startServer(cfg: Config) {
       case 'limits.refresh':
         limits.refresh();
         break;
-      case 'team.get':
-        void team.state().then((state) => sendTo(c, { t: 'team', state }));
-        break;
-      case 'team.invite': {
-        const user = str(msg.github, 64);
-        void team.invite(user).then(async (r) => {
-          sendTo(c, { t: 'team.invited', github: user, ...r });
-          if ('error' in r) return;
-          toastAll(`${who} invited ${r.name} to the office`);
-          await teamChanged();
-        });
-        break;
-      }
-      case 'team.remove': {
-        const name = str(msg.name, 64);
-        void team.remove(name).then(async (err) => {
-          if (err) return warn(c, err);
-          toastAll(`${who} removed ${name}'s access`);
-          await teamChanged();
-        });
-        break;
-      }
-      case 'accounts.get':
-      case 'accounts.invite':
-      case 'accounts.cancel':
-      case 'accounts.revoke':
-      case 'accounts.role':
-      case 'accounts.shared':
-        handleAccounts(c, msg);
-        break;
       case 'decor.add': {
         const floor = here();
         if (!floor) break;
@@ -1865,7 +1685,7 @@ export async function startServer(cfg: Config) {
         if (!floor || (c.playing && msg.game === c.game)) break;
         // Already at it: that game's over, and this is the next one.
         if (c.playing) arcade.leave(c.game, floor.id);
-        // Score names come from the connection's display provenance, until A6 re-sources names.
+        // Score names come from the connection's display provenance (see Client.peer).
         c.game = arcade.start({ owner: c.id, name: who, color: c.peer.color }, msg.game);
         if (typeof msg.game === 'string' && msg.game && c.game !== msg.game) warn(c, "🕹️ Your paused game didn't survive the restart, so here's a new one");
         if (c.game !== msg.game && !arcade.counts(c.game)) warn(c, "🕹️ That's a lot of new games in a row, so this one won't go on the high-score table");
@@ -1899,56 +1719,6 @@ export async function startServer(cfg: Config) {
     }
   };
 
-  /** Inviting, listing and revoking people. Admins only: an admin account, or the shared password. */
-  const handleAccounts = (c: Client, msg: Extract<ClientMsg, { t: `accounts.${string}` }>) => {
-    const who = c.peer.name;
-    if (!meOf(c.accountId).admin) return warn(c, 'Only admins can manage accounts');
-    switch (msg.t) {
-      case 'accounts.get':
-        sendTo(c, { t: 'accounts', state: accounts.state(onlineAccounts()) });
-        break;
-      case 'accounts.invite': {
-        const r = accounts.invite(who, msg.role === 'admin' ? 'admin' : 'member', typeof msg.name === 'string' ? msg.name : undefined);
-        if (typeof r === 'string') return sendTo(c, { t: 'accounts.invited', error: r });
-        sendTo(c, { t: 'accounts.invited', invite: r });
-        accountsChanged();
-        break;
-      }
-      case 'accounts.cancel':
-        if (accounts.cancel(str(msg.inviteId, 32))) accountsChanged();
-        break;
-      case 'accounts.revoke': {
-        const id = str(msg.accountId, 32);
-        if (id === c.accountId) return warn(c, "You can't revoke your own account");
-        const a = accounts.revoke(id);
-        if (!a) break;
-        console.log(`  ${who} revoked ${a.name}'s account`);
-        toastAll(`${who} revoked ${a.name}'s account`);
-        accountsChanged(); // signs them out everywhere
-        break;
-      }
-      case 'accounts.role': {
-        const id = str(msg.accountId, 32);
-        if (id === c.accountId) return warn(c, "You can't change your own role");
-        const a = accounts.setRole(id, msg.role === 'admin' ? 'admin' : 'member');
-        if (!a) break;
-        toastAll(a.role === 'admin' ? `${who} made ${a.name} an admin` : `${a.name} is no longer an admin`);
-        accountsChanged();
-        break;
-      }
-      case 'accounts.shared': {
-        if (msg.on === accounts.sharedPassword) break;
-        // Only someone who can still get in without it may switch it off.
-        if (!msg.on && !c.accountId) return warn(c, 'Sign in with an admin account of your own first, or nobody could get back in');
-        accounts.setSharedPassword(!!msg.on);
-        console.log(`  ${who} switched the shared office password ${msg.on ? 'on' : 'off'}`);
-        toastAll(msg.on ? `${who} switched the shared office password back on` : `🔑 ${who} switched off the shared office password — everyone signs in with their own account now`);
-        accountsChanged(); // signs out whoever came in with it
-        break;
-      }
-    }
-  };
-
   const resync = setInterval(() => {
     for (const c of clients.values()) {
       if (!c.stale.size || c.ws.bufferedAmount > SLOW_CLIENT_BYTES / 8) continue;
@@ -1961,19 +1731,15 @@ export async function startServer(cfg: Config) {
   }, 1000);
 
   // Drop dead connections so ghosts don't linger in the office.
-  // Also signs out anyone `droid-office accounts` revoked, and passes on role changes made there.
   const heartbeat = setInterval(() => {
-    let accountsMoved = false;
     for (const c of clients.values()) {
       if (!c.isAlive) {
         c.ws.terminate();
         continue;
       }
-      if (!c.out && (!stillIn(c) || c.admin !== meOf(c.accountId).admin)) accountsMoved = true;
       c.isAlive = false;
       c.ws.ping();
     }
-    if (accountsMoved) accountsChanged();
   }, 20_000);
 
   await new Promise<void>((resolve, reject) => {
@@ -2005,5 +1771,5 @@ export async function startServer(cfg: Config) {
     hookServer.close();
   };
 
-  return { server, shutdown, accounts, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
+  return { server, shutdown, lanToken, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
 }

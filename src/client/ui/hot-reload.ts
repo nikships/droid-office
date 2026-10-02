@@ -1,7 +1,6 @@
 import type { HotReloadState } from '../../shared/hot-reload';
+import { withToken } from '../token';
 import { h } from './dom';
-
-type Status = HotReloadState & { admin: boolean };
 
 /** Polls separately from the game connection, only while Settings is open. */
 export function hotReloadSettings(): { element: HTMLElement; dispose: () => void } {
@@ -18,7 +17,7 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
     return { element, dispose: () => {} };
   }
 
-  let state: Status | undefined;
+  let state: HotReloadState | undefined;
   let busy = false;
   let disposed = false;
   let stopped = false;
@@ -26,11 +25,10 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   const paint = () => {
-    controls.hidden = !!state && !state.admin;
     toggle.textContent = state?.enabled ? 'Disable' : 'Enable';
-    toggle.disabled = busy || stopped || !state?.admin || (!state.available && !state.enabled);
+    toggle.disabled = busy || stopped || !state || (!state.available && !state.enabled);
     rebuild.textContent = state?.phase === 'error' ? 'Build & reload (retry)' : 'Build & reload';
-    rebuild.disabled = busy || stopped || !state?.admin || !state.available || !state.enabled || state.phase === 'building';
+    rebuild.disabled = busy || stopped || !state || !state.available || !state.enabled || state.phase === 'building';
     const messages: string[] = [];
     if (state) {
       messages.push(state.enabled ? 'Source hot reload is on.' : 'Source hot reload is off.');
@@ -39,7 +37,6 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
       else if (state.phase === 'error') messages.push('Build failed. The last successful client stays published. Fix the source and retry.');
       else if (state.lastBuiltAt) messages.push(`Last built ${new Date(state.lastBuiltAt).toLocaleTimeString()}.`);
       if (state.restartRequired) messages.push('Server source changed. Restart the local office to apply it; client reload does not restart the server.');
-      if (!state.admin) messages.push('Only office admins can enable, disable or rebuild.');
     }
     if (failure) messages.push(failure);
     status.textContent = messages.join(' ') || 'Checking source reload…';
@@ -54,7 +51,7 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
     const timeout = setTimeout(() => controller?.abort(), 8000);
     paint();
     try {
-      const response = await fetch('/api/hot-reload', {
+      const response = await fetch(withToken('/api/hot-reload'), {
         method: body ? 'POST' : 'GET',
         credentials: 'same-origin',
         cache: 'no-store',
@@ -63,12 +60,12 @@ export function hotReloadSettings(): { element: HTMLElement; dispose: () => void
       });
       if (response.status === 401) {
         stopped = true;
-        throw new Error('Sign in again to use source reload.');
+        throw new Error('The office restarted: reopen it from the join link in its terminal.');
       }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Request failed (${response.status}).`);
       if (disposed) return;
-      state = result as Status;
+      state = result as HotReloadState;
       failure = '';
     } catch (err) {
       if (!disposed) failure = err instanceof Error && err.name !== 'AbortError' ? err.message : 'Could not reach the local office. Retrying…';

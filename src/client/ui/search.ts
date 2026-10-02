@@ -1,6 +1,7 @@
 import type { SearchResults, TerminalHit } from '../../shared/protocol';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search';
 import { store } from '../state';
+import { withToken } from '../token';
 import { h, openModal } from './dom';
 import type { TerminalFind } from './terminal';
 
@@ -14,7 +15,7 @@ let lastQuery = '';
 export async function search(q: string): Promise<SearchResults> {
   // The terminals searched are the workers on your floor.
   const floor = store.floor ? `&floor=${encodeURIComponent(store.floor)}` : '';
-  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}${floor}`, { credentials: 'same-origin' });
+  const r = await fetch(withToken(`/api/search?q=${encodeURIComponent(q)}${floor}`), { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
   return r.json() as Promise<SearchResults>;
 }

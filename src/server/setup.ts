@@ -148,7 +148,7 @@ async function pickFolder(building: Building) {
     if (!err) break;
     console.log(`     ✗ ${err}`);
   }
-  console.log(`     ✓ Looking in ${building.projectsDirState().dir} (admins can change it in ⚙️ Settings or the elevator)`);
+  console.log(`     ✓ Looking in ${building.projectsDirState().dir} (change it in ⚙️ Settings or the elevator)`);
 }
 
 async function pickProjects(building: Building) {

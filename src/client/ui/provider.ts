@@ -2,6 +2,7 @@ import type { AgentChoice, AgentEffort, AgentProvider, ClaudeModel, ProjectInfo,
 import { AGENT_EFFORTS, CLAUDE_MODELS } from '../../shared/protocol';
 import { withoutGlyph } from '../world/glyph';
 import { store } from '../state';
+import { withToken } from '../token';
 import { h } from './dom';
 
 const PROVIDER_KEY = 'droid-office.provider';
@@ -129,7 +130,7 @@ export interface AgentFields extends ProviderPicker {
 }
 
 /**
- * The office's default worker as an admin set it in Settings, or the office's --agent on its own
+ * The office's default worker as set in Settings, or the office's --agent on its own
  * default model. The server starts it wherever a worker is started without a provider.
  */
 export function officeChoice(project: ProjectInfo | null): AgentChoice {
@@ -277,7 +278,7 @@ let grokModelRequest: Promise<string[]> | null = null;
 function fetchGrokModels(): Promise<string[]> {
   if (grokModelList && Date.now() - grokModelListAt < 60_000) return Promise.resolve(grokModelList);
   if (grokModelRequest) return grokModelRequest;
-  grokModelRequest = fetch('/api/agents/grok/models', { credentials: 'same-origin', cache: 'no-store' })
+  grokModelRequest = fetch(withToken('/api/agents/grok/models'), { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { models?: unknown };
@@ -295,7 +296,7 @@ function fetchGrokModels(): Promise<string[]> {
 function fetchOpenCodeModels(): Promise<string[]> {
   if (modelList && Date.now() - modelListAt < 60_000) return Promise.resolve(modelList);
   if (modelRequest) return modelRequest;
-  modelRequest = fetch('/api/agents/opencode/models', { credentials: 'same-origin', cache: 'no-store' })
+  modelRequest = fetch(withToken('/api/agents/opencode/models'), { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { models?: unknown };
@@ -323,7 +324,7 @@ let droidDefault = '';
 function fetchDroidModels(): Promise<DroidModelOption[]> {
   if (droidList && Date.now() - droidListAt < 60_000) return Promise.resolve(droidList);
   if (droidRequest) return droidRequest;
-  droidRequest = fetch('/api/agents/droid/models', { credentials: 'same-origin', cache: 'no-store' })
+  droidRequest = fetch(withToken('/api/agents/droid/models'), { credentials: 'same-origin', cache: 'no-store' })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { models?: unknown; defaultModel?: unknown };

@@ -5,7 +5,7 @@ export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'workers';
 export type SettingsScope = 'you' | 'floor' | 'office';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
-  { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and how you’re signed in.' },
+  { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look and how you see the office.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, where the elevator looks for projects, and local source reload.' },
@@ -24,7 +24,6 @@ export const SETTINGS_CARDS = [
   { pane: 'you', title: 'Your character', scope: null },
   { pane: 'you', title: 'Camera view', scope: 'you' },
   { pane: 'you', title: 'VR (headset browser)', scope: 'you' },
-  { pane: 'you', title: 'Signed in', scope: null },
   { pane: 'sound', title: 'Office sounds', scope: 'you' },
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },
