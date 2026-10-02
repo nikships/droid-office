@@ -1147,8 +1147,6 @@ export type ClientMsg =
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
-  | { t: 'voice'; voice: boolean; muted: boolean; sharing: boolean }
-  | { t: 'rtc'; to: string; data: unknown }
   | { t: 'chat'; text: string }
   | { t: 'team.get' }
   | { t: 'team.invite'; github: string }
@@ -1255,7 +1253,6 @@ export type ServerMsg =
       floors: FloorInfo[];
       /** Where the office looks for checkouts to add as floors, on the office's machine. */
       projectsDir: ProjectsDirState;
-      ice: { urls: string | string[]; username?: string; credential?: string }[];
       chat: ChatLine[];
       /** Whether teammates can be invited from the office (see TeamState). */
       invites: boolean;
@@ -1312,7 +1309,6 @@ export type ServerMsg =
   | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; error?: string }
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */
   | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string }
-  | { t: 'rtc'; from: string; data: unknown }
   | ({ t: 'chat' } & ChatLine)
   /**
    * A line for the toast stack. `workerId` names the worker it is about, when one is: a client

@@ -1048,7 +1048,6 @@ export async function startServer(cfg: Config) {
       peers: [...clients.values()].map((c) => c.peer),
       floors: floorInfos(),
       projectsDir: building.projectsDirState(),
-      ice: cfg.iceServers,
       chat: chat.recent(50),
       invites: team.available,
       version: upgrader.version,
@@ -1265,17 +1264,6 @@ export async function startServer(cfg: Config) {
         if (COLOR_RE.test(msg.color)) c.peer.color = msg.color;
         c.peer.look = sanitizeLook(msg.look, c.peer.look);
         broadcast({ t: 'peer.update', peer: c.peer });
-        break;
-      }
-      case 'voice':
-        c.peer.voice = !!msg.voice;
-        c.peer.muted = !!msg.muted;
-        c.peer.sharing = !!msg.sharing;
-        broadcast({ t: 'peer.update', peer: c.peer });
-        break;
-      case 'rtc': {
-        const target = clients.get(str(msg.to, 32));
-        if (target) sendTo(target, { t: 'rtc', from: c.id, data: msg.data });
         break;
       }
       case 'chat': {

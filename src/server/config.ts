@@ -36,7 +36,6 @@ export interface Config {
   agentArgs: string[];
   tls?: { cert: string; key: string };
   trustProxy: boolean;
-  iceServers: RTCIceServerLike[];
   /** Address teammates SSH-tunnel to (set by deploy/aws.sh); enables invites from the office. */
   publicHost?: string;
   /** Daily tracked Claude Code spend budget, USD. Other providers' spend is excluded. */
@@ -51,12 +50,6 @@ export interface Config {
   city?: string;
   /** Weather pinned for good, instead of made up or forecast. */
   weather?: Weather;
-}
-
-export interface RTCIceServerLike {
-  urls: string | string[];
-  username?: string;
-  credential?: string;
 }
 
 const HELP = `droid-office — a 3D office for your team and its Droid / Claude Code / OpenCode / Codex / Grok / Muse workers
@@ -119,8 +112,6 @@ Options:
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
       --trust-proxy       Trust X-Forwarded-* headers (behind Caddy/nginx)
-      --turn <url>        Add a TURN server for voice (repeatable), e.g.
-                          turn:user:pass@turn.example.com:3478
       --budget <usd>      Daily budget for tracked Claude Code spend (env
                           DROID_OFFICE_BUDGET). Everyone is warned when the
                           day's spend passes it. Other providers' spend is excluded
@@ -140,9 +131,6 @@ Options:
       --weather <kind>    Pin the weather: clear, cloudy, rain, storm, snow or
                           fog (env DROID_OFFICE_WEATHER)
   -h, --help              Show this help
-
-Voice and screen sharing need a secure context: use https (a reverse proxy,
---tls-cert/--tls-key or --self-signed) unless everyone is on localhost.
 `;
 
 function takeValue(args: string[], i: number, flag: string): string {
@@ -160,13 +148,6 @@ function splitArgs(s: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) out.push(m[1] ?? m[2] ?? m[3]);
   return out;
-}
-
-function parseTurn(url: string): RTCIceServerLike {
-  // turn:user:pass@host:port  ->  { urls: 'turn:host:port', username, credential }
-  const m = /^(turns?):([^:@]+):([^@]+)@(.+)$/.exec(url);
-  if (m) return { urls: `${m[1]}:${m[4]}`, username: decodeURIComponent(m[2]), credential: decodeURIComponent(m[3]) };
-  return { urls: url };
 }
 
 /** Where the office lives when it isn't started in a project: ~/droid-office, or $DROID_OFFICE_HOME. */
@@ -242,7 +223,6 @@ export function loadConfig(argv: string[]): Config {
   let webhook = process.env.DROID_OFFICE_WEBHOOK;
   let city = process.env.DROID_OFFICE_CITY || '';
   let weather = process.env.DROID_OFFICE_WEATHER || '';
-  const iceServers: RTCIceServerLike[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -290,9 +270,6 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--reset-password':
         resetPassword = true;
-        break;
-      case '--turn':
-        iceServers.push(parseTurn(takeValue(argv, i++, a)));
         break;
       case '--budget':
         budget = takeValue(argv, i++, a);
@@ -443,7 +420,6 @@ export function loadConfig(argv: string[]): Config {
     agentArgs,
     tls,
     trustProxy,
-    iceServers,
     publicHost: process.env.DROID_OFFICE_PUBLIC_HOST || undefined,
     budget: budgetUsd,
     budgetPause,

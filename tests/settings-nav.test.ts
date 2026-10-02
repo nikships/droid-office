@@ -5,7 +5,7 @@ import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type
 test('settings has the five categories, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound & voice', 'Notifications', 'Building', 'Workers'],
+    ['You', 'Sound', 'Notifications', 'Building', 'Workers'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),

@@ -8,7 +8,7 @@
  * import { attachVrUi } from './vr/attach';
  * import { DESKS } from '../shared/layout';
  *
- * // After the renderer, scene, net, store and voice exist (next to the other UI setup):
+ * // After the renderer, scene, net and store exist (next to the other UI setup):
  * const vrUi = attachVrUi(scene, {
  *   send: (msg) => net.send(msg),
  *   subscribe: (topic, fn) => store.on(topic, fn),
@@ -20,7 +20,6 @@
  *   getQueue: () => store.queue,
  *   getFreeDesks: () => DESKS.filter((d) => !d.station && !store.workerAtDesk(d.id))
  *     .map((d) => ({ id: d.id, label: d.label })),
- *   voice: { isMuted: () => voice.muted, inVoice: () => voice.inVoice, toggleMute: () => voice.inVoice ? voice.toggleMute() : joinVoice(), leaveVoice: () => voice.leaveVoice() },
  *   actions: {
  *     hire: (deskId) => hireAtDesk(deskId),          // the DOM hire dialog's function
  *     nextWaiting: () => goToNextWaiting(),          // the DOM N key's function
@@ -71,15 +70,6 @@ import { VrPromptPanel, type VrPromptOpts } from './prompt';
 import { VrTerminalPanel, type VrTerminalMsg } from './terminal-panel';
 import { VrToast } from './toast';
 
-export interface VrUiVoice {
-  isMuted: () => boolean;
-  inVoice: () => boolean;
-  /** Mutes/unmutes in voice, or joins it (the menu mute row's tap). */
-  toggleMute: () => void;
-  /** Leaves voice (the menu leave row's tap). */
-  leaveVoice: () => void;
-}
-
 /** Everything the VR UI needs from the office: stores, clients and DOM-shared actions. No globals. */
 export interface VrUiDeps {
   send: (msg: VrTerminalMsg) => void;
@@ -109,8 +99,7 @@ export interface VrUiDeps {
   onRoof: () => boolean;
   barCutOff: () => boolean;
   getVrSettings: () => VrSettings;
-  voice: VrUiVoice;
-  actions: Omit<VrMenuActions, 'toggleMute' | 'leaveVoice'>;
+  actions: VrMenuActions;
   /** Worker acts from the terminal header: wake (R), send home (X), and what X would do. */
   workerActions: {
     resume: (workerId: string) => void;
@@ -251,10 +240,8 @@ class VrUi implements VrUiHandle {
         onRoof: deps.onRoof,
         barCutOff: deps.barCutOff,
         getVrSettings: deps.getVrSettings,
-        isMuted: deps.voice.isMuted,
-        inVoice: deps.voice.inVoice,
       },
-      { ...deps.actions, toggleMute: deps.voice.toggleMute, leaveVoice: deps.voice.leaveVoice },
+      deps.actions,
     );
     this.keyboard = new VrKeyboard();
     this.prompt = new VrPromptPanel();

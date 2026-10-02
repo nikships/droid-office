@@ -72,8 +72,7 @@ console.log(`
 
   password: ${passwordLine()}
   default agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}
-  choose Claude Code, OpenCode, Codex or Droid when hiring or queueing a task
-${cfg.tls ? '' : '\n  tip: voice & screen share need https off localhost — use a reverse proxy or --self-signed\n'}`);
+  choose Claude Code, OpenCode, Codex or Droid when hiring or queueing a task`);
 
 let closing = false;
 // SIGTERM is a restart (tsx watch reloading, a plain `kill`, systemd): workers keep running in their

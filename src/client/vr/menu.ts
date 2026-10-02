@@ -4,7 +4,7 @@
  * arrives through VrMenuActions (see attach.ts for the exact main.ts snippet), so there is
  * no forked logic here. Read-only views render from the same stores the DOM boards read.
  *
- * Views: main (Hire, Next waiting, Queue, Issues/PRs, Floors, Jukebox, Bar, Chat, Mute, Leave voice, Exit VR),
+ * Views: main (Hire, Next waiting, Queue, Issues/PRs, Floors, Jukebox, Bar, Chat, Exit VR),
  * hire (free desks, with the worktree toggle), queue (running/queued/done, with tap-twice remove + requeue), board (issues/PRs tabs, read + hand-to-worker),
  * a detail view for one issue or PR (hand it over, queue it, comment, close it, review a PR), floors (ride the elevator), jukebox (tunes + a stream row), bar (drinks),
  * chat (the floor's chat + say something + search it), search (the search hits — chat lines and
@@ -66,8 +66,6 @@ export interface VrMenuStores {
   onRoof: () => boolean;
   /** Had enough: the bar pours nothing stronger than water. */
   barCutOff: () => boolean;
-  isMuted: () => boolean;
-  inVoice: () => boolean;
   /** VR locomotion and comfort (the ⚙️ Settings VR section's values, live). */
   getVrSettings: () => VrSettings;
   /** The meeting room: the meeting at the table, and the ones before. */
@@ -115,10 +113,6 @@ export interface VrMenuActions {
   searchOffice: (query: string) => void;
   /** Walks over to a teammate — the sidebar people list's click (main.ts vrWalkToPeer). */
   walkToPeer: (peerId: string) => void;
-  /** Mutes/unmutes in voice, or joins it — the DOM M/V keys' function (main.ts voice toggle). */
-  toggleMute: () => void;
-  /** Leaves voice — the DOM V key's function while in it (main.ts voice leave). */
-  leaveVoice: () => void;
   /** Patches VR locomotion/comfort — the DOM ⚙️ Settings VR section's function (assign + save). */
   vrSettings: (patch: Partial<VrSettings>) => void;
   /** Mutes/unmutes the jukebox or the office sounds — the DOM ⚙️ Settings mute buttons. */
@@ -266,7 +260,6 @@ export class VrMenu {
   private assignTarget: AssignTarget | null = null;
   /** Scroll offset (and list identity) the row buttons were last synced to. */
   private rowSyncKey = '';
-  private lastMuted = '';
   /** The queue's last unpaused width: the ⏸ toggle goes back to it. */
   private lastLimit = 2;
   /** The detail ✕ confirms while now is before this (the first tap arms it). */
@@ -409,8 +402,6 @@ export class VrMenu {
   /** Repaints the menu (main.ts calls this when the merge box's fetch lands — no state resets). */
   refresh() {
     if (!this.panel.visible) return;
-    const muted = `${this.stores.isMuted()}|${this.stores.inVoice()}`;
-    if (muted !== this.lastMuted) this.lastMuted = muted;
     const limit = this.stores.getQueue().maxWorkers;
     if (limit > 0) this.lastLimit = limit;
     this.syncButtons();
@@ -601,30 +592,6 @@ export class VrMenu {
             },
           ]
         : []),
-      // Out of voice the row joins it (the V key's function); in voice it mutes.
-      ...(this.stores.inVoice()
-        ? [
-            {
-              id: 'mute',
-              icon: this.stores.isMuted() ? '🔇' : '🎙️',
-              title: this.stores.isMuted() ? 'Unmute' : 'Mute',
-              sub: () => 'in voice (M)',
-            },
-            {
-              id: 'leave',
-              icon: '📞',
-              title: 'Leave voice',
-              sub: () => 'back to silence (V)',
-            },
-          ]
-        : [
-            {
-              id: 'mute',
-              icon: '🎙️',
-              title: 'Join voice',
-              sub: () => 'talk to the floor (V)',
-            },
-          ]),
       { id: 'settings', icon: '⚙️', title: 'VR settings', sub: () => 'glide · turning · fade' },
       { id: 'controls', icon: '❓', title: 'VR controls', sub: () => 'pinches, teleports, sticks' },
       { id: 'exit', icon: '🚪', title: 'Exit VR', sub: () => 'back to the flat screen' },
@@ -834,10 +801,6 @@ export class VrMenu {
         return this.go('services');
       case 'people':
         return this.go('people');
-      case 'mute':
-        return this.actions.toggleMute();
-      case 'leave':
-        return this.actions.leaveVoice();
       case 'settings':
         return this.go('settings');
       case 'controls':
@@ -1776,13 +1739,6 @@ export class VrMenu {
   }
 
   update(dt: number, head?: HeadPose | null) {
-    // Mute state can flip from the desktop side; the button label follows it.
-    const muted = `${this.stores.isMuted()}|${this.stores.inVoice()}`;
-    if (muted !== this.lastMuted && this.panel.visible) {
-      this.lastMuted = muted;
-      this.syncButtons();
-      this.panel.markDirty();
-    }
     // Row buttons track the list's scroll offset.
     if (this.panel.visible && this.view !== 'main' && this.view !== 'detail') {
       this.syncRowsIfMoved();

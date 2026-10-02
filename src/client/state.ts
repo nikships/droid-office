@@ -267,7 +267,6 @@ class Store {
   repos: { list: RepoChoice[]; error?: string; loading: boolean; at: number } = { list: [], loading: false, at: 0 };
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: true };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: true };
-  ice: RTCIceServer[] = [];
   chat: ChatLine[] = [];
   /** Whether this office can invite teammates (deployed with deploy/aws.sh). */
   invites = false;
@@ -389,7 +388,6 @@ class Store {
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
-        this.ice = msg.ice as RTCIceServer[];
         this.chat = msg.chat;
         this.invites = msg.invites;
         this.upgrade = msg.upgrade;

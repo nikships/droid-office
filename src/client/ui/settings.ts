@@ -587,7 +587,7 @@ export function openSettings(
       card('Signed in', h('div.volume', {}, signOut), h('p.setting-note', {}, account ? `As ${account.name}, with your own account (${account.role}).` : 'With the shared office password.')),
     ],
     sound: [
-      card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done. Voice chat isn’t affected.')),
+      card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done.')),
       card('Jukebox', musicRow, h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.')),
     ],
     notify: [

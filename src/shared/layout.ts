@@ -188,7 +188,7 @@ export const BOARDS = {
   services: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: '🌐 Services' },
 } as const;
 
-/** The big TV on the east wall that shows whoever is screen sharing. */
+/** The big TV on the east wall, showing its idle screen. */
 export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 } as const;
 /**
  * The monitor on the west wall, between the first two windows from the north (the ladder has the
@@ -363,8 +363,6 @@ export interface SeatDef {
   depth: number;
   /** Getting up, you step off this far in front of where you sat (negative: behind, away from a desk or a table). */
   out: number;
-  /** It faces the lounge TV: sitting down there puts whatever's being shared up on your screen. */
-  tv?: boolean;
   /** It faces the boss's monitor: E there, sitting down, plays Minesweeper on it. */
   game?: boolean;
   /** Up on the rooftop bar, not in the office. */
@@ -379,7 +377,7 @@ export interface SeatDef {
  */
 export const SEATING: SeatDef[] = [
   // The lounge couch, its back to the room, facing the TV.
-  { id: 'couch', label: '🛋️ Couch', x: 10.5, y: 0, z: 0, rotY: Math.PI / 2, places: [-1.2, 0, 1.2], hips: 0.5, depth: -0.05, out: 0.9, tv: true },
+  { id: 'couch', label: '🛋️ Couch', x: 10.5, y: 0, z: 0, rotY: Math.PI / 2, places: [-1.2, 0, 1.2], hips: 0.5, depth: -0.05, out: 0.9 },
   // Beanbags either side of the lounge, turned to the TV.
   { id: 'lounge-beanbag-1', label: '🫘 Beanbag', x: 12.5, y: 0, z: 3.5, rotY: Math.atan2(TV.x - 12.5, TV.z - 3.5), places: [0], hips: 0.42, depth: -0.1, out: 1.2 },
   { id: 'lounge-beanbag-2', label: '🫘 Beanbag', x: 14.5, y: 0, z: -3.4, rotY: Math.atan2(TV.x - 14.5, TV.z + 3.4), places: [0], hips: 0.42, depth: -0.1, out: 1.2 },

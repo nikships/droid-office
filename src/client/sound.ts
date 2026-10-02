@@ -7,8 +7,8 @@
  * Everything here is triggered by something: there is no background hum, no weather, no random
  * room noise. Silence until something happens.
  *
- * Everything goes through one master gain that Settings turns down or mutes. Voice chat doesn't, and
- * the jukebox has a volume of its own.
+ * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
+ * which has a volume of its own.
  */
 import { CABINET, DJ_BOOTH, FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';

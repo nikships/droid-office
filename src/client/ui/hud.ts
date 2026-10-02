@@ -1,7 +1,6 @@
 import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import { store } from '../state';
-import type { Voice } from '../voice';
 import type { ChatLine } from '../../shared/protocol';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { usageLabel, usageTitle } from './usage';
@@ -15,7 +14,7 @@ import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
 let peopleKey = '';
 
 /** The people list in the sidebar. Click yourself to change your character, or anyone else to walk over to them. */
-export function renderPeople(voice: Voice, onEditProfile: () => void, onWalkTo: (id: string) => void, force = true) {
+export function renderPeople(onEditProfile: () => void, onWalkTo: (id: string) => void, force = true) {
   const peers = [...store.peers.values()].sort((a, b) => (a.id === store.you ? -1 : b.id === store.you ? 1 : a.name.localeCompare(b.name)));
   // What each of them is up to changes as they walk about (onto the balcony, up the stairs).
   const doing = peers.map((p) => (p.id === store.you ? undefined : whereabouts(p)));
@@ -48,14 +47,6 @@ export function renderPeople(voice: Voice, onEditProfile: () => void, onWalkTo: 
     ul.append(li);
   });
   $('people-count').textContent = String(peers.length);
-  void voice;
-}
-
-export function updateSpeaking(voice: Voice) {
-  for (const li of document.querySelectorAll<HTMLElement>('#people li[data-peer]')) {
-    const lvl = voice.levelOf(li.dataset.peer!);
-    li.classList.toggle('speaking', lvl > 0.04);
-  }
 }
 
 export function renderWorkers(onOpen: (id: string) => void) {
@@ -151,7 +142,7 @@ export function openHelp() {
     ['Mouse', 'Look around in first person (click to capture the mouse, Esc to free it)'],
     [
       'Click / E',
-      'Use what you look at: hire a worker, open its terminal, read a board, call a meeting in the meeting room, watch the TV, put a song on the jukebox, tee off from the balcony, sit on a couch, a beanbag, a chair or the balcony bench (walk off to get up)',
+      'Use what you look at: hire a worker, open its terminal, read a board, call a meeting in the meeting room, put a song on the jukebox, tee off from the balcony, sit on a couch, a beanbag, a chair or the balcony bench (walk off to get up)',
     ],
     ['👥', 'Click someone under "In the office" to walk over to them (on another floor, you ride the elevator first). The line under their name says what they have open or where they are'],
     ['🛗', 'Every project is a floor: step into the elevator on the north wall and press E (or click the project name, top left) to go to another one or add a project'],
@@ -184,7 +175,6 @@ export function openHelp() {
       typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K',
       'Command palette: a few letters find a worker, issue, PR, service, board, teammate or action. Enter opens it, Shift+Enter walks you over first',
     ],
-    ['V / M', 'Join voice / mute'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
     ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude)'],
     ['Shift + Esc', 'Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal)'],

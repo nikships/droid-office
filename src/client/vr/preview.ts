@@ -192,7 +192,6 @@ const floors: FloorInfo[] = [
 ];
 const jukebox: JukeboxState = { on: true, track: 'coffee-break', by: 'Ada', startedAt: now - 45000, elapsed: 0 };
 
-let muted = false;
 const deps: VrUiDeps = {
   send: (msg) => {
     log('send', msg.t, (msg as { workerId?: string }).workerId ?? '', (msg as { data?: string }).data ? JSON.stringify((msg as { data?: string }).data) : '');
@@ -257,15 +256,6 @@ const deps: VrUiDeps = {
   onRoof: () => false,
   barCutOff: () => false,
   getVrSettings: () => ({ glide: false, turn: 'snap', turnSpeed: 90, fade: true }),
-  voice: {
-    isMuted: () => muted,
-    inVoice: () => true,
-    toggleMute: () => {
-      muted = !muted;
-      log('mute →', muted);
-    },
-    leaveVoice: () => log('leave voice'),
-  },
   actions: {
     hire: (deskId) => log('hire at', deskId, '(would open the VR hire prompt)'),
     toggleWorktree: () => log('worktree toggle (would flip the next hire)'),

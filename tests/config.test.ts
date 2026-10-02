@@ -41,6 +41,11 @@ test('other flags still treat a leading -- as a missing value', (t) => {
   assert.throws(() => load(t, '--agent', '--agent-args', 'x'), /exit 2: droid-office: --agent needs a value/);
 });
 
+test('voice is gone: --turn is no longer an option', (t) => {
+  assert.throws(() => load(t, '--turn', 'turn:user:pass@turn.example.com:3478'), /exit 2: droid-office: unknown option --turn/);
+  assert.ok(!('iceServers' in load(t)), 'no ICE servers on the config');
+});
+
 test('the office looks for checkouts in a code folder in the home folder, else the home folder itself', (t) => {
   const cfg = load(t);
   assert.equal(cfg.projectsDir, suggestedFolder(homedir()));

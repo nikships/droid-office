@@ -6,7 +6,7 @@ export type SettingsScope = 'you' | 'floor' | 'office';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and how you’re signed in.' },
-  { id: 'sound', icon: '🔊', label: 'Sound & voice', blurb: 'How loud the office is for you.' },
+  { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, where the elevator looks for projects, and local source reload.' },
   { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home and what the office tells them.' },

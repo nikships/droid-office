@@ -78,11 +78,10 @@ import { BloodSpray, gunHit, Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { disposeSprite, redrawText, textSprite } from './world/toon';
-import { Voice } from './voice';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, openModal, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -100,7 +99,7 @@ import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openQueue } from './ui/queue';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
-import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers, updateSpeaking } from './ui/hud';
+import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers } from './ui/hud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
@@ -467,13 +466,7 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
-// TV
-const tvVideo = document.createElement('video');
-tvVideo.muted = true;
-tvVideo.playsInline = true;
-tvVideo.autoplay = true;
-const tvTexture = new THREE.VideoTexture(tvVideo);
-tvTexture.colorSpace = THREE.SRGBColorSpace;
+// TV: geometry and its idle screen only (screen sharing is gone).
 const tvIdle = (() => {
   const c = document.createElement('canvas');
   c.width = 1280;
@@ -491,9 +484,6 @@ const tvIdle = (() => {
     g.textAlign = 'left';
     g.font = `700 72px ${MONO}`;
     g.fillText('OFFICE TV', 116, 376);
-    g.fillStyle = '#8c8c8c';
-    g.font = `500 30px ${MONO}`;
-    if (controlHintsShown()) g.fillText('CLICK “SHARE SCREEN” TO PUT SOMETHING UP HERE', 116, 432);
     t.needsUpdate = true;
   };
   const t = new THREE.CanvasTexture(c);
@@ -556,7 +546,6 @@ const drunkVision = new DrunkVision(renderer);
 
 // ---- Networking & state -------------------------------------------------------------------------
 const net = new Net(() => store.profile, whereNow);
-const voice = new Voice(net);
 
 const me = new Person(store.profile.name, store.profile.color, store.profile.look);
 me.showLabel(false);
@@ -633,7 +622,7 @@ function vrAimLabel(it: Interactable, note: GhIssue | null, spot: BoardSpot | nu
     case 'bookshelf':
       return '📚 Bookshelf · desktop only';
     case 'tv':
-      return '📺 TV · desktop only';
+      return '📺 TV';
     case 'cabinet':
       return '🕹️ Arcade · desktop only';
     case 'ball':
@@ -647,7 +636,6 @@ function vrAimLabel(it: Interactable, note: GhIssue | null, spot: BoardSpot | nu
       if (player.seat?.seatId !== it.seatId) return 'E · sit down';
       const seat = SEATING_BY_ID.get(it.seatId);
       if (seat?.bar) return 'E · order a drink';
-      if (seat?.tv && tvShowing()) return '📺 TV · desktop only';
       if (seat?.game) return '💣 Minesweeper · desktop only';
       return 'E · stand up';
     }
@@ -725,15 +713,11 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
     if (it.kind === 'bar') return vrUi.showMenu('bar');
     if (it.kind === 'meeting') return vrUi.showMenu('meeting');
     if (it.kind === 'services') return vrUi.showMenu('services');
-    // E at the seat you're on: the bar opens its VR menu (the roof's E does the same); the TV
-    // and the boss's Minesweeper stay desktop — sitting down and standing up fall through below.
+    // E at the seat you're on: the bar opens its VR menu (the roof's E does the same); the
+    // boss's Minesweeper stays desktop — sitting down and standing up fall through below.
     if (it.kind === 'seat' && it.seatId && player.seat?.seatId === it.seatId) {
       const seat = SEATING_BY_ID.get(it.seatId);
       if (seat?.bar) return vrUi.showMenu('bar');
-      if (seat?.tv && tvShowing()) {
-        toast("Whoever's sharing is up on the desktop TV — the headset can't watch screens yet", 'warn');
-        return;
-      }
       if (seat?.game) {
         toast("The boss's Minesweeper isn't in VR yet — hop on the desktop for that one", 'warn');
         return;
@@ -755,7 +739,7 @@ function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot |
       toast(withControlHint(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}`, '. E again to take it down'));
       return;
     }
-    if (it.kind === 'tv' || it.kind === 'cabinet' || it.kind === 'bookshelf' || it.kind === 'ball' || it.kind === 'golf') {
+    if (it.kind === 'cabinet' || it.kind === 'bookshelf' || it.kind === 'ball' || it.kind === 'golf') {
       toast(`The ${it.kind} isn't in VR yet — hop on the desktop for that one`, 'warn');
       return;
     }
@@ -904,7 +888,6 @@ const vrHooks: VRHooks = {
       // The main row follows the focused terminal; the changes view holds its watched worker.
       getChangesWorker: () => (vrMenuView === 'changes' ? vrChangesWorker : (vrUi?.terminal.focused() ?? null)),
       getChanges: () => vrChanges,
-      voice: { isMuted: () => voice.muted, inVoice: () => voice.inVoice, toggleMute: () => (voice.inVoice ? voice.toggleMute() : void toggleVoice()), leaveVoice: () => voice.leaveVoice() },
       actions: {
         hire: (deskId) => vrHire(deskId),
         toggleWorktree: () => setWorktreePref(!worktreePref()),
@@ -1172,8 +1155,6 @@ if (new URLSearchParams(location.search).has('vrtest')) {
       store.meeting.past.unshift({ id: 'zzz-past', pattern: 'debate', title, status: 'done', summary: 'Seeded by the VR meeting-history check.', calledBy: 'vrtest', finishedAt: Date.now(), output: 'docs/zzz-past.md' });
       store.emit('meeting');
     },
-    // Whether this client is in voice (the join-voice check reads this back).
-    inVoice: () => voice.inVoice,
     // What's on the jukebox (the stream check reads this back).
     jukebox: () => ({ on: store.jukebox.on, track: store.jukebox.track, url: store.jukebox.url ?? null }),
     // Your own mute switches (the sound-rows check reads these back).
@@ -1799,7 +1780,6 @@ net.onStatus((up) => {
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
   const wasOn = msg.t === 'welcome' ? (store.floor ?? lastFloor()) : null;
-  if (msg.t === 'welcome') voice.reset();
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
     departures.clear();
     arrivals.clear();
@@ -1851,7 +1831,6 @@ net.onMessage((msg) => {
         const notice = removedFloorNotice(msg.arrival, wasOn, lastSpot(), store.floor);
         if (notice) toast(notice, 'warn');
       } else if (!store.floor) arrive();
-      if (voice.inVoice || voice.sharing) net.send({ t: 'voice', voice: voice.inVoice, muted: voice.muted, sharing: voice.sharing });
       // The office let go of the ball for you while you were away.
       ballNews(false);
       // After a reconnect the server has forgotten which terminal we had open, and what we're doing.
@@ -1869,7 +1848,6 @@ net.onMessage((msg) => {
       if (!bootVersion) bootVersion = msg.version;
       else if (msg.version !== bootVersion || restarting()) showUpgraded(msg.upgrade);
       upgradePhase = msg.upgrade.phase;
-      voice.syncPeers();
       break;
     }
     case 'floor.enter':
@@ -1891,13 +1869,6 @@ net.onMessage((msg) => {
       break;
     case 'floors':
       noticeWaiting();
-      break;
-    case 'peer.join':
-    case 'peer.leave':
-      voice.syncPeers();
-      break;
-    case 'rtc':
-      void voice.handleSignal(msg.from, msg.data as never);
       break;
     case 'worker.worktree':
       routeWorktreeMessage(msg);
@@ -2298,8 +2269,7 @@ function syncPeers() {
       remotes.delete(id);
     }
   }
-  renderPeople(voice, editProfile, walkTo);
-  refreshShares();
+  renderPeople(editProfile, walkTo);
 }
 store.on('peers', syncPeers);
 store.on('carrying', () => {
@@ -3540,22 +3510,6 @@ function boardActions() {
   };
 }
 
-function watchShare() {
-  const streams = currentShares();
-  if (!streams.length) {
-    void toggleShare();
-    return;
-  }
-  const video = h('video', { autoplay: true, playsinline: true, muted: true }) as HTMLVideoElement;
-  // What's on the TV: someone else's screen before your own.
-  const [who, stream] = streams.find(([name]) => name !== 'You') ?? streams[0];
-  video.srcObject = stream;
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h('div.modal.viewer', { role: 'dialog', 'aria-label': 'Screen share' }, h('header', {}, h('h2', {}, `🖥️ ${who}'s screen`), close), video);
-  const modal = openModal(el, { doing: `🖥️ watching ${who}'s screen`, onClose: () => (video.srcObject = null) });
-  close.addEventListener('click', () => modal.close());
-}
-
 /** `note` is the issue note you're pointing at on the issues board, if any (see aimedNote); `spot` the tab or Jira card (see aimedSpot). */
 function interact(target: Interactable | null, key: DeskKey, note = aimedNote, spot = aimedSpot) {
   if (!target) return;
@@ -3604,7 +3558,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
   else if (target.kind === 'services') openServices();
   else if (target.kind === 'queue') showQueue();
-  else if (target.kind === 'tv') watchShare();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
@@ -4111,25 +4064,17 @@ function freePlace(seat: SeatDef): SeatPlace | null {
   return best;
 }
 
-/** Someone else's screen is up on the TV. */
-function tvShowing(): boolean {
-  return currentShares().some(([who]) => who !== 'You');
-}
-
-/** E at a seat: sit down on it. Sitting there already, get up, or on the couch facing the TV, watch it. */
+/** E at a seat: sit down on it. Sitting there already, get up (or play, or order, where the seat offers it). */
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
-    if (seat.tv && tvShowing()) watchShare();
-    else if (seat.game) arcade.play();
+    if (seat.game) arcade.play();
     else if (seat.bar) showBar();
     else standUp();
     return;
   }
-  if (!sitOn(seatId)) return;
-  // The couch in front of the TV is where you watch whoever's sharing.
-  if (seat.tv && tvShowing()) watchShare();
+  sitOn(seatId);
 }
 
 /** Sits down on a free place on a seat. */
@@ -4344,10 +4289,8 @@ function hintFor(it: Interactable): Hint {
       const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
       return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
     }
-    case 'tv': {
-      const any = currentShares().length > 0;
-      return { k: String(any), parts: [title('📺 Office TV'), key('E', any ? 'Watch full screen' : 'Share your screen')] };
-    }
+    case 'tv':
+      return { k: '', parts: [title('📺 Office TV'), aside('standby')] };
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
       return { k: String(buzzed), parts: [title('☕ Coffee machine'), key('E', buzzed ? 'Another cup' : 'Grab a cup')] };
@@ -4399,9 +4342,8 @@ function hintFor(it: Interactable): Hint {
       const seat = SEATING_BY_ID.get(it.seatId ?? '');
       if (!seat) return { k: '', parts: [] };
       if (player.seat?.seatId === seat.id) {
-        const tv = !!seat.tv && tvShowing();
-        const use = tv ? 'Watch the TV' : seat.game ? 'Play Minesweeper' : seat.bar ? 'Order a drink' : '';
-        return { k: `${seat.id}|sitting|${tv}`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
+        const use = seat.game ? 'Play Minesweeper' : seat.bar ? 'Order a drink' : '';
+        return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
       }
       const full = !freePlace(seat);
       return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.game ? aside('💣 Minesweeper on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
@@ -4770,12 +4712,6 @@ function officeKey(e: KeyboardEvent): boolean {
       e.preventDefault();
       hud.toggleMenu();
       return true;
-    case 'KeyV':
-      void toggleVoice();
-      return true;
-    case 'KeyM':
-      voice.toggleMute();
-      return true;
     case 'KeyH':
       openHelp();
       return true;
@@ -4800,7 +4736,7 @@ function officeKey(e: KeyboardEvent): boolean {
   return false;
 }
 
-/** Keys while hanging a picture. Walking, chat and voice work as usual. */
+/** Keys while hanging a picture. Walking and chat work as usual. */
 function hangingKey(code: string): boolean {
   switch (code) {
     case 'Escape':
@@ -5053,67 +4989,6 @@ chatInput.addEventListener('keydown', (e) => {
 chatInput.addEventListener('blur', () => $('chat').classList.remove('peek'));
 store.on('chat', renderChat);
 
-// ---- Voice & screen share ---------------------------------------------------------------------------
-async function toggleVoice() {
-  if (voice.inVoice) voice.leaveVoice();
-  else {
-    const err = await voice.joinVoice();
-    if (err) toast(err, 'warn');
-  }
-}
-
-async function toggleShare() {
-  if (voice.sharing) voice.stopShare();
-  else {
-    const err = await voice.startShare();
-    if (err) toast(err, 'warn');
-  }
-}
-
-function currentShares(): [string, MediaStream][] {
-  const out: [string, MediaStream][] = [];
-  const local = voice.localScreen;
-  if (local) out.push(['You', local]);
-  for (const [id, s] of voice.remoteScreens()) {
-    const peer = store.peers.get(id);
-    // A screen shared on another floor is on that floor's TV.
-    if (peer && !store.onMyFloor(peer)) continue;
-    out.push([peer?.name ?? 'Someone', s]);
-  }
-  return out;
-}
-
-let tvStream: MediaStream | null = null;
-function refreshShares() {
-  const shares = currentShares();
-  // Remote shares win the TV; your own share is what others see anyway.
-  const pick = shares.find(([who]) => who !== 'You') ?? shares[0];
-  const stream = pick?.[1] ?? null;
-  if (stream !== tvStream) {
-    tvStream = stream;
-    tvVideo.srcObject = stream;
-    if (stream) void tvVideo.play().catch(() => {});
-    tvMat.map = stream ? tvTexture : tvIdle.tex;
-    tvMat.needsUpdate = true;
-  }
-  const box = $('shares');
-  box.replaceChildren(
-    ...shares
-      .filter(([who]) => who !== 'You')
-      .map(([who, s]) => {
-        const v = h('video', { autoplay: true, playsinline: true, muted: true }) as HTMLVideoElement;
-        v.srcObject = s;
-        return h('div.share-thumb', { onclick: () => watchShare(), title: 'Watch full screen' }, v, h('span.who', {}, `🖥️ ${who}`));
-      }),
-  );
-  hintKey = '';
-}
-
-voice.onChange(() => {
-  hud.refresh();
-  refreshShares();
-});
-
 // Buttons must not keep focus, or Space (jump) would click them again.
 $('hud').addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button');
@@ -5127,7 +5002,6 @@ $('project').addEventListener('click', () => {
 
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------
 const waitingNow = () => waitingInOrder(store.workers.values());
-const noMedia = () => (window.isSecureContext ? undefined : 'Voice and screen sharing need HTTPS or localhost — use a TLS proxy, --self-signed, or an SSH tunnel');
 /** This page came over plain http:// on the LAN: WebXR stays undefined there, so Enter VR shows dimmed with the reason instead of hiding. Set by the probe below. */
 let xrInsecure = false;
 const noXr = () => (xrInsecure ? 'Enter VR needs HTTPS or localhost — reopen this office over https:// (start it with --self-signed)' : undefined);
@@ -5151,32 +5025,6 @@ const hud = mountHud(
     { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search the chat and every terminal', run: showSearch },
     { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
     { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
-    { id: 'voice', icon: '🎙️', label: () => (voice.inVoice ? 'Leave voice' : 'Join voice'), section: 'Together', key: 'V', on: () => voice.inVoice, blocked: noMedia, run: () => void toggleVoice() },
-    // While you're in voice, the top bar keeps the mute button handy.
-    {
-      id: 'mute',
-      icon: () => (voice.muted ? '🔇' : '🎙️'),
-      label: () => (voice.muted ? 'Unmute' : 'Mute'),
-      section: 'Together',
-      key: 'M',
-      shown: () => voice.inVoice,
-      status: () => voice.inVoice,
-      on: () => voice.inVoice,
-      tone: () => (voice.muted ? 'danger' : undefined),
-      title: () => (voice.muted ? 'Unmute (M)' : 'Mute (M)'),
-      run: () => voice.toggleMute(),
-    },
-    {
-      id: 'share',
-      icon: '🖥️',
-      label: () => (voice.sharing ? 'Stop sharing' : 'Share screen'),
-      section: 'Together',
-      on: () => voice.sharing,
-      status: () => voice.sharing,
-      chip: () => 'Sharing',
-      blocked: noMedia,
-      run: () => void toggleShare(),
-    },
     {
       id: 'decor',
       icon: '🖼️',
@@ -5378,7 +5226,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   const grip = climber.grip;
   me.setGrip(grip);
   me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip && !golf.active, player.speedBoost);
-  me.setVoiceLevel(voice.inVoice ? voice.localLevel : 0);
   const firstPerson = player.view === 'first';
   // In first person you are the camera; in third, hide yourself when it's zoomed in right behind your head.
   // At the tee the camera's behind the ball, and you're the one holding the club.
@@ -5432,15 +5279,12 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     r.person.setGrip(holding);
     const walking = !sat && p.moving && !airborne;
     r.person.update(dt, t, walking || (holding === 'ladder' && p.moving), airborne && !holding && Math.abs(pos.y - r.target.y) > 0.01);
-    r.person.setVoiceLevel(p.voice && !p.muted ? voice.levelOf(id) : 0);
     r.person.emojiLift = r.bubble ? 0.45 : 0;
     if (r.bubble && now > r.bubble.until) {
       r.person.root.remove(r.bubble.sprite);
       disposeSprite(r.bubble.sprite);
       r.bubble = undefined;
     }
-    const d = Math.hypot(pos.x - player.pos.x, pos.z - player.pos.z);
-    voice.setVolume(id, d < 4 ? 1 : Math.max(0.2, 1 - (d - 4) / 16));
   }
 
   const camPos = camera.position;
@@ -5541,10 +5385,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
       const p = store.peers.get(id);
       if (p) r.person.setDoing(whereabouts(p));
     }
-    renderPeople(voice, editProfile, walkTo, false);
-    updateSpeaking(voice);
-    // People on other floors can't be heard here (their voice connection stays up for when you meet).
-    for (const p of store.peers.values()) if (p.id !== store.you && !store.onMyFloor(p)) voice.setVolume(p.id, 0);
+    renderPeople(editProfile, walkTo, false);
   }
 
   // A few drinks in, the frame goes to the screen through the drunk vision (see world/drunk.ts).
@@ -5970,6 +5811,5 @@ void whoami().then(() => {
       }
     : {}),
 };
-(window as any).__voice = voice;
 (window as any).__sound = sound;
 (window as any).__notify = notifier;
