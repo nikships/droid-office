@@ -1,0 +1,12 @@
+{
+    "name": "DroidOffice.Spike.Tests",
+    "references": [
+        "DroidOffice.Spike",
+        "Unity.XR.OpenXR"
+    ],
+    "includePlatforms": ["Editor"],
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+    "optionalUnityReferences": ["TestAssemblies"],
+    "autoReferenced": false
+}

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "new-unity-project": {
+      "source": "unity-technologies/skills",
+      "sourceType": "github",
+      "skillPath": "skills/new-unity-project/SKILL.md",
+      "computedHash": "ffcb3e579dc16610a528385bb2bec61610f2df49ac993d588262997e3c13dab5"
+    },
+    "ui-ugui": {
+      "source": "unity-technologies/skills",
+      "sourceType": "github",
+      "skillPath": "skills/ui-ugui/SKILL.md",
+      "computedHash": "f1f37ee90215335cf4211e54a68653ad366e911eddfc041758bcae3060e7dd0b"
+    },
+    "unity-cli": {
+      "source": "unity-technologies/skills",
+      "sourceType": "github",
+      "skillPath": "skills/unity-cli/SKILL.md",
+      "computedHash": "3dc226a7f8fdb938126606c6f7ed4c97a1eee541e9f0ae1a38e8d7918f37964e"
+    },
+    "unity-package-management": {
+      "source": "unity-technologies/skills",
+      "sourceType": "github",
+      "skillPath": "skills/unity-package-management/SKILL.md",
+      "computedHash": "e3f2864bae52f446664469bba04484c04fc142d3b0e2290a4d360f46db808fcb"
+    },
+    "validate-urp-render-graph-renderer-feature": {
+      "source": "unity-technologies/skills",
+      "sourceType": "github",
+      "skillPath": "skills/validate-urp-render-graph-renderer-feature/SKILL.md",
+      "computedHash": "0038b319a6eac55a454a5da817bdba4e909300f151659f151f1868b64e858ffb"
+    }
+  }
+}

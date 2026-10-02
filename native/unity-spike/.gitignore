@@ -1,0 +1,16 @@
+/Library/
+/Temp/
+/Obj/
+/obj/
+/Build/
+/Builds/
+/Logs/
+/UserSettings/
+/MemoryCaptures/
+/Evidence/
+/Assets/Evidence/
+/Assets/Evidence.meta
+*.csproj
+*.sln
+*.slnx
+*.apk

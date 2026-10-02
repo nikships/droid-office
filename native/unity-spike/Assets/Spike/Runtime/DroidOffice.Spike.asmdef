@@ -1,0 +1,11 @@
+{
+    "name": "DroidOffice.Spike",
+    "references": [
+        "Unity.TextMeshPro",
+        "Unity.XR.CompositionLayers",
+        "Unity.XR.AndroidOpenXR",
+        "Unity.XR.OpenXR",
+        "Unity.XR.ARSubsystems"
+    ],
+    "autoReferenced": true
+}
