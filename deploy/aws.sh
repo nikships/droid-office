@@ -7,8 +7,8 @@
 #   deploy/aws.sh resume    start it again
 #   deploy/aws.sh destroy   delete everything it created (asks first)
 #
-# The office is never exposed to the internet: it listens on the box's loopback and everyone
-# reaches it through an SSH tunnel. Run `deploy/aws.sh help` for all commands and options.
+# The office is never exposed to the internet: it listens on the box's loopback and you
+# reach it through an SSH tunnel. Run `deploy/aws.sh help` for all commands and options.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +27,6 @@ YES=0
 NO_OPEN=0
 EXTRA_ALLOW=()
 SSH_USER="ubuntu"
-TEAM_USER="office"   # teammates' keys log in as this user, which can only tunnel to the office
 OFFICE_PORT=4600     # where the office listens on the box (127.0.0.1 only)
 LOCAL_PORT=4600
 LOCAL_PORT_SET=0
@@ -39,11 +38,11 @@ Droid Office on AWS — one command up, one command down.
 Usage: deploy/aws.sh <command> [options]
 
 The office is never on the internet. It listens on the machine's loopback, the firewall only
-opens SSH, and everyone reaches the office through an SSH tunnel on http://localhost:4600.
+opens SSH, and you reach the office through an SSH tunnel on http://localhost:4600.
 
 Commands
   up                 Create (or reuse) your office on EC2, install and start it, and open it in
-                     your browser. The first page shows the office password ONCE — write it down.
+                     your browser
   open               Tunnel to your office and open it in the browser (Ctrl-C closes the tunnel)
   pause              Stop the machine to save money (asks first). The disk, the address and
                      everything on it stay; only the disk and the address are billed while paused
@@ -53,20 +52,15 @@ Commands
 
   service <port>     Open a worker's web server from the office's 🌐 Services board on
                      http://localhost:<port> (through the office; Ctrl-C closes the tunnel)
-  invite <gh-user>   Let a teammate tunnel in with the SSH keys on their GitHub account, and
-                     print the one command to send them. Or: invite <name> <public-key-file>
-  uninvite <name>    Remove a teammate's keys and drop open tunnels
-  team               List who is invited
   status             Show the instance, whether the office is up and which IPs may SSH in
   allow <ip|me>      Let an IP (or CIDR) reach SSH. "me" = your current IP. "anywhere" opens SSH
-                     to every IP — reasonable, since it only accepts your key and invited keys
+                     to every IP — reasonable, since SSH only accepts your key
   revoke <ip|me>     Take that access away again
   ssh                SSH into the machine
   logs               Follow the office's logs
   resize <type>      Change the machine size, e.g. t3.2xlarge (stops it for ~1-2 minutes;
                      the address stays the same). `up --instance-type <type>` does this too.
   update             Install the latest droid-office on the machine and restart it
-  reset-password     Forget the password and show a new one once in your browser
 
 Options
   --name <name>             Deployment name, lets you run several offices (default: droid-office)
@@ -74,7 +68,7 @@ Options
   --profile <profile>       AWS CLI profile
   --instance-type <type>    EC2 instance type (default: t3.xlarge — 4 vCPU, 16 GiB)
   --disk <GiB>              Root disk size (default: 50)
-  --allow <ip|cidr>         With up or invite: also allow this IP to SSH in (repeatable).
+  --allow <ip|cidr>         With up: also allow this IP to SSH in (repeatable).
                             Your own IP is always allowed.
   --port <n>                Local port for the tunnel (default: 4600, or the next free one)
   --project <owner/repo>    Also clone this GitHub repo as the office's first floor. Without it
@@ -138,7 +132,6 @@ NAME_FLAG=""
 [[ "$NAME" != "droid-office" ]] && NAME_FLAG=" --name $NAME"
 KEY_FILE="$STATE_DIR/id_ed25519"
 KNOWN_HOSTS="$STATE_DIR/known_hosts"
-CLAIM_FILE="$STATE_DIR/claim-token"
 
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required (${2:-install it first})"; }
 aws_() { aws --output text "$@"; }
@@ -165,8 +158,6 @@ to_cidr() {
   [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || die "not an IPv4 address or CIDR: $1"
   echo "$v"
 }
-
-random_token() { od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; }
 
 open_url() {
   local url="$1"
@@ -365,31 +356,18 @@ service_tunnel() {
   done
   [[ $up -eq 1 ]] || { kill "$pid" 2>/dev/null; die "the tunnel didn't come up"; }
   ok "The worker's server: http://localhost:$port"
-  echo "   (through the office on $IP — sign in with the office password if it asks; Ctrl-C closes it)"
+  echo "   (through the office on $IP — Ctrl-C closes it)"
   open_url "http://localhost:$port"
   wait "$pid" || true
   trap - INT TERM
   warn "The tunnel dropped — reopen it with: deploy/aws.sh service $port$NAME_FLAG"
 }
 
+# The tunnel lands on the box's loopback, which the office trusts (see lan.ts), so the
+# owner walks straight in: no login, no token, nothing to write down.
 open_office() {
-  local claimable path="/"
-  claimable=$(office_get /api/claim 2>/dev/null || true)
-  if [[ "$claimable" == *'"claimable":true'* && -f "$CLAIM_FILE" ]]; then
-    path="/claim?t=$(cat "$CLAIM_FILE")"
-    say "Opening the one-time password page — write the password down, it is never shown again"
-  fi
-  tunnel "$path"
+  tunnel "/"
 }
-
-valid_member() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$ ]] || die "names are letters, numbers, dots, dashes and underscores: $1"; }
-
-# Teammates' keys are managed on the box by droid-office-team (installed by provision.sh).
-require_team() {
-  remote "test -x /usr/local/bin/droid-office-team" 2>/dev/null || die "this office predates team access — run: deploy/aws.sh up$NAME_FLAG"
-}
-
-team_members() { remote "droid-office-team list"; } # "<name> <number of keys>" per line
 
 # --- commands --------------------------------------------------------------------------------------
 
@@ -518,15 +496,13 @@ cmd_up() {
   done
   remote true || die "SSH never came up on $IP"
 
-  [[ -f "$CLAIM_FILE" ]] || (umask 077 && random_token >"$CLAIM_FILE")
-
   say "Provisioning (Node, git, gh, Claude Code, droid-office) — a few minutes on first run"
   local git_name git_email
   git_name=$(git config user.name 2>/dev/null || true)
   git_email=$(git config user.email 2>/dev/null || true)
   {
     printf 'export APP_REPO=%q APP_REF=%q PROJECT_REPO=%q\n' "$APP_REPO" "$APP_REF" "$project_repo"
-    printf 'export CLAIM_TOKEN=%q PUBLIC_HOST=%q GH_TOKEN=%q CLAUDE_CODE_OAUTH_TOKEN=%q ANTHROPIC_API_KEY=%q\n' "$(cat "$CLAIM_FILE")" "$IP" "$gh_token" "$CLAUDE_TOKEN" "$ANTHROPIC_KEY"
+    printf 'export PUBLIC_HOST=%q GH_TOKEN=%q CLAUDE_CODE_OAUTH_TOKEN=%q ANTHROPIC_API_KEY=%q\n' "$IP" "$gh_token" "$CLAUDE_TOKEN" "$ANTHROPIC_KEY"
     printf 'export GIT_NAME=%q GIT_EMAIL=%q\n' "$git_name" "$git_email"
     cat "$SCRIPT_DIR/provision.sh"
   } | remote 'bash -s' || die "provisioning failed (re-run \"deploy/aws.sh up\" to retry; it picks up where it left off)"
@@ -536,7 +512,6 @@ cmd_up() {
   ok "Your office is running on $IP (reachable only through SSH)"
   echo
   echo "   Open it later:     deploy/aws.sh open$NAME_FLAG"
-  echo "   Add a teammate:    the 👥 Invite button in the office, or deploy/aws.sh invite <their-github-username>$NAME_FLAG"
   echo "   Pause / resume:    deploy/aws.sh pause$NAME_FLAG   /   deploy/aws.sh resume$NAME_FLAG"
   echo "   Tear it down:      deploy/aws.sh destroy$NAME_FLAG"
   echo
@@ -578,9 +553,6 @@ cmd_status() {
     echo "office:    paused (start it with: deploy/aws.sh resume$NAME_FLAG)"
   elif [[ -n "$IP" && -f "$KEY_FILE" ]] && office_get /api/health >/dev/null 2>&1; then
     echo "office:    up"
-    local team
-    team=$(team_members 2>/dev/null | awk '{printf "%s%s", sep, $1; sep=", "}')
-    echo "team:      ${team:-nobody invited yet}"
   else
     echo "office:    not answering"
   fi
@@ -611,78 +583,6 @@ cmd_revoke() {
     revoke_cidr "$sg" "$c"
     ok "Revoked $c"
   done
-}
-
-cmd_invite() {
-  preflight
-  [[ ${#POSITIONAL[@]} -ge 1 && ${#POSITIONAL[@]} -le 2 ]] ||
-    die "usage: deploy/aws.sh invite <github-username>   or   deploy/aws.sh invite <name> <public-key-file>"
-  local who="${POSITIONAL[0]}" src raw keys
-  valid_member "$who"
-  if [[ ${#POSITIONAL[@]} -eq 2 ]]; then
-    src="${POSITIONAL[1]}"
-    [[ -f "$src" ]] || die "no such file: $src"
-    raw=$(cat "$src")
-  else
-    src="github.com/$who.keys"
-    raw=$(curl -fsS --max-time 10 "https://github.com/$who.keys") || die "couldn't fetch https://$src"
-  fi
-  [[ -n "$raw" ]] || die "no SSH public keys found in $src"
-  require_instance
-  require_team
-  local n
-  # The box keeps only valid keys and restricts each one to opening the tunnel.
-  n=$(printf '%s\n' "$raw" | remote "droid-office-team add $who") || die "couldn't add $who's keys from $src"
-  ok "$who is invited ($n key(s) from $src)"
-
-  local sg a fp
-  sg=$(find_sg)
-  for a in "${EXTRA_ALLOW[@]+"${EXTRA_ALLOW[@]}"}"; do
-    a=$(to_cidr "$a")
-    allow_cidr "$sg" "$a"
-    ok "SSH allowed from $a"
-  done
-  fp=$(remote "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub" | awk '{print $2}')
-  echo
-  echo "   Send $who this:"
-  echo
-  echo "     ssh -L 4600:localhost:$OFFICE_PORT $TEAM_USER@$IP"
-  echo
-  echo "     Leave it running, open http://localhost:4600 and sign in with the office password."
-  echo "     The first time, ssh asks you to trust the server. Only say yes if it shows"
-  echo "     ED25519 key fingerprint $fp"
-  echo
-  if ! allowed_cidrs "$sg" | grep -qx '0.0.0.0/0'; then
-    echo "   SSH only answers allowed IPs, so also run: deploy/aws.sh allow <their-ip>$NAME_FLAG"
-    echo "   (or \"allow anywhere\" — SSH only accepts your key and invited keys)"
-  fi
-}
-
-cmd_uninvite() {
-  preflight
-  [[ ${#POSITIONAL[@]} -eq 1 ]] || die "usage: deploy/aws.sh uninvite <name>"
-  local who="${POSITIONAL[0]}" out rc=0
-  valid_member "$who"
-  require_instance
-  require_team
-  out=$(remote "droid-office-team remove $who" 2>&1) || rc=$?
-  [[ $rc -eq 66 ]] && die "$who isn't invited (see: deploy/aws.sh team$NAME_FLAG)"
-  [[ $rc -eq 0 ]] || die "couldn't remove the keys: $out"
-  ok "$who's keys are removed and open tunnels were dropped (other teammates just reconnect)"
-  echo "   They still know the office password. To change it: deploy/aws.sh reset-password$NAME_FLAG"
-}
-
-cmd_team() {
-  preflight
-  require_instance
-  require_team
-  local list
-  list=$(team_members)
-  if [[ -z "$list" ]]; then
-    echo "Nobody is invited yet. Add someone: deploy/aws.sh invite <github-username>$NAME_FLAG"
-    return
-  fi
-  echo "$list" | awk '{printf "%s  (%d key%s)\n", $1, $2, ($2 == 1 ? "" : "s")}'
 }
 
 cmd_ssh() {
@@ -719,7 +619,7 @@ cmd_pause() {
   state=$(instance_field "$INSTANCE_ID" State.Name)
   if [[ "$state" != "stopped" ]]; then
     say "Pausing office \"$NAME\" ($INSTANCE_ID). Running workers stop and come back asleep"
-    echo "   when you resume (press R at their desk). Open tunnels, teammates' too, are dropped."
+    echo "   when you resume (press R at their desk). Open tunnels are dropped."
     if [[ $YES -ne 1 ]]; then
       read -r -p "   Continue? [y/N] " answer
       [[ "$answer" =~ ^[Yy] ]] || die "cancelled"
@@ -766,23 +666,6 @@ cmd_update() {
     sudo systemctl restart droid-office" || die "update failed"
   wait_healthy || die "the office didn't come back — check: deploy/aws.sh logs"
   ok "Updated and restarted (workers carry on through it)"
-}
-
-cmd_reset_password() {
-  preflight
-  require_instance
-  (umask 077 && random_token >"$CLAIM_FILE")
-  say "Resetting the office password"
-  remote "set -e
-    # An office from before ~/droid-office keeps its data in its project (/etc/droid-office/dir).
-    if [ -f /etc/droid-office/dir ]; then set -- \"\$(cat /etc/droid-office/dir)\"; else set -- --home \"\$(cat /etc/droid-office/home)\"; fi
-    sudo sed -i 's/^DROID_OFFICE_CLAIM_TOKEN=.*/DROID_OFFICE_CLAIM_TOKEN=\"$(cat "$CLAIM_FILE")\"/' /etc/droid-office/env
-    sudo systemctl stop droid-office
-    node /opt/droid-office/bin/droid-office.js \"\$@\" --reset-password >/dev/null
-    sudo systemctl start droid-office" || die "reset failed"
-  wait_healthy || die "the office didn't come back — check: deploy/aws.sh logs"
-  ok "Everyone has been signed out"
-  open_office
 }
 
 cmd_down() {
@@ -835,9 +718,6 @@ case "$CMD" in
   open) cmd_open ;;
   service) cmd_service ;;
   status) cmd_status ;;
-  invite) cmd_invite ;;
-  uninvite) cmd_uninvite ;;
-  team) cmd_team ;;
   allow) cmd_allow ;;
   revoke) cmd_revoke ;;
   ssh) cmd_ssh ;;
@@ -846,7 +726,6 @@ case "$CMD" in
   pause) cmd_pause ;;
   resume) cmd_resume ;;
   update) cmd_update ;;
-  reset-password) cmd_reset_password ;;
   destroy | down) cmd_down ;;
   help | -h | --help) usage ;;
   *) die "unknown command \"$CMD\" (see: deploy/aws.sh help)" ;;

@@ -19,7 +19,6 @@ public final class OfficeWebServicesRulesTest {
     private static final String AUDIO = "android.webkit.resource.AUDIO_CAPTURE";
     private static final String VIDEO = "android.webkit.resource.VIDEO_CAPTURE";
     private static final String MIDI = "android.webkit.resource.MIDI_SYSEX";
-    private static final String MIC = "android.permission.RECORD_AUDIO";
     private static int checks;
 
     public static void main(String[] args) {
@@ -28,8 +27,6 @@ public final class OfficeWebServicesRulesTest {
         sameDocument();
         navigation();
         resources();
-        input();
-        permissionResults();
         requestCodes();
         acceptLists();
         pickedTypes();
@@ -128,9 +125,10 @@ public final class OfficeWebServicesRulesTest {
     }
 
     private static void resources() {
-        equal("[" + AUDIO + "]", Arrays.toString(Rules.grantableResources(new String[] {AUDIO})));
-        equal("[" + AUDIO + "]",
-              Arrays.toString(Rules.grantableResources(new String[] {VIDEO, AUDIO, MIDI})));
+        // The office has no voice or video calls: audio, video and unknown resources are
+        // all denied, alone or mixed with anything else.
+        equal(0, Rules.grantableResources(new String[] {AUDIO}).length);
+        equal(0, Rules.grantableResources(new String[] {VIDEO, AUDIO, MIDI}).length);
         equal(0, Rules.grantableResources(new String[] {VIDEO}).length);
         equal(0, Rules.grantableResources(new String[] {MIDI, "unknown"}).length);
         equal(0, Rules.grantableResources(new String[] {null}).length);
@@ -138,27 +136,9 @@ public final class OfficeWebServicesRulesTest {
         equal(0, Rules.grantableResources(null).length);
     }
 
-    private static void input() {
-        check(Rules.recentInput(1000, 1000, 5000));
-        check(Rules.recentInput(6000, 1000, 5000));
-        check(!Rules.recentInput(6001, 1000, 5000));
-        check(!Rules.recentInput(1000, -1, 5000));
-        check(!Rules.recentInput(999, 1000, 5000));
-    }
-
-    private static void permissionResults() {
-        check(Rules.permissionGranted(MIC, new String[] {MIC}, new int[] {0}));
-        check(Rules.permissionGranted(MIC, new String[] {"x", MIC}, new int[] {-1, 0}));
-        check(!Rules.permissionGranted(MIC, new String[] {MIC}, new int[] {-1}));
-        check(!Rules.permissionGranted(MIC, new String[] {"x"}, new int[] {0}));
-        check(!Rules.permissionGranted(MIC, new String[] {MIC}, new int[0]));
-        check(!Rules.permissionGranted(MIC, new String[0], new int[0]));
-        check(!Rules.permissionGranted(MIC, null, null));
-    }
-
     private static void requestCodes() {
-        int first = OfficeWebServices.REQUEST_MICROPHONE_FIRST;
-        int last = OfficeWebServices.REQUEST_MICROPHONE_LAST;
+        int first = OfficeWebServices.REQUEST_FILE_CHOOSER_FIRST;
+        int last = OfficeWebServices.REQUEST_FILE_CHOOSER_LAST;
         equal(first, Rules.nextCode(last, first, last));
         equal(first + 1, Rules.nextCode(first, first, last));
         equal(first, Rules.nextCode(0, first, last));
@@ -167,14 +147,15 @@ public final class OfficeWebServicesRulesTest {
             code = Rules.nextCode(code, first, last);
             check(code >= first && code <= last);
         }
-        check(Rules.ownsRequestCode(OfficeWebServices.REQUEST_MICROPHONE_FIRST));
+        check(Rules.ownsRequestCode(OfficeWebServices.REQUEST_FILE_CHOOSER_FIRST));
         check(Rules.ownsRequestCode(OfficeWebServices.REQUEST_FILE_CHOOSER_LAST));
         check(!Rules.ownsRequestCode(1));
         check(!Rules.ownsRequestCode(0));
         check(!Rules.ownsRequestCode(OfficeWebServices.REQUEST_FILE_CHOOSER_LAST + 1));
-        check(!Rules.ownsRequestCode(OfficeWebServices.REQUEST_MICROPHONE_FIRST - 1));
-        check(OfficeWebServices.REQUEST_MICROPHONE_LAST <
-              OfficeWebServices.REQUEST_FILE_CHOOSER_FIRST);
+        check(!Rules.ownsRequestCode(OfficeWebServices.REQUEST_FILE_CHOOSER_FIRST - 1));
+        // The old microphone range is unowned now: nothing requests permissions anymore.
+        check(!Rules.ownsRequestCode(4100));
+        check(!Rules.ownsRequestCode(4149));
     }
 
     private static void acceptLists() {

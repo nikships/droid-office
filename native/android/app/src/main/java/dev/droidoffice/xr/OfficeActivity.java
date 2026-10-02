@@ -193,8 +193,6 @@ public final class OfficeActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
-        if (services.onRequestPermissionsResult(request, permissions, results))
-            return;
         if (request == 1)
             startNative();
     }
@@ -892,8 +890,6 @@ public final class OfficeActivity extends Activity {
                 event.recycle();
                 return;
             }
-            if (action == MotionEvent.ACTION_UP)
-                services.noteUserInput();
             long time = SystemClock.uptimeMillis();
             if (action == MotionEvent.ACTION_DOWN)
                 pointerDownTime = time;
@@ -928,8 +924,6 @@ public final class OfficeActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (services != null && event.getAction() == KeyEvent.ACTION_UP)
-            services.noteUserInput();
         // A paired keyboard never types into a terminal hidden behind the settings view.
         boolean settings = settingsView != null && settingsView.isOpen();
         if (!settings && web != null && event.getKeyCode() != KeyEvent.KEYCODE_BACK &&

@@ -1,11 +1,9 @@
 package dev.droidoffice.xr;
 
-import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
@@ -38,23 +36,19 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * The browser services the office page expects from a desktop browser: the microphone for
- * voice, an image picker for {@code <input type=file accept=image/*>}, and links or
- * {@code window.open} that leave the office opening in the system browser.
+ * The browser services the office page expects from a desktop browser: an image picker for
+ * {@code <input type=file accept=image/*>}, and links or {@code window.open} that leave the
+ * office opening in the system browser.
  *
- * <p>Everything is limited to the chosen office origin. Other permission resources are
- * denied, the microphone is only granted or requested right after real user input, and each
- * asynchronous answer is dropped when the page, the office or the WebView changed in between.
- * All methods run on the main thread.
+ * <p>Everything is limited to the chosen office origin. WebView media requests (microphone,
+ * camera, anything else the page asks for) are always denied: the office has no voice or
+ * video calls. Each asynchronous answer is dropped when the page, the office or the WebView
+ * changed in between. All methods run on the main thread.
  */
 public final class OfficeWebServices extends WebChromeClient {
-    public static final int REQUEST_MICROPHONE_FIRST = 4100;
-    public static final int REQUEST_MICROPHONE_LAST = 4149;
     public static final int REQUEST_FILE_CHOOSER_FIRST = 4150;
     public static final int REQUEST_FILE_CHOOSER_LAST = 4199;
 
-    /** How long after a tap or key press a microphone request still counts as the user's. */
-    static final long USER_INPUT_WINDOW_MS = 5000;
     /** A popup that never names a URL (window.open() then document.write) is dropped. */
     static final long POPUP_TIMEOUT_MS = 5000;
     /** One click can reach both onCreateWindow and shouldOverrideUrlLoading. */
@@ -87,31 +81,11 @@ public final class OfficeWebServices extends WebChromeClient {
     private boolean closed;
     /** Bumped whenever the page, the office or the WebView changes; stale answers compare it. */
     private int generation;
-    private long lastUserInput = -1;
-    private PendingMicrophone microphone;
     private PendingFiles files;
-    private int microphoneCode = REQUEST_MICROPHONE_LAST;
     private int fileCode = REQUEST_FILE_CHOOSER_LAST;
     private String lastExternalUrl;
     private long lastExternalAt;
     private Bitmap blankPoster;
-
-    private static final class PendingMicrophone {
-        final PermissionRequest request;
-        final String[] resources;
-        final String origin;
-        final int generation;
-        final int code;
-
-        PendingMicrophone(PermissionRequest request, String[] resources, String origin,
-                          int generation, int code) {
-            this.request = request;
-            this.resources = resources;
-            this.origin = origin;
-            this.generation = generation;
-            this.code = code;
-        }
-    }
 
     private static final class PendingFiles {
         final ValueCallback<Uri[]> callback;
@@ -191,9 +165,6 @@ public final class OfficeWebServices extends WebChromeClient {
             cancelPending();
     }
 
-    /** Call for each deliberate user action: pointer up, key up, a controller UI button. */
-    public void noteUserInput() { lastUserInput = SystemClock.uptimeMillis(); }
-
     /**
      * Call first in WebViewClient.shouldOverrideUrlLoading. Returns false only for the office's
      * own URLs, which the caller then handles as before; everything else is consumed here.
@@ -209,33 +180,6 @@ public final class OfficeWebServices extends WebChromeClient {
             openExternally(url);
         else
             Log.i(TAG, "Blocked a navigation away from the office");
-        return true;
-    }
-
-    /** Call first in Activity.onRequestPermissionsResult; true means the result was ours. */
-    public boolean onRequestPermissionsResult(int code, String[] permissions, int[] results) {
-        if (code < REQUEST_MICROPHONE_FIRST || code > REQUEST_MICROPHONE_LAST)
-            return false;
-        PendingMicrophone pending = microphone;
-        if (pending == null || pending.code != code)
-            return true;
-        microphone = null;
-        if (closed || !stillCurrent(pending.origin, pending.generation)) {
-            pending.request.deny();
-            return true;
-        }
-        if (Rules.permissionGranted(Manifest.permission.RECORD_AUDIO, permissions, results)) {
-            pending.request.grant(pending.resources);
-            return true;
-        }
-        pending.request.deny();
-        // An empty result means the dialog was interrupted, not that the user said no.
-        if (results == null || results.length == 0)
-            return true;
-        tell(activity.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
-                 ? "Voice needs microphone access."
-                 : "Microphone access is off for Droid Office XR. Turn it on in Settings, then "
-                       + "Apps.");
         return true;
     }
 
@@ -266,43 +210,19 @@ public final class OfficeWebServices extends WebChromeClient {
         return true;
     }
 
+    /**
+     * Every WebView media request is denied, whatever the page asked for and whichever origin
+     * it came from: the office has no voice or video calls. The grant branch stays so the
+     * policy keeps one home in {@link Rules#grantableResources}, which always returns empty.
+     */
     @Override
     public void onPermissionRequest(PermissionRequest request) {
-        String office = officeOrigin.get();
-        Uri origin = request.getOrigin();
-        if (closed || origin == null || !Rules.sameOrigin(office, origin.toString()) ||
-            !pageIsOffice(web, office)) {
-            request.deny();
-            return;
-        }
         String[] resources = Rules.grantableResources(request.getResources());
         if (resources.length == 0) {
             request.deny();
             return;
         }
-        if (!Rules.recentInput(SystemClock.uptimeMillis(), lastUserInput, USER_INPUT_WINDOW_MS)) {
-            request.deny();
-            tell("Choose Join voice to turn on the microphone.");
-            return;
-        }
-        denyMicrophone();
-        if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED) {
-            request.grant(resources);
-            return;
-        }
-        microphoneCode =
-            Rules.nextCode(microphoneCode, REQUEST_MICROPHONE_FIRST, REQUEST_MICROPHONE_LAST);
-        microphone = new PendingMicrophone(request, resources, Rules.origin(office), generation,
-                                           microphoneCode);
-        activity.requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO},
-                                    microphoneCode);
-    }
-
-    @Override
-    public void onPermissionRequestCanceled(PermissionRequest request) {
-        if (microphone != null && microphone.request == request)
-            microphone = null;
+        request.grant(resources);
     }
 
     @Override
@@ -563,7 +483,6 @@ public final class OfficeWebServices extends WebChromeClient {
 
     private void cancelPending() {
         generation++;
-        denyMicrophone();
         cancelFiles();
         cancelDialog();
         for (Map.Entry<WebView, Runnable> popup : popups.entrySet()) {
@@ -571,13 +490,6 @@ public final class OfficeWebServices extends WebChromeClient {
             popup.getKey().destroy();
         }
         popups.clear();
-    }
-
-    private void denyMicrophone() {
-        PendingMicrophone pending = microphone;
-        microphone = null;
-        if (pending != null)
-            pending.request.deny();
     }
 
     private void cancelFiles() {
@@ -746,29 +658,12 @@ public final class OfficeWebServices extends WebChromeClient {
             return Navigation.EXTERNAL;
         }
 
-        /** Only the microphone is ever granted, whatever else the page asked for. */
+        /**
+         * Nothing is ever granted: the office has no voice or video calls, so audio capture,
+         * video capture and anything else the page asks for are all denied.
+         */
         static String[] grantableResources(String[] requested) {
-            if (requested != null) {
-                for (String resource : requested) {
-                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource))
-                        return new String[] {PermissionRequest.RESOURCE_AUDIO_CAPTURE};
-                }
-            }
             return new String[0];
-        }
-
-        static boolean recentInput(long now, long lastInput, long window) {
-            return lastInput >= 0 && now >= lastInput && now - lastInput <= window;
-        }
-
-        static boolean permissionGranted(String permission, String[] permissions, int[] results) {
-            if (permissions == null || results == null)
-                return false;
-            for (int i = 0; i < Math.min(permissions.length, results.length); i++) {
-                if (permission.equals(permissions[i]))
-                    return results[i] == PackageManager.PERMISSION_GRANTED;
-            }
-            return false;
         }
 
         static final int MAX_DIALOG_CHARS = 600;
@@ -781,8 +676,7 @@ public final class OfficeWebServices extends WebChromeClient {
         }
 
         static boolean ownsRequestCode(int code) {
-            return (code >= REQUEST_MICROPHONE_FIRST && code <= REQUEST_MICROPHONE_LAST) ||
-                (code >= REQUEST_FILE_CHOOSER_FIRST && code <= REQUEST_FILE_CHOOSER_LAST);
+            return code >= REQUEST_FILE_CHOOSER_FIRST && code <= REQUEST_FILE_CHOOSER_LAST;
         }
 
         /** Cycles through [first, last] so a late answer to an older request never matches. */
