@@ -5,7 +5,7 @@ import { GRAB_HOLD_MS, GRAB_REACH, VRGrab, type Grabbable } from '../src/client/
 import { VRSession, type VRHooks, type VRUiSink } from '../src/client/vr/session.js';
 import { HeldObjectView } from '../src/client/world/held-object.js';
 import type { CarriedObject, CarryPose } from '../src/shared/protocol.js';
-import { store, loadSettings } from '../src/client/state.js';
+import { loadSettings } from '../src/client/state.js';
 
 const pose = (): CarryPose => ({ hand: 'right', position: [0, 1, 0], quaternion: [0, 0, 0, 1] });
 
@@ -192,8 +192,7 @@ test('the local held-object view shows a card or a mug, and hides when empty', (
   assert.equal(view.root.visible, false);
 });
 
-test('a card handoff and coffee drink-and-place complete locally, with no peers or messages', (t) => {
-  assert.equal(store.peers.size, 0);
+test('a card handoff and coffee drink-and-place complete locally, with no network messages', (t) => {
   // A card: grab it, hand it to the queue, and the hold clears exactly once.
   const card = rig(t, false);
   card.grab.begin(0, 'left', card.hand);
@@ -214,7 +213,6 @@ test('a card handoff and coffee drink-and-place complete locally, with no peers 
   assert.equal(cup.grab.begin(1, 'right', cup.hand), true);
   cup.grab.clear();
   assert.equal(cup.sent.at(-1), null);
-  assert.equal(store.peers.size, 0);
 });
 
 /** Exercises the production event handlers without a WebGL context or XR hardware. */

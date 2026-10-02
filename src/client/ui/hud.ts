@@ -1,53 +1,11 @@
 import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
-import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import { store } from '../state';
-import type { ChatLine } from '../../shared/protocol';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { usageLabel, usageTitle } from './usage';
 import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
-import { whereabouts } from './whereabouts';
 import { DESK_BY_ID } from '../../shared/layout';
 import { controlHintsShown } from '../native/mode';
 import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
-
-/** What the people list last showed, so it's only drawn again when something in it changed. */
-let peopleKey = '';
-
-/** The people list in the sidebar. Click yourself to change your character, or anyone else to walk over to them. */
-export function renderPeople(onEditProfile: () => void, onWalkTo: (id: string) => void, force = true) {
-  const peers = [...store.peers.values()].sort((a, b) => (a.id === store.you ? -1 : b.id === store.you ? 1 : a.name.localeCompare(b.name)));
-  // What each of them is up to changes as they walk about (onto the balcony, up the stairs).
-  const doing = peers.map((p) => (p.id === store.you ? undefined : whereabouts(p)));
-  const key = peers.map((p, i) => `${p.id}|${doing[i] ?? ''}`).join('\n');
-  if (!force && key === peopleKey) return;
-  peopleKey = key;
-  const ul = $('people');
-  ul.replaceChildren();
-  peers.forEach((p, i) => {
-    const you = p.id === store.you;
-    const mic = !p.voice ? '' : p.muted ? '🔇' : '🎙️';
-    const sub = doing[i];
-    const li = h(
-      'li',
-      { 'data-peer': p.id, class: 'walk', title: you ? 'Change your character' : `${store.onMyFloor(p) ? 'Walk over to' : 'Take the elevator to'} ${p.name}${sub ? ` (${sub})` : ''}` },
-      h('span.dot', { style: `background:${p.color}` }),
-      h('span.name', {}, p.name, sub ? h('span.sub', {}, sub) : null),
-      p.account ? h('span.acct', { title: `Signed in with ${you ? 'your' : 'their'} own account` }, '✓') : null,
-      you ? h('span.you', {}, '(you)') : null,
-      // Somewhere else in the building: which floor.
-      !you && !store.onMyFloor(p)
-        ? p.floor === ROOF
-          ? h('span.where', { title: 'Up on the roof' }, `🍸 ${ROOF_NAME}`)
-          : h('span.where', { title: 'On another floor' }, `🛗 ${store.floors.find((f) => f.id === p.floor)?.name ?? 'lobby'}`)
-        : null,
-      p.sharing ? h('span', { title: 'Sharing screen' }, '🖥️') : null,
-      h('span.mic', {}, mic),
-    );
-    li.addEventListener('click', () => (you ? onEditProfile() : onWalkTo(p.id)));
-    ul.append(li);
-  });
-  $('people-count').textContent = String(peers.length);
-}
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
@@ -104,32 +62,6 @@ export function renderCaffeine(caffeine: Caffeine, now: number) {
   $('caffeine-left').textContent = `${Math.ceil(left)}s`;
 }
 
-/** How long a chat line stays up before it fades away. Hovering the chat, or typing in it, brings them all back. */
-const CHAT_LINGER = 12_000;
-/** When this page first showed each line. */
-const chatSeen = new WeakMap<ChatLine, number>();
-
-export function renderChat() {
-  const log = $('chat-log');
-  const now = performance.now();
-  log.replaceChildren(
-    ...store.chat.slice(-60).map((c) => {
-      const seen = chatSeen.get(c) ?? now;
-      chatSeen.set(c, seen);
-      // Older lines start their fade in the past, so they're already gone.
-      return h(
-        'li',
-        { style: `animation-delay:${Math.round(CHAT_LINGER - (now - seen))}ms` },
-        h('b', { style: `color:${c.color}`, title: c.account ? `${c.name}, signed in with their own account` : undefined }, c.name),
-        c.account ? h('span.acct', {}, ' ✓') : null,
-        ': ',
-        c.text,
-      );
-    }),
-  );
-  log.scrollTop = log.scrollHeight;
-}
-
 export function openHelp() {
   if (document.body.classList.contains('native-xr')) {
     openNativeHelp();
@@ -144,7 +76,6 @@ export function openHelp() {
       'Click / E',
       'Use what you look at: hire a worker, open its terminal, read a board, call a meeting in the meeting room, put a song on the jukebox, tee off from the balcony, sit on a couch, a beanbag, a chair or the balcony bench (walk off to get up)',
     ],
-    ['👥', 'Click someone under "In the office" to walk over to them (on another floor, you ride the elevator first). The line under their name says what they have open or where they are'],
     ['🛗', 'Every project is a floor: step into the elevator on the north wall and press E (or click the project name, top left) to go to another one or add a project'],
     ['🤖', 'An agent stands by the issues board, the PR board and the task queue. Press E at one and type what you want: it runs as an agent that knows that board. O there opens its terminal, X sends it home'],
     [
@@ -167,14 +98,10 @@ export function openHelp() {
     ['F', 'Hang a picture from the web on a wall. Look at a picture and press E to move, edit or take it down'],
     ['Q', 'Put back the issue card in your hands (E at a note on the issues board, or Pick it up in an issue; then E at an empty desk, a worker or the queue board), or drop the basketball'],
     ['O', 'Open a pull request for a worker on its own branch, or see the one it has'],
-    ['T', 'Chat'],
     ['G / 1–6', 'Emote: hold G, point at one and let go (or tap G and click one), or press 1–6: wave, thumbs up, clap, dance, point, facepalm. Everyone on your floor sees it'],
     ['7', 'Draw the .44 Magnum (or holster it); click to fire at the worker under the crosshair. One shot drops it — confirm the kill or revive it'],
-    ['/', 'Search the chat and every terminal on your floor, back to before the office last restarted'],
-    [
-      typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K',
-      'Command palette: a few letters find a worker, issue, PR, service, board, teammate or action. Enter opens it, Shift+Enter walks you over first',
-    ],
+    ['/', 'Search every terminal on your floor, back to before the office last restarted'],
+    [typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K', 'Command palette: a few letters find a worker, issue, PR, service, board or action. Enter opens it, Shift+Enter walks you over first'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
     ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude)'],
     ['Shift + Esc', 'Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal)'],
@@ -190,7 +117,7 @@ function openNativeHelp() {
   const rows: readonly (readonly [string, string])[] = [
     ['Controllers', 'Galaxy XR motion controllers are required. Look around naturally; the headset tracks your head directly.'],
     ...NATIVE_CONTROL_ROWS,
-    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services, boards and teammates.'],
+    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services and boards.'],
     ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
     [
       'Terminal',

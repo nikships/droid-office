@@ -9,7 +9,7 @@
  */
 
 import * as THREE from 'three';
-import type { ChatLine, FloorInfo, GhIssue, GhPull, QueueTask, Run, WorkerInfo } from '../../shared/protocol';
+import type { FloorInfo, GhIssue, GhPull, QueueTask, Run, WorkerInfo } from '../../shared/protocol';
 import type { JukeboxState } from '../../shared/jukebox';
 import type { ScreenState } from '../world/laptop';
 import { attachVrUi, type VrUiDeps } from './attach';
@@ -176,19 +176,15 @@ const tasks: QueueTask[] = [
   },
 ];
 
-type Topic = 'screens' | 'workers' | 'issues' | 'pulls' | 'queue' | 'chat' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services' | 'peers';
+type Topic = 'screens' | 'workers' | 'issues' | 'pulls' | 'queue' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services';
 const subs = new Map<Topic, Set<() => void>>();
 function emit(t: Topic) {
   subs.get(t)?.forEach((fn) => fn());
 }
 
-const chat: ChatLine[] = [
-  { from: 'nik', name: 'Nik', color: '#ee6018', text: 'who took my bean bag', at: now - 90000 },
-  { from: 'ada', name: 'Ada', color: '#4f86f7', text: 'the elevator did. it looked guilty', at: now - 60000 },
-];
 const floors: FloorInfo[] = [
-  { id: 'f1', name: 'droid-office', repo: 'nik/droid-office', dir: '/tmp/f1', palette: 0, addedBy: 'nik', addedAt: now - 8000000, workers: 3, busy: 1, waiting: 1, people: 1 },
-  { id: 'f2', name: 'droidproxy', dir: '/tmp/f2', palette: 2, addedBy: 'nik', addedAt: now - 7000000, workers: 1, busy: 0, waiting: 0, people: 0 },
+  { id: 'f1', name: 'droid-office', repo: 'nik/droid-office', dir: '/tmp/f1', palette: 0, addedBy: 'nik', addedAt: now - 8000000, workers: 3, busy: 1, waiting: 1 },
+  { id: 'f2', name: 'droidproxy', dir: '/tmp/f2', palette: 2, addedBy: 'nik', addedAt: now - 7000000, workers: 1, busy: 0, waiting: 0 },
 ];
 const jukebox: JukeboxState = { on: true, track: 'coffee-break', by: 'Ada', startedAt: now - 45000, elapsed: 0 };
 
@@ -226,16 +222,14 @@ const deps: VrUiDeps = {
     { id: 'd5', label: 'Desk 5' },
     { id: 'lounge-beanbag', label: '🫘 Lounge bean bag' },
   ],
-  getChat: () => chat,
   getFloors: () => floors,
   currentFloor: () => 'f1',
   getJukebox: () => jukebox,
   getMeeting: () => ({ current: null, past: [] }),
   getServices: () => ({ items: [], port: 4600 }),
-  getPeers: () => [],
   getSound: () => ({ volume: 0.7, muted: false, music: 0.5, musicMuted: false }),
   getWorktree: () => true,
-  getSearch: () => ({ query: 'bean bag', status: 'done', results: { q: 'bean bag', chat: [chat[0]], terminals: [{ workerId: 'w2', text: 'sitting on the bean bag, feeling guilty', row: 30, rows: 40 }], more: false } }),
+  getSearch: () => ({ query: 'bean bag', status: 'done', results: { q: 'bean bag', terminals: [{ workerId: 'w2', text: 'sitting on the bean bag, feeling guilty', row: 30, rows: 40 }], more: false } }),
   getMerge: () => ({ number: 42, state: 'ready', status: { icon: '✅', text: 'Ready to merge.', short: 'Ready to merge', cls: 'ok', can: true, auto: false }, methods: ['squash', 'merge', 'rebase'] }),
   getChangesWorker: () => 'w2',
   getChanges: () => ({
@@ -289,9 +283,7 @@ const deps: VrUiDeps = {
     viewChanged: (view) => log('menu view →', view),
     playStream: () => log('play a stream (would open the VR URL prompt)'),
     toggleSound: (kind) => log('mute toggle', kind),
-    sendChat: (text) => log('say', text),
     searchOffice: (q) => log('search', q),
-    walkToPeer: (id) => log('walk over to', id),
     vrSettings: (patch) => log('VR settings', JSON.stringify(patch)),
     exitVr: () => log('exit VR (would end the XR session)'),
   },

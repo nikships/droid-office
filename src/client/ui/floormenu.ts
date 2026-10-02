@@ -44,7 +44,6 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     if (f.waiting) stats.push(h('span.waiting', { title: 'Workers waiting on someone' }, `🙋 ${f.waiting}`));
     if (f.busy) stats.push(h('span', { title: 'Working' }, `👷 ${f.busy}`));
     stats.push(h('span', { title: 'Workers at desks' }, `💻 ${f.workers}`));
-    if (f.people) stats.push(h('span', { title: 'People on this floor' }, `🧑 ${f.people}`));
     const btn = h(
       'button.floor-item',
       { type: 'button', role: 'menuitem', class: isHere ? 'here' : '', disabled: isHere, title: isHere ? "You're on this floor" : `Go to ${f.name}, right where you're standing` },
@@ -76,13 +75,12 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     // Top floor first, the way a building's directory reads, and the roof over them.
     const items = floors.map((f, i) => item(f, i, here)).reverse();
     const onRoof = store.floor === ROOF;
-    const people = [...store.peers.values()].filter((p) => p.floor === ROOF).length;
     const roof = h(
       'button.floor-item',
       { type: 'button', role: 'menuitem', class: onRoof ? 'here' : '', disabled: onRoof, title: onRoof ? "You're up on the roof" : 'Take the elevator up to the roof' },
       h('span.floor-no', { style: 'background:#14181f' }, '🍸'),
       h('span.floor-text', {}, h('span.floor-name', {}, ROOF_NAME), h('span.floor-sub', {}, onRoof ? 'you are here' : 'A DJ, drinks and the city')),
-      h('span.floor-stats', {}, people ? h('span', { title: 'People up there' }, `🧑 ${people}`) : ''),
+      h('span.floor-stats', {}, ''),
     );
     roof.addEventListener('click', () => {
       if (onRoof) return;

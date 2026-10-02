@@ -111,7 +111,6 @@ export function openElevator(opts: ElevatorOptions): void {
     if (f.busy) stats.push(h('span', { title: 'Working' }, `👷 ${f.busy}`));
     if (f.waiting) stats.push(h('span.waiting', { title: 'Waiting on someone' }, `🙋 ${f.waiting}`));
     stats.push(h('span', { title: 'Workers at desks' }, `💻 ${f.workers}`));
-    if (f.people) stats.push(h('span', { title: 'People on this floor' }, `🧑 ${f.people}`));
     const btn = h(
       'button.floor-btn',
       { type: 'button', class: here ? 'here' : '', disabled: here, title: here ? "You're on this floor" : `Ride to ${f.name}` },
@@ -139,22 +138,21 @@ export function openElevator(opts: ElevatorOptions): void {
   const confirmRemove = (f: FloorInfo) => {
     const next = store.floors.find((o) => o.id !== f.id);
     const workers = f.workers ? `Its ${f.workers} worker${f.workers === 1 ? '' : 's'} stop${f.workers === 1 ? 's' : ''}. ` : '';
-    const people = f.people ? `Everyone on it rides the elevator to ${next ? next.name : 'the lobby'}. ` : '';
-    // The office was started in it: its accounts, password and chat live in that .droid-office too, and stay.
+    const ride = f.id === store.floor ? `You ride the elevator to ${next ? next.name : 'the lobby'}. ` : '';
+    // The office was started in it: its accounts and password live in that .droid-office too, and stay.
     const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
-    confirmDialog(`Take ${f.name} off the building?`, `${workers}${people}Nothing is deleted: its checkout stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
+    confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its checkout stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
   };
 
   /** The roof, over every floor: the rooftop bar. */
   const roofButton = () => {
     const here = store.floor === ROOF;
-    const people = [...store.peers.values()].filter((p) => p.floor === ROOF).length;
     const btn = h(
       'button.floor-btn',
       { type: 'button', class: here ? 'here' : '', disabled: here, title: here ? "You're up on the roof" : `Ride up to the ${ROOF_NAME.toLowerCase()}` },
       h('span.floor-no', { style: 'background:#14181f' }, '🍸'),
       h('span.floor-text', {}, h('span.floor-name', {}, ROOF_NAME, here ? h('span.here-tag', {}, 'you are here') : null), h('span.floor-sub', {}, 'The roof: a DJ playing drum and bass, a bar, and the city all around')),
-      h('span.floor-stats', {}, people ? h('span', { title: 'People up there' }, `🧑 ${people}`) : ''),
+      h('span.floor-stats', {}, ''),
     );
     btn.addEventListener('click', () => {
       if (here) return;
@@ -329,7 +327,6 @@ export function openElevator(opts: ElevatorOptions): void {
     store.on('repos', renderAdd),
     store.on('projectsDir', () => (editDir(false), renderAdd())),
     store.on('floor', renderFloors),
-    store.on('peers', renderFloors),
     store.on('me', () => (renderFloors(), renderAdd())),
   ];
   const modal = openModal(el, {

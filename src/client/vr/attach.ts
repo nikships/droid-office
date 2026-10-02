@@ -52,7 +52,7 @@
  */
 
 import * as THREE from 'three';
-import type { AgentProvider, ChangesState, ChatLine, FloorInfo, GhIssue, GhPull, GhState, MeetingState, PeerInfo, QueueState, ServicesState, WorkerInfo } from '../../shared/protocol';
+import type { AgentProvider, ChangesState, FloorInfo, GhIssue, GhPull, GhState, MeetingState, QueueState, ServicesState, WorkerInfo } from '../../shared/protocol';
 import type { JukeboxState } from '../../shared/jukebox';
 import { SEARCH_MIN, searchKey } from '../../shared/search';
 import { isAsleep } from '../../shared/status';
@@ -73,7 +73,7 @@ import { VrToast } from './toast';
 /** Everything the VR UI needs from the office: stores, clients and DOM-shared actions. No globals. */
 export interface VrUiDeps {
   send: (msg: VrTerminalMsg) => void;
-  subscribe: (topic: 'screens' | 'workers' | 'issues' | 'pulls' | 'queue' | 'chat' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services' | 'peers', fn: () => void) => () => void;
+  subscribe: (topic: 'screens' | 'workers' | 'issues' | 'pulls' | 'queue' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services', fn: () => void) => () => void;
   getScreen: (workerId: string) => ScreenState | undefined;
   getWorker: (workerId: string) => WorkerInfo | undefined;
   /** A worker's provider after the office default fills in a missing one (the store's resolvedProvider). */
@@ -83,13 +83,11 @@ export interface VrUiDeps {
   getPulls: () => GhState<GhPull>;
   getQueue: () => QueueState;
   getFreeDesks: () => { id: string; label: string }[];
-  getChat: () => ChatLine[];
   getFloors: () => FloorInfo[];
   currentFloor: () => string | null;
   getJukebox: () => JukeboxState;
   getMeeting: () => MeetingState;
   getServices: () => ServicesState;
-  getPeers: () => PeerInfo[];
   getSound: () => { volume: number; muted: boolean; music: number; musicMuted: boolean };
   getWorktree: () => boolean;
   getSearch: () => VrSearchState | null;
@@ -131,13 +129,13 @@ export interface VrUiHandle {
   closeTerminal: () => void;
   /** Shows/hides the core menu. */
   toggleMenu: () => void;
-  /** Shows the menu at a view (floors, jukebox, bar, chat…): the VR way into modal flows. */
+  /** Shows the menu at a view (floors, jukebox, bar, search…): the VR way into modal flows. */
   showMenu: (view: Parameters<VrMenu['show']>[0]) => void;
   /** Opens one issue or PR in the menu's detail view (the board rows' tap, callable outright). */
   openDetail: (kind: 'issue' | 'pull', number: number) => void;
   /** Shows the controls card (the menu's ❓ row; also shown on session enter). */
   showControls: () => void;
-  /** Asks for a line of text (hire prompt, board-agent question, chat): prompt panel + keyboard. */
+  /** Asks for a line of text (hire prompt, board-agent question, search): prompt panel + keyboard. */
   askText: (opts: Omit<VrPromptOpts, 'onCancel'> & { onCancel?: () => void }) => void;
   /** A DOM-toast mirror for the headset (level colors the strip's edge). */
   showToast: (text: string, level?: 'info' | 'warn' | 'error') => void;
@@ -224,13 +222,11 @@ class VrUi implements VrUiHandle {
         getPulls: deps.getPulls,
         getQueue: deps.getQueue,
         getFreeDesks: deps.getFreeDesks,
-        getChat: deps.getChat,
         getFloors: deps.getFloors,
         currentFloor: deps.currentFloor,
         getJukebox: deps.getJukebox,
         getMeeting: deps.getMeeting,
         getServices: deps.getServices,
-        getPeers: deps.getPeers,
         getSound: deps.getSound,
         getWorktree: deps.getWorktree,
         getSearch: deps.getSearch,
@@ -288,8 +284,7 @@ class VrUi implements VrUiHandle {
     this.menu.panel.setOnTop(9993);
     this.keyboard.panel.setOnTop(9992);
     this.aim.panel.setOnTop(9991);
-    this.menu.onChatSay = () => this.askChat();
-    this.menu.onChatSearch = () => this.askSearch();
+    this.menu.onFindSearch = () => this.askSearch();
     // The queue rows, meeting seats and detail view open terminals through here (this was
     // never wired — their taps silently did nothing until the search view needed it too).
     this.menu.onOpenTerminal = (workerId, find) => this.openTerminal(workerId, find);
@@ -428,20 +423,11 @@ class VrUi implements VrUiHandle {
     this.controls.show();
   };
 
-  /** The chat view's ✍️ button: a line for the floor. */
-  private askChat() {
-    this.askText({
-      title: '💬 Say it on this floor',
-      placeholder: 'Hi everyone…',
-      submitLabel: 'Send',
-      onSubmit: (text) => this.deps.actions.sendChat(text),
-    });
-  }
-  /** The chat view's 🔎 button: words in the chat and every worker's terminal. */
+  /** The menu's 🔎 row: words in every worker's terminal. */
   private askSearch() {
     this.askText({
       title: '🔎 Search the office',
-      placeholder: 'words in the chat or a terminal…',
+      placeholder: 'words in a terminal…',
       submitLabel: 'Search',
       onSubmit: (text) => {
         // The search window's two-character floor: shorter matches too much to be useful.

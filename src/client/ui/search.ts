@@ -1,18 +1,18 @@
-import type { ChatLine, SearchResults, TerminalHit } from '../../shared/protocol';
+import type { SearchResults, TerminalHit } from '../../shared/protocol';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search';
 import { store } from '../state';
-import { h, openModal, timeAgo } from './dom';
+import { h, openModal } from './dom';
 import type { TerminalFind } from './terminal';
 
-// The search window: words in the office chat and in every worker's terminal, including what was said
-// and shown before the office last restarted. A terminal line opens that terminal right at it.
+// The search window: words in every worker's terminal, including what they showed before the office
+// last restarted. A terminal line opens that terminal right at it.
 
 /** What was searched last, so the window opens where you left it. */
 let lastQuery = '';
 
 /** The search itself (main.ts runs the same fetch for the VR search view). */
 export async function search(q: string): Promise<SearchResults> {
-  // Terminals are the workers on your floor; the chat is the whole building's.
+  // The terminals searched are the workers on your floor.
   const floor = store.floor ? `&floor=${encodeURIComponent(store.floor)}` : '';
   const r = await fetch(`/api/search?q=${encodeURIComponent(q)}${floor}`, { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
@@ -38,11 +38,11 @@ function highlight(text: string, needle: string): (string | HTMLElement)[] {
 export function openSearch(openTerminal: (workerId: string, find: TerminalFind) => void) {
   const input = h('input', {
     type: 'text',
-    placeholder: 'Search the chat and every terminal…',
+    placeholder: 'Search every terminal…',
     maxlength: SEARCH_MAX,
     autocomplete: 'off',
     spellcheck: 'false',
-    'aria-label': 'Search the chat and every terminal',
+    'aria-label': 'Search every terminal',
   });
   input.value = lastQuery;
   const status = h('p.note.search-status');
@@ -83,8 +83,6 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
     openTerminal(hit.workerId, { needle, fromEnd: hit.rows - hit.row });
   };
 
-  const chatRow = (c: ChatLine, needle: string) => h('li.search-hit', {}, h('div.search-meta', {}, h('b', { style: `color:${c.color}` }, c.name), h('span', {}, timeAgo(c.at))), h('div.search-text', {}, ...highlight(c.text, needle)));
-
   const termRow = (hit: TerminalHit, needle: string) => {
     const li = h('li.search-hit.term', { tabindex: 0, role: 'button', title: 'Open the terminal at this line' }, h('code', {}, ...highlight(hit.text, needle)));
     li.addEventListener('click', () => jump(hit, needle));
@@ -104,7 +102,7 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
       return;
     }
     if (!found) {
-      status.textContent = `Finds words in the office chat and in every worker's terminal, including what they showed before the office restarted.`;
+      status.textContent = `Finds words in every worker's terminal, including what they showed before the office restarted.`;
       results.replaceChildren();
       return;
     }
@@ -117,12 +115,9 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
       if (!list) byWorker.set(hit.workerId, (list = []));
       list.push(hit);
     }
-    const count = found.chat.length + [...byWorker.values()].reduce((n, l) => n + l.length, 0);
-    status.textContent = !count
-      ? `Nothing in the chat or any terminal matches “${found.q.trim()}”.`
-      : `${count} ${count === 1 ? 'line' : 'lines'}, newest first${found.more ? ' (only the newest are shown; add words to narrow it down)' : ''}.`;
+    const count = [...byWorker.values()].reduce((n, l) => n + l.length, 0);
+    status.textContent = !count ? `Nothing in any terminal matches “${found.q.trim()}”.` : `${count} ${count === 1 ? 'line' : 'lines'}, newest first${found.more ? ' (only the newest are shown; add words to narrow it down)' : ''}.`;
     const groups: HTMLElement[] = [];
-    if (found.chat.length) groups.push(h('section.search-group', {}, h('h4', {}, 'Chat'), h('ul', {}, ...found.chat.map((c) => chatRow(c, needle)))));
     for (const [workerId, hits] of byWorker) {
       const w = store.workers.get(workerId)!;
       groups.push(

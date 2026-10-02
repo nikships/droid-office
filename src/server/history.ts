@@ -1,89 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type headless from '@xterm/headless';
 import type serialize from '@xterm/addon-serialize';
-import type { ChatLine } from '../shared/protocol.js';
 import { logicalLines, searchKey, snippet } from '../shared/search.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Serializer = InstanceType<typeof serialize.SerializeAddon>;
-
-/** How many chat lines the office keeps, across restarts. */
-export const CHAT_KEEP = 1000;
-
-/** The office chat, kept in .droid-office/chat.jsonl (a line per message) so a restart doesn't wipe it. */
-export class ChatLog {
-  private lines: ChatLine[] = [];
-  private file: string;
-  /** Lines in the file. It only grows between rewrites, which trim it back to CHAT_KEEP. */
-  private fileLines = 0;
-
-  constructor(dataDir: string) {
-    this.file = path.join(dataDir, 'chat.jsonl');
-    this.load();
-  }
-
-  recent(n: number): ChatLine[] {
-    return this.lines.slice(-n);
-  }
-
-  add(line: ChatLine) {
-    this.lines.push(line);
-    if (this.lines.length > CHAT_KEEP) this.lines.splice(0, this.lines.length - CHAT_KEEP);
-    if (this.fileLines >= CHAT_KEEP * 2) return this.rewrite();
-    try {
-      appendFileSync(this.file, `${JSON.stringify(line)}\n`, { mode: 0o600 });
-      this.fileLines++;
-    } catch {
-      // disk issues shouldn't take the office down
-    }
-  }
-
-  /** Lines whose text or sender holds `needle` (a searchKey), newest first. */
-  search(needle: string, limit: number): { hits: ChatLine[]; more: boolean } {
-    const hits: ChatLine[] = [];
-    for (let i = this.lines.length - 1; i >= 0; i--) {
-      const l = this.lines[i];
-      if (!searchKey(`${l.name}: ${l.text}`).includes(needle)) continue;
-      if (hits.length === limit) return { hits, more: true };
-      hits.push(l);
-    }
-    return { hits, more: false };
-  }
-
-  private load() {
-    if (!existsSync(this.file)) return;
-    let raw: string[];
-    try {
-      raw = readFileSync(this.file, 'utf8').split('\n').filter(Boolean);
-    } catch {
-      return;
-    }
-    for (const s of raw) {
-      try {
-        const l = JSON.parse(s) as Partial<ChatLine>;
-        if (typeof l.text !== 'string' || typeof l.name !== 'string' || typeof l.at !== 'number') continue;
-        this.lines.push({ from: typeof l.from === 'string' ? l.from : '', name: l.name, color: typeof l.color === 'string' ? l.color : '#4f86f7', text: l.text, at: l.at, ...(l.account === true ? { account: true } : {}) });
-      } catch {
-        // a torn last line (the office died mid-write) is skipped
-      }
-    }
-    this.fileLines = raw.length;
-    if (this.lines.length > CHAT_KEEP || this.lines.length !== raw.length) {
-      this.lines = this.lines.slice(-CHAT_KEEP);
-      this.rewrite();
-    }
-  }
-
-  private rewrite() {
-    try {
-      writeFileSync(this.file, this.lines.map((l) => `${JSON.stringify(l)}\n`).join(''), { mode: 0o600 });
-      this.fileLines = this.lines.length;
-    } catch {
-      // disk issues shouldn't take the office down
-    }
-  }
-}
 
 /** Each worker's latest terminal output, kept in .droid-office/scrollback/<worker id>.ansi across restarts. */
 export class ScrollbackStore {

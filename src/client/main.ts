@@ -1,7 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
-import { randomLook, sameLook } from '../shared/avatar';
+import { randomLook } from '../shared/avatar';
 import {
   BALCONY,
   BEANBAGS,
@@ -26,7 +26,6 @@ import {
   inElevator,
   nextFreeSeat,
   roofDrop,
-  seatAt,
   seatPlace,
   streetBelow,
   vacantSeats,
@@ -36,8 +35,7 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
-import type { AgentEffort, AgentProvider, CarriedIssue, CarriedObject, ChangesState, FloorInfo, GhIssue, GongWhy, PeerInfo, WorkerInfo, WorkerTask } from '../shared/protocol';
-import { HeldObjectView } from './world/held-object';
+import type { AgentEffort, AgentProvider, CarriedIssue, CarriedObject, ChangesState, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
 import { GRAB_REACH, type Grabbable } from './vr/grab';
 import { MEETING_PATTERNS, defaultMeetingRequest, reviewMeetingRequest } from '../shared/meetings';
 import { isPaletteKey } from '../shared/palette';
@@ -47,7 +45,7 @@ import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving, leaveTo } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveProfile, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
-import { Climber, gripOf, type Arrival, type Grip, type Way } from './climb';
+import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { loadPropManifest, preloadProps, propManifest } from './world/props';
@@ -81,7 +79,7 @@ import { disposeSprite, redrawText, textSprite } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, doingNow, hintToast, modalOpen, onDoingChange, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, closeTopModal, hintToast, modalOpen, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch, search } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -99,7 +97,7 @@ import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openQueue } from './ui/queue';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
-import { openHelp, renderCaffeine, renderChat, renderPeople, renderWorkers } from './ui/hud';
+import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
@@ -118,7 +116,6 @@ import { trackTitle, checkStreamUrl } from '../shared/jukebox';
 import { GAME, scoreText } from '../shared/cabinet';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
-import { whereabouts } from './ui/whereabouts';
 import { wayTo } from './walkto';
 import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/meeting';
 import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
@@ -415,17 +412,12 @@ function mountBoard(mesh: THREE.Mesh, texture: THREE.Texture, render: () => void
 /** The issue card in your hands, taken off this floor's issues board (see Carrying an issue card), or null. */
 let carrying: CarriedIssue | null = null;
 let physicalCarry: CarriedObject | null = null;
-/** Issues whose cards are missing from the board: the one in your hands, if any. */
-function offBoard(): Set<number> {
-  const off = new Set<number>();
-  if (carrying) off.add(carrying.issue);
-  return off;
-}
 const issuesTex = new BoardTexture('issues');
 const renderIssuesBoard = () => {
-  const off = offBoard();
+  // The card in your hands is missing from the board until you put it back.
+  const held = carrying?.issue;
   issuesTex.setJira(store.jiraBoard);
-  issuesTex.render(off.size ? { ...store.issues, items: store.issues.items.filter((i) => !off.has(i.number)) } : store.issues);
+  issuesTex.render(held === undefined ? store.issues : { ...store.issues, items: store.issues.items.filter((i) => i.number !== held) });
 };
 mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'jiraBoard']);
 const pullsTex = new BoardTexture('pulls');
@@ -857,7 +849,7 @@ const vrHooks: VRHooks = {
     golf.stop();
     // Put the desktop gun away; shared revival deadlines keep running in VR.
     holsterGun(true);
-    // A focused DOM field (the chat box) would take IME text the capture below can't cancel.
+    // A focused DOM field would take IME text the capture below can't cancel.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     syncElevatorButtons();
     vrUi = attachVrUi(scene, {
@@ -871,7 +863,6 @@ const vrHooks: VRHooks = {
       getPulls: () => store.pulls,
       getQueue: () => store.queue,
       getFreeDesks: () => DESKS.filter((d) => !d.station && !d.room && !store.workerAtDesk(d.id)).map((d) => ({ id: d.id, label: d.label })),
-      getChat: () => store.chat,
       getFloors: () => store.floors,
       currentFloor: () => store.floor,
       getJukebox: () => store.jukebox,
@@ -880,7 +871,6 @@ const vrHooks: VRHooks = {
       getVrSettings: () => settings.vr,
       getMeeting: () => store.meeting,
       getServices: () => store.services,
-      getPeers: () => [...store.peers.values()].filter((p) => p.id !== store.you),
       getSound: () => ({ volume: settings.volume, muted: settings.muted, music: settings.music, musicMuted: settings.musicMuted }),
       getWorktree: () => worktreePref(),
       getSearch: () => vrSearch,
@@ -966,9 +956,7 @@ const vrHooks: VRHooks = {
           }
           saveSettings(settings);
         },
-        sendChat: (text) => net.send({ t: 'chat', text }),
         searchOffice: (query) => void vrSearchOffice(query),
-        walkToPeer: (peerId) => vrWalkToPeer(peerId),
         vrSettings: (patch) => {
           Object.assign(settings.vr, patch);
           saveSettings(settings);
@@ -1030,7 +1018,7 @@ if (new URLSearchParams(location.search).has('vrtest')) {
       g.getWorldPosition(v);
       return [v.x, v.y, v.z] as [number, number, number];
     },
-    showMenu: (view: 'main' | 'hire' | 'queue' | 'board' | 'detail' | 'floors' | 'jukebox' | 'bar' | 'chat' | 'search' | 'assign' | 'settings' | 'meeting' | 'services' | 'people' | 'changes') => vrUi?.showMenu(view),
+    showMenu: (view: 'main' | 'hire' | 'queue' | 'board' | 'detail' | 'floors' | 'jukebox' | 'bar' | 'search' | 'assign' | 'settings' | 'meeting' | 'services' | 'changes') => vrUi?.showMenu(view),
     // Hides the dash (controls card + menu) so the rays aim at the world, not a panel.
     hideDash: () => {
       vrUi?.controls.hide();
@@ -1161,37 +1149,14 @@ if (new URLSearchParams(location.search).has('vrtest')) {
     soundMuted: () => ({ music: settings.musicMuted, sounds: settings.muted }),
     // Whether the next hire gets its own worktree (the hire-toggle check reads this back).
     worktree: () => worktreePref(),
-    // Seeds a fake teammate into this client's peers (solo here; reload clears it).
-    seedPeer: (name: string, doing: string, floor?: string) => {
-      store.peers.delete('peer-zzz');
-      store.peers.set('peer-zzz', {
-        id: 'peer-zzz',
-        name,
-        color: '#06d6a0',
-        look: { skin: 0, hair: 0, style: 0 },
-        x: 0,
-        y: 0,
-        z: 0,
-        rotY: 0,
-        moving: false,
-        voice: true,
-        muted: false,
-        sharing: false,
-        floor: floor ?? store.floor ?? undefined,
-        doing,
-      });
-      store.emit('peers');
-    },
-    // Everyone else around, in people-view order (the walk-over check finds its row).
-    people: () => [...store.peers.values()].filter((p) => p.id !== store.you).map((p) => ({ id: p.id, name: p.name })),
     // The pictures on the walls (the decor E-again check reads this back).
     decor: () => store.decor.map((d) => ({ id: d.id, title: d.title, by: d.by })),
     // What the VR prompt field holds (assert scripts read this back after pressing keys).
     promptText: () => vrUi?.promptText() ?? null,
     // The VR prompt's engine row label (the meeting-pattern check reads this back).
     promptEngine: () => vrUi?.promptEngine() ?? null,
-    // The VR search view's latest answer (the search check reads the hit counts back).
-    search: () => vrSearch && { query: vrSearch.query, status: vrSearch.status, chat: vrSearch.results?.chat.length ?? 0, terminals: vrSearch.results?.terminals.length ?? 0 },
+    // The VR search view's latest answer (the search check reads the hit count back).
+    search: () => vrSearch && { query: vrSearch.query, status: vrSearch.status, terminals: vrSearch.results?.terminals.length ?? 0 },
     // The VR terminal's search jump target (the search check reads the landed row back).
     termFind: () => vrUi?.terminal.findState() ?? null,
     // The VR merge box's answer (the merge check reads the status back).
@@ -1420,7 +1385,7 @@ function teeOff() {
   if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
-  if (walkingTo) stopWalking();
+  if (errand) stopWalking();
   if (smokeBreakUntil) setSmoking(false);
   dropBall();
   holsterGun(true);
@@ -1498,7 +1463,7 @@ function grabLadder(physical = false) {
   if (!floorThere(1) && !floorThere(-1)) return toast('No other floors yet — add a project in the elevator', 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
-  if (walkingTo) stopWalking();
+  if (errand) stopWalking();
   climber.grabLadder(physical);
 }
 
@@ -1508,7 +1473,7 @@ function usePole(i: number, physical = false) {
   if (trip || climber.active || !spot) return;
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
-  if (walkingTo) stopWalking();
+  if (errand) stopWalking();
   if (office.stack.polesGoDown()) climber.slide(spot, physical);
   else climber.twirl(spot, physical);
 }
@@ -1538,20 +1503,6 @@ function showMyProfile(p: Profile) {
   hands.setColor(p.color);
   hands.setSkin(me.skinColor);
 }
-
-interface RemotePeer {
-  person: Person;
-  held: HeldObjectView;
-  target: THREE.Vector3;
-  rotY: number;
-  moving: boolean;
-  label: string;
-  look: PeerInfo['look'];
-  bubble?: { sprite: THREE.Sprite; until: number };
-  /** On the ladder or a pole, going by where they are. */
-  grip: Grip | null;
-}
-const remotes = new Map<string, RemotePeer>();
 
 interface WorkerView {
   model: Worker;
@@ -1833,8 +1784,7 @@ net.onMessage((msg) => {
       } else if (!store.floor) arrive();
       // The office let go of the ball for you while you were away.
       ballNews(false);
-      // After a reconnect the server has forgotten which terminal we had open, and what we're doing.
-      sendDoing(true);
+      // After a reconnect the server has forgotten which terminal we had open.
       const openId = openTerminalFor();
       if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       // The VR terminal too (else its screen freezes where the connection dropped).
@@ -1882,9 +1832,6 @@ net.onMessage((msg) => {
       if (msg.state.phase === 'restarting') showRestarting(msg.state, net);
       if (msg.state.phase === 'failed' && upgradePhase === 'building') toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
       upgradePhase = msg.state.phase;
-      break;
-    case 'chat':
-      sayBubble(msg.from, msg.text);
       break;
     case 'gong':
       gongRang(msg.why, msg.pr);
@@ -1962,7 +1909,7 @@ function takenAway() {
   closeAllModals();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
-  if (walkingTo) stopWalking();
+  if (errand) stopWalking();
   placeInCar();
 }
 
@@ -2070,8 +2017,8 @@ function switchFloor(floorId: string) {
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
   if (player.seat) standUp();
-  // The floor list isn't a window, so nothing else stops a walk over to someone on this floor.
-  if (walkingTo) stopWalking();
+  // The floor list isn't a window, so nothing else stops an errand on this floor.
+  if (errand) stopWalking();
   trip = { floor: floorId, how: 'switch', timer: window.setTimeout(tripFailed, 10_000) };
   player.enabled = false;
   player.clearKeys();
@@ -2222,134 +2169,16 @@ function noticeWaiting() {
 }
 
 // ---- Peers --------------------------------------------------------------------------------------
-function syncPeers() {
-  for (const [id, peer] of store.peers) {
-    // Only who's on your floor is in the room with you.
-    if (id === store.you || !store.onMyFloor(peer)) continue;
-    let r = remotes.get(id);
-    if (!r) {
-      const person = new Person(peer.name, peer.color, peer.look);
-      person.setCostume(store.theme.active);
-      person.onSmoke = puff;
-      person.root.position.set(peer.x, peer.y, peer.z);
-      scene.add(person.root);
-      noOutline(person.root);
-      const held = new HeldObjectView();
-      scene.add(held.root);
-      r = { person, held, target: new THREE.Vector3(peer.x, peer.y, peer.z), rotY: peer.rotY, moving: false, label: '', look: { ...peer.look }, grip: null };
-      remotes.set(id, r);
-    }
-    const label = `${peer.name}|${peer.voice ? (peer.muted ? 'm' : 'v') : '-'}|${peer.color}`;
-    if (label !== r.label) {
-      r.label = label;
-      r.person.setLabel(peer.name, peer.voice ? peer.muted : null);
-      r.person.setColor(peer.color);
-      noOutline(r.person.root);
-    }
-    if (!sameLook(peer.look, r.look)) {
-      r.look = { ...peer.look };
-      r.person.setLook(peer.look);
-      noOutline(r.person.root);
-    }
-    r.person.setSmoking(!!peer.smoking);
-    r.person.setGolf(!!peer.golfing);
-    r.person.holdDrink(peer.drink ? (DRINK_BY_ID.get(peer.drink) ?? null) : null);
-    r.person.carry(peer.carrying?.kind !== 'coffee' && !peer.carrying?.pose ? peer.carrying : null);
-    // No carry poses come over the wire any more; the held view stays empty until A5 removes remotes.
-    r.held.set(null);
-    r.person.read(!!peer.reading);
-    r.person.sit(peer.seat ? (seatAt(peer.seat)?.hips ?? null) : null);
-    r.person.setDoing(whereabouts(peer));
-  }
-  for (const [id, r] of remotes) {
-    const peer = store.peers.get(id);
-    if (!peer || !store.onMyFloor(peer)) {
-      scene.remove(r.person.root);
-      r.held.dispose();
-      remotes.delete(id);
-    }
-  }
-  renderPeople(editProfile, walkTo);
-}
-store.on('peers', syncPeers);
-store.on('carrying', () => {
-  for (const [, r] of remotes) r.held.set(null);
-});
-
-function sayBubble(from: string, text: string) {
-  if (from === store.you) return;
-  const r = remotes.get(from);
-  if (!r) return;
-  if (r.bubble) {
-    r.person.root.remove(r.bubble.sprite);
-    disposeSprite(r.bubble.sprite);
-  }
-  const sprite = textSprite(`💬 ${clip(text, 60)}`, { bg: '#0a0a0a', color: '#ffffff', border: '#eeeeee', size: 34 });
-  sprite.position.y = r.person.bubbleY;
-  r.person.root.add(sprite);
-  r.bubble = { sprite, until: performance.now() + 6000 };
-}
-
-// ---- Walking over to someone --------------------------------------------------------------------
-/** Near enough to talk: where a walk over to someone ends. */
-const NEAR_ENOUGH = 1.6;
-/** Who you're on your way to (clicked in the sidebar), and when to look again at where they've got to. */
-let walkingTo: { id: string; replanAt: number } | null = null;
+// ---- Walking over to a spot -----------------------------------------------------------------------
 /** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
 let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void } | null = null;
 
-/** Walks you over to a teammate, riding the elevator first if they're on another floor. A key of yours takes over. */
-function walkTo(id: string) {
-  if (nativeControls?.active) return vrWalkToPeer(id);
-  const p = store.peers.get(id);
-  if (!p || id === store.you) return;
-  if (!store.onMyFloor(p) && !p.floor) return;
-  if (player.seat) standUp();
-  if (golf.active) golf.stop();
-  errand = null;
-  walkingTo = { id, replanAt: 0 };
-  if (store.onMyFloor(p)) toast(`🚶 Walking over to ${p.name}`);
-  else {
-    toast(`🛗 Taking the elevator to ${p.name}, on the ${store.floors.find((f) => f.id === p.floor)?.name ?? 'other'} floor`);
-    ride(p.floor!);
-  }
-}
-
-/** The VR people view's row tap: over to a teammate (the sidebar click's walk-over, as a blink — the desktop pathing doesn't run in the headset). */
-function vrWalkToPeer(id: string) {
-  const p = store.peers.get(id);
-  if (!p || id === store.you) return;
-  if (!store.onMyFloor(p)) {
-    const floor = (p.floor && store.floors.find((f) => f.id === p.floor)?.name) ?? 'other';
-    toast(`${p.name} is on the ${floor} floor — ride the elevator over`, 'warn');
-    return;
-  }
-  const at = whereIs(p);
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2;
-    const x = at.x + Math.cos(a) * NEAR_ENOUGH;
-    const z = at.z + Math.sin(a) * NEAR_ENOUGH;
-    const g = player.groundBelow(x, z, at.y + 1);
-    if (!Number.isFinite(g) || Math.abs(g - player.pos.y) > 8 || player.blockedAt(x, z, g)) continue;
-    if (player.seat) standUp();
-    headsetControls().teleportTo(new THREE.Vector3(x, g, z));
-    toast(`🚶 Over to ${p.name}`);
-    return;
-  }
-  toast(`🚧 Couldn't find a way over to ${p.name}`, 'warn');
-}
 function stopWalking() {
-  walkingTo = null;
   errand = null;
   player.stopWalking();
 }
 
-/** Where they are, sitting or standing. */
-function whereIs(p: PeerInfo): { x: number; y: number; z: number } {
-  return (p.seat && seatAt(p.seat)) || p;
-}
-
-/** There: stop, and turn to them. */
+/** There: stop, and turn to it. */
 function arrivedAt(at: { x: number; z: number }) {
   stopWalking();
   const yaw = Math.atan2(at.x - player.pos.x, at.z - player.pos.z);
@@ -2357,36 +2186,8 @@ function arrivedAt(at: { x: number; z: number }) {
   player.camYaw = yaw - Math.PI;
 }
 
-/** Each frame: keep heading for them, looking again every so often in case they've moved on. */
-function walkTick(now: number) {
-  if (!walkingTo || trip || climber.active || !player.enabled) return;
-  // Sitting down on the way is stopping there.
-  if (player.seat) return stopWalking();
-  const p = store.peers.get(walkingTo.id);
-  if (!p || !store.onMyFloor(p)) {
-    toast(p ? `${p.name} left the floor before you got there` : 'They left the office', 'warn');
-    return stopWalking();
-  }
-  const at = whereIs(p);
-  if (Math.hypot(at.x - player.pos.x, at.z - player.pos.z) < NEAR_ENOUGH && Math.abs(at.y - player.pos.y) < 1) return arrivedAt(at);
-  if (now < walkingTo.replanAt) return;
-  walkingTo.replanAt = now + 800;
-  player.walkPath(wayTo(player.pos, at));
-}
-
 player.onPathEnd = (why) => {
   if (errand) return errandEnd(why);
-  if (!walkingTo) return;
-  if (why === 'cancelled') return void (walkingTo = null);
-  const p = store.peers.get(walkingTo.id);
-  if (!p) return stopWalking();
-  const at = whereIs(p);
-  // As near as the way goes (they're behind a desk, or on the couch): that'll do.
-  if (Math.hypot(at.x - player.pos.x, at.z - player.pos.z) < 3) return arrivedAt(at);
-  if (why === 'stuck') {
-    toast(`🚧 Couldn't find a way over to ${p.name}`, 'warn');
-    stopWalking();
-  } else walkingTo.replanAt = 0;
 };
 
 /**
@@ -2400,7 +2201,7 @@ function walkThen(at: { x: number; y?: number; z: number }, what: string, then: 
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (golf.active) golf.stop();
-  if (walkingTo || errand) stopWalking();
+  if (errand) stopWalking();
   const to = { x: at.x, y: at.y ?? 0, z: at.z };
   const path = wayTo(player.pos, to);
   if (!path.length) return then();
@@ -2583,7 +2384,7 @@ store.on('workers', renderUsage);
 
 /**
  * Dresses the building up for the holiday it's set to (⚙️ Settings), or takes it all down: the sky and
- * the decorations, your hands and your character, everyone else, and every worker.
+ * the decorations, your hands and your character, and every worker.
  */
 function dressUp() {
   const theme = store.theme.active;
@@ -2591,7 +2392,6 @@ function dressUp() {
   sky.setTheme(theme);
   hands.setCostume(theme);
   me.setCostume(theme);
-  for (const r of remotes.values()) r.person.setCostume(theme);
   for (const v of workerViews.values()) v.model.setCostume(theme);
   for (const a of idleAgents) a.model.setCostume(theme);
 }
@@ -2911,7 +2711,7 @@ function vrChangesPr(workerId: string) {
     },
   });
 }
-/** The chat view's 🔎 button, submitted: the search window's fetch, answered into the menu's search view. */
+/** The VR menu's 🔎 button, submitted: the search window's fetch, answered into the menu's search view. */
 async function vrSearchOffice(query: string) {
   vrSearch = { query, status: 'searching' };
   try {
@@ -3197,7 +2997,7 @@ function standAt(desk: DeskDef) {
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
-  if (walkingTo) stopWalking();
+  if (errand) stopWalking();
   const spot = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
   player.pos.set(spot.x, 0, spot.z);
   player.vy = 0;
@@ -3285,7 +3085,7 @@ function openWorkerTerminal(id: string, find?: TerminalFind) {
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
 
-/** 🔎 the chat and every terminal; a terminal line opens that terminal right at it. */
+/** 🔎 every terminal; a terminal line opens that terminal right at it. */
 function showSearch() {
   openSearch(openWorkerTerminal);
 }
@@ -3373,7 +3173,7 @@ function paletteEntries(): PaletteEntry[] {
   if (store.invites) out.push({ icon: '👥', kind: 'Action', title: 'Invite teammates', keywords: ['team', 'add people'], open: () => openTeam(net) });
   else if (store.me.admin) out.push({ icon: '👥', kind: 'Action', title: 'Invite people', detail: 'Accounts', keywords: ['invite teammates', 'accounts', 'team'], open: () => openAccounts(net) });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
-  out.push({ icon: '🔎', kind: 'Action', title: 'Search the chat and every terminal', keywords: ['find'], open: showSearch });
+  out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
 
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
@@ -3414,11 +3214,6 @@ function paletteEntries(): PaletteEntry[] {
       open: () => window.open(serviceUrl(svc.port), '_blank', 'noopener'),
       walk: board ? () => walkThen(board, 'the Services board', () => openServices()) : undefined,
     });
-  }
-  for (const p of store.peers.values()) {
-    if (p.id === store.you) continue;
-    const floor = store.onMyFloor(p) ? 'On this floor' : `On the ${store.floors.find((f) => f.id === p.floor)?.name ?? 'other'} floor`;
-    out.push({ icon: '🙂', kind: 'Teammate', title: p.name, detail: floor, open: () => walkTo(p.id) });
   }
   return out;
 }
@@ -3929,7 +3724,7 @@ function pickVrGrab(point: THREE.Vector3): Grabbable | null {
     if (at.distanceTo(point) > GRAB_REACH) continue;
     const number = issuesTex.noteAt(new THREE.Vector2(local.x / width + 0.5, local.y / height + 0.5));
     const issue = store.issues.items.find((i) => i.number === number);
-    if (!issue || offBoard().has(issue.number)) continue;
+    if (!issue || carrying?.issue === issue.number) continue;
     const use = (aim: { it: Interactable } | null) => {
       // Physical use never swaps for a different note while pinning the held card back.
       if (aim && ['issues', 'queue', 'meeting', 'desk'].includes(aim.it.kind)) vrUseE(aim.it, null);
@@ -4317,11 +4112,7 @@ function hintFor(it: Interactable): Hint {
       return { k: `${left}|${best?.name}|${best?.score}`, parts: [title(`🕹️ ${GAME}`), aside(about), key('E', left !== null ? 'Carry on' : 'Play')] };
     }
     case 'bookshelf': {
-      const names = [...store.peers.values()]
-        .filter((p) => p.reading && p.id !== store.you && store.onMyFloor(p))
-        .map((p) => p.name)
-        .join(', ');
-      return { k: names, parts: [title('📚 Bookshelf'), aside(names ? `📖 ${clip(names, 40)} reading` : "the project's docs"), key('E', 'Read the docs')] };
+      return { k: '', parts: [title('📚 Bookshelf'), aside("the project's docs"), key('E', 'Read the docs')] };
     }
     case 'meeting': {
       const m = store.meeting.current;
@@ -4701,13 +4492,6 @@ function officeKey(e: KeyboardEvent): boolean {
     return true;
   }
   switch (e.code) {
-    case 'KeyT':
-    case 'Enter':
-      e.preventDefault();
-      // With the chat turned off, it shows while you type.
-      $('chat').classList.add('peek');
-      $('chat-input').focus();
-      return true;
     case 'Tab':
       e.preventDefault();
       hud.toggleMenu();
@@ -4736,7 +4520,7 @@ function officeKey(e: KeyboardEvent): boolean {
   return false;
 }
 
-/** Keys while hanging a picture. Walking and chat work as usual. */
+/** Keys while hanging a picture. Walking works as usual. */
 function hangingKey(code: string): boolean {
   switch (code) {
     case 'Escape':
@@ -4760,33 +4544,6 @@ function hangingKey(code: string): boolean {
   return false;
 }
 
-/** What you last told the office you have open (see PeerInfo.doing), and whether you're reading. */
-let doingSent: string | undefined;
-let readingSent = false;
-/** Tells everyone what you have open now, for the line under your name tag. A reconnected office has forgotten. */
-function sendDoing(reconnected = false) {
-  if (reconnected) {
-    doingSent = undefined;
-    readingSent = false;
-  }
-  const reading = readingNow();
-  let what = doingNow();
-  // The office keeps 60 UTF-16 units of it: cut it short here instead, between whole characters.
-  if (what && what.length > 60) {
-    let cut = '';
-    for (const ch of what) {
-      if (cut.length + ch.length >= 60) break;
-      cut += ch;
-    }
-    what = `${cut}…`;
-  }
-  if (what === doingSent && reading === readingSent) return;
-  doingSent = what;
-  readingSent = reading;
-  net.send({ t: 'doing', what, reading });
-}
-onDoingChange(() => sendDoing());
-
 /**
  * Set when closing the last window may not have given you the mouse back, so the next key you press
  * takes it instead (a key counts for the browser, where the Esc that closed the window doesn't).
@@ -4799,13 +4556,12 @@ window.addEventListener('keydown', () => (pressedMouse = false), true);
 onModalChange((open) => {
   player.enabled = !open && !headsetActive();
   player.clearKeys();
-  sendDoing();
   // Reading off the bookshelf: an open book in your hands, and your character's.
   const reading = readingNow();
   me.read(reading);
   hands.read(reading);
-  // Opening something on the way over to someone is stopping there.
-  if (open && walkingTo && !trip) stopWalking();
+  // Opening something on an errand is stopping there.
+  if (open && errand && !trip) stopWalking();
   if (open) {
     windFrom = 0;
     emoteWheel.close();
@@ -4974,21 +4730,6 @@ player.onClick = (ndc) => {
   use(aim.it, 'E', noteUnder(aim), spotUnder(aim));
 };
 
-// Chat
-const chatInput = $('chat-input') as HTMLInputElement;
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const text = chatInput.value.trim();
-    if (text) net.send({ t: 'chat', text });
-    chatInput.value = '';
-    chatInput.blur();
-    e.preventDefault();
-  } else if (e.key === 'Escape') chatInput.blur();
-  e.stopPropagation();
-});
-chatInput.addEventListener('blur', () => $('chat').classList.remove('peek'));
-store.on('chat', renderChat);
-
 // Buttons must not keep focus, or Space (jump) would click them again.
 $('hud').addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button');
@@ -5022,7 +4763,7 @@ const hud = mountHud(
       title: () => 'Call a meeting: workers work through a question or a task together',
       run: () => showMeeting(),
     },
-    { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search the chat and every terminal', run: showSearch },
+    { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
     { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
     { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
     {
@@ -5157,9 +4898,7 @@ window.addEventListener('resize', resize);
 resize();
 
 const timer = new THREE.Timer();
-let lastSent = { x: 0, y: 0, z: 0, rotY: 0, moving: false, at: 0 };
 let spotSavedAt = 0;
-let speakTick = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
 const headPos = new THREE.Vector3();
@@ -5203,7 +4942,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   vr.sway = vr.active ? player.drunk : 0;
   if (nativeControls) nativeControls.sway = nativeControls.active ? player.drunk : 0;
 
-  walkTick(now);
   if (nativeControls?.active) nativeControls.update(dt);
   else if (vr.active) vr.update(dt);
   else player.update(dt);
@@ -5246,45 +4984,10 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   else camera.getWorldDirection(lookDir);
   sound.update({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z, fx: lookDir.x, fz: lookDir.z });
 
-  const moved = Math.abs(player.pos.x - lastSent.x) + Math.abs(player.pos.y - lastSent.y) + Math.abs(player.pos.z - lastSent.z) > 0.01 || Math.abs(player.facing - lastSent.rotY) > 0.02;
-  if ((moved || player.moving !== lastSent.moving) && now - lastSent.at > 66) {
-    lastSent = { x: player.pos.x, y: player.pos.y, z: player.pos.z, rotY: player.facing, moving: player.moving, at: now };
-    net.send({ t: 'move', x: player.pos.x, y: player.pos.y, z: player.pos.z, rotY: player.facing, moving: player.moving });
-  }
   // Where you are, to come back to next time.
   if (now - spotSavedAt > 1000) {
     spotSavedAt = now;
     saveSpot();
-  }
-
-  for (const [id, r] of remotes) {
-    const p = store.peers.get(id);
-    if (!p) continue;
-    // Sitting, they're wherever their seat puts them.
-    const sat = p.seat ? seatAt(p.seat) : undefined;
-    const at = sat ?? p;
-    r.target.set(at.x, at.y, at.z);
-    const pos = r.person.root.position;
-    pos.lerp(r.target, Math.min(1, dt * 12));
-    let diff = at.rotY - r.person.root.rotation.y;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    r.person.root.rotation.y += diff * Math.min(1, dt * 12);
-    // On their feet if they're standing on something: the floor, a desk, a stair, the loft.
-    const ground = groundAt(player.colliders, p.x, p.z, p.y);
-    const airborne = !sat && p.y > ground + 0.05;
-    // Or holding on to the ladder or a pole; off a pole onto the mat, the firehouse bell rings.
-    const holding = sat || upTop ? null : gripOf(p, office.stack.poles(), ground);
-    if (r.grip === 'pole' && !holding && Math.abs(p.y) < 0.2) sound.poleLanding(6, { x: pos.x, y: 0.5, z: pos.z });
-    r.grip = holding;
-    r.person.setGrip(holding);
-    const walking = !sat && p.moving && !airborne;
-    r.person.update(dt, t, walking || (holding === 'ladder' && p.moving), airborne && !holding && Math.abs(pos.y - r.target.y) > 0.01);
-    r.person.emojiLift = r.bubble ? 0.45 : 0;
-    if (r.bubble && now > r.bubble.until) {
-      r.person.root.remove(r.bubble.sprite);
-      disposeSprite(r.bubble.sprite);
-      r.bubble = undefined;
-    }
   }
 
   const camPos = camera.position;
@@ -5322,12 +5025,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   }
   if (!upTop) updateBall(now, dt);
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...[...remotes.values()].map((r) => r.person.root.position), ...departures.positions(), ...arrivals.positions(), ...casualties.positions()]);
-    office.stack.update(
-      dt,
-      [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }, ...[...remotes.values()].map((r) => ({ x: r.person.root.position.x, y: r.person.root.position.y, z: r.person.root.position.z, grip: r.grip }))],
-      camera.position,
-    );
+    office.update(t, dt, [player.pos, ...departures.positions(), ...arrivals.positions(), ...casualties.positions()]);
+    office.stack.update(dt, [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }], camera.position);
     office.jukebox.update(t, dt, sound.beat());
   }
   checkSmokeBreak(now);
@@ -5377,16 +5076,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   issuesTex.hover(aimedSpot);
   renderHint();
   renderCrosshair();
-
-  if (now - speakTick > 200) {
-    speakTick = now;
-    // What people are up to changes as they walk about, not only when they open something.
-    for (const [id, r] of remotes) {
-      const p = store.peers.get(id);
-      if (p) r.person.setDoing(whereabouts(p));
-    }
-    renderPeople(editProfile, walkTo, false);
-  }
 
   // A few drinks in, the frame goes to the screen through the drunk vision (see world/drunk.ts).
   // No post effects in the headset: drunk vision's render targets don't mix with the XR framebuffer.
@@ -5764,7 +5453,6 @@ void whoami().then(() => {
   renderer,
   hands,
   me,
-  remotes,
   settings,
   gallery,
   hanger,

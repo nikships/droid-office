@@ -8,7 +8,6 @@ import type { BallState } from './hoop.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
-import type { DrinkId } from './rooftop.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -281,7 +280,7 @@ export interface WorktreeState {
   repos?: { name: string; state: WorktreeState }[];
 }
 
-/** The issue on a card someone carries around the floor (see PeerInfo.carrying). */
+/** The issue on a card carried around the floor. */
 export interface CarriedIssue {
   issue: number;
   title: string;
@@ -296,40 +295,6 @@ export interface CarryPose {
 }
 
 export type CarriedObject = (CarriedIssue & { kind?: 'issue'; pose?: CarryPose }) | { kind: 'coffee'; empty: boolean; pose: CarryPose };
-
-export interface PeerInfo {
-  id: string;
-  name: string;
-  color: string;
-  /** Skin tone and hair, picked on the character select screen. */
-  look: Look;
-  x: number;
-  y: number;
-  z: number;
-  rotY: number;
-  moving: boolean;
-  voice: boolean;
-  muted: boolean;
-  sharing: boolean;
-  /** On a smoke break, cigarette in hand. */
-  smoking?: boolean;
-  /** At the golf tee on the balcony, club in hand. */
-  golfing?: boolean;
-  /** Sitting down: the place they're in (see seatAt in layout), like "couch:1". */
-  seat?: string;
-  /** Desktop issue card, or a physically held/placed VR object. Uses the same carry channel. */
-  carrying?: CarriedObject;
-  /** A drink from the rooftop bar in their hand. */
-  drink?: DrinkId;
-  /** Signed in with their own account, so `name` is theirs and nobody else can take it. */
-  account?: boolean;
-  /** The floor they're on (see FloorInfo); none while the building has no floors yet. */
-  floor?: string;
-  /** What they have open, in their own words: "in Pixel's terminal", "reading PR #12". */
-  doing?: string;
-  /** Reading something off the bookshelf: an open book in their hands, its pages turning. */
-  reading?: boolean;
-}
 
 /** A styled run of text on a terminal row: [text, fg, bg, flags]. */
 export type Run = [string, number, number, number];
@@ -755,14 +720,13 @@ export interface FloorInfo {
   addedBy: string;
   addedAt: number;
   /**
-   * For the elevator panel: who's there and what they're up to. `workers` counts the ones hired onto
+   * For the elevator panel: what's under way there. `workers` counts the ones hired onto
    * desks, bean bags and the meeting room's table, not the board agents at their kiosks.
    */
   workers: number;
   busy: number;
   /** Workers waiting on someone: a question, a permission, or a finished turn nobody looked at. */
   waiting: number;
-  people: number;
 }
 
 /** The workspace folder on the office's machine: where the elevator's "add a project" looks for existing checkouts. Nothing is ever cloned. */
@@ -1039,16 +1003,6 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
-export interface ChatLine {
-  from: string;
-  name: string;
-  color: string;
-  text: string;
-  at: number;
-  /** Said by someone signed in with their own account. */
-  account?: boolean;
-}
-
 /** A line of a worker's terminal that matched a search. */
 export interface TerminalHit {
   workerId: string;
@@ -1059,10 +1013,9 @@ export interface TerminalHit {
   rows: number;
 }
 
-/** What GET /api/search answers: matching chat and terminal lines, newest first. */
+/** What GET /api/search answers: matching terminal lines, newest first. */
 export interface SearchResults {
   q: string;
-  chat: ChatLine[];
   terminals: TerminalHit[];
   /** More lines matched than these. */
   more: boolean;
@@ -1072,7 +1025,6 @@ export interface SearchResults {
 export type GongWhy = 'hit' | 'merged' | 'queue';
 
 export type ClientMsg =
-  | { t: 'move'; x: number; y: number; z: number; rotY: number; moving: boolean }
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
@@ -1103,8 +1055,6 @@ export type ClientMsg =
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
-  /** What you have open now (see PeerInfo.doing and PeerInfo.reading); none when you're back in the office. */
-  | { t: 'doing'; what?: string; reading?: boolean }
   | { t: 'gh.refresh' }
   /** Merge a pull request; the answer comes back as gh.merged. */
   | { t: 'gh.merge'; number: number; method: GhMergeMethod; deleteBranch: boolean; auto?: boolean }
@@ -1147,7 +1097,6 @@ export type ClientMsg =
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
-  | { t: 'chat'; text: string }
   | { t: 'team.get' }
   | { t: 'team.invite'; github: string }
   | { t: 'team.remove'; name: string }
@@ -1243,17 +1192,14 @@ export interface Arrival {
 export type ServerMsg =
   | ({
       t: 'welcome';
-      you: string;
-      /** This connection's transport id (the same `you` has always carried); never shown, never a player. */
+      /** This connection's transport id; never shown, never a player. */
       connection: string;
       /** Where the owner arrives: the floor, the spot, and how the server chose it. */
       arrival: Arrival;
-      peers: PeerInfo[];
       /** Every floor of the building, for the elevator. */
       floors: FloorInfo[];
       /** Where the office looks for checkouts to add as floors, on the office's machine. */
       projectsDir: ProjectsDirState;
-      chat: ChatLine[];
       /** Whether teammates can be invited from the office (see TeamState). */
       invites: boolean;
       /** The running server's version; a change after a reconnect means the office was upgraded. */
@@ -1273,8 +1219,8 @@ export type ServerMsg =
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
     } & FloorView)
-  /** You arrived on another floor: everything on it, replacing the last one's, and where everyone is now. */
-  | ({ t: 'floor.enter'; arrival: Arrival; peers: PeerInfo[] } & FloorView)
+  /** You arrived on another floor: everything on it, replacing the last one's. */
+  | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
@@ -1282,10 +1228,6 @@ export type ServerMsg =
   | { t: 'floor.added'; dir: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */
   | { t: 'projectsDir'; state: ProjectsDirState }
-  | { t: 'peer.join'; peer: PeerInfo }
-  | { t: 'peer.update'; peer: PeerInfo; carryOnly?: boolean }
-  | { t: 'peer.move'; id: string; x: number; y: number; z: number; rotY: number; moving: boolean }
-  | { t: 'peer.leave'; id: string }
   | { t: 'worker.update'; worker: WorkerInfo }
   | { t: 'worker.remove'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
@@ -1309,7 +1251,6 @@ export type ServerMsg =
   | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; error?: string }
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */
   | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string }
-  | ({ t: 'chat' } & ChatLine)
   /**
    * A line for the toast stack. `workerId` names the worker it is about, when one is: a client
    * already showing that in its world (the headset's medics carrying off a shot worker whose

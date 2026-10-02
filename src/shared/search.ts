@@ -1,4 +1,4 @@
-// Searching the chat and the terminals. The server finds the lines; the browser uses the same
+// Searching the terminals. The server finds the lines; the browser uses the same
 // rules to find a hit again in its own copy of a terminal and scroll to it.
 
 /** Queries shorter than this match too much to be useful. */

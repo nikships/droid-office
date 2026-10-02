@@ -1,7 +1,6 @@
 import type {
   AccountsState,
   Arrival,
-  ChatLine,
   FloorInfo,
   FloorView,
   GhIssue,
@@ -11,7 +10,6 @@ import type {
   MachineState,
   MeetingState,
   NotifyState,
-  PeerInfo,
   PlanLimits,
   Me,
   ProjectInfo,
@@ -41,12 +39,9 @@ import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import type { BallState } from '../shared/hoop';
 
 export type Topic =
-  | 'peers'
-  | 'carrying'
   | 'workers'
   | 'issues'
   | 'pulls'
-  | 'chat'
   | 'project'
   | 'screens'
   | 'team'
@@ -112,9 +107,9 @@ export function saveProfile(p: Profile) {
 export type ViewMode = 'first' | 'third';
 
 /** The panels you can show or hide on screen, from the ☰ menu. */
-export type HudPanel = 'workers' | 'people' | 'spend' | 'limits' | 'chat' | 'floor';
-/** Out of the way by default: only the chat shows until you turn the rest on. */
-export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: false, people: false, spend: false, limits: false, chat: true, floor: false };
+export type HudPanel = 'workers' | 'spend' | 'limits' | 'floor';
+/** The workers show by default; the rest wait in the ☰ menu until turned on. */
+export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, spend: false, limits: false, floor: false };
 
 /** How turning works with a thumbstick in VR. */
 export type VrTurn = 'snap' | 'smooth';
@@ -222,7 +217,8 @@ export function loadSettings(): Settings {
     if (typeof saved?.musicMuted === 'boolean') s.musicMuted = saved.musicMuted;
     if (typeof saved?.notify === 'boolean') s.notify = saved.notify;
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
-    if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string').slice(0, 30);
+    // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
+    if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string' && p !== 'people' && p !== 'chat').slice(0, 30);
     if (typeof saved?.vr?.glide === 'boolean') s.vr.glide = saved.vr.glide;
     if (saved?.vr?.turn === 'snap' || saved?.vr?.turn === 'smooth') s.vr.turn = saved.vr.turn;
     if (typeof saved?.vr?.turnSpeed === 'number' && Number.isFinite(saved.vr.turnSpeed)) s.vr.turnSpeed = Math.max(30, Math.min(180, saved.vr.turnSpeed));
@@ -248,13 +244,11 @@ export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: numbe
 }
 
 class Store {
-  you = '';
   /** This connection's transport id; never shown, never a player. */
   connection = '';
   /** Where the server last put this connection (see welcome, floor.enter). */
   arrival: Arrival | null = null;
   profile: Profile = { name: 'Guest', color: AVATAR_COLORS[1], look: randomLook() };
-  peers = new Map<string, PeerInfo>();
   workers = new Map<string, WorkerInfo>();
   screens = new Map<string, ScreenState>();
   project: ProjectInfo | null = null;
@@ -267,7 +261,6 @@ class Store {
   repos: { list: RepoChoice[]; error?: string; loading: boolean; at: number } = { list: [], loading: false, at: 0 };
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: true };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: true };
-  chat: ChatLine[] = [];
   /** Whether this office can invite teammates (deployed with deploy/aws.sh). */
   invites = false;
   team: TeamState | null = null;
@@ -336,11 +329,6 @@ class Store {
     return this.clock ? performance.now() + this.clock.offset : Date.now();
   }
 
-  /** Whether someone is on your floor (people on other floors aren't in the room with you). */
-  onMyFloor(peer: PeerInfo): boolean {
-    return (peer.floor ?? null) === this.floor;
-  }
-
   workerAtDesk(deskId: string): WorkerInfo | undefined {
     for (const w of this.workers.values()) if (w.deskId === deskId) return w;
     return undefined;
@@ -382,13 +370,10 @@ class Store {
   apply(msg: ServerMsg) {
     switch (msg.t) {
       case 'welcome':
-        this.you = msg.you;
         this.connection = msg.connection;
         this.arrival = msg.arrival;
-        this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
-        this.chat = msg.chat;
         this.invites = msg.invites;
         this.upgrade = msg.upgrade;
         this.usage = msg.usage;
@@ -403,13 +388,11 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.prompts = msg.prompts ?? { custom: {} };
         this.enter(msg);
-        for (const t of ['peers', 'chat', 'upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
-        this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.enter(msg);
-        this.emit('peers');
         break;
       case 'floors':
         this.floors = msg.floors;
@@ -422,20 +405,6 @@ class Store {
       case 'floor.repos':
         this.repos = { list: msg.repos, error: msg.error, loading: false, at: Date.now() };
         this.emit('repos');
-        break;
-      case 'peer.join':
-      case 'peer.update':
-        this.peers.set(msg.peer.id, msg.peer);
-        this.emit(msg.t === 'peer.update' && msg.carryOnly ? 'carrying' : 'peers');
-        break;
-      case 'peer.move': {
-        const p = this.peers.get(msg.id);
-        if (p) Object.assign(p, { x: msg.x, y: msg.y, z: msg.z, rotY: msg.rotY, moving: msg.moving });
-        break;
-      }
-      case 'peer.leave':
-        this.peers.delete(msg.id);
-        this.emit('peers');
         break;
       case 'worker.update':
         this.workers.set(msg.worker.id, msg.worker);
@@ -565,11 +534,6 @@ class Store {
       case 'prompts':
         this.prompts = msg.state;
         this.emit('prompts');
-        break;
-      case 'chat':
-        this.chat.push(msg);
-        if (this.chat.length > 200) this.chat.shift();
-        this.emit('chat');
         break;
     }
   }

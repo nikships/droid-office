@@ -131,9 +131,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .burger { display: flex; flex-direction: column; gap: 3px; }
 .burger i { display: block; width: 16px; height: 2px; border-radius: 1px; background: currentColor; }
 
-/* Panels you turned off from the ☰ menu. The chat still shows while you type in it. */
+/* Panels you turned off from the ☰ menu. */
 .hud-off { display: none !important; }
-.chat.hud-off.peek { display: flex !important; }
 .project-meta.hud-off.lobby { display: block !important; }
 .panel-x { flex: none; margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius); background: none; color: var(--text-secondary); font: 500 12px/1 var(--font-mono); cursor: pointer; opacity: 0; transition: opacity var(--duration) var(--ease); align-self: center; }
 .side h3 :is(.cost, .plan) ~ .panel-x { margin-left: 2px; }
@@ -149,16 +148,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .side .count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 .side section { padding: 10px 12px; overflow: auto; }
 .side ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.people li, .workers li { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 3px 4px; border-radius: var(--radius); }
+.workers li { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 3px 4px; border-radius: var(--radius); }
 .workers li { cursor: pointer; }
 .workers li:hover { background: var(--surface-hover); }
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border-strong); flex: none; }
-.people .you { color: var(--text-secondary); font-weight: 500; }
-.people .mic { margin-left: auto; font-size: 12px; }
-.people li.walk { cursor: pointer; }
-.people li.walk:hover { background: var(--surface-hover); }
-.people .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.people .sub, .workers .sub { display: block; font: 400 10px/1.5 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workers .sub { display: block; font: 400 10px/1.5 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workers .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workers h3 .cost { margin-left: auto; font-size: 10px; text-transform: none; letter-spacing: .02em; }
 .workers .cost { font: 500 10px var(--font-mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -219,21 +213,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .compass-mark.needs_input .compass-dial { animation: blink 1.2s steps(2, jump-none) infinite; }
 .compass-who { position: absolute; top: 22px; left: 0; transform: translateX(-50%); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); font: 500 9.5px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
 @media (prefers-reduced-motion: reduce) { .compass-mark.needs_input .compass-dial { animation: none; } }
-
-/* The chat: lines float up and fade after a while; hover it or press T to read back. */
-.chat { position: absolute; left: 12px; bottom: 12px; width: 330px; max-width: calc(100vw - 24px); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-#hud > .chat { pointer-events: none; }
-#chat-log { list-style: none; margin: 0; padding: 0 0 3px; max-height: 190px; width: 100%; overflow: auto; font-size: 13px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; scrollbar-width: none; }
-#chat-log:empty { display: none; }
-#chat-log li { max-width: 100%; padding: 4px 10px; background: rgba(2, 2, 2, .72); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; animation: chat-out .6s ease-in forwards; }
-@keyframes chat-out { to { opacity: 0; visibility: hidden; } }
-.chat:is(:hover, :focus-within) #chat-log { pointer-events: auto; scrollbar-width: thin; }
-.chat:is(:hover, :focus-within) #chat-log li { animation: none; }
-#chat-log b { font-weight: 700; }
-#chat-log .sys { color: var(--text-secondary); font-style: italic; }
-#chat-input { pointer-events: auto; width: 180px; border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 7px 10px; font: inherit; font-size: 13px; background: rgba(2, 2, 2, .8); color: var(--text); outline: none; transition: width var(--duration) var(--ease); }
-#chat-input::placeholder { color: var(--text-tertiary); }
-#chat-input:focus { width: 100%; border-color: var(--accent); background: var(--surface-raised); }
 
 .hint {
   position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
@@ -427,7 +406,7 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
   .charsel-stage { min-height: 230px; }
 }
 
-/* Search: the chat and every terminal */
+/* Search: every terminal */
 .modal.search { width: min(820px, 100%); height: min(720px, calc(100vh - 32px)); }
 .modal.search .body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .search-status { margin: 10px 0 4px; font: 400 11px var(--font-mono); color: var(--text-secondary); }
@@ -438,8 +417,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .search-hit.term { background: #0a0a0a; color: var(--text); border-color: var(--border); cursor: pointer; }
 .search-hit.term:hover, .search-hit.term:focus-visible { border-color: var(--accent); outline: none; }
 .search-hit code { font-family: var(--font-mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.search-meta { display: flex; gap: 8px; align-items: baseline; font: 400 11px var(--font-mono); color: var(--text-secondary); }
-.search-text { overflow-wrap: anywhere; }
 .search-hit mark { background: var(--warning); color: var(--text-inverse); border-radius: 1px; padding: 0 1px; }
 
 /* Command palette (Ctrl+K): up near the top, so it doesn't jump as the list narrows. */
@@ -613,7 +590,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
   .dock-btn .lbl { display: none; }
   .hint { max-width: calc(100vw - 24px); bottom: 190px; }
   .shot-meter { bottom: 246px; }
-  .chat { width: calc(100vw - 24px); }
 }
 
 /* Invite teammates */
@@ -645,7 +621,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .accounts .team-head .btn { padding: 3px 10px; }
 .role { font: 500 10px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; padding: 1px 6px; border-radius: var(--radius-xs); border: 1px solid var(--border-strong); background: var(--surface-raised); color: var(--text-secondary); }
 .role.admin { border-color: rgba(242, 184, 75, .4); background: rgba(242, 184, 75, .1); color: var(--warning); }
-.acct { font: 500 10px var(--font-mono); color: var(--success); }
 
 /* Services board */
 .svc-count { margin-left: 6px; background: var(--accent-muted); color: var(--accent); border-radius: var(--radius-xs); padding: 0 5px; font: 600 10px/1.5 var(--font-mono); }
@@ -1078,7 +1053,6 @@ a.when:hover { text-decoration: underline; }
 #fade { position: fixed; inset: 0; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity .3s ease; z-index: 40; }
 #fade.on { opacity: 1; }
 #fps { position: fixed; right: 10px; bottom: 8px; z-index: 60; pointer-events: none; font: 600 11px/1 var(--font-mono); color: #39ff14; text-shadow: 0 0 4px rgba(57, 255, 20, .7), 0 1px 2px #000; font-variant-numeric: tabular-nums; }
-.people .where { font: 400 10px var(--font-mono); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .modal.elevator { width: min(640px, 100%); }
 .elevator .intro { margin: 0 0 12px; font-weight: 500; }
 .elevator .floors { display: grid; gap: 8px; }

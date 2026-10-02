@@ -229,26 +229,6 @@ test('on the desktop a worker still wears its name tag, status card and antenna 
   assert.ok(topOf(pixel) > 1.2, 'the bulb on its antenna shows its status across the room');
 });
 
-test('in the headset app a teammate wears a name badge on their shirt, not a tag over their head', (t) => {
-  page(t, '?native=1');
-  const ada = new Person('Ada', '#e63946', { skin: 0, hair: 0, style: 0 });
-  ada.setLabel('Ada', false);
-  ada.setDoing('💻 in Pixel’s terminal');
-  ada.setVoiceLevel(1);
-  assert.deepEqual(sprites(ada.root), []);
-  const badges: THREE.Object3D[] = [];
-  ada.root.traverse((o) => o.name === 'name-badge' && badges.push(o));
-  assert.equal(badges.length, 1);
-  const [badge] = badges;
-  assert.equal(badge.visible, true);
-  ada.showLabel(false);
-  ada.setLabel('Ada L.', null);
-  const renamed: THREE.Object3D[] = [];
-  ada.root.traverse((o) => o.name === 'name-badge' && renamed.push(o));
-  assert.equal(renamed.length, 1);
-  assert.equal(renamed[0].visible, false, 'a new name keeps the badge hidden where it was hidden');
-});
-
 test("a medic's red cross takes the place of their badge while they carry a stretcher", (t) => {
   page(t, '?native=1');
   const medic = new Person('Medic', '#f2f4f6', { skin: 0, hair: 0, style: 0 });

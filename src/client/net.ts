@@ -29,9 +29,9 @@ export class Net {
   }
 
   connect() {
-    const { name, color, look } = this.profile();
+    const { name, color } = this.profile();
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const q = new URLSearchParams({ name, color, skin: String(look.skin), hair: String(look.hair), style: String(look.style) });
+    const q = new URLSearchParams({ name, color });
     // Back to the floor you were on (after a reload or a restart), in the spot you were in there.
     const floor = store.floor ?? lastFloor();
     if (floor) q.set('floor', floor);

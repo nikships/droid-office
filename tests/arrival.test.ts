@@ -88,13 +88,16 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
     return { ws, seen, next, welcome };
   };
 
-  // A fresh arrival lands on the project's floor, by elevator, with the old peer fields still there.
+  // A fresh arrival lands on the project's floor, by elevator, with no peers or chat anywhere.
   const fresh = await open('name=Fresh');
   const floorId = (fresh.welcome.floor as string) ?? null;
   assert.ok(floorId && floorId !== ROOF, `expected a project floor, got ${String(floorId)}`);
-  assert.equal(fresh.welcome.connection, fresh.welcome.you);
+  assert.match(String(fresh.welcome.connection), /^[0-9a-f]{10}$/);
   assert.deepEqual({ ...(fresh.welcome.arrival as Arrival), at: typeof (fresh.welcome.arrival as Arrival).at === 'object' ? 'spot' : undefined }, { floor: floorId, at: 'spot', via: 'elevator' });
-  assert.ok(Array.isArray(fresh.welcome.peers) && (fresh.welcome.peers as unknown[]).length >= 1);
+  for (const key of ['you', 'peers', 'chat']) assert.ok(!(key in (fresh.welcome as Record<string, unknown>)), `welcome has no ${key}`);
+  const floors = fresh.welcome.floors as Record<string, unknown>[];
+  assert.ok(floors.length >= 1);
+  for (const f of floors) assert.ok(!('people' in f), 'floors carry no people count');
 
   // Back to the same floor with a spot: the arrival is the saved one.
   const back = await open(`name=Back&floor=${floorId}&x=5&y=0&z=3&rotY=1.2`);
@@ -106,15 +109,34 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
 
   // By elevator to the roof, then back down to a requested spot (the ladder, pole and floor-list path).
   back.ws.send(JSON.stringify({ t: 'floor.go', floor: ROOF }));
-  const roofed = (await back.next('floor.enter')).arrival as Arrival;
-  assert.equal(roofed.floor, ROOF);
-  assert.equal(roofed.via, 'elevator');
+  const roofed = await back.next('floor.enter');
+  assert.equal((roofed.arrival as Arrival).floor, ROOF);
+  assert.equal((roofed.arrival as Arrival).via, 'elevator');
+  assert.ok(!('peers' in roofed), 'floor.enter carries no peers');
   back.seen.length = 0;
   back.ws.send(JSON.stringify({ t: 'floor.go', floor: floorId, at: { x: 1, y: 0, z: 2, rotY: 0 } }));
-  assert.deepEqual((await back.next('floor.enter')).arrival, { floor: floorId, at: { x: 1, y: 0, z: 2, rotY: 0 }, via: 'requested' });
+  const requested = await back.next('floor.enter');
+  assert.deepEqual(requested.arrival, { floor: floorId, at: { x: 1, y: 0, z: 2, rotY: 0 }, via: 'requested' });
+  assert.ok(!('peers' in requested), 'floor.enter carries no peers');
+
+  // Search answers terminal hits only, with the more flag and no chat branch.
+  const searched = await (await fetch(`${base}/api/search?q=zzz-nothing-here&floor=${floorId}`, { headers: { cookie } })).json();
+  assert.deepEqual(searched, { q: 'zzz-nothing-here', terminals: [], more: false });
+  const short = await (await fetch(`${base}/api/search?q=x&floor=${floorId}`, { headers: { cookie } })).json();
+  assert.deepEqual(short, { q: 'x', terminals: [], more: false });
 
   // The last floor off the building leaves the arrival out in the lobby.
   back.seen.length = 0;
   back.ws.send(JSON.stringify({ t: 'floor.remove', floor: floorId }));
   assert.deepEqual((await back.next('floor.enter')).arrival, { floor: null, via: 'lobby' });
+
+  // With connections coming, going and traveling, nobody is announced to anyone.
+  await delay(300);
+  for (const c of [fresh, back, orphan]) {
+    assert.deepEqual(
+      c.seen.map((m) => m.t).filter((t) => t === 'peer.join' || t === 'peer.update' || t === 'peer.move' || t === 'peer.leave' || t === 'chat'),
+      [],
+      'no presence or chat messages',
+    );
+  }
 });

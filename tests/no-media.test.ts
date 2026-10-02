@@ -1,6 +1,8 @@
 // Voice chat and screen sharing are gone (single-owner track, commit A4): nothing captures
 // the microphone or the screen, no signaling rides the WebSocket, and no voice or share UI
-// remains on the desktop or in VR. The jukebox, office sounds, chat and people stay.
+// remains on the desktop or in VR. Chat and teammate presence are gone too (commit A5):
+// no chat history, remote avatars, relays, whereabouts, people views or floor headcounts.
+// The jukebox and office sounds stay.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -104,19 +106,46 @@ test('the VR menu has no voice rows or actions', () => {
   assert.doesNotMatch(file('client/vr/preview.ts'), /voice|leave voice|mute →/);
 });
 
-test('VR keeps chat, people, and sound actions', () => {
+test('VR keeps terminal search and sound actions', () => {
   const menu = file('client/vr/menu.ts');
-  assert.match(menu, /sendChat/);
-  assert.match(menu, /walkToPeer/);
   assert.match(menu, /toggleSound/);
-  assert.match(menu, /id: 'chat'/);
-  assert.match(menu, /id: 'people'/);
+  assert.match(menu, /searchOffice/);
+  assert.match(menu, /id: 'find'/);
 });
 
-test('teammate presence fields stay for the A5 commit', () => {
-  // PeerInfo.voice/muted/sharing and their plumbing go with chat and presence, not here.
-  assert.match(file('shared/protocol.ts'), /voice: boolean/);
-  assert.match(file('shared/protocol.ts'), /ChatLine/);
-  assert.match(file('client/ui/hud.ts'), /renderPeople/);
-  assert.match(file('client/main.ts'), /\{ t: 'chat', text \}/);
+test('no chat or teammate presence anywhere: protocol, server, stores or UI', () => {
+  // No peer or chat shapes on the wire, and no presence or chat messages. queue.move is a
+  // queued task moving up or down the queue, not a person, so it stays.
+  assert.deepEqual(hits(/PeerInfo/), []);
+  assert.deepEqual(hits(/ChatLine/), []);
+  assert.deepEqual(hits(/\bt: '(move|doing|chat)'/), []);
+  assert.deepEqual(hits(/peer\.(join|update|move|leave)/), []);
+  assert.deepEqual(hits(/term\.typing/), []);
+  // No chat persistence on the server, and no peer relays or headcounts.
+  assert.deepEqual(hits(/ChatLog|CHAT_KEEP|chat\.jsonl/), []);
+  assert.deepEqual(hits(/toNeighbors|lastMoveAt/), []);
+  assert.deepEqual(hits(/\.people\b/), []);
+  // The whereabouts module and the chat/people emulator scripts are gone.
+  assert.equal(existsSync(join(ROOT, 'client/ui/whereabouts.ts')), false);
+  assert.equal(existsSync(join(ROOT, 'client/iwsdk-scripts/show-chat.mjs')), false);
+  assert.equal(existsSync(join(ROOT, 'client/iwsdk-scripts/vr-people.mjs')), false);
+  assert.equal(existsSync(join(ROOT, 'client/iwsdk-scripts/vr-walkto.mjs')), false);
+  assert.deepEqual(hits(/whereabouts/), []);
+  // No people or chat UI on the desktop.
+  assert.deepEqual(hits(/renderPeople|renderChat|sayBubble|syncPeers|walkToPeer|vrWalkToPeer|sendChat|seedPeer/), []);
+  assert.doesNotMatch(file('client/main.ts'), /store\.peers|store\.chat|store\.you/);
+  assert.doesNotMatch(file('client/state.ts'), /\| '(peers|carrying|chat)'/);
+  assert.doesNotMatch(file('client/state.ts'), / (peers|chat|you) = /);
+  assert.doesNotMatch(file('client/ui/hud.ts'), /people|chat/i);
+  assert.doesNotMatch(file('client/ui/menu.ts'), /'people'|'chat'/);
+  assert.doesNotMatch(file('client/index.html'), /people-panel|chat-log|chat-input/);
+  assert.doesNotMatch(file('client/style.css'), /#chat-log|#chat-input|chat-out|\.people/);
+  // No chat or people views in VR; search is terminal-only with its own menu entry.
+  assert.doesNotMatch(file('client/vr/menu.ts'), /getChat|getPeers|sendChat|walkToPeer|'chat'|'people'|onChatSay|onChatSearch/);
+  assert.doesNotMatch(file('client/vr/attach.ts'), /askChat|getChat|getPeers|sendChat/);
+  assert.doesNotMatch(file('client/vr/preview.ts'), /getChat|getPeers|sendChat|walkToPeer/);
+  assert.doesNotMatch(file('client/iwsdk-scripts/vr-search.mjs'), /chat|Chat|seedPeer|walkTo|mclick\('say'|rotate|Orbit/);
+  assert.match(file('client/iwsdk-scripts/vr-search.mjs'), /mclick\?\.\('find'\)/);
+  // The workers panel shows by default; removed panels can't come back from old settings.
+  assert.match(file('client/state.ts'), /workers: true, spend: false, limits: false, floor: false/);
 });

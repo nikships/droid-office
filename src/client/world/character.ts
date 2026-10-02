@@ -82,9 +82,6 @@ class MedicLimb {
   }
 }
 
-/** Voice loudness (RMS) above which someone counts as speaking. */
-const SPEAKING = 0.04;
-
 /** How long reaching out to use something takes, in seconds. */
 export const REACH_TIME = 0.42;
 
@@ -343,10 +340,6 @@ export function boxOfStuff(): THREE.Group {
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 
-/** Where the line under a person's name tag sits, just over their hair, and how far it lifts the name tag. */
-const DOING_Y = 1.95;
-const DOING_LIFT = 0.25;
-
 /** What a zombie worker's skin is mixed toward. */
 const ZOMBIE = new THREE.Color('#7fa36b');
 
@@ -376,19 +369,7 @@ export class Person {
   /** Their name on a badge on their shirt, where names don't float over heads (see floatingTagsShown). */
   private badge: THREE.Mesh | null = null;
   private badgeName = '';
-  /** The smaller line under the name tag: what they have open, or where they are (see whereabouts). */
-  private doing: THREE.Sprite | null = null;
-  private doingText = '';
-  private speaking = false;
-  private mic: THREE.Mesh;
   private head: THREE.Group;
-  private smile: THREE.Mesh;
-  private mouth: THREE.Mesh;
-  private voiceLevel = 0;
-  /** 0 = lips together, 1 = wide open. Follows the voice's loudness. */
-  private mouthOpen = 0;
-  /** Keep the talking mouth up through the short gaps between words. */
-  private talkUntil = 0;
   private walkPhase = 0;
   private reachT = -1;
   /** Held in the left hand, kept upright however the arm swings: a mug of coffee or a drink. */
@@ -419,7 +400,7 @@ export class Person {
   /** A thumb up and a pointing finger on the right hand, out only for those emotes. */
   private thumb: THREE.Mesh;
   private finger: THREE.Mesh;
-  /** How much higher (meters) an emote's emoji pops up, to clear a chat bubble over their head. */
+  /** How much higher (meters) an emote's emoji pops up, to clear a bubble over their head. */
   emojiLift = 0;
   /** Hips this high above the feet while sitting (on the seat), or null on their feet. */
   private hips: number | null = null;
@@ -473,16 +454,9 @@ export class Person {
       head.add(mesh(new THREE.SphereGeometry(0.055, 10, 8), ink, sx * 0.12, 0.02, 0.3, false));
       head.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ff9f9f'), sx * 0.2, -0.08, 0.27, false));
     }
-    const smile = (this.smile = mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12, Math.PI), ink, 0, -0.08, 0.32, false));
+    const smile = mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12, Math.PI), ink, 0, -0.08, 0.32, false);
     smile.rotation.z = Math.PI;
     head.add(smile);
-    // Talking mouth: a flattened ball pressed into the face, scaled open and shut with the voice.
-    this.mouth = mesh(new THREE.SphereGeometry(1, 16, 12), toon('#7a2635'), 0, -0.1, 0.295, false);
-    const tongue = mesh(new THREE.SphereGeometry(1, 12, 10), toon('#ff8fa3'), 0, -0.5, 0, false);
-    tongue.scale.set(0.6, 0.45, 1.15);
-    this.mouth.add(tongue);
-    this.mouth.visible = false;
-    head.add(this.mouth);
     this.body.add(head);
 
     const limb = (len: number, r: number, mat: THREE.Material, x: number, y: number) => {
@@ -536,12 +510,7 @@ export class Person {
       this.armL.add(m);
     }
 
-    // Little mic icon that pops up while speaking
-    this.mic = mesh(new THREE.SphereGeometry(0.09, 10, 8), toon('#7cf29a', { emissive: '#2a9d4b' }), 0, 2.25, 0, false);
-    this.mic.visible = false;
-    this.root.add(this.mic);
-
-    this.setLabel(name, false);
+    this.setLabel(name);
   }
 
   setColor(color: string) {
@@ -651,16 +620,15 @@ export class Person {
     this.hair.traverse((o) => ((o as THREE.Mesh).castShadow = true));
   }
 
-  setLabel(name: string, muted: boolean | null) {
+  setLabel(name: string) {
     if (!this.tags) return this.setBadge(name);
     if (this.label) {
       this.root.remove(this.label);
       disposeSprite(this.label);
     }
-    const suffix = muted === null ? '' : muted ? ' 🔇' : ' 🎙️';
-    this.label = textSprite(`${name}${suffix}`, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 40 });
+    this.label = textSprite(name, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 40 });
+    this.label.position.y = 2.0;
     this.root.add(this.label);
-    this.placeLabels();
   }
 
   /** Clips a badge with `name` on it to the front of their shirt, in place of the name tag over their head. */
@@ -680,49 +648,8 @@ export class Person {
     return this.label ?? this.badge;
   }
 
-  /** Puts a smaller line under the name tag, like "💻 in Pixel's terminal"; none (or '') takes it away. */
-  setDoing(text: string | undefined) {
-    if (!this.tags) return;
-    text ??= '';
-    if (text === this.doingText) return;
-    this.doingText = text;
-    if (this.doing) {
-      this.root.remove(this.doing);
-      disposeSprite(this.doing);
-      this.doing = null;
-    }
-    if (text) {
-      this.doing = textSprite(text, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 26 });
-      this.doing.position.y = DOING_Y;
-      this.doing.visible = this.label?.visible ?? true;
-      this.root.add(this.doing);
-    }
-    this.placeLabels();
-  }
-
-  /** Where a chat bubble goes: over the name tag, however high it sits. */
-  get bubbleY(): number {
-    return 2.45 + (this.doing ? DOING_LIFT : 0);
-  }
-
-  /** The name tag and the mic badge move up out of the way of the line under them. */
-  private placeLabels() {
-    const lift = this.doing ? DOING_LIFT : 0;
-    if (this.label) this.label.position.y = 2.0 + lift;
-    this.mic.position.y = 2.25 + lift;
-  }
-
-  /** How loud this person is talking right now (0 when silent); drives the mic badge and the mouth. */
-  setVoiceLevel(level: number) {
-    this.voiceLevel = level;
-    this.speaking = level > SPEAKING;
-    // Where nothing floats over heads, their moving mouth shows they're talking.
-    this.mic.visible = this.speaking && this.tags;
-  }
-
   showLabel(v: boolean) {
     if (this.label) this.label.visible = v;
-    if (this.doing) this.doing.visible = v;
     if (this.badge) this.badge.visible = v;
   }
 
@@ -1047,7 +974,6 @@ export class Person {
     this.medicPose(null);
     this.root.removeFromParent();
     if (this.label) disposeSprite(this.label);
-    if (this.doing) disposeSprite(this.doing);
     if (this.badge) disposeBadge(this.badge);
     this.endEmote();
   }
@@ -1175,7 +1101,7 @@ export class Person {
   }
 
   /** `pace` speeds up the walk cycle for someone walking faster than usual. */
-  update(dt: number, t: number, moving: boolean, airborne: boolean, pace = 1) {
+  update(dt: number, _t: number, moving: boolean, airborne: boolean, pace = 1) {
     const target = moving ? 1 : 0;
     this.walkPhase += dt * 11 * target * pace;
     const swing = Math.sin(this.walkPhase) * 0.7 * target;
@@ -1253,18 +1179,9 @@ export class Person {
     this.body.position.y = moving && !airborne ? Math.abs(Math.sin(this.walkPhase)) * 0.06 : 0;
     // Down onto (or up onto) the seat: the hips go where it puts them.
     if (sit) this.body.position.y = THREE.MathUtils.lerp(this.body.position.y, this.seatHips - HIPS, sit);
-    if (this.speaking) this.mic.scale.setScalar(1 + Math.sin(t * 14) * 0.2);
 
-    // Lip flap: pop open fast on each syllable, close a little slower.
-    const want = THREE.MathUtils.clamp((this.voiceLevel - 0.02) / 0.12, 0, 1);
-    this.mouthOpen += (want - this.mouthOpen) * Math.min(1, dt * (want > this.mouthOpen ? 35 : 15));
-    if (this.voiceLevel > SPEAKING * 0.75) this.talkUntil = t + 0.4;
-    const talking = t < this.talkUntil;
-    this.smile.visible = !talking;
-    this.mouth.visible = talking;
-    if (talking) this.mouth.scale.set(0.07 * (1 - this.mouthOpen * 0.2), 0.01 + this.mouthOpen * 0.045, 0.05);
     // Reading, they look down into the book.
-    this.head.rotation.x = -this.mouthOpen * 0.08 + (this.book ? 0.32 : 0);
+    this.head.rotation.x = this.book ? 0.32 : 0;
     this.head.rotation.y = this.head.rotation.z = 0;
     this.body.rotation.y = this.body.rotation.z = 0;
     if (this.emoting) this.emoteStep(dt, moving || airborne ? 0 : 1 - sit);

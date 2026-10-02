@@ -51,8 +51,8 @@ export interface FloorContext {
   changes(state: ChangesState, clients: string[]): void;
   /** A worker on this floor changed, or left (then just its id). */
   workerChanged(floor: Floor, w: WorkerInfo | string): void;
-  /** How many people are on this floor right now. */
-  people(floor: Floor): number;
+  /** How many owner connections are on this floor right now. */
+  connections(floor: Floor): number;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
@@ -280,7 +280,7 @@ export class Floor {
 
     void this.board.refresh();
     void this.jira.refresh();
-    // A floor with people on it, or work under way, keeps its boards fresh; the others check in now and then.
+    // A floor with an owner connection on it, or work under way, keeps its boards fresh; the others check in now and then.
     this.timer = setInterval(() => {
       const active = this.active();
       if (active || Date.now() - this.board.issues.fetchedAt > IDLE_REFRESH_MS) void this.board.refresh();
@@ -342,7 +342,7 @@ export class Floor {
   }
 
   private active(): boolean {
-    return this.ctx.people(this) > 0 || this.ctx.lent(this) || this.workers.list().some((w) => isBusy(w.status)) || this.queue.state().tasks.some((t) => t.status !== 'done') || this.meetings.state().current?.status === 'running';
+    return this.ctx.connections(this) > 0 || this.ctx.lent(this) || this.workers.list().some((w) => isBusy(w.status)) || this.queue.state().tasks.some((t) => t.status !== 'done') || this.meetings.state().current?.status === 'running';
   }
 
   info(): FloorInfo {
@@ -359,7 +359,6 @@ export class Floor {
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,
       busy: ws.filter((w) => w.status === 'working').length,
       waiting: ws.filter((w) => w.kind === 'agent' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
-      people: this.ctx.people(this),
     };
   }
 

@@ -31,9 +31,8 @@ import { LeaveOnMerge } from './leave-on-merge.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { RELAY_LOGIN, relayRequest, relayUpgrade, signInPage, stoppedPage, tunneledPort } from './relay.js';
-import { ChatLog } from './history.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { Arrival, ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
@@ -42,7 +41,6 @@ import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES } from '../shared/drops.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
-import { lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
@@ -75,9 +73,13 @@ type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 interface Client {
   id: string;
   ws: WebSocket;
-  /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this, not the peer. */
+  /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this. */
   floor: string | null;
-  peer: PeerInfo;
+  /**
+   * Display provenance only: the name (its account's, or ?name=) and color this connection's toasts,
+   * createdBy and score names are written with. Nothing routes or filters by it; A6 re-sources names.
+   */
+  peer: { name: string; color: string };
   /** Signed in with this account; none means the shared office password. */
   accountId?: string;
   /** Whether this person was last told they're an admin (see `me`). */
@@ -87,7 +89,6 @@ interface Client {
   attached: Set<string>;
   /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
   stale: Set<string>;
-  lastMoveAt: number;
   lastGongAt: number;
   /** When they last blew the DJ's air horn on the roof. */
   lastHornAt: number;
@@ -191,8 +192,7 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const TOO_MANY_ATTEMPTS = 'Too many attempts. Try again in a few minutes.';
 /** WebSocket close code for a session that stopped counting: the account was revoked, or the shared password switched off. */
 const SIGNED_OUT = 4001;
-/** The most chat lines, and lines per worker's terminal, a search answers with. */
-const SEARCH_CHAT_HITS = 50;
+/** The most lines per worker's terminal a search answers with. */
 const SEARCH_TERMINAL_HITS = 25;
 
 export async function startServer(cfg: Config) {
@@ -205,8 +205,6 @@ export async function startServer(cfg: Config) {
   const accounts = new Accounts(cfg.dataDir);
   const auth = new Auth(cfg.verifier, cfg.salt, cfg.secret, accounts);
   const clients = new Map<string, Client>();
-  // Kept on disk, so a restart doesn't wipe it.
-  const chat = new ChatLog(cfg.dataDir);
   // The arcade's high scores: one table for the whole building, on every floor's cabinet. The office
   // follows every game and puts the scores up itself (see Arcade).
   const highScores = new HighScores(cfg.dataDir);
@@ -483,7 +481,7 @@ export async function startServer(cfg: Config) {
       machine.workersChanged();
       floorsChanged();
     },
-    people: (floor) => {
+    connections: (floor) => {
       let n = 0;
       for (const c of clients.values()) if (c.floor === floor.id) n++;
       return n;
@@ -672,14 +670,13 @@ export async function startServer(cfg: Config) {
     return send(res, 200, { ok: true, name: r.name }, signedIn(req, r.id));
   };
 
-  /** The 🔎 search: chat lines, and lines of the terminals of every worker on that floor, with the words in them. */
+  /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
   const search = (q: string, floor: Floor | undefined): SearchResults => {
     q = q.slice(0, SEARCH_MAX);
     const needle = searchKey(q);
-    if (needle.length < SEARCH_MIN) return { q, chat: [], terminals: [], more: false };
-    const said = chat.search(needle, SEARCH_CHAT_HITS);
+    if (needle.length < SEARCH_MIN) return { q, terminals: [], more: false };
     const shown = floor?.workers.search(needle, SEARCH_TERMINAL_HITS) ?? { hits: [], more: false };
-    return { q, chat: said.hits, terminals: shown.hits, more: said.more || shown.more };
+    return { q, terminals: shown.hits, more: shown.more };
   };
 
   const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -1000,10 +997,9 @@ export async function startServer(cfg: Config) {
       ...(landing.gone ? { removed: true } : {}),
     };
     const account = session.account;
-    // An account's name is its own; on the shared password people pick one.
+    // An account's name is its own; on the shared password the connection picks one.
     const name = account?.name ?? (str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`);
     const colorParam = url.searchParams.get('color') ?? '';
-    const intParam = (k: string) => (url.searchParams.get(k) ? Number(url.searchParams.get(k)) : undefined);
     const me = meOf(account?.id);
     const client: Client = {
       id,
@@ -1013,28 +1009,11 @@ export async function startServer(cfg: Config) {
       admin: me.admin,
       attached: new Set(),
       stale: new Set(),
-      lastMoveAt: 0,
       lastGongAt: 0,
       lastHornAt: 0,
       playing: false,
       isAlive: true,
-      peer: {
-        id,
-        name,
-        color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7',
-        look: sanitizeLook({ skin: intParam('skin'), hair: intParam('hair'), style: intParam('style') }, lookFromSeed(id)),
-        x: spot.x,
-        y: spot.y,
-        z: spot.z,
-        // The way they were facing, or out through the elevator's doors.
-        rotY: spot.rotY,
-        moving: false,
-        voice: false,
-        muted: true,
-        sharing: false,
-        ...(account ? { account: true } : {}),
-        ...(onRoof ? { floor: ROOF } : floor ? { floor: floor.id } : {}),
-      },
+      peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
     };
     clients.set(id, client);
     if (account) accounts.seen(account.id);
@@ -1042,13 +1021,10 @@ export async function startServer(cfg: Config) {
 
     sendTo(client, {
       t: 'welcome',
-      you: id,
       connection: id,
       arrival,
-      peers: [...clients.values()].map((c) => c.peer),
       floors: floorInfos(),
       projectsDir: building.projectsDirState(),
-      chat: chat.recent(50),
       invites: team.available,
       version: upgrader.version,
       upgrade: upgrader.state,
@@ -1065,7 +1041,6 @@ export async function startServer(cfg: Config) {
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
-    broadcast({ t: 'peer.join', peer: client.peer }, id);
     if (account) accountsChanged(); // now online
     floorsChanged();
     if (floor) {
@@ -1094,7 +1069,6 @@ export async function startServer(cfg: Config) {
         f.changes.unwatchAll(id);
         if (f.court.left(id)) ballChanged(f);
       }
-      broadcast({ t: 'peer.leave', id });
       if (account) accountsChanged();
       floorsChanged();
     });
@@ -1106,30 +1080,18 @@ export async function startServer(cfg: Config) {
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
   const teamChanged = async () => broadcast({ t: 'team', state: await team.state() });
 
-  /** To everyone else on the same floor as `c`: nobody on another floor can see them. */
-  const toNeighbors = (c: Client, msg: ServerMsg, droppable = false) => {
-    if (!c.floor) return;
-    const json = JSON.stringify(msg);
-    for (const o of clients.values()) {
-      if (o.id === c.id || o.floor !== c.floor || o.ws.readyState !== WebSocket.OPEN) continue;
-      if (droppable && o.ws.bufferedAmount > 4 * 1024 * 1024) continue;
-      o.ws.send(json);
-    }
-  };
-
   /**
-   * Takes `c` to another floor: everyone sees them leave and arrive, and they get the new floor's
-   * everything. They arrive in the elevator, or `at` the spot they came by.
+   * Takes `c` to another floor: they get the new floor's everything. They arrive in the
+   * elevator, or `at` the spot they came by.
    */
   const goToFloor = (c: Client, floor: Floor, at?: { x: number; y: number; z: number; rotY: number }) => {
     if (c.floor === floor.id) return;
     const left = leave(c, at);
     c.floor = floor.id;
-    Object.assign(c.peer, { floor: floor.id });
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(floor, c) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor, c) });
     screensOf(c, floor);
-    arrived(c, left);
+    arrived(left);
     floor.arrived();
     floor.workers.wakeAll();
     floorsChanged();
@@ -1140,10 +1102,9 @@ export async function startServer(cfg: Config) {
     if (c.floor === ROOF) return;
     const left = leave(c);
     c.floor = ROOF;
-    c.peer.floor = ROOF;
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...roofView(c) });
-    arrived(c, left);
+    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView(c) });
+    arrived(left);
     floorsChanged();
   };
 
@@ -1151,9 +1112,8 @@ export async function startServer(cfg: Config) {
   const toLobby = (c: Client) => {
     const left = leave(c);
     c.floor = null;
-    delete c.peer.floor;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(undefined, c) });
-    arrived(c, left);
+    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined, c) });
+    arrived(left);
   };
 
   /**
@@ -1195,12 +1155,10 @@ export async function startServer(cfg: Config) {
     c.stale.clear();
     stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
-    Object.assign(c.peer, { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY, moving: false });
     return { was, ballLeft, spot };
   };
 
-  const arrived = (c: Client, left: ReturnType<typeof leave>) => {
-    broadcast({ t: 'peer.update', peer: c.peer }, c.id);
+  const arrived = (left: ReturnType<typeof leave>) => {
     if (left.ballLeft && left.was) ballChanged(left.was);
   };
 
@@ -1248,30 +1206,11 @@ export async function startServer(cfg: Config) {
       return floor ? { wid, floor, info: floor.workers.get(wid)! } : undefined;
     };
     switch (msg.t) {
-      case 'move': {
-        const p = c.peer;
-        p.x = num(msg.x);
-        p.y = num(msg.y);
-        p.z = num(msg.z);
-        p.rotY = num(msg.rotY);
-        p.moving = !!msg.moving;
-        toNeighbors(c, { t: 'peer.move', id: c.id, x: p.x, y: p.y, z: p.z, rotY: p.rotY, moving: p.moving }, true);
-        break;
-      }
       case 'profile': {
+        // Display provenance only (see Client.peer): an account's name is its own.
         const name = str(msg.name, 24).trim();
         if (name && !c.accountId) c.peer.name = name;
         if (COLOR_RE.test(msg.color)) c.peer.color = msg.color;
-        c.peer.look = sanitizeLook(msg.look, c.peer.look);
-        broadcast({ t: 'peer.update', peer: c.peer });
-        break;
-      }
-      case 'chat': {
-        const text = str(msg.text, 500).trim();
-        if (!text) break;
-        const line: ChatLine = { from: c.id, name: who, color: c.peer.color, text, at: Date.now(), ...(c.accountId ? { account: true } : {}) };
-        chat.add(line);
-        broadcast({ t: 'chat', ...line });
         break;
       }
       case 'floor.go': {
@@ -1521,17 +1460,6 @@ export async function startServer(cfg: Config) {
       case 'term.input':
         if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.write(msg.workerId, str(msg.data, 64 * 1024));
         break;
-      case 'doing': {
-        const what = str(msg.what, 60).trim() || undefined;
-        const reading = msg.reading === true || undefined;
-        if (what === c.peer.doing && reading === c.peer.reading) break;
-        if (what) c.peer.doing = what;
-        else delete c.peer.doing;
-        if (reading) c.peer.reading = true;
-        else delete c.peer.reading;
-        broadcast({ t: 'peer.update', peer: c.peer });
-        break;
-      }
       case 'term.resize':
         if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.resize(msg.workerId, num(msg.cols), num(msg.rows));
         break;
@@ -1937,7 +1865,7 @@ export async function startServer(cfg: Config) {
         if (!floor || (c.playing && msg.game === c.game)) break;
         // Already at it: that game's over, and this is the next one.
         if (c.playing) arcade.leave(c.game, floor.id);
-        // INTERIM until A5/A6: score names still come from the peer, until connections carry their own identity.
+        // Score names come from the connection's display provenance, until A6 re-sources names.
         c.game = arcade.start({ owner: c.id, name: who, color: c.peer.color }, msg.game);
         if (typeof msg.game === 'string' && msg.game && c.game !== msg.game) warn(c, "🕹️ Your paused game didn't survive the restart, so here's a new one");
         if (c.game !== msg.game && !arcade.counts(c.game)) warn(c, "🕹️ That's a lot of new games in a row, so this one won't go on the high-score table");

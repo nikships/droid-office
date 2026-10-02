@@ -4,13 +4,12 @@
  * arrives through VrMenuActions (see attach.ts for the exact main.ts snippet), so there is
  * no forked logic here. Read-only views render from the same stores the DOM boards read.
  *
- * Views: main (Hire, Next waiting, Queue, Issues/PRs, Floors, Jukebox, Bar, Chat, Exit VR),
+ * Views: main (Hire, Next waiting, Queue, Issues/PRs, Floors, Jukebox, Bar, Find, Exit VR),
  * hire (free desks, with the worktree toggle), queue (running/queued/done, with tap-twice remove + requeue), board (issues/PRs tabs, read + hand-to-worker),
  * a detail view for one issue or PR (hand it over, queue it, comment, close it, review a PR), floors (ride the elevator), jukebox (tunes + a stream row), bar (drinks),
- * chat (the floor's chat + say something + search it), search (the search hits — chat lines and
- * terminal lines, tap one to open its terminal at the line), assign (hand an issue to a worker), meeting (the room's
+ * search (the terminal search hits — tap one to open its terminal at the line), assign (hand an issue to a worker), meeting (the room's
  * status + call one with the pattern defaults, and the earlier meetings), services (the workers' web servers, tap to copy
- * a tunnel command), people (who else is around — tap a row to walk over), and settings
+ * a tunnel command), and settings
  * (glide, turning, turn speed, teleport fade — the ⚙️ Settings VR section, in the headset).
  *
  * A worker's uncommitted work lives in the changes view (the Changes window's file list
@@ -18,7 +17,7 @@
  * in the terminal): the main menu grows a 📝 Changes row while a terminal is focused.
  */
 
-import type { ChangeStatus, ChangesState, ChatLine, FloorInfo, GhIssue, GhMergeMethod, GhPull, GhState, MeetingState, PeerInfo, QueueState, QueueTask, SearchResults, ServicesState, TerminalHit, WorkerInfo } from '../../shared/protocol';
+import type { ChangeStatus, ChangesState, FloorInfo, GhIssue, GhMergeMethod, GhPull, GhState, MeetingState, QueueState, QueueTask, SearchResults, ServicesState, TerminalHit, WorkerInfo } from '../../shared/protocol';
 import { fmtTokens } from '../../shared/protocol';
 import { MEETING_PATTERNS, meetingSpend } from '../../shared/meetings';
 import { JUKEBOX_TUNES, STREAM, trackTitle, type JukeboxState } from '../../shared/jukebox';
@@ -31,7 +30,6 @@ import type { VrSettings } from '../state';
 import { timeAgo } from '../ui/dom';
 import type { MergeStatus } from '../ui/pull';
 import type { TerminalFind } from '../ui/terminal';
-import { whereabouts } from '../ui/whereabouts';
 import { clampScroll, type HeadPose, type Rect } from './math';
 import { WorldPanel } from './panel';
 
@@ -52,13 +50,12 @@ export interface VrMergeInfo {
 }
 
 export interface VrMenuStores {
-  subscribe: (topic: 'workers' | 'issues' | 'pulls' | 'queue' | 'chat' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services' | 'peers', fn: () => void) => () => void;
+  subscribe: (topic: 'workers' | 'issues' | 'pulls' | 'queue' | 'floors' | 'floor' | 'jukebox' | 'meeting' | 'services', fn: () => void) => () => void;
   getWorkers: () => WorkerInfo[];
   getIssues: () => GhState<GhIssue>;
   getPulls: () => GhState<GhPull>;
   getQueue: () => QueueState;
   getFreeDesks: () => { id: string; label: string }[];
-  getChat: () => ChatLine[];
   getFloors: () => FloorInfo[];
   currentFloor: () => string | null;
   getJukebox: () => JukeboxState;
@@ -72,8 +69,6 @@ export interface VrMenuStores {
   getMeeting: () => MeetingState;
   /** Web servers the workers are running (the 🌐 Services board's list). */
   getServices: () => ServicesState;
-  /** Everyone else around (the sidebar's people, without you). */
-  getPeers: () => PeerInfo[];
   /** Your own sound levels (the ⚙️ Settings volume rows' values, live). */
   getSound: () => { volume: number; muted: boolean; music: number; musicMuted: boolean };
   /** Whether the next hire gets its own git worktree (the hire dialog checkbox's memory). */
@@ -107,12 +102,8 @@ export interface VrMenuActions {
   playStream: () => void;
   /** Orders a drink — the DOM bar menu's function (main.ts orderDrink). */
   orderDrink: (id: Drink['id']) => void;
-  /** Says it on the floor's chat — the DOM chat box's function (net chat). */
-  sendChat: (text: string) => void;
-  /** Searches the chat and every worker's terminal — the DOM search window's fetch (main.ts vrSearchOffice). */
+  /** Searches every worker's terminal — the DOM search window's fetch (main.ts vrSearchOffice). */
   searchOffice: (query: string) => void;
-  /** Walks over to a teammate — the sidebar people list's click (main.ts vrWalkToPeer). */
-  walkToPeer: (peerId: string) => void;
   /** Patches VR locomotion/comfort — the DOM ⚙️ Settings VR section's function (assign + save). */
   vrSettings: (patch: Partial<VrSettings>) => void;
   /** Mutes/unmutes the jukebox or the office sounds — the DOM ⚙️ Settings mute buttons. */
@@ -164,7 +155,7 @@ export interface VrMenuActions {
   exitVr: () => void;
 }
 
-export type MenuView = 'main' | 'hire' | 'queue' | 'board' | 'detail' | 'floors' | 'jukebox' | 'bar' | 'chat' | 'search' | 'assign' | 'settings' | 'meeting' | 'services' | 'people' | 'changes';
+export type MenuView = 'main' | 'hire' | 'queue' | 'board' | 'detail' | 'floors' | 'jukebox' | 'bar' | 'search' | 'assign' | 'settings' | 'meeting' | 'services' | 'changes';
 
 export interface MenuDetail {
   kind: 'issue' | 'pull';
@@ -193,9 +184,6 @@ const TABS: Rect = { x: 0.55, y: 0.015, w: 0.42, h: 0.09 };
 const JB_PLAY: Rect = { x: 0.58, y: 0.015, w: 0.13, h: 0.09 };
 const JB_STOP: Rect = { x: 0.72, y: 0.015, w: 0.13, h: 0.09 };
 const JB_SKIP: Rect = { x: 0.86, y: 0.015, w: 0.11, h: 0.09 };
-/** Chat view: the "say something" and "search the office" buttons in the header. */
-const SAY_BTN: Rect = { x: 0.6, y: 0.015, w: 0.16, h: 0.09 };
-const CHAT_FIND: Rect = { x: 0.77, y: 0.015, w: 0.2, h: 0.09 };
 /** Floors view: the "add a project" button in the header. */
 const FLOORS_ADD: Rect = { x: 0.72, y: 0.015, w: 0.25, h: 0.09 };
 /** Queue view: add a task, and pause/unpause the line. */
@@ -242,10 +230,8 @@ export class VrMenu {
   onOpenTerminal: ((workerId: string, find?: TerminalFind) => void) | null = null;
   /** Opening the controls card from the ❓ row (wired by attach.ts to the VR controls panel). */
   onShowControls: (() => void) | null = null;
-  /** Opening the chat prompt from the ✍️ button (wired by attach.ts to the VR prompt panel). */
-  onChatSay: (() => void) | null = null;
-  /** Opening the search prompt from the 🔎 button (wired by attach.ts to the VR prompt panel). */
-  onChatSearch: (() => void) | null = null;
+  /** Opening the search prompt from the 🔎 row (wired by attach.ts to the VR prompt panel). */
+  onFindSearch: (() => void) | null = null;
   /** A detail view opened (wired by attach.ts: main.ts fetches what the merge box needs). */
   onDetailOpen: ((kind: 'issue' | 'pull', number: number) => void) | null = null;
   /** The menu moved to another view (wired by attach.ts: main.ts stops watching the checkout). */
@@ -285,7 +271,7 @@ export class VrMenu {
     this.panel = new WorldPanel({ width: widthM, height: heightM, paint: (ctx, w, h, _dirty, state) => this.paint(ctx, w, h, state) });
     this.panel.setScrollRegion('list', BODY);
     this.panel.setVisible(false);
-    this.unsubs = (['workers', 'issues', 'pulls', 'queue', 'chat', 'floors', 'floor', 'jukebox', 'meeting', 'services', 'peers'] as const).map((t) => stores.subscribe(t, () => this.refresh()));
+    this.unsubs = (['workers', 'issues', 'pulls', 'queue', 'floors', 'floor', 'jukebox', 'meeting', 'services'] as const).map((t) => stores.subscribe(t, () => this.refresh()));
     this.syncButtons();
   }
 
@@ -448,14 +434,10 @@ export class VrMenu {
       id: f.id,
       name: f.name,
       here: f.id === here && !onRoof,
-      sub: `${f.people} 🧑 · ${f.workers} 💻${f.waiting ? ` · ${f.waiting} 🙋` : ''}`,
+      sub: `${f.workers} 💻${f.waiting ? ` · ${f.waiting} 🙋` : ''}`,
     }));
     rows.push({ roof: true });
     return rows;
-  }
-
-  private chatLines(): ChatLine[] {
-    return this.stores.getChat().slice(-40);
   }
 
   /** The merge box's answer for a PR, if it's this PR's (a fetch for another is stale). */
@@ -482,17 +464,12 @@ export class VrMenu {
     return status === 'M' ? 'modified' : status === 'A' ? 'added' : status === 'D' ? 'deleted' : status === 'R' ? 'renamed' : status === 'T' ? 'type changed' : 'new file';
   }
 
-  /** The search view's rows: matching chat lines first, then terminal lines (the search window's order). */
-  private searchRows(): ({ kind: 'chat'; chat: ChatLine } | { kind: 'term'; hit: TerminalHit })[] {
+  /** The search view's rows: matching terminal lines (the search window's order). */
+  private searchRows(): TerminalHit[] {
     const s = this.stores.getSearch();
     if (s?.status !== 'done' || !s.results) return [];
-    const rows: ({ kind: 'chat'; chat: ChatLine } | { kind: 'term'; hit: TerminalHit })[] = s.results.chat.map((chat) => ({ kind: 'chat' as const, chat }));
     // Workers sent home since the search ran have nothing left to open (the search window's rule).
-    for (const hit of s.results.terminals) {
-      if (!this.stores.getWorkers().some((w) => w.id === hit.workerId)) continue;
-      rows.push({ kind: 'term', hit });
-    }
-    return rows;
+    return s.results.terminals.filter((hit) => this.stores.getWorkers().some((w) => w.id === hit.workerId));
   }
 
   /** Awake agents, for the assign view (the DOM Ask window's worker list). */
@@ -547,21 +524,13 @@ export class VrMenu {
       { id: 'floors', icon: '🛗', title: 'Floors', sub: () => `${this.stores.getFloors().length} floors · ride the elevator` },
       { id: 'jukebox', icon: '🎵', title: 'Jukebox', sub: () => (j.on ? trackTitle(j) : 'off — pick a tune') },
       {
-        id: 'chat',
-        icon: '💬',
-        title: 'Chat',
+        id: 'find',
+        icon: '🔎',
+        title: 'Find in terminals',
         sub: () => {
-          const c = this.chatLines();
-          return c.length ? `${c[c.length - 1].name}: ${c[c.length - 1].text.slice(0, 24)}` : 'say hi to the floor';
-        },
-      },
-      {
-        id: 'people',
-        icon: '🧑',
-        title: 'People',
-        sub: () => {
-          const n = this.stores.getPeers().length;
-          return n ? `${n === 1 ? 'one more here' : `${n} around`} · what they're up to` : 'just you here';
+          const s = this.stores.getSearch();
+          if (s?.status === 'done' && s.results) return `“${s.query.trim().slice(0, 20)}” · ${this.searchRows().length} lines`;
+          return 'words in every terminal';
         },
       },
       {
@@ -647,9 +616,6 @@ export class VrMenu {
             ]
           : [{ id: 'jb:play', rect: JB_PLAY, onClick: () => this.actions.jukebox('play') }]),
       );
-    }
-    if (this.view === 'chat') {
-      buttons.push({ id: 'say', rect: SAY_BTN, onClick: () => this.onChatSay?.() }, { id: 'find', rect: CHAT_FIND, onClick: () => this.onChatSearch?.() });
     }
     if (this.view === 'floors') {
       buttons.push({ id: 'add', rect: FLOORS_ADD, onClick: () => this.actions.addFloor() });
@@ -752,7 +718,6 @@ export class VrMenu {
     if (this.view === 'floors') return this.floorRows().length;
     if (this.view === 'jukebox') return JUKEBOX_TUNES.length + 1;
     if (this.view === 'bar') return DRINKS.length;
-    if (this.view === 'chat') return Math.max(1, this.chatLines().length);
     if (this.view === 'search') return this.searchRows().length;
     if (this.view === 'assign') return Math.max(1, this.awakeWorkers().length);
     if (this.view === 'settings') return this.settingsRows().length;
@@ -761,7 +726,6 @@ export class VrMenu {
       return (m ? m.seats.length + 1 : 0) + this.stores.getMeeting().past.length;
     }
     if (this.view === 'services') return this.stores.getServices().items.length;
-    if (this.view === 'people') return this.stores.getPeers().length;
     if (this.view === 'changes') {
       if (!this.changesTarget()) return 0;
       const s = this.changesState();
@@ -788,8 +752,8 @@ export class VrMenu {
         return this.go('jukebox');
       case 'bar':
         return this.go('bar');
-      case 'chat':
-        return this.go('chat');
+      case 'find':
+        return this.onFindSearch?.();
       case 'meeting':
         return this.go('meeting');
       case 'changes': {
@@ -799,8 +763,6 @@ export class VrMenu {
       }
       case 'services':
         return this.go('services');
-      case 'people':
-        return this.go('people');
       case 'settings':
         return this.go('settings');
       case 'controls':
@@ -879,14 +841,12 @@ export class VrMenu {
       if (d && !(this.stores.barCutOff() && d.strength > 0)) this.actions.orderDrink(d.id);
       return;
     }
-    if (this.view === 'chat') return; // lines are read-only; ✍️ says something
     if (this.view === 'search') {
       const s = this.stores.getSearch();
       const row = this.searchRows()[i];
-      // A terminal line opens that terminal right at it (the search window's jump); chat lines
-      // are read-only — they're already in the chat view.
-      if (s?.results && row?.kind === 'term') {
-        this.onOpenTerminal?.(row.hit.workerId, { needle: searchKey(s.results.q), fromEnd: row.hit.rows - row.hit.row });
+      // A terminal line opens that terminal right at it (the search window's jump).
+      if (s?.results && row) {
+        this.onOpenTerminal?.(row.workerId, { needle: searchKey(s.results.q), fromEnd: row.rows - row.row });
       }
       return;
     }
@@ -932,11 +892,6 @@ export class VrMenu {
       return;
     }
     if (this.view === 'changes') return; // files are read-only; the diff lives in the window
-    if (this.view === 'people') {
-      const p = this.stores.getPeers()[i];
-      if (p) this.actions.walkToPeer(p.id);
-      return;
-    }
     if (this.view === 'board') {
       if (this.boardTab === 'issues') {
         const it = this.openIssues()[i];
@@ -1007,38 +962,28 @@ export class VrMenu {
                   ? '🎵 Jukebox'
                   : this.view === 'bar'
                     ? '🍸 Sky Bar'
-                    : this.view === 'chat'
-                      ? '💬 Chat'
-                      : this.view === 'search'
-                        ? `🔎 ${this.stores.getSearch()?.query.trim() || 'Search'}`
-                        : this.view === 'changes'
-                          ? `📝 ${this.changesTarget()?.name ?? 'Changes'}`
-                          : this.view === 'settings'
-                            ? '⚙️ VR settings'
-                            : this.view === 'meeting'
-                              ? '🤝 Meeting room'
-                              : this.view === 'services'
-                                ? '🌐 Services'
-                                : this.view === 'people'
-                                  ? '🧑 People'
-                                  : this.view === 'assign'
-                                    ? `🤖 Hand #${this.assignTarget?.number ?? ''} to…`
-                                    : this.detailTitle();
+                    : this.view === 'search'
+                      ? `🔎 ${this.stores.getSearch()?.query.trim() || 'Search'}`
+                      : this.view === 'changes'
+                        ? `📝 ${this.changesTarget()?.name ?? 'Changes'}`
+                        : this.view === 'settings'
+                          ? '⚙️ VR settings'
+                          : this.view === 'meeting'
+                            ? '🤝 Meeting room'
+                            : this.view === 'services'
+                              ? '🌐 Services'
+                              : this.view === 'assign'
+                                ? `🤖 Hand #${this.assignTarget?.number ?? ''} to…`
+                                : this.detailTitle();
     ctx.fillStyle = '#eeeeee';
     ctx.font = `700 ${Math.round(h * 0.042)}px ${TERM_FONT}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    ctx.fillText(
-      title,
-      w * (this.view === 'main' ? 0.05 : 0.22),
-      h * HEADER_H * 0.55,
-      w * (this.view === 'board' ? 0.3 : this.view === 'jukebox' || this.view === 'chat' || this.view === 'meeting' || this.view === 'queue' || this.view === 'changes' ? 0.34 : 0.5),
-    );
+    ctx.fillText(title, w * (this.view === 'main' ? 0.05 : 0.22), h * HEADER_H * 0.55, w * (this.view === 'board' ? 0.3 : this.view === 'jukebox' || this.view === 'meeting' || this.view === 'queue' || this.view === 'changes' ? 0.34 : 0.5));
     if (this.view !== 'main') this.paintBack(ctx, w, h, state);
     if (this.view === 'detail') this.paintCloseBtn(ctx, w, h, state);
     if (this.view === 'board') this.paintTabs(ctx, w, h, state);
     if (this.view === 'jukebox') this.paintTransport(ctx, w, h, state);
-    if (this.view === 'chat') this.paintSay(ctx, w, h, state);
     if (this.view === 'floors') this.paintFloorsAdd(ctx, w, h, state);
     if (this.view === 'queue') this.paintQueueBtns(ctx, w, h, state);
     if (this.view === 'changes') this.paintChangesBtns(ctx, w, h, state);
@@ -1162,21 +1107,6 @@ export class VrMenu {
       ctx.textBaseline = 'middle';
       ctx.fillText(b.label, (b.r.x + b.r.w / 2) * w, (b.r.y + b.r.h / 2) * h);
     }
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-  }
-
-  private paintSay(ctx: CanvasRenderingContext2D, w: number, h: number, state: { hoverId: string | null; pressedId: string | null }) {
-    this.pill(ctx, SAY_BTN, w, h, 'say', state);
-    ctx.fillStyle = '#eeeeee';
-    ctx.font = `700 ${Math.round(SAY_BTN.h * h * 0.38)}px ${TERM_FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('✍️ say', (SAY_BTN.x + SAY_BTN.w / 2) * w, (SAY_BTN.y + SAY_BTN.h / 2) * h);
-    this.pill(ctx, CHAT_FIND, w, h, 'find', state);
-    ctx.fillStyle = '#eeeeee';
-    ctx.font = `700 ${Math.round(CHAT_FIND.h * h * 0.38)}px ${TERM_FONT}`;
-    ctx.fillText('🔎 find', (CHAT_FIND.x + CHAT_FIND.w / 2) * w, (CHAT_FIND.y + CHAT_FIND.h / 2) * h);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
@@ -1329,7 +1259,6 @@ export class VrMenu {
     if (this.view === 'board' && this.boardTab === 'issues' && !this.openIssues().length) this.centerNote(ctx, w, 'No open issues 🎉', h);
     if (this.view === 'board' && this.boardTab === 'pulls' && !this.openPulls().length) this.centerNote(ctx, w, 'No open PRs', h);
     if (this.view === 'queue' && count === 0) this.centerNote(ctx, w, 'Nothing on the queue', h);
-    if (this.view === 'chat' && !this.chatLines().length) this.centerNote(ctx, w, 'Quiet on this floor — say hi ✍️', h);
     if (this.view === 'search') {
       const s = this.stores.getSearch();
       if (s?.status === 'searching') this.centerNote(ctx, w, 'Searching…', h);
@@ -1339,7 +1268,6 @@ export class VrMenu {
     if (this.view === 'assign' && !this.awakeWorkers().length) this.centerNote(ctx, w, 'Nobody awake — hire a worker first', h);
     if (this.view === 'meeting' && !this.stores.getMeeting().current && !this.stores.getMeeting().past.length) this.centerNote(ctx, w, 'The table is empty — 🤝 call one', h);
     if (this.view === 'services' && !this.stores.getServices().items.length) this.centerNote(ctx, w, 'Nothing running yet', h);
-    if (this.view === 'people' && !this.stores.getPeers().length) this.centerNote(ctx, w, 'Just you here', h);
     if (this.view === 'changes') {
       const t = this.changesTarget();
       const s = this.changesState();
@@ -1408,23 +1336,11 @@ export class VrMenu {
       this.rowText(ctx, d.emoji, d.name, refused ? "the bartender won't pour this" : `${d.blurb} · ${kick(d)}`, x, y, bw, rh);
       return;
     }
-    if (this.view === 'chat') {
-      const c = this.chatLines()[i];
-      if (!c) return;
-      const when = new Date(c.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      this.rowText(ctx, '💬', `${c.name}: ${c.text}`, when, x, y, bw, rh);
-      return;
-    }
     if (this.view === 'search') {
       const row = this.searchRows()[i];
       if (!row) return;
-      if (row.kind === 'chat') {
-        const when = new Date(row.chat.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        this.rowText(ctx, '💬', `${row.chat.name}: ${row.chat.text}`, when, x, y, bw, rh);
-        return;
-      }
-      const who = this.stores.getWorkers().find((w) => w.id === row.hit.workerId)?.name ?? 'A worker';
-      this.rowText(ctx, '💻', who, row.hit.text, x, y, bw, rh);
+      const who = this.stores.getWorkers().find((w) => w.id === row.workerId)?.name ?? 'A worker';
+      this.rowText(ctx, '💻', who, row.text, x, y, bw, rh);
       return;
     }
     if (this.view === 'assign') {
@@ -1462,14 +1378,6 @@ export class VrMenu {
       const title = f.from ? `${f.from} → ${f.path}` : f.path;
       const sub = `${this.changeWord(f.status)} · +${f.additions}/−${f.deletions}${f.binary ? ' · binary' : ''}${f.uncommitted ? '' : ' · committed'}`;
       this.rowText(ctx, icon, title, sub, x, y, bw, rh);
-      return;
-    }
-    if (this.view === 'people') {
-      const p = this.stores.getPeers()[i];
-      if (!p) return;
-      const floor = p.floor ? (this.stores.getFloors().find((f) => f.id === p.floor)?.name ?? null) : null;
-      const sub = [whereabouts(p), floor].filter(Boolean).join(' · ') || 'walking around';
-      this.rowText(ctx, p.sharing ? '🖥️' : !p.voice ? '🧑' : p.muted ? '🔇' : '🎙️', p.name, `${sub} · tap to walk over`, x, y, bw, rh);
       return;
     }
     if (this.view === 'queue') {
