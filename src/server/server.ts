@@ -33,7 +33,7 @@ import { HotReload, sourceAppDir } from './hot-reload.js';
 import { RELAY_LOGIN, relayRequest, relayUpgrade, signInPage, stoppedPage, tunneledPort } from './relay.js';
 import { ChatLog } from './history.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { Arrival, ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, seatHere, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
@@ -77,6 +77,8 @@ type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 interface Client {
   id: string;
   ws: WebSocket;
+  /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this, not the peer. */
+  floor: string | null;
   peer: PeerInfo;
   /** Signed in with this account; none means the shared office password. */
   accountId?: string;
@@ -252,7 +254,7 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`droid-office: --projects: ${err}`);
   }
   const floors = new Map<string, Floor>();
-  const floorOf = (c: Client): Floor | undefined => (c.peer.floor ? floors.get(c.peer.floor) : undefined);
+  const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
   /** The floor a worker sits on. Worker ids are unique across the building. */
   const workerFloor = (workerId: string): Floor | undefined => {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
@@ -262,7 +264,7 @@ export async function startServer(cfg: Config) {
   const toFloor = (floor: Floor, msg: ServerMsg, droppable = false) => {
     const json = JSON.stringify(msg);
     for (const c of clients.values()) {
-      if (c.peer.floor !== floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
+      if (c.floor !== floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
       if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
       c.ws.send(json);
     }
@@ -494,7 +496,7 @@ export async function startServer(cfg: Config) {
     },
     people: (floor) => {
       let n = 0;
-      for (const c of clients.values()) if (c.peer.floor === floor.id) n++;
+      for (const c of clients.values()) if (c.floor === floor.id) n++;
       return n;
     },
     leaveOnMerge: () => leaveOnMerge.on,
@@ -543,7 +545,7 @@ export async function startServer(cfg: Config) {
   );
 
   /** Who's playing the arcade cabinet on a floor. */
-  const cabinetPlayer = (floor: Floor): Client | undefined => [...clients.values()].find((c) => c.playing && c.peer.floor === floor.id);
+  const cabinetPlayer = (floor: Floor): Client | undefined => [...clients.values()].find((c) => c.playing && c.floor === floor.id);
   const cabinetState = (floor: Floor | undefined): CabinetState => {
     const p = floor && cabinetPlayer(floor);
     return { player: p ? { id: p.id, name: p.peer.name, game: p.game ?? '' } : null, scores: highScores.top() };
@@ -1000,7 +1002,14 @@ export async function startServer(cfg: Config) {
     const onRoof = landing.onRoof;
     const floor = landing.floorId ? floors.get(landing.floorId) : undefined;
     // Back where they were standing on it too; anywhere else, they arrive by elevator.
-    const spot = (landing.back && spotFrom(url.searchParams)) || { ...elevatorSpot(), y: 0, rotY: 0 };
+    const saved = landing.back ? spotFrom(url.searchParams) : undefined;
+    const spot = saved ?? { ...elevatorSpot(), y: 0, rotY: 0 };
+    const arrival: Arrival = {
+      floor: onRoof ? ROOF : (floor?.id ?? null),
+      ...(onRoof || floor ? { at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY } } : {}),
+      via: !onRoof && !floor ? 'lobby' : saved ? 'saved' : landing.gone ? 'roof' : 'elevator',
+      ...(landing.gone ? { removed: true } : {}),
+    };
     const account = session.account;
     // An account's name is its own; on the shared password people pick one.
     const name = account?.name ?? (str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`);
@@ -1010,6 +1019,7 @@ export async function startServer(cfg: Config) {
     const client: Client = {
       id,
       ws,
+      floor: onRoof ? ROOF : (floor?.id ?? null),
       accountId: account?.id,
       admin: me.admin,
       attached: new Set(),
@@ -1050,6 +1060,8 @@ export async function startServer(cfg: Config) {
     sendTo(client, {
       t: 'welcome',
       you: id,
+      connection: id,
+      arrival,
       peers: [...clients.values()].map((c) => c.peer),
       floors: floorInfos(),
       projectsDir: building.projectsDirState(),
@@ -1114,10 +1126,10 @@ export async function startServer(cfg: Config) {
 
   /** To everyone else on the same floor as `c`: nobody on another floor can see them. */
   const toNeighbors = (c: Client, msg: ServerMsg, droppable = false) => {
-    if (!c.peer.floor) return;
+    if (!c.floor) return;
     const json = JSON.stringify(msg);
     for (const o of clients.values()) {
-      if (o.id === c.id || o.peer.floor !== c.peer.floor || o.ws.readyState !== WebSocket.OPEN) continue;
+      if (o.id === c.id || o.floor !== c.floor || o.ws.readyState !== WebSocket.OPEN) continue;
       if (droppable && o.ws.bufferedAmount > 4 * 1024 * 1024) continue;
       o.ws.send(json);
     }
@@ -1128,10 +1140,12 @@ export async function startServer(cfg: Config) {
    * everything. They arrive in the elevator, or `at` the spot they came by.
    */
   const goToFloor = (c: Client, floor: Floor, at?: { x: number; y: number; z: number; rotY: number }) => {
-    if (c.peer.floor === floor.id) return;
+    if (c.floor === floor.id) return;
     const left = leave(c, at);
+    c.floor = floor.id;
     Object.assign(c.peer, { floor: floor.id });
-    sendTo(c, { t: 'floor.enter', peers: [...clients.values()].map((o) => o.peer), ...floorView(floor) });
+    const spot = left.spot;
+    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(floor) });
     screensOf(c, floor);
     arrived(c, left);
     floor.arrived();
@@ -1141,10 +1155,12 @@ export async function startServer(cfg: Config) {
 
   /** Up to the rooftop bar, by elevator. */
   const goToRoof = (c: Client) => {
-    if (c.peer.floor === ROOF) return;
+    if (c.floor === ROOF) return;
     const left = leave(c);
+    c.floor = ROOF;
     c.peer.floor = ROOF;
-    sendTo(c, { t: 'floor.enter', peers: [...clients.values()].map((o) => o.peer), ...roofView() });
+    const spot = left.spot;
+    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, peers: [...clients.values()].map((o) => o.peer), ...roofView() });
     arrived(c, left);
     floorsChanged();
   };
@@ -1152,8 +1168,9 @@ export async function startServer(cfg: Config) {
   /** Out to the lobby, where the elevator has nowhere to go: the building's last floor was taken off. */
   const toLobby = (c: Client) => {
     const left = leave(c);
+    c.floor = null;
     delete c.peer.floor;
-    sendTo(c, { t: 'floor.enter', peers: [...clients.values()].map((o) => o.peer), ...floorView(undefined) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, peers: [...clients.values()].map((o) => o.peer), ...floorView(undefined) });
     arrived(c, left);
   };
 
@@ -1169,7 +1186,7 @@ export async function startServer(cfg: Config) {
     floorsSent = JSON.stringify(list);
     broadcast({ t: 'floors', floors: list });
     for (const c of clients.values()) {
-      if (c.peer.floor === floor.id || (!next && c.peer.floor === ROOF)) {
+      if (c.floor === floor.id || (!next && c.floor === ROOF)) {
         if (next) goToFloor(c, next);
         else toLobby(c);
         sendTo(c, { t: 'toast', text: next ? `🛗 ${who} took ${name} off the building, so you rode the elevator to ${next.def.name}` : `🛗 ${who} took ${name}, the last floor, off the building`, level: 'warn' });
@@ -1203,7 +1220,7 @@ export async function startServer(cfg: Config) {
     // An issue card belongs to the board it came off, which is on the floor they left; a drink stays at the bar.
     delete c.peer.carrying;
     delete c.peer.drink;
-    return { was, ballLeft };
+    return { was, ballLeft, spot };
   };
 
   const arrived = (c: Client, left: ReturnType<typeof leave>) => {
@@ -1268,7 +1285,7 @@ export async function startServer(cfg: Config) {
       case 'act': {
         if (msg.drink !== undefined) {
           // A drink from the rooftop bar, which stays up there.
-          const drink = isDrink(msg.drink) && c.peer.floor === ROOF ? msg.drink : undefined;
+          const drink = isDrink(msg.drink) && c.floor === ROOF ? msg.drink : undefined;
           if (drink === c.peer.drink) break;
           if (drink) c.peer.drink = drink;
           else delete c.peer.drink;
@@ -1283,7 +1300,7 @@ export async function startServer(cfg: Config) {
         }
         if (typeof msg.golf === 'boolean') {
           // The tee's on an office floor's balcony; there's none up on the roof.
-          const golf = msg.golf && c.peer.floor !== ROOF;
+          const golf = msg.golf && c.floor !== ROOF;
           if (golf === !!c.peer.golfing) break;
           if (golf) c.peer.golfing = true;
           else delete c.peer.golfing;
@@ -1311,7 +1328,7 @@ export async function startServer(cfg: Config) {
         // Everyone sees them sit down (or get up), and anyone who comes in later finds them sitting.
         // Only on a seat where they are: the roof's up on the roof, the office's on a floor.
         const key = str(msg.seat, 40);
-        const seat = seatHere(key, c.peer.floor === ROOF) ? key : undefined;
+        const seat = seatHere(key, c.floor === ROOF) ? key : undefined;
         if (seat === c.peer.seat) break;
         if (seat) c.peer.seat = seat;
         else delete c.peer.seat;
@@ -1676,9 +1693,9 @@ export async function startServer(cfg: Config) {
       }
       case 'horn': {
         const now = Date.now();
-        if (c.peer.floor !== ROOF || now - c.lastHornAt < 1500) break;
+        if (c.floor !== ROOF || now - c.lastHornAt < 1500) break;
         c.lastHornAt = now;
-        for (const o of clients.values()) if (o.peer.floor === ROOF) sendTo(o, { t: 'horn', by: who });
+        for (const o of clients.values()) if (o.floor === ROOF) sendTo(o, { t: 'horn', by: who });
         break;
       }
       case 'gh.close': {

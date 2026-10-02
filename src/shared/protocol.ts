@@ -1250,10 +1250,28 @@ export type ClientMsg =
   | { t: 'proxy.refresh' }
   | { t: 'ping'; at: number };
 
+/**
+ * Where the server put this connection: which floor it is on (ROOF, or null out in the empty
+ * lobby) and where to stand on it. The client places the owner from this, never from a peer list.
+ */
+export interface Arrival {
+  floor: string | null;
+  /** Where to stand, when the requested or saved spot is valid on this floor. */
+  at?: { x: number; y: number; z: number; rotY: number };
+  /** How the server chose it; the client uses it for fallbacks and notices. */
+  via: 'saved' | 'requested' | 'elevator' | 'roof' | 'lobby';
+  /** The remembered floor no longer exists. */
+  removed?: boolean;
+}
+
 export type ServerMsg =
   | ({
       t: 'welcome';
       you: string;
+      /** This connection's transport id (the same `you` has always carried); never shown, never a player. */
+      connection: string;
+      /** Where the owner arrives: the floor, the spot, and how the server chose it. */
+      arrival: Arrival;
       peers: PeerInfo[];
       /** Every floor of the building, for the elevator. */
       floors: FloorInfo[];
@@ -1281,7 +1299,7 @@ export type ServerMsg =
       prompts: PromptsState;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's, and where everyone is now. */
-  | ({ t: 'floor.enter'; peers: PeerInfo[] } & FloorView)
+  | ({ t: 'floor.enter'; arrival: Arrival; peers: PeerInfo[] } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }

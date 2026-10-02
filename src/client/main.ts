@@ -43,6 +43,7 @@ import { MEETING_PATTERNS, defaultMeetingRequest, reviewMeetingRequest } from '.
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { Net } from './net';
+import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving, leaveTo } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveProfile, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
@@ -1868,26 +1869,28 @@ net.onMessage((msg) => {
     case 'welcome': {
       // A few pings, to line this page's clock up with the office's for the jukebox.
       for (let i = 0; i < 5; i++) setTimeout(() => net.send({ t: 'ping', at: performance.now() }), 200 + i * 500);
-      const mine = store.peers.get(store.you);
-      if (firstWelcome && mine) {
+      if (firstWelcome) {
         firstWelcome = false;
         // Where the office put you: back in the spot you left (if there's still room there), or in the elevator car.
         setPlace();
         syncStack();
-        if (!inElevator(mine.x, mine.z) && !player.blockedAt(mine.x, mine.z, mine.y)) {
-          placeAt(mine);
+        const spot = standSpot(msg.arrival, (x, y, z) => player.blockedAt(x, z, y));
+        if (spot) {
+          placeAt(spot);
           arrive('back');
         } else {
-          placeInCar(mine);
+          placeInCar(msg.arrival.at);
           arrive();
         }
-        floorWentWhileAway(wasOn);
+        const notice = removedFloorNotice(msg.arrival, wasOn, lastSpot(), store.floor);
+        if (notice) toast(notice, 'warn');
       } else if (store.floor && store.floor !== wasOn) {
         // Back after the office restarted, but not on your floor: it went while the office was down.
         takenAway();
         if (carrying) setCarrying(null);
         arrive();
-        floorWentWhileAway(wasOn);
+        const notice = removedFloorNotice(msg.arrival, wasOn, lastSpot(), store.floor);
+        if (notice) toast(notice, 'warn');
       } else if (!store.floor) arrive();
       if (voice.inVoice || voice.sharing) net.send({ t: 'voice', voice: voice.inVoice, muted: voice.muted, sharing: voice.sharing });
       if (player.seat) net.send({ t: 'sit', seat: player.seat.key });
@@ -2095,14 +2098,6 @@ function saveSpot() {
 }
 // Closing the tab, or reloading: the frame loop saves it every second, and here's the last word.
 window.addEventListener('pagehide', saveSpot);
-
-/** You asked to come back to floor `was`, and it's gone: the office sent you up to the roof. */
-function floorWentWhileAway(was: string | null) {
-  if (!was || was === ROOF || store.floor !== ROOF || store.floors.some((f) => f.id === was)) return;
-  const saved = lastSpot();
-  const name = saved?.floor === was && saved.name ? saved.name : 'Your floor';
-  toast(`🛗 ${name} isn't in the building any more, so the elevator brought you up to the roof`, 'warn');
-}
 
 function fade(on: boolean, quick = false) {
   $('fade').classList.toggle('quick', quick);

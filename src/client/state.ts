@@ -1,5 +1,6 @@
 import type {
   AccountsState,
+  Arrival,
   ChatLine,
   FloorInfo,
   FloorView,
@@ -248,6 +249,10 @@ export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: numbe
 
 class Store {
   you = '';
+  /** This connection's transport id; never shown, never a player. */
+  connection = '';
+  /** Where the server last put this connection (see welcome, floor.enter). */
+  arrival: Arrival | null = null;
   profile: Profile = { name: 'Guest', color: AVATAR_COLORS[1], look: randomLook() };
   peers = new Map<string, PeerInfo>();
   workers = new Map<string, WorkerInfo>();
@@ -379,6 +384,8 @@ class Store {
     switch (msg.t) {
       case 'welcome':
         this.you = msg.you;
+        this.connection = msg.connection;
+        this.arrival = msg.arrival;
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
@@ -401,6 +408,7 @@ class Store {
         for (const t of ['peers', 'chat', 'upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
+        this.arrival = msg.arrival;
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.enter(msg);
         this.emit('peers');
