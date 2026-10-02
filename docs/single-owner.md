@@ -24,8 +24,8 @@ owner and agents and not between client and server.
 
 | Class | Meaning | Contents |
 | --- | --- | --- |
-| **a. Delete** | The feature and every producer and consumer go | Remote human avatars and presence, movement/action/emote relays, voice, WebRTC signalling, screen sharing, chat and chat history, teammate typing and viewer faces, office accounts, roles and invites, SSH teammate provisioning, people menus and counts, spectator modes, multiplayer marketing copy |
-| **b. Rewrite** | The feature stays; its multiplayer coupling goes | Connection state, welcome and arrival, floor routing and activity, terminal subscriptions and the "terminal open" signal, local held objects, game ownership, authentication, owner controls, search, settings, previews, tests and docs |
+| **a. Delete** | The feature and every producer and consumer go | Remote human avatars and presence, movement/action/emote relays, voice, WebRTC signalling, screen sharing, chat and chat history, teammate typing and viewer faces, office passwords, sessions, login pages and the claim flow, office accounts, roles and invites, SSH teammate provisioning, people menus and counts, spectator modes, multiplayer marketing copy |
+| **b. Rewrite** | The feature stays; its multiplayer coupling goes | Connection state, welcome and arrival, floor routing and activity, terminal subscriptions and the "terminal open" signal, local held objects, game ownership, LAN access (QR token), search, settings, previews, tests and docs |
 | **c. Keep** | Unchanged in behavior | One local player and avatar, workers and desks, PTYs and recovery, forge and Jira boards, the queue, floors, elevator, ladder, poles and roof, meetings with agents, kiosk agents, local held cards and coffee, the jukebox and audio, single-player games, AI provider credentials and plan limits, native rendering and input, own-device discovery |
 
 Single-player games (golf, basketball, BLOCKFALL, Minesweeper) stay on the desktop and WebXR.
@@ -36,7 +36,8 @@ They are not multiplayer; only their spectator and replication paths go.
 - No change to worker, PTY host, worktree, queue, meeting, board or provider behavior.
 - No `PTY_PROTOCOL` bump. Nothing here edits code the detached PTY host runs (`ptyhost.ts`,
   `screen.ts`, or what it imports from `ptys.ts`). A bump would end running terminals.
-- No removal of authentication. One owner still signs in.
+- No per-message auth overhead. LAN gating is one token check per connection (see D1);
+  nothing on the steady-state path may cost latency.
 - No automatic cleanup of old runtime files, remote machines, SSH keys or accounts.
 - No change to the Vulkan native renderer beyond removing the microphone path.
 
@@ -47,15 +48,15 @@ depends on it (section 11 names the commit).
 
 | # | Decision | Starting position | Reason |
 | --- | --- | --- | --- |
-| D1 | Authentication | One owner password and signed session cookies. Named accounts, roles and invites go. | PTYs, uploads, worktrees, forge writes and owner settings stay powerful. One human does not mean no password. |
-| D2 | Network bind | Keep today's default (`0.0.0.0`, password required). Loopback-only stays available through `--host 127.0.0.1`. | The Galaxy XR headset reaches the laptop over the LAN. Defaulting to loopback breaks it. |
+| D1 | Authentication (owner override: no passwords, no sessions) | No passwords, accounts, sessions, cookies or login pages. Each start mints a random LAN token; loopback connects freely, every non-loopback HTTP/WebSocket request must carry `?t=<token>`. Startup prints a QR code of the join URL in the terminal; the headset scans it. | The office serves one laptop plus its headset. Gating costs one token compare per connection and zero per-message latency. |
+| D2 | Network bind | Keep today's default (`0.0.0.0`), gated by the per-start token (D1). Loopback-only stays available through `--host 127.0.0.1`. | The Galaxy XR headset reaches the laptop over the LAN. Defaulting to loopback breaks it. |
 | D3 | Several owner windows and devices | Allowed. Each is a transport connection with its own subscriptions and floor. None has a name, avatar or presence. | A laptop tab and a headset are the same person. A single global "viewer" flag causes detach and reconnect bugs. |
 | D4 | Emotes | Keep the local animation and controls; delete the network message. | Character animation is single-player. |
 | D5 | Lounge TV | Keep the geometry and idle screen; remove media capture, playback and "watch screen". | Avoids a room layout change. |
 | D6 | Webhook notifications | Keep as optional owner notifications; rename "team" wording. | They report worker state, not people. |
-| D7 | Remote hosting (AWS) | Keep owner lifecycle (`up`, `open`, `service`, `status`, `allow`, `revoke`, `ssh`, `logs`, `resize`, `pause`, `resume`, `update`, `reset-password`, `down`); delete `invite`, `uninvite`, `team`. `allow` and `revoke` manage SSH source CIDRs, not people, and stay. | AWS hosting is not multiplayer. Teammate management is. |
-| D8 | Account-only installs | An office that had `accounts.sharedPassword=false` refuses LAN or remote start until the owner sets a password with `--reset-password`. | A password the owner deliberately disabled must not silently start working again. |
-| D9 | Claim token and generated password | Keep the generated owner password and one-time claim for remote deployment. | It is owner access for a fresh remote office, not an invite. |
+| D7 | Remote hosting (AWS) | Keep owner lifecycle (`up`, `open`, `service`, `status`, `allow`, `revoke`, `ssh`, `logs`, `resize`, `pause`, `resume`, `update`, `down`); delete `invite`, `uninvite`, `team`, `reset-password`. `allow` and `revoke` manage SSH source CIDRs, not people, and stay. | AWS hosting is not multiplayer. Teammate management is. |
+| D8 | Account-only installs | Superseded by the D1 owner override: with no passwords or accounts there is nothing to migrate. `accounts.json` is left unread on disk. | Nothing to migrate to. |
+| D9 | Claim token and generated password | Superseded by the D1 owner override: the claim flow and generated password are deleted with the password. | No password, nothing to claim. |
 | D10 | Historical names | `createdBy`, `addedBy`, `calledBy`, jukebox and score names stay as provenance text. Nothing filters by them. | Old state keeps loading and still reads sensibly. |
 
 ## 3. Invariants
@@ -166,18 +167,23 @@ lastInputAt?: number;   // replaces lastInput?: { by: string; at: number }
   no longer match start a new game with a clear message instead of corrupting the table.
 - Seats: other-player reservation goes. `freePlace` (`main.ts:4210`) no longer reads peers.
 
-### 4.5 Authentication
+### 4.5 LAN access (owner override: QR token, no passwords)
 
-- `auth.ts:Session` payload is `{exp, n}`. A token carrying `u` (an account ID) is rejected.
-- Owner session signing stays derived from the password verifier and the office secret, so
-  existing shared-password cookies remain valid owner sessions.
-- `POST /api/login` takes `{password}`. `GET /api/login` (account and shared-switch options)
-  is removed. `/api/whoami` returns `{ok:true}`.
-- Origin checks on the WebSocket upgrade (`server.ts:958–961`), uploads (`:832`) and
-  owner-only writes stay. Port-scoped cookie names, malformed-cookie handling and stripping
-  office cookies from worker-service requests stay.
-- Owner-only controls (hot reload, floor removal, projects directory, prompts, default agent,
-  machine limit, Jira) keep their checks against "signed in as owner" instead of `Me.admin`.
+- `auth.ts` and `accounts.ts` are deleted: no passwords, sessions, cookies, login pages or
+  claim flow. `POST /api/login`, `GET /api/login`, `/api/join`, `/api/claim`, `/api/whoami`,
+  the relay sign-in page and the `login`/`join`/`claim` HTML entries go with them.
+- Each server start mints a random LAN token (kept in memory, never written to disk).
+  Startup prints a QR code of the join URL (`http://<lan-ip>:<port>/?t=<token>`) in the
+  terminal. The headset scans it; the laptop browser on loopback needs no token.
+- Every non-loopback HTTP request and WebSocket upgrade must carry `?t=<token>` (one
+  timing-safe compare per connection; nothing per message). Missing or wrong token gets
+  401/closed socket. Loopback (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) bypasses the check.
+- Origin checks on the WebSocket upgrade, uploads and owner writes stay. Office-cookie
+  stripping from worker-service requests goes with the cookies.
+- Every connection is the owner: role/admin checks on hot reload, floor removal, projects
+  directory, prompts, default agent, machine limit and Jira are deleted, not replaced.
+  Worker hook tokens (`DROID_OFFICE_HOOK_TOKEN`) and AI provider credentials stay; they are
+  machine credentials, not user auth.
 
 ### 4.6 Search
 
@@ -215,14 +221,17 @@ Every protocol change updates the server handlers (`server.ts`, `floor.ts`), `ne
 | File / symbol | What goes |
 | --- | --- |
 | `src/server/accounts.ts` (395 lines) | Accounts, invites, name reservation, account CLI |
+| `src/server/auth.ts` (160 lines) | Passwords, sessions, cookies, login rate limit |
 | `src/server/team.ts` (93 lines) | SSH teammate list, invite and remove |
+| `server.ts:login`, `/api/login` (GET+POST), `/api/whoami`, claim routes, `/login`, `/claim`, `/join` assets, relay sign-in page | All sign-in. Old `/login`, `/join`, `/claim` URLs 404 with the removed pages. |
+| `config.ts` password/verifier/salt/secret/claim storage, `--password`, `--reset-password`, `--claim-token`, `DROID_OFFICE_PASSWORD`, `DROID_OFFICE_CLAIM_TOKEN` | Password and claim configuration |
+| `cli.ts` `accounts` and `reset-password` flows, claim/password startup copy | Account CLI and password copy |
+| `src/client/login.ts`, `join.ts`, `claim.ts` (or equivalents), Vite `login`/`join`/`claim` inputs | Sign-in pages |
 | `history.ts:CHAT_KEEP`, `ChatLog` (12–86) | Chat persistence and search. `ScrollbackStore`, `terminalTail`, `searchTerminal` stay. |
-| `server.ts:join` (669–682), `/api/join` (715), `/join` assets (750) | Invite redemption. An old invite URL gets a clear "invites are gone" page, never an unprotected office. |
-| `server.ts:meOf`, `stillIn`, `onlineAccounts`, `accountsChanged` (964–992), `handleAccounts` (2076–2124) | Roles, revocation, online state |
+| `server.ts:join`, `meOf`, `stillIn`, `onlineAccounts`, `accountsChanged`, `handleAccounts`, `teamChanged`, `team.*`, account dispatch | Invite redemption, roles, revocation, online state, team and account dispatch |
 | `server.ts` cases `move`, `act`, `golf`, `emote`, `sit`, `carry` (1258–1330), `voice`, `rtc`, `chat` (1339–1356), `term.typing` (1606–1616), `doing` (1618–1627) | Peer relays |
-| `server.ts:teamChanged` (1113), `team.*` (1955–1976), account dispatch (1977–1982) | Team and account dispatch |
 | `config.ts:iceServers`, `RTCIceServerLike` (56), `--turn`, default STUN URLs | WebRTC NAT traversal |
-| `cli.ts` `accounts` subcommand; `config.ts:HELP` lines 69 and 91–92 | Account CLI and copy |
+| `config.ts:HELP` account/password/claim lines | Account CLI and copy |
 | `deploy/aws.sh:TEAM_USER` (30), `require_team` (388), `team_members` (392), `cmd_invite` (616), `cmd_uninvite` (661), `cmd_team` (675), dispatch (838–840) | Teammate commands |
 | `deploy/provision.sh:142–205` | Teammate user, tunnel command, team helper and sudoers entry. Audit first whether owner tunnels use the restricted user; if so, keep an owner-named equivalent. |
 
@@ -232,18 +241,17 @@ Every protocol change updates the server handlers (`server.ts`, `floor.ts`), `ne
 | --- | --- |
 | `server.ts:Client`, `sendTo`, `broadcast`, `floorOf` (255), `toFloor` (262) | Section 4.1. |
 | `server.ts:onConnection` (994–1108) | Keep return-floor choice, position validation, initial floor data and screens, `workers.wakeAll()`, limits and proxy refresh, heartbeat, error handling and close cleanup. Send `arrival`. No peer creation, join or leave. |
-| `server.ts:goToFloor`, `goToRoof`, `floor.go` (1358), `floor.remove` (1387), `floor.projectsDir` (1399) | Keep travel, cancellation, fallback, floor lifecycle and cleanup. Drop pose, seat, drink and carry resets. Owner check replaces admin check. |
+| `server.ts:goToFloor`, `goToRoof`, `floor.go` (1358), `floor.remove` (1387), `floor.projectsDir` (1399) | Keep travel, cancellation, fallback, floor lifecycle and cleanup. Drop pose, seat, drink and carry resets. Every connection is the owner, so role checks are deleted. |
 | `server.ts:FloorContext.people` (495); `floor.ts:FloorContext` (32), `people` (55), `active` (344–345), `info` (~348–363) | A floor is active while an owner connection is on it, work is busy, the queue has tasks, a meeting runs or a worktree is lent. No people count. |
 | `workers.ts` `viewers` (182), `attach` (1018), `detach` (1045), `detachAll` (1050+), input (1076–1094), `syncViewers` (2112–2117), restore (508–509, 2362–2363, 2396) | Section 4.3. Restored workers ignore legacy viewer fields. |
 | `server.ts:search` (684–692) | Section 4.6. |
 | `court.ts:Court` (11) | One holder, no contention; keep validation, per-floor lifetime and reset. |
 | `cabinet.ts:Player` (97), `Arcade` (194), `HighScores` (15); `server.ts:cabinetPlayer`, `cabinetState`, `stopPlaying`, cases 2029–2061 | Section 4.4. |
-| `auth.ts:Session` (12), `Auth` (16–124); `server.ts:signedIn` (641), `login` (644–661), `loginOptions` (663), `/api/whoami` (767) | Section 4.5. |
-| `relay.ts:signInPage` | Password-only form for worker-service sign-in. |
+| `server.ts` HTTP handler + WebSocket upgrade, `cli.ts` startup banner | Section 4.5: per-start LAN token, terminal QR of the join URL, loopback bypass, one timing-safe compare per non-loopback connection. |
 | `services.ts`, `ServicesState` (`protocol.ts:898`) | Service discovery and URLs stay. The `ssh` tunnel hint comes from owner remote metadata, not team membership. |
 | `jukebox.ts`, `webhook.ts`, `notify.*` | Keep; owner wording. Webhook URLs stay secret and never appear in logs or migrations. |
-| Owner checks at `server.ts:773–787`, 1389, 1401, 1826, 1838, 1852, 1863–1885 | Signed-in owner instead of role. |
-| `.env.example:73,77`, `tests/env-example.test.ts` | Remove `DROID_OFFICE_TEAM_HELPER`. Remove `DROID_OFFICE_PUBLIC_HOST` if only team code reads it; otherwise document its owner use. |
+| Owner checks at `server.ts:773–787`, 1389, 1401, 1826, 1838, 1852, 1863–1885 | Deleted; every connection is the owner. |
+| `.env.example`, `tests/env-example.test.ts` | Remove `DROID_OFFICE_TEAM_HELPER`, password and claim-token vars. Remove `DROID_OFFICE_PUBLIC_HOST` if only team code reads it; otherwise document its owner use. |
 
 **Keep untouched:** `ptyhost.ts`, `ptys.ts`, `screen.ts`, provider adapters, hooks, tasks,
 usage, repositories and worktrees, GitHub, GitLab and Jira, `queue.ts`, `meetings.ts`,
@@ -284,8 +292,8 @@ exists to remove.
 | `ui/search.ts` `search` (14), `chatRow` (86), counts (120–125) | Terminal-only. |
 | `ui/palette.ts` (25, 30) | Drop teammate entries and copy. |
 | `ui/character.ts` (153–158, 205, 247) | Drop the account name lock. |
-| `ui/settings.ts` admin branches (304, 351, 420, 466), account and sign-out (559–587), sound (590) | Owner settings; "Sound & voice" becomes "Sound". Keep sign-out. |
-| `ui/elevator.ts` people (114, 151), admin (133, 244), remove-floor copy (142–145), peer subscription (332); `ui/floormenu.ts` (47, 79) | Drop people counts and plural relocation copy. |
+| `ui/settings.ts` admin branches (304, 351, 420, 466), account and sign-out (559–587), sound (590) | Delete admin branches, account and sign-out. Owner settings stay; "Sound & voice" becomes "Sound". |
+| `ui/elevator.ts` people (114, 151), admin (133, 244), remove-floor copy (142–145), peer subscription (332); `ui/floormenu.ts` (47, 79) | Drop people counts, admin gating and plural relocation copy. |
 | `ui/prompts.ts` (89), `ui/meeting.ts` (117, 135) | Drop role restrictions; keep `calledBy` as display history. |
 | `ui/services.ts` (4–17, 29–32, 91+) | Use the extracted helpers. |
 | `ui/whereabouts.ts` (39 lines) | Delete after its consumers go. |
@@ -293,7 +301,7 @@ exists to remove.
 | `world/character.ts` `setLabel` (654), badge (667), `setVoiceLevel` (716), `showLabel` (723) | Delete remote-human presentation once no local or medic user remains. Keep the module. |
 | `world/nameplate.ts` `nameBadge` (437), `disposeBadge` (463) | Delete only proven dead exports. Worker seat nameplates and lamps stay. |
 | `src/client/join.ts`, `join.html`; `vite.config.ts:34,54` | Delete with routing and build input. |
-| `src/client/login.ts`, `login.html`, `login.css` | Password-only; keep error handling, destination sanitizing and native query restore. Stop reading and writing `droid-office.login-name`. |
+| `src/client/login.ts`, `login.html`, `login.css`, `claim.ts`, `claim.html` | Delete with routing and build inputs. Stop reading and writing `droid-office.login-name`. |
 | `sound.ts:10` | Drop voice-only comment. |
 
 ### 6.3 WebXR
@@ -338,9 +346,9 @@ files left untouched, and no destructive cleanup commands.
 
 | Stored data | Policy |
 | --- | --- |
-| `.droid-office/accounts.json` | Stop reading and writing it once D8 is in place. Leave the file on disk. Never expose its hashes or invite tokens. Old account cookies are rejected. |
+| `.droid-office/accounts.json` | Stop reading and writing it. Leave the file on disk. Never expose its hashes or invite tokens. |
 | `.droid-office/chat.jsonl` | Stop reading, writing, indexing and broadcasting. Leave it on disk; the guide says where it is for anyone who wants it. |
-| `.droid-office/config.json` | Keep the owner verifier, salt, secret, TLS and claim state. Never rewrite the whole file as "multiplayer state". |
+| `.droid-office/config.json` | Keep TLS state. Drop the owner verifier, salt, secret and claim state. Never rewrite the whole file as "multiplayer state". |
 | Floor `workers.json` | Load records with legacy `viewers`, `viewerIds`, `lastInput` and `createdBy`. Start subscriptions empty. Map `lastInput.at` to `lastInputAt`. |
 | Scrollback, PTY host metadata, drops | Unchanged. |
 | Building, project and floor lists; per-floor queue, repos, worktrees, meetings, Jira, decor, prompts, usage | Unchanged. Floor removal still leaves checkouts and state on disk. |
@@ -348,9 +356,9 @@ files left untouched, and no destructive cleanup commands.
 | Per-floor jukebox state | Keep; `by` is provenance. |
 | `webhook.json` | Keep; never print or copy the URL. |
 | Browser `droid-office.settings` | Load only retained HUD flags; drop old pins and unknown entries so removed panels never mount. |
-| Browser `droid-office.login-name` | Stop reading and writing it. Remove only this key, once, in the login page. |
+| Browser `droid-office.login-name` | Stop reading and writing it. Remove only this key, once, in the main client. |
 | Browser `droid-office.profile`, `droid-office.floor`, `droid-office.spot`, game records | Keep. Never clear localStorage wholesale. |
-| `ao_session` cookies | Owner tokens stay valid; account tokens return to the password page with `next` and `?native=1` kept. |
+| `ao_session` cookies | Ignored; no cookie code remains. Old cookies simply stop working. |
 | AWS helper, keys, sudoers and restricted user on existing machines | Source changes do not touch running hosts. The guide documents a manual audit before anyone removes keys or users. |
 | Android saved office, discovery choice, APK graphics settings, signing lineage | Unchanged; the microphone permission simply stops being requested. |
 
@@ -372,8 +380,8 @@ files left untouched, and no destructive cleanup commands.
   input; scores survive a restart.
 - Terminal-only search is reachable on desktop and in WebXR, including persisted scrollback
   and line jumps.
-- Auth rejects old account tokens, a wrong password and cross-origin WebSocket and mutation
-  requests. An account-only office does not start on the LAN without a new password.
+- LAN gating rejects missing and wrong `?t=` tokens from non-loopback senders, lets
+  loopback through, and still rejects cross-origin WebSocket and mutation requests.
 - No remaining code requests the microphone or display capture. The Android manifest has no
   `RECORD_AUDIO`; WebView media requests are denied while file picker and origin protections
   remain.
@@ -390,10 +398,10 @@ files left untouched, and no destructive cleanup commands.
 | `tests/cabinet.test.ts` | Drop account and connection contention; keep frame, schema and score validation, pause and resume, rate bounds and persistence. |
 | `tests/emotes.test.ts` | Drop server leniency; keep local IDs, durations and keys. |
 | `tests/queue.test.ts`, `leave-on-merge.test.ts`, `nextup.test.ts`, `repos.test.ts`, `meetings.test.ts`, `prompts.test.ts`, `workers.test.ts` and other worker fixtures | `open` instead of `viewers`/`viewerIds`; add owner-open protection, single detach, legacy creator and acknowledgement cases. |
-| `tests/hot-reload-http.test.ts` (66–74) | Drop the member-account scenario; keep owner and origin checks. |
-| `tests/config.test.ts`, `env-example.test.ts` | Drop TURN, team and account CLI; assert bind and owner password policy. |
+| `tests/hot-reload-http.test.ts` (66–74) | Drop the member-account scenario and the admin gate; keep origin checks. |
+| `tests/config.test.ts`, `env-example.test.ts` | Drop TURN, team, account, password and claim CLI/env; assert bind and QR-token policy. |
 | `tests/settings-nav.test.ts` | "Sound" label. |
-| `tests/pwa.test.ts`, `native-launch.test.ts`, `hot-reload-client.test.ts` | Drop join page assumptions. |
+| `tests/pwa.test.ts`, `native-launch.test.ts`, `hot-reload-client.test.ts` | Drop join/login/claim page assumptions. |
 | `tests/native-controls.test.ts`, `native-nameplates.test.ts`, `native-typing.test.ts`, `native-menus.test.ts`, `native-desktop-parity.test.ts` | Update peer, carry, menu and typing fixtures. |
 | `OfficeWebServicesRulesTest.java` | Section 6.4. |
 
@@ -431,7 +439,7 @@ page or media assets.
 | --- | --- | --- |
 | Deleting the self-peer before explicit arrival | High | A1 lands arrival with tests while peers still exist. |
 | Deleting the viewer map with the typing UI | High | A2 separates subscriptions; tests for single detach and queue, auto-remove and notify protection. |
-| Removing accounts weakens access on a public bind | High | D1, D2, D8; origin checks stay; rejection tests for account tokens. |
+| No-password LAN access on a public bind | High | D1 per-start token + D2; origin checks stay; loopback bypass; rejection tests for missing and wrong tokens. |
 | Old creator names hide restored workers | High | Delete `yours()`; legacy-state test. |
 | Broad deletion of `Person`, character or native modules | High | Delete only proven dead exports; keep local avatar, worker, medic, nameplate and controller consumers. |
 | Losing card, coffee or board handoff | High | A3 makes local objects independent before relay deletion; tests in all three clients. |
@@ -456,7 +464,7 @@ broken examples.
 | **A3** `feat: keep held objects and games local` | Local carry, seat, golf, emote and reading state; one-player ball and arcade; high-score compatibility. Spectator branches go once local tests pass. | No local gameplay path reads peers or sends `carry`, `sit`, `act`, `golf` or `emote`. | D4 |
 | **A4** `feat: remove voice and screen sharing` | Delete `voice.ts`, RTC, ICE, TURN, media UI, hotkeys and TV streams, WebXR deps, previews, tests and scripts; protocol, server and state in the same commit. Jukebox, ambient audio and TLS stay. | No `getUserMedia`, `getDisplayMedia` or `RTCPeerConnection` in `src/`. | D5 |
 | **A5** `feat: remove chat and teammate presence` | Delete chat persistence, DTO, UI and search branch; remote avatars, relay handlers, whereabouts, people views, floor people counts and movement sends. | Audit patterns for `PeerInfo`, `ChatLine`, `peer.*`, `term.typing` find nothing live. | - |
-| **A6** `feat: replace office accounts with one owner password` | Delete account and team DTOs, routes, pages, CLI and UI; owner-only auth, login and relay forms; owner checks; account-only migration; Vite, env and help. | Login is a password field; account tokens rejected; D8 enforced; join page gone from the build. | D1, D2, D8, D9 |
+| **A6** `feat: replace passwords and accounts with QR pairing` | Delete auth/accounts/login/join/claim routes, pages, CLI, UI, team DTOs and role checks; per-start LAN token, terminal QR, loopback bypass; services ssh hint from owner metadata; Vite, env and help. | Laptop connects with no login; LAN needs `?t=`; missing/wrong token rejected; login/join/claim gone from the build. | D1, D2 |
 | **A7** `chore: remove teammate deployment and the native microphone` | AWS team commands and provisioning; team env; Android `RECORD_AUDIO`, mic requests and grants; Java rules tests. May split into two commits. | Native host checks and both APK variants pass; `aws.sh help` lists no team commands. | D7 |
 | **A8** `docs: describe the single-owner office` | Section 9 sweep; dead CSS, fixtures, emulator scripts; legacy browser settings; packaged artifact check; final validation. | Section 13 audit is clean except listed false positives. | D6, D10 |
 
