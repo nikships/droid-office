@@ -1,0 +1,4 @@
+{
+  "name": "DroidOffice.Diagnostics",
+  "references": ["DroidOffice.Core", "DroidOffice.World", "DroidOffice.Terminal", "Unity.RenderPipelines.Universal.Runtime"]
+}

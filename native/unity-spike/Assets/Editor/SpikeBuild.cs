@@ -315,11 +315,12 @@ namespace DroidOffice.Spike.Editor
                 options = BuildOptions.Development
             });
             Directory.CreateDirectory("Evidence");
+            var apk = new FileInfo("Builds/droid-office-u0.apk");
             File.WriteAllText("Evidence/build.json",
-                FormattableString.Invariant($"{{\"result\":\"{report.summary.result}\",\"bytes\":{report.summary.totalSize},\"seconds\":{report.summary.totalTime.TotalSeconds:F3},\"errors\":{report.summary.totalErrors},\"warnings\":{report.summary.totalWarnings}}}"));
-            if (report.summary.result != BuildResult.Succeeded)
+                FormattableString.Invariant($"{{\"result\":\"{report.summary.result}\",\"apkBytes\":{(apk.Exists ? apk.Length : 0)},\"reportedBytes\":{report.summary.totalSize},\"seconds\":{report.summary.totalTime.TotalSeconds:F3},\"errors\":{report.summary.totalErrors},\"warnings\":{report.summary.totalWarnings}}}"));
+            if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0)
                 throw new InvalidOperationException("U0 Android build failed: " + report.summary.result);
-            Debug.Log($"U0 APK bytes={report.summary.totalSize} duration={report.summary.totalTime.TotalSeconds:F1}s");
+            Debug.Log($"U0 APK bytes={apk.Length} duration={report.summary.totalTime.TotalSeconds:F1}s");
         }
     }
 }

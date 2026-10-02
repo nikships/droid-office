@@ -19,8 +19,8 @@ namespace DroidOffice.Interaction
         readonly Collider[] occupied = new Collider[16];
         bool aiming, valid;
         Vector3 destination;
-        void Start() { app.Store.Changed += Changed; }
-        void OnDestroy() { if (app?.Store != null) app.Store.Changed -= Changed; }
+        void OnEnable() { if (Application.isPlaying && app?.Store != null) app.Store.Changed += Changed; }
+        void OnDisable() { if (app?.Store != null) app.Store.Changed -= Changed; }
         void Changed(string topic)
         {
             if (topic != "arrival" || app.Store.Arrival == null) return;

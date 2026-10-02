@@ -8,7 +8,7 @@ const dependencies = JSON.parse(await readFile(resolve(tools, 'network-deps.json
 const destination = resolve(tools, '../Assets/Plugins/Android');
 await mkdir(destination, { recursive: true });
 for (const { artifact, sha256 } of dependencies) {
-  const name = artifact.split('/').at(-1) + '.jar';
+  const name = `${artifact.split('/').at(-1)}.jar`;
   const path = resolve(destination, name);
   let bytes;
   try {

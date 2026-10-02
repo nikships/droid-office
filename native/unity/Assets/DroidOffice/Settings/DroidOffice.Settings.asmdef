@@ -1,0 +1,7 @@
+{
+  "name": "DroidOffice.Settings",
+  "references": ["DroidOffice.Core"],
+  "overrideReferences": true,
+  "precompiledReferences": ["Newtonsoft.Json.dll"],
+  "noEngineReferences": true
+}

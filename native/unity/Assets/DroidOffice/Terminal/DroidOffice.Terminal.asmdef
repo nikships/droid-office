@@ -1,0 +1,4 @@
+{
+  "name": "DroidOffice.Terminal",
+  "references": ["DroidOffice.Core", "DroidOffice.World", "DroidOffice.Protocol", "Unity.TextMeshPro"]
+}

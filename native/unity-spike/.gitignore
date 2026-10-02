@@ -1,5 +1,8 @@
 /Library/
 /Temp/
+/.utmp/
+/mono_crash.*
+/Assets/Resources/PerformanceTestRun*.json*
 /Obj/
 /obj/
 /Build/

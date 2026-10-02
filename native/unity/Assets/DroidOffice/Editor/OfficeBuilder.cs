@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using DroidOffice.Interaction;
+using DroidOffice.Terminal;
 using DroidOffice.Workers;
 using DroidOffice.World;
 using Newtonsoft.Json.Linq;
@@ -103,6 +105,13 @@ namespace DroidOffice.Editor
             accent = Material("Sage", new Color(0.33f, 0.66f, 0.57f));
             robot = Material("Robot", new Color(0.25f, 0.48f, 0.57f));
             font = Font();
+            // Bake the terminal atlas before freezing it. Dynamic TMP atlases are
+            // cleared by the build pipeline, but our renderer needs stable IDs.
+            font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+            font.TryAddCharacters(string.Concat(System.Linq.Enumerable.Range(32, 224).Select(n => (char)n)));
+            font.atlasPopulationMode = AtlasPopulationMode.Static;
+            EditorUtility.SetDirty(font);
+            foreach (var texture in font.atlasTextures) EditorUtility.SetDirty(texture);
             TMP_Settings.defaultFontAsset = font;
             EditorUtility.SetDirty(TMP_Settings.instance);
             world = new GameObject("Office, layout snapshot").transform;
@@ -116,8 +125,10 @@ namespace DroidOffice.Editor
             {
                 var anchor = Anchor("board-" + board.Name, "board", board.Value);
                 Box(board.Name, anchor, Vector3.zero, new Vector3(Number(board.Value, "width"), Number(board.Value, "height"), 0.12f), dark);
-                var text = Text((string)board.Value["label"], anchor, new Vector3(0, 0, -0.07f), new Vector2(5, 0.8f), 0.35f);
-                text.transform.localRotation = Quaternion.Euler(0, 180, 0);
+                var label = (string)board.Value["label"];
+                label = string.Concat(label.Where(c => !char.IsSurrogate(c))).Trim();
+                var text = Text(label, anchor, new Vector3(0, 0, -0.07f), new Vector2(5, 0.8f), 0.35f);
+                text.transform.localRotation = Quaternion.identity;
             }
             foreach (var name in new[] { "MEETING_TABLE", "MEETING_BOARD", "TV", "MACHINE_MONITOR", "BOOKSHELF", "GONG", "JUKEBOX", "CABINET" })
             {
@@ -168,7 +179,16 @@ namespace DroidOffice.Editor
             view.lamp = Box("Status lamp", anchor, new Vector3(0.7f, y + 0.1f, 0), Vector3.one * 0.1f, accent).GetComponent<Renderer>();
             view.nameplate = Text("Available", anchor, new Vector3(0, y + 0.25f, 0.55f), new Vector2(1.8f, 0.5f), 0.09f);
             view.stateplate = Text("", anchor, new Vector3(0, y + 0.05f, 0.57f), new Vector2(1.8f, 0.2f), 0.09f);
-            view.nameplate.transform.localRotation = view.stateplate.transform.localRotation = Quaternion.Euler(0, 180, 0);
+            view.nameplate.transform.localRotation = view.stateplate.transform.localRotation = Quaternion.identity;
+            var screen = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            screen.name = "Terminal overview"; screen.transform.SetParent(anchor, false);
+            screen.transform.localPosition = new Vector3(0, y + 0.19f, -0.1f);
+            screen.transform.localRotation = Quaternion.Euler(15, 0, 0);
+            screen.transform.localScale = new Vector3(0.34f, 0.2f, 1);
+            UnityEngine.Object.DestroyImmediate(screen.GetComponent<Collider>());
+            var surface = screen.AddComponent<TerminalSurface>();
+            surface.app = app; surface.deskId = view.deskId; surface.font = font;
+            surface.panel = screen.GetComponent<MeshRenderer>(); surface.shader = Shader.Find("DroidOffice/Terminal/Cells");
         }
         static void Shell()
         {

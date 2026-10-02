@@ -27,8 +27,13 @@ namespace DroidOffice.Workers
             _ => new Color32(108, 117, 125, 255)
         };
         void Awake() { properties = new MaterialPropertyBlock(); }
-        void Start() { app.Store.Changed += Changed; Refresh(); }
-        void OnDestroy() { if (app?.Store != null) app.Store.Changed -= Changed; }
+        void OnEnable()
+        {
+            if (!Application.isPlaying || app?.Store == null) return;
+            properties ??= new MaterialPropertyBlock();
+            app.Store.Changed += Changed; Refresh();
+        }
+        void OnDisable() { if (app?.Store != null) app.Store.Changed -= Changed; }
         void Changed(string topic) { if (topic == "workers" || topic == "floor") Refresh(); }
         void Refresh()
         {

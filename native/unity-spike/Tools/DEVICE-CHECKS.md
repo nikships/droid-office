@@ -1,4 +1,11 @@
-# U0 device run, not yet performed
+# U0 device checks
+
+Partial Galaxy XR results are recorded in `docs/unity-headset.md` section 25:
+the spike runs, but actual refresh is 72 Hz, not the requested 90 Hz. Android
+OkHttp over USB reverse, Keystore round-trip and one discovery resolution passed.
+Owner readability, haptics, bound gaze foveation, clean sustained performance,
+QR/picker and upgrade-preservation checks remain open. Repeat the relevant steps
+below; do not treat the checklist itself as evidence.
 
 The spike APK is a separate app, `dev.droidoffice.xr.unity`. Nothing here replaces
 the existing `dev.droidoffice.xr` app or accesses its files.
@@ -14,7 +21,7 @@ The helper commands assume this repository is the working directory. Use the
    focused, and record actual rate/eye dimensions. A requested setting is not
    a measurement.
 4. The frame recorder warms up for 10 seconds, then records 120 seconds.
-   Fetch app-private CSVs with `adb shell run-as dev.droidoffice.xr.unity ...`.
+   Pull CSVs from `/sdcard/Android/data/dev.droidoffice.xr.unity/files/`.
    GPU `NaN` and counters `-1` mean unavailable. Never turn them into zero.
 5. Send diagnostic commands with:
 

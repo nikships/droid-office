@@ -47,7 +47,7 @@ function fieldType(type: ts.Type, suggested: string): string {
     const nullable = parts.length !== type.types.length;
     if (parts.length === 1) {
       const inner = fieldType(parts[0], suggested);
-      return nullable && ['double', 'bool'].includes(inner) ? inner + '?' : inner;
+      return nullable && ['double', 'bool'].includes(inner) ? `${inner}?` : inner;
     }
     if (parts.every((t) => t.flags & ts.TypeFlags.StringLike)) return 'string';
     if (parts.every((t) => t.flags & ts.TypeFlags.BooleanLike)) return nullable ? 'bool?' : 'bool';
@@ -59,10 +59,10 @@ function fieldType(type: ts.Type, suggested: string): string {
   if (type.flags & ts.TypeFlags.BooleanLike) return 'bool';
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter | ts.TypeFlags.Null)) return 'JToken';
   if (checker.isTupleType(type)) return 'JArray';
-  if (checker.isArrayType(type)) return fieldType(checker.getTypeArguments(type as ts.TypeReference)[0], suggested + 'Item') + '[]';
+  if (checker.isArrayType(type)) return `${fieldType(checker.getTypeArguments(type as ts.TypeReference)[0], `${suggested}Item`)}[]`;
   const stringIndex = checker.getIndexTypeOfType(type, ts.IndexKind.String);
   const numberIndex = checker.getIndexTypeOfType(type, ts.IndexKind.Number);
-  if (stringIndex || numberIndex) return 'Dictionary<string, ' + fieldType((stringIndex ?? numberIndex)!, suggested + 'Value') + '>';
+  if (stringIndex || numberIndex) return `Dictionary<string, ${fieldType((stringIndex ?? numberIndex)!, `${suggested}Value`)}>`;
   if (checker.getPropertiesOfType(type).length) {
     let preferred = type.getSymbol()?.getName();
     if (!preferred || preferred.startsWith('__')) preferred = suggested;
@@ -116,16 +116,15 @@ const constants = Object.fromEntries(Object.entries(layout).filter(([, value]) =
 const layoutSource = readFileSync(resolve(root, 'src/shared/layout.ts'));
 const files = new Map([
   ['Assets/DroidOffice/Protocol/Generated/Protocol.g.cs', code],
-  ['Assets/DroidOffice/Protocol/Generated/source.json', JSON.stringify({ commit, protocolSha256: sourceHash, inputs: identity }, null, 2) + '\n'],
-  ['Assets/DroidOffice/Layout/office-layout.json', JSON.stringify({ sourceCommit: commit, sourceSha256: sha(layoutSource), constants }, null, 2) + '\n'],
+  ['Assets/DroidOffice/Protocol/Generated/source.json', `${JSON.stringify({ commit, protocolSha256: sourceHash, inputs: identity }, null, 2)}\n`],
+  ['Assets/DroidOffice/Layout/office-layout.json', `${JSON.stringify({ sourceCommit: commit, sourceSha256: sha(layoutSource), constants }, null, 2)}\n`],
 ]);
 // Commit identity is evidence, not drift: unrelated parallel commits need not regenerate DTOs.
 const normalize = (text: string) =>
   text
-    .replaceAll(commit, '<commit>')
     .replace(/Source commit: [0-9a-f]{40}/g, 'Source commit: <commit>')
     .replace(/SourceCommit = "[0-9a-f]{40}"/g, 'SourceCommit = "<commit>"')
-    .replace(/"(?:sourceCommit|commit)": "[0-9a-f]{40}"/g, '"commit": "<commit>"');
+    .replace(/("(?:sourceCommit|commit)": ")[0-9a-f]{40}"/g, '$1<commit>"');
 for (const [path, content] of files) {
   const destination = resolve(project, path);
   if (process.argv.includes('--check')) {

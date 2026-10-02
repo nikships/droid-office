@@ -13,8 +13,12 @@ namespace DroidOffice.Core
         public readonly object Value;
         public readonly JObject Json;
         public readonly int Generation, Bytes;
+        public readonly TerminalFrame Terminal;
         public ParsedMessage(string tag, object value, JObject json, int generation, int bytes)
-        { Tag = tag; Value = value; Json = json; Generation = generation; Bytes = bytes; }
+        {
+            Tag = tag; Value = value; Json = json; Generation = generation; Bytes = bytes;
+            if (value is ServerScreen screen) Terminal = TerminalFrame.DecodeOverview(screen);
+        }
     }
 
     public static class Wire

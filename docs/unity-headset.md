@@ -1,7 +1,8 @@
 # Unity headset app: specification and plan
 
-**Status:** planned, not implemented. Baseline `28cf00f` on `main`. Nothing in this document
-exists yet unless it is marked **existing**.
+**Status:** implementation in progress. Baseline `28cf00f` on `main`; section 25 records
+the implemented foundation and measured evidence. The other sections remain the target
+specification, not a claim that their features or milestone exits are complete.
 
 This is **Track C** of the standalone headset roadmap:
 
@@ -1279,16 +1280,16 @@ After U8 ships and the owner has used it for a week without returning to the old
 
 ## 25. Spike report
 
-### 25.1 Offline evidence, 2026-10-02
+### 25.1 Stack and local evidence, 2026-10-02
 
-**U0 remains open.** The Galaxy XR is unavailable until the next device session.
-The owner authorized continued offline implementation and delegated Unity/version
-choices. This partial report precedes U1. It is not physical U0 acceptance.
-No sustained-90-Hz, readability, comfort, haptic or cold-start claim is made.
+**U0 remains open.** The owner authorized continued implementation and delegated
+Unity/version choices. The initial work was offline; a Galaxy XR subsequently became
+available. Section 25.4 records its partial physical evidence. No sustained-90-Hz,
+readability, comfort, haptic or first-frame cold-start acceptance is claimed.
 
 The isolated project is `native/unity-spike/`. Unity MCP connected, and unity-cli
-controlled the explicitly selected spike Editor. `adb devices -l` reported no
-device. The stray root Unity project and current APK remain outside this work.
+controlled the explicitly selected spike Editor. The stray root Unity project and
+legacy `dev.droidoffice.xr` installation and data remain outside this work.
 
 | Component | Resolved pin |
 | --- | --- |
@@ -1308,15 +1309,14 @@ AR Session features; no hand tracking or face manager is added to the scene.
 
 Local results:
 
-- Initial isolated EditMode run: **12 passed, 0 failed**, 0.0488668 s. A final
-  rerun follows the build and visual fixes.
+- Final isolated EditMode rerun: **12 passed, 0 failed**, 0.0341762 s.
 - Greybox: **16 desks, 12 synthetic robots, 2 terminals**, imported MacBook at
   every desk. Editor frame advancement was verified, not inferred from a still.
   This is not a live-agent scene.
 - Terminal A/B: identical **2160×1200** raster source, **120×40** characters,
   **0.9×0.5 m** panels, **4 Hz** updates. This is a TMP raster reference, not the
-  production MSDF cell renderer. Capture validation found panel-facing and
-  source-framing errors, now being corrected before the final build.
+  production cell renderer. Panel-facing and source-framing errors were corrected
+  before the final spike build; owner comparison is still pending.
 - Managed `ClientWebSocket` fails the self-signed synthetic WSS handshake with
   `UNITYTLS_X509VERIFY_FLAG_NOT_TRUSTED`, despite its per-socket pin callback.
   The separate SPKI hash matches OpenSSL. No global trust bypass was added.
@@ -1325,28 +1325,28 @@ Local results:
   and WSS handshakes rejected incorrect pins. Control-pong counts were
   **25, 25, 24**. These numbers do not measure Wi-Fi, Android JNI or headset
   main-thread cost.
-- APK build is pending. Early builds exposed the required AR Face/AR Session
-  features and an Android-only assembly reference missing from the Editor build.
-  Failed builds are not counted as passes. Final size and manifest inspection
-  will be recorded below.
+- Final spike APK: **73,140,917 bytes**, 25.873 s, **0 errors / 3 warnings**.
+  APK v2 signing and 16 KiB ZIP alignment pass. ARM64, Vulkan, GameActivity and
+  spatial API 1 are present; microphone, face and hand permissions are absent.
+  Earlier failed builds are not counted as passes.
 
 ### 25.2 All thirteen checks
 
-| # | Offline evidence | Physical status |
+| # | Evidence | Physical status |
 | --- | --- | --- |
-| 1 | Pinned stack compiles in Editor; Vulkan/ARM64/IL2CPP/GameActivity configured; Android build being repaired | NOT RUN |
-| 2 | Display Utilities request and actual-rate polling implemented | NOT RUN |
-| 3 | Fine-eye permission and gaze-only requests instrumented; API readback is not relabelled as bound swapchain state | NOT RUN |
-| 4 | 10 s warmup + 120 s buffered CSV; missing metrics NaN/-1 | NOT RUN |
+| 1 | Signed spike APK runs on Galaxy XR with Vulkan/IL2CPP; focused OpenXR session observed | Partial: missing-script warnings remain; no clean validation pass |
+| 2 | Actual rate **72.00001 Hz**; native refresh request reports `XR_ERROR_FUNCTION_UNSUPPORTED` | **FAIL**, not 90 Hz |
+| 3 | Owner approved fine-eye permission; gaze flag and 0.5 API readback observed | Bound profile/gaze diagnostic NOT RUN |
+| 4 | 7,296 samples over 120.0137 s; CPU main median 13.913 ms/p95 27.373 ms; GPU unavailable | No budget pass; interrupted synthetic run |
 | 5 | Eye 1.0, eye 1.25 and quad-underlay raster alternatives implemented | Owner readability/occlusion NOT RUN |
-| 6 | Touch grip/input/capacitive support logs implemented | NOT RUN |
+| 6 | Both Touch-profile controllers expose button/touch support; touch changes observed | Every physical control not yet exercised |
 | 7 | Amplitude/duration impulse probes implemented | Felt feedback NOT RUN |
-| 8 | Managed WSS fails; OkHttp JVM headers, HTTPS/WSS, wrong pins, pongs and reconnect pass | Android JNI/IL2CPP NOT RUN |
+| 8 | Managed WSS fails; OkHttp host and Android JNI/IL2CPP HTTPS/WSS, wrong pins, pongs and reconnect pass | USB loopback measured; Wi-Fi and display-loop cost NOT RUN |
 | 9 | QR API and coarse scene-understanding permission identified in pinned package; sample not integrated | NOT RUN |
-| 10 | Java discovery, AES-GCM Keystore, picker and browser-intent probes implemented | NOT RUN |
+| 10 | Android Keystore persisted round-trip passes; discovery resolved one office | Picker/browser visibility NOT RUN; restart persistence not yet tested |
 | 11 | No release-key use or install over the owner's current app | NOT RUN |
 | 12 | Mirror-Z/yaw and glTFast mirror-X adapter tests pass; imported mesh present | Browser/device visual comparison NOT RUN |
-| 13 | APK size pending | Cold start NOT RUN |
+| 13 | Spike APK 73,140,917 bytes; activity COLD launch total 506 ms/wait 511 ms | First rendered-frame timing NOT RUN |
 
 Reproduction instructions are in `native/unity-spike/Tools/DEVICE-CHECKS.md`.
 Evidence, TLS fixture keys, captures and APKs are ignored. The synthetic fixture
@@ -1374,4 +1374,112 @@ and exporter remain Track B-owned; temporary generators live in
 
 The owner authorized implementation beyond the offline U0 report. U1 and later
 phases can progress locally, but physical milestone exits and device-dependent
-decisions remain open. Final local build/test outcomes will amend this report.
+decisions remain open.
+
+### 25.4 First Galaxy XR session, 2026-10-02
+
+Device: Samsung SM-I610, Android 14/API 34. Only the separate development package
+was installed. The owner deliberately approved fine-eye permission and wore the
+headset for the initial focused checks, then removed it. Later ADB wake/probe
+results are not owner comfort, haptic or readability evidence.
+
+The spike CSV records **7,296 samples / 120.0137 s** at **1856×2160** and
+**72.00001 Hz**. Main-thread time is median **13.912813 ms**, p95 **27.373073 ms**.
+Frame intervals are median **13.8855 ms**, p95 **39.24561 ms**, with a **12.21918 s**
+interruption. GPU/render counters are unavailable, not zero. Managed allocations
+are median **1,916 bytes**, p95 **80,600 bytes**. This does not meet the CPU/GC/90 Hz
+budgets and is not a clean sustained run or populated production measurement.
+
+The native display request reports `XR_ERROR_FUNCTION_UNSUPPORTED` even though
+the managed wrapper prints `UnqualifiedSuccess`. The measured rate takes
+precedence. Fine-eye permission, gaze-allowed flags and API foveation readback do
+not establish that the runtime bound the intended eye-tracked swapchain profile.
+The Android performance-metrics feature is unsupported in this runtime session.
+
+The Android OkHttp probe receives **1,649,410,048 bytes over 45.000 s**, or
+**36.653 MB/s**, across three connections. HTTPS and WSS succeed, both wrong-pin
+paths reject, and the server observes **74 control pongs on each connection**.
+This is **USB `adb reverse`**, not Wi-Fi. The private per-client TLS context keeps
+hostname verification. The Java Keystore AES-GCM persisted-file round-trip passes;
+the discovery callback resolves one `_droidoffice._tcp.` advertisement without
+logging its name/address. These probes do not establish production pairing.
+
+### 25.5 Production foundation
+
+`native/unity/` now contains a generated snapshot of **44 server / 69 client message
+types and 200 DTOs**, 59 layout anchors and 36 worker seats, the bounded ordered
+store/transport adapter, tracked rig and teleport foundation, worker views, terminal
+overview grids and a single-draw cell renderer. Protocol 1 is explicitly a development
+loopback adapter; no Track B negotiation, operation-result or full-grid capability
+is claimed.
+
+The terminal uses a baked **Static TMP SDF atlas, 192 characters / 191 glyphs**.
+Dynamic TMP atlases were cleared during Android builds, causing blank/fallback
+glyphs; baking before freezing fixes this, with post-build regression coverage.
+Blank/space cells map to glyph zero rather than sampling atlas padding. The renderer
+shares a fair 1 ms CPU update budget and a 6 m distance gate. Corrected panel facing
+and clean blank cells are verified in a fixed 0.9 m Editor capture. This is not yet
+the final MSDF/symbol/dynamic-grapheme/history/focused-terminal implementation.
+
+Preferences have defaults, validated copies, bounded loads, serialized atomic
+saves, and read-only preservation of corrupt/future-schema files, including a
+save-before-load attempt. OfficeApp loads asynchronously and debounces saves,
+flushing on pause/disable/quit. Settings UI, actual graphics application and
+device quit-save completion remain open.
+
+**54/54 EditMode tests pass**, including after the Android static-atlas build.
+The isolated real-server fixture uses its own HOME, checkout and two synthetic
+agent commands. Editor tests observe live 100×30 grids and worker status changes,
+retain workers while disconnected, and reconnect to a new welcome without
+restarting PlayMode. No owner workers or credentials are involved.
+
+Android loader configuration now enforces **exactly one OpenXR loader**. Installed
+ARCore/MockHMD packages had auto-assigned extra loaders, introducing ARCore sample
+image build errors and unwanted camera/depth requirements. Disabling those loaders,
+without editing/removing vendor packages, removes those requirements and build
+errors. The builder rejects nonzero build-report errors even if Unity says
+`Succeeded`. Package/Sentis shader warnings remain and are not labelled a clean log.
+The installed Editor additions (AI Assistant 2.20.0-pre.1, Inference 2.6.1,
+ARCore 6.3.5 and MockHMD 1.5.0-exp.3) are preserved; Android does not select
+ARCore or MockHMD. A late Android build-input filter removes AR Foundation's
+Editor-only XR Simulation settings from preloaded assets. This removes the
+production startup missing-script warnings without deleting assets or patching
+packages.
+
+Development-only diagnostics accept `status` and `capture-terminal` through an
+app-local file inbox. They report counts, not terminal text, worker names or
+credentials. Captures are explicit and may contain terminal content; use only the
+synthetic fixture for shareable evidence. The capture uses a fixed mono camera
+at 0.9 m, not the headset eye, and temporarily bypasses the distance gate. No
+listener, exported receiver or arbitrary evaluation is added, and the component
+is compiled out of release builds.
+
+Final production development APK: **96,552,773 bytes**, **0 errors / 355 warnings**,
+12.723873 s incremental build. APK v2 signing and 16 KiB ZIP alignment pass.
+Manifest inspection confirms `allowBackup=false`, cleartext disabled except the
+development loopback network configuration, spatial API 1 and no camera, face,
+hand or microphone requirements. Latest activity COLD launch is 650 ms total /
+657 ms wait, not first-frame latency.
+
+On-device Vulkan diagnostics observe two synthetic workers, two **100×30** grids,
+loaded preferences and advancing frames/messages. The fixed-camera Android
+capture renders correctly facing text and clean blank cells. Normal eye surfaces
+were distance-gated at this pose; the explicit capture bypassed that gate. With
+the headset unfocused/unworn, this is a renderer/integration check, not eye
+readability or performance acceptance. Actual refresh remains **72.00001 Hz**.
+Android XR performance-counter initialization still reports unsupported native
+functions; the final startup has no missing-script warnings.
+
+Stopping the synthetic server retains two workers/grids with `connected=false`.
+Restarting it restores both grids and `connected=true`, increasing generation
+from 1 to 2 with the same app process. The legacy package remains version
+**0.1.340 / code 340**, with its prior update time unchanged. Only the development
+package was replaced.
+
+Validation: **54/54 production EditMode tests**, **12/12 spike EditMode tests**,
+protocol/layout drift check, repository lint/typecheck and **895/895 repository
+coverage tests** pass. Coverage is 88.62% lines, 84.35% branches and 76.51%
+functions. Source whitespace checks pass; a whole-tree `git diff --check` reports
+Unity-authored empty YAML fields with trailing spaces, which were not hand-edited.
+Root dependency installation/CI and a release build were not run or changed.
+Reproduction: `native/unity/Tools/DEVICE-CHECKS.md`.

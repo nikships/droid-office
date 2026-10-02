@@ -65,7 +65,8 @@ namespace DroidOffice.Net
                         if (!store.Enqueue(parsed)) throw new InvalidDataException("Office backlog exceeded limit.");
                     }
                 }
-                catch (Exception) when (!cancellation.IsCancellationRequested)
+                catch (Exception) when (cancellation.IsCancellationRequested) { break; }
+                catch (Exception)
                 {
                     // Never propagate endpoint or server exception text into user logs.
                     store.TransportDisconnected(session, "Reconnecting…");

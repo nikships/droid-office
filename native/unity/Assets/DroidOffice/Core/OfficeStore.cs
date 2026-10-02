@@ -42,6 +42,7 @@ namespace DroidOffice.Core
         readonly object gate = new();
         Dictionary<string, WorkerState> workers = new();
         IReadOnlyDictionary<string, WorkerState> view;
+        readonly Dictionary<string, TerminalGrid> terminals = new();
         readonly Dictionary<string, JToken> topics = new();
         readonly HashSet<string> dirty = new();
         int queuedBytes, generation;
@@ -61,6 +62,7 @@ namespace DroidOffice.Core
         public event Action<ParsedMessage> MessageApplied;
         public OfficeStore() { view = new ReadOnlyDictionary<string, WorkerState>(workers); }
         public JToken Topic(string key) => topics.TryGetValue(key, out var value) ? value.DeepClone() : null;
+        public TerminalGrid Terminal(string workerId) => workerId != null && terminals.TryGetValue(workerId, out var grid) ? grid : null;
 
         public void BeginConnection(int nextGeneration)
         {
@@ -123,6 +125,7 @@ namespace DroidOffice.Core
             workers = replacement; view = new ReadOnlyDictionary<string, WorkerState>(workers);
             Floor = floor; Arrival = arrival; FloorGeneration++;
             topics.Clear();
+            terminals.Clear();
             foreach (var property in json.Properties()) topics[property.Name] = property.Value.DeepClone();
             dirty.Add("floor"); dirty.Add("workers"); dirty.Add("arrival"); dirty.Add("topics");
         }
@@ -148,7 +151,15 @@ namespace DroidOffice.Core
                     break;
                 case ServerWorkerRemove remove when SnapshotReady:
                     workers.Remove(remove.workerId);
+                    terminals.Remove(remove.workerId);
                     dirty.Add("workers"); dirty.Add("worker:" + remove.workerId);
+                    break;
+                case ServerScreen screen when SnapshotReady:
+                    if (!workers.ContainsKey(screen.workerId)) return;
+                    if (!terminals.TryGetValue(screen.workerId, out var grid))
+                        terminals.Add(screen.workerId, grid = new TerminalGrid());
+                    grid.Apply(message.Terminal);
+                    dirty.Add("terminal:" + screen.workerId);
                     break;
                 default:
                     if (!SnapshotReady) return;

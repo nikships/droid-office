@@ -1,5 +1,7 @@
 /Library/
 /Temp/
+/.utmp/
+/mono_crash.*
 /Obj/
 /obj/
 /Build/
