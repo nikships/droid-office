@@ -32,8 +32,7 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
         createdAt: Date.now(),
         cols: 80,
         rows: 24,
-        viewers: [],
-        viewerIds: [],
+        open: false,
         worktree: worktree ? { path: `.droid-office/worktrees/${id}`, branch: `office/${id}`, base: 'abc' } : undefined,
       };
       workers.push(worker);
@@ -343,8 +342,7 @@ test("a board agent at work does not hold one of the queue's slots", (t) => {
     createdAt: Date.now(),
     cols: 80,
     rows: 24,
-    viewers: [],
-    viewerIds: [],
+    open: false,
   });
   const q = f.open();
   q.setLimit(1);
@@ -372,8 +370,7 @@ test("workers hired by hand, or left at their prompt after a restart, do not hol
       createdAt: Date.now(),
       cols: 80,
       rows: 24,
-      viewers: [],
-      viewerIds: [],
+      open: false,
     });
   }
   const q = f.open();
@@ -442,6 +439,38 @@ test('an office at its worker limit holds the queue, and a finished queue worker
   assert.equal(q.state().tasks[2].status, 'running');
 });
 
+test('an open terminal holds its finished queue worker at its desk until it closes', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const q = f.open(() => 1 - f.workers.length);
+  q.add('First', 'Tester');
+  q.add('Second', 'Tester');
+  assert.deepEqual(
+    q.state().tasks.map((t) => t.status),
+    ['running', 'queued'],
+  );
+  // The first finishes while its terminal is open: the second waits, nobody goes home.
+  f.workers[0].status = 'done';
+  f.workers[0].open = true;
+  q.onWorker(f.workers[0]);
+  assert.deepEqual(
+    q.state().tasks.map((t) => t.status),
+    ['done', 'queued'],
+  );
+  assert.equal(f.workers.length, 1);
+  // Closed: its worker goes home to make room, and the second task gets the seat.
+  f.workers[0].open = false;
+  q.pump();
+  assert.deepEqual(
+    q.state().tasks.map((t) => t.status),
+    ['done', 'running'],
+  );
+  assert.deepEqual(
+    f.workers.map((w) => w.id),
+    ['worker-1'],
+  );
+});
+
 test("a queue worker that switches to a branch of its own takes its task's branch along, so the PR from there is linked", (t) => {
   const f = fixture();
   t.after(() => f.close());
@@ -508,8 +537,7 @@ test('a worktree task waits for the fetch of what its worktree starts from, then
         createdAt: Date.now(),
         cols: 80,
         rows: 24,
-        viewers: [],
-        viewerIds: [],
+        open: false,
       };
       workers.push(worker);
       return worker;

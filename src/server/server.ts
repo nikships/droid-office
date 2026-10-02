@@ -102,15 +102,11 @@ interface Client {
   game?: string;
   frame?: CabinetFrame;
   lastFrameAt: number;
-  /** When this client last said it was typing, per terminal (see 'term.typing'). */
-  typingAt: Map<string, number>;
   /** Cleared at each heartbeat ping and set again by the pong; still clear at the next one means gone. */
   isAlive: boolean;
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
-/** The least time between two 'term.typing' notes from one person in one terminal. */
-const TYPING_GAP_MS = 500;
 
 function findPublicDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -469,12 +465,12 @@ export async function startServer(cfg: Config) {
     prompts,
     emit: toFloor,
     toast: toastFloor,
-    termData: (workerId, data, viewers) => {
+    termData: (workerId, data, connectionIds) => {
       const json = JSON.stringify({ t: 'term.data', workerId, data } satisfies ServerMsg);
-      for (const id of viewers) {
+      for (const id of connectionIds) {
         const c = clients.get(id);
         if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
-        // A viewer on a slow link skips output and gets a fresh snapshot once it catches up,
+        // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
         // instead of queueing unbounded data in server memory.
         if (c.stale.has(workerId) || c.ws.bufferedAmount > SLOW_CLIENT_BYTES) c.stale.add(workerId);
         else c.ws.send(json);
@@ -1033,7 +1029,6 @@ export async function startServer(cfg: Config) {
       emotes: new EmoteBucket(EMOTE_EVERY * 0.8),
       playing: false,
       lastFrameAt: 0,
-      typingAt: new Map(),
       isAlive: true,
       peer: {
         id,
@@ -1210,7 +1205,6 @@ export async function startServer(cfg: Config) {
     // arrived), or their own page would put it down before it knew they'd gone.
     const ballLeft = !!was?.court.left(c.id);
     c.attached.clear();
-    c.typingAt.clear();
     c.stale.clear();
     stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
@@ -1549,7 +1543,7 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.attach': {
         const w = worker(msg.workerId);
-        const snap = w?.floor.workers.attach(w.wid, c.id, who);
+        const snap = w?.floor.workers.attach(w.wid, c.id);
         if (w && snap) {
           c.attached.add(w.wid);
           sendTo(c, { t: 'term.snapshot', workerId: w.wid, ...snap });
@@ -1559,13 +1553,12 @@ export async function startServer(cfg: Config) {
       case 'worker.detach': {
         const wid = str(msg.workerId, 32);
         c.attached.delete(wid);
-        c.typingAt.delete(wid);
         workerFloor(wid)?.workers.detach(wid, c.id);
         break;
       }
       case 'worker.prompt': {
         const w = worker(msg.workerId);
-        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), who) : 'No such worker';
+        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000)) : 'No such worker';
         warn(c, err);
         const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
         if (w && !err && issue) {
@@ -1618,20 +1611,8 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'term.input':
-        if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.write(msg.workerId, str(msg.data, 64 * 1024), who);
+        if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.write(msg.workerId, str(msg.data, 64 * 1024));
         break;
-      case 'term.typing': {
-        // Everyone else in that terminal sees who's typing. A typist says so about once a second.
-        const w = worker(msg.workerId);
-        const now = Date.now();
-        if (!w || !c.attached.has(w.wid) || now - (c.typingAt.get(w.wid) ?? 0) < TYPING_GAP_MS) break;
-        c.typingAt.set(w.wid, now);
-        for (const id of w.info.viewerIds) {
-          const o = clients.get(id);
-          if (o && o.id !== c.id) sendTo(o, { t: 'term.typing', workerId: w.wid, id: c.id });
-        }
-        break;
-      }
       case 'doing': {
         const what = str(msg.what, 60).trim() || undefined;
         const reading = msg.reading === true || undefined;
@@ -2144,7 +2125,7 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) {
       if (!c.stale.size || c.ws.bufferedAmount > SLOW_CLIENT_BYTES / 8) continue;
       for (const wid of c.stale) {
-        const snap = c.attached.has(wid) ? workerFloor(wid)?.workers.attach(wid, c.id, c.peer.name) : undefined;
+        const snap = c.attached.has(wid) ? workerFloor(wid)?.workers.attach(wid, c.id) : undefined;
         if (snap) sendTo(c, { t: 'term.snapshot', workerId: wid, ...snap });
       }
       c.stale.clear();

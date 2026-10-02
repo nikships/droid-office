@@ -3,7 +3,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
 import { confirmDialog } from './prompt';
-import { copyButton } from './team';
+import { copyButton } from './clipboard';
 
 export const inviteLink = (v: AccountInvite) => `${location.origin}/join#${v.token}`;
 

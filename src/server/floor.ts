@@ -46,7 +46,7 @@ export interface FloorContext {
   /** To everyone on this floor; `workerId` names the worker it is about, when one is. */
   toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string): void;
   /** A worker's terminal output, for whoever has that terminal open. */
-  termData(workerId: string, data: string, viewers: string[]): void;
+  termData(workerId: string, data: string, connectionIds: string[]): void;
   /** What a worker changed, for whoever has its Changes window open. */
   changes(state: ChangesState, clients: string[]): void;
   /** A worker on this floor changed, or left (then just its id). */
@@ -188,7 +188,7 @@ export class Floor {
           this.meetings?.onWorkerGone(workerId);
           ctx.workerChanged(this, workerId);
         },
-        data: (workerId, data, viewers) => ctx.termData(workerId, data, viewers),
+        data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame }, true),
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },
@@ -229,8 +229,8 @@ export class Floor {
         },
         list: () => this.workers.list(),
         seat: (deskId, by, prompt, provider, model, effort, meeting) => this.workers.spawn(deskId, by, prompt, false, 'agent', provider, model, effort, meeting),
-        prompt: (id, text, by) => this.workers.prompt(id, text, by),
-        write: (id, data, by) => this.workers.write(id, data, by),
+        prompt: (id, text) => this.workers.prompt(id, text),
+        write: (id, data) => this.workers.write(id, data),
         kill: (id) => this.workers.kill(id),
       },
       this.project.branch ? new Worktrees(def.dir) : undefined,

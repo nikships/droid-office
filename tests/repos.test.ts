@@ -451,8 +451,7 @@ test('a worker across repositories goes home once its pull requests have merged 
     createdAt: 0,
     cols: 80,
     rows: 24,
-    viewers: [],
-    viewerIds: [],
+    open: false,
     worktree: { path: '.droid-office/worktrees/pip-1/web', branch: 'office/pip-1', base: 'a' },
     repos: [{ floor: 'api', name: 'api', dir: '/api', path: '.droid-office/worktrees/pip-1/api', branch: 'office/pip-1', base: 'b', pr: { number: 9, url: '' } }],
   };

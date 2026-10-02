@@ -53,7 +53,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
         createdAt: Date.now(),
         cols: 80,
         rows: 24,
-        viewers: [],
+        open: false,
         worktree: meeting.worktree,
         meeting: meeting.id,
       };

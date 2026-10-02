@@ -21,8 +21,7 @@ function worker(id: string, status: WorkerStatus = 'done', more: Partial<WorkerI
     createdAt: 0,
     cols: 80,
     rows: 24,
-    viewers: [],
-    viewerIds: [],
+    open: false,
     worktree: { path: `.droid-office/worktrees/${id}`, branch: `office/${id}`, base: 'abc' },
     ...more,
   };
@@ -66,11 +65,12 @@ test('a worker stays while its PR is open, a follow-up is open, or it has none',
   assert.deepEqual(ids([worker('a', 'done', { pr: { number: 9, url: '' } })], [pull(1, 'MERGED', 'office/a')]), []);
 });
 
-test('a worker stays while it works, waits on someone, opens a PR or has its terminal watched', () => {
+test('a worker stays while it works, waits on someone, opens a PR or has its terminal open', () => {
   const merged = [pull(1, 'MERGED', 'office/a')];
   for (const status of ['starting', 'working', 'needs_input'] as const) assert.deepEqual(ids([worker('a', status)], merged), [], status);
   assert.deepEqual(ids([worker('a', 'done', { prOpening: true })], merged), []);
-  assert.deepEqual(ids([worker('a', 'done', { viewers: ['Cody'] })], merged), []);
+  assert.deepEqual(ids([worker('a', 'done', { open: true })], merged), []);
+  assert.deepEqual(ids([worker('a', 'done', { open: false })], merged), ['a']);
 });
 
 test('shells, board agents and the meeting table never go by pull request', () => {

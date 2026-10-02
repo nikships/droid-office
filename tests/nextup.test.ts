@@ -4,7 +4,7 @@ import { NextUp, waitingInOrder, waitingLabel } from '../src/client/nextup.js';
 import type { WorkerInfo, WorkerStatus } from '../src/shared/protocol.js';
 
 function worker(id: string, status: WorkerStatus, waitingSince?: number, acked = false): WorkerInfo {
-  return { id, kind: 'agent', deskId: `desk-${id}`, name: id, color: '#fff', status, acked, waitingSince, createdBy: 'test', createdAt: 0, cols: 80, rows: 24, viewers: [] };
+  return { id, kind: 'agent', deskId: `desk-${id}`, name: id, color: '#fff', status, acked, waitingSince, createdBy: 'test', createdAt: 0, cols: 80, rows: 24, open: false };
 }
 
 test('three workers waiting: N three times visits each of them, oldest first, then starts over', () => {

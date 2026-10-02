@@ -26,7 +26,6 @@ export type VrTerminalMsg =
   | { t: 'worker.detach'; workerId: string }
   | { t: 'worker.prompt'; workerId: string; prompt: string }
   | { t: 'term.input'; workerId: string; data: string }
-  | { t: 'term.typing'; workerId: string }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number };
 
 export interface VrTerminalDeps {
@@ -89,7 +88,6 @@ export class VrTerminalPanel {
   private cursorRect: Rect | null = null;
   private blinkOn = true;
   private blinkAt = 0;
-  private typingAt = 0;
   private lastSentSize = '';
   /** Pinned to the live bottom: new output auto-scrolls until the user drags back. */
   private stickToBottom = true;
@@ -220,11 +218,6 @@ export class VrTerminalPanel {
         this.lastSentSize = key;
         this.deps.send({ t: 'term.resize', workerId: this.workerId, cols: VR_TERM_COLS, rows: VR_TERM_ROWS });
       }
-    }
-    const now = performance.now();
-    if (now - this.typingAt > 1000) {
-      this.typingAt = now;
-      this.deps.send({ t: 'term.typing', workerId: this.workerId });
     }
     this.deps.send({ t: 'term.input', workerId: this.workerId, data });
     // Typing drops back to the live bottom, where the echo lands.

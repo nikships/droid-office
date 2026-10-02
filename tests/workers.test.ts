@@ -1884,3 +1884,149 @@ test('a worker whose worktree was deleted outside the office waits, marked lost,
   assert.equal(after.get(gone.id)?.lost, undefined);
   assert.deepEqual(toasts, []);
 });
+
+test('two connections share one terminal: closing one leaves the other subscribed, open and streaming', async (t) => {
+  const f = carryOnFixture(t);
+  const updates: WorkerInfo[] = [];
+  const streamed: { workerId: string; data: string; to: string[] }[] = [];
+  const workers = new WorkerManager(f.root, f.data, f.claude, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events(updates), data: (workerId, data, to) => streamed.push({ workerId, data, to }) }, ledger(f.data));
+  t.after(() => workers.shutdown());
+  const spawned = workers.spawn('desk-1', 'test', 'share this terminal');
+  assert.notEqual(typeof spawned, 'string');
+  if (typeof spawned === 'string') throw new Error(spawned);
+  const id = spawned.id;
+  assert.equal(workers.get(id)?.open, false);
+
+  const a = workers.attach(id, 'conn-a');
+  assert.ok(a);
+  assert.equal(workers.get(id)?.open, true);
+  assert.ok(workers.attach(id, 'conn-b'));
+  // The fake agent announces itself; both connections stream it.
+  const first = await waitFor(
+    () => streamed,
+    (x) => x.some((s) => s.data.includes('fake-agent-ready')),
+  );
+  assert.deepEqual(first.find((s) => s.data.includes('fake-agent-ready'))?.to, ['conn-a', 'conn-b']);
+
+  // One window closes: the other keeps the terminal open and streaming.
+  workers.detach(id, 'conn-a');
+  assert.equal(workers.get(id)?.open, true);
+  workers.write(id, 'echo still-here\r');
+  const second = await waitFor(
+    () => streamed,
+    (x) => x.some((s) => s.data.includes('still-here')),
+  );
+  assert.deepEqual(
+    second.filter((s) => s.data.includes('still-here')).map((s) => s.to),
+    [['conn-b']],
+  );
+  // The echo is the PTY's; the agent logs the keystrokes on its own time, before teardown takes its log away.
+  await waitFor(
+    () =>
+      f
+        .read()
+        .map((inv) => inv.stdin ?? '')
+        .join(''),
+    (x) => x.includes('still-here'),
+  );
+
+  // The last one out closes it; detaching a stranger changes nothing.
+  workers.detach(id, 'conn-b');
+  assert.equal(workers.get(id)?.open, false);
+  const n = updates.length;
+  workers.detach(id, 'conn-a');
+  assert.equal(updates.length, n);
+
+  // Gone for good: no subscriber entry is left behind.
+  workers.attach(id, 'conn-a');
+  await workers.kill(id);
+  assert.equal((workers as unknown as { subscribers: Map<string, Set<string>> }).subscribers.has(id), false);
+  assert.equal(workers.attach(id, 'conn-a'), undefined);
+});
+
+test('opening a finished terminal acknowledges its wait; answering a question takes input', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, f.claude, []);
+  t.after(() => workers.shutdown());
+  const done = await hireInState(f, workers, 'desk-1', 'finished-session', 'done');
+  assert.equal(workers.get(done.id)?.acked, false);
+  assert.equal(workers.get(done.id)?.open, false);
+  const waiting = workers.get(done.id)?.waitingSince;
+  workers.attach(done.id, 'conn-a');
+  assert.equal(workers.get(done.id)?.acked, true);
+  assert.equal(workers.get(done.id)?.waitingSince, waiting);
+  assert.equal(workers.get(done.id)?.open, true);
+  workers.detach(done.id, 'conn-a');
+
+  const asking = await hireInState(f, workers, 'desk-2', 'asking-session', 'needs_input');
+  assert.equal(workers.get(asking.id)?.acked, false);
+  workers.attach(asking.id, 'conn-a');
+  assert.equal(workers.get(asking.id)?.acked, false, 'opening a question does not answer it');
+  workers.write(asking.id, 'yes\r');
+  assert.equal(workers.get(asking.id)?.acked, true);
+  assert.ok(typeof workers.get(asking.id)?.lastInputAt === 'number');
+  // The agent answers on its own time: let it log the keystrokes before teardown takes its log away.
+  await waitFor(
+    () =>
+      f
+        .read()
+        .map((inv) => inv.stdin ?? '')
+        .join(''),
+    (x) => x.includes('yes'),
+  );
+});
+
+test('a worker restored from before subscriptions keeps its names, maps its last input time, and starts unopened', async (t) => {
+  const f = carryOnFixture(t);
+  writeFileSync(
+    path.join(f.data, 'workers.json'),
+    JSON.stringify([
+      {
+        id: 'legacy-1',
+        kind: 'agent',
+        provider: 'claude',
+        deskId: 'desk-1',
+        name: 'Legacy',
+        color: '#fff',
+        createdBy: 'Old Teammate',
+        createdAt: 1000,
+        viewers: ['Old Teammate'],
+        viewerIds: ['ghost-connection'],
+        lastInput: { by: 'Old Teammate', at: 4242 },
+      },
+      {
+        id: 'legacy-2',
+        kind: 'agent',
+        provider: 'claude',
+        deskId: 'desk-2',
+        name: 'Legacy Two',
+        color: '#fff',
+        createdBy: 'Old Teammate',
+        createdAt: 1000,
+        lastInput: { by: 'Old Teammate' },
+      },
+    ]),
+  );
+  const workers = manager(f, f.claude, []);
+  t.after(() => workers.shutdown());
+  const info = workers.get('legacy-1');
+  assert.ok(info);
+  assert.equal(info.createdBy, 'Old Teammate');
+  assert.equal(info.lastInputAt, 4242);
+  assert.equal(info.open, false);
+  assert.equal(workers.get('legacy-2')?.lastInputAt, undefined);
+  // Subscriptions start empty: no ghost streams, and detaching the ghost changes nothing.
+  assert.deepEqual([...(workers as unknown as { subscribers: Map<string, Set<string>> }).subscribers.keys()], []);
+  workers.detachAll('ghost-connection');
+  assert.equal(workers.get('legacy-1')?.open, false);
+  // Still visible and actionable: it opens, closes, and gets back to work.
+  assert.ok(workers.attach('legacy-1', 'conn-a'));
+  assert.equal(workers.get('legacy-1')?.open, true);
+  workers.detachAll('conn-a');
+  assert.equal(workers.get('legacy-1')?.open, false);
+  assert.equal(workers.resume('legacy-1'), undefined);
+  await waitFor(
+    () => launchesOf(f),
+    (x) => x.length > 0,
+  );
+});

@@ -5,9 +5,9 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
 import { TERM_THEME } from '../world/laptop';
-import { h, hintToast, openModal, STATUS_LABEL, timeAgo, toast, type Modal } from './dom';
+import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { usageLabel, usageTitle } from './usage';
-import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
+import type { ServerMsg } from '../../shared/protocol';
 import { isAsleep } from '../../shared/status';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
@@ -22,23 +22,6 @@ export interface TerminalFind {
   needle: string;
   /** How many rows from the bottom of the worker's terminal the line was. */
   fromEnd: number;
-}
-
-/** How long someone shows as typing after the last word from their keyboard (they send one about every second). */
-const TYPING_SHOWS_MS = 2500;
-
-/** "Sam is typing…", "Sam and Ada are typing…", "Sam and 2 others are typing…". */
-function typingLine(names: string[]): string {
-  if (names.length === 1) return `${names[0]} is typing…`;
-  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
-  return `${names[0]} and ${names.length - 1} others are typing…`;
-}
-
-/** Up to two letters for someone's face: "Sam" -> "S", "Ada Lovelace" -> "AL". */
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  const first = (w: string | undefined) => (w ? Array.from(w)[0].toUpperCase() : '');
-  return first(words[0]) + (words.length > 1 ? first(words[words.length - 1]) : '') || '?';
 }
 
 /** Sends a file dropped or pasted into a worker's terminal to the office; where the office keeps it. */
@@ -80,7 +63,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const title = h('h2', {}, info.kind === 'agent' ? `${providerLabel(info.provider, store.project)} · ${info.name}` : info.name);
   const pill = h('span.pill', {}, '');
   const cost = h('span.cost', {});
-  const viewers = h('div.viewers', {});
   const modelsBtn = h(
     'button.btn',
     {
@@ -90,7 +72,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     },
     '🧠 Models',
   );
-  const typed = h('span.typed', {});
   const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
@@ -100,7 +81,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, viewers, typed, zoom, picture, modelsBtn, onChanges ? changesBtn : null, closeBtn), host, pictureInput);
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, zoom, picture, modelsBtn, onChanges ? changesBtn : null, closeBtn), host, pictureInput);
 
   const term = new Terminal({
     fontFamily: TERM_FONT,
@@ -125,13 +106,16 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let opened = false;
   let lastSentSize = '';
   /**
-   * Sizes the shared PTY to this window. Typing always claims it (latest typist wins); merely
-   * opening or resizing the window only does when nobody else is watching, so a phone that is just
-   * looking doesn't reflow the terminal under whoever is working.
+   * Whether another window already had this terminal open when this one attached. Merely
+   * opening or resizing then adopts the shared size instead of reflowing the terminal under
+   * it; typing still reclaims the size (latest typist wins). Captured when attaching: the
+   * open flag includes this window afterwards, so it can't tell them apart any more.
    */
+  let adoptSharedSize = false;
+  /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
   const sendSize = (typing = false) => {
     if (!ready || !opened) return;
-    if (!typing && (store.workers.get(workerId)?.viewers.length ?? 0) > 1) {
+    if (!typing && adoptSharedSize) {
       const w = store.workers.get(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
       return;
@@ -147,52 +131,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       lastSentSize = key;
       net.send({ t: 'term.resize', workerId, cols: term.cols, rows: term.rows });
     }
-  };
-
-  /** Who else is typing here right now (PeerInfo ids), until when. */
-  const typing = new Map<string, number>();
-  /** The viewers' faces, and who's typing (or who typed last, once nobody is). */
-  const renderPresence = (w: WorkerInfo) => {
-    const now = Date.now();
-    for (const [id, until] of typing) if (until <= now || !w.viewerIds.includes(id)) typing.delete(id);
-    const people = viewersOf(w);
-    viewers.replaceChildren(...people.map((v) => h('span.avatar', { class: v.typing ? 'typing' : '', style: `background:${v.color}`, title: `${v.name}${v.you ? ' (you)' : ''}${v.typing ? ' · typing' : ''}` }, initials(v.name))));
-    viewers.title = people.length ? `In this terminal: ${people.map((v) => (v.you ? `${v.name} (you)` : v.name)).join(', ')}` : '';
-    const typists = people.filter((v) => v.typing && !v.you).map((v) => v.name);
-    typed.classList.toggle('now', typists.length > 0);
-    if (typists.length) {
-      typed.textContent = `✍️ ${typingLine(typists)}`;
-      typed.title = '';
-    } else {
-      typed.textContent = w.lastInput ? `⌨️ ${w.lastInput.by}` : '';
-      typed.title = w.lastInput ? `${w.lastInput.by} typed here last, ${timeAgo(w.lastInput.at)}` : '';
-    }
-  };
-  /** Everyone in the terminal, one face per person however many windows they have it open in, you first. */
-  const viewersOf = (w: WorkerInfo) => {
-    const byName = new Map<string, { name: string; color: string; you: boolean; typing: boolean }>();
-    for (const id of w.viewerIds) {
-      const p = store.peers.get(id);
-      if (!p) continue;
-      const v = byName.get(p.name) ?? { name: p.name, color: p.color, you: false, typing: false };
-      v.you ||= id === store.you;
-      v.typing ||= typing.has(id);
-      byName.set(p.name, v);
-    }
-    return [...byName.values()].sort((a, b) => Number(b.you) - Number(a.you));
-  };
-  // Typing stops showing a couple of seconds after the last keystroke.
-  const typingTimer = setInterval(() => {
-    const w = store.workers.get(workerId);
-    if (w && typing.size) renderPresence(w);
-  }, 500);
-  /** Tells the others here you're typing, about once a second while you are. */
-  let typingSentAt = 0;
-  const sayTyping = () => {
-    const now = Date.now();
-    if (now - typingSentAt < 1000) return;
-    typingSentAt = now;
-    net.send({ t: 'term.typing', workerId });
   };
 
   const refresh = () => {
@@ -227,12 +165,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
                 ? 'usage untracked'
                 : '';
     cost.title = w.kind === 'agent' && w.usage ? usageTitle(w.usage, workerProvider) : w.kind === 'agent' ? providerUsageNote(workerProvider!) : '';
-    renderPresence(w);
     const openCode = w.kind === 'agent' && resolvedProvider(w.provider, store.project) === 'opencode';
     modelsBtn.classList.toggle('hidden', !openCode);
     modelsBtn.toggleAttribute('disabled', !openCode || !ready || isAsleep(w.status));
-    // Someone else resized the shared PTY (the latest typist wins): follow it so this view renders
-    // correctly. Typing here fits the terminal back to this window and reclaims the size.
+    // Another window claimed the shared PTY (the latest typist wins): follow it so this view
+    // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
     const ptySize = `${w.cols}x${w.rows}`;
     if (ready && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
       term.resize(w.cols, w.rows);
@@ -270,11 +207,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
 
   const onMsg = (msg: ServerMsg) => {
     if (msg.t === 'term.data' && msg.workerId === workerId) term.write(msg.data);
-    else if (msg.t === 'term.typing' && msg.workerId === workerId) {
-      typing.set(msg.id, Date.now() + TYPING_SHOWS_MS);
-      const w = store.workers.get(workerId);
-      if (w) renderPresence(w);
-    } else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
+    else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
       term.reset();
       term.resize(msg.cols, msg.rows);
       term.write(msg.data, () => {
@@ -289,11 +222,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
   listeners.add(onMsg);
   const unsub = store.on('workers', refresh);
-  // A viewer's name or color can change while they're here.
-  const unsubPeers = store.on('peers', () => {
-    const w = store.workers.get(workerId);
-    if (w) renderPresence(w);
-  });
   const ro = new ResizeObserver(() => sendSize());
 
   const modal = openModal(el, {
@@ -312,9 +240,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     onClose: () => {
       listeners.delete(onMsg);
       unsub();
-      unsubPeers();
       offFont();
-      clearInterval(typingTimer);
       ro.disconnect();
       net.send({ t: 'worker.detach', workerId });
       term.dispose();
@@ -366,7 +292,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (enter.do === 'send') {
       e.preventDefault();
       term.input(enter.data);
-      sayTyping();
     }
     return false;
   });
@@ -374,8 +299,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
-  // Only your own keys and pastes count as typing, not the terminal answering the program's queries.
-  term.onKey(sayTyping);
 
   // Files dropped in, or a screenshot pasted, go up to the office's machine and the terminal types
   // where they are, as a terminal does with a file dragged into it: Claude Code attaches a picture.
@@ -386,7 +309,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));
       if (current?.modal !== modal) return;
-      sayTyping();
       sendSize(true);
       term.paste(droppedPaths(paths));
       term.focus();
@@ -462,9 +384,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (current?.modal !== modal) return;
     term.open(host);
     opened = true;
-    term.textarea?.addEventListener('input', sayTyping);
-    term.textarea?.addEventListener('paste', sayTyping);
     ro.observe(host);
+    adoptSharedSize = store.workers.get(workerId)?.open === true;
     net.send({ t: 'worker.attach', workerId });
     setTimeout(() => {
       if (current?.modal === modal) term.focus();

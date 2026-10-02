@@ -1,7 +1,7 @@
 import type { ServiceInfo, ServicesState } from '../../shared/protocol';
 import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
-import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './team';
+import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './clipboard';
 
 export function serviceUrl(port: number): string {
   // The tunnel lands on the office's own port, so it speaks whatever the office speaks.
@@ -26,7 +26,7 @@ export function openServices() {
   let os = guessOs();
   let picked: number | null = null;
   let copied: number | null = null;
-  const body = h('div.body.team.services');
+  const body = h('div.body.services');
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const tabs = h('div.os-tabs');
   const footer = h('footer', {}, h('span.grow', {}, 'Tunnels go through the office, so the office password still guards every page. Keep the terminal open while you look.'));
@@ -91,8 +91,8 @@ export function openServices() {
       const cmd = serviceTunnel(s, svc.port, os);
       body.append(
         copied === svc.port
-          ? h('p.team-status.ok', {}, `✅ Copied. Paste it in a terminal: it opens ${serviceUrl(svc.port)} once the tunnel is up.`)
-          : h('p.team-status', {}, `The command for :${svc.port} — run it in a terminal, and it opens ${serviceUrl(svc.port)}.`),
+          ? h('p.svc-status.ok', {}, `✅ Copied. Paste it in a terminal: it opens ${serviceUrl(svc.port)} once the tunnel is up.`)
+          : h('p.svc-status', {}, `The command for :${svc.port} — run it in a terminal, and it opens ${serviceUrl(svc.port)}.`),
         h(
           'div.cmd',
           {},
@@ -101,7 +101,7 @@ export function openServices() {
         ),
       );
     } else if (picked !== null) {
-      body.append(h('p.team-status.error', {}, `The server on :${picked} stopped.`));
+      body.append(h('p.svc-status.error', {}, `The server on :${picked} stopped.`));
     }
     body.append(
       s.ssh

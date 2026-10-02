@@ -36,9 +36,9 @@ export interface MeetingWorkers {
   list(): WorkerInfo[];
   /** Seats an agent at a chair of the meeting table, for meeting `meeting`, in its worktree when it has one. */
   seat(deskId: string, by: string, prompt: string, provider: AgentProvider, model: string | undefined, effort: AgentEffort | undefined, meeting: { id: string; worktree?: Meeting['worktree'] }): WorkerInfo | string;
-  prompt(id: string, text: string, by?: string): string | undefined;
+  prompt(id: string, text: string): string | undefined;
   /** Keys into its terminal: Esc, to stop what it's doing. */
-  write(id: string, data: string, by: string): void;
+  write(id: string, data: string): void;
   kill(id: string): Promise<{ note?: string; error?: string }>;
 }
 
@@ -70,8 +70,6 @@ const PAST_MAX = 20;
 const PROMPT_MAX = 20_000;
 const ROLE_MAX = 40;
 const PARTS_MAX = 100;
-/** Who the office types a meeting's prompts as. */
-const BY = 'the meeting room';
 /** What a red team or a reviewer writes when it has nothing to report. */
 const NOTHING = /^\W*no findings\b/i;
 
@@ -351,13 +349,13 @@ export class MeetingRoom {
     const retry = () => {
       t.retried = true;
       this.readySince.delete(t);
-      return this.workers.prompt(w.id, this.say('meeting.nudge', { file: path.join(this.cwd(m), t.file) }), BY);
+      return this.workers.prompt(w.id, this.say('meeting.nudge', { file: path.join(this.cwd(m), t.file) }));
     };
     switch (t.state) {
       case 'waiting': {
         if (!ready(w.status)) return false;
         const part = this.plan(m, m.round, m.step)?.find((p) => p.seat === t.seat);
-        if (!part || this.workers.prompt(w.id, this.ask(m, part), BY)) return false;
+        if (!part || this.workers.prompt(w.id, this.ask(m, part))) return false;
         t.state = 'sent';
         t.sentAt = now;
         return true;
@@ -387,7 +385,7 @@ export class MeetingRoom {
         const part = this.plan(m, m.round, m.step)?.find((p) => p.seat === t.seat);
         t.retried = true;
         this.readySince.delete(t);
-        if (part) this.workers.prompt(w.id, this.ask(m, part), BY);
+        if (part) this.workers.prompt(w.id, this.ask(m, part));
         return true;
       }
       case 'working': {
@@ -483,7 +481,7 @@ export class MeetingRoom {
         .filter((w) => w.status === 'working' || w.status === 'needs_input')
         .map((w) => w.id),
     );
-    for (const s of m.seats) if (s.workerId && busy.has(s.workerId)) this.workers.write(s.workerId, '\x1b', BY);
+    for (const s of m.seats) if (s.workerId && busy.has(s.workerId)) this.workers.write(s.workerId, '\x1b');
     this.readPreview(m);
     this.keepNotes(m);
     this.events.toast(`⛔ The meeting on “${m.title}” stopped in round ${m.round}: ${reason}`, 'warn');

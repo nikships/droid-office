@@ -268,8 +268,7 @@ function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentCh
         createdAt: Date.now(),
         cols: 80,
         rows: 24,
-        viewers: [],
-        viewerIds: [],
+        open: false,
       };
       workers.push(w);
       return w;

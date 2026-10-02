@@ -76,7 +76,7 @@ export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], tasks: Que
   const out: Landed[] = [];
   for (const w of workers) {
     if (w.downedUntil !== undefined || w.kind !== 'agent' || w.meeting || DESK_BY_ID.get(w.deskId)?.station) continue;
-    if (isBusy(w.status) || w.prOpening || w.viewers.length) continue;
+    if (isBusy(w.status) || w.prOpening || w.open) continue;
     const pr = workerPr(w, pulls, tasks);
     if (w.repos?.length) {
       const landed = landedAcross(w, pr, pulls, pullsOf);

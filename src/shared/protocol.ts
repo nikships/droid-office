@@ -132,10 +132,8 @@ export interface WorkerInfo {
   exitCode?: number;
   cols: number;
   rows: number;
-  /** Names of people currently viewing the terminal. */
-  viewers: string[];
-  /** Who is viewing it, by connection (PeerInfo.id): one per open window, so a name can be here twice. */
-  viewerIds: string[];
+  /** True while any owner connection has its terminal open. */
+  open: boolean;
   /** Latest line of meaningful activity (e.g. last prompt or tool). */
   activity?: string;
   /** What its latest tool call is, for the worker to act out while it works. */
@@ -144,8 +142,8 @@ export interface WorkerInfo {
   task?: WorkerTask;
   /** Reported session tokens and cost, when the provider supplies them (agents only). */
   usage?: Usage;
-  /** Who last typed into its terminal (or sent it a prompt), and when. */
-  lastInput?: { by: string; at: number };
+  /** When its terminal last took input (keystrokes or a prompt). */
+  lastInputAt?: number;
   /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
   meeting?: string;
   /**
@@ -1122,8 +1120,6 @@ export type ClientMsg =
   /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
-  /** You're typing into that terminal (a keystroke or a paste, not the terminal answering itself); sent about once a second. */
-  | { t: 'term.typing'; workerId: string }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
   /** What you have open now (see PeerInfo.doing and PeerInfo.reading); none when you're back in the office. */
   | { t: 'doing'; what?: string; reading?: boolean }
@@ -1321,8 +1317,6 @@ export type ServerMsg =
   | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }
   | { t: 'term.snapshot'; workerId: string; data: string; cols: number; rows: number }
   | { t: 'term.data'; workerId: string; data: string }
-  /** Someone else in that terminal (`id`, a PeerInfo id) is typing; only its other viewers get these. */
-  | { t: 'term.typing'; workerId: string; id: string }
   | { t: 'gh.issues'; state: GhState<GhIssue> }
   | { t: 'gh.pulls'; state: GhState<GhPull> }
   /** Sent to whoever asked for the merge. */

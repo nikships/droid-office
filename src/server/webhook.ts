@@ -105,7 +105,7 @@ export class Webhook {
       this.pending.delete(w.id);
       const cur = this.latest.get(w.id);
       // Someone opened its terminal (or it moved on) meanwhile: they've got it.
-      if (!cur || cur.status !== status || cur.acked || cur.viewers.length) return;
+      if (!cur || cur.status !== status || cur.acked || cur.open) return;
       void this.alert(cur, status);
     }, SETTLE_MS);
     timer.unref();

@@ -179,7 +179,6 @@ interface Worker {
   ser?: InstanceType<typeof serialize.SerializeAddon>;
   /** The screen so far, for a browser opening the terminal (see screen.ts). */
   snapshot?: () => string;
-  viewers: Map<string, string>; // clientId -> name
   screenDirty: boolean;
   lastLines: string[];
   leftNeedsInputAt: number;
@@ -227,7 +226,7 @@ interface Worker {
 export interface WorkerEvents {
   update(info: WorkerInfo): void;
   remove(workerId: string): void;
-  data(workerId: string, data: string, viewers: string[]): void;
+  data(workerId: string, data: string, connectionIds: string[]): void;
   screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
@@ -235,6 +234,8 @@ export interface WorkerEvents {
 
 export class WorkerManager {
   private workers = new Map<string, Worker>();
+  /** Which connections have each worker's terminal open (workerId -> connection IDs). */
+  private subscribers = new Map<string, Set<string>>();
   private statePath: string;
   private settingsPath: string;
   private droidSettingsPath: string;
@@ -505,8 +506,7 @@ export class WorkerManager {
       repos: others,
       cols: 100,
       rows: 30,
-      viewers: [],
-      viewerIds: [],
+      open: false,
       activity: prompt ? truncate(prompt, 80) : undefined,
       meeting: meeting?.id,
     };
@@ -633,8 +633,8 @@ export class WorkerManager {
     }
     // Typed into the question it's asking, the prompt would answer it.
     if (w.info.status === 'needs_input') return `The ${w.info.name} is waiting on an answer in its terminal`;
-    if (!w.pty) w.info.lastInput = { by, at: Date.now() };
-    const err = w.pty ? this.prompt(w.info.id, clean, by) : this.resume(w.info.id, clean);
+    if (!w.pty) w.info.lastInputAt = Date.now();
+    const err = w.pty ? this.prompt(w.info.id, clean) : this.resume(w.info.id, clean);
     return err ?? { info: w.info, hired: false };
   }
 
@@ -722,6 +722,7 @@ export class WorkerManager {
     if (w.info.downedUntil !== undefined && w.info.downedUntil > Date.now()) return { error: 'This worker is downed — revive them or wait until the revival window expires' };
     const shot = w.info.downedUntil !== undefined;
     this.workers.delete(id);
+    this.subscribers.delete(id);
     this.namer.forget(id);
     clearTimeout(w.scanTimer);
     clearTimeout(w.downedTimer);
@@ -1015,11 +1016,17 @@ export class WorkerManager {
     this.resume(w.info.id);
   }
 
-  attach(id: string, clientId: string, name: string): { data: string; cols: number; rows: number } | undefined {
+  /** Subscribes one connection to a worker's terminal; opening it acknowledges its wait for attention. */
+  attach(id: string, clientId: string): { data: string; cols: number; rows: number } | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
-    w.viewers.set(clientId, name);
-    let changed = this.syncViewers(w);
+    let subs = this.subscribers.get(id);
+    if (!subs) {
+      subs = new Set();
+      this.subscribers.set(id, subs);
+    }
+    subs.add(clientId);
+    let changed = this.syncOpen(w);
     if (!w.info.acked && w.info.status !== 'needs_input') {
       w.info.acked = true;
       changed = true;
@@ -1042,24 +1049,34 @@ export class WorkerManager {
     return { hits, more };
   }
 
+  /** Unsubscribes one connection from a worker's terminal. */
   detach(id: string, clientId: string) {
     const w = this.workers.get(id);
     if (!w) return;
-    if (w.viewers.delete(clientId) && this.syncViewers(w)) this.emitUpdate(w);
+    if (this.unsubscribe(id, clientId) && this.syncOpen(w)) this.emitUpdate(w);
   }
 
+  /** Unsubscribes one connection from every terminal; other connections keep streaming. */
   detachAll(clientId: string) {
     for (const w of this.workers.values()) {
-      if (w.viewers.delete(clientId) && this.syncViewers(w)) this.emitUpdate(w);
+      if (this.unsubscribe(w.info.id, clientId) && this.syncOpen(w)) this.emitUpdate(w);
     }
   }
 
-  /** Keystrokes from `by`'s browser. */
-  write(id: string, data: string, by: string) {
+  /** Removes one connection's subscription; empty entries go, so removed workers leave nothing behind. */
+  private unsubscribe(id: string, clientId: string): boolean {
+    const subs = this.subscribers.get(id);
+    if (!subs?.delete(clientId)) return false;
+    if (!subs.size) this.subscribers.delete(id);
+    return true;
+  }
+
+  /** Keystrokes from an attached browser. */
+  write(id: string, data: string) {
     const w = this.workers.get(id);
     if (!w?.pty) return;
     w.pty.write(data);
-    let changed = this.typed(w, by);
+    let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
       w.info.acked = true;
       changed = true;
@@ -1068,19 +1085,19 @@ export class WorkerManager {
   }
 
   /**
-   * Remembers who typed into the terminal last. Says whether that's news: another person, or the
-   * same one after a pause (not every keystroke, or a typist would flood everyone with updates).
+   * Remembers that the terminal took input. Says whether that's news: input after a pause (not
+   * every keystroke, or a typist would flood every connection with updates).
    */
-  private typed(w: Worker, by: string): boolean {
+  private typed(w: Worker): boolean {
     const now = Date.now();
-    const last = w.info.lastInput;
-    if (last?.by === by && now - last.at < TYPED_REFRESH_MS) return false;
-    w.info.lastInput = { by, at: now };
+    const last = w.info.lastInputAt;
+    if (last !== undefined && now - last < TYPED_REFRESH_MS) return false;
+    w.info.lastInputAt = now;
     return true;
   }
 
-  /** Types a prompt into the agent's input box and submits it; `by` is the person who sent it, if any. */
-  prompt(id: string, text: string, by?: string): string | undefined {
+  /** Types a prompt into the agent's input box and submits it. */
+  prompt(id: string, text: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (!w.pty) return 'Worker is not running';
@@ -1091,7 +1108,7 @@ export class WorkerManager {
     setTimeout(() => w.pty?.write('\r'), 120);
     w.info.activity = truncate(clean, 80);
     this.notePrompt(w, clean);
-    if (by) w.info.lastInput = { by, at: Date.now() };
+    w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;
   }
@@ -1966,7 +1983,7 @@ export class WorkerManager {
       term.write(data);
       w.screenDirty = true;
       w.unsaved = true;
-      if (w.viewers.size) this.events.data(info.id, data, [...w.viewers.keys()]);
+      if (info.open) this.events.data(info.id, data, this.subscriberIds(info.id));
     });
     proc.onExit(({ exitCode, error, lost }) => {
       if (w.pty !== proc || this.workers.get(info.id) !== w) return;
@@ -1994,7 +2011,7 @@ export class WorkerManager {
       const hint = info.kind === 'shell' ? ' — press R to restart' : info.sessionId ? ' — press R to resume' : '';
       const msg = `\r\n\x1b[2m[${info.name} exited with code ${exitCode}${hint}]\x1b[0m\r\n`;
       term.write(msg);
-      if (w.viewers.size) this.events.data(info.id, msg, [...w.viewers.keys()]);
+      if (info.open) this.events.data(info.id, msg, this.subscriberIds(info.id));
       w.screenDirty = true;
       w.unsaved = true;
       this.emitUpdate(w);
@@ -2027,7 +2044,7 @@ export class WorkerManager {
     w.info.status = 'exited';
     w.info.exitCode = -1;
     w.term?.write(msg);
-    if (w.viewers.size) this.events.data(w.info.id, msg, [...w.viewers.keys()]);
+    if (w.info.open) this.events.data(w.info.id, msg, this.subscriberIds(w.info.id));
     w.screenDirty = true;
     w.unsaved = true;
     this.events.toast(`Could not start ${what}: ${message}`, 'error');
@@ -2098,7 +2115,7 @@ export class WorkerManager {
     // Nobody is looking at the terminal right now -> raise the flag (the worker jumps). A worker at the
     // meeting table that ends its part is waiting on the meeting, not on anyone, so it stays quiet.
     if (status === 'done' || status === 'needs_input') {
-      w.info.acked = status === 'done' && (w.viewers.size > 0 || !!w.info.meeting);
+      w.info.acked = status === 'done' && (w.info.open || !!w.info.meeting);
       w.info.waitingSince = Date.now();
     } else w.info.acked = true;
     this.emitUpdate(w);
@@ -2108,13 +2125,16 @@ export class WorkerManager {
     if (status === 'done' || status === 'idle') void this.syncBranch(w);
   }
 
-  private syncViewers(w: Worker): boolean {
-    const names = [...new Set(w.viewers.values())];
-    const ids = [...w.viewers.keys()];
-    const same = (a: string[], b: string[]) => a.length === b.length && a.every((n, i) => n === b[i]);
-    if (same(names, w.info.viewers) && same(ids, w.info.viewerIds)) return false;
-    w.info.viewers = names;
-    w.info.viewerIds = ids;
+  /** The connections subscribed to a worker's terminal, oldest first. */
+  private subscriberIds(id: string): string[] {
+    return [...(this.subscribers.get(id) ?? [])];
+  }
+
+  /** Syncs the public open flag with the subscriptions; says whether it changed. */
+  private syncOpen(w: Worker): boolean {
+    const open = (this.subscribers.get(w.info.id)?.size ?? 0) > 0;
+    if (w.info.open === open) return false;
+    w.info.open = open;
     return true;
   }
 
@@ -2322,6 +2342,8 @@ process.stdin.on('end', () => {
         pty?: any;
         midTurn?: unknown;
         worktreeOwnership?: Record<string, WorktreeOwnership>;
+        /** An office from before subscriptions kept who last typed here; only the time carries over. */
+        lastInput?: unknown;
       })[];
       for (const s of saved) {
         if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
@@ -2359,8 +2381,8 @@ process.stdin.on('end', () => {
           usage: provider === 'opencode' || provider === 'codex' ? reportedUsage(s.usage) : (provider === 'claude' || provider === 'custom') && tracker.transcript ? trackerUsage(tracker) : undefined,
           cols: 100,
           rows: 30,
-          viewers: [],
-          viewerIds: [],
+          open: false,
+          lastInputAt: legacyLastInputAt(s.lastInput),
           meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
         };
         const w = newWorker(info, tracker, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
@@ -2393,7 +2415,6 @@ function midTurn({ info, bootBlocked }: Pick<Worker, 'info' | 'bootBlocked'>): b
 function newWorker(info: WorkerInfo, tracker: UsageTracker, hookToken = randomBytes(16).toString('hex')): Worker {
   return {
     info,
-    viewers: new Map(),
     screenDirty: true,
     lastLines: [],
     leftNeedsInputAt: 0,
@@ -2415,6 +2436,12 @@ function newWorker(info: WorkerInfo, tracker: UsageTracker, hookToken = randomBy
 /** Where a Codex worker's sessions are logged, for reading its usage. */
 function codexHome(cwd: string, env: NodeJS.ProcessEnv): string {
   return path.resolve(cwd, env.CODEX_HOME || path.join(env.HOME || homedir(), '.codex'));
+}
+
+/** When a legacy `lastInput: {by, at}` record says input last landed, if it says so sanely. */
+function legacyLastInputAt(lastInput: unknown): number | undefined {
+  const at = (lastInput as { at?: unknown } | null)?.at;
+  return typeof at === 'number' && Number.isFinite(at) ? at : undefined;
 }
 
 function restoredModel(provider: AgentProvider | undefined, model: unknown): string | undefined {

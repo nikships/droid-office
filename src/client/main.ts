@@ -92,7 +92,8 @@ import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
-import { copy, guessOs, openTeam, routeTeamMessage } from './ui/team';
+import { copy, guessOs } from './ui/clipboard';
+import { openTeam, routeTeamMessage } from './ui/team';
 import { openAccounts, routeAccountsMessage } from './ui/accounts';
 import { openServices, serviceTunnel, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
@@ -2565,8 +2566,8 @@ function syncWorkers() {
       if (waitingOnSomeone(w) && v.status !== '' && w.status !== v.status) {
         sound.ding(w.status);
         notifier.alert(w);
-        // Playing at the arcade: one of yours stops the game.
-        if (w.status === 'needs_input' && yours(w)) cabinet.needsYou(w);
+        // Playing at the arcade: a worker waiting on input stops the game.
+        if (w.status === 'needs_input') cabinet.needsYou(w);
       }
       // Finished what it was on: a little spin and a puff of confetti.
       if (w.status === 'done' && (v.status === 'working' || v.status === 'needs_input')) {
@@ -2638,12 +2639,6 @@ function syncWorkers() {
   renderWaiting();
   notifier.sync(store.workers);
   renderTitle();
-}
-
-/** Hired by you (at a desk, or through the queue), or last given something to do by you. */
-function yours(w: WorkerInfo): boolean {
-  const name = store.peers.get(store.you)?.name ?? store.profile.name;
-  return w.createdBy === name || w.createdBy === `${name} (queue)` || w.lastInput?.by === name;
 }
 
 /**
@@ -5769,7 +5764,6 @@ if (nativeMode) {
   });
   const menus = nativeMenus;
   /** The laptop a paired keyboard types into: attached to its terminal while linked, like an open terminal window. */
-  let typedAt = 0;
   nativeTyping = new NativeTyping(
     {
       aimed: () => {
@@ -5795,11 +5789,6 @@ if (nativeMode) {
         const w = store.workers.get(workerId);
         if (!w) return;
         const enter = key.key === 'Enter' ? modifiedEnter(wantsCsiEnter(w.kind, resolvedProvider(w.provider, store.project)), { ctrl: key.ctrlKey, shift: key.shiftKey, alt: key.altKey, meta: key.metaKey }) : undefined;
-        const now = performance.now();
-        if (now - typedAt > 1000) {
-          typedAt = now;
-          net.send({ t: 'term.typing', workerId });
-        }
         net.send({ t: 'term.input', workerId, data: enter ?? bytes });
       },
       kiosk: (deskId, _bytes, key) => kioskKey(deskId, key),
