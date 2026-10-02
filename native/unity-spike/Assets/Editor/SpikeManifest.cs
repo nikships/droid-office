@@ -27,7 +27,7 @@ namespace DroidOffice.Spike.Editor
             foreach (XmlElement permission in manifest.SelectNodes("uses-permission"))
             {
                 var name = permission.GetAttribute("name", Android);
-                if (name == "android.permission.RECORD_AUDIO" || name.Contains("HAND_TRACKING"))
+                if (name == "android.permission.RECORD_AUDIO" || name == "android.permission.FACE_TRACKING" || name.Contains("HAND_TRACKING"))
                     manifest.RemoveChild(permission);
             }
             foreach (XmlElement activity in application.SelectNodes("activity"))
@@ -36,6 +36,44 @@ namespace DroidOffice.Spike.Editor
                 Property(xml, activity, "android.window.PROPERTY_XR_BOUNDARY_TYPE_RECOMMENDED", "XR_BOUNDARY_TYPE_LARGE");
             }
             xml.Save(file);
+            // The two XR providers append to one generated library. Normalize
+            // generated output without modifying either immutable package.
+            var xrFile = Path.Combine(path, "xrmanifest.androidlib/AndroidManifest.xml");
+            if (File.Exists(xrFile))
+            {
+                var xr = new XmlDocument();
+                xr.Load(xrFile);
+                var seen = new System.Collections.Generic.Dictionary<string, XmlElement>();
+                foreach (XmlElement element in xr.SelectNodes("//*"))
+                {
+                    var name = element.GetAttribute("name", Android);
+                    if (element.Name == "uses-permission" && name == "android.permission.FACE_TRACKING")
+                    { element.ParentNode.RemoveChild(element); continue; }
+                    if (string.IsNullOrEmpty(name) || element.Name == "activity") continue;
+                    var key = element.ParentNode.Name + "/" + element.Name + "/" + name;
+                    if (seen.TryGetValue(key, out var prior))
+                    {
+                        var version = element.GetAttribute("version", Android);
+                        if (int.TryParse(version, out var next) &&
+                            int.TryParse(prior.GetAttribute("version", Android), out var previous) && next > previous)
+                            prior.SetAttribute("version", Android, version);
+                        element.ParentNode.RemoveChild(element);
+                    }
+                    else seen.Add(key, element);
+                }
+                foreach (XmlElement feature in xr.SelectNodes("manifest/uses-feature"))
+                    if (feature.GetAttribute("name", Android) == "android.hardware.xr.input.eye_tracking")
+                        feature.SetAttribute("required", Android, "false");
+                xr.Save(xrFile);
+            }
+            // File-JAR pins replace AndroidX's older transitive Kotlin modules.
+            File.AppendAllText(Path.Combine(path, "build.gradle"), @"
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin'
+    exclude group: 'org.jetbrains', module: 'annotations'
+}
+android.packaging.resources.pickFirsts += ['META-INF/versions/9/module-info.class']
+");
         }
 
         static void Add(XmlDocument xml, XmlElement parent, string tag, string name, string required)

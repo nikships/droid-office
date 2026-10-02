@@ -1,0 +1,46 @@
+{
+  "commit": "4dc4a84fe4bde9fefb364e214dcd10c8ba4f647d",
+  "protocolSha256": "bb9c7069a333f355f35d0005ace0eca60ccaca901e706c264d29edada0ca471c",
+  "inputs": [
+    {
+      "path": "src/shared/avatar.ts",
+      "sha256": "54e1ac71284b1f695f671bcba9a9a3c93dbedc6541ec72750b1e5e048bdf6604"
+    },
+    {
+      "path": "src/shared/cabinet.ts",
+      "sha256": "7dd43f82da215fb142d904079e23f3ac6fcba1ff55c1e7ff8c6033cdaeaa1ee5"
+    },
+    {
+      "path": "src/shared/decor.ts",
+      "sha256": "68980f2dcb4591c9e6c03fbc6f40cf856abe3a06cfd89fda8af1b534707d93d4"
+    },
+    {
+      "path": "src/shared/floors.ts",
+      "sha256": "3480a5bbe3708779693240e296f211a77a7d97bcdabd5f013e4a0225c7f40c66"
+    },
+    {
+      "path": "src/shared/hoop.ts",
+      "sha256": "95b9b29455dcef9eac0b4d4cf7d7e2d402c9ee2912164814be54b73f6c15c2d8"
+    },
+    {
+      "path": "src/shared/jira.ts",
+      "sha256": "c3323e59e924c9f64b73e7f59122b1a54438c1f5d7866185a626c102cf8f8211"
+    },
+    {
+      "path": "src/shared/jukebox.ts",
+      "sha256": "d4a8eb67a42376684f72763281e31203f07ec293b39e3eeaed882dd6c32d6e7c"
+    },
+    {
+      "path": "src/shared/layout.ts",
+      "sha256": "4d859d92cfc60375fc544f5078eceefe2121420591840c4a51f3964a991b0a7d"
+    },
+    {
+      "path": "src/shared/prompts.ts",
+      "sha256": "03f008401d5cb93ffe04c816ab5d5249df84808b44eb0380bd493ee56feeb942"
+    },
+    {
+      "path": "src/shared/protocol.ts",
+      "sha256": "bb9c7069a333f355f35d0005ace0eca60ccaca901e706c264d29edada0ca471c"
+    }
+  ]
+}

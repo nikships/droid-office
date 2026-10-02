@@ -52,6 +52,9 @@ namespace DroidOffice.Spike
             // Its text allocations are reported by SpikeFrames, never hidden.
             sourceText.text = Fixture(frame++);
             sourceText.ForceMeshUpdate();
+            // Camera aspect overrides do not survive scene serialization.
+            // Fit the complete 120 x 40 grid after the render target is assigned.
+            sourceCamera.aspect = sourceText.preferredWidth / sourceText.preferredHeight;
             sourceCamera.Render();
         }
     }

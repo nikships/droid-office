@@ -1238,7 +1238,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 10e4854d42a94cccbb16cf9736c37576, type: 3}
   m_Name: OpenXRLifeCycleFeature Android
   m_EditorClassIdentifier: Unity.XR.AndroidOpenXR::UnityEngine.XR.OpenXR.Features.Android.OpenXRLifeCycleFeature
-  m_enabled: 1
+  m_enabled: 0
   nameUi: 
   version: 0.1.0
   featureIdInternal: AndroidXR-OpenXRLifeCycle
@@ -1755,7 +1755,7 @@ MonoBehaviour:
   _vulkanSubsampling: 0
   _useSpatialApi: 1
   _spatialApiRequired: 1
-  _spatialApiTargetVersion: 0
+  _spatialApiTargetVersion: 1
 --- !u!114 &5538171827117592265
 MonoBehaviour:
   m_ObjectHideFlags: 0

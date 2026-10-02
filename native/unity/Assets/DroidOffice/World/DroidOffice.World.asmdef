@@ -1,0 +1,4 @@
+{
+  "name": "DroidOffice.World",
+  "references": ["DroidOffice.Core", "DroidOffice.Protocol", "DroidOffice.Net"]
+}

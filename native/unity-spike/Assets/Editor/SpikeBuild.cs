@@ -95,6 +95,12 @@ namespace DroidOffice.Spike.Editor
             foreach (var feature in openxr.GetFeatures())
             {
                 feature.enabled = enabled.Contains(feature.GetType().Name);
+                if (feature.GetType().Name == "XRSessionFeature")
+                {
+                    var serialized = new SerializedObject(feature);
+                    serialized.FindProperty("_spatialApiTargetVersion").intValue = 1;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
                 // QR/image tracking and spatial sensing are configured separately,
                 // not permission-granted merely to compile a controller-only scene.
                 EditorUtility.SetDirty(feature);
@@ -238,7 +244,10 @@ namespace DroidOffice.Spike.Editor
             text.overflowMode = TextOverflowModes.Overflow;
             text.text = TerminalReference.Fixture(0);
             text.alignment = TextAlignmentOptions.TopLeft;
-            text.rectTransform.sizeDelta = new Vector2(80, 50);
+            text.ForceMeshUpdate();
+            var textWidth = text.preferredWidth;
+            var textHeight = text.preferredHeight;
+            text.rectTransform.sizeDelta = new Vector2(textWidth, textHeight);
             var rtPath = $"Assets/Spike/Generated/Terminal{index}.renderTexture";
             var rt = AssetDatabase.LoadAssetAtPath<RenderTexture>(rtPath);
             if (rt == null)
@@ -249,7 +258,8 @@ namespace DroidOffice.Spike.Editor
             var camera = new GameObject($"Terminal raster camera {index}").AddComponent<Camera>();
             camera.enabled = false;
             camera.orthographic = true;
-            camera.orthographicSize = 25;
+            camera.orthographicSize = textHeight / 2;
+            camera.aspect = textWidth / textHeight;
             camera.transform.position = source.transform.position + new Vector3(0, 0, -10);
             camera.targetTexture = rt;
             camera.cullingMask = 1 << 30;
@@ -305,7 +315,8 @@ namespace DroidOffice.Spike.Editor
                 options = BuildOptions.Development
             });
             Directory.CreateDirectory("Evidence");
-            File.WriteAllText("Evidence/build.json", JsonUtility.ToJson(report.summary, true));
+            File.WriteAllText("Evidence/build.json",
+                FormattableString.Invariant($"{{\"result\":\"{report.summary.result}\",\"bytes\":{report.summary.totalSize},\"seconds\":{report.summary.totalTime.TotalSeconds:F3},\"errors\":{report.summary.totalErrors},\"warnings\":{report.summary.totalWarnings}}}"));
             if (report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException("U0 Android build failed: " + report.summary.result);
             Debug.Log($"U0 APK bytes={report.summary.totalSize} duration={report.summary.totalTime.TotalSeconds:F1}s");
