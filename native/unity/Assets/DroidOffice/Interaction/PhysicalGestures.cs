@@ -29,11 +29,14 @@ namespace DroidOffice.Interaction
             var sum = Vector3.zero; for (var i = 0; i < samples; i++) sum += velocity[i];
             return Vector3.ClampMagnitude(sum / samples + Vector3.Cross(angular, worldOffset), 12);
         }
-        public static bool FetchFlick(Vector3 position, Vector3 head, Vector3 linear, Vector3 angular, double seconds)
+        public static bool FetchFlick(Vector3 position, Vector3 head, Vector3 linear, Vector3 angular, double seconds) =>
+            FetchFlick(position, head, linear, angular, seconds, Vector3.forward);
+        public static bool FetchFlick(Vector3 position, Vector3 head, Vector3 linear, Vector3 angular, double seconds, Vector3 forward)
         {
-            if (!Finite(position) || !Finite(head) || !Finite(linear) || !Finite(angular) || !double.IsFinite(seconds) || seconds < 0 || seconds > 0.3) return false;
+            if (!Finite(position) || !Finite(head) || !Finite(linear) || !Finite(angular) || !Finite(forward) ||
+                !double.IsFinite(seconds) || seconds < 0 || seconds > 0.3) return false;
             var toward = (head - position).normalized;
-            return Vector3.Dot(linear, toward) > 1.2f || Vector3.Dot(Vector3.Cross(angular, Vector3.forward), toward) > 4;
+            return Vector3.Dot(linear, toward) > 1.2f || Vector3.Dot(Vector3.Cross(angular, forward.normalized), toward) > 4;
         }
         public static Vector3 Arc(Vector3 from, Vector3 to, float time, float duration)
         {

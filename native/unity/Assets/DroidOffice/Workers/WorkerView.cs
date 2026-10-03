@@ -29,6 +29,7 @@ namespace DroidOffice.Workers
         Vector3 seatedPosition; Quaternion seatedRotation; bool seatedKnown;
         float down, shotAt = -100, bloodAt;
         GameObject pool;
+        Renderer[] bodyRenderers;
         public WorkerState Worker => worker;
         // Fallen locally on a hit, or by the server's revival window.
         public bool Down => worker != null && (worker.Downed || Time.time - shotAt < ShotEchoSeconds);
@@ -36,9 +37,22 @@ namespace DroidOffice.Workers
         public Bounds BodyBounds()
         {
             var bounds = new Bounds(body.transform.position, Vector3.zero);
-            foreach (var renderer in body.GetComponentsInChildren<Renderer>()) bounds.Encapsulate(renderer.bounds);
+            bodyRenderers ??= body.GetComponentsInChildren<Renderer>();
+            foreach (var renderer in bodyRenderers) if (renderer != null) bounds.Encapsulate(renderer.bounds);
             return bounds;
         }
+        public Vector3 ReceivePoint
+        {
+            get
+            {
+                var desk = computer != null ? computer.transform.position : transform.position + Vector3.up * 0.78f;
+                var toward = body != null ? body.transform.position - desk : transform.forward;
+                toward.y = 0;
+                return desk + toward.normalized * 0.38f + Vector3.up * 0.24f;
+            }
+        }
+        public bool CanReceiveAt(Vector3 point) => worker != null && worker.CardRefusal == null && body != null && body.activeInHierarchy && !Down &&
+            Vector3.SqrMagnitude(point - ReceivePoint) <= 0.35f * 0.35f;
         static Color StatusColor(string status) => status switch
         {
             "working" => new Color32(242, 184, 75, 255),

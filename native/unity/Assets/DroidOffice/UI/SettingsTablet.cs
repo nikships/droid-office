@@ -27,9 +27,10 @@ namespace DroidOffice.UI
             new[] { LocalControl.SmoothMovement, LocalControl.MovementDirection, LocalControl.MovementSpeed, LocalControl.Sprint },
             new[] { LocalControl.Turning, LocalControl.SnapAngle, LocalControl.SmoothTurnSpeed, LocalControl.Vignette },
             new[] { LocalControl.RenderScale, LocalControl.Foveation, LocalControl.RefreshRate },
-            new[] { LocalControl.Gun }
+            new[] { LocalControl.Gun, LocalControl.Blood },
+            new[] { LocalControl.DominantHand, LocalControl.PointAndClick, LocalControl.Haptics, LocalControl.WristDisplay }
         };
-        static readonly string[] titles = { "Movement", "Turning and comfort", "Graphics", "Play" };
+        static readonly string[] titles = { "Movement", "Turning and comfort", "Graphics", "Play", "Hands" };
         int page;
         bool menuArmed, menuHeld, priorTrigger, triggerArmed;
         bool confirmingReset;
@@ -53,6 +54,9 @@ namespace DroidOffice.UI
                 increase[i].onClick.AddListener(() => Adjust(row, 1));
             }
             ray.enabled = false; rayVisual.enabled = false; panel.SetActive(false);
+            rayVisual.overrideInteractorLineLength = true; rayVisual.lineLength = ray.maxRaycastDistance;
+            var feedback = ray.GetComponent<PanelPointerFeedback>() ?? ray.gameObject.AddComponent<PanelPointerFeedback>();
+            feedback.tablet = this;
         }
         void OnEnable() { if (app != null) app.PreferencesChanged += Refresh; }
         void OnDisable()
@@ -78,13 +82,25 @@ namespace DroidOffice.UI
             if (motion != null) motion.InputCaptured = visible;
             if (!visible) return;
             var camera = motion.origin.Camera.transform;
-            panel.transform.position = camera.position + camera.forward * 0.45f + camera.right * -0.025f + Vector3.down * 0.08f;
-            panel.transform.rotation = camera.rotation;
+            Placement(camera.position, camera.rotation, motion.origin.transform.forward, out var position, out var rotation);
+            panel.transform.SetPositionAndRotation(position, rotation);
             Refresh();
+        }
+        public static void Placement(Vector3 head, Quaternion orientation, Vector3 fallbackForward, out Vector3 position, out Quaternion rotation)
+        {
+            var forward = orientation * Vector3.forward; forward.y = 0;
+            if (forward.sqrMagnitude < 0.05f) { forward = fallbackForward; forward.y = 0; }
+            if (forward.sqrMagnitude < 0.05f) forward = Vector3.forward;
+            forward.Normalize();
+            var right = Vector3.Cross(Vector3.up, forward);
+            position = head + forward * 0.45f - right * 0.025f - Vector3.up * 0.08f;
+            rotation = Quaternion.LookRotation(position - head, Vector3.up);
         }
         void ShowPage(int value)
         {
-            page = Mathf.Clamp(value, 0, pages.Length - 1); Refresh();
+            var next = Mathf.Clamp(value, 0, pages.Length - 1);
+            if (next != page) InteractionAudio.Play(panel.transform.position, InteractionCue.Click, 0.6f);
+            page = next; Refresh();
         }
         void Adjust(int row, int direction)
         {
@@ -122,8 +138,9 @@ namespace DroidOffice.UI
             { summary.text = "Waiting for headset graphics.\nRequested settings remain saved."; return; }
             summary.text = page == 2 && graphics != null ?
                 $"Actual: {GraphicsRate(graphics.NativeHz, framesPerSecond)}, scale {graphics.AppliedRenderScale:0.##}×, {graphics.EyeWidth} × {graphics.EyeHeight}.\n{graphics.FoveationState}." :
-                page == 3 ? "Reach over your shoulder and squeeze grip to draw.\nTrigger fires at a worker; trigger near a downed worker revives." :
-                "Changes apply now and save on this headset.\nOther headset settings are not connected yet.";
+                page == 3 ? "Draw behind your back. Return it there to stow.\nAfter 30 seconds, an unrescued worker's owned work is deleted." :
+                page == 4 ? "Your dominant hand points, turns and teleports.\nTouch controls directly, or hold the frame to move it." :
+                "Changes save on this headset.\nTouch a control. Hold the frame to move the tablet.";
         }
         // The display keeps its refresh when rendering falls behind, so a heavy
         // render scale only shows up in the frames the app actually makes.
@@ -144,8 +161,14 @@ namespace DroidOffice.UI
             if (!menu) menuArmed = true;
             if (menuArmed && menu && !menuHeld) SetVisible(!Visible);
             menuHeld = menu;
-            var right = motion.right;
-            var tracked = right != null && right.Valid;
+            if (Visible && motion.Dominant?.SecondaryPressed == true)
+            {
+                if (page > 0) ShowPage(page - 1); else SetVisible(false);
+            }
+            var right = motion.Dominant;
+            var tracked = right != null && right.Valid && right.HasAim && right.Aim != null &&
+                right.Holder == null && !right.UseConsumed && app.Preferences.pointAndClick;
+            if (tracked) ray.rayOriginTransform = right.Aim;
             var trigger = tracked && right.Trigger;
             if (!tracked) triggerArmed = false;
             else if (!trigger) triggerArmed = true;

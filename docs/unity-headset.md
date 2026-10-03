@@ -1764,3 +1764,152 @@ not acceptance.
 on cards, the tablet and the gun; a real card handoff, hire, queue add, shot or
 revive against the real server (each is consequential, so none was sent);
 Bluetooth keyboard input; focused 90 FPS acceptance; section 16 review.
+
+### 25.10 Controller hands and physical card iteration, 2026-10-02
+
+This local development pass supersedes the interaction limitations and ranges
+in 25.9. It does **not** close U3 or establish worn acceptance.
+
+**Hands and pointing.** The primitive gloves are replaced with licensed Unity
+XR Hands sample meshes, each with 1,616 vertices and 26 bones. They are animated
+from the controllers only: no hand-tracking subsystem or permission is enabled.
+The card pose fits the thumb and index to opposite sides of a bottom corner,
+mirrored for each hand. The fit is solved once at startup and cached. A fixed
+Editor view exposed the original glove overlapping the title; the corner grip
+leaves that text clear. Pokes use the model's actual index tip.
+
+The UI pointer is a separate object, no longer attached to the glove. UI and
+teleport rays use the runtime aim position and rotation; grabbing, holsters and
+release velocity still require tracked grip poses. Invalid/nonfinite poses,
+sample gaps above 100 ms, jumps over 40 cm or 75°, and lost tracking cancel
+ownership and require released controls before rearming. Aim loss disables
+pointing without substituting aim for the grip. Teleport requires a neutral
+stick after interruption. Dominant-hand settings swap pointing, turning and
+movement roles; Menu stays on the left. Occupied hands and a hand interacting
+with a downed worker cannot also press UI.
+
+**Gun.** Both the existing waist region and a shoulder region support a fresh
+back-holster grab. The held bore follows current aim, rather than preserving
+only the draw-time orientation. Drawing requires a subsequent trigger release
+before firing. No shot is sent from the holster, without valid aim/current
+connection, or through geometry between the grip and muzzle. A dropped gun can
+be picked up within 16 cm, with an unobstructed path, before its 1.2-second
+return. Focus/pause loss, disabled gun, floor/disconnection and lost ownership
+holster it. The default remains off; shoot/revive server semantics are unchanged.
+
+**Cards.**
+
+- A fresh grip within 10 cm takes a board note. At distance, aim selects within
+  6 m and a 6° cone; gripping then flicking toward the head within 0.3 seconds
+  launches a 0.55-second fetch. Releasing before the flick cancels. An issue
+  removed from the current board cannot complete an armed fetch.
+- Fetch flight checks obstacles. A free hand can take the card from the other
+  hand within 14 cm. Transfers, near grabs and loose-card pickups reject
+  obstructed paths.
+- Releasing within 35 cm of a worker's derived receiving point revalidates the
+  existing eligibility rules before sending. A local reaching-hand visual
+  accompanies the offer; it is not full worker-arm IK or an operation receipt.
+- Releasing at the queue board within 22 cm sends one queue request. A release
+  elsewhere drops the card rather than sending work. Loose cards can be
+  regrabbed within 18 cm and return after eight seconds. Back returns a held
+  card to its pin over 0.4 seconds. Other pinned notes do not reflow.
+- Empty-desk releases no longer spawn workers accidentally. Explicit desk
+  hiring remains available; card staging plus a deliberate bell is still
+  missing.
+- Focus/pause loss, disabling the component, settings capture, floor change
+  and disconnection clear local ownership and cancel pending transport work.
+  A pending write blocks another grab. Cancellation cannot retract a request
+  already delivered; no reconnect replay or automatic retry occurs.
+- Transport completion says **sent**, not accepted. Queue sends direct the
+  owner to the queue; worker sends direct them to the terminal. Track B
+  operation receipts and idempotent retry remain unavailable.
+
+**Software verification.** The missing loopback office was restarted against
+the actual checkout. Editor PlayMode connected to **two real workers and six
+open cards**. The latest fixed-mono preview used scripted controller samples,
+with a held card and disabled firing component; **no prompts, hires, queue adds,
+shots or revives were sent**. The player loop advanced from frame 12,300 to
+12,369 before capture. `Reviews/interactions/2026-10-02/card-gun-editor.png`
+records the corner pinch and gun fit; it is not a headset-eye capture or
+section 16 review.
+
+**277/277 EditMode tests** pass. The added component coverage includes fresh
+hand-to-hand transfer, occupied/obstructed hands, loose release/regrab, animated
+return, cancellation on focus/pause/disable/floor change, pending-send exclusion,
+fetch cancellation and closed issues, handed pickup, receiving eligibility,
+mirrored thumb orientation and fingertip pinch fit. Component fixtures open no
+transport and never dispatch real-worker tasks. Parent lint, typecheck and
+**895/895 Node tests** pass. Protocol/layout drift checks verify **44 server
+messages, 69 client messages and 200 DTOs**. Coverage-mode tests were not rerun.
+The last live preview had no current console errors. The scene was inspected
+by serialized object identity: only the hand references, moved pointer
+components and their references changed; most of the text diff is ordering.
+
+**Android packaging.** The ARM64 IL2CPP development APK built in **77.39 s**:
+**197,001,297 bytes**, **zero errors / 348 warnings**. The warnings include
+Unity AI Inference/Sentis Vulkan shader diagnostics and a missing package
+Samples-directory cache warning; this is not a warning-free build. V2 signature
+and 16 KiB ZIP-alignment verification pass. The manifest retains
+`dev.droidoffice.xr.unity`, API 29/35, optional controllers and no microphone or
+hand-tracking permission. SHA-256:
+`bea6b1389918bc654a2eb2f748ed0f922854f4797605e50236fc9efb17d00cfe`.
+The APK remains at `Builds/droid-office-unity.apk`; it was not installed.
+
+**Still NOT RUN / incomplete.** No headset is attached in ADB, so this pass has
+no installation, worn input/readability/comfort, actual Galaxy XR aim/tracking
+usage check, haptics, keyboard or frame-rate acceptance. The owner's render
+scale was not lowered. Solid-world hand proxies, collision-constrained held
+cards, broader fetchable props, throwing/catching assistance, full receiving
+arm animation, sound cues and the desk bell remain incomplete. A real
+consequential handoff and section 16's independent review are still pending.
+
+### 25.11 Fit and feedback polish, 2026-10-02 (later)
+
+A second review pass over five rough spots found by rendering, not just reading:
+
+- **Gun grip.** A side-view isolation render showed the palm closing 5 cm
+  beside the stock. The glove now mounts on the gun's grip transform, wraps the
+  stock, and fits the index finger to distinct trigger-rest and trigger-press
+  contact points, mirrored per hand. The glove follows recoil through the gun's
+  transform instead of the tracked controller pose.
+- **Receiving arm.** The floating receiving hand is now a connected arm:
+  shoulder socket aligned to the worker's existing side arm (found by render,
+  moved from the first attempt's too-high mount), two-bone IK with elbow bend,
+  forearm, wrist cuff and the skinned hand, tinted with the worker's color.
+  It still asserts nothing about server acceptance.
+- **Dropped cards.** Cards collide as their actual 20×15 cm box, not a 2.5 cm
+  sphere at the center: corners catch ledges a center sphere would miss. On a
+  mostly-upward contact the card settles face-up over 0.18 s at its real 2 mm
+  thickness (a support-relative anchor, so it never clips through the surface
+  and re-falls if the support disappears). Release spin carries over and damps.
+  A nearby free hand gets a hover tick and the card glows faintly green.
+- **Pointer.** A small two-tone contact ring (dark outer band, bright inner
+  band) renders at the exact UI hit point reported by the XR UI module, with a
+  light haptic tick when an interactable is first hovered. It is a custom
+  MaskableGraphic, so it draws in the panel's own path instead of a world-space
+  line that went dark in the night office. All world-space panels now opt into
+  3D occlusion, so pointing through desks and walls no longer clicks hidden UI.
+- **Tablet.** 32 cm wide with an 8.3 mm thick rounded shell, side frame grips,
+  a header rule, and status text separated from the footer. It opens upright at
+  arm's length even with a tilted head (previously it inherited head pitch and
+  roll). Point-and-click off no longer strands it: the surface takes direct
+  fingertip presses with a click haptic, and either frame edge can be gripped
+  to carry it. Frame grabs release on tracking loss, focus loss, pause, or a
+  head jump over 40 cm.
+
+Verification: **295/295 EditMode tests** pass (added mirrored tool-pose fit,
+card-box placement, ledge edges, support-loss, ring geometry, touch/hover
+eligibility, and tilted-head tablet placement). Live Editor PlayMode against
+the loopback office (two workers, six issues) rendered the gun wrap, the
+connected receiving arm at a real desk, the revised tablet at 45 cm, and the
+contact ring centered on the hovered Close button. Scripted samples only; no
+work messages were sent. Two runtime faults found by rendering and fixed: a
+material-property block created in a component constructor (illegal) and the
+ring's missing CanvasRenderer (auto-requirement does not fire for a graphic
+added before its canvas exists in some orders). The build preprocessor no
+longer leaves the preloaded-assets filter persisted into ProjectSettings.
+
+Still NOT RUN: everything in 25.10's list — no headset is attached, so no
+device capture, worn comfort, haptics, or frame-rate acceptance, and no real
+card handoff. The desk bell, sound cues, solid hand proxies, and the
+section 16 review remain open.

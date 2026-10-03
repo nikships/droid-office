@@ -40,7 +40,9 @@ namespace DroidOffice.UI
             var rect = root.GetComponent<RectTransform>(); rect.sizeDelta = new Vector2(800, 1000); rect.localScale = Vector3.one * 0.0016f;
             rect.SetPositionAndRotation(OfficeSpace.ToUnity(9.45, 1.6, -11.8), Quaternion.Euler(0, 90, 0));
             var canvas = root.AddComponent<Canvas>(); canvas.renderMode = RenderMode.WorldSpace; canvas.worldCamera = terminals.motion.origin.Camera;
-            root.AddComponent<TrackedDeviceGraphicRaycaster>(); root.AddComponent<UnityEngine.UI.Image>().color = new Color(0.03f, 0.06f, 0.065f);
+            var raycaster = root.AddComponent<TrackedDeviceGraphicRaycaster>();
+            raycaster.checkFor3DOcclusion = true; raycaster.raycastTriggerInteraction = QueryTriggerInteraction.Ignore;
+            root.AddComponent<UnityEngine.UI.Image>().color = new Color(0.03f, 0.06f, 0.065f);
             FocusedPanel.Label(rect, "Floors · development", new Vector2(0, 420), new Vector2(760, 70), terminals.font, 34);
             for (var i = 0; i < buttons.Length; i++)
             {

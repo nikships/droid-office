@@ -25,12 +25,15 @@ namespace DroidOffice.Interaction
         public bool TerminalInputCaptured { get; set; }
         public bool PromptInputCaptured { get; set; }
         public bool BoardInputCaptured { get; set; }
+        public TrackedGrip Dominant => app?.Preferences.dominantHand == Handedness.Left ? left : right;
+        public TrackedGrip OffHand => app?.Preferences.dominantHand == Handedness.Left ? right : left;
         bool Captured => InputCaptured || TerminalInputCaptured || PromptInputCaptured || BoardInputCaptured;
         readonly VignetteParameters movementVignette = new();
         public VignetteParameters vignetteParameters => movementVignette;
         readonly Vector3[] points = new Vector3[49];
         readonly Collider[] occupied = new Collider[16];
         bool aiming, valid;
+        bool teleportArmed;
         Vector3 destination;
         float verticalSpeed;
         bool movementArmed;
@@ -60,6 +63,9 @@ namespace DroidOffice.Interaction
         void ResetInput()
         {
             movementArmed = turnArmed = false; verticalSpeed = 0; Tunnel(false);
+            teleportArmed = aiming = valid = false;
+            if (arc != null) arc.enabled = false;
+            if (marker != null) marker.SetActive(false);
             if (snapTurn != null) { snapTurn.rightHandTurnInput.manualValue = Vector2.zero; snapTurn.enabled = false; }
             if (smoothTurn != null) { smoothTurn.rightHandTurnInput.manualValue = Vector2.zero; smoothTurn.enabled = false; }
         }
@@ -94,13 +100,19 @@ namespace DroidOffice.Interaction
                 capsule.center = new Vector3(head.x, capsule.height / 2 + 0.05f, head.z);
             }
             Move(); Turn();
-            if (Captured || !Application.isFocused || !right.Valid)
-            { aiming = false; arc.enabled = false; marker.SetActive(false); return; }
-            var active = right.Stick.y > 0.6f && Mathf.Abs(right.Stick.x) < 0.35f;
+            var pointer = Dominant;
+            if (Captured || !Application.isFocused || pointer == null || !pointer.Valid || !pointer.HasAim || pointer.Aim == null || pointer.Pose == HandPose.Tool)
+            { teleportArmed = aiming = valid = false; arc.enabled = false; marker.SetActive(false); return; }
+            if (!teleportArmed)
+            {
+                if (pointer.Stick.sqrMagnitude < 0.15f * 0.15f) teleportArmed = true;
+                arc.enabled = false; marker.SetActive(false); return;
+            }
+            var active = pointer.Stick.y > 0.6f && Mathf.Abs(pointer.Stick.x) < 0.35f;
             if (active)
             {
-                var position = right.visual.position;
-                var velocity = right.visual.forward * 6;
+                var position = pointer.Aim.position;
+                var velocity = pointer.Aim.forward * 6;
                 valid = false; points[0] = position; var count = 1;
                 for (var i = 1; i < points.Length; i++)
                 {
@@ -129,20 +141,21 @@ namespace DroidOffice.Interaction
         void Move()
         {
             var preferences = app?.Preferences;
+            var moveHand = OffHand;
             if (!Application.isFocused || Captured || app?.PreferencesReady != true || preferences == null ||
-                !preferences.smoothMovement || left == null || !left.Valid)
+                !preferences.smoothMovement || moveHand == null || !moveHand.Valid)
             { movementArmed = false; verticalSpeed = 0; Tunnel(false); return; }
             // A held stick never starts moving after tracking/focus comes back.
             if (!movementArmed)
             {
-                if (left.Stick.sqrMagnitude <= 0.15f * 0.15f) movementArmed = true;
+                if (moveHand.Stick.sqrMagnitude <= 0.15f * 0.15f) movementArmed = true;
                 return;
             }
             var speed = preferences.movementSpeed;
-            if (preferences.sprint && left.Device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick, out var sprint) && sprint)
+            if (preferences.sprint && moveHand.Device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick, out var sprint) && sprint)
                 speed *= 1.6f;
-            var forward = preferences.movementDirection == MovementDirection.LeftHand ? left.visual.forward : origin.Camera.transform.forward;
-            var motion = Movement(left.Stick, forward, speed, Time.deltaTime);
+            var forward = preferences.movementDirection == MovementDirection.LeftHand ? moveHand.visual.forward : origin.Camera.transform.forward;
+            var motion = Movement(moveHand.Stick, forward, speed, Time.deltaTime);
             movementVignette.apertureSize = preferences.vignette == Strength.Low ? 0.85f : preferences.vignette == Strength.High ? 0.5f : 0.7f;
             Tunnel(preferences.vignette != Strength.Off && motion.sqrMagnitude > 0.000001f);
             verticalSpeed = capsule.isGrounded ? -1 : Mathf.Max(-10, verticalSpeed + Physics.gravity.y * Mathf.Min(Time.deltaTime, 0.05f));
@@ -158,12 +171,13 @@ namespace DroidOffice.Interaction
         void Turn()
         {
             if (snapTurn == null || smoothTurn == null) return;
-            var ready = Application.isFocused && !Captured && app?.PreferencesReady == true && right != null && right.Valid;
+            var turnHand = Dominant;
+            var ready = Application.isFocused && !Captured && app?.PreferencesReady == true && turnHand != null && turnHand.Valid;
             if (!ready) turnArmed = false;
-            else if (!turnArmed && right.Stick.sqrMagnitude <= 0.15f * 0.15f) turnArmed = true;
+            else if (!turnArmed && turnHand.Stick.sqrMagnitude <= 0.15f * 0.15f) turnArmed = true;
             var preferences = app?.Preferences;
             var active = ready && turnArmed;
-            var input = active ? new Vector2(TurnInput(right.Stick), 0) : Vector2.zero;
+            var input = active ? new Vector2(TurnInput(turnHand.Stick), 0) : Vector2.zero;
             snapTurn.rightHandTurnInput.manualValue = input;
             smoothTurn.rightHandTurnInput.manualValue = input;
             snapTurn.turnAmount = preferences?.snapAngle ?? 45;

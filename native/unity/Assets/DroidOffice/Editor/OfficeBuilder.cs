@@ -303,7 +303,9 @@ namespace DroidOffice.Editor
                 hand.transform.SetParent(offset.transform, false); hand.node = node;
                 hand.visual = new GameObject(node == UnityEngine.XR.XRNode.LeftHand ? "Left glove" : "Right glove").transform;
                 hand.visual.SetParent(offset.transform, false);
-                hand.gameObject.AddComponent<Glove>();
+                var glove = hand.gameObject.AddComponent<Glove>();
+                glove.model = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/DroidOffice/Art/Hands/" +
+                    (node == UnityEngine.XR.XRNode.LeftHand ? "LeftHand" : "RightHand") + ".fbx");
                 if (node == UnityEngine.XR.XRNode.RightHand) motion.right = hand;
                 else motion.left = hand;
             }

@@ -16,6 +16,8 @@ namespace DroidOffice.Interaction
         void Awake() { rect = GetComponent<RectTransform>(); motion = FindFirstObjectByType<OfficeLocomotion>(); }
         void OnEnable() { leftArmed = rightArmed = false; Drop(); }
         void OnDisable() { Drop(); leftArmed = rightArmed = false; }
+        void OnApplicationFocus(bool focused) { if (!focused) { Drop(); leftArmed = rightArmed = false; } }
+        void OnApplicationPause(bool paused) { if (paused) { Drop(); leftArmed = rightArmed = false; } }
         void Drop() { holding?.Release(this); holding = null; }
         void Update()
         {
@@ -23,7 +25,8 @@ namespace DroidOffice.Interaction
             { Drop(); leftArmed = rightArmed = false; return; }
             if (holding != null)
             {
-                if (!holding.Valid || !holding.Grip || Vector3.Distance(priorHead, motion.origin.Camera.transform.position) > 0.4f)
+                if (!holding.Valid || !holding.Grip || !ReferenceEquals(holding.Holder, this) ||
+                    Vector3.Distance(priorHead, motion.origin.Camera.transform.position) > 0.4f)
                 { Drop(); leftArmed = rightArmed = false; return; }
                 var target = holding.visual.position + holding.visual.rotation * offset;
                 // Keep the frame out of world geometry. Ignore its UI ray;
@@ -39,7 +42,7 @@ namespace DroidOffice.Interaction
         }
         void TryGrab(TrackedGrip hand, ref bool armed)
         {
-            if (hand == null || !hand.Valid) { armed = false; return; }
+            if (hand == null || !hand.Valid || hand.visual == null) { armed = false; return; }
             if (!hand.Grip) { armed = true; return; }
             if (!armed) return; armed = false;
             var point = rect.InverseTransformPoint(hand.visual.position);

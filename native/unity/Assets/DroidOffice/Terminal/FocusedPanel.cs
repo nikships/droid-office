@@ -15,7 +15,8 @@ namespace DroidOffice.Terminal
             var root = new GameObject("Focused terminal", typeof(RectTransform));
             var panel = root.AddComponent<FocusedPanel>();
             var canvas = root.AddComponent<Canvas>(); canvas.renderMode = RenderMode.WorldSpace; canvas.worldCamera = owner.motion.origin.Camera;
-            root.AddComponent<TrackedDeviceGraphicRaycaster>();
+            var raycaster = root.AddComponent<TrackedDeviceGraphicRaycaster>();
+            raycaster.checkFor3DOcclusion = true; raycaster.raycastTriggerInteraction = QueryTriggerInteraction.Ignore;
             root.AddComponent<DroidOffice.Interaction.TrackedPanelGrab>();
             var rect = root.GetComponent<RectTransform>(); rect.sizeDelta = new Vector2(1000, 980); root.transform.localScale = Vector3.one * 0.0009f;
             var head = owner.motion.origin.Camera.transform;

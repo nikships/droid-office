@@ -18,7 +18,21 @@ namespace DroidOffice.Terminal
         public OfficeLocomotion motion;
         public TMP_FontAsset font;
         public Shader shader;
-        public FocusedTerminals Focus { get; private set; }
+        FocusedTerminals focus;
+        // Created lazily: an instance can reach Update before Awake when play
+        // mode entered without a domain reload, or before references are wired.
+        public FocusedTerminals Focus
+        {
+            get
+            {
+                if (focus == null && app != null && app.Store != null)
+                {
+                    focus = new FocusedTerminals(app.Store, this);
+                    focus.Changed += Refresh;
+                }
+                return focus;
+            }
+        }
         readonly Dictionary<string, FocusedPanel> panels = new();
         readonly StringBuilder text = new();
         readonly List<string> remove = new();
@@ -39,8 +53,7 @@ namespace DroidOffice.Terminal
         }
         void Awake()
         {
-            Focus = new FocusedTerminals(app.Store, this);
-            Focus.Changed += Refresh;
+            _ = Focus;
             inputLifetime = new CancellationTokenSource();
         }
         void Update()
@@ -51,20 +64,22 @@ namespace DroidOffice.Terminal
                 keyboard = Keyboard.current;
                 if (keyboard != null) keyboard.onTextInput += Typed;
             }
-            Focus.SetApplicationFocus(Application.isFocused);
-            if (motion.InputCaptured || motion.PromptInputCaptured || motion.BoardInputCaptured) Focus.ClearFocus();
-            motion.TerminalInputCaptured = Focus.Focused != null;
+            var focus = Focus;
+            if (focus == null || motion == null) return;
+            focus.SetApplicationFocus(Application.isFocused);
+            if (motion.InputCaptured || motion.PromptInputCaptured || motion.BoardInputCaptured) focus.ClearFocus();
+            motion.TerminalInputCaptured = focus.Focused != null;
             remove.Clear();
             foreach (var pair in panels)
                 if ((pair.Value.Surface.transform.position - motion.origin.Camera.transform.position).sqrMagnitude > 36) remove.Add(pair.Key);
-            foreach (var id in remove) Focus.Close(id);
-            if (!Application.isFocused || keyboard == null || !Focus.TryCaptureInput(out var lease)) return;
+            foreach (var id in remove) focus.Close(id);
+            if (!Application.isFocused || keyboard == null || !focus.TryCaptureInput(out var lease)) return;
             var writeLease = text.Length > 0 ? textLease : lease;
             var input = text.ToString(); text.Clear();
             var ctrl = keyboard.ctrlKey.isPressed; var shift = keyboard.shiftKey.isPressed;
             var alt = keyboard.altKey.isPressed; var meta = keyboard.leftMetaKey.isPressed || keyboard.rightMetaKey.isPressed;
-            TryGetModes(Focus.Focused.WorkerId, out var modes);
-            var worker = app.Store.Workers[Focus.Focused.WorkerId];
+            TryGetModes(focus.Focused.WorkerId, out var modes);
+            var worker = app.Store.Workers[focus.Focused.WorkerId];
             if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
                 input += TerminalKeys.Enter(worker.Kind == "agent" && worker.Provider == "droid", ctrl, shift, alt, meta);
             else if (keyboard.escapeKey.wasPressedThisFrame) input += "\u001b";
@@ -84,7 +99,7 @@ namespace DroidOffice.Terminal
                 foreach (var key in keyboard.allKeys)
                     if (key.wasPressedThisFrame && key.keyCode >= Key.A && key.keyCode <= Key.Z)
                     { input += TerminalKeys.Control((char)('a' + (int)key.keyCode - (int)Key.A)); break; }
-            if (input.Length > 0) Focus.TryType(writeLease, input);
+            if (input.Length > 0) focus.TryType(writeLease, input);
         }
         void Typed(char character)
         {
@@ -152,7 +167,7 @@ namespace DroidOffice.Terminal
         }
         void OnDestroy()
         {
-            if (Focus != null) { Focus.Changed -= Refresh; Focus.Dispose(); }
+            if (focus != null) { focus.Changed -= Refresh; focus.Dispose(); }
             inputLifetime?.Cancel(); inputLifetime?.Dispose();
             foreach (var panel in panels.Values) if (panel != null) Destroy(panel.gameObject);
         }

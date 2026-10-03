@@ -45,7 +45,8 @@ namespace DroidOffice.UI
             var rect = panel.GetComponent<RectTransform>(); rect.sizeDelta = new Vector2(1040, 420); rect.localScale = Vector3.one * Scale;
             rect.localPosition = LocalPosition; rect.localRotation = LocalRotation;
             var canvas = panel.AddComponent<Canvas>(); canvas.renderMode = RenderMode.WorldSpace; canvas.worldCamera = terminals.motion.origin.Camera;
-            panel.AddComponent<TrackedDeviceGraphicRaycaster>();
+            var raycaster = panel.AddComponent<TrackedDeviceGraphicRaycaster>();
+            raycaster.checkFor3DOcclusion = true; raycaster.raycastTriggerInteraction = QueryTriggerInteraction.Ignore;
             panel.AddComponent<PhysicalPanelPress>();
             panel.AddComponent<UnityEngine.UI.Image>().color = new Color(0.02f, 0.05f, 0.07f, 0.82f);
             terminal = FocusedPanel.Button(rect, "Terminal", new Vector2(-390, 70), new Vector2(240, 150), terminals.font, () => { if (workerId != null) terminals.Open(workerId); });

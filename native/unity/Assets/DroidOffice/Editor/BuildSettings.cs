@@ -143,12 +143,21 @@ namespace DroidOffice.Editor
             if (office.IsValid() && office.isLoaded && !EditorSceneManager.SaveScene(office))
                 throw new InvalidOperationException("Office scene could not be saved.");
             Directory.CreateDirectory("Builds"); Directory.CreateDirectory("Evidence");
-            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            // AndroidPreloadedSettings filters an Editor-only asset out of the
+            // build input. Restore the project's list afterward so a build never
+            // dirties ProjectSettings.asset.
+            var preloaded = PlayerSettings.GetPreloadedAssets();
+            BuildReport report;
+            try
             {
-                scenes = new[] { OfficeBuilder.ScenePath }, target = BuildTarget.Android,
-                locationPathName = "Builds/droid-office-unity.apk",
-                options = BuildOptions.Development | BuildOptions.CompressWithLz4HC
-            });
+                report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+                {
+                    scenes = new[] { OfficeBuilder.ScenePath }, target = BuildTarget.Android,
+                    locationPathName = "Builds/droid-office-unity.apk",
+                    options = BuildOptions.Development | BuildOptions.CompressWithLz4HC
+                });
+            }
+            finally { PlayerSettings.SetPreloadedAssets(preloaded); }
             var apk = new FileInfo("Builds/droid-office-unity.apk");
             File.WriteAllText("Evidence/build.json", $"{{\"result\":\"{report.summary.result}\",\"apkBytes\":{(apk.Exists ? apk.Length : 0)},\"reportedBytes\":{report.summary.totalSize},\"errors\":{report.summary.totalErrors},\"warnings\":{report.summary.totalWarnings},\"seconds\":{report.summary.totalTime.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}");
             if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0)

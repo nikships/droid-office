@@ -44,7 +44,9 @@ namespace DroidOffice.UI
             panel.transform.SetParent(transform, false);
             var rect = panel.GetComponent<RectTransform>(); rect.sizeDelta = new Vector2(1100, 1000); rect.localScale = Vector3.one * 0.0009f;
             var canvas = panel.AddComponent<Canvas>(); canvas.renderMode = RenderMode.WorldSpace; canvas.worldCamera = terminals.motion.origin.Camera;
-            panel.AddComponent<TrackedDeviceGraphicRaycaster>(); panel.AddComponent<UnityEngine.UI.Image>().color = new Color(0.03f, 0.06f, 0.065f);
+            var raycaster = panel.AddComponent<TrackedDeviceGraphicRaycaster>();
+            raycaster.checkFor3DOcclusion = true; raycaster.raycastTriggerInteraction = QueryTriggerInteraction.Ignore;
+            panel.AddComponent<UnityEngine.UI.Image>().color = new Color(0.03f, 0.06f, 0.065f);
             panel.AddComponent<PhysicalPanelPress>(); panel.AddComponent<DroidOffice.Interaction.TrackedPanelGrab>();
             title = FocusedPanel.Label(rect, "", new Vector2(-90, 390), new Vector2(870, 150), terminals.font, 30);
             FocusedPanel.Button(rect, "Close", new Vector2(440, 420), new Vector2(160, 80), terminals.font, Close);

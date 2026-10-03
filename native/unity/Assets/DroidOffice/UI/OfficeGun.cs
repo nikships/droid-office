@@ -12,7 +12,7 @@ namespace DroidOffice.UI
     // worker.shoot once. A free hand's trigger at a downed body sends
     // worker.revive. A shot never opens anything.
     [DefaultExecutionOrder(-630)]
-    public sealed class OfficeGun : MonoBehaviour
+    public sealed class OfficeGun : MonoBehaviour, IHandToolPose
     {
         public Mesh mesh;
         public Texture2D surface;
@@ -29,7 +29,7 @@ namespace DroidOffice.UI
         Quaternion hold = Quaternion.identity;
         Vector3 dropVelocity;
         float firedAt = -10, droppedAt, flashUntil;
-        bool leftArmed, rightArmed, leftTriggerArmed, rightTriggerArmed, triggerArmed;
+        bool triggerArmed;
         bool leftAtHolster, rightAtHolster;
         WorkerView leftAtBody, rightAtBody;
         WorkerView[] views;
@@ -38,6 +38,8 @@ namespace DroidOffice.UI
         float bloodUntil;
         public bool Holding => state == State.Held;
         public TrackedGrip Hand => hand;
+        public Vector3 GripOffset => model != null ? model.transform.localPosition : Vector3.zero;
+        public Quaternion GripRotation => model != null ? model.transform.localRotation : hold;
         public bool Enabled => app != null && app.Preferences.gun;
         void Start()
         {
@@ -45,9 +47,25 @@ namespace DroidOffice.UI
             if (motion == null) motion = FindFirstObjectByType<OfficeLocomotion>();
             if (app == null || motion == null || mesh == null) { enabled = false; return; }
             views = FindObjectsByType<WorkerView>(FindObjectsSortMode.None);
-            app.PreferencesChanged += PreferencesUpdated; PreferencesUpdated();
+            app.PreferencesChanged += PreferencesUpdated; app.Store.Changed += Changed; PreferencesUpdated();
         }
-        void OnDestroy() { if (app != null) app.PreferencesChanged -= PreferencesUpdated; }
+        void OnDisable() { Holster(); leftAtHolster = rightAtHolster = false; }
+        void OnApplicationFocus(bool focused) { if (!focused) Holster(); }
+        void OnApplicationPause(bool paused) { if (paused) Holster(); }
+        void OnDestroy()
+        {
+            if (app != null) { app.PreferencesChanged -= PreferencesUpdated; app.Store.Changed -= Changed; }
+            Holster();
+            if (model != null) Destroy(model);
+            foreach (var drop in blood) if (drop != null) Destroy(drop.gameObject);
+            if (material != null) Destroy(material);
+            if (flashMaterial != null) Destroy(flashMaterial);
+            if (sprayMaterial != null) Destroy(sprayMaterial);
+        }
+        void Changed(string topic)
+        {
+            if (topic == "floor" || topic == "connection" && !app.Store.Connected) Holster();
+        }
         void PreferencesUpdated()
         {
             WorkerView.Blood = app.Preferences.blood;
@@ -63,8 +81,17 @@ namespace DroidOffice.UI
             var offset = grip - head;
             var back = -(offset.x * forward.x + offset.z * forward.z);
             var side = offset.x * forward.z - offset.z * forward.x;
-            return back >= 0.12f && back <= 0.62f && Mathf.Abs(side) <= 0.55f && offset.y >= -1.25f && offset.y <= -0.25f;
+            return HolsterRegion(back, side, offset.y);
         }
+        public static bool HolsterRegion(float back, float side, float height)
+        {
+            if (!float.IsFinite(back) || !float.IsFinite(side) || !float.IsFinite(height)) return false;
+            var waist = back >= 0.12f && back <= 0.62f && Mathf.Abs(side) <= 0.55f && height >= -1.25f && height <= -0.25f;
+            var shoulder = back >= 0.08f && back <= 0.5f && Mathf.Abs(side) >= 0.12f && Mathf.Abs(side) <= 0.5f &&
+                height >= -0.3f && height <= 0.18f;
+            return waist || shoulder;
+        }
+        Material flashMaterial, sprayMaterial;
         // Recoil (physical.ts): about 15 degrees up and 3 cm back, critically
         // damped home by RecoilSeconds.
         public static void Recoil(float seconds, out float pitch, out float back)
@@ -89,11 +116,11 @@ namespace DroidOffice.UI
             flash.name = "Muzzle flash"; Destroy(flash.GetComponent<Collider>());
             flash.transform.SetParent(model.transform, false); flash.transform.localPosition = Muzzle + Vector3.forward * 0.03f;
             flash.transform.localScale = new Vector3(0.05f, 0.05f, 0.09f);
-            var glow = new Material(material.shader) { name = "Muzzle flash" };
+            var glow = flashMaterial = new Material(material.shader) { name = "Muzzle flash" };
             glow.SetColor("_BaseColor", new Color(1, 0.7f, 0.28f)); glow.SetColor("_EmissionColor", new Color(1, 0.75f, 0.35f) * 2);
             flash.GetComponent<MeshRenderer>().sharedMaterial = glow;
             flash.SetActive(false);
-            var bloodMaterial = new Material(material.shader) { name = "Blood spray" };
+            var bloodMaterial = sprayMaterial = new Material(material.shader) { name = "Blood spray" };
             bloodMaterial.SetColor("_BaseColor", new Color(0.5f, 0.03f, 0.04f)); bloodMaterial.SetColor("_EmissionColor", new Color(0.2f, 0.01f, 0.02f));
             for (var i = 0; i < blood.Length; i++)
             {
@@ -107,22 +134,24 @@ namespace DroidOffice.UI
         }
         void Update()
         {
-            if (!Application.isFocused) { if (state == State.Held) Holster(); return; }
+            if (!Application.isFocused) { Holster(); leftAtHolster = rightAtHolster = false; return; }
             var head = motion.origin.Camera.transform;
             UpdateEffects();
             if (state == State.Dropped)
             {
-                dropVelocity += Physics.gravity * Time.deltaTime;
-                var step = dropVelocity * Time.deltaTime;
+                var dt = Mathf.Min(Time.deltaTime, 0.035f);
+                dropVelocity += Physics.gravity * dt;
+                var step = dropVelocity * dt;
                 if (Physics.Raycast(model.transform.position, step.normalized, out var floor, step.magnitude + 0.02f, ~0, QueryTriggerInteraction.Ignore))
                 { model.transform.position = floor.point + Vector3.up * 0.03f; dropVelocity = Vector3.zero; }
                 else model.transform.position += step;
                 if (Time.time - droppedAt > DropSeconds) Holster();
             }
-            Sample(motion.left, ref leftArmed, ref leftTriggerArmed, ref leftAtHolster, ref leftAtBody, head);
-            Sample(motion.right, ref rightArmed, ref rightTriggerArmed, ref rightAtHolster, ref rightAtBody, head);
+            Sample(motion.left, ref leftAtHolster, ref leftAtBody, head);
+            Sample(motion.right, ref rightAtHolster, ref rightAtBody, head);
             if (state != State.Held) return;
-            if (!hand.Valid) { Holster(); return; }
+            if (!hand.Valid || !ReferenceEquals(hand.Holder, this) || motion.InputCaptured) { Holster(); return; }
+            if (hand.HasAim) hold = Quaternion.Inverse(hand.Rotation) * hand.AimRotation;
             if (!hand.Grip)
             {
                 // Releasing grip suppresses a simultaneous trigger.
@@ -130,35 +159,38 @@ namespace DroidOffice.UI
                 return;
             }
             if (!hand.Trigger) triggerArmed = true;
-            else if (triggerArmed && !motion.InputCaptured) { triggerArmed = false; Fire(); }
+            else if (triggerArmed)
+            {
+                triggerArmed = false;
+                if (hand.HasAim && app.Store.Connected && app.Store.SnapshotReady &&
+                    !InBackHolster(hand.visual.position, head.position, head.rotation)) Fire();
+            }
             Recoil(Time.time - firedAt, out var pitch, out var back);
             model.transform.localPosition = hold * new Vector3(0, 0, -back);
             model.transform.localRotation = hold * Quaternion.Euler(-pitch, 0, 0);
         }
-        void Sample(TrackedGrip grip, ref bool armed, ref bool triggerReady, ref bool atHolster, ref WorkerView atBody, Transform head)
+        void Sample(TrackedGrip grip, ref bool atHolster, ref WorkerView atBody, Transform head)
         {
-            if (grip == null || !grip.Valid || grip.visual == null) { armed = triggerReady = atHolster = false; atBody = null; return; }
+            if (grip == null || !grip.Valid || grip.visual == null || motion.InputCaptured)
+            { atHolster = false; atBody = null; return; }
             var point = grip.visual.position;
             var holster = Enabled && state != State.Held && grip.Holder == null && InBackHolster(point, head.position, head.rotation);
             if (holster && !atHolster) grip.Haptic(0.1f, 0.02f);
             atHolster = holster;
-            if (!grip.Grip) armed = true;
-            else if (armed)
-            {
-                armed = false;
-                if (holster) Draw(grip);
-            }
+            if (grip.GripPressed && (holster || Enabled && state == State.Dropped && grip.Holder == null &&
+                Vector3.Distance(point, model.transform.position) < 0.16f &&
+                !Physics.Linecast(point, model.transform.position, ~0, QueryTriggerInteraction.Ignore))) Draw(grip);
             // Revival is the free hand's use action at the body; the gun hand's trigger fires.
             var body = grip.Holder == null ? BodyNear(point) : null;
             if (body != null && body != atBody) grip.Haptic(0.15f, 0.02f);
             atBody = body;
-            if (!grip.Trigger) triggerReady = true;
-            else if (triggerReady)
+            if (body != null) grip.ConsumeUse();
+            if (grip.TriggerPressed)
             {
-                triggerReady = false;
                 if (body != null && app.Store.Connected && grip.Holder == null)
                 {
                     grip.Haptic(0.6f, 0.06f);
+                    InteractionAudio.Play(point, InteractionCue.Revive, 0.7f);
                     _ = app.Connection.SendAsync(new ClientWorkerRevive { workerId = body.Worker.Id });
                 }
             }
@@ -166,42 +198,51 @@ namespace DroidOffice.UI
         WorkerView BodyNear(Vector3 point)
         {
             foreach (var view in views)
-                if (view.Worker != null && view.Worker.Downed && view.BodyBounds().SqrDistance(point) <= ReviveTouch * ReviveTouch) return view;
+                if (view.Worker != null && view.Worker.Downed && view.BodyBounds().SqrDistance(point) <= ReviveTouch * ReviveTouch &&
+                    !Physics.Linecast(point, view.BodyBounds().ClosestPoint(point), ~0, QueryTriggerInteraction.Ignore)) return view;
             return null;
         }
         public bool Draw(TrackedGrip grip)
         {
-            if (grip == null || grip.visual == null || !grip.Claim(this)) return false;
+            if (!Enabled || grip == null || !grip.Valid || grip.visual == null || state == State.Held || !grip.Claim(this, HandPose.Tool)) return false;
             EnsureModel();
-            hand = grip; state = State.Held; triggerArmed = !grip.Trigger;
+            hand = grip; state = State.Held; triggerArmed = false; firedAt = -10;
             // Bore along the runtime's aim, handle at the grip origin.
             hold = grip.HasAim ? Quaternion.Inverse(grip.Rotation) * grip.AimRotation : Quaternion.identity;
             model.transform.SetParent(grip.visual, false);
             model.transform.SetLocalPositionAndRotation(Vector3.zero, hold);
             model.SetActive(true);
             grip.Haptic(0.35f, 0.04f);
+            InteractionAudio.Play(grip.visual.position, InteractionCue.Draw, 0.8f);
             return true;
         }
         public void Holster()
         {
+            var wasHeld = state == State.Held && hand != null && hand.visual != null;
+            if (wasHeld) InteractionAudio.Play(hand.visual.position, InteractionCue.Holster, 0.7f);
             hand?.Release(this); hand = null; state = State.Holstered;
+            triggerArmed = false;
             if (model != null) { model.SetActive(false); model.transform.SetParent(transform, false); flash.SetActive(false); }
+            foreach (var drop in blood) if (drop != null) drop.gameObject.SetActive(false);
         }
         void Drop()
         {
-            var velocity = hand.Velocity;
+            var velocity = hand.ReleaseVelocity(model.transform.position - hand.visual.position);
             hand.Release(this); hand = null;
-            state = State.Dropped; droppedAt = Time.time; dropVelocity = motion.origin.transform.rotation * velocity;
+            state = State.Dropped; droppedAt = Time.time; dropVelocity = velocity;
             model.transform.SetParent(transform, true); flash.SetActive(false);
         }
         void Fire()
         {
             firedAt = Time.time; flashUntil = Time.time + 0.06f; flash.SetActive(true);
             hand.Haptic(1, 0.07f);
+            InteractionAudio.Play(model.transform.TransformPoint(Muzzle), InteractionCue.Shot);
             // The bullet leaves as aimed, before the kick.
             model.transform.localPosition = Vector3.zero; model.transform.localRotation = hold;
             var origin = model.transform.TransformPoint(Muzzle);
             var direction = model.transform.forward;
+            // A muzzle pushed through a wall must not shoot from the other side.
+            if (Physics.Linecast(hand.visual.position, origin, ~0, QueryTriggerInteraction.Ignore)) return;
             var hit = Target(origin, direction, out var distance);
             if (hit == null) return;
             hit.Shot();

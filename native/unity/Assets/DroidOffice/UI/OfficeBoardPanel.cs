@@ -62,7 +62,9 @@ namespace DroidOffice.UI
             // layout anchor (office.ts); mount in front, not inside its mesh.
             rect.localPosition = new Vector3(0, 0, -0.165f);
             var canvas = root.AddComponent<Canvas>(); canvas.renderMode = RenderMode.WorldSpace; canvas.worldCamera = terminals.motion.origin.Camera;
-            root.AddComponent<TrackedDeviceGraphicRaycaster>(); root.AddComponent<UnityEngine.UI.Image>().color = Hex(0x0a0a0a);
+            var raycaster = root.AddComponent<TrackedDeviceGraphicRaycaster>();
+            raycaster.checkFor3DOcclusion = true; raycaster.raycastTriggerInteraction = QueryTriggerInteraction.Ignore;
+            root.AddComponent<UnityEngine.UI.Image>().color = Hex(0x0a0a0a);
             if (kind == "issues") CreateNotes(); else CreateList();
             status = FocusedPanel.Label(rect, "", new Vector2(-115, -252), new Vector2(850, 56), terminals.font, 23);
             status.color = new Color(0.55f, 0.55f, 0.55f);
@@ -87,7 +89,7 @@ namespace DroidOffice.UI
         void CreateNotes()
         {
             summary = Heading("ISSUES");
-            var hint = FocusedPanel.Label(rect, "Grab a card, carry it to a desk or the task queue, and let go.",
+            var hint = FocusedPanel.Label(rect, "Take a card and offer it to an agent. Distant cards come with a pull toward you.",
                 new Vector2(0, 150), new Vector2(1140, 44), terminals.font, 24);
             hint.color = new Color(0.62f, 0.62f, 0.6f);
             notesRoot = new GameObject("Issue notes", typeof(RectTransform)).GetComponent<RectTransform>();
@@ -118,7 +120,14 @@ namespace DroidOffice.UI
             if (topic == "floor" || topic == "connection" || topic == kind || topic == "gh." + kind) dirty = true;
         }
         // The card in a hand leaves its place on the board until it is put down.
-        public void SetCarried(int number) { if (carried != number) { carried = number; dirty = true; } }
+        public void SetCarried(int number)
+        {
+            if (carried == number) return;
+            carried = number;
+            // Keep every other pin in place while a card is carried. Rebuilding
+            // the entire board on grab shifted notes under the other hand.
+            foreach (var note in notes) note.Rect.gameObject.SetActive(note.Card.Number != carried);
+        }
         public void Hover(int number)
         {
             if (hovered == number) return;
@@ -152,7 +161,7 @@ namespace DroidOffice.UI
             var all = BoardView.Read(app.Store, "issues", "", 0, BoardView.MaxItems);
             var open = new List<BoardItem>();
             foreach (var item in all.Items)
-                if (item.State == "OPEN" && item.Id != carried.ToString(System.Globalization.CultureInfo.InvariantCulture)) open.Add(item);
+                if (item.State == "OPEN") open.Add(item);
             var perPage = MaxColumns * MaxRows;
             var pages = Mathf.Max(1, (open.Count + perPage - 1) / perPage);
             page = Mathf.Clamp(page, 0, pages - 1);
@@ -171,6 +180,7 @@ namespace DroidOffice.UI
                 var c = i % columns; var r = i / columns;
                 var x = -600 + gx + c * (w + gx) + w / 2; var y = NotesTop - gy - r * (h + gy) - h / 2;
                 notes.Add(CreateNote(item, number, urls.TryGetValue(item.Id, out var url) ? url : "", new Vector2(x, y), new Vector2(w, h), fs));
+                notes[notes.Count - 1].Rect.gameObject.SetActive(number != carried);
             }
             summary.text = open.Count == 0 ? "" : open.Count + " open";
             status.text = !app.Store.Connected || all.Total == 0 && open.Count == 0 && carried == 0 ? all.Status :
@@ -210,11 +220,27 @@ namespace DroidOffice.UI
             Note best = null; var bestDistance = float.MaxValue;
             foreach (var note in notes)
             {
+                if (!note.Rect.gameObject.activeInHierarchy) continue;
                 var local = note.Rect.InverseTransformPoint(point);
                 var half = note.Rect.rect.size / 2 + Vector2.one * (0.04f / CanvasScale);
                 if (Mathf.Abs(local.x) > half.x || Mathf.Abs(local.y) > half.y) continue;
                 var distance = new Vector2(local.x, local.y).sqrMagnitude;
                 if (distance < bestDistance) { best = note; bestDistance = distance; }
+            }
+            return best;
+        }
+        public Note FetchAt(Vector3 origin, Vector3 direction)
+        {
+            Note best = null; var score = Mathf.Cos(6 * Mathf.Deg2Rad);
+            foreach (var note in notes)
+            {
+                if (!note.Rect.gameObject.activeInHierarchy) continue;
+                var delta = note.Rect.position - origin;
+                if (delta.sqrMagnitude > 36 || delta.sqrMagnitude < 0.15f * 0.15f ||
+                    Vector3.Dot(origin - note.Rect.position, -note.Rect.forward) <= 0) continue;
+                var alignment = Vector3.Dot(delta.normalized, direction);
+                if (alignment <= score || Physics.Linecast(origin, note.Rect.position, ~0, QueryTriggerInteraction.Ignore)) continue;
+                best = note; score = alignment;
             }
             return best;
         }

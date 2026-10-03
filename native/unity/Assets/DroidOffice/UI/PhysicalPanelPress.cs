@@ -33,7 +33,12 @@ namespace DroidOffice.UI
                 leftContact |= left; rightContact |= right;
                 if (!left && !right) continue;
                 contact.Add(button);
-                if ((left && leftArmed || right && rightArmed) && pressed.Add(button)) button.onClick.Invoke();
+                if ((left && leftArmed || right && rightArmed) && pressed.Add(button))
+                {
+                    (left && leftArmed ? motion.left : motion.right).Haptic(0.22f, 0.025f);
+                    InteractionAudio.Play(button.transform.position, InteractionCue.Click, 0.7f);
+                    button.onClick.Invoke();
+                }
             }
             if (!leftContact && motion.left?.Valid == true && !motion.left.Trigger) leftArmed = true;
             if (!rightContact && motion.right?.Valid == true && !motion.right.Trigger) rightArmed = true;
@@ -41,8 +46,8 @@ namespace DroidOffice.UI
         }
         static bool Touches(TrackedGrip hand, RectTransform rect)
         {
-            if (hand == null || !hand.Valid || hand.Trigger) return false;
-            var tip = hand.visual.position + hand.visual.rotation * new Vector3(0, 0, 0.09f);
+            if (hand == null || !hand.Valid || hand.Trigger || hand.UseConsumed || hand.Holder != null || hand.visual == null) return false;
+            var tip = hand.Point;
             var local = rect.InverseTransformPoint(tip); var scale = rect.lossyScale;
             return rect.rect.Contains(new Vector2(local.x, local.y)) && local.z * scale.z >= -0.012f && local.z * scale.z <= 0.004f;
         }
