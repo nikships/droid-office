@@ -55,8 +55,15 @@ namespace DroidOffice.Tests
         [Test] public void OverviewIsDecodedBeforeStoreDrain()
         {
             var message = Wire.Parse(Encoding.UTF8.GetBytes("{\"t\":\"screen\",\"workerId\":\"a\",\"cols\":4,\"rows\":2,\"full\":true,\"cursor\":[1,0],\"lines\":{\"0\":[[\"Áb\",-1,1,2]]}}"), 1);
-            Assert.That(message.Terminal.Lines[0].Cells[0].Text, Is.EqualTo("Á"));
+            Assert.That(message.Terminal.Lines[0].Cells[0].Text, Is.EqualTo("Á"));
             Assert.That(message.Terminal.Lines[0].Cells[1].Text, Is.EqualTo("b"));
+        }
+        [Test] public void OverviewReservesBothCellsForWideUnicode()
+        {
+            var message = Wire.Parse(Encoding.UTF8.GetBytes("{\"t\":\"screen\",\"workerId\":\"a\",\"cols\":4,\"rows\":2,\"full\":true,\"cursor\":[3,0],\"lines\":{\"0\":[[\"中x\",-1,-1,0]]}}"), 1);
+            var cells = message.Terminal.Lines[0].Cells;
+            Assert.That(cells[0].Text, Is.EqualTo("中")); Assert.That(cells[0].Width, Is.EqualTo(2));
+            Assert.That(cells[1].Width, Is.Zero); Assert.That(cells[2].Text, Is.EqualTo("x"));
         }
         [TestCase(-1, true, 0xeeeeeeu)][TestCase(-1, false, 0x0a0a0au)]
         [TestCase(1, true, 0xff5c7au)][TestCase(16, true, 0u)][TestCase(231, true, 0xffffffu)]
@@ -80,5 +87,21 @@ namespace DroidOffice.Tests
             Assert.That(TerminalKeys.Arrow('A', true), Is.EqualTo("\u001bOA"));
             Assert.That(TerminalKeys.Arrow('B', false), Is.EqualTo("\u001b[B"));
         }
+        [Test] public void CompactShortcutsUseCliModesAndDroidModifiedEnter()
+        {
+            var application = new TerminalInputModes(true, true);
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.Up, true, application), Is.EqualTo("\u001bOA"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.Right, false, default), Is.EqualTo("\u001b[C"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.Tab, true, default), Is.EqualTo("\t"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.Interrupt, true, default), Is.EqualTo("\u0003"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.ControlX, true, default), Is.EqualTo("\u0018"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.Escape, true, default), Is.EqualTo("\u001b"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.ControlEnter, true, default), Is.EqualTo("\u001b[13;5u"));
+            Assert.That(TerminalKeys.Quick(TerminalQuickKey.ControlEnter, false, default), Is.EqualTo("\r"));
+        }
+        [TestCase(0x0301, 0)][TestCase(0x200d, 0)][TestCase(0x4e2d, 2)]
+        [TestCase(0x1f600, 1)][TestCase(0x1f1fa, 1)][TestCase(0xe0b0, 1)][TestCase(0xf0001, 1)]
+        public void CellWidthsMatchCurrentServerUnicodeProvider(int scalar, int width) =>
+            Assert.That(TerminalUnicode.Width(scalar), Is.EqualTo(width));
     }
 }

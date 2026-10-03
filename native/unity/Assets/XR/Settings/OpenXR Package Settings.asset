@@ -51,6 +51,7 @@ MonoBehaviour:
   - {fileID: 5148856855073793197}
   - {fileID: -8943817891999431183}
   - {fileID: 3927262562171081544}
+  - {fileID: -1798500946069678037}
   - {fileID: 8892077883310875342}
   - {fileID: 8461049863656712682}
   - {fileID: 4367428789342052095}
@@ -743,6 +744,28 @@ MonoBehaviour:
   featureIdInternal: com.unity.openxr.feature.input.khrsimpleprofile
   openxrExtensionStrings: 
   company: Unity
+  priority: 0
+  targetOpenXRApiVersion: 
+  required: 0
+  customRuntimeLoaderName: 
+--- !u!114 &-1798500946069678037
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 63aada457afa647678e2a7cf4ebab4ab, type: 3}
+  m_Name: DisplayRefreshFeature Android
+  m_EditorClassIdentifier: DroidOffice.World::DroidOffice.World.DisplayRefreshFeature
+  m_enabled: 1
+  nameUi: Droid Office display refresh
+  version: 1.0.0
+  featureIdInternal: dev.droidoffice.display-refresh
+  openxrExtensionStrings: XR_FB_display_refresh_rate
+  company: Droid Office
   priority: 0
   targetOpenXRApiVersion: 
   required: 0

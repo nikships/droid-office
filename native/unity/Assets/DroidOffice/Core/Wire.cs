@@ -14,9 +14,11 @@ namespace DroidOffice.Core
         public readonly JObject Json;
         public readonly int Generation, Bytes;
         public readonly TerminalFrame Terminal;
-        public ParsedMessage(string tag, object value, JObject json, int generation, int bytes)
+        public readonly AttachedTerminalSnapshot Attached;
+        public ParsedMessage(string tag, object value, JObject json, int generation, int bytes, AttachedTerminalSnapshot attached = null)
         {
-            Tag = tag; Value = value; Json = json; Generation = generation; Bytes = bytes;
+            Tag = tag; Value = value; Json = json; Generation = generation; Bytes = checked(bytes + (attached?.EstimatedBytes ?? 0));
+            Attached = attached;
             if (value is ServerScreen screen) Terminal = TerminalFrame.DecodeOverview(screen);
         }
     }

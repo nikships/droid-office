@@ -19,3 +19,8 @@
 *.slnx
 *.apk
 /Tools/.cache/
+# Baked from Assets/DroidOffice/Fonts by "Droid Office/Bake Unicode terminal fonts"
+# (about 420 MB, over GitHub's file limit). Nothing references it by GUID.
+/Assets/DroidOffice/Resources/TerminalGlyphBank.asset
+/Assets/DroidOffice/Resources/TerminalGlyphBank.asset.meta
+/Assets/DroidOffice/Resources.meta

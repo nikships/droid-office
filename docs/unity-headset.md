@@ -1,6 +1,6 @@
 # Unity headset app: specification and plan
 
-**Status:** implementation in progress. Baseline `28cf00f` on `main`; section 25 records
+**Status:** implementation in progress. Published baseline `728f146` on `main`; section 25 records
 the implemented foundation and measured evidence. The other sections remain the target
 specification, not a claim that their features or milestone exits are complete.
 
@@ -58,7 +58,8 @@ practice that means:
 2. See which agents need you: red lamps at their desks, a ping from their direction, a count on
    the back of your left hand, a list on the tablet.
 3. Walk up to an agent, open its laptop, read the terminal and answer, with a paired keyboard,
-   the quick-answer pad or the poke keyboard.
+   and the compact terminal shortcut buttons. Text entry uses external keyboards
+   only; there is no virtual in-VR typing keyboard.
 4. Pull an issue card off the board, from across the room with a flick of the wrist, and hand it
    to an agent. The agent takes it, reads it and starts typing.
 5. Put a card on an empty desk and ring the desk bell to hire an agent for it.
@@ -180,7 +181,7 @@ recycles DTO instances where it can.
 | `DroidOffice.Settings` | Core | Local preferences, schema, migration |
 | `DroidOffice.World` | Core, Settings | Layout anchors, floors, elevator, ladder, poles, rooms, lighting, audio zones |
 | `DroidOffice.Workers` | World | Worker characters, animation, nameplates, laptops |
-| `DroidOffice.Terminal` | Core, World | Terminal renderer, focus panel, keyboards |
+| `DroidOffice.Terminal` | Core, World | Terminal renderer, focus panel, external keyboard input and shortcut buttons |
 | `DroidOffice.Interaction` | World, XRI | Rig, hands, grabs, pokes, fetch, throw, climb, locomotion, haptics |
 | `DroidOffice.UI` | Interaction | Design system, tablet, panels, wrist display |
 | `DroidOffice.Features.*` | the above | Boards, queue, hiring, PRs, changes, meetings, monitors, bookshelf |
@@ -242,7 +243,7 @@ The app opens in **the lobby**: a quiet, softly lit entrance hall, distinct from
 1. A wall screen lists offices found nearby (`_droidoffice._tcp`, existing discovery rules:
    generation-checked callbacks, at most 16 offices, 6 s resolve timeout, 8 s empty hint).
    Each row shows the laptop name and port.
-2. **Enter an address** opens the poke keyboard for a manual origin.
+2. **Enter an address** opens an address field for an external keyboard.
 3. Choosing an office starts pairing ([protocol section 4](headset-protocol.md#4-proposed-device-pairing-and-device-tokens)):
    - Code comparison: the screen shows six large digits and says "Check your laptop shows the
      same code, then press Allow there".
@@ -532,7 +533,7 @@ Each subsection lists the affordances, the server messages, and the feedback. "R
 | Open the terminal | Touch the laptop's trackpad, or point and trigger | `worker.attach {format: 'grid'}` |
 | Wake an asleep agent | Tap its shoulder | `worker.resume` with result; it lifts its head |
 | Desk panel | A small angled panel on the desk edge, shown when you stand at the desk: Prompt, Changes, PR, Send home | Below |
-| Prompt | Opens the keyboard with a prompt field; Send | `worker.prompt` |
+| Prompt | Opens a prompt field for the external keyboard; Send | `worker.prompt` |
 | Changes | Section 9.10 | `changes.*` |
 | Pull request | "Open pull request" or "View #N" | `worker.pr` |
 | Send home | Hold to confirm, after choosing cleanup if it has a worktree (`worker.worktree` first; Keep, Remove worktree, Remove worktree and branch) | `worker.kill` |
@@ -561,8 +562,11 @@ facing you at the **Terminal distance** setting (default 0.9 m), about 0.9 m wid
 | Method | Use |
 | --- | --- |
 | Paired Bluetooth keyboard | Primary. Keys go to the focused terminal; Enter and modified Enter follow `src/client/term-keys.ts`; paste is bracketed when the grid's `bracketedPaste` mode is on |
-| Quick-answer pad | Always under the focused terminal: 1, 2, 3, y, n, Enter, Esc, Tab, arrows, Ctrl-C. Big physical keys for the answers agents usually need |
-| Poke keyboard | Full layout on a tray below the terminal, pressed with fingertips; for short prompts without a paired keyboard |
+| Terminal shortcuts | Compact UI buttons under the full worker terminal: Tab, arrows, Ctrl+C, Esc, Ctrl+Enter, Ctrl+X, and Enter. Input modes and provider-specific modified Enter remain authoritative |
+
+**Owner contract:** external keyboards only, including a Bluetooth keyboard
+connected to the headset. No full virtual keyboard in VR and no Android soft
+keyboard. The shortcut buttons are not a text-entry keyboard.
 
 Keyboard focus is explicit: the focused terminal has a lit border; typing never goes anywhere
 else; a paired keyboard's keys never move the player.
@@ -638,7 +642,7 @@ tray. Jira, when the floor has an epic, is a tab on the issues board.
 ### 9.6 Kiosk agents
 
 The three kiosks (`station-issues`, `station-pulls`, `station-queue`) have agents who manage
-their boards. Walk up and touch the kiosk's screen to talk: the keyboard opens with a prompt
+their boards. Walk up and touch the kiosk's screen to talk: a prompt field opens for the external keyboard
 field; Send uses `station.prompt`. The agent's terminal opens like a desk terminal.
 
 ### 9.7 The elevator
@@ -994,7 +998,7 @@ never counts.
 | --- | --- |
 | Permissions | `INTERNET`, `android.permission.EYE_TRACKING_FINE`, `VIBRATE` if Unity's haptics path needs it, plus whatever QR tracking needs if U0 adopts it |
 | Not requested | `RECORD_AUDIO` (neither the current app nor this one uses the microphone), hand tracking, storage (pickers use the system photo and document pickers) |
-| Features | `android.software.xr.api.openxr` and `android.hardware.xr.input.controller` required; `android.hardware.xr.input.eye_tracking` not required at install but needed for foveation. The current app's `glEsVersion` requirement is dropped |
+| Features | `android.software.xr.api.openxr` required; `android.hardware.xr.input.controller` optional so viewing/startup does not require controllers. Motion controllers remain the only interaction scheme; no hand tracking. `android.hardware.xr.input.eye_tracking` is not required at install but is needed for foveation. The current app's `glEsVersion` requirement is dropped |
 | XR properties | `PROPERTY_XR_ACTIVITY_START_MODE` = `XR_ACTIVITY_START_MODE_FULL_SPACE_UNMANAGED` and `PROPERTY_XR_BOUNDARY_TYPE_RECOMMENDED` = `XR_BOUNDARY_TYPE_LARGE`, as the current app; checked against what Unity's Android XR build writes in U0 |
 | Backup | `allowBackup="false"`, as today (tokens must not leave the device) |
 | Network security | HTTPS for everything once paired; cleartext only to show an HTTP office's "start with `--self-signed`" message |
@@ -1042,7 +1046,7 @@ surface that would ship in a top-tier VR game, judged by someone other than its 
 ### 16.1 Surfaces
 
 Tablet Home, Find, each Settings section, Office, About; the back-of-hand display; the lobby and
-pairing; the focused terminal with its pads and keyboard; the desk panel; the hiring kiosk; issue
+pairing; the focused terminal with its shortcut buttons and external keyboard focus; the desk panel; the hiring kiosk; issue
 and PR cards (front, back, reading panel); the stamp station; the queue board and tray; the
 elevator car panel and display; the meeting console and whiteboard; the monitors; the changes
 clipboard; the bookshelf reader; object messages.
@@ -1116,7 +1120,7 @@ passing review.
 | Coordinates | Golden placements of desk, laptop, board and elevator; round trip to `floor.go.at` | EditMode |
 | Settings | Defaults, ranges, schema migration, atomic save, migration from the old APK's files | EditMode |
 | Prompts | `issuePrompt`, `ticketPrompt` and meeting presets render the same text as the browser for shared fixtures | EditMode |
-| Interaction | Scripted XR Interaction Simulator scenarios: fetch a card, hand it to an agent, drop it in the tray, press an elevator button, climb the ladder, slide a pole, stamp a PR, poke-type a prompt, hold-to-confirm cancel | PlayMode |
+| Interaction | Scripted XR Interaction Simulator scenarios: fetch a card, hand it to an agent, drop it in the tray, press an elevator button, climb the ladder, slide a pole, stamp a PR, type a prompt with an external keyboard, press terminal shortcuts, hold-to-confirm cancel | PlayMode |
 | Integration | The headset app (editor, no XR) against a real `droid-office` server started by the test harness with fake agent commands: pair, connect, hire, prompt, queue, floor travel, reconnect during a hire (no duplicate), revocation | PlayMode |
 | Device | The acceptance list (section 19) on the Galaxy XR, recorded | Manual, recorded |
 | Performance | Section 14.3 captures | Manual, recorded |
@@ -1134,7 +1138,7 @@ with an art contributor from U6; they are planning ranges.
 | --- | --- | --- | --- |
 | **U0 Spike** | Section 20 | Spike report with numbers and decisions U-D1 to U-D9 | 1–2 weeks |
 | **U1 Skeleton** | Project, assemblies, `AGENTS.md`, generated protocol, store, connection (development-only LAN-token join URL until B2, then pairing), greybox office from layout JSON, rig, teleport, snap turn, agents as placeholder robots with lamps and nameplates | Walk the greybox office and watch live agent states change as they do on the laptop | 2–3 weeks |
-| **U2 Terminals** | Overview and focused terminals (grid, needs B5), paired keyboard, quick-answer pad, poke keyboard, scrolling and history, resize ownership, desk panel Prompt | Answer a `needs_input` agent entirely from the headset; terminal surfaces pass review | 2–3 weeks |
+| **U2 Terminals** | Overview and focused terminals (grid, needs B5), external keyboard only, compact terminal shortcuts, scrolling and history, resize ownership, desk panel Prompt | Answer a `needs_input` agent entirely from the headset with its connected external keyboard and shortcut buttons; terminal surfaces pass review | 2–3 weeks |
 | **U3 Physical core** | Gloves and poses, grab, fetch, throw, poke buttons, hold-to-confirm, haptics and sounds; issue board and cards; handing cards to agents; hiring kiosk and bell; queue tray and shredder; elevator; ladder; poles; results everywhere (needs B4) | Scenarios 1–8 of section 19 pass on device | 3–5 weeks |
 | **U4 Tablet and settings** | Tablet, holster, pages, back-of-hand display, every setting, lobby and pairing, failure states | Every tablet surface passes review; every setting works and persists | 2–3 weeks |
 | **U5 Office depth** | PR board and stamp station, reading panels, comments, labels, close; changes clipboard; meetings v1; monitors; services; bookshelf; picture drop | Scenarios 9–12 pass on device; their surfaces pass review | 3–4 weeks |
@@ -1152,7 +1156,7 @@ All on the physical headset, recorded, with the laptop untouched after starting 
 1. Launch the app; it reconnects to the saved office and puts you on your last floor within 8 s.
 2. Find every agent that needs you from the lamps, the ping and the tablet; press X to go to the
    next one.
-3. Open a waiting agent's laptop, read the question, answer with the quick-answer pad; the agent
+3. Open a waiting agent's laptop, read the question, answer with the external keyboard and terminal shortcuts; the agent
    continues.
 4. Fetch an issue card from across the room, hand it to an idle agent; it starts working; the card
    leaves the board.
@@ -1483,3 +1487,280 @@ functions. Source whitespace checks pass; a whole-tree `git diff --check` report
 Unity-authored empty YAML fields with trailing spaces, which were not hand-edited.
 Root dependency installation/CI and a release build were not run or changed.
 Reproduction: `native/unity/Tools/DEVICE-CHECKS.md`.
+
+### 25.6 Source office, controls and native refresh continuation
+
+This supersedes the earlier foundation's 72 Hz-only status, not its historical
+measurements. The authoritative Three.js office is exported as **962 meshes /
+89,208 triangles / 149 batches**, plus the worker/laptop assets, 36 laptop mounts
+and source collision/slab topology. Unity imports those assets rather than
+inventing a separate office. The elevator is open and settled for this static
+ground-floor foundation; floor travel, roof and elevator gameplay are not complete.
+
+Collision-aware left-stick movement and preference-selected XRI snap/smooth
+turning now have neutral rearming after focus/tracking loss. The owner's persisted
+choices are **smooth movement on, smooth turning, vignette Off**. The imported XRI
+vignette remains available only when explicitly selected. Physical locomotion and
+comfort sign-off are still pending.
+
+A native `XR_FB_display_refresh_rate` feature resolves the functions through
+`xrGetInstanceProcAddr` and tracks the OpenXR instance/session lifecycle. Device
+readbacks report **90 Hz through both native and Unity getters**, native request
+result **0**, supported rates 60/72/90, and recommended eye targets **1856×2160**.
+Requests do not wait for application input focus, but do require a running
+session and advertised support. Both generated manifests make the controller
+feature optional; Touch input stays enabled, and hand tracking stays disabled.
+Google's [Android XR manifest guidance](https://developer.android.com/develop/xr/openxr/get-started#packagemanager-features)
+distinguishes controller availability from a mandatory startup requirement.
+
+Refresh readback is **not sustained 90 FPS acceptance**. The last valid focused
+controls capture has **8,641 samples / 120.0126 s**, about **72.0 FPS** at **72 Hz**:
+interval median 13.902 ms, p95 15.408 ms, maximum 22.310 ms; draw median 86, p95 126,
+maximum 136; triangle median 83,431, p95 118,251; GC median 936 bytes. GPU/render
+timing is unavailable. A later native-90 automated capture ran unfocused and
+paused for **831 seconds**, producing a 911-second file. It is not a valid
+120-second performance run, even though its legacy header says `Complete`.
+The capture code now interrupts after a frame gap over one second, restarts
+warmup after a pause, and labels visible/unfocused captures separately.
+Never replace the worn, populated, tablet-open/tablet-closed checks with those files.
+
+Device texture inventory reports approximately **1.426 GB** in Unity's resource
+estimates: **1.160 GB RenderTexture**, including four XR targets, and **266 MB
+Texture2D**. This is not proof of Vulkan resident memory and does not meet the
+600 MB total-texture budget. Art is not the largest reported category; MSAA,
+depth/opaque buffers and provider target allocation require measurement before
+quality changes. Optimize Buffer Discards is already enabled.
+
+The connected settings panel is a **partial U4 implementation**, not a completed
+physical tablet. It exposes 11 movement, turning/comfort and graphics controls,
+persists validated copies through OfficeApp, disables incompatible/read-only
+controls, confirms page-scoped resets, and separates requested graphics values
+from readbacks. The left Menu toggle and right tracked trigger ray cancel stale
+input and capture locomotion while open. Native
+`xrEnumerateViewConfigurationViews` bounds render scale by both runtime axes and
+`SystemInfo.maxTextureSize`; unavailable limits conservatively disallow upscaling.
+Physical grab/holster/poke, Home/Find/Office/About, the other settings, feedback,
+design review and owner readability/input approval remain open. Diagnostics and
+mono captures are development-only, not production surface approval.
+
+### 25.7 Settings-panel build validation, 2026-10-02
+
+The saved scene and connected controls pass **131/131 EditMode tests**, before
+and after Android packaging. Repository lint/typecheck, **895/895 coverage
+tests** and protocol/layout drift checks pass. All new assets have companion
+meta files. Source whitespace checks pass; Unity-authored YAML is not hand-edited.
+The independent batch runner, dependency reinstall, release build and physical
+device acceptance were not run.
+
+Editor PlayMode advances with 12 connected synthetic agents. Direct button-event
+checks verify a value change, page navigation, reset confirmation and locomotion
+capture/release. Three fixed-mono page images render without clipping. These are
+scripted/renderer checks, not tracked-controller input tests. A test-runner
+cleanup race was resolved by waiting until the framework finished restoring
+scenes before entering PlayMode.
+
+The installed development APK is **113,393,689 bytes**, built in **44.961842 s**
+with **0 errors / 347 warnings**. V2 signature verification and 16 KiB ZIP
+alignment pass. The final manifest declares controllers optional and no
+microphone/hand-tracking input. The Static font retains **192 characters /
+191 glyphs** after packaging. Only `dev.droidoffice.xr.unity` was updated.
+
+Device PID 26569 reports Vulkan, **12 connected working agents / 12 100×30
+grids**, advancing messages, native/Unity **90 Hz**, native request result 0,
+render scale 1, recommended/actual **1856×2160** and runtime maximum
+**3152×3682**. Smooth movement, Smooth turning and vignette Off survive the
+install. `capture-settings` produces a correct fixed-mono Android panel and
+restores visibility; this is not an eye or readability capture.
+
+The headset is unfocused/unworn. Performance-metrics initialization remains
+unsupported, and runtime/driver/tracking warnings remain. Do not call the
+runtime log clean. A new `capture-performance-visible` reached warmup, then
+stopped advancing; it produced no valid new timing file. Restarting the
+development app cancelled it, and a fresh status from PID 27663 confirms an
+idle capture state, 12 connected agents, 90 Hz and unchanged controls.
+Worn sustained 90 FPS, two updating focused terminals, physical ray/poke,
+tablet holster/grab and section 16 approval remain **NOT RUN / incomplete**.
+
+### 25.8 Real terminals, Unicode and external keyboards, 2026-10-02
+
+The owner requires real-office validation, not synthetic substitutes. The
+current loopback development server uses the actual checkout and actual Droid
+and shell workers. Unity Input System text plus Enter reached a real Droid,
+which returned `UNITY_KEYBOARD_PATH_OK`. A real Oh My Zsh/Agnoster shell
+printed the Unicode test sample through the same path. These are software
+input tests, not Bluetooth-keyboard or physical-controller acceptance.
+
+Focused terminals are desk anchored, capped at three, explicitly focused and
+closed beyond six metres. Attach snapshots and live ANSI streams remain
+separate from overview grids in OfficeStore. Resize, authoritative input modes,
+provider-aware modified Enter, bracketed paste and cancellation use the real
+protocol-1 adapter. Outbound JSON and socket work run away from Unity's thread.
+Clear-screen bursts exposed snapshot-queue overflow; receive-side decoding now
+keeps the latest pending immutable live screen per worker without coalescing
+across authoritative boundaries. Repeated actual shell bursts remain connected.
+
+The owner's revised input contract is **external keyboards only**, including
+Bluetooth. No virtual in-VR typing keyboard or Android soft keyboard is
+implemented or planned. Compact Tab, four arrows, Ctrl+C, Esc, Ctrl+Enter,
+Ctrl+X and Enter buttons appear under the full terminal. The former letter/
+number answer pad and poke-keyboard requirements are superseded.
+
+A shared baked glyph bank contains **63,341 glyph/sequence keys**, including
+all **10,624** codepoints of the bundled Nerd Font 3.5.1, CJK, Latin/Greek/
+Cyrillic text, symbols and **3,770** emoji-sequence mappings. Licensed,
+hash-pinned source fonts and their OFL notices accompany the reproducible bake.
+All terminal panels share the texture array and metrics, rather than allocating
+one atlas per panel or depending on headset system fonts. The shader spans
+wide cells and composes supported emoji sequences without changing logical
+cells. Those cell widths match the real server's Unicode 6 provider.
+
+The pinned TMP bulk APIs required a surrogate-unit workaround for supplementary
+glyphs, plus glyph-alias deduplication when packing multiple atlas pages.
+**191/191 EditMode tests** pass, including full Nerd Font coverage, actual
+rasterized pixels, Unicode widths, emoji composition, terminal bursts and
+shortcut encoding. A fixed-mono image of the real Agnoster terminal verifies
+the sampled glyphs and shortcut layout. It is not headset-eye readability,
+complete complex-script shaping/bidi support, or section 16 approval.
+
+The updated Android APK built successfully: **198,412,998 bytes**, **59.891767
+seconds**, **zero errors / 347 warnings**. V2 signing, 16 KiB ZIP alignment and
+controller-optional manifest checks pass. It installed only over the development
+app; the legacy app and its data remain unchanged. Android Vulkan readbacks
+show requested/native/actual **90 Hz**, scale 1, and 1856 × 2160 eye targets.
+The real shell's Agnoster, Unicode and shortcut panel render in a fresh Android
+fixed-mono capture. This is not physical keyboard or eye-readability acceptance.
+
+A fresh focused 30-second timing attempt was **interrupted by app focus loss**:
+305 samples, **3.909763 seconds**, native/actual 90 Hz. Reject it for FPS
+acceptance. The headset reports `xr_doff`; returning to the app also exposed
+the system boundary setup. The authorized 20-second wake loop does not establish
+continuous focus. Neither proximity nor boundary settings were changed.
+
+The installed runtime inventory estimates **1,843,866,261 bytes** of textures,
+including 1,159,624,502 bytes of XR targets and 411,042,424 bytes for the shared
+49-page Alpha8 Unicode atlas. This is not Vulkan resident-memory measurement.
+Sharing avoids per-panel copies, but the total memory budget remains unmet.
+
+The next worker-controls slice adds an external-keyboard task editor and hiring
+choices from the actual project's provider list, with model ID, effort, own
+worktree and plain shell options. Drafts revalidate desk occupancy, worker
+identity, floor generation and connection before sending. Opening the editor
+clears terminal focus and captures locomotion; focus loss, floor change, close
+and disconnection cancel its outbound context. It sends once, never replays on
+reconnect, and explicitly does not claim protocol-1 operation receipts.
+The real Droid returned `UNITY_DESK_TASK_PATH_OK` after the editor's Send task
+button was invoked with a safe no-tools prompt. This proves software UI-to-server
+delivery, not physical keyboard/controller use. Model catalogues, persistent
+per-desk choices, multiple repositories, physical bell and broader desk actions
+are still incomplete.
+
+The latest combined build is installed: **223,266,552 bytes**, **25.972956
+seconds**, **zero errors / two warnings**, with signature/alignment checks
+passing. **205/205 EditMode tests** pass. A fresh Android mono task-editor
+capture verifies the actual Droid's model/effort display and separate prompt
+input capture; no physical text input was exercised.
+
+The immutable atlas and metrics now release their CPU pixels on Android,
+without changing glyph coverage or GPU texture objects. The shared atlas's
+runtime estimate fell from **411,042,424 to 205,521,528 bytes**. Fresh post-build
+inventory totals **1,634,991,005 bytes**, and a fresh full Agnoster/Unicode
+terminal capture still renders correctly. The inventory/capture diagnostics
+now include UTC and frame provenance because files survive APK updates.
+These are Unity estimates, not Vulkan residency; the memory target is still
+unmet, dominated by XR targets. No MSAA/depth/visual-quality downgrade was made.
+
+Production pairing, Track B grids/results, broader office tools/travel/physical
+UI and owner acceptance remain incomplete.
+
+### 25.9 Midnight office, issue cards, gloves and the gun, 2026-10-02
+
+This slice answers the owner's first worn review: the office was too bright,
+the outside world and garage distracted, laptop terminals were sharp rectangles
+on rounded lids, facing desk menus overlapped, hiring was unclear, issues could
+not be picked up, there were no hands and no gun.
+
+**Look.** The Three.js export drops the outside world and garage. The office
+renders at midnight: runtime night globals, a moon key light, baked source
+emission, dark board faces and screen glow. URP blends transparency in linear
+space while three.js blends in sRGB, so the source's 14–22 % white glass turned
+into pale grey panes. The environment builder now scales glass and glint
+colours by alpha^1.2, which matches the source over a dark backdrop. Laptops are
+the MacBook model with a rounded-corner display mesh. Each desk menu sits beside
+its own laptop on the chair side; in PlayMode the 36 menus' world bounds have
+no pairwise overlaps and none touch a laptop. Empty desks show the source's
+floating green "+" and a "Hire a worker here" button.
+
+**Issue cards.** The issues board draws up to 12 open issues as tilted, pinned
+notes (6 × 2, paged), from the real floor's `gh.issues`. An armed grip within
+0.3 m of a note takes the card into that glove. Releasing it:
+
+| Where | What is sent |
+| --- | --- |
+| At the issues board | Nothing; the card is pinned back |
+| Within 0.5 m of the task queue board | `queue.add` with the issue, once |
+| At the nearest desk within 1.25 m with an eligible agent | `worker.prompt` with the source `issue.work` prompt (or the owner's rewrite) and `issue` |
+| At the nearest empty desk within 1.25 m | `worker.spawn` for that desk with the issue |
+| Anywhere else | Nothing; the card returns to the board |
+
+Refusals use the source words (`cantTakeCard`): down, shell, deleted worktree,
+asleep, waiting on an answer; a full office refuses to hire. A floating label
+over the hand says what letting go will do. One send can be in flight; nothing
+is replayed on reconnect. This differs from section 8.6, which hands the card
+to the agent's hands within 0.35 m; desk release is simpler to hit without
+catch animations. Fetching at a distance and throwing are not implemented.
+
+**Hands.** Each controller draws a cartoon glove in the tracked grip space.
+Grip curls the lower three fingers and the trigger curls the index. A hand holds
+one thing at a time (card, tablet or gun). Shell workers' names drop the
+server's trailing 🐚 because the TMP fonts carry no emoji and the plate already
+says Shell.
+
+**Gun.** Settings → Play → **Gun on your back**, off by default. With it on, a
+fresh grip behind the head (`physical.ts` `inBackHolster`) draws the
+`magnum-44.glb` model with its bore along the controller's aim pose. Trigger
+fires once per press from the muzzle. A hit on a worker's body that is not
+blocked by scenery sends `worker.shoot` once, with flash, recoil (about 15° and
+3 cm, settled in 0.34 s), haptics and the blood setting's spray. Releasing grip
+in the holster stows it; elsewhere it drops and returns after 1.2 s. A free
+hand's trigger within 0.45 m of a downed body sends `worker.revive`. Downed
+workers fall over, flash their lamp red and leave a blood pool.
+
+**Graphics page.** The page now shows the frames the app actually makes beside
+the display refresh, for example "90 Hz at 57 FPS".
+
+**Validation.** **245/245 EditMode tests** pass, including 22 new test cases for
+prompt filling, forge-specific prompts, owner rewrites, refusals, hiring, full
+office, queue-once, disconnected fail-closed, board layout, holster geometry,
+recoil, the gun preference, glove curl, one-hand-one-thing, shell names and
+the FPS text. Editor PlayMode against the real server shows the six open
+notes, a held card and a drawn gun upright with its bore forward. These are
+scripted poses, not tracked-controller input.
+
+The installed development APK is **196,876,490 bytes**, built in **36.07 s**
+with **0 errors / 3 warnings**. V2 signing and 16 KiB alignment pass; the
+manifest keeps controllers optional and has no microphone or hand tracking.
+Only `dev.droidoffice.xr.unity` was updated; the legacy app stays 0.1.340.
+On the device the app connects to the real server (2 workers, 4 boards),
+reports native/actual **90 Hz**, and fixed-mono captures show the night office
+and the issue notes.
+
+**Render scale is the frame-rate cliff.** The owner's saved render scale is
+1.5× (2784 × 3240 per eye). Unfocused, unworn 120-second visible captures of the
+same populated scene, each with the same build:
+
+| Render scale | Eye target | FPS | p50 / p95 interval |
+| --- | --- | --- | --- |
+| 1.0× | 1856 × 2160 | **89.1** | 11.1 / 14.3 ms |
+| 1.25× | 2320 × 2700 | 62.1 | 16.0 / 18.1 ms |
+| 1.5× | 2784 × 3240 | 56.7 | 17.6 / 19.7 ms |
+
+The scene is 66 draws and about 45,000 triangles, so the cost is GPU fill at
+4× MSAA, not CPU. The 1.0× and 1.25× runs used temporary copies of the
+settings file; the owner's file was restored byte for byte and 1.5× is still
+applied. These are `capture-performance-visible` runs: not focused, not worn,
+not acceptance.
+
+**NOT RUN.** Worn readability and comfort; physical grip, release and trigger
+on cards, the tablet and the gun; a real card handoff, hire, queue add, shot or
+revive against the real server (each is consequential, so none was sent);
+Bluetooth keyboard input; focused 90 FPS acceptance; section 16 review.

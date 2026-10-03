@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Droid Office environment export</title>
+    <style>
+      @font-face { font-family: Geist; src: url('/fonts/Geist-Variable.woff2'); }
+      @font-face { font-family: 'Geist Mono'; src: url('/fonts/GeistMono-Variable.woff2'); }
+    </style>
+  </head>
+  <body>
+    <p id="status">Building the authoritative Three.js office.</p>
+    <a id="model">Environment model</a>
+    <a id="contract">Environment contract</a>
+    <a id="worker">Worker model</a>
+    <a id="laptop">Laptop model</a>
+    <script type="module">
+      let seed = 0xc0ffee;
+      Math.random = () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+      import('./environment-export.ts').catch(error => {
+        window.environmentExportError = String(error.stack ?? error);
+        document.getElementById('status').textContent = window.environmentExportError;
+      });
+    </script>
+  </body>
+</html>

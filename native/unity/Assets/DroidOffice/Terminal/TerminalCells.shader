@@ -4,8 +4,9 @@ Shader "DroidOffice/Terminal/Cells"
     {
         _Cells("Cells", 2D) = "black" {}
         _Glyphs("Glyph metrics", 2D) = "black" {}
-        _Atlas("Glyph atlas", 2D) = "white" {}
+        _Atlas("Glyph atlas", 2DArray) = "" {}
         _Grid("Grid", Vector) = (120,40,0,0)
+        _TopOriginUV("Top-origin mesh UVs", Float) = 0
         _MSDF("Multi-channel distance field", Float) = 0
     }
     SubShader
@@ -24,10 +25,12 @@ Shader "DroidOffice/Terminal/Cells"
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
             TEXTURE2D(_Cells); SAMPLER(sampler_Cells);
             TEXTURE2D(_Glyphs); SAMPLER(sampler_Glyphs);
-            TEXTURE2D(_Atlas); SAMPLER(sampler_Atlas);
+            TEXTURE2D_ARRAY(_Atlas); SAMPLER(sampler_Atlas);
+            float4 _Glyphs_TexelSize;
             CBUFFER_START(UnityPerMaterial)
                 float4 _Grid;
                 float _MSDF;
+                float _TopOriginUV;
             CBUFFER_END
             struct Attributes { float4 positionOS : POSITION; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct Varyings { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; UNITY_VERTEX_OUTPUT_STEREO };
@@ -38,6 +41,8 @@ Shader "DroidOffice/Terminal/Cells"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
                 output.uv = input.uv;
+                // glTF laptop meshes have top-origin UVs; Unity quads do not.
+                output.uv.y = lerp(input.uv.y, 1-input.uv.y, _TopOriginUV);
                 return output;
             }
             float Median(float3 value) { return max(min(value.r,value.g), min(max(value.r,value.g),value.b)); }
@@ -49,17 +54,26 @@ Shader "DroidOffice/Terminal/Cells"
                 float2 local = float2(frac(position.x), 1-frac(position.y));
                 float2 dataUV = float2((cell.x*3+0.5)/(_Grid.x*3), (cell.y+0.5)/_Grid.y);
                 float4 data = round(SAMPLE_TEXTURE2D_LOD(_Cells,sampler_Cells,dataUV,0)*255);
+                // A wide glyph is sampled across both cells. The continuation
+                // must reuse its leading cell, not render a blank second half.
+                for (uint part = 0u; part < 8u && data.w == 0 && dataUV.x > 3/(_Grid.x*3); part++)
+                {
+                    dataUV.x -= 3/(_Grid.x*3);
+                    data = round(SAMPLE_TEXTURE2D_LOD(_Cells,sampler_Cells,dataUV,0)*255);
+                    local.x += 1;
+                }
                 uint id = (uint)(data.x+data.y*256);
                 uint flags = (uint)data.z;
                 float3 fg = SAMPLE_TEXTURE2D_LOD(_Cells,sampler_Cells,dataUV+float2(1/(_Grid.x*3),0),0).rgb;
                 float3 bg = SAMPLE_TEXTURE2D_LOD(_Cells,sampler_Cells,dataUV+float2(2/(_Grid.x*3),0),0).rgb;
                 if ((flags & 2u) != 0) { float3 swap = fg; fg = bg; bg = swap; }
                 if ((flags & 4u) != 0) fg *= 0.65;
-                float2 glyphUV = float2((id+0.5)/2048.0, 0.25);
+                float2 glyphUV = float2((id%2048u+0.5)/2048.0, (floor(id/2048.0)*3+0.5)*_Glyphs_TexelSize.y);
                 float4 rect = SAMPLE_TEXTURE2D_LOD(_Glyphs,sampler_Glyphs,glyphUV,0);
-                float4 metrics = SAMPLE_TEXTURE2D_LOD(_Glyphs,sampler_Glyphs,glyphUV+float2(0,0.5),0);
+                float4 metrics = SAMPLE_TEXTURE2D_LOD(_Glyphs,sampler_Glyphs,glyphUV+float2(0,_Glyphs_TexelSize.y),0);
+                float page = SAMPLE_TEXTURE2D_LOD(_Glyphs,sampler_Glyphs,glyphUV+float2(0,2*_Glyphs_TexelSize.y),0).x;
                 float2 glyphCoordinate = (local-metrics.xy)/max(metrics.zw,0.00001);
-                float4 distanceTexel = SAMPLE_TEXTURE2D(_Atlas,sampler_Atlas,rect.xy+glyphCoordinate*rect.zw);
+                float4 distanceTexel = SAMPLE_TEXTURE2D_ARRAY(_Atlas,sampler_Atlas,rect.xy+glyphCoordinate*rect.zw,page);
                 float distance = _MSDF > 0.5 ? Median(distanceTexel.rgb) : distanceTexel.a;
                 float edge = (flags & 1u) != 0 ? 0.44 : 0.5;
                 float aa = max(fwidth(distance), 0.015);

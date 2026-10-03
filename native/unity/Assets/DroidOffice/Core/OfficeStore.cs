@@ -22,12 +22,19 @@ namespace DroidOffice.Core
         {
             if (string.IsNullOrEmpty(worker.id) || string.IsNullOrEmpty(worker.deskId))
                 throw new ArgumentException("Worker identity is missing.");
-            Id = worker.id; DeskId = worker.deskId; Name = worker.name ?? "Agent"; Color = worker.color;
+            Id = worker.id; DeskId = worker.deskId; Name = DisplayName(worker.name); Color = worker.color;
             Kind = worker.kind; Provider = worker.provider; Model = worker.activeModel ?? worker.model;
             Effort = worker.activeEffort ?? worker.effort; Status = worker.status; Action = worker.action;
             Task = worker.task?.name; Branch = worker.worktree?.branch;
             Acknowledged = worker.acked; Lost = worker.lost != null;
             Downed = worker.downedUntil.HasValue; WaitingSince = worker.waitingSince ?? 0;
+        }
+        // workers.ts suffixes shells with " 🐚"; the TMP fonts have no emoji and Kind already says shell.
+        public static string DisplayName(string name)
+        {
+            const string shellMark = " \U0001F41A";
+            if (string.IsNullOrEmpty(name)) return "Agent";
+            return name.EndsWith(shellMark, StringComparison.Ordinal) ? name.Substring(0, name.Length - shellMark.Length) : name;
         }
         public bool Waiting => !Acknowledged && (Status == "needs_input" || Status == "done");
         public string CardRefusal => Downed ? Name + " is down" : Kind != "agent" ? Name + " is a shell, not an agent" :
@@ -38,11 +45,13 @@ namespace DroidOffice.Core
     // One writer: the Unity main-thread bounded drain. Everything exposed is read-only.
     public sealed class OfficeStore
     {
-        readonly Queue<ParsedMessage> incoming = new();
+        readonly LinkedList<ParsedMessage> incoming = new();
+        readonly Dictionary<string, LinkedListNode<ParsedMessage>> pendingAttached = new();
         readonly object gate = new();
         Dictionary<string, WorkerState> workers = new();
         IReadOnlyDictionary<string, WorkerState> view;
         readonly Dictionary<string, TerminalGrid> terminals = new();
+        readonly Dictionary<string, AttachedTerminalState> attachedTerminals = new();
         readonly Dictionary<string, JToken> topics = new();
         readonly HashSet<string> dirty = new();
         int queuedBytes, generation;
@@ -63,10 +72,12 @@ namespace DroidOffice.Core
         public OfficeStore() { view = new ReadOnlyDictionary<string, WorkerState>(workers); }
         public JToken Topic(string key) => topics.TryGetValue(key, out var value) ? value.DeepClone() : null;
         public TerminalGrid Terminal(string workerId) => workerId != null && terminals.TryGetValue(workerId, out var grid) ? grid : null;
+        public AttachedTerminalState AttachedTerminal(string workerId) => workerId != null && attachedTerminals.TryGetValue(workerId, out var terminal) ? terminal : null;
+        public void DetachTerminal(string workerId) { attachedTerminals.Remove(workerId); }
 
         public void BeginConnection(int nextGeneration)
         {
-            lock (gate) { generation = nextGeneration; incoming.Clear(); queuedBytes = 0; }
+            lock (gate) { generation = nextGeneration; incoming.Clear(); pendingAttached.Clear(); queuedBytes = 0; }
             Connected = false; SnapshotReady = false;
             ConnectionState = "Connecting…"; dirty.Add("connection");
         }
@@ -78,8 +89,22 @@ namespace DroidOffice.Core
             lock (gate)
             {
                 if (message.Generation != generation) return true;
+                // The receive decoder has already folded every ANSI packet into
+                // a full immutable screen. Keep only its latest pending live
+                // frame, without coalescing across authoritative boundaries.
+                var live = message.Value as ServerTermData;
+                if (live != null && message.Attached != null && pendingAttached.TryGetValue(live.workerId, out var prior))
+                {
+                    queuedBytes -= prior.Value.Bytes; incoming.Remove(prior); pendingAttached.Remove(live.workerId);
+                }
+                if (message.Tag == "welcome" || message.Tag == "floor.enter") pendingAttached.Clear();
+                if (message.Value is ServerWorkerRemove removed) pendingAttached.Remove(removed.workerId);
+                if (message.Value is ServerWorkerUpdate updated) pendingAttached.Remove(updated.worker.id);
+                if (message.Value is ServerTermSnapshot initial) pendingAttached.Remove(initial.workerId);
                 if (incoming.Count >= MaxQueuedMessages || queuedBytes + message.Bytes > MaxQueuedBytes) return false;
-                incoming.Enqueue(message); queuedBytes += message.Bytes; return true;
+                var node = incoming.AddLast(message); queuedBytes += message.Bytes;
+                if (live != null && message.Attached != null) pendingAttached[live.workerId] = node;
+                return true;
             }
         }
         // Socket closure shares ordering with received frames. Drop the abandoned
@@ -89,8 +114,8 @@ namespace DroidOffice.Core
             lock (gate)
             {
                 if (session != generation) return;
-                incoming.Clear(); queuedBytes = 0;
-                incoming.Enqueue(new ParsedMessage("connection", new TransportClosed(safeState), null, session, 0));
+                incoming.Clear(); pendingAttached.Clear(); queuedBytes = 0;
+                incoming.AddLast(new ParsedMessage("connection", new TransportClosed(safeState), null, session, 0));
             }
         }
         public int Drain(double milliseconds = 1, int maxMessages = 64)
@@ -103,7 +128,9 @@ namespace DroidOffice.Core
                 lock (gate)
                 {
                     if (incoming.Count == 0) break;
-                    message = incoming.Dequeue(); queuedBytes -= message.Bytes;
+                    var node = incoming.First; message = node.Value; incoming.RemoveFirst(); queuedBytes -= message.Bytes;
+                    if (message.Value is ServerTermData data && pendingAttached.TryGetValue(data.workerId, out var pending) && ReferenceEquals(node, pending))
+                        pendingAttached.Remove(data.workerId);
                 }
                 if (message.Generation == generation) Apply(message);
                 count++;
@@ -113,7 +140,9 @@ namespace DroidOffice.Core
             dirty.Clear();
             return count;
         }
-        void ReplaceFloor(JObject json, WorkerInfo[] snapshot, Arrival arrival, string floor)
+        static readonly HashSet<string> buildingTopics = new()
+        { "floors", "projectsDir", "version", "upgrade", "usage", "limits", "notify", "machine", "proxy", "sky", "theme", "leaveOnMerge", "prompts" };
+        void ReplaceFloor(JObject json, WorkerInfo[] snapshot, Arrival arrival, string floor, bool welcome)
         {
             var replacement = new Dictionary<string, WorkerState>();
             if (snapshot == null) throw new ArgumentException("Snapshot has no workers.");
@@ -124,8 +153,15 @@ namespace DroidOffice.Core
             }
             workers = replacement; view = new ReadOnlyDictionary<string, WorkerState>(workers);
             Floor = floor; Arrival = arrival; FloorGeneration++;
-            topics.Clear();
+            if (welcome) topics.Clear();
+            else
+            {
+                var discard = new List<string>();
+                foreach (var key in topics.Keys) if (!buildingTopics.Contains(key)) discard.Add(key);
+                foreach (var key in discard) topics.Remove(key);
+            }
             terminals.Clear();
+            attachedTerminals.Clear();
             foreach (var property in json.Properties()) topics[property.Name] = property.Value.DeepClone();
             dirty.Add("floor"); dirty.Add("workers"); dirty.Add("arrival"); dirty.Add("topics");
         }
@@ -137,12 +173,12 @@ namespace DroidOffice.Core
                     Disconnect(closed.State);
                     break;
                 case ServerWelcome welcome:
-                    ReplaceFloor(message.Json, welcome.workers, welcome.arrival, welcome.floor);
+                    ReplaceFloor(message.Json, welcome.workers, welcome.arrival, welcome.floor, true);
                     Connection = welcome.connection; Connected = true; SnapshotReady = true;
                     ConnectionState = "Connected"; dirty.Add("connection");
                     break;
                 case ServerFloorEnter enter when SnapshotReady:
-                    ReplaceFloor(message.Json, enter.workers, enter.arrival, enter.floor);
+                    ReplaceFloor(message.Json, enter.workers, enter.arrival, enter.floor, false);
                     break;
                 case ServerWorkerUpdate update when SnapshotReady:
                     var state = new WorkerState(update.worker);
@@ -152,6 +188,7 @@ namespace DroidOffice.Core
                 case ServerWorkerRemove remove when SnapshotReady:
                     workers.Remove(remove.workerId);
                     terminals.Remove(remove.workerId);
+                    attachedTerminals.Remove(remove.workerId);
                     dirty.Add("workers"); dirty.Add("worker:" + remove.workerId);
                     break;
                 case ServerScreen screen when SnapshotReady:
@@ -160,6 +197,16 @@ namespace DroidOffice.Core
                         terminals.Add(screen.workerId, grid = new TerminalGrid());
                     grid.Apply(message.Terminal);
                     dirty.Add("terminal:" + screen.workerId);
+                    break;
+                case ServerTermSnapshot snapshot when SnapshotReady:
+                    if (!workers.ContainsKey(snapshot.workerId) || message.Attached == null) return;
+                    var terminal = new AttachedTerminalState();
+                    terminal.Apply(message.Attached); attachedTerminals[snapshot.workerId] = terminal;
+                    dirty.Add("attached:" + snapshot.workerId);
+                    break;
+                case ServerTermData data when SnapshotReady:
+                    if (message.Attached != null && attachedTerminals.TryGetValue(data.workerId, out var attached))
+                    { attached.Apply(message.Attached); dirty.Add("attached:" + data.workerId); }
                     break;
                 default:
                     if (!SnapshotReady) return;

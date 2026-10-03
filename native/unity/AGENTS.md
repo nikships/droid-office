@@ -8,6 +8,9 @@ Follow `../../docs/unity-headset.md`. Device acceptance is still pending.
   through the running Editor, not YAML edits. Save scenes before builds.
 - No WebView, microphone or hand tracking. Never bind the right Menu button.
   Physical gestures use fresh tracked grip poses, never aim-pose fallback.
+- Text entry uses external keyboards only (including Bluetooth). No virtual
+  in-VR typing keyboard or Android soft keyboard. Full worker terminals expose
+  compact Tab, arrows, Ctrl+C, Esc, Ctrl+Enter and Ctrl+X buttons underneath.
 - `Protocol/Generated` and `Layout/office-layout.json` are generated. Run
   `node --import tsx native/unity/Tools/snapshot.ts` from the repository root.
   Track B owns the eventual shared generator. Do not change server/shared/client
@@ -28,6 +31,10 @@ Follow `../../docs/unity-headset.md`. Device acceptance is still pending.
   ignored. Record physical checks as NOT RUN until actually performed.
 - UI is uGUI/TMP, not OnGUI. Section 16 review and owner device approval are
   required before a surface or physical milestone is marked complete.
+
+The terminal glyph bank (`Assets/DroidOffice/Resources/TerminalGlyphBank.asset`)
+is ignored: on a fresh checkout run **Droid Office → Bake Unicode terminal
+fonts** (or `TerminalFontBuilder.RequestBake()`) before tests or builds.
 
 Local checks: `Tools/check.sh` runs snapshot drift checks and isolated EditMode
 tests. `build.sh` creates a debug ARM64 IL2CPP APK. Neither proves device timing,

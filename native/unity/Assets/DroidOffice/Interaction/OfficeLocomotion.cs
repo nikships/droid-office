@@ -1,26 +1,70 @@
 using DroidOffice.World;
+using DroidOffice.Settings;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit.Locomotion.Teleportation;
+using UnityEngine.XR.Interaction.Toolkit.Locomotion.Comfort;
+using UnityEngine.XR.Interaction.Toolkit.Locomotion.Turning;
 
 namespace DroidOffice.Interaction
 {
-    public sealed class OfficeLocomotion : MonoBehaviour
+    [DefaultExecutionOrder(-700)]
+    public sealed class OfficeLocomotion : MonoBehaviour, ITunnelingVignetteProvider
     {
         public OfficeApp app;
         public XROrigin origin;
         public TeleportationProvider teleport;
-        public TrackedGrip right;
+        public SnapTurnProvider snapTurn;
+        public ContinuousTurnProvider smoothTurn;
+        public TrackedGrip left, right;
         public LineRenderer arc;
         public GameObject marker;
         public CharacterController capsule;
+        public TunnelingVignetteController vignette;
         public bool InputCaptured;
+        public bool TerminalInputCaptured { get; set; }
+        public bool PromptInputCaptured { get; set; }
+        public bool BoardInputCaptured { get; set; }
+        bool Captured => InputCaptured || TerminalInputCaptured || PromptInputCaptured || BoardInputCaptured;
+        readonly VignetteParameters movementVignette = new();
+        public VignetteParameters vignetteParameters => movementVignette;
         readonly Vector3[] points = new Vector3[49];
         readonly Collider[] occupied = new Collider[16];
         bool aiming, valid;
         Vector3 destination;
+        float verticalSpeed;
+        bool movementArmed;
+        bool turnArmed;
+        bool tunneling;
+        void Tunnel(bool moving)
+        {
+            if (vignette == null || moving == tunneling) return;
+            tunneling = moving;
+            if (moving) vignette.BeginTunnelingVignette(this);
+            else vignette.EndTunnelingVignette(this);
+        }
+        public static Vector3 Movement(Vector2 stick, Vector3 forward, float speed, float deltaTime)
+        {
+            if (!float.IsFinite(stick.x) || !float.IsFinite(stick.y) || !float.IsFinite(forward.x) || !float.IsFinite(forward.y) ||
+                !float.IsFinite(forward.z) || !float.IsFinite(speed) || !float.IsFinite(deltaTime) || deltaTime <= 0) return Vector3.zero;
+            var magnitude = Mathf.Clamp01(stick.magnitude);
+            if (magnitude <= 0.15f) return Vector3.zero;
+            forward.y = 0;
+            if (forward.sqrMagnitude < 0.0001f) return Vector3.zero;
+            forward.Normalize();
+            var right = Vector3.Cross(Vector3.up, forward);
+            var direction = stick.normalized;
+            return (right * direction.x + forward * direction.y) * ((magnitude - 0.15f) / 0.85f * Mathf.Max(0, speed) * Mathf.Min(deltaTime, 0.05f));
+        }
         void OnEnable() { if (Application.isPlaying && app?.Store != null) app.Store.Changed += Changed; }
-        void OnDisable() { if (app?.Store != null) app.Store.Changed -= Changed; }
+        void ResetInput()
+        {
+            movementArmed = turnArmed = false; verticalSpeed = 0; Tunnel(false);
+            if (snapTurn != null) { snapTurn.rightHandTurnInput.manualValue = Vector2.zero; snapTurn.enabled = false; }
+            if (smoothTurn != null) { smoothTurn.rightHandTurnInput.manualValue = Vector2.zero; smoothTurn.enabled = false; }
+        }
+        void OnDisable() { if (app?.Store != null) app.Store.Changed -= Changed; ResetInput(); }
+        void OnApplicationFocus(bool focus) { if (!focus) ResetInput(); }
         void Changed(string topic)
         {
             if (topic != "arrival" || app.Store.Arrival == null) return;
@@ -49,7 +93,8 @@ namespace DroidOffice.Interaction
                 capsule.height = Mathf.Clamp(head.y, 0.8f, 2.5f);
                 capsule.center = new Vector3(head.x, capsule.height / 2 + 0.05f, head.z);
             }
-            if (InputCaptured || !right.Valid)
+            Move(); Turn();
+            if (Captured || !Application.isFocused || !right.Valid)
             { aiming = false; arc.enabled = false; marker.SetActive(false); return; }
             var active = right.Stick.y > 0.6f && Mathf.Abs(right.Stick.x) < 0.35f;
             if (active)
@@ -80,6 +125,51 @@ namespace DroidOffice.Interaction
                 arc.enabled = false; marker.SetActive(false);
             }
             aiming = active;
+        }
+        void Move()
+        {
+            var preferences = app?.Preferences;
+            if (!Application.isFocused || Captured || app?.PreferencesReady != true || preferences == null ||
+                !preferences.smoothMovement || left == null || !left.Valid)
+            { movementArmed = false; verticalSpeed = 0; Tunnel(false); return; }
+            // A held stick never starts moving after tracking/focus comes back.
+            if (!movementArmed)
+            {
+                if (left.Stick.sqrMagnitude <= 0.15f * 0.15f) movementArmed = true;
+                return;
+            }
+            var speed = preferences.movementSpeed;
+            if (preferences.sprint && left.Device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick, out var sprint) && sprint)
+                speed *= 1.6f;
+            var forward = preferences.movementDirection == MovementDirection.LeftHand ? left.visual.forward : origin.Camera.transform.forward;
+            var motion = Movement(left.Stick, forward, speed, Time.deltaTime);
+            movementVignette.apertureSize = preferences.vignette == Strength.Low ? 0.85f : preferences.vignette == Strength.High ? 0.5f : 0.7f;
+            Tunnel(preferences.vignette != Strength.Off && motion.sqrMagnitude > 0.000001f);
+            verticalSpeed = capsule.isGrounded ? -1 : Mathf.Max(-10, verticalSpeed + Physics.gravity.y * Mathf.Min(Time.deltaTime, 0.05f));
+            motion.y = verticalSpeed * Mathf.Min(Time.deltaTime, 0.05f);
+            capsule.Move(motion);
+        }
+        public static float TurnInput(Vector2 stick)
+        {
+            if (!float.IsFinite(stick.x) || !float.IsFinite(stick.y) || Mathf.Abs(stick.x) <= 0.15f || Mathf.Abs(stick.y) >= Mathf.Abs(stick.x))
+                return 0;
+            return Mathf.Sign(stick.x) * Mathf.Clamp01((Mathf.Abs(stick.x) - 0.15f) / 0.85f);
+        }
+        void Turn()
+        {
+            if (snapTurn == null || smoothTurn == null) return;
+            var ready = Application.isFocused && !Captured && app?.PreferencesReady == true && right != null && right.Valid;
+            if (!ready) turnArmed = false;
+            else if (!turnArmed && right.Stick.sqrMagnitude <= 0.15f * 0.15f) turnArmed = true;
+            var preferences = app?.Preferences;
+            var active = ready && turnArmed;
+            var input = active ? new Vector2(TurnInput(right.Stick), 0) : Vector2.zero;
+            snapTurn.rightHandTurnInput.manualValue = input;
+            smoothTurn.rightHandTurnInput.manualValue = input;
+            snapTurn.turnAmount = preferences?.snapAngle ?? 45;
+            smoothTurn.turnSpeed = preferences?.smoothTurnSpeed ?? 90;
+            snapTurn.enabled = active && preferences.turning == Turning.Snap;
+            smoothTurn.enabled = active && preferences.turning == Turning.Smooth;
         }
     }
 }

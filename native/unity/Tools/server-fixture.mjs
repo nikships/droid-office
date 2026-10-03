@@ -15,7 +15,7 @@ const evidence = path.join(project, 'Evidence');
 if (!process.argv.includes('--isolated')) {
   await mkdir(evidence, { recursive: true });
   const home = await mkdtemp(path.join(evidence, 'server-fixture-'));
-  const child = spawn(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url), '--isolated'], {
+  const child = spawn(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url), '--isolated', ...(process.argv.includes('--populated') ? ['--populated'] : [])], {
     cwd: root,
     env: {
       HOME: home,
@@ -34,6 +34,7 @@ if (!process.argv.includes('--isolated')) {
   const { startServer } = await import('../../../src/server/server.ts');
   const { loadConfig } = await import('../../../src/server/config.ts');
   const home = process.env.OFFICE_FIXTURE_HOME;
+  const populated = process.argv.includes('--populated');
   const checkout = path.join(home, 'Synthetic office');
   await mkdir(checkout);
   execFileSync('git', ['init', '--quiet', checkout]);
@@ -43,7 +44,7 @@ if (!process.argv.includes('--isolated')) {
     agent,
     `#!${process.execPath}
 import http from 'node:http';
-const events = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop'];
+const events = ${populated ? "['SessionStart', 'UserPromptSubmit']" : "['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop']"};
 let step = 0;
 function next() {
   const event = events[step++ % events.length];
@@ -66,7 +67,7 @@ process.stdin.resume();
   const office = await startServer(cfg);
   const floor = office.floors()[0];
   assert.ok(floor, 'Isolated fixture has a floor');
-  const workers = [floor.workers.spawn('desk-1', 'Unity fixture'), floor.workers.spawn('desk-2', 'Unity fixture')];
+  const workers = Array.from({ length: populated ? 12 : 2 }, (_, i) => floor.workers.spawn(`desk-${i + 1}`, 'Unity fixture'));
   assert.ok(
     workers.every((worker) => typeof worker === 'object'),
     'Fake agents start without worktrees',
@@ -99,7 +100,7 @@ process.stdin.resume();
       path.join(evidence, 'server-fixture.json'),
       JSON.stringify(
         {
-          source: 'real server, isolated HOME and git checkout, two synthetic agent commands',
+          source: `real server, isolated HOME and git checkout, ${workers.length} synthetic agent commands`,
           welcomes,
           statuses: [...seen].sort(),
           ownerOfficeTouched: false,
@@ -109,10 +110,10 @@ process.stdin.resume();
       ),
     );
     await delay(300);
-    process.exit(welcomes >= 2 && seen.has('working') && seen.has('needs_input') && seen.has('done') ? 0 : 1);
+    process.exit(welcomes >= 2 && seen.has('working') && (populated || (seen.has('needs_input') && seen.has('done'))) ? 0 : 1);
   }
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  setTimeout(stop, 180000);
-  console.log('Synthetic office ready on loopback :14600. Automatic stop in 180 seconds.');
+  setTimeout(stop, populated ? 600000 : 180000);
+  console.log(`Synthetic office ready on loopback :14600, ${workers.length} agents. Automatic stop in ${populated ? 600 : 180} seconds.`);
 }

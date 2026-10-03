@@ -3,6 +3,7 @@ using UnityEngine.XR;
 
 namespace DroidOffice.Interaction
 {
+    [DefaultExecutionOrder(-800)]
     public sealed class TrackedGrip : MonoBehaviour
     {
         public XRNode node;
@@ -15,7 +16,23 @@ namespace DroidOffice.Interaction
         public Vector3 Velocity { get; private set; }
         public Vector3 AngularVelocity { get; private set; }
         public Vector2 Stick { get; private set; }
+        // Analog curl for the glove's fingers; zero until the controls are armed.
+        public float GripAmount { get; private set; }
+        public float TriggerAmount { get; private set; }
         public InputDevice Device { get; private set; }
+        // The runtime's aim pose (pointing direction), when it reports one; held
+        // tools may orient by it but never place by it.
+        public bool HasAim { get; private set; }
+        public Quaternion AimRotation { get; private set; }
+        // One held thing per hand: a panel, a card or the gun.
+        public object Holder { get; private set; }
+        public bool Claim(object owner)
+        {
+            if (owner == null || Holder != null && !ReferenceEquals(Holder, owner)) return false;
+            Holder = owner; return true;
+        }
+        public void Release(object owner) { if (ReferenceEquals(Holder, owner)) Holder = null; }
+        static readonly InputFeatureUsage<Quaternion> pointerRotation = new("PointerRotation");
         bool anchored, controlsArmed, focused = true;
         Vector3 previous;
         Quaternion priorRotation;
@@ -24,7 +41,7 @@ namespace DroidOffice.Interaction
         void Cancel()
         {
             if (Valid) TrackingLost?.Invoke();
-            Valid = Grip = Trigger = false; anchored = controlsArmed = false;
+            Valid = Grip = Trigger = false; anchored = controlsArmed = false; GripAmount = TriggerAmount = 0; HasAim = false;
             if (visual != null) visual.gameObject.SetActive(false);
         }
         void Update()
@@ -39,6 +56,8 @@ namespace DroidOffice.Interaction
             if (anchored && (Vector3.Distance(previous, position) > 0.4f || Quaternion.Angle(priorRotation, rotation) > 75))
             { Cancel(); return; }
             Position = position; Rotation = rotation;
+            HasAim = Device.TryGetFeatureValue(pointerRotation, out var aim) && Mathf.Abs(Quaternion.Dot(aim, aim) - 1) < 0.01f;
+            if (HasAim) AimRotation = aim;
             Device.TryGetFeatureValue(CommonUsages.deviceVelocity, out var velocity); Velocity = velocity;
             Device.TryGetFeatureValue(CommonUsages.deviceAngularVelocity, out var angular); AngularVelocity = angular;
             Device.TryGetFeatureValue(CommonUsages.primary2DAxis, out var stick); Stick = stick;
@@ -48,6 +67,10 @@ namespace DroidOffice.Interaction
             if (!anchored) { previous = position; priorRotation = rotation; anchored = true; Grip = Trigger = false; return; }
             if (!grip && !trigger) controlsArmed = true;
             Valid = true; Grip = controlsArmed && grip; Trigger = controlsArmed && trigger;
+            Device.TryGetFeatureValue(CommonUsages.grip, out var gripAmount);
+            Device.TryGetFeatureValue(CommonUsages.trigger, out var triggerAmount);
+            GripAmount = controlsArmed ? Mathf.Max(Mathf.Clamp01(gripAmount), grip ? 1 : 0) : 0;
+            TriggerAmount = controlsArmed ? Mathf.Max(Mathf.Clamp01(triggerAmount), trigger ? 1 : 0) : 0;
             previous = position; priorRotation = rotation;
             if (visual != null)
             {

@@ -838,7 +838,7 @@ PlayerSettings:
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
   scriptingDefineSymbols:
-    Android: SENTIS_ANALYTICS_ENABLED;APP_UI_EDITOR_ONLY
+    Android: APP_UI_EDITOR_ONLY;SENTIS_ANALYTICS_ENABLED
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:
@@ -938,11 +938,11 @@ PlayerSettings:
   captureStartupLogs: {}
   activeInputHandler: 1
   windowsGamepadBackendHint: 0
-  cloudProjectId: 
+  cloudProjectId: ebae5e3c-f4c8-4526-9ae9-929dd90bd0cc
   framebufferDepthMemorylessMode: 0
   qualitySettingsNames: []
-  projectName: 
-  organizationId: 
+  projectName: My project (1)
+  organizationId: nikanand
   cloudEnabled: 0
   legacyClampBlendShapeWeights: 0
   hmiLoadingImage: {fileID: 0}

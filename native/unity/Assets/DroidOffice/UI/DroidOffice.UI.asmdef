@@ -1,0 +1,6 @@
+{
+  "name": "DroidOffice.UI",
+  "references": ["DroidOffice.World", "DroidOffice.Core", "DroidOffice.Settings", "DroidOffice.Interaction", "DroidOffice.Protocol", "DroidOffice.Net", "DroidOffice.Terminal", "DroidOffice.Workers", "Unity.TextMeshPro", "Unity.ugui", "Unity.XR.CoreUtils", "Unity.XR.Interaction.Toolkit", "Unity.InputSystem"],
+  "overrideReferences": true,
+  "precompiledReferences": ["Newtonsoft.Json.dll"]
+}

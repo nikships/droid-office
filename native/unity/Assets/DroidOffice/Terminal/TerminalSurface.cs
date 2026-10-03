@@ -16,7 +16,12 @@ namespace DroidOffice.Terminal
         public TMP_FontAsset font;
         public MeshRenderer panel;
         public Shader shader;
+        public bool topOriginUv;
         public float updateDistance = 6;
+        public string focusedWorkerId;
+        public int scrollback;
+        TerminalGrid historyGrid;
+        int historyVersion, shownScrollback;
         GlyphAtlas glyphs;
         Material material;
         Texture2D cells;
@@ -47,6 +52,7 @@ namespace DroidOffice.Terminal
         {
             glyphs = new GlyphAtlas(font);
             material = new Material(shader) { name = "Terminal cells" };
+            material.SetFloat("_TopOriginUV", topOriginUv ? 1 : 0);
             material.SetTexture("_Atlas", glyphs.Atlas); material.SetTexture("_Glyphs", glyphs.Lookup);
             panel.sharedMaterial = material;
             head = Camera.main;
@@ -55,9 +61,10 @@ namespace DroidOffice.Terminal
         void Bind()
         {
             bindingDirty = false;
-            string next = null;
-            foreach (var worker in app.Store.Workers.Values)
-                if (worker.DeskId == deskId) { next = worker.Id; break; }
+            string next = string.IsNullOrEmpty(focusedWorkerId) ? null : focusedWorkerId;
+            if (next == null)
+                foreach (var worker in app.Store.Workers.Values)
+                    if (worker.DeskId == deskId) { next = worker.Id; break; }
             if (next == workerId) return;
             workerId = next; grid = null;
             panel.enabled = next != null;
@@ -81,7 +88,32 @@ namespace DroidOffice.Terminal
             if (workerId == null || (!ignoreDistance && (head == null ||
                 (head.transform.position - transform.position).sqrMagnitude > updateDistance * updateDistance)))
             { panel.enabled = false; return; }
-            var next = app.Store.Terminal(workerId);
+            var focused = !string.IsNullOrEmpty(focusedWorkerId);
+            var attached = focused ? app.Store.AttachedTerminal(workerId) : null;
+            var next = focused ? attached?.Grid : app.Store.Terminal(workerId);
+            if (attached != null && scrollback > 0)
+            {
+                var offset = Mathf.Clamp(scrollback, 0, attached.History.Length);
+                if (historyGrid == null || historyVersion != next.Version || shownScrollback != offset)
+                {
+                    var lines = new Dictionary<int, TerminalRow>();
+                    for (var row = 0; row < next.Rows; row++)
+                    {
+                        var at = attached.History.Length - offset + row;
+                        if (at < attached.History.Length) lines[row] = attached.History[at];
+                        else
+                        {
+                            var line = new TerminalCell[next.Columns];
+                            for (var col = 0; col < line.Length; col++) line[col] = next.Cell(col, at - attached.History.Length);
+                            lines[row] = new TerminalRow(line);
+                        }
+                    }
+                    historyGrid ??= new TerminalGrid();
+                    historyGrid.Apply(new TerminalFrame(workerId, next.Columns, next.Rows, true, lines));
+                    historyVersion = next.Version; shownScrollback = offset;
+                }
+                next = historyGrid;
+            }
             if (next == null || next.NeedsSnapshot) { panel.enabled = false; return; }
             panel.enabled = true;
             if (next != grid || cells == null || cells.width != next.Columns * 3 || cells.height != next.Rows)
@@ -101,11 +133,18 @@ namespace DroidOffice.Terminal
                 uploadedRows[y] = grid.RowVersion(y); changed = true;
                 for (var x = 0; x < grid.Columns; x++)
                 {
-                    var cell = grid.Cell(x, y); var id = glyphs.Id(cell.Text);
+                    var cell = grid.Cell(x, y); var id = glyphs.Match(grid, x, y, out var span);
                     var at = (y * grid.Columns + x) * 3;
-                    pixels[at] = new Color32((byte)id, (byte)(id >> 8), (byte)cell.Flags, cell.Width);
+                    pixels[at] = new Color32((byte)id, (byte)(id >> 8), (byte)cell.Flags, (byte)span);
                     pixels[at + 1] = Rgb(TerminalPalette.Color(cell.Foreground, true));
                     pixels[at + 2] = Rgb(TerminalPalette.Color(cell.Background, false));
+                    for (var part = 1; part < span; part++)
+                    {
+                        var continuation = at + part * 3;
+                        pixels[continuation] = new Color32(0, 0, (byte)cell.Flags, 0);
+                        pixels[continuation + 1] = pixels[at + 1]; pixels[continuation + 2] = pixels[at + 2];
+                    }
+                    if (span > 1) x += span - 1;
                 }
             }
             if (!changed) return;

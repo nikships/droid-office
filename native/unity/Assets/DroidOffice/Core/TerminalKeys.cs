@@ -2,8 +2,23 @@ using System;
 
 namespace DroidOffice.Core
 {
+    public enum TerminalQuickKey { Tab, Up, Down, Left, Right, Interrupt, Escape, ControlEnter, ControlX, Enter }
     public static class TerminalKeys
     {
+        public static string Quick(TerminalQuickKey key, bool droidAgent, TerminalInputModes modes) => key switch
+        {
+            TerminalQuickKey.Tab => "\t",
+            TerminalQuickKey.Up => Arrow('A', modes.ApplicationCursor),
+            TerminalQuickKey.Down => Arrow('B', modes.ApplicationCursor),
+            TerminalQuickKey.Left => Arrow('D', modes.ApplicationCursor),
+            TerminalQuickKey.Right => Arrow('C', modes.ApplicationCursor),
+            TerminalQuickKey.Interrupt => Control('c'),
+            TerminalQuickKey.Escape => "\u001b",
+            TerminalQuickKey.ControlEnter => Enter(droidAgent, true, false),
+            TerminalQuickKey.ControlX => Control('x'),
+            TerminalQuickKey.Enter => Enter(droidAgent, false, false),
+            _ => null
+        };
         public static string Enter(bool droidAgent, bool control, bool shift, bool alt = false, bool meta = false)
         {
             if (droidAgent && !alt && !meta && control != shift) return control ? "\u001b[13;5u" : "\u001b[13;2u";

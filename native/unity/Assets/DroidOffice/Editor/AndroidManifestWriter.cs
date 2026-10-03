@@ -32,7 +32,7 @@ namespace DroidOffice.Editor
             Add(xml, manifest, "uses-permission", "android.permission.EYE_TRACKING_FINE", null);
             Add(xml, manifest, "uses-permission", "android.permission.VIBRATE", null);
             Add(xml, manifest, "uses-feature", "android.software.xr.api.openxr", "true");
-            Add(xml, manifest, "uses-feature", "android.hardware.xr.input.controller", "true");
+            OptionalControllers(xml);
             Add(xml, manifest, "uses-feature", "android.hardware.xr.input.eye_tracking", "false");
             foreach (XmlElement permission in manifest.SelectNodes("uses-permission"))
             {
@@ -74,6 +74,7 @@ namespace DroidOffice.Editor
                 foreach (XmlElement feature in xr.SelectNodes("manifest/uses-feature"))
                     if (feature.GetAttribute("name", Android) == "android.hardware.xr.input.eye_tracking")
                         feature.SetAttribute("required", Android, "false");
+                OptionalControllers(xr);
                 xr.Save(xrFile);
             }
             // File-JAR pins replace AndroidX's older transitive Kotlin modules.
@@ -84,6 +85,14 @@ configurations.configureEach {
 }
 android.packaging.resources.pickFirsts += ['META-INF/versions/9/module-info.class']
 ");
+        }
+
+        public static void OptionalControllers(XmlDocument xml)
+        {
+            // Viewing/head tracking and development diagnostics work without
+            // controllers. Leave the Touch profile enabled for physical input.
+            // https://developer.android.com/develop/xr/openxr/get-started#package-manager
+            Add(xml, xml.DocumentElement, "uses-feature", "android.hardware.xr.input.controller", "false");
         }
 
         static void Add(XmlDocument xml, XmlElement parent, string tag, string name, string required)

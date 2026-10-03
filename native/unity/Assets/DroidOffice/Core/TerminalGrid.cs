@@ -66,7 +66,11 @@ namespace DroidOffice.Core
                     while (graphemes.MoveNext())
                     {
                         if (x >= cols) throw new InvalidDataException("Terminal row exceeds columns.");
-                        cells[x++] = new TerminalCell(graphemes.GetTextElement(), fg, bg, (CellFlags)flags);
+                        var textElement = graphemes.GetTextElement().Normalize();
+                        var width = AnsiTerminal.Width(textElement);
+                        if (x + width > cols) throw new InvalidDataException("Terminal wide cell exceeds columns.");
+                        cells[x++] = new TerminalCell(textElement, fg, bg, (CellFlags)flags, (byte)width);
+                        if (width == 2) cells[x++] = new TerminalCell("", fg, bg, (CellFlags)flags, 0);
                     }
                 }
                 lines.Add(y, new TerminalRow(cells));

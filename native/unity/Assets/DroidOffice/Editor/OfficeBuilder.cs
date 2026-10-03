@@ -145,10 +145,11 @@ namespace DroidOffice.Editor
             }
             foreach (var plant in (JArray)layout["PLANTS"])
                 Box("Plant placeholder", world, OfficeSpace.ToUnity((double)plant[0], 0.5, (double)plant[1]), new Vector3(0.4f, (float)plant[2], 0.4f), accent);
-            var light = new GameObject("Sun").AddComponent<Light>();
-            light.type = LightType.Directional; light.intensity = 1.2f; light.shadows = LightShadows.None;
-            light.transform.rotation = Quaternion.Euler(45, -30, 0);
-            RenderSettings.ambientLight = new Color(0.45f, 0.5f, 0.54f);
+            var light = new GameObject("Moon").AddComponent<Light>();
+            light.type = LightType.Directional; light.shadows = LightShadows.None;
+            light.color = NightLighting.Moon; light.intensity = NightLighting.MoonIntensity;
+            light.transform.rotation = NightLighting.MoonRotation;
+            RenderSettings.ambientLight = NightLighting.Ambient;
             Rig();
             Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
             EditorSceneManager.SaveScene(scene, ScenePath);
@@ -286,18 +287,25 @@ namespace DroidOffice.Editor
             var mediator = origin.gameObject.AddComponent<LocomotionMediator>();
             var teleport = origin.gameObject.AddComponent<TeleportationProvider>(); teleport.mediator = mediator;
             var snap = origin.gameObject.AddComponent<SnapTurnProvider>(); snap.mediator = mediator;
-            snap.turnAmount = 45; snap.enableTurnAround = false;
+            snap.turnAmount = 45; snap.enableTurnAround = false; snap.enabled = false;
             snap.leftHandTurnInput.inputSourceMode = XRInputValueReader.InputSourceMode.Unused;
-            snap.rightHandTurnInput = new XRInputValueReader<Vector2>("Right turn", XRInputValueReader.InputSourceMode.InputAction)
-            { inputAction = new InputAction("Right turn", binding: "<XRController>{RightHand}/primary2DAxis", expectedControlType: "Vector2") };
+            snap.rightHandTurnInput = new XRInputValueReader<Vector2>("Right turn", XRInputValueReader.InputSourceMode.ManualValue);
+            var smooth = origin.gameObject.AddComponent<ContinuousTurnProvider>(); smooth.mediator = mediator;
+            smooth.turnSpeed = 90; smooth.enableTurnAround = false; smooth.enabled = false;
+            smooth.leftHandTurnInput.inputSourceMode = XRInputValueReader.InputSourceMode.Unused;
+            smooth.rightHandTurnInput = new XRInputValueReader<Vector2>("Right turn", XRInputValueReader.InputSourceMode.ManualValue);
             var motion = origin.gameObject.AddComponent<OfficeLocomotion>();
             motion.app = app; motion.origin = origin; motion.teleport = teleport; motion.capsule = capsule;
+            motion.snapTurn = snap; motion.smoothTurn = smooth;
             foreach (var node in new[] { UnityEngine.XR.XRNode.LeftHand, UnityEngine.XR.XRNode.RightHand })
             {
                 var hand = new GameObject(node.ToString()).AddComponent<TrackedGrip>();
                 hand.transform.SetParent(offset.transform, false); hand.node = node;
-                hand.visual = Box("Tracked grip proxy", offset.transform, Vector3.zero, new Vector3(0.09f, 0.06f, 0.15f), robot).transform;
+                hand.visual = new GameObject(node == UnityEngine.XR.XRNode.LeftHand ? "Left glove" : "Right glove").transform;
+                hand.visual.SetParent(offset.transform, false);
+                hand.gameObject.AddComponent<Glove>();
                 if (node == UnityEngine.XR.XRNode.RightHand) motion.right = hand;
+                else motion.left = hand;
             }
             motion.arc = new GameObject("Teleport arc").AddComponent<LineRenderer>();
             motion.arc.sharedMaterial = accent; motion.arc.startWidth = motion.arc.endWidth = 0.008f; motion.arc.enabled = false;

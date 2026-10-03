@@ -1,6 +1,6 @@
 {
   "name": "DroidOffice.Editor",
-  "references": ["DroidOffice.World", "DroidOffice.Core", "DroidOffice.Protocol", "DroidOffice.Net", "DroidOffice.Workers", "DroidOffice.Terminal", "DroidOffice.Interaction", "Unity.XR.CoreUtils", "Unity.XR.Management", "Unity.XR.Management.Editor", "Unity.XR.OpenXR", "Unity.XR.OpenXR.Editor", "Unity.XR.Interaction.Toolkit", "Unity.InputSystem", "Unity.TextMeshPro", "Unity.RenderPipelines.Universal.Runtime"],
+  "references": ["DroidOffice.World", "DroidOffice.Core", "DroidOffice.Protocol", "DroidOffice.Net", "DroidOffice.Workers", "DroidOffice.Terminal", "DroidOffice.Interaction", "DroidOffice.UI", "Unity.ugui", "Unity.XR.CoreUtils", "Unity.XR.Management", "Unity.XR.Management.Editor", "Unity.XR.OpenXR", "Unity.XR.OpenXR.Editor", "Unity.XR.Interaction.Toolkit", "Unity.InputSystem", "Unity.TextMeshPro", "Unity.RenderPipelines.Universal.Runtime"],
   "overrideReferences": true,
   "precompiledReferences": ["Newtonsoft.Json.dll"],
   "includePlatforms": ["Editor"]

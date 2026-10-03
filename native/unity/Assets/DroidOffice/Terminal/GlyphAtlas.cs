@@ -1,52 +1,67 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
+using DroidOffice.Core;
 using TMPro;
 using UnityEngine;
 
 namespace DroidOffice.Terminal
 {
-    // Static SDF atlas adapter. The cell shader also accepts MSDF atlases; the
-    // final MSDF/dynamic grapheme atlas and device presentation choice remain open.
     public sealed class GlyphAtlas : IDisposable
     {
-        const int Capacity = 2048;
-        readonly Dictionary<string, int> ids = new();
-        public readonly Texture2D Lookup;
-        public readonly Texture Atlas;
+        static TerminalGlyphBank loaded;
+        static Dictionary<string, int> sharedIds;
+        static HashSet<string> prefixes;
+        readonly Dictionary<string, int> ids;
+        public Texture2D Lookup { get; }
+        public Texture Atlas { get; }
+        public int Count => ids.Count;
         public GlyphAtlas(TMP_FontAsset font)
         {
             if (font == null) throw new ArgumentNullException(nameof(font));
-            font.ReadFontAssetDefinition();
-            Atlas = font.atlasTexture;
-            Lookup = new Texture2D(Capacity, 2, TextureFormat.RGBAFloat, false, true)
-            { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, name = "Terminal glyph metrics" };
-            var pixels = new Color[Capacity * 2];
-            var count = 1;
-            foreach (var character in font.characterTable)
+            if (loaded == null)
             {
-                if (count >= Capacity) break;
-                if (character.glyph.atlasIndex != 0) continue;
-                var glyph = character.glyph; var rect = glyph.glyphRect; var padding = font.atlasPadding;
-                var advance = font.faceInfo.pointSize * 0.6f;
-                var line = font.faceInfo.lineHeight;
-                var descent = -font.faceInfo.descentLine;
-                var key = char.ConvertFromUtf32((int)character.unicode);
-                if (ids.ContainsKey(key)) continue;
-                if (rect.width == 0 || rect.height == 0)
-                { ids.Add(key, 0); continue; }
-                ids.Add(key, count);
-                pixels[count] = new Color((rect.x - padding) / (float)Atlas.width, (rect.y - padding) / (float)Atlas.height,
-                    (rect.width + padding * 2) / (float)Atlas.width, (rect.height + padding * 2) / (float)Atlas.height);
-                pixels[Capacity + count] = new Color((glyph.metrics.horizontalBearingX - padding) / advance,
-                    (descent + glyph.metrics.horizontalBearingY - glyph.metrics.height - padding) / line,
-                    (glyph.metrics.width + padding * 2) / advance, (glyph.metrics.height + padding * 2) / line);
-                count++;
+                loaded = Resources.Load<TerminalGlyphBank>("TerminalGlyphBank");
+                if (loaded == null || loaded.atlas == null || loaded.lookup == null)
+                    throw new InvalidOperationException("Bake the terminal Unicode glyph bank before building.");
+                if (Application.platform == RuntimePlatform.Android) loaded.ReleaseCpuPixels();
+                sharedIds = new Dictionary<string, int>(loaded.graphemes.Length, StringComparer.Ordinal);
+                prefixes = new HashSet<string>(StringComparer.Ordinal);
+                for (var i = 0; i < loaded.graphemes.Length; i++) sharedIds[loaded.graphemes[i]] = i + 1;
+                foreach (var text in loaded.graphemes)
+                    for (var length = 1; length < text.Length; length++)
+                        if (!char.IsHighSurrogate(text[length - 1])) prefixes.Add(text.Substring(0, length));
             }
-            Lookup.SetPixels(pixels); Lookup.Apply(false, true);
+            ids = sharedIds; Lookup = loaded.lookup; Atlas = loaded.atlas;
         }
-        public int Id(string grapheme) => string.IsNullOrEmpty(grapheme) || grapheme == " " ? 0 :
-            ids.TryGetValue(grapheme, out var id) ? id :
-            ids.TryGetValue("?", out var fallback) ? fallback : 0;
-        public void Dispose() { if (Lookup != null) UnityEngine.Object.Destroy(Lookup); }
+        public int Match(TerminalGrid grid, int x, int y, out int span)
+        {
+            var cell = grid.Cell(x, y); span = cell.Width;
+            var id = Id(cell.Text);
+            if (!prefixes.Contains(cell.Text)) return id;
+            var candidate = cell.Text; var next = x + span;
+            while (next < grid.Columns && next - x < 8 && prefixes.Contains(candidate))
+            {
+                var following = grid.Cell(next, y);
+                if (following.Width == 0 || following.Foreground != cell.Foreground || following.Background != cell.Background || following.Flags != cell.Flags) break;
+                candidate += following.Text; next += following.Width;
+                if (ids.TryGetValue(candidate, out var composed)) { id = composed; span = next - x; }
+            }
+            return id;
+        }
+        public bool Contains(string grapheme) => !string.IsNullOrEmpty(grapheme) &&
+            (ids.ContainsKey(grapheme) || ids.ContainsKey(grapheme.Normalize(NormalizationForm.FormC)));
+        public int Id(string grapheme)
+        {
+            if (string.IsNullOrEmpty(grapheme) || grapheme == " ") return 0;
+            if (ids.TryGetValue(grapheme, out var id)) return id;
+            var normalized = grapheme.Normalize(NormalizationForm.FormC);
+            if (ids.TryGetValue(normalized, out id)) return id;
+            // Text/emoji presentation selectors do not change a terminal cell's
+            // glyph unless the font contains a specific sequence.
+            normalized = normalized.Replace("\ufe0e", "").Replace("\ufe0f", "");
+            return ids.TryGetValue(normalized, out id) ? id : ids.TryGetValue("\ufffd", out var replacement) ? replacement : ids["?"];
+        }
+        public void Dispose() { } // Shared asset lifetime, never per-panel destruction.
     }
 }

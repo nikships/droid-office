@@ -43,6 +43,7 @@ namespace DroidOffice.Editor
         }
         static void RunQueuedAndroid()
         {
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
             EditorApplication.update -= RunQueuedAndroid;
             AndroidBuildState = "Running";
             try { Android(); AndroidBuildState = "Succeeded"; }
@@ -76,7 +77,19 @@ namespace DroidOffice.Editor
             {
                 var pipeline = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(AssetDatabase.GUIDToAssetPath(guid));
                 pipeline.supportsHDR = false; pipeline.msaaSampleCount = 4; pipeline.renderScale = 1; pipeline.shadowDistance = 0;
+                var serializedPipeline = new SerializedObject(pipeline);
+                serializedPipeline.FindProperty("m_MainLightShadowsSupported").boolValue = false;
+                serializedPipeline.FindProperty("m_AdditionalLightShadowsSupported").boolValue = false;
+                serializedPipeline.FindProperty("m_AdditionalLightsRenderingMode").intValue = (int)LightRenderingMode.Disabled;
+                serializedPipeline.ApplyModifiedPropertiesWithoutUndo();
+                pipeline.useSRPBatcher = true;
                 EditorUtility.SetDirty(pipeline);
+            }
+            var mobile = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>("Assets/Settings/Mobile_RPAsset.asset");
+            if (mobile != null)
+            {
+                GraphicsSettings.defaultRenderPipeline = mobile;
+                QualitySettings.renderPipeline = mobile;
             }
             if (!EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.settingsKey, out XRGeneralSettingsPerBuildTarget targets))
             {
@@ -96,12 +109,13 @@ namespace DroidOffice.Editor
             if (loaders.Count != 1 || !settings.Manager.TrySetLoaders(loaders))
                 throw new InvalidOperationException("Android must use exactly one OpenXR loader.");
             EditorUtility.SetDirty(settings.Manager);
+            UnityEditor.XR.OpenXR.Features.FeatureHelpers.RefreshFeatures(BuildTargetGroup.Android);
             var openxr = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
             openxr.renderMode = OpenXRSettings.RenderMode.SinglePassInstanced;
             openxr.foveatedRenderingApi = OpenXRSettings.BackendFovationApi.SRPFoveation;
             var enabled = new[] { "OculusTouchControllerProfile", "FoveatedRenderingFeature", "DisplayUtilitiesFeature",
                 "AndroidXRSupportFeature", "AndroidXRPerformanceMetrics", "XRSessionFeature", "XRFineEyeFeature",
-                "ARFaceFeature", "ARSessionFeature", "OpenXRCompositionLayersFeature" };
+                "ARFaceFeature", "ARSessionFeature", "OpenXRCompositionLayersFeature", "DisplayRefreshFeature" };
             foreach (var feature in openxr.GetFeatures())
             {
                 feature.enabled = enabled.Contains(feature.GetType().Name);
@@ -118,9 +132,16 @@ namespace DroidOffice.Editor
         }
         public static void Android()
         {
+            var glyphs = AssetDatabase.LoadAssetAtPath<DroidOffice.Terminal.TerminalGlyphBank>(TerminalFontBuilder.BankPath);
+            if (glyphs == null || glyphs.atlas == null || glyphs.lookup == null || glyphs.graphemes.Length < 50000 || string.IsNullOrEmpty(glyphs.licenses))
+                throw new InvalidOperationException("Bake the licensed Unicode terminal glyph bank before building.");
             Configure();
             EditorUserBuildSettings.development = true;
-            EditorSceneManager.SaveOpenScenes();
+            // The test runner can leave an untitled temporary scene open. Only
+            // save our build scene, never prompt to save unrelated Editor work.
+            var office = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(OfficeBuilder.ScenePath);
+            if (office.IsValid() && office.isLoaded && !EditorSceneManager.SaveScene(office))
+                throw new InvalidOperationException("Office scene could not be saved.");
             Directory.CreateDirectory("Builds"); Directory.CreateDirectory("Evidence");
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
