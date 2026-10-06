@@ -32,16 +32,14 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
   const reviews: { pr: number; file: string }[] = [];
   let ids = 0;
   const manager: MeetingWorkers = {
-    defaultProvider: 'claude',
     officeDefault: opts.officeDefault,
     list: () => workers,
-    seat(deskId, by, prompt, provider, model, effort, meeting) {
+    seat(deskId, by, prompt, model, effort, meeting) {
       if (workers.some((w) => w.deskId === deskId)) return 'taken';
       const worker: WorkerInfo = {
         id: `w${++ids}`,
         deskId,
         kind: 'agent',
-        provider,
         model,
         effort,
         prompt,
@@ -177,21 +175,6 @@ test('a debate runs its rounds and ends when the chair writes the decision', (t)
   assert.ok(existsSync(path.join(f.dir, '.droid-office', 'meetings', m.id)));
 });
 
-test('the meeting stops once it runs over its token budget, and says so', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  assert.equal(f.start({ budget: 100_000 }), undefined);
-  const w = f.workers[0];
-  w.status = 'working';
-  w.usage = { input: 90_000, output: 20_000, cacheRead: 0, cacheWrite: 0, cost: 0.5, calls: 3 };
-  f.room.onWorker(w);
-  const m = f.room.state().current!;
-  assert.equal(m.status, 'stopped');
-  assert.match(m.reason!, /over budget: 110k of 100k tokens/);
-  // Whoever was busy is told to stop.
-  assert.deepEqual(f.typed, [{ id: w.id, data: '\x1b' }]);
-});
-
 test('a worker that ends its part without writing the file is reminded once, then the meeting stops', (t) => {
   const f = fixture();
   t.after(() => f.close());
@@ -286,27 +269,16 @@ test('bad requests are turned away before anyone sits down', (t) => {
   assert.match(f.start({}) ?? '', /busy/);
 });
 
-test('meetings seat Droid workers with the requested model and effort', (t) => {
+test('meetings seat workers with the requested model and effort', (t) => {
   const f = fixture();
   t.after(() => f.close());
-  assert.match(f.start({ provider: 'droid', model: 'has a space' }) ?? '', /Droid model/);
-  assert.equal(f.start({ provider: 'droid', model: 'custom:droidproxy:gpt-6-sol', effort: 'high' }), undefined);
+  assert.match(f.start({ model: 'has a space' }) ?? '', /Droid model/);
+  assert.equal(f.start({ model: 'custom:droidproxy:gpt-6-sol', effort: 'high' }), undefined);
   assert.ok(f.workers.length > 0);
-  assert.ok(f.workers.every((w) => w.provider === 'droid' && w.model === 'custom:droidproxy:gpt-6-sol' && w.effort === 'high'));
+  assert.ok(f.workers.every((w) => w.model === 'custom:droidproxy:gpt-6-sol' && w.effort === 'high'));
   const m = f.room.state().current!;
-  assert.equal(m.provider, 'droid');
   assert.equal(m.model, 'custom:droidproxy:gpt-6-sol');
   assert.equal(m.effort, 'high');
-});
-
-test('meetings drop the model and effort for providers that take none', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  assert.equal(f.start({ provider: 'codex', model: 'gpt-5', effort: 'high' }), undefined);
-  const m = f.room.state().current!;
-  assert.equal(m.provider, 'codex');
-  assert.equal(m.model, undefined);
-  assert.equal(m.effort, undefined);
 });
 
 test('in a git project the output is committed on the meeting branch, which outlives the room being cleared', async (t) => {
@@ -334,7 +306,7 @@ test('in a git project the output is committed on the meeting branch, which outl
   assert.ok(!existsSync(path.join(f.dir, m.worktree!.path)));
   assert.equal(git('rev-parse', '--abbrev-ref', m.worktree!.branch), m.worktree!.branch);
   assert.equal(f.room.state().current, null);
-  assert.match(f.room.state().past[0].summary, /Debate · 2 rounds · 0 tokens · \$0\.00 · ✅ docs\/decision\.md on office\/meeting-pick-a-cache-/);
+  assert.match(f.room.state().past[0].summary, /Debate · 2 rounds · ✅ docs\/decision\.md on office\/meeting-pick-a-cache-/);
 });
 
 test('only the real meeting patterns pass, not what every object inherits', () => {
@@ -343,8 +315,8 @@ test('only the real meeting patterns pass, not what every object inherits', () =
 });
 
 test('the default review request sends a review panel with the pattern defaults', async () => {
-  const { reviewMeetingRequest, MEETING_PATTERNS, TOKENS_PER_SEAT } = await import('../src/shared/meetings.js');
-  const req = reviewMeetingRequest({ number: 42, title: 'Fix the login' }, { provider: 'claude', model: 'opus' });
+  const { reviewMeetingRequest, MEETING_PATTERNS } = await import('../src/shared/meetings.js');
+  const req = reviewMeetingRequest({ number: 42, title: 'Fix the login' }, { model: 'opus' });
   const def = MEETING_PATTERNS.review;
   assert.equal(req.pattern, 'review');
   assert.equal(req.pr, 42);
@@ -353,8 +325,6 @@ test('the default review request sends a review panel with the pattern defaults'
   assert.equal(req.output, 'reviews/pr-42.md');
   assert.deepEqual(req.roles, def.roles.slice(0, def.seats.default));
   assert.equal(req.rounds, def.rounds.default);
-  assert.equal(req.budget, def.seats.default * TOKENS_PER_SEAT);
-  assert.equal(req.provider, 'claude');
   assert.equal(req.model, 'opus');
 });
 
@@ -365,17 +335,17 @@ test('a meeting says what the office’s rewritten prompts say, and seats the de
       'meeting.debate.propose': 'Pitch it as the {{role}}, into {{file}}.',
       'meeting.nudge': 'Still waiting on {{file}}!',
     },
-    officeDefault: { provider: 'droid', model: 'custom:droidproxy:opus-5-5', effort: 'high' },
+    officeDefault: { model: 'custom:droidproxy:opus-5-5', effort: 'high' },
   });
   t.after(() => f.close());
-  assert.equal(f.start({ rounds: 3, provider: undefined }), undefined);
+  assert.equal(f.start({ rounds: 3 }), undefined);
   assert.equal(
     f.prompts[0].text,
     `You are the Chair. Topic: Which cache should we use?{{nothing}}\n\nRound 1 of 3, proposing. Pitch it as the Chair, into ${path.join(f.cwd(), '.droid-office', 'meetings', f.room.state().current!.id, 'r1-1-chair.md')}.`,
   );
   assert.deepEqual(
-    f.workers.map((w) => [w.provider, w.model, w.effort]),
-    Array(3).fill(['droid', 'custom:droidproxy:opus-5-5', 'high']),
+    f.workers.map((w) => [w.model, w.effort]),
+    Array(3).fill(['custom:droidproxy:opus-5-5', 'high']),
   );
   // A worker that ends its turn without its part is nudged in the office's words.
   const w = f.workers[0];
@@ -384,21 +354,21 @@ test('a meeting says what the office’s rewritten prompts say, and seats the de
   w.status = 'done';
   f.room.onWorker(w);
   assert.match(f.prompts.at(-1)!.text, /^Still waiting on \S+r1-1-chair\.md!$/);
-  // Picked, the meeting's own choice wins, Droid model and effort included.
-  const g = fixture({ officeDefault: { provider: 'claude', model: 'sonnet' } });
+  // Picked, the meeting's own choice wins, model and effort included.
+  const g = fixture({ officeDefault: { model: 'sonnet' } });
   t.after(() => g.close());
-  assert.equal(g.start({ provider: 'droid', model: 'custom:droidproxy:gpt-6-sol', effort: 'low' }), undefined);
+  assert.equal(g.start({ model: 'custom:droidproxy:gpt-6-sol', effort: 'low' }), undefined);
   assert.deepEqual(
-    g.workers.map((x) => [x.provider, x.model, x.effort]),
-    Array(3).fill(['droid', 'custom:droidproxy:gpt-6-sol', 'low']),
+    g.workers.map((x) => [x.model, x.effort]),
+    Array(3).fill(['custom:droidproxy:gpt-6-sol', 'low']),
   );
-  // With no default set, nobody picking seats the office's --agent on its own model.
+  // With no default set, nobody picking seats Droid's own default model.
   const plain = fixture();
   t.after(() => plain.close());
   assert.equal(plain.start({}), undefined);
   assert.deepEqual(
-    plain.workers.map((x) => [x.provider, x.model, x.effort]),
-    Array(3).fill(['claude', undefined, undefined]),
+    plain.workers.map((x) => [x.model, x.effort]),
+    Array(3).fill([undefined, undefined]),
   );
 });
 
@@ -418,7 +388,7 @@ test('a review panel tells its reviewers what it always did, on GitHub and GitLa
         "You're the Security in a Review panel meeting in Droid Office's meeting room, round the table with the Correctness and the Performance & simplicity. Round 1: each reviewer reviews the pull request through their own lens. Round 2: the Correctness merges the reviews into one, which the office posts on the pull request.",
         'What the meeting is about:\nReview it',
         `The ${pull} is ${ref}: read it with ${read}.`,
-        `How it runs: the office hands each of you your part of every round in a message like this one. Do just that part, write it to the file it names, and end your turn; the next round starts once every part of this one is written. Your working directory is ${cwd}, and every file of the meeting is in it: the notes go in ${notes}/, which is where you read what the others wrote. The meeting ends when reviews/pr-42.md (${path.join(cwd, 'reviews/pr-42.md')}) is written, and only the part that says so writes it. It has 2 rounds at most and 3.00M tokens between all of you, so keep your notes short: bullets over prose.`,
+        `How it runs: the office hands each of you your part of every round in a message like this one. Do just that part, write it to the file it names, and end your turn; the next round starts once every part of this one is written. Your working directory is ${cwd}, and every file of the meeting is in it: the notes go in ${notes}/, which is where you read what the others wrote. The meeting ends when reviews/pr-42.md (${path.join(cwd, 'reviews/pr-42.md')}) is written, and only the part that says so writes it. It has 2 rounds at most, so keep your notes short: bullets over prose.`,
         "You're in the project's folder, which other people use too: don't commit, push or switch branches.",
         `Round 1 of 2, reviewing. Review ${pull} ${ref} through your lens, Security, and nothing else. Read it with ${read}; don't check it out or change any files. Write your findings to ${path.join(notes, 'r1-2-security.md')}, one per bullet: the file:line, what's wrong and what to do about it, the most serious first. If you find nothing, write just NO FINDINGS. Then end your turn.`,
       ].join('\n\n'),

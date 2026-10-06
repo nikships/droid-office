@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { MEETING_PATTERNS, meetingSummary } from '../../shared/meetings';
-import { fmtCost, fmtTokens, type Meeting, type MeetingState } from '../../shared/protocol';
+import type { Meeting, MeetingState } from '../../shared/protocol';
 import { SANS, MONO } from '../fonts';
 import { paintGlyph, plainLabel, track } from './toon';
 
@@ -158,7 +158,7 @@ export class MeetingBoardTexture {
 
 /**
  * The panel on the glass beside the meeting room's door, like a room-booking screen: what's on, the
- * round, who has the floor and the tokens against the budget; once it's over, its one-line summary.
+ * round, who has the floor; once it's over, its one-line summary.
  */
 export class MeetingSignTexture {
   readonly texture: THREE.CanvasTexture;
@@ -218,19 +218,6 @@ export class MeetingSignTexture {
       y = lines(meetingStage(m), `500 30px ${SANS}`, '#c9c9c9', y, 3, 40);
       const who = speaking(m);
       if (who.length) lines(`> ${who.join(', ')}`, `500 26px ${MONO}`, ORANGE, y + 8, 3, 36);
-      // The budget, as a bar that fills up, and what's been spent.
-      const f = Math.min(1, m.tokens / Math.max(1, m.budget));
-      const barY = H - 118;
-      g.fillStyle = '#1c1c1c';
-      g.fillRect(pad, barY, W - 2 * pad, 20);
-      g.fillStyle = f > 0.9 ? '#ef4444' : f > 0.7 ? '#f2b84b' : ORANGE;
-      g.fillRect(pad, barY, (W - 2 * pad) * f, 20);
-      g.fillStyle = '#eeeeee';
-      g.font = `500 26px ${MONO}`;
-      g.fillText(`${fmtTokens(m.tokens)} / ${fmtTokens(m.budget)} TOKENS`, pad, H - 58);
-      g.font = `500 24px ${MONO}`;
-      g.fillStyle = '#c9c9c9';
-      if (m.cost > 0) g.fillText(`${fmtCost(m.cost)}${m.costKnown ? '' : '+'} so far`, pad, H - 22);
     } else {
       // The summary line after the pattern, which is up top already.
       lines(meetingSummary(m).split(' · ').slice(1).join(' · '), `500 28px ${SANS}`, '#c9c9c9', y, Math.floor((H - y) / 38), 38);

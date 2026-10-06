@@ -19,7 +19,7 @@ export interface ServiceOwner {
   workerId: string;
   /** The worker's PTY process, when it's running. */
   pid?: number;
-  /** Claude itself, as opposed to a shell: its own ports (IDE, OAuth callbacks) aren't services. */
+  /** The agent itself, as opposed to a shell: its own ports (IDE, OAuth callbacks) aren't services. */
   agent: boolean;
   /** Its working directory: the project, or its own worktree. */
   cwd: string;
@@ -242,7 +242,7 @@ export class Services {
         owner = byPty.get(p);
         if (owner) {
           if (p === l.pid && owner.agent)
-            owner = undefined; // Claude's own port
+            owner = undefined; // the agent's own port
           else break;
         }
         if (p === process.pid) {

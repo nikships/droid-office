@@ -8,16 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
 import { lanAllowed, mintLanToken } from './lan.js';
-import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
-import { agentProviders, configuredProvider, DROID_MODEL_MAX, OPEN_CODE_MODEL_MAX } from './agents.js';
+import { MAX_REPOS, resolveCommand, type RepoSource } from './workers.js';
+import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
-import { createGrokModelCatalogue, createOpenCodeModelCatalogue } from './models.js';
 import { Upgrader } from './upgrade.js';
 import { Services } from './services.js';
 import { ImageProxy } from './decor.js';
-import { Ledger } from './usage.js';
-import { PlanLimitsReader } from './limits.js';
-import { DROIDPROXY_AUTH_DIR, DroidProxyUsage } from './droidproxy.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
@@ -31,7 +27,7 @@ import { HotReload, sourceAppDir } from './hot-reload.js';
 import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
 import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
-import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
+import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
@@ -62,8 +58,8 @@ const MIME: Record<string, string> = {
 
 const CLEANUPS = new Set(['keep', 'worktree', 'all']);
 
-/** The longest model id any provider takes, so an overlong one fails validation instead of being clipped. */
-const MODEL_MAX = Math.max(OPEN_CODE_MODEL_MAX, DROID_MODEL_MAX);
+/** The longest model id Droid takes, so an overlong one fails validation instead of being clipped. */
+const MODEL_MAX = DROID_MODEL_MAX;
 
 type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 
@@ -189,10 +185,6 @@ export async function startServer(cfg: Config) {
   });
   /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
-  const modelCommand = configuredProvider(cfg.agentCmd) === 'opencode' ? cfg.agentCmd : 'opencode';
-  const openCodeModels = createOpenCodeModelCatalogue(modelCommand.includes('/') ? path.resolve(modelCommand) : modelCommand, cfg.dir);
-  const grokCommand = configuredProvider(cfg.agentCmd) === 'grok' ? cfg.agentCmd : 'grok';
-  const grokModels = createGrokModelCatalogue(grokCommand.includes('/') ? path.resolve(grokCommand) : grokCommand, cfg.dir);
   // Droid's selectable models come from its own settings, on this machine.
   const droidModels = createDroidModelCatalogue();
 
@@ -263,32 +255,20 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(req, res, url);
-    if (req.method !== 'POST' || !['/hooks/claude', '/hooks/opencode', '/hooks/codex', '/hooks/droid', '/hooks/grok', '/hooks/muse'].includes(url.pathname)) return send(res, 404, { ok: false });
+    if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
       const body = await readBody(req);
       payload = body ? JSON.parse(body) : {};
     } catch {
-      if (url.pathname !== '/hooks/claude') return send(res, 400, { ok: false });
-      // permissive: a bad payload still counts as the event
+      return send(res, 400, { ok: false });
     }
     const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     const workerId = url.searchParams.get('worker') ?? '';
     const workers = workerFloor(workerId)?.workers;
     if (!workers) return send(res, 401, {});
     const event = url.searchParams.get('event') ?? '';
-    const ok =
-      url.pathname === '/hooks/opencode'
-        ? workers.handleOpenCodeHook(workerId, token, payload)
-        : url.pathname === '/hooks/codex'
-          ? workers.handleCodexHook(workerId, token, event, payload)
-          : url.pathname === '/hooks/droid'
-            ? workers.handleDroidHook(workerId, token, event, payload)
-            : url.pathname === '/hooks/grok'
-              ? workers.handleGrokHook(workerId, token, event, payload)
-              : url.pathname === '/hooks/muse'
-                ? workers.handleMuseHook(workerId, token, event, payload)
-                : workers.handleHook(workerId, token, event, payload);
+    const ok = workers.handleHook(workerId, token, event, payload);
     send(res, ok ? 200 : 401, {});
   });
   /**
@@ -363,20 +343,7 @@ export async function startServer(cfg: Config) {
   // Whether a worker whose pull request merged goes home by itself, on every floor (⚙️ Settings).
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
-  const configured = configuredProvider(cfg.agentCmd);
-  const prompts = new OfficePrompts(cfg.dataDir, { list: agentProviders(configured), configured }, (state) => broadcast({ t: 'prompts', state }));
-
-  // What the workers spend, all time and today, with the optional daily budget.
-  const ledger = new Ledger(cfg.dataDir, { budget: cfg.budget, pauseHiring: cfg.budgetPause }, (state) => broadcast({ t: 'usage', state }), toastAll);
-
-  // The Claude plan's 5-hour and weekly limits, for the meter under the workers: one account for
-  // every floor.
-  const limits = new PlanLimitsReader(
-    configuredProvider(cfg.agentCmd) === 'claude' ? resolveCommand(cfg.agentCmd) : resolveCommand('claude'),
-    childEnv(),
-    () => clients.size > 0,
-    (state) => broadcast({ t: 'limits', state }),
-  );
+  const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
 
   // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
@@ -405,13 +372,6 @@ export async function startServer(cfg: Config) {
     (state) => broadcast({ t: 'machine', state }),
   );
   machine.start();
-  // The limits of the accounts DroidProxy serves on this machine, under the CPU and memory.
-  const proxy = new DroidProxyUsage(
-    DROIDPROXY_AUTH_DIR,
-    () => clients.size > 0,
-    (state) => broadcast({ t: 'proxy', state }),
-  );
-  proxy.start();
   /** Queues everywhere may be waiting for room under the worker limit: let them look again. */
   const pumpQueues = (except?: Floor) => {
     if (machine.limit === undefined) return;
@@ -425,7 +385,6 @@ export async function startServer(cfg: Config) {
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
-    ledger,
     capacity: machine,
     jira,
     prompts,
@@ -675,26 +634,12 @@ export async function startServer(cfg: Config) {
         const error = typeof body.enabled === 'boolean' ? await hotReload.setEnabled(body.enabled) : hotReload.rebuild();
         return error ? send(res, 400, { error }) : send(res, 200, state());
       }
-      if (p === '/api/agents/opencode/models' && req.method === 'GET') {
-        try {
-          return send(res, 200, { models: await openCodeModels.get() });
-        } catch {
-          return send(res, 502, { error: 'Could not load OpenCode models' });
-        }
-      }
       if (p === '/api/agents/droid/models' && req.method === 'GET') {
         try {
           const catalogue = await droidModels.get();
           return send(res, 200, { models: catalogue.models, defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort });
         } catch {
           return send(res, 502, { error: 'Could not load Droid models' });
-        }
-      }
-      if (p === '/api/agents/grok/models' && req.method === 'GET') {
-        try {
-          return send(res, 200, { models: await grokModels.get() });
-        } catch {
-          return send(res, 502, { error: 'Could not load Grok models' });
         }
       }
       if (p === '/api/image' && req.method === 'GET') {
@@ -893,11 +838,8 @@ export async function startServer(cfg: Config) {
       projectsDir: building.projectsDirState(),
       version: upgrader.version,
       upgrade: upgrader.state,
-      usage: ledger.state(),
-      limits: limits.state,
       notify: webhook.state(),
       machine: machine.state(),
-      proxy: proxy.current,
       sky: sky.state,
       theme: themes.state(),
       leaveOnMerge: leaveOnMerge.state(),
@@ -911,8 +853,6 @@ export async function startServer(cfg: Config) {
       // Anyone whose process ended since (exited, or failed to resume) gets up as you walk in.
       floor.workers.wakeAll();
     }
-    limits.refresh();
-    proxy.refresh();
 
     ws.on('message', (raw) => {
       let msg: ClientMsg;
@@ -1132,19 +1072,10 @@ export async function startServer(cfg: Config) {
         else sendTo(c, { t: 'ball', ball: floor.court.state() });
         break;
       }
-      case 'proxy.refresh': {
-        const why = proxy.refreshNow();
-        if (why) sendTo(c, { t: 'toast', text: why, level: 'info' });
-        break;
-      }
       case 'worker.spawn': {
         const floor = here();
         if (!floor) break;
         const kind = msg.kind === 'shell' ? 'shell' : 'agent';
-        if (kind === 'agent' && msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
-          warn(c, 'Unknown agent provider');
-          break;
-        }
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
         // Other floors' projects to work in too, each in a worktree of its own.
@@ -1155,7 +1086,7 @@ export async function startServer(cfg: Config) {
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, repos);
+          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') warn(c, r);
@@ -1266,13 +1197,9 @@ export async function startServer(cfg: Config) {
       case 'station.prompt': {
         const floor = here();
         if (!floor) break;
-        if (msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
-          warn(c, 'Unknown agent provider');
-          break;
-        }
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const r = floor.workers.station(str(msg.deskId, 32), who, str(msg.prompt, 20000), msg.provider, model, effort);
+        const r = floor.workers.station(str(msg.deskId, 32), who, str(msg.prompt, 20000), model, effort);
         if (typeof r === 'string') warn(c, r);
         else if (r.hired) toastFloor(floor, `${who} asked the ${r.info.name} something`);
         break;
@@ -1403,14 +1330,10 @@ export async function startServer(cfg: Config) {
       case 'queue.add': {
         const floor = here();
         if (!floor) break;
-        if (msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
-          warn(c, 'Unknown agent provider');
-          break;
-        }
         const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, msg.provider, model, effort);
+        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, model, effort);
         if (err) warn(c, err);
         else toastFloor(floor, `📋 ${who} queued ${issue !== undefined ? `issue #${issue}` : 'a task'}`);
         break;
@@ -1437,10 +1360,6 @@ export async function startServer(cfg: Config) {
       case 'meeting.start': {
         const floor = here();
         if (!floor) break;
-        if (msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
-          warn(c, 'Unknown agent provider');
-          break;
-        }
         const count = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
         const request: MeetingRequest = {
           pattern: msg.pattern,
@@ -1452,8 +1371,6 @@ export async function startServer(cfg: Config) {
           pr: count(msg.pr),
           issue: count(msg.issue),
           rounds: count(msg.rounds),
-          budget: count(msg.budget),
-          provider: msg.provider,
           model: msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1),
           effort: isAgentEffort(msg.effort) ? msg.effort : undefined,
         };
@@ -1520,13 +1437,12 @@ export async function startServer(cfg: Config) {
         const ch = msg.choice;
         if (ch !== null && (!ch || typeof ch !== 'object')) return;
         const choice = ch && {
-          provider: ch.provider,
           model: ch.model === undefined || ch.model === '' ? undefined : str(ch.model, MODEL_MAX + 1),
           effort: ch.effort === undefined ? undefined : ch.effort,
         };
         const err = prompts.setAgent(choice, who);
         if (err) return warn(c, err);
-        toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to ${path.basename(cfg.agentCmd)}`);
+        toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to Droid’s own default`);
         break;
       }
       case 'machine.limit': {
@@ -1625,9 +1541,6 @@ export async function startServer(cfg: Config) {
           if (err) warn(c, err);
           else toastAll(`${who} is upgrading the office — it restarts when the new version is built`);
         });
-        break;
-      case 'limits.refresh':
-        limits.refresh();
         break;
       case 'decor.add': {
         const floor = here();
@@ -1756,9 +1669,6 @@ export async function startServer(cfg: Config) {
     sky.stop();
     themes.stop();
     for (const f of floors.values()) f.shutdown(keep);
-    ledger.flush();
-    limits.close();
-    proxy.close();
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();

@@ -61,8 +61,7 @@ console.log(`
 
   ${localUrl}
 
-  default agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}
-  choose Claude Code, OpenCode, Codex or Droid when hiring or queueing a task`);
+  agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}`);
 if (joinUrl) {
   console.log(`
   📱 A device on the same Wi-Fi opens the join URL (scan the QR code or open the link):

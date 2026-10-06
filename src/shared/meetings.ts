@@ -1,7 +1,7 @@
 // The meeting room's patterns: how 2–5 workers at the table work on one question or task together.
 // The server runs them (server/meetings.ts); the client offers them when a meeting is called.
 
-import { fmtCost, fmtTokens, type AgentEffort, type AgentProvider, type Meeting, type MeetingPattern, type MeetingRecord, type MeetingRequest } from './protocol.js';
+import type { AgentEffort, Meeting, MeetingPattern, MeetingRecord, MeetingRequest } from './protocol.js';
 
 export interface PatternDef {
   icon: string;
@@ -84,15 +84,10 @@ export function isMeetingPattern(v: unknown): v is MeetingPattern {
   return typeof v === 'string' && Object.hasOwn(MEETING_PATTERNS, v);
 }
 
-/** Tokens a meeting may use by default: a million per worker at the table. */
-export const TOKENS_PER_SEAT = 1_000_000;
-/** The most a meeting may be given, however many workers sit down. */
-export const MAX_MEETING_BUDGET = 50_000_000;
-
 /**
  * The round notes' folder at the top of a meeting's worktree. It's left out of the meeting's commit and
  * cleared away with the room (a copy stays in the floor's .droid-office/meetings/). Not under
- * .droid-office/: Claude Code asks before writing there in a worktree nested in the project.
+ * .droid-office/: an agent asks before writing there in a worktree nested in the project.
  */
 export const MEETING_NOTES_DIR = '.meeting';
 
@@ -127,19 +122,14 @@ export function outputProblem(p: string): string | undefined {
 /** "3 rounds" / "round 2 of 3". */
 const rounds = (n: number) => `${n} round${n === 1 ? '' : 's'}`;
 
-/** The spend, e.g. "1.2M tokens · $2.40" (or without the cost when a provider doesn't report it). */
-export function meetingSpend(m: Pick<Meeting, 'tokens' | 'cost' | 'costKnown'>): string {
-  return `${fmtTokens(m.tokens)} tokens${m.costKnown ? ` · ${fmtCost(m.cost)}` : m.cost > 0 ? ` · ${fmtCost(m.cost)}+` : ''}`;
-}
-
 /**
- * The line on the room's door once a meeting is over: pattern, rounds, tokens, cost, and the output
+ * The line on the room's door once a meeting is over: pattern, rounds, and the output
  * file it wrote (and where), or why it stopped.
  */
 export function meetingSummary(m: Meeting): string {
   const p = MEETING_PATTERNS[m.pattern];
   const ran = m.status === 'done' ? rounds(m.round) : `${m.status === 'stopped' ? 'in ' : ''}round ${m.round} of ${m.rounds}`;
-  const head = `${p.icon} ${p.label} · ${ran} · ${meetingSpend(m)}`;
+  const head = `${p.icon} ${p.label} · ${ran}`;
   if (m.status === 'stopped') return `${head} · ⛔ ${m.reason ?? 'stopped'}`;
   if (m.status === 'running') return head;
   const where = m.review?.url ? ' · posted on the PR' : m.review?.error ? ` · couldn't post it: ${m.review.error}` : m.commit ? ` on ${m.worktree?.branch}` : m.worktree ? ` in ${m.worktree.branch}'s worktree` : '';
@@ -152,10 +142,10 @@ export function meetingRecord(m: Meeting): MeetingRecord {
 
 /**
  * A review panel for a pull request with everything defaulted: the pattern's seats, rounds
- * and output, a per-seat token budget, and the caller's engine. The desktop Review panel
+ * and output, and the caller's model and effort. The desktop Review panel
  * button fills its form with these words.
  */
-export function reviewMeetingRequest(pr: { number: number; title: string }, engine: { provider: AgentProvider; model?: string; effort?: AgentEffort }): MeetingRequest {
+export function reviewMeetingRequest(pr: { number: number; title: string }, engine: { model?: string; effort?: AgentEffort }): MeetingRequest {
   const def = MEETING_PATTERNS.review;
   const roles = def.roles.slice(0, def.seats.default);
   return {
@@ -166,8 +156,6 @@ export function reviewMeetingRequest(pr: { number: number; title: string }, engi
     pr: pr.number,
     roles: [...roles],
     rounds: def.rounds.default,
-    budget: roles.length * TOKENS_PER_SEAT,
-    provider: engine.provider,
     model: engine.model,
     effort: engine.effort,
   };

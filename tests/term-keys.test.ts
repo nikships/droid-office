@@ -7,10 +7,9 @@ function key(type: string, mods: Partial<KeyEventLike> = {}): KeyEventLike {
 }
 
 test('only Droid agents get CSI u Enter', () => {
-  assert.equal(wantsCsiEnter('agent', 'droid'), true);
-  for (const p of ['claude', 'codex', 'opencode', 'custom', undefined] as const) assert.equal(wantsCsiEnter('agent', p), false, String(p));
-  assert.equal(wantsCsiEnter('shell', 'droid'), false);
-  assert.equal(wantsCsiEnter(undefined, undefined), false);
+  assert.equal(wantsCsiEnter('agent'), true);
+  assert.equal(wantsCsiEnter('shell'), false);
+  assert.equal(wantsCsiEnter(undefined), false);
 });
 
 test('Ctrl+Enter and Shift+Enter encode as CSI u; other Enters keep the default', () => {
@@ -34,7 +33,7 @@ test('the DOM key handler sends on keydown and swallows the matching keypress/ke
   assert.deepEqual(enterKeyAction(true, key('keydown', { shiftKey: true })), { do: 'send', data: SHIFT_ENTER });
 });
 
-test('the DOM key handler leaves plain, Alt, IME and non-Droid Enter to xterm', () => {
+test('the DOM key handler leaves plain, Alt, IME and non-agent Enter to xterm', () => {
   assert.deepEqual(enterKeyAction(true, key('keydown')), { do: 'default' });
   assert.deepEqual(enterKeyAction(true, key('keydown', { altKey: true })), { do: 'default' });
   assert.deepEqual(enterKeyAction(true, key('keydown', { ctrlKey: true, isComposing: true })), { do: 'default' });

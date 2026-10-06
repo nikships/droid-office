@@ -1,9 +1,9 @@
-import type { AgentProvider, QueueTask, Usage } from '../../shared/protocol';
+import type { QueueTask } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { glyphText, h, openModal, timeAgo, STATUS_LABEL } from './dom';
 import { confirmDialog } from './prompt';
-import { providerPicker, providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
+import { agentPicker, modelBadge } from './models';
 import { officeFull } from '../world/machine';
 
 export interface QueueActions {
@@ -51,9 +51,9 @@ export function openQueue(net: Net, actions: QueueActions) {
   );
 
   const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free worker…', 'aria-label': 'New task' }) as HTMLTextAreaElement;
-  const provider = providerPicker(store.project, 'queue-provider', 'Provider', 'queue');
+  const models = agentPicker('queue-models', 'queue');
   const addBtn = h('button.btn.primary', { type: 'submit' }, 'Add to queue');
-  const form = h('form.queue-add', {}, ta, provider.element, addBtn) as HTMLFormElement;
+  const form = h('form.queue-add', {}, ta, models.element, addBtn) as HTMLFormElement;
   form.noValidate = true;
   const submit = () => {
     const text = ta.value.trim();
@@ -61,8 +61,7 @@ export function openQueue(net: Net, actions: QueueActions) {
       ta.focus();
       return;
     }
-    if (!provider.valid()) return;
-    net.send({ t: 'queue.add', prompt: text, provider: provider.value(), model: provider.model(), effort: provider.effort() });
+    net.send({ t: 'queue.add', prompt: text, model: models.model(), effort: models.effort() });
     ta.value = '';
   };
   form.addEventListener('submit', (e) => {
@@ -85,22 +84,11 @@ export function openQueue(net: Net, actions: QueueActions) {
     const w = t.workerId ? store.workers.get(t.workerId) : undefined;
     const meta: string[] = [];
     const buttons: HTMLElement[] = [];
-    const badge = modelBadge(t.provider, t.model, t.effort);
+    const badge = modelBadge(t.model, t.effort);
     const model = badge ? ` · initial: ${badge}` : '';
-    const usageSuffix = (provider: AgentProvider | undefined, usage?: Usage) => {
-      const state = providerUsageState(provider, store.project, usage);
-      return state === 'untracked'
-        ? ' · usage untracked'
-        : state === 'waiting' && resolvedProvider(provider, store.project) === 'opencode'
-          ? ' · waiting for metrics'
-          : state === 'waiting' && resolvedProvider(provider, store.project) === 'codex'
-            ? ' · waiting for first report'
-            : '';
-    };
     let pos: string | null = null;
     if (t.status === 'running') {
-      const selectedProvider = providerLabel(t.provider ?? w?.provider, store.project);
-      meta.push(`⚙️ ${selectedProvider}${model}${usageSuffix(t.provider ?? w?.provider, w?.usage)}`);
+      meta.push(`⚙️ Droid${model}`);
       meta.push(`${t.workerName ?? 'a worker'} · ${w ? (STATUS_LABEL[w.status] ?? w.status) : 'gone'}`);
       if (t.branch) meta.push(`🌿 ${t.branch}`);
       if (t.startedAt) meta.push(`started ${timeAgo(t.startedAt)}`);
@@ -123,13 +111,13 @@ export function openQueue(net: Net, actions: QueueActions) {
       const queued = store.queue.tasks.filter((x) => x.status === 'queued');
       const i = queued.indexOf(t);
       pos = String(i + 1);
-      meta.push(`⚙️ ${providerLabel(t.provider, store.project)}${model}${usageSuffix(t.provider, w?.usage)}`);
+      meta.push(`⚙️ Droid${model}`);
       meta.push(`added by ${t.addedBy} ${timeAgo(t.addedAt)}`);
       buttons.push(h('button.btn', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: -1 }) }, '↑'));
       buttons.push(h('button.btn', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === queued.length - 1, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: 1 }) }, '↓'));
       buttons.push(h('button.btn', { type: 'button', title: 'Remove from the queue', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
     } else {
-      meta.push(`⚙️ ${providerLabel(t.provider, store.project)}${model}${usageSuffix(t.provider, w?.usage)}`);
+      meta.push(`⚙️ Droid${model}`);
       meta.push(outcome(t));
       if (t.workerName) meta.push(t.workerName);
       if (t.branch) meta.push(`🌿 ${t.branch}`);

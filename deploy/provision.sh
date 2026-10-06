@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs ON the EC2 instance (piped over ssh by deploy/aws.sh). Idempotent: safe to re-run.
 # Expects these to be exported by the caller: APP_REPO APP_REF PROJECT_REPO (optional)
-# PUBLIC_HOST GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY GIT_NAME GIT_EMAIL
+# PUBLIC_HOST GH_TOKEN FACTORY_API_KEY GIT_NAME GIT_EMAIL
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 APT=(sudo -E apt-get -y -q -o DPkg::Lock::Timeout=600)
@@ -40,12 +40,16 @@ quiet "${APT[@]}" update
 quiet "${APT[@]}" install git gh curl ca-certificates build-essential python3
 echo "    $(gh --version | head -1)"
 
-if [[ ! -x "$HOME/.local/bin/claude" ]]; then
-  step "Installing Claude Code"
-  quiet bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+if ! command -v droid >/dev/null 2>&1; then
+  step "Installing the Droid CLI"
+  quiet bash -c 'curl -fsSL https://app.factory.ai/cli | sh'
 fi
 export PATH="$HOME/.local/bin:$PATH"
-echo "    claude $(claude --version 2>/dev/null | head -1)"
+if command -v droid >/dev/null 2>&1; then
+  echo "    droid $(droid --version 2>/dev/null | head -1)"
+else
+  echo "    droid not found on PATH — install it from https://docs.factory.ai/cli/getting-started/quickstart"
+fi
 
 step "Writing secrets to /etc/droid-office/env"
 sudo install -d -m 755 /etc/droid-office
@@ -53,8 +57,7 @@ env_file=$(mktemp)
 {
   # The address the owner SSHes to, so the office can show the tunnel command.
   [[ -n "${PUBLIC_HOST:-}" ]] && printf 'DROID_OFFICE_PUBLIC_HOST="%s"\n' "$PUBLIC_HOST"
-  [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && printf 'CLAUDE_CODE_OAUTH_TOKEN="%s"\n' "$CLAUDE_CODE_OAUTH_TOKEN"
-  [[ -n "${ANTHROPIC_API_KEY:-}" ]] && printf 'ANTHROPIC_API_KEY="%s"\n' "$ANTHROPIC_API_KEY"
+  [[ -n "${FACTORY_API_KEY:-}" ]] && printf 'FACTORY_API_KEY="%s"\n' "$FACTORY_API_KEY"
   true
 } >"$env_file"
 sudo install -m 600 -o root -g root "$env_file" /etc/droid-office/env
@@ -119,24 +122,6 @@ else
 fi
 echo "$OFFICE_HOME" | sudo tee /etc/droid-office/home >/dev/null
 [[ -n "$LEGACY_DIR" ]] && echo "$LEGACY_DIR" | sudo tee /etc/droid-office/dir >/dev/null
-
-step "Pre-accepting Claude Code onboarding and folder trust"
-# The workspace (every project is cloned under it), and an older office's own project.
-node - "$WORKSPACE" ${LEGACY_DIR:+"$LEGACY_DIR"} <<'NODE'
-const fs = require('fs');
-const file = `${process.env.HOME}/.claude.json`;
-let c = {};
-try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-c.hasCompletedOnboarding = true;
-c.projects = c.projects || {};
-for (const dir of process.argv.slice(2)) c.projects[dir] = { ...(c.projects[dir] || {}), hasTrustDialogAccepted: true };
-const key = process.env.ANTHROPIC_API_KEY;
-if (key) {
-  c.customApiKeyResponses = c.customApiKeyResponses || { approved: [], rejected: [] };
-  if (!c.customApiKeyResponses.approved.includes(key.slice(-20))) c.customApiKeyResponses.approved.push(key.slice(-20));
-}
-fs.writeFileSync(file, JSON.stringify(c, null, 2), { mode: 0o600 });
-NODE
 
 # Only the owner reaches this box, over SSH as its own user with a plain `ssh -L`
 # tunnel (see deploy/aws.sh): there is no restricted tunnel user anymore, so nothing

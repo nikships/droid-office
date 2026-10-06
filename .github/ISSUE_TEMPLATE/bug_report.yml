@@ -34,20 +34,14 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: provider
+  - type: input
+    id: model
     attributes:
-      label: Provider
-      description: The agent the affected workers run.
-      multiple: true
-      options:
-        - claude (Claude Code)
-        - opencode (OpenCode)
-        - codex (Codex CLI)
-        - droid (Droid CLI)
-        - Not related to a provider
+      label: Droid model
+      description: The model the affected workers run, if it matters (from ~/.factory/settings.json, or "default").
+      placeholder: claude-sonnet-4-6 or default
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: floor

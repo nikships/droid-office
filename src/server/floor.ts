@@ -6,7 +6,6 @@ import { isBusy } from '../shared/status.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
-import { agentProviders, configuredProvider } from './agents.js';
 import { WorkerManager, type HookEnv } from './workers.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
@@ -22,7 +21,6 @@ import { MeetingRoom } from './meetings.js';
 import { Worktrees } from './worktrees.js';
 import { FloorJira, type JiraOffice } from './jira.js';
 import { landedWorkers } from './leave-on-merge.js';
-import type { Ledger } from './usage.js';
 import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
@@ -33,8 +31,6 @@ export interface FloorContext {
   agentCmd: string;
   agentArgs: string[];
   hook: HookEnv;
-  /** Spend, across every floor. */
-  ledger: Ledger;
   /** The office's worker limit, across every floor. */
   capacity: Capacity;
   /** The office's Jira connection, which every floor's epic goes through. */
@@ -91,8 +87,6 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
     remote: git(['remote', 'get-url', 'origin']),
     forge,
     agentCmd: [agentCmd, ...agentArgs].join(' '),
-    defaultProvider: configuredProvider(agentCmd),
-    agentProviders: agentProviders(configuredProvider(agentCmd)),
   };
 }
 
@@ -192,7 +186,6 @@ export class Floor {
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame }, true),
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },
-      ctx.ledger,
       ctx.capacity,
       this.board,
       ctx.prompts,
@@ -208,7 +201,6 @@ export class Floor {
       toast: (text, level) => ctx.toast(this, text, level),
       claimIssue: (issue) => this.board.claim(issue),
       refreshGitHub: () => void this.board.refresh(),
-      hiringPaused: () => ctx.ledger.hiringPaused,
       room: () => ctx.capacity.room(),
       emptied: () => {
         ctx.toast(this, '📋 The queue is empty: every task is done 🎉');
@@ -223,12 +215,11 @@ export class Floor {
       def.dir,
       dataDir,
       {
-        defaultProvider: this.workers.defaultProvider,
         get officeDefault() {
           return workers.officeDefault;
         },
         list: () => this.workers.list(),
-        seat: (deskId, by, prompt, provider, model, effort, meeting) => this.workers.spawn(deskId, by, prompt, false, 'agent', provider, model, effort, meeting),
+        seat: (deskId, by, prompt, model, effort, meeting) => this.workers.spawn(deskId, by, prompt, false, 'agent', model, effort, meeting),
         prompt: (id, text) => this.workers.prompt(id, text),
         write: (id, data) => this.workers.write(id, data),
         kill: (id) => this.workers.kill(id),
@@ -237,7 +228,6 @@ export class Floor {
       {
         update: (state) => ctx.emit(this, { t: 'meeting', state }),
         toast: (text, level) => ctx.toast(this, text, level),
-        hiringPaused: () => ctx.ledger.hiringPaused,
         postReview: (pr, file) => this.board.review(pr, file),
         prompt: (id) => ctx.prompts.text(id),
       },

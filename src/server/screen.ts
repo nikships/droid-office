@@ -9,8 +9,8 @@ const MOUSE_ENCODINGS = [1006, 1016];
  * A snapshot of `term` that a fresh terminal replays into the same screen, mouse included.
  *
  * The serialize addon puts mouse tracking back but not its encoding, so a browser attaching to
- * OpenCode (tracking plus SGR, 1006) sent the wheel in the default encoding, which the office
- * doesn't forward and OpenCode doesn't read: scrolling and clicking did nothing. So the encoding
+ * a full-screen program using tracking plus SGR (1006) got the wheel in the default encoding, which
+ * the office doesn't forward and it doesn't read: scrolling and clicking did nothing. So the encoding
  * is followed here, the way xterm.js sets and resets it, and appended to every snapshot.
  */
 export function screenSnapshot(term: InstanceType<typeof headless.Terminal>, ser: InstanceType<typeof serialize.SerializeAddon>): () => string {

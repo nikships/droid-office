@@ -25,6 +25,3 @@ const JOB: Record<Forge, Record<StationKind, string>> = {
 export function stationBrief(kind: StationKind, forge: Forge = 'github', prompts?: PromptSource): string {
   return officePrompt(prompts, `station.${kind}`, { ...forgeVars(forge), job: JOB[forge][kind] });
 }
-
-/** Claude Code tools the queue agent is launched without, so it can't edit the checkout even by mistake. */
-export const QUEUE_AGENT_DISALLOWED_TOOLS = ['Edit', 'Write', 'NotebookEdit'];

@@ -12,7 +12,7 @@ Each connection has its own floor and terminal subscriptions, not a user identit
 Several windows or devices can watch the same PTY. Closing one leaves the others
 attached. The last window to type determines the PTY's size.
 
-Worker status comes from agent hooks or the OpenCode plugin. Terminal input does
+Worker status comes from Droid's hooks. Terminal input does
 not create typing presence. Meetings seat AI workers, never human participants.
 Single-player games and local issue-card carrying remain browser features.
 

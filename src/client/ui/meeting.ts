@@ -1,11 +1,11 @@
-import { MEETING_PATTERNS, MEETING_PATTERN_IDS, TOKENS_PER_SEAT, meetingSpend, outputProblem, slugify } from '../../shared/meetings';
-import { fmtTokens, type Meeting, type MeetingPattern, type MeetingTurn } from '../../shared/protocol';
+import { MEETING_PATTERNS, MEETING_PATTERN_IDS, outputProblem, slugify } from '../../shared/meetings';
+import type { Meeting, MeetingPattern, MeetingTurn } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { meetingStage } from '../world/meeting';
 import { h, openModal, timeAgo, toast, STATUS_LABEL, type Modal } from './dom';
 import { confirmDialog } from './prompt';
-import { providerPicker } from './provider';
+import { agentPicker } from './models';
 import { officePrompt } from './prompts';
 import { issueVars } from './boards';
 
@@ -80,7 +80,6 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
   const p = MEETING_PATTERNS[m.pattern];
   const running = m.status === 'running';
   const pill = h('span.pill', { class: running ? 'working' : m.status === 'done' ? 'done' : 'needs_input' }, running ? 'in a meeting' : m.status);
-  const f = Math.min(1, m.tokens / Math.max(1, m.budget));
   const seats = h(
     'ul.meeting-seats',
     {},
@@ -96,7 +95,6 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
         h('span.muted', {}, `${i === 0 ? 'head of the table · ' : ''}${s.workerName ?? '…'}`),
         w ? h('span.pill', { class: w.status }, STATUS_LABEL[w.status]) : h('span.pill.exited', {}, 'gone home'),
         part ? h('span.meeting-part', { title: t?.file ?? '' }, part) : null,
-        s.tokens ? h('span.muted', {}, `${fmtTokens(s.tokens)} tokens`) : null,
         w ? h('button.btn.small', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal') : null,
       );
     }),
@@ -118,12 +116,6 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
           : m.status === 'done'
             ? `Wrote ${m.output} in ${m.round} round${m.round === 1 ? '' : 's'}`
             : `Stopped in round ${m.round}: ${m.reason ?? 'stopped'}`,
-      ),
-      h(
-        'div.meeting-budget',
-        { title: `${m.tokens.toLocaleString()} of ${m.budget.toLocaleString()} tokens` },
-        h('div.meeting-bar', {}, h('i', { style: `width:${(f * 100).toFixed(1)}%;background:${f > 0.9 ? 'var(--bad)' : f > 0.7 ? 'var(--warn)' : 'var(--good)'}` })),
-        h('span', {}, `${meetingSpend(m)} of ${fmtTokens(m.budget)} tokens`),
       ),
       seats,
       h('div.meeting-out', {}, h('div.meeting-out-head', {}, h('code', {}, m.output), where, review), h('pre.meeting-preview', {}, m.preview?.trim() ? m.preview : running ? 'Nothing written yet.' : 'Nothing was written.')),
@@ -164,7 +156,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   let pattern: MeetingPattern = preset?.pattern ?? 'debate';
   let roles: string[] = [];
   let outputTouched = false;
-  let budgetTouched = false;
   const patterns = h('div.meeting-patterns', { role: 'radiogroup', 'aria-label': 'Pattern' });
   const about = h('textarea', { rows: 4, placeholder: 'The question to settle, or the task to do: e.g. “Should workers use A* or a navmesh?”', 'aria-label': 'What the meeting is about' }) as HTMLTextAreaElement;
   about.value = preset?.prompt ?? '';
@@ -172,7 +163,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   titleIn.value = preset?.title ?? '';
   const outputIn = h('input', { type: 'text', 'aria-label': 'Output file', spellcheck: 'false' }) as HTMLInputElement;
   const outputNote = h('small.muted');
-  const prSel = h('select.provider-select', { 'aria-label': 'Pull request' }) as HTMLSelectElement;
+  const prSel = h('select.meeting-select', { 'aria-label': 'Pull request' }) as HTMLSelectElement;
   const prRow = h('div.meeting-field', {}, h('label', {}, 'Pull request'), prSel);
   const partsIn = h('textarea', { rows: 3, placeholder: 'src/server/\nsrc/client/\nsrc/shared/', 'aria-label': 'Parts', spellcheck: 'false' }) as HTMLTextAreaElement;
   const partsRow = h('div.meeting-field', {}, h('label', {}, 'Parts, one per line'), partsIn, h('small.muted', {}, 'Handed out to the mappers in turn: files, folders, modules or issues.'));
@@ -182,8 +173,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   const roleList = h('div.meeting-roles');
   const roundsIn = h('input', { type: 'number', 'aria-label': 'Rounds' }) as HTMLInputElement;
   const roundsNote = h('small.muted');
-  const budgetIn = h('input', { type: 'number', min: 50, step: 250, 'aria-label': 'Token budget in thousands' }) as HTMLInputElement;
-  const provider = providerPicker(store.project, 'meeting-provider', 'Meeting provider', 'meeting');
+  const models = agentPicker('meeting-models', 'meeting');
   const busy = h('p.meeting-busy');
   const submit = h('button.btn.primary', { type: 'submit' }, 'Start the meeting');
   const cancel = h('button.btn', { type: 'button', onclick: store.meeting.current ? back : done }, store.meeting.current ? '← Back' : 'Cancel');
@@ -203,9 +193,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
           : 'It ends when this file is written.';
     outputNote.classList.toggle('bad', !!problem);
   };
-  const syncBudget = () => {
-    if (!budgetTouched) budgetIn.value = String((roles.length * TOKENS_PER_SEAT) / 1000);
-  };
   const renderRoles = () => {
     const d = def();
     count.textContent = String(roles.length);
@@ -218,7 +205,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
         return h('div.meeting-role', {}, h('span.muted', {}, i === 0 ? '👑' : `${i + 1}`), input);
       }),
     );
-    syncBudget();
   };
   const pickPattern = (p: MeetingPattern) => {
     pattern = p;
@@ -252,7 +238,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     outputTouched = true;
     syncOutput();
   });
-  budgetIn.addEventListener('input', () => (budgetTouched = true));
   titleIn.addEventListener('input', syncOutput);
   about.addEventListener('input', syncOutput);
   prSel.addEventListener('change', syncOutput);
@@ -267,13 +252,8 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     partsRow,
     h('div.meeting-field', {}, h('label', {}, 'Output file'), outputIn, outputNote),
     h('div.meeting-field', {}, h('label.meeting-count', {}, 'Workers at the table', minus, count, plus), roleList),
-    h(
-      'div.meeting-bounds',
-      {},
-      h('div.meeting-field', {}, h('label', {}, 'Round limit'), roundsIn, roundsNote),
-      h('div.meeting-field', {}, h('label', {}, 'Token budget (thousands)'), budgetIn, h('small.muted', {}, 'For everyone at the table together. Over it, the meeting stops.')),
-    ),
-    provider.element,
+    h('div.meeting-bounds', {}, h('div.meeting-field', {}, h('label', {}, 'Round limit'), roundsIn, roundsNote)),
+    models.element,
     busy,
   ) as HTMLFormElement;
   bodyEl.noValidate = true;
@@ -293,7 +273,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     }
     const output = outputIn.value.trim();
     if (outputProblem(output)) return outputIn.focus();
-    if (!provider.valid()) return;
     net.send({
       t: 'meeting.start',
       pattern,
@@ -305,10 +284,8 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       pr: def().needs === 'pr' ? pr() : undefined,
       issue: preset?.issue,
       rounds: Number(roundsIn.value) || undefined,
-      budget: Math.round((Number(budgetIn.value) || 0) * 1000) || undefined,
-      provider: provider.value(),
-      model: provider.model(),
-      effort: provider.effort(),
+      model: models.model(),
+      effort: models.effort(),
     });
     toast(`🤝 Calling the ${def().label} meeting: the workers are heading for the meeting room`);
     done();
@@ -347,5 +324,5 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   if (preset?.pr) prSel.value = String(preset.pr);
   refresh();
   setTimeout(() => (preset?.prompt ? titleIn : about).focus(), 0);
-  return { body: bodyEl, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings cheap.'), cancel, submit], refresh };
+  return { body: bodyEl, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings short.'), cancel, submit], refresh };
 }

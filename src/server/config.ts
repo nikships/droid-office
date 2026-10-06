@@ -25,10 +25,6 @@ export interface Config {
   trustProxy: boolean;
   /** This machine's public address (set by deploy/aws.sh): the Services board's owner SSH hint. */
   publicHost?: string;
-  /** Daily tracked Claude Code spend budget, USD. Other providers' spend is excluded. */
-  budget?: number;
-  /** Refuse new hires for the rest of the day once the budget is spent. */
-  budgetPause: boolean;
   /** The most workers the office runs at once, across every floor; ⚙️ Settings can't go past it. */
   maxWorkers?: number;
   /** Slack / Discord webhook to post to when a worker needs input or finishes ('' turns it off). */
@@ -39,7 +35,7 @@ export interface Config {
   weather?: Weather;
 }
 
-const HELP = `droid-office — a 3D office where you hire Droid / Claude Code / OpenCode / Codex / Grok / Muse workers at desks and work in their live terminals
+const HELP = `droid-office — a 3D office where you hire Droid workers at desks and work in their live terminals
 
 Usage:
   droid-office [options]
@@ -79,18 +75,12 @@ Options:
                           in the office
   -p, --port <n>          Port to listen on (default 4600, env PORT)
   -H, --host <addr>       Address to bind (default 0.0.0.0)
-      --agent <cmd>       Default agent command (default "droid", env DROID_OFFICE_AGENT)
-      --agent-args <str>  Extra args for the configured agent, e.g. "--model opus"
-                          Workers can also select Droid, Claude Code, OpenCode, Codex, Grok or Muse in the UI
+      --agent <cmd>       The Droid command (default "droid", env DROID_OFFICE_AGENT)
+      --agent-args <str>  Extra args for Droid, e.g. "--auto medium"
       --tls-cert <file>   Serve HTTPS with this certificate (PEM)
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
       --trust-proxy       Trust X-Forwarded-* headers (behind Caddy/nginx)
-      --budget <usd>      Daily budget for tracked Claude Code spend (env
-                          DROID_OFFICE_BUDGET). Everyone is warned when the
-                          day's spend passes it. Other providers' spend is excluded
-      --budget-pause      ...and no new workers can be hired until the next
-                          day (env DROID_OFFICE_BUDGET_PAUSE=1)
       --max-workers <n>   Run at most this many workers at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
@@ -187,8 +177,6 @@ export function loadConfig(argv: string[]): Config {
   let tlsKey = '';
   let selfSigned = false;
   let trustProxy = false;
-  let budget = process.env.DROID_OFFICE_BUDGET || '';
-  let budgetPause = !!process.env.DROID_OFFICE_BUDGET_PAUSE && process.env.DROID_OFFICE_BUDGET_PAUSE !== '0';
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
   let webhook = process.env.DROID_OFFICE_WEBHOOK;
   let city = process.env.DROID_OFFICE_CITY || '';
@@ -228,12 +216,6 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--trust-proxy':
         trustProxy = true;
-        break;
-      case '--budget':
-        budget = takeValue(argv, i++, a);
-        break;
-      case '--budget-pause':
-        budgetPause = true;
         break;
       case '--max-workers':
         maxWorkers = takeValue(argv, i++, a);
@@ -276,11 +258,6 @@ export function loadConfig(argv: string[]): Config {
   const projectsDir = defaultProjectsDir();
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     console.error('droid-office: invalid --port');
-    process.exit(2);
-  }
-  const budgetUsd = budget ? Number(budget.replace(/^\$/, '')) : undefined;
-  if (budgetUsd !== undefined && !(budgetUsd > 0)) {
-    console.error('droid-office: --budget needs an amount in dollars, e.g. --budget 20');
     process.exit(2);
   }
   const workerLimit = maxWorkers ? parseWorkerLimit(maxWorkers) : undefined;
@@ -327,8 +304,6 @@ export function loadConfig(argv: string[]): Config {
     tls,
     trustProxy,
     publicHost: process.env.DROID_OFFICE_PUBLIC_HOST || undefined,
-    budget: budgetUsd,
-    budgetPause,
     maxWorkers: workerLimit,
     webhook,
     city: city.trim() || undefined,

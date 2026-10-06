@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { isAgentEffort, isAgentProvider, type AgentChoice, type AgentProvider, type PromptsState } from '../shared/protocol.js';
+import { isAgentEffort, type AgentChoice, type PromptsState } from '../shared/protocol.js';
 import { PROMPTS, PROMPT_MAX, fillPrompt, isPromptId, promptText, type PromptId, type PromptVars } from '../shared/prompts.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 
@@ -18,8 +18,7 @@ export function officePrompt(source: PromptSource | undefined, id: PromptId, var
 
 /**
  * The prompts the office writes for workers by itself (shared/prompts.ts), as rewritten in
- * Settings, and the provider, model and effort a worker starts on when whoever starts it doesn't
- * pick one. The same for the whole building, kept in .droid-office/prompts.json.
+ * Settings, and the model and effort a worker starts on when whoever starts it doesn't pick one. The same for the whole building, kept in .droid-office/prompts.json.
  */
 export class OfficePrompts implements PromptSource {
   private saved: PromptsState = { custom: {} };
@@ -27,8 +26,6 @@ export class OfficePrompts implements PromptSource {
 
   constructor(
     dataDir: string,
-    /** The providers this office can start, and the one it was started with (--agent). */
-    private providers: { list: AgentProvider[]; configured: AgentProvider },
     private onState: (state: PromptsState) => void,
   ) {
     this.path = path.join(dataDir, 'prompts.json');
@@ -45,7 +42,7 @@ export class OfficePrompts implements PromptSource {
 
   agent(): AgentChoice | undefined {
     const a = this.saved.agent;
-    return a && { provider: a.provider, ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) };
+    return a && { ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) };
   }
 
   /** Rewrites a prompt; `text` null (or the default's own text) puts the default back. Returns why it can't, if it can't. */
@@ -61,7 +58,7 @@ export class OfficePrompts implements PromptSource {
     return undefined;
   }
 
-  /** Picks the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
+  /** Picks the worker a new one starts on when nobody picks; null goes back to Droid's own default. */
   setAgent(choice: AgentChoice | null, by: string): string | undefined {
     if (!choice) {
       delete this.saved.agent;
@@ -70,15 +67,13 @@ export class OfficePrompts implements PromptSource {
     }
     const why = this.problem(choice);
     if (why) return why;
-    this.saved.agent = { provider: choice.provider, ...(choice.model ? { model: choice.model } : {}), ...(choice.effort ? { effort: choice.effort } : {}), by, at: Date.now() };
+    this.saved.agent = { ...(choice.model ? { model: choice.model } : {}), ...(choice.effort ? { effort: choice.effort } : {}), by, at: Date.now() };
     this.changed();
     return undefined;
   }
 
   private problem(c: AgentChoice): string | undefined {
-    if (!isAgentProvider(c.provider) || !this.providers.list.includes(c.provider)) return 'Unknown agent provider';
-    if (c.provider === 'custom' && this.providers.configured !== 'custom') return 'Custom is not the configured agent provider';
-    return validateWorkerModel('agent', c.provider, c.model) ?? validateWorkerEffort('agent', c.provider, c.effort);
+    return validateWorkerModel('agent', c.model) ?? validateWorkerEffort('agent', c.effort);
   }
 
   private changed() {
@@ -97,10 +92,9 @@ export class OfficePrompts implements PromptSource {
       if (!isPromptId(id) || typeof v?.text !== 'string') continue;
       this.saved.custom[id] = { text: v.text.slice(0, PROMPT_MAX), by: typeof v.by === 'string' ? v.by : 'someone', at: typeof v.at === 'number' ? v.at : 0 };
     }
-    const a = raw?.agent;
-    if (a && isAgentProvider(a.provider)) {
-      const choice: AgentChoice = { provider: a.provider, model: typeof a.model === 'string' ? a.model : undefined, effort: isAgentEffort(a.effort) ? a.effort : undefined };
-      // One the office can't start any more (it was started with another --agent) is forgotten.
+    const a = raw?.agent as (Partial<AgentChoice> & { by?: unknown; at?: unknown }) | undefined;
+    if (a) {
+      const choice: AgentChoice = { model: typeof a.model === 'string' ? a.model : undefined, effort: isAgentEffort(a.effort) ? a.effort : undefined };
       if (!this.problem(choice)) this.saved.agent = { ...choice, by: typeof a.by === 'string' ? a.by : 'someone', at: typeof a.at === 'number' ? a.at : 0 };
     }
   }

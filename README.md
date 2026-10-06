@@ -6,7 +6,7 @@
 
 ### Your AI agents deserve a desk.
 
-**A 3D office in your browser where you hire Factory Droid, Claude Code, Codex and OpenCode workers, walk over to their desks and step into their live terminals.**
+**A 3D office in your browser where you hire Factory Droid workers, walk over to their desks and step into their live terminals.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/nikships/droid-office?style=for-the-badge)](https://github.com/nikships/droid-office/releases)
@@ -26,7 +26,7 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 
 ## What you get
 
-- **A desk for every agent.** Walk up, press **E**, pick Droid, Claude Code, Codex or OpenCode, and a worker sits down. Its live terminal opens on the laptop in front of it.
+- **A desk for every agent.** Walk up, press **E**, pick a model, and a Droid worker sits down. Its live terminal opens on the laptop in front of it.
 - **One terminal, every window.** Open the same live session in a second browser tab; it keeps streaming in each, with full scrollback.
 - **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards, task queue and workers.
 - **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
@@ -41,10 +41,7 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 This started as a fork of [agent-office](https://github.com/AgentSystemLabs/agent-office) and went its own way. It's built for teams that live in Factory.
 
 ### Droid is the star
-Droid is the default agent. Hire a worker on any Droid model, including custom and [DroidProxy](https://github.com/anand-92/droidproxy) ones, at the reasoning effort you choose. The office remembers your pick per desk and keeps it with the worker across restarts. It shows you when a Droid worker is working, waiting on you or done.
-
-### See your limits before you hit them
-Run DroidProxy on the machine and the monitor on the wall shows every Claude, Codex and Grok sign-in it holds: how much of each 5-hour, weekly and per-model limit is used, when it resets, and which accounts are out. No emails, no tokens.
+Every worker is a Droid session. Hire a worker on any model you've configured — including your custom models — at the reasoning effort you choose. The office remembers your pick per desk and keeps it with the worker across restarts. It shows you when a Droid worker is working, waiting on you or done.
 
 ### GitLab is a first-class citizen
 A floor can be a GitLab project, on gitlab.com or your own host. Merge requests fill the PR board, workers open them with `glab`, and every prompt the office sends speaks GitLab.
@@ -62,7 +59,7 @@ Every new feature that ships in the original project is brought over, adapted to
 
 ## Get started in a minute
 
-You need Node.js 20+, `git`, and one agent CLI signed in ([`droid`](https://docs.factory.ai/droid-cli/cli-reference.md), `claude`, `codex` or `opencode`). For the boards, sign in to `gh` for GitHub or `glab` for GitLab.
+You need Node.js 20+, `git`, and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab.
 
 **macOS and Linux**
 

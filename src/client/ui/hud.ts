@@ -1,8 +1,7 @@
 import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
-import { usageLabel, usageTitle } from './usage';
-import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
+import { modelBadge } from './models';
 import { DESK_BY_ID } from '../../shared/layout';
 
 export function renderWorkers(onOpen: (id: string) => void) {
@@ -10,19 +9,8 @@ export function renderWorkers(onOpen: (id: string) => void) {
   ul.replaceChildren();
   const workers = [...store.workers.values()].sort((a, b) => a.createdAt - b.createdAt);
   for (const w of workers) {
-    const provider = w.kind === 'agent' ? providerLabel(w.provider, store.project) : null;
-    const providerKind = w.kind === 'agent' ? resolvedProvider(w.provider, store.project) : undefined;
-    const usageState = w.kind === 'agent' ? providerUsageState(w.provider, store.project, w.usage) : undefined;
-    const usageNote =
-      usageState === 'untracked' ? ' · usage untracked' : usageState === 'waiting' && providerKind === 'opencode' ? ' · waiting for metrics' : usageState === 'waiting' && providerKind === 'codex' ? ' · waiting for first report' : '';
-    const badge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
-    const sub = [
-      provider && `⚙️ ${provider}${badge ? ` · ${badge}` : ''}${usageNote}`,
-      w.worktree && `🌿 ${w.worktree.branch}`,
-      w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
-      w.pr && `🔀 PR #${w.pr.number}`,
-      w.activity || w.title || w.prompt,
-    ]
+    const badge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const sub = [w.kind === 'agent' && `⚙️ Droid${badge ? ` · ${badge}` : ''}`, w.worktree && `🌿 ${w.worktree.branch}`, w.repos?.length && `🗂️ ${w.repos.length + 1} repos`, w.pr && `🔀 PR #${w.pr.number}`, w.activity || w.title || w.prompt]
       .filter(Boolean)
       .join(' · ');
     ul.append(
@@ -30,7 +18,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
         'li',
         { onclick: () => onOpen(w.id), title: `Open ${w.name}'s terminal` },
         h('span.dot', { style: `background:${w.color}` }),
-        h('span.name', {}, w.name, sub ? h('span.sub', {}, ...glyphText(sub)) : null, usageState === 'tracked' && w.usage ? h('span.cost', { title: usageTitle(w.usage, providerKind) }, usageLabel(w.usage, providerKind)) : null),
+        h('span.name', {}, w.name, sub ? h('span.sub', {}, ...glyphText(sub)) : null),
         w.lost ? h('span.pill.lost', { title: 'Its worktree was deleted outside droid-office: open it to fix it' }, 'worktree deleted') : h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status),
       ),
     );
@@ -97,7 +85,7 @@ export function openHelp() {
     ['/', 'Search every terminal on your floor, back to before the office last restarted'],
     [typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K', 'Command palette: a few letters find a worker, issue, PR, service, board or action. Enter opens it, Shift+Enter walks you over first'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
-    ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Claude)'],
+    ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Droid)'],
     ['Shift + Esc', 'Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal)'],
     ['⚙️', 'Settings (in the ☰ menu): switch between first and third person'],
   ];

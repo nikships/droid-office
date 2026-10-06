@@ -4,23 +4,8 @@ import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readS
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { MEETING_SEATS } from '../shared/layout.js';
-import { MAX_MEETING_BUDGET, MEETING_NOTES_DIR, MEETING_PATTERNS, TOKENS_PER_SEAT, isMeetingPattern, meetingRecord, outputProblem, slugify } from '../shared/meetings.js';
-import {
-  fmtTokens,
-  isAgentEffort,
-  isAgentProvider,
-  tokensOf,
-  type AgentChoice,
-  type AgentEffort,
-  type AgentProvider,
-  type Meeting,
-  type MeetingRecord,
-  type MeetingRequest,
-  type MeetingState,
-  type MeetingTurn,
-  type WorkerInfo,
-  type WorkerStatus,
-} from '../shared/protocol.js';
+import { MEETING_NOTES_DIR, MEETING_PATTERNS, isMeetingPattern, meetingRecord, outputProblem, slugify } from '../shared/meetings.js';
+import { isAgentEffort, type AgentChoice, type AgentEffort, type Meeting, type MeetingRecord, type MeetingRequest, type MeetingState, type MeetingTurn, type WorkerInfo, type WorkerStatus } from '../shared/protocol.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { gitError, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import type { Forge } from '../shared/floors.js';
@@ -30,12 +15,11 @@ const execFileP = promisify(execFile);
 
 /** What the meeting room needs from the worker manager. Narrow on purpose, so a test can fake it. */
 export interface MeetingWorkers {
-  readonly defaultProvider: AgentProvider;
-  /** What a meeting seats when whoever calls it doesn't pick (Settings); the default provider without it. */
+  /** What a meeting seats when whoever calls it doesn't pick (Settings); Droid's own default without it. */
   readonly officeDefault?: AgentChoice;
   list(): WorkerInfo[];
   /** Seats an agent at a chair of the meeting table, for meeting `meeting`, in its worktree when it has one. */
-  seat(deskId: string, by: string, prompt: string, provider: AgentProvider, model: string | undefined, effort: AgentEffort | undefined, meeting: { id: string; worktree?: Meeting['worktree'] }): WorkerInfo | string;
+  seat(deskId: string, by: string, prompt: string, model: string | undefined, effort: AgentEffort | undefined, meeting: { id: string; worktree?: Meeting['worktree'] }): WorkerInfo | string;
   prompt(id: string, text: string): string | undefined;
   /** Keys into its terminal: Esc, to stop what it's doing. */
   write(id: string, data: string): void;
@@ -53,8 +37,6 @@ export interface MeetingTrees {
 export interface MeetingEvents {
   update(state: MeetingState): void;
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
-  /** Why nobody may be hired right now (today's budget is spent), if that's so. */
-  hiringPaused(): string | undefined;
   /** Posts the review panel's review on its pull request. Resolves to the review's URL. */
   postReview(pr: number, file: string): Promise<string>;
   /** One of the office's prompts as it has it now (rewritten in Settings, or the default). */
@@ -90,7 +72,7 @@ interface Part {
  * through the rounds of its pattern (shared/meetings.ts): in each step every worker with a part gets
  * it as a prompt, and the step is over when each of them has ended its turn with its part written to
  * the file it names. Checking the files, not the talk, is what moves a meeting on. It ends when the
- * output file is written, and stops early, saying why, when it runs over its token budget, when a
+ * output file is written, and stops early, saying why, when a
  * worker won't write its part, or when a worker leaves.
  *
  * Everyone at the table shares the meeting's own git worktree (in a git project). When it's done,
@@ -135,20 +117,16 @@ export class MeetingRoom {
     if (this.current?.status === 'running') return `The meeting room is busy with “${this.current.title}”: stop that meeting first`;
     if (!isMeetingPattern(req.pattern)) return 'Unknown meeting pattern';
     const pattern = MEETING_PATTERNS[req.pattern];
-    const paused = this.events.hiringPaused();
-    if (paused) return paused;
     const prompt = String(req.prompt ?? '')
       .replace(/\r\n?/g, '\n')
       .trim()
       .slice(0, PROMPT_MAX);
     if (!prompt) return 'Say what the meeting is about';
     // Nobody picked: the office's default worker, model and effort included.
-    const picked: Partial<AgentChoice> = (req.provider === undefined && this.workers.officeDefault) || { provider: req.provider ?? this.workers.defaultProvider, model: req.model, effort: req.effort };
-    const provider = picked.provider;
-    if (!isAgentProvider(provider) || (provider === 'custom' && this.workers.defaultProvider !== 'custom')) return 'Unknown agent provider';
-    const model = provider === 'claude' || provider === 'opencode' || provider === 'droid' || provider === 'grok' || provider === 'muse' ? picked.model || undefined : undefined;
-    const effort = (provider === 'claude' || provider === 'droid' || provider === 'grok' || provider === 'muse') && isAgentEffort(picked.effort) ? picked.effort : undefined;
-    const bad = validateWorkerModel('agent', provider, model) ?? validateWorkerEffort('agent', provider, effort);
+    const picked: Partial<AgentChoice> = (req.model === undefined && this.workers.officeDefault) || { model: req.model, effort: req.effort };
+    const model = picked.model || undefined;
+    const effort = isAgentEffort(picked.effort) ? picked.effort : undefined;
+    const bad = validateWorkerModel('agent', model) ?? validateWorkerEffort('agent', effort);
     if (bad) return bad;
 
     const given = Array.isArray(req.roles)
@@ -174,7 +152,6 @@ export class MeetingRoom {
     if (pattern.needs === 'parts' && parts.length < count - 1) return `List at least ${count - 1} part${count === 2 ? '' : 's'} for the mappers, one per line (or seat fewer workers)`;
     const issue = Number.isInteger(req.issue) && (req.issue as number) > 0 ? (req.issue as number) : undefined;
     const rounds = clamp(Math.floor(Number(req.rounds) || pattern.rounds.default), pattern.rounds.min, pattern.rounds.max);
-    const budget = clamp(Math.floor(Number(req.budget) || count * TOKENS_PER_SEAT), 50_000, MAX_MEETING_BUDGET);
     const title = (
       String(req.title ?? '')
         .replace(/\s+/g, ' ')
@@ -210,17 +187,12 @@ export class MeetingRoom {
       parts: pattern.needs === 'parts' ? parts : undefined,
       pr,
       issue,
-      provider,
       model,
       effort,
       rounds,
       round: 1,
       step: 1,
       turns: [],
-      budget,
-      tokens: 0,
-      cost: 0,
-      costKnown: true,
       status: 'running',
       calledBy: by,
       startedAt: Date.now(),
@@ -233,7 +205,7 @@ export class MeetingRoom {
     for (let i = 0; i < m.seats.length; i++) {
       const part = first.find((p) => p.seat === i);
       const text = `${this.brief(m, i)}\n\n${part ? this.ask(m, part) : this.say('meeting.wait')}`;
-      const w = this.workers.seat(m.seats[i].deskId, `${by} (meeting)`, text, provider, model, effort, { id, worktree });
+      const w = this.workers.seat(m.seats[i].deskId, `${by} (meeting)`, text, model, effort, { id, worktree });
       if (typeof w === 'string') {
         for (const s of m.seats) if (s.workerId) void this.workers.kill(s.workerId);
         if (worktree && this.trees) void this.trees.remove(worktree, 'all');
@@ -247,7 +219,7 @@ export class MeetingRoom {
     if (last) this.archive(last);
     this.current = m;
     this.changed();
-    this.events.toast(`🤝 ${by} called a ${pattern.label} meeting: “${title}” (${count} workers, ${rounds} round${rounds === 1 ? '' : 's'} at most, ${fmtTokens(budget)} tokens)`, 'info');
+    this.events.toast(`🤝 ${by} called a ${pattern.label} meeting: “${title}” (${count} workers, ${rounds} round${rounds === 1 ? '' : 's'} at most)`, 'info');
     return undefined;
   }
 
@@ -317,7 +289,6 @@ export class MeetingRoom {
     const m = this.current;
     if (!m) return;
     const byId = new Map(this.workers.list().map((w) => [w.id, w]));
-    if (this.tally(m, byId)) this.dirty = true;
     if (m.status !== 'running') {
       // Everyone went home one by one: tidy the worktree away after them.
       if (!m.cleared && m.seats.every((s) => !s.workerId || !byId.has(s.workerId))) void this.dismiss(m);
@@ -328,7 +299,6 @@ export class MeetingRoom {
       if (!w) return this.halt(m, `the ${s.role} (${s.workerName ?? 'its worker'}) was sent home`);
       if (w.status === 'exited') return this.halt(m, `the ${s.role}'s agent (${w.name}) exited`);
     }
-    if (m.tokens > m.budget) return this.halt(m, `over budget: ${fmtTokens(m.tokens)} of ${fmtTokens(m.budget)} tokens`);
     let changed = false;
     for (const t of m.turns) {
       changed = this.advance(m, t, byId.get(m.seats[t.seat].workerId!)!) || changed;
@@ -522,29 +492,6 @@ export class MeetingRoom {
     this.past = [meetingRecord(m), ...this.past.filter((r) => r.id !== m.id)].slice(0, PAST_MAX);
   }
 
-  /** Adds up what the workers at the table have used. Returns whether it changed. */
-  private tally(m: Meeting, byId: Map<string, WorkerInfo>): boolean {
-    let tokens = 0;
-    let cost = 0;
-    let known = true;
-    for (const s of m.seats) {
-      const w = s.workerId ? byId.get(s.workerId) : undefined;
-      // A worker sent home took its figures with it: keep the last ones seen.
-      if (w?.usage) {
-        s.tokens = tokensOf(w.usage);
-        s.cost = w.usage.costKnown === false || (w.provider === 'codex' && w.usage.costKnown !== true) ? undefined : w.usage.cost;
-      }
-      tokens += s.tokens ?? 0;
-      if (s.tokens && s.cost === undefined) known = false;
-      cost += s.cost ?? 0;
-    }
-    if (tokens === m.tokens && cost === m.cost && known === m.costKnown) return false;
-    m.tokens = tokens;
-    m.cost = cost;
-    m.costKnown = known;
-    return true;
-  }
-
   // --- The patterns ----------------------------------------------------------
 
   /** What every worker is told when it sits down, ahead of its first part. */
@@ -594,7 +541,6 @@ export class MeetingRoom {
       output: m.output,
       outputPath: path.join(this.cwd(m), m.output),
       rounds: `${m.rounds} round${m.rounds === 1 ? '' : 's'}`,
-      budget: fmtTokens(m.budget),
       where: where + inside,
     });
   }

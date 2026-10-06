@@ -5,7 +5,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WorkerManager, type WorkerEvents } from '../src/server/workers.js';
-import { Ledger } from '../src/server/usage.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 
 const REVIVE_MS = 30_000;
@@ -27,20 +26,7 @@ function fixture(t: { after(fn: () => void): void }) {
   const events: WorkerEvents = { update: (info) => updates.push(info), remove: (id) => removed.push(id), data() {}, screen() {}, toast: (text, level) => toasts.push({ text, level }) };
   const managers: WorkerManager[] = [];
   const manager = () => {
-    const workers = new WorkerManager(
-      dir,
-      data,
-      command,
-      [],
-      { url: 'http://127.0.0.1:1', token: '' },
-      events,
-      new Ledger(
-        data,
-        { pauseHiring: false },
-        () => {},
-        () => {},
-      ),
-    );
+    const workers = new WorkerManager(dir, data, command, [], { url: 'http://127.0.0.1:1', token: '' }, events);
     managers.push(workers);
     return workers;
   };

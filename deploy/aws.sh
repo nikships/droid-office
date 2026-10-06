@@ -21,8 +21,7 @@ APP_REPO=""
 PROJECT=""
 GH_TOKEN_ARG=""
 NO_GH_TOKEN=0
-CLAUDE_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-ANTHROPIC_KEY=""
+FACTORY_KEY="${FACTORY_API_KEY:-}"
 YES=0
 NO_OPEN=0
 EXTRA_ALLOW=()
@@ -79,10 +78,9 @@ Options
   --github-token <token>    GitHub token for private repos + the issue/PR boards
                             (default: your local `gh auth token`)
   --no-github-token         Don't put any GitHub token on the machine
-  --claude-token <token>    Claude subscription token from `claude setup-token`
-                            (default: $CLAUDE_CODE_OAUTH_TOKEN). Without one, log in from the
-                            first worker's terminal in the office.
-  --anthropic-api-key <key> Use an Anthropic API key instead
+  --factory-api-key <key>   A Factory API key for Droid on the machine (default:
+                            $FACTORY_API_KEY). Without one, sign Droid in over SSH once the
+                            box is up: deploy/aws.sh ssh, run `droid`, log in.
   --no-open                 Don't open the browser (up, resume: don't open the tunnel either)
   -y, --yes                 Don't ask for confirmation
 EOF
@@ -113,8 +111,7 @@ while [[ $# -gt 0 ]]; do
     --app-ref) APP_REF="$2"; shift 2 ;;
     --github-token) GH_TOKEN_ARG="$2"; shift 2 ;;
     --no-github-token) NO_GH_TOKEN=1; shift ;;
-    --claude-token) CLAUDE_TOKEN="$2"; shift 2 ;;
-    --anthropic-api-key) ANTHROPIC_KEY="$2"; shift 2 ;;
+    --factory-api-key) FACTORY_KEY="$2"; shift 2 ;;
     --no-open) NO_OPEN=1; shift ;;
     -y | --yes) YES=1; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -418,10 +415,10 @@ cmd_up() {
   else
     echo "   github:   no token — private repos and the boards won't work"
   fi
-  if [[ -n "$CLAUDE_TOKEN" || -n "$ANTHROPIC_KEY" ]]; then
-    echo "   claude:   signed in with the token you provided"
+  if [[ -n "$FACTORY_KEY" ]]; then
+    echo "   droid:    signed in with the Factory API key you provided"
   else
-    echo "   claude:   not signed in — log in from the first worker's terminal (or pass --claude-token)"
+    echo "   droid:    not signed in — run 'deploy/aws.sh ssh' once and log in to Droid there"
   fi
 
   mkdir -p "$STATE_DIR"
@@ -496,13 +493,13 @@ cmd_up() {
   done
   remote true || die "SSH never came up on $IP"
 
-  say "Provisioning (Node, git, gh, Claude Code, droid-office) — a few minutes on first run"
+  say "Provisioning (Node, git, gh, the Droid CLI, droid-office) — a few minutes on first run"
   local git_name git_email
   git_name=$(git config user.name 2>/dev/null || true)
   git_email=$(git config user.email 2>/dev/null || true)
   {
     printf 'export APP_REPO=%q APP_REF=%q PROJECT_REPO=%q\n' "$APP_REPO" "$APP_REF" "$project_repo"
-    printf 'export PUBLIC_HOST=%q GH_TOKEN=%q CLAUDE_CODE_OAUTH_TOKEN=%q ANTHROPIC_API_KEY=%q\n' "$IP" "$gh_token" "$CLAUDE_TOKEN" "$ANTHROPIC_KEY"
+    printf 'export PUBLIC_HOST=%q GH_TOKEN=%q FACTORY_API_KEY=%q\n' "$IP" "$gh_token" "$FACTORY_KEY"
     printf 'export GIT_NAME=%q GIT_EMAIL=%q\n' "$git_name" "$git_email"
     cat "$SCRIPT_DIR/provision.sh"
   } | remote 'bash -s' || die "provisioning failed (re-run \"deploy/aws.sh up\" to retry; it picks up where it left off)"

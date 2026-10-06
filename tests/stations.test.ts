@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from '../src/server/stations.js';
+import { stationBrief } from '../src/server/stations.js';
 import type { StationKind } from '../src/shared/layout.js';
 
 const KINDS: StationKind[] = ['issues', 'pulls', 'queue'];
@@ -43,8 +43,4 @@ test('the issues and PR agents keep their jobs, and may still be asked for somet
     assert.match(brief, /say in a few lines what you did, with links/);
     assert.doesNotMatch(brief, /one-line fix/);
   }
-});
-
-test('the queue agent is launched without the file-editing tools', () => {
-  assert.deepEqual(QUEUE_AGENT_DISALLOWED_TOOLS, ['Edit', 'Write', 'NotebookEdit']);
 });

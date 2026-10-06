@@ -7,9 +7,7 @@ import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeComm
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import { stationBrief } from '../src/server/stations.js';
 import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentChoice, AgentProvider, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
-
-const PROVIDERS: { list: AgentProvider[]; configured: AgentProvider } = { list: ['droid', 'claude', 'opencode', 'codex'], configured: 'droid' };
+import type { AgentChoice, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
 
 function scratch(t: { after(fn: () => void): void }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-prompts-'));
@@ -180,14 +178,14 @@ test('the board agents are briefed as they always were on both forges', () => {
 test('a rewritten prompt is kept, used, and put back to the default', (t) => {
   const dir = scratch(t);
   const told: PromptsState[] = [];
-  const book = new OfficePrompts(dir, PROVIDERS, (s) => told.push(s));
+  const book = new OfficePrompts(dir, (s) => told.push(s));
   assert.equal(book.setPrompt('issue.work', 'Just do #{{number}}\r\n', 'Ada'), undefined);
   assert.equal(book.text('issue.work'), 'Just do #{{number}}');
   assert.equal(book.state().custom['issue.work']?.by, 'Ada');
   assert.equal(told.length, 1);
 
   // It's there after a restart.
-  const again = new OfficePrompts(dir, PROVIDERS, () => {});
+  const again = new OfficePrompts(dir, () => {});
   assert.equal(officePrompt(again, 'issue.work', { number: 4 }), 'Just do #4');
 
   // The default's own text, or null, puts the default back.
@@ -207,32 +205,27 @@ test('a rewritten prompt is kept, used, and put back to the default', (t) => {
   assert.equal(promptText(book.state().custom, 'office.namer'), PROMPTS['office.namer'].text);
 });
 
-test('the default worker is checked before it is kept, Droid included, and one the office can no longer start is forgotten', (t) => {
+test('the default worker is checked before it is kept, and one the office can no longer start is forgotten', (t) => {
   const dir = scratch(t);
-  const book = new OfficePrompts(dir, PROVIDERS, () => {});
+  const book = new OfficePrompts(dir, () => {});
   assert.equal(book.agent(), undefined);
-  assert.match(book.setAgent({ provider: 'custom' }, 'Ada') ?? '', /Unknown agent provider/);
-  assert.match(book.setAgent({ provider: 'claude', model: 'gpt-9' }, 'Ada') ?? '', /Invalid Claude model/);
-  assert.match(book.setAgent({ provider: 'codex', effort: 'high' }, 'Ada') ?? '', /only be selected for Claude Code, Droid, Grok or Muse/);
-  assert.match(book.setAgent({ provider: 'opencode', model: 'no slash' }, 'Ada') ?? '', /Invalid OpenCode model/);
-  assert.match(book.setAgent({ provider: 'droid', model: 'has a space' }, 'Ada') ?? '', /Invalid Droid model/);
-  assert.equal(book.setAgent({ provider: 'droid', model: 'custom:droidproxy:opus-5-5', effort: 'high' }, 'Ada'), undefined);
-  assert.deepEqual(book.agent(), { provider: 'droid', model: 'custom:droidproxy:opus-5-5', effort: 'high' });
+  assert.match(book.setAgent({ model: 'has a space' }, 'Ada') ?? '', /Invalid Droid model/);
+  assert.match(book.setAgent({ model: 'glm-5.3-flash', effort: 'turbo' } as unknown as AgentChoice, 'Ada') ?? '', /Invalid effort/);
+  assert.equal(book.setAgent({ model: 'custom:droidproxy:opus-5-5', effort: 'high' }, 'Ada'), undefined);
+  assert.deepEqual(book.agent(), { model: 'custom:droidproxy:opus-5-5', effort: 'high' });
   assert.equal(book.state().agent?.by, 'Ada');
-  assert.deepEqual(new OfficePrompts(dir, PROVIDERS, () => {}).agent(), { provider: 'droid', model: 'custom:droidproxy:opus-5-5', effort: 'high' });
-  assert.equal(book.setAgent({ provider: 'claude', model: 'opus', effort: 'high' }, 'Ada'), undefined);
-  assert.deepEqual(book.agent(), { provider: 'claude', model: 'opus', effort: 'high' });
+  assert.deepEqual(new OfficePrompts(dir, () => {}).agent(), { model: 'custom:droidproxy:opus-5-5', effort: 'high' });
+  assert.equal(book.setAgent({ model: 'opus', effort: 'high' }, 'Ada'), undefined);
+  assert.deepEqual(book.agent(), { model: 'opus', effort: 'high' });
   assert.equal(book.setAgent(null, 'Ada'), undefined);
   assert.equal(book.agent(), undefined);
 
-  // Custom, then the office comes back with another --agent: custom is gone.
   const file = path.join(dir, 'prompts.json');
-  writeFileSync(file, JSON.stringify({ custom: {}, agent: { provider: 'custom', by: 'Ada', at: 1 } }));
-  assert.deepEqual(new OfficePrompts(dir, { list: [...PROVIDERS.list, 'custom'], configured: 'custom' }, () => {}).agent(), { provider: 'custom' });
-  assert.equal(new OfficePrompts(dir, PROVIDERS, () => {}).agent(), undefined);
+  writeFileSync(file, JSON.stringify({ custom: {}, agent: { model: 'opus', by: 'Ada', at: 1 } }));
+  assert.deepEqual(new OfficePrompts(dir, () => {}).agent(), { model: 'opus' });
   // A broken file is the defaults.
   writeFileSync(file, '{nope');
-  assert.deepEqual(new OfficePrompts(dir, PROVIDERS, () => {}).state(), { custom: {} });
+  assert.deepEqual(new OfficePrompts(dir, () => {}).state(), { custom: {} });
   assert.ok(readFileSync(file, 'utf8'));
 });
 
@@ -247,16 +240,14 @@ function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentCh
   const dir = scratch(t);
   const workers: WorkerInfo[] = [];
   const manager: QueueWorkers = {
-    defaultProvider: 'droid',
     officeDefault,
     list: () => workers,
     deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, _worktree, kind, provider, model, effort) {
+    spawn(deskId, by, prompt, _worktree, kind, model, effort) {
       const w: WorkerInfo = {
         id: `w${workers.length}`,
         deskId,
         kind,
-        provider,
         model,
         effort,
         prompt,
@@ -288,16 +279,16 @@ function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentCh
   return { queue, workers };
 }
 
-test('a task nobody picked a worker for runs on the office default, Droid model and effort included; one that did keeps its own', (t) => {
-  const { queue, workers } = queueFixture(t, { provider: 'droid', model: 'custom:droidproxy:gpt-6-sol', effort: 'low' });
+test('a task nobody picked a worker for runs on the office default, model and effort included; one that did keeps its own', (t) => {
+  const { queue, workers } = queueFixture(t, { model: 'custom:droidproxy:gpt-6-sol', effort: 'low' });
   assert.equal(queue.add('Fix the dog', 'Queue agent'), undefined);
-  assert.deepEqual([workers[0].provider, workers[0].model, workers[0].effort], ['droid', 'custom:droidproxy:gpt-6-sol', 'low']);
-  assert.equal(queue.add('Fix the cat', 'Ada', undefined, undefined, 'claude', 'haiku'), undefined);
-  assert.deepEqual([workers[1].provider, workers[1].model, workers[1].effort], ['claude', 'haiku', undefined]);
-  // Without one set, it's the office's --agent on its own model, as it always was.
+  assert.deepEqual([workers[0].model, workers[0].effort], ['custom:droidproxy:gpt-6-sol', 'low']);
+  assert.equal(queue.add('Fix the cat', 'Ada', undefined, undefined, 'glm-5.3-flash'), undefined);
+  assert.deepEqual([workers[1].model, workers[1].effort], ['glm-5.3-flash', undefined]);
+  // Without one set, it's Droid's own default model, as it always was.
   const plain = queueFixture(t, undefined);
   plain.queue.add('Fix it', 'Ada');
-  assert.deepEqual([plain.workers[0].provider, plain.workers[0].model, plain.workers[0].effort], ['droid', undefined, undefined]);
+  assert.deepEqual([plain.workers[0].model, plain.workers[0].effort], [undefined, undefined]);
 });
 
 test('the worktree note the queue adds is the old one by default, and can be rewritten or left off', (t) => {

@@ -6,7 +6,7 @@ import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type
 import { THEME_PICKS } from '../../shared/theme';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
-import { agentFields, officeChoice } from './provider';
+import { agentFields, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 
@@ -221,8 +221,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   hookTest.addEventListener('click', () => net.send({ t: 'notify.test' }));
   hookRemove.addEventListener('click', () => net.send({ t: 'notify.webhook', url: '' }));
 
-  // The worker a new one starts on when whoever starts it sends no provider.
-  const agent = agentFields(store.project, 'office-agent', officeChoice(store.project));
+  // The worker a new one starts on when whoever starts it picks no model.
+  const agent = agentFields('office-agent', officeChoice());
   let agentTouched = false;
   agent.element.addEventListener('change', () => (agentTouched = true));
   agent.element.addEventListener('input', () => (agentTouched = true));
@@ -232,17 +232,16 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const agentNote = h('p.setting-note');
   const paintAgent = () => {
     const picked = store.prompts.agent;
-    const now = officeChoice(store.project);
+    const now = officeChoice();
     agentBack.classList.toggle('hidden', !picked);
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(now);
     agentNote.textContent =
-      'What a worker starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a provider. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
+      'What a worker starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a model. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
       (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.');
   };
   paintAgent();
   agentSave.addEventListener('click', () => {
-    if (!agent.valid()) return;
     agentTouched = false;
     net.send({ t: 'prompts.agent', choice: agent.choice() });
   });

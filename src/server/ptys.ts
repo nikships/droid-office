@@ -9,13 +9,13 @@ import * as pty from '@lydell/node-pty';
 
 /**
  * Workers' terminals live in a small host process of their own (ptyhost.ts), not in the office.
- * When the office restarts (a dev-server reload, a self-upgrade), Claude keeps working in the host,
+ * When the office restarts (a dev-server reload, a self-upgrade), Droid keeps working in the host,
  * and the new office picks every terminal back up where it was. Without a host, terminals run
  * in-process as before and die with the office.
  */
 
 /** Bump whenever the host's messages change: an office that finds an older host stops it and starts its own. */
-export const PTY_PROTOCOL = 2;
+export const PTY_PROTOCOL = 3;
 export const SCROLLBACK = 3000;
 
 export interface SpawnOpts {
@@ -54,8 +54,6 @@ export interface Adopted {
   pty: Pty;
   cols: number;
   rows: number;
-  /** Claude's last OSC 9;4 progress report. */
-  busy: boolean;
   title: string;
   /** Scrollback and screen, to replay into a fresh terminal. */
   snapshot: string;
@@ -245,7 +243,7 @@ export class PtyHost {
       return undefined;
     }
     p.pid = msg.pid;
-    return { pty: p, cols: msg.cols, rows: msg.rows, busy: msg.busy, title: msg.title, snapshot: msg.snapshot };
+    return { pty: p, cols: msg.cols, rows: msg.rows, title: msg.title, snapshot: msg.snapshot };
   }
 
   /** Ends the host's terminals that no worker claimed (their worker was sent home meanwhile). */

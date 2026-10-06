@@ -11,14 +11,14 @@ const storage = {
 
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
 
-test('settings show the workers panel by default, and yesterday’s people/chat panels can’t come back', () => {
+test('settings show the workers panel by default, and yesterday’s spend/limits panels can’t come back', () => {
   mem.clear();
-  assert.deepEqual(loadSettings().hud, { workers: true, spend: false, limits: false, floor: false });
-  assert.deepEqual(HUD_DEFAULTS, { workers: true, spend: false, limits: false, floor: false });
+  assert.deepEqual(loadSettings().hud, { workers: true, floor: false });
+  assert.deepEqual(HUD_DEFAULTS, { workers: true, floor: false });
 
-  // Saved before the people and chat panels went away.
-  mem.set('droid-office.settings', JSON.stringify({ hud: { people: true, chat: true, spend: true }, pins: ['people', 'chat', 'search'] }));
+  // Saved before the spend and limits panels went away.
+  mem.set('droid-office.settings', JSON.stringify({ hud: { people: true, chat: true, spend: true, limits: true, floor: true }, pins: ['people', 'chat', 'search'] }));
   const s = loadSettings();
-  assert.deepEqual(s.hud, { workers: true, spend: true, limits: false, floor: false });
+  assert.deepEqual(s.hud, { workers: true, floor: true });
   assert.deepEqual(s.pins, ['search']);
 });
