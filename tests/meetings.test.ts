@@ -28,14 +28,16 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
   const workers: WorkerInfo[] = [];
   const prompts: { id: string; text: string }[] = [];
   const typed: { id: string; data: string }[] = [];
+  const pictures: (readonly string[] | undefined)[] = [];
   const toasts: string[] = [];
   const reviews: { pr: number; file: string }[] = [];
   let ids = 0;
   const manager: MeetingWorkers = {
     officeDefault: opts.officeDefault,
     list: () => workers,
-    seat(deskId, by, prompt, model, effort, meeting) {
+    seat(deskId, by, prompt, model, effort, meeting, images) {
       if (workers.some((w) => w.deskId === deskId)) return 'taken';
+      pictures.push(images);
       const worker: WorkerInfo = {
         id: `w${++ids}`,
         deskId,
@@ -124,6 +126,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
     room,
     workers,
     prompts,
+    pictures,
     typed,
     toasts,
     reviews,
@@ -414,4 +417,22 @@ test('a meeting about an issue names its forge and CLI, and a teammate with no f
     assert.ok(text.includes(`\n\nIt comes from ${site} issue #7: ${cli} issue view 7 --comments.\n\n`), forge);
     assert.ok(text.endsWith("\n\nRound 1 has no part for you. Reply in one line that you're ready and end your turn; your part comes in a later message."), forge);
   }
+});
+
+test('every worker at the table is given the meeting’s pictures, and pictures can stand in for the topic', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const images = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'];
+  assert.equal(f.start({ images }), undefined);
+  assert.equal(f.pictures.length, 3);
+  assert.ok(f.pictures.every((p) => p?.join() === images.join()));
+  assert.equal(f.room.state().current!.prompt, 'Which cache should we use?');
+
+  const g = fixture();
+  t.after(() => g.close());
+  assert.equal(g.start({ prompt: '', images }), undefined);
+  assert.equal(g.room.state().current!.prompt, 'See the attached images.');
+  const none = fixture();
+  t.after(() => none.close());
+  assert.match(none.start({ prompt: '' }) ?? '', /Say what the meeting is about/);
 });

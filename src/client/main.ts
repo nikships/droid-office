@@ -1382,8 +1382,8 @@ function officeIsFull(): boolean {
   return true;
 }
 
-function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[]) {
-  net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined });
+function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], images?: string[]) {
+  net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined, images: images?.length ? images : undefined });
   // The moment notifications start to matter: ask once (it has to come from a key press or click).
   if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
     askedToNotify = true;
@@ -1413,9 +1413,10 @@ function promptAtDesk(deskId: string) {
       submitLabel: 'Hire & start',
       modelOption: true,
       worktreeOption: !!store.project?.branch,
+      imagesOption: true,
       deskId,
       repoOptions: repoChoices(),
-      onSubmit: (text, o) => hire(deskId, text, o.worktree, o.model, o.effort, undefined, o.repos),
+      onSubmit: (text, o) => hire(deskId, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
     });
   } else if (w.lost) {
     fixLostWorktree(w);
@@ -1432,7 +1433,8 @@ function promptAtDesk(deskId: string) {
     openPrompt({
       title: `💬 Prompt ${w.name}`,
       subtitle: w.status === 'working' ? `${w.name} is busy — your message will be queued in their input box.` : undefined,
-      onSubmit: (text) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text }),
+      imagesOption: true,
+      onSubmit: (text, o) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text, images: o.images.length ? o.images : undefined }),
     });
   }
 }
@@ -1449,9 +1451,10 @@ function hireAtDesk(deskId: string) {
     allowEmpty: true,
     modelOption: true,
     worktreeOption: !!store.project?.branch,
+    imagesOption: true,
     deskId,
     repoOptions: repoChoices(),
-    onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos),
+    onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
   });
 }
 
@@ -1517,9 +1520,10 @@ function askStation(deskId: string) {
     submitLabel: 'Send ✨',
     warning: w ? undefined : pressureNote(store.machine),
     modelOption: !w,
+    imagesOption: true,
     deskId,
     onSubmit: (text, o) => {
-      net.send({ t: 'station.prompt', deskId, prompt: text, model: o.model, effort: o.effort });
+      net.send({ t: 'station.prompt', deskId, prompt: text, model: o.model, effort: o.effort, images: o.images.length ? o.images : undefined });
     },
   });
 }
@@ -1905,9 +1909,9 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     worktreeOption: !!store.project?.branch,
     modelOption: true,
     repoOptions: repoChoices(),
-    onSubmit: (prompt, to, worktree, model, effort, repos) => {
-      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt });
-      else if (desk) hire(desk, prompt, worktree, model, effort, undefined, repos);
+    onSubmit: (prompt, to, worktree, model, effort, repos, images) => {
+      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, images: images?.length ? images : undefined });
+      else if (desk) hire(desk, prompt, worktree, model, effort, undefined, repos, images);
     },
   });
 }

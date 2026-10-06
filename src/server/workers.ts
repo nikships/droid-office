@@ -9,6 +9,7 @@ import unicode11 from '@xterm/addon-unicode11';
 import type { AgentChoice, AgentEffort, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
+import { withImages } from '../shared/drops.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
@@ -360,6 +361,8 @@ export class WorkerManager {
     meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
     repos: RepoSource[] = [],
     lead?: string,
+    /** Pictures staged for its first prompt (see stageImage), listed after it. */
+    images?: readonly string[],
   ): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
@@ -372,7 +375,7 @@ export class WorkerManager {
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
-    if (seat.station && !prompt?.trim()) return 'Tell the board agent what to do';
+    if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
     if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
     if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
@@ -404,6 +407,9 @@ export class WorkerManager {
         if (note) this.events.toast(`🌿 ${name}'s worktree ${note}`, 'info');
       }
     }
+    const text = kind === 'agent' && images?.length ? withImages(prompt ?? '', this.drops.adopt(id, images)) : prompt?.trim();
+    // What the card shows when the prompt was pictures alone.
+    const shown = prompt?.trim() || (text ? 'See the attached images' : undefined);
     const info: WorkerInfo = {
       id,
       kind,
@@ -416,13 +422,13 @@ export class WorkerManager {
       acked: true,
       createdBy: by,
       createdAt: Date.now(),
-      prompt: kind === 'shell' ? undefined : prompt?.trim() || undefined,
+      prompt: kind === 'shell' ? undefined : shown,
       worktree: wt,
       repos: others,
       cols: 100,
       rows: 30,
       open: false,
-      activity: prompt ? truncate(prompt, 80) : undefined,
+      activity: shown && kind !== 'shell' ? truncate(shown, 80) : prompt ? truncate(prompt, 80) : undefined,
       meeting: meeting?.id,
       ...(lead !== undefined ? { lead } : {}),
     };
@@ -430,7 +436,7 @@ export class WorkerManager {
     if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
-    this.launch(w, this.briefed(w, info.prompt), undefined);
+    this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
   }
@@ -577,20 +583,30 @@ export class WorkerManager {
    * up with it if it's asleep, or it's hired there with it when nobody is. Returns what went wrong, or
    * the agent and whether it was just hired.
    */
-  station(deskId: string, by: string, text: string, model?: string, effort?: AgentEffort): { info: WorkerInfo; hired: boolean } | string {
+  station(deskId: string, by: string, text: string, model?: string, effort?: AgentEffort, images?: readonly string[]): { info: WorkerInfo; hired: boolean } | string {
     if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
     const clean = text.replace(/\r\n?/g, '\n').trim();
-    if (!clean) return 'Empty prompt';
+    if (!clean && !images?.length) return 'Empty prompt';
     const w = [...this.workers.values()].find((x) => x.info.deskId === deskId);
     if (!w) {
-      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort);
+      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, undefined, [], undefined, images);
       return typeof info === 'string' ? info : { info, hired: true };
     }
     // Typed into the question it's asking, the prompt would answer it.
     if (w.info.status === 'needs_input') return `The ${w.info.name} is waiting on an answer in its terminal`;
     if (!w.pty) w.info.lastInputAt = Date.now();
-    const err = w.pty ? this.prompt(w.info.id, clean) : this.resume(w.info.id, clean);
+    const err = w.pty ? this.prompt(w.info.id, clean, images) : this.resume(w.info.id, withImages(clean, this.drops.adopt(w.info.id, images ?? [])) || undefined);
     return err ?? { info: w.info, hired: false };
+  }
+
+  /** Keeps a picture pasted into a prompt that isn't sent yet; its id, or undefined when it isn't a picture or couldn't be kept. */
+  stageImage(name: string, body: Buffer): string | undefined {
+    return this.drops.stage(name, body);
+  }
+
+  /** Throws away staged pictures: taken out of the prompt, or the prompt was never sent. */
+  unstage(ids: readonly string[]) {
+    this.drops.unstage(ids);
   }
 
   /** The worker whose terminal holds this hook token: how a worker proves it's asking for itself. */
@@ -1056,18 +1072,20 @@ export class WorkerManager {
     return true;
   }
 
-  /** Types a prompt into the agent's input box and submits it. */
-  prompt(id: string, text: string): string | undefined {
+  /** Types a prompt into the agent's input box and submits it, with any staged pictures listed after it. */
+  prompt(id: string, text: string, images?: readonly string[]): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (!w.pty) return 'Worker is not running';
-    const clean = text.replace(/\r\n?/g, '\n').trim();
+    const typed = text.replace(/\r\n?/g, '\n').trim();
+    const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
     // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
     w.pty.write(`\x1b[200~${clean}\x1b[201~`);
     setTimeout(() => w.pty?.write('\r'), 120);
-    w.info.activity = truncate(clean, 80);
-    this.notePrompt(w, clean);
+    const shown = typed || 'See the attached images';
+    w.info.activity = truncate(shown, 80);
+    this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;

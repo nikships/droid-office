@@ -19,7 +19,7 @@ export interface MeetingWorkers {
   readonly officeDefault?: AgentChoice;
   list(): WorkerInfo[];
   /** Seats an agent at a chair of the meeting table, for meeting `meeting`, in its worktree when it has one. */
-  seat(deskId: string, by: string, prompt: string, model: string | undefined, effort: AgentEffort | undefined, meeting: { id: string; worktree?: Meeting['worktree'] }): WorkerInfo | string;
+  seat(deskId: string, by: string, prompt: string, model: string | undefined, effort: AgentEffort | undefined, meeting: { id: string; worktree?: Meeting['worktree'] }, images?: readonly string[]): WorkerInfo | string;
   prompt(id: string, text: string): string | undefined;
   /** Keys into its terminal: Esc, to stop what it's doing. */
   write(id: string, data: string): void;
@@ -117,10 +117,12 @@ export class MeetingRoom {
     if (this.current?.status === 'running') return `The meeting room is busy with “${this.current.title}”: stop that meeting first`;
     if (!isMeetingPattern(req.pattern)) return 'Unknown meeting pattern';
     const pattern = MEETING_PATTERNS[req.pattern];
-    const prompt = String(req.prompt ?? '')
-      .replace(/\r\n?/g, '\n')
-      .trim()
-      .slice(0, PROMPT_MAX);
+    const images = Array.isArray(req.images) ? req.images : [];
+    const prompt =
+      String(req.prompt ?? '')
+        .replace(/\r\n?/g, '\n')
+        .trim()
+        .slice(0, PROMPT_MAX) || (images.length ? 'See the attached images.' : '');
     if (!prompt) return 'Say what the meeting is about';
     // Nobody picked: the office's default worker, model and effort included.
     const picked: Partial<AgentChoice> = (req.model === undefined && this.workers.officeDefault) || { model: req.model, effort: req.effort };
@@ -205,7 +207,7 @@ export class MeetingRoom {
     for (let i = 0; i < m.seats.length; i++) {
       const part = first.find((p) => p.seat === i);
       const text = `${this.brief(m, i)}\n\n${part ? this.ask(m, part) : this.say('meeting.wait')}`;
-      const w = this.workers.seat(m.seats[i].deskId, `${by} (meeting)`, text, model, effort, { id, worktree });
+      const w = this.workers.seat(m.seats[i].deskId, `${by} (meeting)`, text, model, effort, { id, worktree }, images);
       if (typeof w === 'string') {
         for (const s of m.seats) if (s.workerId) void this.workers.kill(s.workerId);
         if (worktree && this.trees) void this.trees.remove(worktree, 'all');
