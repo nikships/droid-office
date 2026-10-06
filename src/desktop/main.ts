@@ -30,7 +30,7 @@ let quitting = false;
 /** Set while the app itself replaces the page, which the office's "Leave the office?" guard mustn't stop. */
 let replacing = false;
 
-const updates = new Updates({ path: () => PATH, log: path.join(logDir, 'updates.log'), beforeInstall: () => stopOffice(true) });
+const updates = new Updates({ log: path.join(logDir, 'updates.log'), beforeInstall: () => stopOffice(true) });
 
 function page(title: string, detail = ''): string {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
