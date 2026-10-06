@@ -1,9 +1,8 @@
 import type { Net } from '../net';
 import { store, type Settings, type ViewMode } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
-import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type ThemePick, type WebhookKind } from '../../shared/protocol';
+import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
-import { THEME_PICKS } from '../../shared/theme';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { agentFields, modelBadge, officeChoice } from './models';
@@ -14,8 +13,6 @@ const VIEWS: [ViewMode, string, string][] = [
   ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
   ['third', 'Third person', 'Follow your character from behind. Drag to orbit the camera, scroll to zoom, and click things to use them.'],
 ];
-
-const THEME_LABEL: Record<ThemePick, string> = { auto: 'By the calendar', halloween: 'Halloween', christmas: 'Christmas', off: 'Off' };
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
@@ -134,39 +131,6 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   };
   const soundRow = volumeRow('Office sounds volume', 'volume', 'muted', previewSound);
   const musicRow = volumeRow('Jukebox volume', 'music', 'musicMuted');
-
-  // The building's holiday theme, for everyone.
-  const themeRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Holiday theme' });
-  const themeNote = h('p.setting-note');
-  const paintTheme = () => {
-    const { pick, active, by, at } = store.theme;
-    themeRow.replaceChildren(
-      ...THEME_PICKS.map((p) =>
-        h(
-          'button.btn',
-          {
-            type: 'button',
-            role: 'radio',
-            'aria-checked': String(pick === p),
-            class: pick === p ? 'on' : '',
-            onclick: () => {
-              if (store.theme.pick !== p) net.send({ t: 'theme.set', pick: p });
-            },
-          },
-          THEME_LABEL[p],
-        ),
-      ),
-    );
-    const now =
-      active === 'halloween'
-        ? 'Halloween: the workers are zombies, your hands are an undead warlock’s, the sky’s gone creepy and there are jack-o’-lanterns everywhere.'
-        : active === 'christmas'
-          ? 'Christmas: the workers are elves, your hands are in mittens, and it’s snowing outside.'
-          : 'No decorations up right now.';
-    const how = pick === 'auto' ? ' By the calendar it’s Halloween through October and Christmas through December.' : '';
-    themeNote.textContent = `${now}${how} It’s the same for everyone in the building${by ? `, set by ${by}${at ? ` ${timeAgo(at)}` : ''}` : ''}.`;
-  };
-  paintTheme();
 
   // Desktop notifications: this browser's permission, then your own on/off.
   const notifyRow = h('div.seg');
@@ -630,7 +594,6 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     ],
     notify: [card('Desktop notifications', notifyRow, notifyNote), card('Channel notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus)],
     building: [
-      card('Holiday theme', themeRow, themeNote),
       ...(outside
         ? [
             card(
@@ -708,7 +671,6 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h('div.modal.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.settings-body', {}, nav, ...bodies.values()));
   const offNotify = store.on('notify', paintHook);
-  const offTheme = store.on('theme', paintTheme);
   const offLeave = store.on('leaveOnMerge', paintLeave);
   const offLimit = [store.on('machine', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir)];
@@ -719,7 +681,6 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     onClose: () => {
       wide.removeEventListener('change', orient);
       offNotify();
-      offTheme();
       offLeave();
       offLimit.forEach((off) => off());
       offDir.forEach((off) => off());

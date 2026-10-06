@@ -8,7 +8,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look and how you see the office.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
-  { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, where the elevator looks for projects, and local source reload.' },
+  { id: 'building', icon: '🏢', label: 'Building', blurb: 'The sky, Jira, where the elevator looks for projects, and local source reload.' },
   { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home and what the office tells them.' },
   {
     id: 'subagents',
@@ -34,7 +34,6 @@ export const SETTINGS_CARDS = [
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },
   { pane: 'notify', title: 'Channel notifications (Slack / Discord)', scope: 'office' },
-  { pane: 'building', title: 'Holiday theme', scope: 'office' },
   { pane: 'building', title: 'Outside', scope: 'office' },
   { pane: 'building', title: 'Jira', scope: 'office' },
   { pane: 'building', title: "This floor's Jira epic", scope: 'floor' },
