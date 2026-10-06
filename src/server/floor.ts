@@ -23,6 +23,8 @@ import { FloorJira, type JiraOffice } from './jira.js';
 import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { Team } from './team.js';
+import type { SubagentSettings } from '../shared/protocol.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
@@ -51,6 +53,8 @@ export interface FloorContext {
   connections(floor: Floor): number;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
+  /** ⚙️ Settings → Subagents: how workers hire subagents. */
+  subagents(): SubagentSettings;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
@@ -111,6 +115,8 @@ export class Floor {
   readonly meetings: MeetingRoom;
   /** The bookshelf: the project's Markdown files (see docs.ts). */
   readonly docs: Docs;
+  /** Leads and the subagents they hire with office-workers (see team.ts). */
+  readonly team: Team;
   /** Settles once the workers whose terminals outlived the last office are picked back up, and the rest woken. */
   readonly ready: Promise<void>;
   /** The basketball by the hoop: who has it, or how it was last thrown. */
@@ -171,6 +177,7 @@ export class Floor {
           // Still being built: the first updates come from waking the workers already at their desks.
           this.queue?.onWorker(worker);
           this.meetings?.onWorker(worker);
+          this.team?.onWorker(worker);
           ctx.workerChanged(this, worker);
           // Its turn ended, or whoever had its terminal open closed it: it may be free to go now.
           this.sendLandedHome();
@@ -180,6 +187,7 @@ export class Floor {
           ctx.emit(this, { t: 'worker.remove', workerId });
           this.queue?.onWorkerGone(workerId);
           this.meetings?.onWorkerGone(workerId);
+          this.team?.onWorkerGone(workerId);
           ctx.workerChanged(this, workerId);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
@@ -211,6 +219,32 @@ export class Floor {
 
     // Meetings seat their own workers round the meeting room's table and run them round by round.
     const workers = this.workers;
+
+    this.team = new Team(
+      {
+        list: () => workers.list(),
+        get: (id) => workers.get(id),
+        deskOccupied: (id) => workers.deskOccupied(id),
+        get officeDefault() {
+          return workers.officeDefault;
+        },
+        hire: (deskId, by, prompt, worktree, c, lead) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, undefined, [], lead),
+        prompt: (id, text) => workers.prompt(id, text),
+        resume: (id, text) => workers.resume(id, text),
+        kill: (id) => workers.kill(id),
+        tail: (id, lines) => workers.tail(id, lines),
+        setTask: (id, task) => workers.setTask(id, task),
+        fetchBase: () => workers.fetchBase(),
+      },
+      {
+        dataDir,
+        dir: def.dir,
+        git: !!this.project.branch,
+        settings: () => ctx.subagents(),
+        prompts: ctx.prompts,
+        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+      },
+    );
     this.meetings = new MeetingRoom(
       def.dir,
       dataDir,
@@ -359,6 +393,7 @@ export class Floor {
     this.board.stop();
     this.queue.shutdown();
     this.meetings.shutdown();
+    this.team.stop();
     this.changes.stop();
     this.workers.shutdown(keep);
   }

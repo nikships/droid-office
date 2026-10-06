@@ -150,6 +150,7 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .workers li { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 3px 4px; border-radius: var(--radius); }
 .workers li { cursor: pointer; }
 .workers li:hover { background: var(--surface-hover); }
+.workers li.subagent { margin-left: 14px; padding-left: 8px; border-left: 2px solid var(--lead, var(--border-strong)); border-radius: 0 var(--radius) var(--radius) 0; }
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border-strong); flex: none; }
 .workers .sub { display: block; font: 400 10px/1.5 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workers .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -263,6 +264,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 
 #toasts { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none !important; }
 .toast { background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 14px; font: 500 12px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--text); animation: toast-in .18s var(--ease); }
+.toast.link { pointer-events: auto; cursor: pointer; }
+.toast.link:hover { border-color: var(--accent); }
 .toast.warn { border-color: rgba(242, 184, 75, .45); color: var(--warning); background: rgba(242, 184, 75, .08); }
 .toast.error { border-color: rgba(239, 68, 68, .5); color: var(--danger); background: rgba(239, 68, 68, .08); }
 @keyframes toast-in { from { transform: translateY(-10px); opacity: 0; } }
@@ -332,6 +335,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .close.corner { position: absolute; top: 10px; right: 10px; z-index: 1; }
 
 .seg { display: flex; gap: 8px; flex-wrap: wrap; }
+.setting .seg + .seg { margin-top: 8px; }
+.seg.disabled { opacity: .45; }
 /* The Droid model and effort a new worker runs on: one line in a form, its hint under. */
 .model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-width: 190px; }
 .model-choice label { margin: 0; white-space: nowrap; }
@@ -403,6 +408,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal.term header { background: var(--surface); }
 .modal.term .term-host { position: relative; flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #0a0a0a; }
 .modal.term .term-host .xterm { height: 100%; }
+.modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.term-team-label { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
+.team-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: 600 12px/1 var(--font-sans); cursor: pointer; }
+.team-chip:hover { background: var(--surface-hover); border-color: var(--accent); }
+.team-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
 /* Files dragged over a terminal, and on their way to the office: they go in where its cursor is. */
 .modal.term.dropping .term-host::after, .modal.term.uploading .term-host::after { content: attr(data-drop); position: absolute; inset: 10px; z-index: 10; display: grid; place-items: center; padding: 16px; text-align: center; border: 3px dashed var(--accent); border-radius: 14px; background: rgba(10, 10, 10, .88); color: #fff; font-size: 18px; font-weight: 900; pointer-events: none; }
 .modal.term.uploading:not(.dropping) .term-host::after { content: '📎 Putting it in the terminal…'; }

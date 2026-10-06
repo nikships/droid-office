@@ -18,10 +18,12 @@ import type {
   ServerMsg,
   ServicesState,
   SkyState,
+  SubagentsState,
   ThemeState,
   UpgradeState,
   WorkerInfo,
 } from '../shared/protocol';
+import { SUBAGENT_DEFAULTS } from '../shared/protocol';
 import type { ScreenState } from './world/laptop';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
@@ -30,6 +32,7 @@ import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import type { BallState } from '../shared/hoop';
+import { teamOf } from '../shared/team';
 
 export type Topic =
   | 'workers'
@@ -51,6 +54,7 @@ export type Topic =
   | 'sky'
   | 'theme'
   | 'leaveOnMerge'
+  | 'subagents'
   | 'cabinet'
   | 'cabinetFrame'
   | 'meeting'
@@ -255,6 +259,8 @@ class Store {
   theme: ThemeState = { pick: 'auto', active: null };
   /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
   leaveOnMerge: LeaveOnMergeState = { on: false };
+  /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
+  subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
   private subs = new Map<Topic, Set<() => void>>();
@@ -283,6 +289,11 @@ class Store {
   workerAtDesk(deskId: string): WorkerInfo | undefined {
     for (const w of this.workers.values()) if (w.deskId === deskId) return w;
     return undefined;
+  }
+
+  /** The subagents a worker on this floor hired, oldest first. */
+  teamOf(leadId: string): WorkerInfo[] {
+    return teamOf(this.workers.values(), leadId);
   }
 
   /** The queue task for an issue: the one on the queue if there is one, else the latest finished one. */
@@ -332,9 +343,10 @@ class Store {
         this.sky = msg.sky;
         this.theme = msg.theme;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
+        this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.prompts = msg.prompts ?? { custom: {} };
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'subagents', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -452,6 +464,10 @@ class Store {
       case 'leaveOnMerge':
         this.leaveOnMerge = msg.state;
         this.emit('leaveOnMerge');
+        break;
+      case 'subagents':
+        this.subagents = msg.state;
+        this.emit('subagents');
         break;
       case 'prompts':
         this.prompts = msg.state;

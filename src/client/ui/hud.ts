@@ -3,20 +3,35 @@ import { store } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
 import { DESK_BY_ID } from '../../shared/layout';
+import { teamSummary, workersByTeam } from '../../shared/team';
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
   ul.replaceChildren();
-  const workers = [...store.workers.values()].sort((a, b) => a.createdAt - b.createdAt);
+  const workers = workersByTeam(store.workers.values());
   for (const w of workers) {
+    const lead = w.lead ? store.workers.get(w.lead) : undefined;
+    const team = store.teamOf(w.id);
     const badge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
-    const sub = [w.kind === 'agent' && `⚙️ Droid${badge ? ` · ${badge}` : ''}`, w.worktree && `🌿 ${w.worktree.branch}`, w.repos?.length && `🗂️ ${w.repos.length + 1} repos`, w.pr && `🔀 PR #${w.pr.number}`, w.activity || w.title || w.prompt]
+    const sub = [
+      teamSummary(team),
+      w.kind === 'agent' && `⚙️ Droid${badge ? ` · ${badge}` : ''}`,
+      w.worktree && `🌿 ${w.worktree.branch}`,
+      w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
+      w.pr && `🔀 PR #${w.pr.number}`,
+      w.activity || w.title || w.prompt,
+    ]
       .filter(Boolean)
       .join(' · ');
     ul.append(
       h(
         'li',
-        { onclick: () => onOpen(w.id), title: `Open ${w.name}'s terminal` },
+        {
+          onclick: () => onOpen(w.id),
+          title: lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`,
+          class: lead ? 'subagent' : team.length ? 'lead' : undefined,
+          style: lead ? `--lead:${lead.color}` : undefined,
+        },
         h('span.dot', { style: `background:${w.color}` }),
         h('span.name', {}, w.name, sub ? h('span.sub', {}, ...glyphText(sub)) : null),
         w.lost ? h('span.pill.lost', { title: 'Its worktree was deleted outside droid-office: open it to fix it' }, 'worktree deleted') : h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status),

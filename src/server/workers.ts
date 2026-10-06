@@ -14,6 +14,7 @@ import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { forgeVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
@@ -196,8 +197,10 @@ export class WorkerManager {
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the office-queue command is, for the board agents' PATH (see writeQueueCommand). */
+  /** Where the office-queue command is, for the board agents' PATH (see writeOfficeCommand). */
   private queueBin: string | undefined;
+  /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
+  private teamBin: string | undefined;
   private screenTimer: NodeJS.Timeout;
   /** The office is shutting down: workers exiting now are being stopped, not failing to resume. */
   private closing = false;
@@ -230,7 +233,8 @@ export class WorkerManager {
     this.statePath = path.join(dataDir, 'workers.json');
     this.droidSettingsPath = path.join(dataDir, 'droid-hooks.json');
     this.writeHookSettings();
-    this.queueBin = this.writeQueueCommand();
+    this.queueBin = this.writeOfficeCommand('bin', 'office-queue', "Droid Office's task queue, for the board agents");
+    this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
     this.agentPath = resolveCommand(agentCmd);
     this.namer = new TaskNamer(
       this.agentPath,
@@ -341,6 +345,7 @@ export class WorkerManager {
    * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
    * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
+   * `lead` hires a subagent for that worker (see team.ts): it's told who hired it and how to report back.
    */
   spawn(
     deskId: string,
@@ -352,6 +357,7 @@ export class WorkerManager {
     effort?: AgentEffort,
     meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
     repos: RepoSource[] = [],
+    lead?: string,
   ): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
@@ -369,6 +375,12 @@ export class WorkerManager {
     if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
+    if (lead !== undefined) {
+      const boss = this.workers.get(lead)?.info;
+      if (!boss) return 'Its lead has left';
+      if (boss.lead) return "A subagent can't hire subagents of its own";
+      if (kind !== 'agent' || seat.station || seat.room || meeting) return 'A subagent is an agent at a desk or a bean bag';
+    }
     const full = this.capacity?.full();
     if (full) return full;
     const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')));
@@ -410,15 +422,56 @@ export class WorkerManager {
       open: false,
       activity: prompt ? truncate(prompt, 80) : undefined,
       meeting: meeting?.id,
+      ...(lead !== undefined ? { lead } : {}),
     };
     const w = newWorker(info);
     if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
-    // A board agent is told what it's there for ahead of its first request (which is what shows).
-    this.launch(w, seat.station && info.prompt ? `${stationBrief(seat.station, this.forge, this.prompts)}\n\n${info.prompt}` : info.prompt, undefined);
+    this.launch(w, this.briefed(w, info.prompt), undefined);
     this.persist();
     return info;
+  }
+
+  /**
+   * A first prompt with what the agent is told ahead of it, for a session starting from nothing: a
+   * board agent what it's there for, a subagent who hired it and how to report back. What shows on
+   * its card is the prompt alone.
+   */
+  private briefed(w: Worker, prompt: string | undefined): string | undefined {
+    if (!prompt) return prompt;
+    const station = DESK_BY_ID.get(w.info.deskId)?.station;
+    if (station) return `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt}`;
+    const lead = w.info.lead ? this.workers.get(w.info.lead)?.info : undefined;
+    if (!lead) return prompt;
+    const wt = w.info.worktree;
+    const where = wt
+      ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task: commit your work there.`
+      : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
+    return `${officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge) })}\n\n${prompt}`;
+  }
+
+  /** The end of a worker's terminal as plain text, its scrollback included: what a lead reads of its subagent. */
+  tail(id: string, lines: number): string | undefined {
+    const term = this.workers.get(id)?.term;
+    if (!term) return undefined;
+    const buf = term.buffer.active;
+    const text = (y: number) => buf.getLine(y)?.translateToString(true) ?? '';
+    // The rows under the cursor are blank until something is written there: they aren't the end.
+    let end = buf.length;
+    while (end > 0 && !text(end - 1).trim()) end--;
+    const out: string[] = [];
+    for (let y = Math.max(0, end - Math.max(1, lines)); y < end; y++) out.push(text(y));
+    return out.join('\n');
+  }
+
+  /** The card over a worker's head, until its own sign writer has something better (a subagent's title from its lead). */
+  setTask(id: string, task: WorkerTask) {
+    const w = this.workers.get(id);
+    if (!w) return;
+    w.info.task = { name: task.name.trim().slice(0, 60), summary: task.summary.trim().slice(0, 140) };
+    this.emitUpdate(w);
+    this.persist();
   }
 
   /**
@@ -504,9 +557,8 @@ export class WorkerManager {
     clockWork(w.info, 'starting');
     w.info.status = 'starting';
     w.info.exitCode = undefined;
-    const station = DESK_BY_ID.get(w.info.deskId)?.station;
-    // A board agent with no session to carry on starts over, so it needs telling what it's for again.
-    const first = prompt && station && !w.info.sessionId ? `${stationBrief(station, this.forge, this.prompts)}\n\n${prompt}` : prompt;
+    // A board agent or a subagent with no session to carry on starts over, so it needs telling what it's for again.
+    const first = w.info.sessionId ? prompt : this.briefed(w, prompt);
     if (prompt) {
       w.info.activity = truncate(prompt, 80);
       this.notePrompt(w, prompt);
@@ -644,6 +696,12 @@ export class WorkerManager {
       }
     }
     this.events.remove(id);
+    // Its subagents stay at their desks, working for nobody now.
+    for (const sub of this.workers.values()) {
+      if (sub.info.lead !== id) continue;
+      delete sub.info.lead;
+      this.emitUpdate(sub);
+    }
     this.persist();
     // A meeting's worktree is everyone at the table's: the meeting tidies it away once they've all gone.
     if (!w.info.worktree || w.info.meeting) return {};
@@ -1370,11 +1428,13 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // A board agent reaches the queue with the office-queue command, whichever agent it runs.
-    if (station && this.queueBin) {
+    // A board agent reaches the queue with the office-queue command, and any agent its subagents with
+    // office-workers.
+    const bins = [station && this.queueBin, !isShell && this.teamBin].filter((d): d is string => !!d);
+    if (bins.length) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-      env[key] = [this.queueBin, env[key]].filter(Boolean).join(path.delimiter);
+      env[key] = [...bins, env[key]].filter(Boolean).join(path.delimiter);
     }
 
     const cwd = this.cwd(info);
@@ -1652,17 +1712,17 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes the office-queue command into the data dir's bin/, running bin/office-queue.js with the
-   * office's own node, and returns that directory. Rewritten on every start, so after an upgrade it
-   * runs the new install's script.
+   * Writes one of the office's agent commands (office-queue, office-workers) into `sub` of the data
+   * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
+   * every start, so after an upgrade it runs the new install's script.
    */
-  private writeQueueCommand(): string | undefined {
-    const script = queueScript();
+  private writeOfficeCommand(sub: string, name: string, what: string): string | undefined {
+    const script = officeScript(name);
     if (!script) return undefined;
-    const dir = path.join(this.dataDir, 'bin');
+    const dir = path.join(this.dataDir, sub);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = path.join(dir, 'office-queue');
-    writeFileSync(file, `#!/bin/sh\n# Droid Office's task queue, for the board agents (see bin/office-queue.js).\nexec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
+    const file = path.join(dir, name);
+    writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\nexec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
     chmodSync(file, 0o700);
     // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Droid's shell there) runs the sh one.
     if (WIN) writeFileSync(`${file}.cmd`, `@"${process.execPath}" "${script}" %*\r\n`);
@@ -1697,6 +1757,7 @@ process.stdin.on('end', () => {
       task: info.task,
       pr: info.pr,
       meeting: info.meeting,
+      lead: info.lead,
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
       pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince } : undefined,
@@ -1750,6 +1811,7 @@ process.stdin.on('end', () => {
           open: false,
           lastInputAt: legacyLastInputAt(s.lastInput),
           meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
+          ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
         };
         const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
         w.worktreeOwnership = s.worktreeOwnership;
@@ -1763,6 +1825,11 @@ process.stdin.on('end', () => {
         w.interrupted = typeof s.midTurn === 'boolean' ? s.midTurn : s.pty?.status === 'working' || s.pty?.status === 'needs_input';
         if (info.prompt) w.prompts = [info.prompt.replace(/\s+/g, ' ').trim()];
         this.workers.set(info.id, w);
+      }
+      // A lead that didn't come back, or is a subagent itself, leads nobody.
+      for (const w of this.workers.values()) {
+        const lead = w.info.lead && this.workers.get(w.info.lead);
+        if (w.info.lead && (!lead || lead.info.lead)) delete w.info.lead;
       }
     } catch {
       // corrupt state file: start fresh
@@ -1866,11 +1933,11 @@ function snapshotScreen(term: HeadlessTerminal, last: string[]) {
   return { cols, rows, lines, full, cursor: [buf.cursorX, buf.cursorY] as [number, number] };
 }
 
-/** bin/office-queue.js in the install this office runs from (src/server under tsx, dist/server/server built). */
-function queueScript(): string | undefined {
+/** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */
+function officeScript(name: string): string | undefined {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 4; i++, dir = path.dirname(dir)) {
-    const file = path.join(dir, 'bin', 'office-queue.js');
+    const file = path.join(dir, 'bin', `${name}.js`);
     if (existsSync(file)) return file;
   }
   return undefined;

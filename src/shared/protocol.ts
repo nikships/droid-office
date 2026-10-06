@@ -128,6 +128,11 @@ export interface WorkerInfo {
   /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
   meeting?: string;
   /**
+   * The worker that hired this one as its subagent with `office-workers hire` (see server/team.ts),
+   * while that worker is still on the floor. Subagents report back to it and can't hire their own.
+   */
+  lead?: string;
+  /**
    * How long it has spent working (ms), over the stretches that have ended, and when the one it's in
    * now started (while it's working).
    */
@@ -782,6 +787,37 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
+/** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
+export interface SubagentSettings {
+  /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
+  on: boolean;
+  /** Desk workers may hire too, not just the Team lead at its kiosk. */
+  deskWorkers: boolean;
+  /** Keep the droid-office-subagents skill in ~/.factory/skills, so Droid workers know how to hire. */
+  skill: boolean;
+  /** What a subagent runs when its lead doesn't pick. Unset: the office's default worker. */
+  agent?: AgentChoice;
+  /** Each subagent gets its own git worktree unless its lead asks for none. */
+  worktree: boolean;
+  /** The most subagents one lead has on the floor at once. */
+  maxPerLead: number;
+  /** A lead at rest is prompted to read what its subagents said once they report or finish. */
+  wakeLead: boolean;
+}
+
+export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true };
+export const SUBAGENT_MAX_PER_LEAD = 8;
+
+/** The Subagents settings for every floor, with who set them and where the Droid skill is. */
+export interface SubagentsState extends SubagentSettings {
+  by?: string;
+  at?: number;
+  /** The skill's SKILL.md, when it's installed. */
+  skillPath?: string;
+  /** Why the skill couldn't be written or taken away. */
+  skillError?: string;
+}
+
 /** A line of a worker's terminal that matched a search. */
 export interface TerminalHit {
   workerId: string;
@@ -926,6 +962,8 @@ export type ClientMsg =
   | { t: 'theme.set'; pick: ThemePick }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
+  /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
+  | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Pick up the floor's basketball (or catch it): yours if it isn't held. */
@@ -973,6 +1011,7 @@ export type ServerMsg =
       /** Halloween or Christmas decorations, all over the building, or none. */
       theme: ThemeState;
       leaveOnMerge: LeaveOnMergeState;
+      subagents: SubagentsState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
     } & FloorView)
@@ -1033,6 +1072,7 @@ export type ServerMsg =
   | { t: 'sky'; state: SkyState }
   | { t: 'theme'; state: ThemeState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
+  | { t: 'subagents'; state: SubagentsState }
   | { t: 'prompts'; state: PromptsState }
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }

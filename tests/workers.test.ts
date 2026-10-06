@@ -1170,3 +1170,73 @@ test('a worker restored from before subscriptions keeps its names, maps its last
     (x) => x.length > 0,
   );
 });
+
+test('a subagent sits down told who hired it and where it works; every agent gets office-workers, and its lead goes on record', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, [], []);
+  t.after(() => workers.shutdown());
+  const bin = path.join(f.data, 'bin', 'team');
+  const launches = (id: string) => launchesOf(f).filter((r) => r.env.workerId === id);
+
+  // The command is there, and runs the shipped script with the office's own node.
+  accessSync(path.join(bin, 'office-workers'), constants.X_OK);
+  assert.match(execFileSync(path.join(bin, 'office-workers'), ['--help'], { encoding: 'utf8' }), /office-workers hire --title/);
+
+  const lead = workers.spawn('desk-1', 'Ada', 'Ship the login fix');
+  assert.ok(typeof lead === 'object');
+  if (typeof lead !== 'object') return;
+  assert.equal(lead.lead, undefined);
+  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'agent', undefined, undefined, undefined, [], 'nobody') as string, /lead has left/);
+  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'shell', undefined, undefined, undefined, [], lead.id) as string, /an agent at a desk/);
+  assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, undefined, [], lead.id) as string, /an agent at a desk/);
+
+  const sub = workers.spawn('desk-3', lead.name, 'Fix the redirect', false, 'agent', undefined, undefined, undefined, [], lead.id);
+  assert.ok(typeof sub === 'object');
+  if (typeof sub !== 'object') return;
+  assert.equal(sub.lead, lead.id);
+  assert.equal(sub.prompt, 'Fix the redirect', 'its card shows the task alone');
+  assert.match(workers.spawn('desk-4', sub.name, 'x', false, 'agent', undefined, undefined, undefined, [], sub.id) as string, /can't hire subagents of its own/);
+
+  const [leadLaunch] = await waitFor(
+    () => launches(lead.id),
+    (l) => l.length === 1,
+  );
+  const [subLaunch] = await waitFor(
+    () => launches(sub.id),
+    (l) => l.length === 1,
+  );
+  assert.equal(promptOf(leadLaunch), 'Ship the login fix', 'a worker nobody hired is told nothing extra');
+  const brief = promptOf(subLaunch) ?? '';
+  assert.match(brief, new RegExp(`^You're ${sub.name}, a subagent in Droid Office.*${lead.name} hired you`));
+  assert.match(brief, /the project's main checkout/);
+  assert.match(brief, /office-workers report <<'EOF'/);
+  assert.ok(brief.endsWith('Your task:\n\nFix the redirect'));
+  for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
+  assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'office-queue stays with the board agents');
+
+  // What its lead reads of it: the end of its terminal, as text.
+  await waitFor(
+    () => workers.tail(sub.id, 20),
+    (s) => !!s?.includes('fake-agent-ready'),
+  );
+  assert.equal(workers.tail('nobody', 20), undefined);
+  // Its lead's title goes on its card.
+  workers.setTask(sub.id, { name: `  ${'Fix login '.repeat(10)}`, summary: 'Fix the redirect' });
+  assert.equal(workers.get(sub.id)?.task?.name.length, 60);
+
+  // The lead survives a restart; a subagent of a lead that's gone has none.
+  workers.shutdown(true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const saved = JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8')) as WorkerInfo[];
+  assert.equal(saved.find((w) => w.id === sub.id)?.lead, lead.id);
+  writeFileSync(path.join(f.data, 'workers.json'), JSON.stringify([...saved, { ...saved.find((w) => w.id === sub.id), id: 'orphan', deskId: 'desk-6', name: 'Orphan', lead: 'gone' }]));
+  const after = manager(f, [], []);
+  t.after(() => after.shutdown());
+  assert.equal(after.get(sub.id)?.lead, lead.id);
+  assert.equal(after.get('orphan')?.lead, undefined);
+  assert.equal(after.get(sub.id)?.task?.name.length, 60);
+
+  // Sending the lead home leaves its subagents at their desks, on their own.
+  await after.kill(lead.id);
+  assert.equal(after.get(sub.id)?.lead, undefined);
+});

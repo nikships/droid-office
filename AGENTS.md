@@ -19,6 +19,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `bin/droid-office.js` | Published CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
+| `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `install.sh`, `install.ps1` | Release installers for macOS/Linux and Windows |

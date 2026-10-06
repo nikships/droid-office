@@ -13,14 +13,28 @@ export const EFFORT_LABEL: Record<AgentEffort, string> = {
   max: 'Max',
 };
 
-/** A Droid model the office can offer, from Droid's own settings (GET /api/agents/droid/models). */
+/** A Droid model the office can offer, from droid's own model list (GET /api/agents/droid/models). */
 export interface DroidModelOption {
   id: string;
   displayName: string;
+  /** A BYOK model from the user's own Droid settings. */
+  custom?: boolean;
+  /** Replaced or deprecated, but droid still runs it. */
+  legacy?: boolean;
   /** What this model runs when nobody picks an effort. */
   defaultReasoningEffort?: AgentEffort;
-  /** The efforts the model takes, when its settings say; the fixed list otherwise. */
+  /** The efforts the model takes, when droid says (empty: none the office can pin); the fixed list otherwise. */
   supportedReasoningEfforts?: AgentEffort[];
+}
+
+/** The catalogue's groups, in the order the server sends them: your own models, Factory's, then the old ones. */
+export function droidModelGroups(models: DroidModelOption[]): { label: string; models: DroidModelOption[] }[] {
+  const groups = [
+    { label: 'Your models', models: models.filter((m) => m.custom) },
+    { label: 'Factory', models: models.filter((m) => !m.custom && !m.legacy) },
+    { label: 'Legacy', models: models.filter((m) => !m.custom && m.legacy) },
+  ];
+  return groups.filter((g) => g.models.length);
 }
 
 const MODEL_MAX = 256;
@@ -42,8 +56,7 @@ function asEffort(value: unknown): AgentEffort | undefined {
 
 function asEfforts(value: unknown): AgentEffort[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const out = value.map(asEffort).filter((e): e is AgentEffort => !!e);
-  return out.length ? [...new Set(out)] : undefined;
+  return [...new Set(value.map(asEffort).filter((e): e is AgentEffort => !!e))];
 }
 
 function fetchCatalogue(): Promise<Catalogue> {
@@ -56,12 +69,14 @@ function fetchCatalogue(): Promise<Catalogue> {
       const models = Array.isArray(body.models)
         ? body.models.flatMap((m): DroidModelOption[] => {
             if (!m || typeof m !== 'object') return [];
-            const { id, displayName, defaultReasoningEffort, supportedReasoningEfforts } = m as Record<string, unknown>;
+            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts } = m as Record<string, unknown>;
             if (typeof id !== 'string' || !id || id.length > MODEL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(id)) return [];
             return [
               {
                 id,
                 displayName: typeof displayName === 'string' && displayName ? displayName : id,
+                ...(custom === true ? { custom: true } : {}),
+                ...(legacy === true ? { legacy: true } : {}),
                 ...(defaultReasoningEffort ? { defaultReasoningEffort: asEffort(defaultReasoningEffort) } : {}),
                 ...(supportedReasoningEfforts ? { supportedReasoningEfforts: asEfforts(supportedReasoningEfforts) } : {}),
               },
@@ -187,17 +202,22 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   let wantedModel = initialModel;
   let wantedEffort = initialEffort;
 
+  /** The model picked, or the one droid runs on "Default". */
+  const pickedModel = () => catalogue?.models.find((x) => x.id === (modelSelect.value || catalogue?.defaultModel));
   /** The efforts to offer: the model's own list, else its default plus the fixed ladder. */
   const effortOptions = (): AgentEffort[] => {
-    const m = catalogue?.models.find((x) => x.id === modelSelect.value);
-    if (m?.supportedReasoningEfforts?.length) return m.supportedReasoningEfforts;
+    const m = pickedModel();
+    if (m?.supportedReasoningEfforts) return m.supportedReasoningEfforts;
     if (m?.defaultReasoningEffort) return [m.defaultReasoningEffort, ...AGENT_EFFORTS.filter((e) => e !== m.defaultReasoningEffort)];
     return [...AGENT_EFFORTS];
   };
+  /** Only the efforts the picked model takes, its own default named on "Default". */
   const applyEfforts = () => {
     const options = effortOptions();
-    effortSelect.replaceChildren(h('option', { value: '' }, 'Default'), ...options.map((e) => h('option', { value: e }, EFFORT_LABEL[e])));
+    const fallback = (!modelSelect.value && catalogue?.defaultReasoningEffort) || pickedModel()?.defaultReasoningEffort;
+    effortSelect.replaceChildren(h('option', { value: '' }, fallback ? `Default (${EFFORT_LABEL[fallback]})` : 'Default'), ...options.map((e) => h('option', { value: e }, EFFORT_LABEL[e])));
     effortSelect.value = wantedEffort && options.includes(wantedEffort) ? wantedEffort : '';
+    effortSelect.disabled = !options.length;
   };
 
   const fill = () => {
@@ -207,7 +227,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
       .then(({ models, defaultModel }) => {
         modelSelect.replaceChildren(
           h('option', { value: '' }, defaultModel ? `Default (${withoutGlyph(droidDisplayName(defaultModel))})` : 'Default (Droid settings)'),
-          ...models.map((m) => h('option', { value: m.id }, withoutGlyph(m.displayName))),
+          ...droidModelGroups(models).map((g) => h('optgroup', { label: `${g.label} (${g.models.length})` }, ...g.models.map((m) => h('option', { value: m.id }, withoutGlyph(m.displayName))))),
         );
         // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
         if (selected && !models.some((m) => m.id === selected)) modelSelect.append(h('option', { value: selected }, `${withoutGlyph(droidDisplayName(selected))} (unavailable)`));

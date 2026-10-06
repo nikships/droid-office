@@ -70,6 +70,8 @@ import { Gallery } from './world/gallery';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
+import { TeamLines, type TeamLink } from './world/team-lines';
+import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
@@ -78,7 +80,7 @@ import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, toast, STATUS_LABEL } from './ui/dom';
-import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -148,6 +150,8 @@ scene.add(sun);
 
 const office = buildOffice();
 scene.add(office.group);
+const teamLines = new TeamLines();
+office.group.add(teamLines.group);
 
 // The MacBook GLBs load after the scene exists; each laptop swaps its procedural
 // stand-in for them the first frame they are cached (see world/laptop.ts).
@@ -180,6 +184,7 @@ const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: str
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
   queue: { icon: '📋', offer: 'Ask me to queue work', does: 'I turn it into tasks for fresh workers', example: 'Queue every open bug issue, most important first' },
+  lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
 };
 /** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
 const idleAgents = STATIONS.map((def) => {
@@ -791,9 +796,17 @@ net.onMessage((msg) => {
     case 'worker.worktree':
       routeWorktreeMessage(msg);
       break;
-    case 'toast':
-      toast(msg.text, msg.level);
+    case 'toast': {
+      const el = toast(msg.text, msg.level);
+      const id = msg.workerId;
+      // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
+      if (id && store.workers.has(id)) {
+        el.classList.add('link');
+        el.title = 'Open its terminal';
+        el.addEventListener('click', () => openWorkerTerminal(id));
+      }
       break;
+    }
     case 'upgrade':
       if (msg.state.phase === 'restarting') showRestarting(msg.state, net);
       if (msg.state.phase === 'failed' && upgradePhase === 'building') toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
@@ -1249,10 +1262,32 @@ function syncWorkers() {
     workerViews.delete(id);
   }
   arrangeSeats();
+  syncTeamLines();
   renderWorkers((id) => openWorkerTerminal(id));
   renderWaiting();
   notifier.sync(store.workers);
   renderTitle();
+}
+
+/** The dashes on the floor from each lead to its subagents, marching while any of them works. */
+function syncTeamLines() {
+  const seat = (deskId: string) => {
+    const desk = office.desks.get(deskId);
+    if (!desk) return undefined;
+    const p = desk.seatAnchor.getWorldPosition(new THREE.Vector3());
+    return { x: p.x, y: desk.group.position.y, z: p.z };
+  };
+  const links: TeamLink[] = [];
+  let working = false;
+  for (const w of store.workers.values()) {
+    const lead = w.lead ? store.workers.get(w.lead) : undefined;
+    const from = lead && seat(lead.deskId);
+    const to = seat(w.deskId);
+    if (!lead || !from || !to) continue;
+    links.push({ from, to, color: lead.color });
+    working ||= w.status === 'working';
+  }
+  teamLines.set(links, working);
 }
 
 /**
@@ -1668,6 +1703,7 @@ function openWorkerTerminal(id: string, find?: TerminalFind) {
   if (isAsleep(w.status)) resumeWorker(w);
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
+onOpenTeammate((id) => openWorkerTerminal(id));
 
 /** 🔎 every terminal; a terminal line opens that terminal right at it. */
 function showSearch() {
@@ -2741,10 +2777,12 @@ function deskHint(deskId: string): Hint {
   }
   const doing = w.activity ? clip(w.activity, 48) : '';
   const shell = w.kind === 'shell';
+  const team = teamNote(w);
   return {
-    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing,
+    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team,
     parts: [
       h('span.title', {}, `${w.name} · ${STATUS_LABEL[w.status]}`),
+      team ? aside(team) : '',
       doing ? aside(doing) : '',
       key('E', 'Open terminal'),
       key('C', 'Changes'),
@@ -2753,6 +2791,13 @@ function deskHint(deskId: string): Hint {
       key('X', 'Send home'),
     ],
   };
+}
+
+/** The hint's word on a worker's team: whose subagent it is, or how its own subagents are doing. */
+function teamNote(w: WorkerInfo): string {
+  const lead = w.lead ? store.workers.get(w.lead) : undefined;
+  if (lead) return `🧭 ${lead.name}'s subagent`;
+  return teamSummary(store.teamOf(w.id)) ?? '';
 }
 
 /** The O in the desk hint of a worker across repositories: its pull requests so far, or opening them. */
@@ -2779,9 +2824,17 @@ function stationHint(deskId: string): Hint {
   }
   if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   const doing = w.activity ? clip(w.activity, 48) : '';
+  const team = teamNote(w);
   return {
-    k: w.status + w.id + doing,
-    parts: [h('span.title', {}, `${info.icon} ${w.name} · ${STATUS_LABEL[w.status]}`), doing ? aside(doing) : '', key('E', isAsleep(w.status) ? 'Wake with a prompt' : 'Prompt'), key('O', 'Terminal'), key('X', 'Send home')],
+    k: w.status + w.id + doing + team,
+    parts: [
+      h('span.title', {}, `${info.icon} ${w.name} · ${STATUS_LABEL[w.status]}`),
+      team ? aside(team) : '',
+      doing ? aside(doing) : '',
+      key('E', isAsleep(w.status) ? 'Wake with a prompt' : 'Prompt'),
+      key('O', 'Terminal'),
+      key('X', 'Send home'),
+    ],
   };
 }
 
@@ -3443,6 +3496,7 @@ function frame(ts?: number) {
   checkSmokeBreak(now);
   smoke.update(dt, camera);
   confetti.update(dt);
+  if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);
   hanger.update();
   sky.update(dt, t, camera);
   if (!upTop) holiday.update(t, sky.lampsOn, camera);

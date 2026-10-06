@@ -16,6 +16,11 @@ export function officePrompt(source: PromptSource | undefined, id: PromptId, var
   return fillPrompt(source ? source.text(id) : PROMPTS[id].text, vars);
 }
 
+/** Why the office can't start `c` as a worker, if it can't. */
+export function agentChoiceProblem(c: AgentChoice): string | undefined {
+  return validateWorkerModel('agent', c.model) ?? validateWorkerEffort('agent', c.effort);
+}
+
 /**
  * The prompts the office writes for workers by itself (shared/prompts.ts), as rewritten in
  * Settings, and the model and effort a worker starts on when whoever starts it doesn't pick one. The same for the whole building, kept in .droid-office/prompts.json.
@@ -73,7 +78,7 @@ export class OfficePrompts implements PromptSource {
   }
 
   private problem(c: AgentChoice): string | undefined {
-    return validateWorkerModel('agent', c.model) ?? validateWorkerEffort('agent', c.effort);
+    return agentChoiceProblem(c);
   }
 
   private changed() {

@@ -1,12 +1,12 @@
 import type { Net } from '../net';
 import { store, type Settings, type ViewMode } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
-import type { ThemePick, WebhookKind } from '../../shared/protocol';
+import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type ThemePick, type WebhookKind } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
 import { THEME_PICKS } from '../../shared/theme';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
-import { agentFields, officeChoice } from './models';
+import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 
@@ -33,6 +33,44 @@ const card = (title: SettingsCardTitle, ...body: Node[]) => {
 
 /** Where Settings was last, so it opens there again. */
 let lastPane: SettingsPane = 'you';
+
+/** A row of radio buttons for one setting; `paint` redraws it from `now`. */
+function radios<T>(label: string, options: readonly (readonly [T, string])[], now: () => T, pick: (value: T) => void) {
+  const row = h('div.seg', { role: 'radiogroup', 'aria-label': label });
+  const paint = () => {
+    const at = now();
+    row.replaceChildren(
+      ...options.map(([value, text]) =>
+        h(
+          'button.btn',
+          {
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(at === value),
+            class: at === value ? 'on' : '',
+            onclick: () => {
+              if (now() !== value) pick(value);
+            },
+          },
+          text,
+        ),
+      ),
+    );
+  };
+  return { row, paint };
+}
+
+/** A worker choice in words: "Droid on Opus 5.5 · High", or Droid's own default. */
+function choiceLabel(c: AgentChoice): string {
+  const badge = modelBadge(c.model, c.effort);
+  return badge ? `Droid on ${badge}` : 'Droid on its default model';
+}
+
+/** The Subagents settings as the office keeps them, without who set them or where the skill is. */
+function subagentSettings(): SubagentSettings {
+  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, agent } = store.subagents;
+  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}) };
+}
 
 /** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
 export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, outside?: { now: string; live: boolean }, first?: SettingsPane) {
@@ -469,6 +507,117 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     net.send({ t: 'jira.epic', key: '' });
   });
 
+  // How workers hire subagents, for the whole office.
+  const subSet = (patch: Partial<SubagentSettings>) => net.send({ t: 'subagents.set', settings: { ...subagentSettings(), ...patch } });
+  const subOn = radios(
+    'Subagents',
+    [
+      [true, 'Workers can hire'],
+      [false, 'Off'],
+    ] as const,
+    () => store.subagents.on,
+    (on) => subSet({ on }),
+  );
+  const subWho = radios(
+    'Who can hire',
+    [
+      [true, 'The Team lead and desk workers'],
+      [false, 'Only the Team lead'],
+    ] as const,
+    () => store.subagents.deskWorkers,
+    (deskWorkers) => subSet({ deskWorkers }),
+  );
+  const subNote = h('p.setting-note');
+  const subPrompts = h('button.btn', { type: 'button', onclick: () => openPromptEditor(net, 'subagent.brief') }, 'Edit the subagent prompts…');
+
+  // What a subagent runs when its lead doesn't say: every model droid lists.
+  const subFallback = () => store.subagents.agent ?? officeChoice();
+  const subAgent = agentFields('subagent-agent', subFallback());
+  let subAgentTouched = false;
+  subAgent.element.addEventListener('change', () => (subAgentTouched = true));
+  subAgent.element.addEventListener('input', () => (subAgentTouched = true));
+  const subAgentSave = h('button.btn.primary', { type: 'button' }, 'Save');
+  const subAgentBack = h('button.btn', { type: 'button' }, 'Back to the default worker');
+  const subAgentNote = h('p.setting-note');
+  subAgentSave.addEventListener('click', () => {
+    subAgentTouched = false;
+    subSet({ agent: subAgent.choice() });
+  });
+  subAgentBack.addEventListener('click', () => {
+    subAgentTouched = false;
+    subSet({ agent: undefined });
+  });
+
+  const subSize = radios(
+    'Most subagents per lead',
+    Array.from({ length: SUBAGENT_MAX_PER_LEAD }, (_, i) => [i + 1, String(i + 1)] as const),
+    () => store.subagents.maxPerLead,
+    (maxPerLead) => subSet({ maxPerLead }),
+  );
+  const subSizeNote = h('p.setting-note');
+  const subTree = radios(
+    'Where subagents work',
+    [
+      [true, 'Each in its own worktree'],
+      [false, "In the lead's checkout"],
+    ] as const,
+    () => store.subagents.worktree,
+    (worktree) => subSet({ worktree }),
+  );
+  const subTreeNote = h(
+    'p.setting-note',
+    {},
+    'Its own worktree lets subagents change files side by side without stepping on each other, each on its own branch you can merge or hand back. A lead can still ask for the other with --worktree or --no-worktree.',
+  );
+  const subWake = radios(
+    'Waking the lead',
+    [
+      [true, 'Wake it when a subagent reports'],
+      [false, 'Let it check by itself'],
+    ] as const,
+    () => store.subagents.wakeLead,
+    (wakeLead) => subSet({ wakeLead }),
+  );
+  const subWakeNote = h(
+    'p.setting-note',
+    {},
+    'When a subagent reports back, finishes or needs input, a lead that is resting gets a short prompt to read the news with office-workers wait. A lead that is busy is told the next time it stops.',
+  );
+  const subSkill = radios(
+    'Droid skill',
+    [
+      [true, 'Installed'],
+      [false, 'Not installed'],
+    ] as const,
+    () => store.subagents.skill,
+    (skill) => subSet({ skill }),
+  );
+  const subSkillNote = h('p.setting-note');
+
+  const paintSubagents = () => {
+    const s = store.subagents;
+    for (const r of [subOn, subWho, subSize, subTree, subWake, subSkill]) r.paint();
+    subWho.row.classList.toggle('disabled', !s.on);
+    subNote.textContent =
+      (s.on
+        ? 'A lead runs office-workers hire to give a subagent a job. The subagent sits down at the free desk nearest its lead, with its own laptop and a terminal you can open like any worker’s, works, and reports back. Its lead reads the news, sends follow-ups and sends it home when the work is in.'
+        : 'Hiring is refused. Subagents already working carry on and can still report back to their leads.') + (s.by && s.at ? ` Set by ${s.by} ${timeAgo(s.at)}.` : '');
+    if (!subAgentTouched) subAgent.set(subFallback());
+    subAgentBack.classList.toggle('hidden', !s.agent);
+    subAgentNote.textContent = s.agent
+      ? `Subagents start on ${choiceLabel(s.agent)} unless their lead asks for something else with --model or --effort.`
+      : `Subagents start on the office’s default worker (${choiceLabel(officeChoice())}, from Workers → Default worker) unless their lead asks for something else with --model or --effort. The picker lists every model droid can run: your own models, Factory’s and legacy ones.`;
+    subSizeNote.textContent = `A lead can have at most ${s.maxPerLead} subagent${s.maxPerLead === 1 ? '' : 's'} on the floor at once; sending one home frees its place. The office's worker limit still counts every one.`;
+    subSkillNote.textContent = s.skillError
+      ? s.skillError
+      : !s.on
+        ? 'Subagents are off, so the droid-office-subagents skill is out of ~/.factory/skills until they are back on.'
+        : s.skill
+          ? `Droid workers at desks learn how to hire from the droid-office-subagents skill${s.skillPath ? ` at ${s.skillPath}` : ''}. It only applies in sessions the office started; outside Droid Office it tells droid to ignore it. The Team lead always knows from its brief.`
+          : 'The droid-office-subagents skill is not in ~/.factory/skills. Workers at desks hire when you tell them to use office-workers (office-workers help explains it), and the Team lead always knows from its brief.';
+  };
+  paintSubagents();
+
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
   paintJira();
@@ -503,6 +652,14 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       card('Source hot reload', sourceReload.element),
     ],
     workers: [card('Default worker', agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
+    subagents: [
+      card('Subagents', subOn.row, subWho.row, subNote, h('div.seg', { style: 'margin-top:8px' }, subPrompts)),
+      card('Subagent worker', subAgent.element, h('div.seg', { style: 'margin-top:8px' }, subAgentSave, subAgentBack), subAgentNote),
+      card('Team size', subSize.row, subSizeNote),
+      card('Where subagents work', subTree.row, subTreeNote),
+      card('Waking the lead', subWake.row, subWakeNote),
+      card('Droid skill', subSkill.row, subSkillNote),
+    ],
   };
 
   // The categories down the side, the one picked on the right. On a phone the row is across the top.
@@ -556,7 +713,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const offLimit = [store.on('machine', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir)];
   const offJira = [store.on('jira', paintJira), offSetup];
-  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts)];
+  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts), store.on('prompts', paintSubagents), store.on('subagents', paintSubagents)];
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {
