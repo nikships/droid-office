@@ -28,6 +28,7 @@ import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './
 import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
+import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
@@ -99,6 +100,10 @@ const RELATED_END = '<!-- /agent-office:related -->';
 const HOOK_TRIES = 6;
 /** How often every worker's folder is checked for having been deleted. */
 const WATCH_MS = 10_000;
+/** How often each agent's screen is checked against its status (see reconcile). */
+const SCREEN_CHECK_MS = 1000;
+/** Tools that ask the person a question: droid's is AskUser. */
+const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
 const SAVE_SCROLLBACK_MS = 15_000;
 /** Between a worker's saved scrollback and what it prints after the office restarted. */
@@ -152,6 +157,20 @@ interface Worker {
   hookToken: string;
   /** Droid never reported SessionStart: it's stuck on a login or hooks screen. */
   bootBlocked?: boolean;
+  /**
+   * Sessions of the subagents its droid started with the Task tool. Their hooks come with this
+   * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
+   */
+  subSessions: Set<string>;
+  /** The latest tool each session started (PreToolUse), to know which one a permission prompt is about. */
+  lastTool: Map<string, string>;
+  /** Who raised its needs_input from a hook: the session asking, and the tool it asks about. */
+  asking?: { session: string; tool?: string };
+  /** When its last hook came in, and its terminal last printed something (see reconcile). */
+  hookAt: number;
+  outputAt: number;
+  /** What its screen has shown since when (see droid-screen.ts). */
+  screenSeen?: { state: DroidScreen; since: number };
   /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
   failStreak: number;
   /** Its latest prompts and tool calls, for naming its task. */
@@ -211,6 +230,7 @@ export class WorkerManager {
   private stopping = false;
   private namer: TaskNamer;
   private watchTimer: NodeJS.Timeout;
+  private statusTimer: NodeJS.Timeout;
   /** Runs the workers' terminals outside the office, so they outlive a restart of it (see ptys.ts). */
   private host: PtyHost;
   /** Each worker's terminal on disk, so a restart doesn't wipe it (see history.ts). */
@@ -263,6 +283,7 @@ export class WorkerManager {
     this.watchTimer = setInterval(() => {
       for (const w of this.workers.values()) this.watchFolder(w);
     }, WATCH_MS);
+    this.statusTimer = setInterval(() => this.reconcile(), SCREEN_CHECK_MS);
     this.saveTimer = setInterval(() => {
       for (const w of this.workers.values()) if (w.unsaved) this.saveScrollback(w);
     }, SAVE_SCROLLBACK_MS);
@@ -1260,10 +1281,32 @@ export class WorkerManager {
     const report = payload as Record<string, unknown>;
     if (report.hook_event_name !== event || typeof report.session_id !== 'string' || !report.session_id) return false;
     if (!['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop'].includes(event)) return false;
-    if (event !== 'SessionStart' && w.info.sessionId && report.session_id !== w.info.sessionId) return false;
+    const session = report.session_id;
+    const caller = typeof report.calling_session_id === 'string' && report.calling_session_id ? report.calling_session_id : undefined;
+    if (event === 'SessionStart' && caller) {
+      // A subagent its droid just started (the Task tool): a session of its own, inside this one's turn.
+      w.info.sessionId ??= caller;
+      if (caller !== w.info.sessionId && !w.subSessions.has(caller)) return false;
+      w.subSessions.add(session);
+    }
+    const sub = w.subSessions.has(session);
+    if (!sub && event !== 'SessionStart' && w.info.sessionId && session !== w.info.sessionId) return false;
+    w.hookAt = Date.now();
+    if (sub) this.subagentHook(w, event, report);
+    else this.sessionHook(w, event, report);
+    this.emitUpdate(w);
+    this.persist();
+    return true;
+  }
+
+  /** A hook from the worker's own session. */
+  private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
+    const session = report.session_id as string;
     if (event === 'SessionStart') {
-      if ((w.info.sessionId && w.info.sessionId !== report.session_id) || report.source === 'clear') this.clearTask(w);
-      w.info.sessionId = report.session_id;
+      if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w);
+      w.info.sessionId = session;
+      w.subSessions.clear();
+      w.lastTool.clear();
       w.bootBlocked = false;
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
@@ -1275,29 +1318,88 @@ export class WorkerManager {
         this.notePrompt(w, report.prompt);
       }
       this.setStatus(w, 'working');
-    } else if (event === 'PreToolUse') {
-      const tool = report.tool_name;
-      if (tool === 'AskUserQuestion' || tool === 'request_user_input') this.setStatus(w, 'needs_input');
-      else {
-        w.info.activity = describeTool(report);
-        w.info.action = toolAction(tool, report.tool_input);
-        this.noteTool(w, w.info.activity);
-        this.setStatus(w, 'working');
-      }
-    } else if (event === 'PostToolUse') {
+    } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
+    else if (event === 'PostToolUse') {
       this.noteOutcome(w, report, false);
-      if (w.info.status === 'needs_input' && (report.tool_name === 'AskUserQuestion' || report.tool_name === 'request_user_input')) this.setStatus(w, 'working');
+      // A subagent that asked has finished, its question answered.
+      if (w.asking && w.asking.session !== session && report.tool_name === 'Task') this.setStatus(w, 'working');
+      else this.toolFinished(w, session, report);
     } else if (event === 'Notification') {
-      if (report.notification_type === 'permission_prompt' || report.notification_type === 'elicitation_dialog') {
-        w.info.activity = typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input';
-        this.setStatus(w, 'needs_input');
-      } else if (report.notification_type === 'idle_prompt' && w.info.status === 'working') this.setStatus(w, 'done');
+      // Droid sends idle_prompt when a turn is cancelled (Esc) instead of Stop, prompt or no prompt.
+      if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.setStatus(w, 'done');
+      else this.notified(w, session, report);
     } else if (event === 'Stop') this.setStatus(w, 'done');
     // /model can change it between turns, and droid writes the file a moment after SessionStart.
     if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'Stop') this.refreshDroidModel(w);
-    this.emitUpdate(w);
-    this.persist();
-    return true;
+  }
+
+  /**
+   * A hook from one of its subagents. It works inside the worker's turn, and its permission prompts
+   * and questions show in the worker's terminal; its own start, prompt and end are not the worker's.
+   */
+  private subagentHook(w: Worker, event: string, report: Record<string, unknown>) {
+    const session = report.session_id as string;
+    if (event === 'PreToolUse') this.toolStarted(w, session, report);
+    else if (event === 'PostToolUse') {
+      this.noteOutcome(w, report, false);
+      this.toolFinished(w, session, report);
+    } else if (event === 'Notification') this.notified(w, session, report);
+    else if ((event === 'SessionStart' || event === 'UserPromptSubmit') && (w.info.status === 'done' || w.info.status === 'idle')) this.setStatus(w, 'working');
+  }
+
+  private toolStarted(w: Worker, session: string, report: Record<string, unknown>) {
+    const tool = report.tool_name;
+    if (typeof tool === 'string') w.lastTool.set(session, tool);
+    if (ASK_TOOLS.has(tool)) {
+      this.setStatus(w, 'needs_input');
+      w.asking = { session, tool: tool as string };
+      return;
+    }
+    w.info.activity = describeTool(report);
+    w.info.action = toolAction(tool, report.tool_input);
+    this.noteTool(w, w.info.activity);
+    // Moving on means its question was answered, unless another session is the one asking.
+    if (w.info.status !== 'needs_input' || !w.asking || w.asking.session === session) this.setStatus(w, 'working');
+  }
+
+  /** A tool the session asked about (permission to run it, or a question) has run: it was answered. */
+  private toolFinished(w: Worker, session: string, report: Record<string, unknown>) {
+    const { asking } = w;
+    if (w.info.status !== 'needs_input' || !asking || asking.session !== session) return;
+    if (asking.tool === undefined || asking.tool === report.tool_name) this.setStatus(w, 'working');
+  }
+
+  private notified(w: Worker, session: string, report: Record<string, unknown>) {
+    if (report.notification_type !== 'permission_prompt' && report.notification_type !== 'elicitation_dialog') return;
+    w.info.activity = typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input';
+    this.setStatus(w, 'needs_input');
+    w.asking = { session, tool: w.lastTool.get(session) };
+  }
+
+  /**
+   * Heals a status the hooks left wrong: once an agent's screen has shown one thing for a while with
+   * no hook coming in, a status it contradicts follows the screen (see droid-screen.ts). Runs every
+   * second; `now` is for tests.
+   */
+  reconcile(now = Date.now()) {
+    for (const w of this.workers.values()) {
+      const { info } = w;
+      if (info.kind !== 'agent' || !w.pty || !w.term || w.bootBlocked || !info.sessionId || info.status === 'starting') {
+        w.screenSeen = undefined;
+        continue;
+      }
+      const state = readDroidScreen(screenRows(w.term));
+      if (!state) {
+        w.screenSeen = undefined;
+        continue;
+      }
+      if (w.screenSeen?.state !== state) w.screenSeen = { state, since: now };
+      if (now - w.screenSeen.since < SCREEN_SETTLE_MS || now - w.hookAt < SCREEN_SETTLE_MS) continue;
+      const next = screenStatus(info.status, state, now - w.outputAt >= SCREEN_SETTLE_MS);
+      if (!next) continue;
+      if (next === 'needs_input') info.activity = 'Waiting for input';
+      this.setStatus(w, next);
+    }
   }
 
   /** Looks up the model and effort droid says the worker's session runs, which no hook reports. */
@@ -1379,6 +1481,7 @@ export class WorkerManager {
     this.stopping = !keep;
     clearInterval(this.screenTimer);
     clearInterval(this.watchTimer);
+    clearInterval(this.statusTimer);
     clearInterval(this.saveTimer);
     for (const w of this.workers.values()) {
       clearTimeout(w.downedTimer);
@@ -1440,6 +1543,10 @@ export class WorkerManager {
       if (prompt) args.push('--', prompt);
     }
     w.hookToken = randomBytes(16).toString('hex');
+    // A new process: whatever subagents and prompts the last one had went with it.
+    w.subSessions.clear();
+    w.lastTool.clear();
+    w.asking = undefined;
     const env = childEnv();
     Object.assign(env, {
       TERM: 'xterm-256color',
@@ -1542,6 +1649,7 @@ export class WorkerManager {
     w.pty = proc;
     proc.onData((data) => {
       term.write(data);
+      w.outputAt = Date.now();
       w.screenDirty = true;
       w.unsaved = true;
       if (info.open) this.events.data(info.id, data, this.subscriberIds(info.id));
@@ -1611,6 +1719,7 @@ export class WorkerManager {
     if (w.info.status === status) return;
     if (w.info.status === 'needs_input') w.leftNeedsInputAt = Date.now();
     w.info.status = status;
+    if (status !== 'needs_input') w.asking = undefined;
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
     // Nobody is looking at the terminal right now -> raise the flag (the worker jumps). A worker at the
@@ -1864,6 +1973,14 @@ function midTurn({ info, bootBlocked }: Pick<Worker, 'info' | 'bootBlocked'>): b
   return info.kind === 'agent' && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
 }
 
+/** The rows a terminal shows now, its scrollback left out. */
+function screenRows(term: HeadlessTerminal): string[] {
+  const buf = term.buffer.active;
+  const rows: string[] = [];
+  for (let y = buf.baseY; y < buf.baseY + term.rows; y++) rows.push(buf.getLine(y)?.translateToString(true) ?? '');
+  return rows;
+}
+
 function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')): Worker {
   return {
     info,
@@ -1878,6 +1995,10 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     toolsSinceNamed: 0,
     namedAt: 0,
     taskEpoch: 0,
+    subSessions: new Set(),
+    lastTool: new Map(),
+    hookAt: 0,
+    outputAt: 0,
   };
 }
 

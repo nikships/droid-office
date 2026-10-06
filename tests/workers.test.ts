@@ -196,10 +196,13 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(workers.get(worker.id)?.status, 'working');
   assert.equal(hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'src/main.ts' } }), true);
   assert.equal(workers.get(worker.id)?.action, 'read');
+  assert.equal(hook('PreToolUse', { tool_name: 'Execute', tool_input: { command: 'git push' } }), true);
   assert.equal(hook('Notification', { notification_type: 'permission_prompt' }), true);
   assert.equal(workers.get(worker.id)?.status, 'needs_input');
   assert.equal(hook('PostToolUse', { tool_name: 'Read' }), true);
   assert.equal(workers.get(worker.id)?.status, 'needs_input', 'unrelated tools cannot dismiss a permission prompt');
+  assert.equal(hook('PostToolUse', { tool_name: 'Execute' }), true);
+  assert.equal(workers.get(worker.id)?.status, 'working', 'the tool it asked about ran: the prompt was answered');
   assert.equal(hook('UserPromptSubmit', { prompt: 'continue' }), true);
   assert.equal(hook('Stop', {}), true);
   assert.equal(workers.get(worker.id)?.status, 'done');
@@ -630,6 +633,168 @@ test('a worker is stamped with when it started waiting on someone, afresh each t
   hook('Stop', {});
   assert.equal(workers.get(worker.id)?.status, 'done');
   assert.ok(worker.waitingSince! > asked, 'finishing is a new wait');
+});
+
+/** A worker that stays running, and its hooks as `session` (or another session). */
+async function liveWorker(t: { after(fn: () => void): void }, session: string) {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const oldLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (oldLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = oldLog;
+    f.close();
+  });
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const worker = workers.spawn('desk-1', 'test', 'fix the login');
+  if (typeof worker === 'string') throw new Error(worker);
+  const token = (await waitFor(f.read, (x) => x.some((r) => r.kind === 'droid' && r.args.includes('--settings')))).find((r) => r.kind === 'droid')!.env.hookToken!;
+  const hook = (event: string, extra: Record<string, unknown> = {}, from = session) => workers.handleHook(worker.id, token, event, { session_id: from, hook_event_name: event, ...extra });
+  const status = () => workers.get(worker.id)?.status;
+  return { workers, worker, hook, status };
+}
+
+test("a prompt answered in the terminal puts the worker back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
+  const { hook, status } = await liveWorker(t, 'answered');
+  const execute = { tool_name: 'Execute', tool_input: { command: 'sleep 5 && echo done' } };
+  hook('SessionStart', { source: 'startup' });
+  // Approved: droid reports nothing more until the tool it asked about has run.
+  hook('UserPromptSubmit', { prompt: 'run it' });
+  hook('PreToolUse', execute);
+  hook('Notification', { notification_type: 'permission_prompt', message: 'Factory CLI needs permission to execute 1 tool(s)' });
+  assert.equal(status(), 'needs_input');
+  hook('PostToolUse', { ...execute, tool_response: 'done' });
+  assert.equal(status(), 'working');
+  hook('Stop', {});
+  assert.equal(status(), 'done');
+
+  // A question through droid's AskUser tool, answered.
+  hook('UserPromptSubmit', { prompt: 'ask me' });
+  hook('PreToolUse', { tool_name: 'AskUser', tool_input: { questionnaire: '1. [question] red or blue?' } });
+  assert.equal(status(), 'needs_input');
+  hook('Notification', { notification_type: 'elicitation_dialog', message: 'Factory CLI is asking the user 1 question(s)' });
+  assert.equal(status(), 'needs_input');
+  hook('PostToolUse', { tool_name: 'AskUser', tool_response: '[answer] Red' });
+  assert.equal(status(), 'working');
+
+  // Esc while it thinks: droid sends idle_prompt instead of Stop, with or without a prompt up.
+  hook('Notification', { notification_type: 'idle_prompt', message: 'Agent stopped by user and is waiting for input' });
+  assert.equal(status(), 'done');
+  hook('UserPromptSubmit', { prompt: 'run it again' });
+  hook('PreToolUse', execute);
+  hook('Notification', { notification_type: 'permission_prompt' });
+  hook('Notification', { notification_type: 'idle_prompt' });
+  assert.equal(status(), 'done');
+  // An idle_prompt at rest stays at rest.
+  hook('SessionStart', { source: 'startup' });
+  hook('Notification', { notification_type: 'idle_prompt' });
+  assert.equal(status(), 'idle');
+});
+
+test("a subagent's hooks don't take over its worker's session (droid's own hook order)", async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'lead-session');
+  const sub = (event: string, extra: Record<string, unknown> = {}) => hook(event, extra, 'sub-session');
+  const task = { tool_name: 'Task', tool_input: { subagent_type: 'worker', description: 'Run echo command' } };
+  const execute = { tool_name: 'Execute', tool_input: { command: 'echo from-sub' } };
+  assert.equal(hook('SessionStart', { source: 'startup' }), true);
+  hook('UserPromptSubmit', { prompt: 'fix the login with a subagent' });
+  hook('PreToolUse', task);
+  // Another session nobody started is still turned away.
+  assert.equal(sub('PreToolUse', execute), false);
+  assert.equal(sub('SessionStart', { source: 'startup', calling_session_id: 'someone-else' }), false);
+  assert.equal(sub('SessionStart', { source: 'startup', calling_session_id: 'lead-session' }), true);
+  assert.equal(sub('SessionStart', { source: 'resume', calling_session_id: 'lead-session' }), true);
+  assert.equal(sub('UserPromptSubmit', { prompt: '# Task Tool Invocation\n\nSubagent type: worker' }), true);
+  assert.equal(workers.get(worker.id)?.sessionId, 'lead-session', 'the worker resumes its own session, not the subagent');
+  assert.equal(status(), 'working');
+  assert.doesNotMatch(workers.get(worker.id)?.activity ?? '', /Task Tool Invocation/);
+
+  // Its permission prompt shows in the worker's terminal.
+  assert.equal(sub('PreToolUse', execute), true);
+  assert.equal(sub('Notification', { notification_type: 'permission_prompt', message: 'Factory CLI needs permission to execute 1 tool(s)' }), true);
+  assert.equal(status(), 'needs_input');
+  // The worker's own tools don't answer the subagent's prompt.
+  hook('PostToolUse', { tool_name: 'Read' });
+  assert.equal(status(), 'needs_input');
+  sub('PostToolUse', { ...execute, tool_response: 'from-sub' });
+  assert.equal(status(), 'working');
+
+  // The subagent finishing is not the worker finishing.
+  assert.equal(sub('Stop', {}), true);
+  assert.equal(sub('Notification', { notification_type: 'idle_prompt' }), true);
+  assert.equal(status(), 'working');
+  assert.equal(hook('PostToolUse', { ...task, tool_response: 'session_id: sub-session' }), true);
+  assert.equal(status(), 'working');
+  assert.equal(hook('Stop', {}), true);
+  assert.equal(status(), 'done');
+
+  // A subagent asks, and returns before anyone sees a tool of its finish: the Task coming back answers it.
+  hook('UserPromptSubmit', { prompt: 'again' });
+  sub('SessionStart', { source: 'startup', calling_session_id: 'lead-session' });
+  sub('PreToolUse', execute);
+  sub('Notification', { notification_type: 'permission_prompt' });
+  assert.equal(status(), 'needs_input');
+  hook('PostToolUse', task);
+  assert.equal(status(), 'working');
+
+  // A new conversation (/clear) forgets the old one's subagents.
+  hook('SessionStart', { source: 'clear' }, 'new-session');
+  assert.equal(sub('PreToolUse', execute), false);
+});
+
+/** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */
+async function show(workers: WorkerManager, id: string, text: string) {
+  workers.write(id, `${text}\r`);
+  for (let i = 0; i < 200 && !workers.tail(id, 3)?.includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(workers.tail(id, 3)?.includes(text), `the terminal shows ${text}`);
+}
+
+test("a status the hooks left wrong follows the agent's screen once it has settled", async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'healed');
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'fix the login' });
+  assert.equal(status(), 'working');
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const at = (ms: number) => {
+    t.mock.timers.setTime(start + ms);
+    workers.reconcile();
+  };
+
+  // Its Stop never came (the office was down longer than the hook retries): at rest on screen, and still.
+  await show(workers, worker.id, '[⏱ 6s, context: 4%] ? for help');
+  at(0);
+  at(3000);
+  assert.equal(status(), 'working', 'not before the screen has settled');
+  at(4000);
+  assert.equal(status(), 'done');
+
+  // A message queued with Ctrl+Enter starts a turn with no UserPromptSubmit: busy on screen, spinner printing.
+  await show(workers, worker.id, ' ⠋ Executing...  (Press ESC to stop)');
+  at(5000);
+  at(9000);
+  assert.equal(status(), 'done', 'a spinner that stopped printing is no turn');
+  await show(workers, worker.id, '[⏱ 9s, context: 4%]');
+  at(9000);
+  assert.equal(status(), 'working');
+
+  // A permission prompt whose Notification never came.
+  await show(workers, worker.id, '  ↑↓ navigate   Enter select   Esc cancel   Alt/Option+E to inspect approval details');
+  at(10_000);
+  at(14_000);
+  assert.equal(status(), 'needs_input');
+  assert.equal(workers.get(worker.id)?.activity, 'Waiting for input');
+
+  // A hook that just came in is believed over the screen, until the screen has had time to catch up.
+  t.mock.timers.setTime(start + 20_000);
+  hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' } });
+  assert.equal(status(), 'working');
+  at(22_000);
+  assert.equal(status(), 'working');
+  at(24_000);
+  assert.equal(status(), 'needs_input');
 });
 
 /** Each worker launch so far (not the task namer's calls, nor what was typed into it), oldest first. */
