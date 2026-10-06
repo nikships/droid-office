@@ -152,11 +152,31 @@ jobs:
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # electron-builder's own keychain for CSC_LINK fails on macos-26 (set-key-partition-list can't
+      # unlock it), so the certificate goes into a keychain made here, which it then finds by name.
+      - name: Import the Developer ID certificate
+        if: env.PUBLISHING == 'true'
+        env:
+          MAC_CERTS: ${{ secrets.MAC_CERTS }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kc_pass="$(openssl rand -base64 24)"
+          security create-keychain -p "$kc_pass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_pass" "$kc"
+          echo "$MAC_CERTS" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -A
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          # Lets codesign use the key without a prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" login.keychain
+          security default-keychain -s "$kc"
+          security find-identity -v -p codesigning "$kc" | grep -q 'Developer ID Application: Nikhil Anand (NW6B3R27LQ)'
+
       - name: Build, sign and notarize the app
         if: env.PUBLISHING == 'true'
         env:
-          CSC_LINK: ${{ secrets.MAC_CERTS }}
-          CSC_KEY_PASSWORD: ${{ secrets.CERT_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
