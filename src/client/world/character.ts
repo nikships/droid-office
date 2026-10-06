@@ -463,12 +463,19 @@ function kitMaterials(): { plain: THREE.MeshToonMaterial; signal: THREE.MeshToon
 }
 
 const kits = new Map<string, { plain: THREE.BufferGeometry; signal: THREE.BufferGeometry }>();
+const sharedGeometry = new WeakSet<THREE.BufferGeometry>();
+/** Whether `geo` is worn by everyone (a crew kit), so whoever frees a person's meshes must leave it be. */
+export function isSharedGeometry(geo: THREE.BufferGeometry): boolean {
+  return sharedGeometry.has(geo);
+}
 /** The kit `key` names, built by `make` the first time anyone wears one and shared after that: two meshes, plain and signal orange. */
 function kit(key: string, make: () => THREE.BufferGeometry[]): THREE.Group {
   let geo = kits.get(key);
   if (!geo) {
     const parts = make();
     geo = { plain: mergeGeometries(parts.filter((p) => !p.userData.signal))!, signal: mergeGeometries(parts.filter((p) => p.userData.signal))! };
+    sharedGeometry.add(geo.plain);
+    sharedGeometry.add(geo.signal);
     kits.set(key, geo);
   }
   const mats = kitMaterials();

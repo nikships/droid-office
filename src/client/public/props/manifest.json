@@ -1,4 +1,30 @@
 {
+  "conveyor": {
+    "bytes": 7636,
+    "depth": 0.736,
+    "height": 0.91,
+    "materials": 1,
+    "tags": [
+      "factory",
+      "hero"
+    ],
+    "triangles": 1016,
+    "url": "/props/conveyor.glb",
+    "width": 2.61
+  },
+  "droid-computer": {
+    "bytes": 6628,
+    "depth": 0.454,
+    "height": 0.472,
+    "materials": 2,
+    "tags": [
+      "factory",
+      "hero"
+    ],
+    "triangles": 548,
+    "url": "/props/droid-computer.glb",
+    "width": 0.45
+  },
   "macbook-base": {
     "bytes": 19672,
     "depth": 0.545,
@@ -22,5 +48,32 @@
     "triangles": 506,
     "url": "/props/macbook-lid.glb",
     "width": 0.78
+  },
+  "pr-crate": {
+    "bytes": 5272,
+    "depth": 0.26,
+    "height": 0.2,
+    "materials": 1,
+    "tags": [
+      "factory",
+      "hero"
+    ],
+    "triangles": 340,
+    "url": "/props/pr-crate.glb",
+    "width": 0.26
+  },
+  "robot-arm": {
+    "bytes": 21840,
+    "depth": 0.62,
+    "height": 0.786,
+    "materials": 1,
+    "tags": [
+      "factory",
+      "hero",
+      "animated"
+    ],
+    "triangles": 2848,
+    "url": "/props/robot-arm.glb",
+    "width": 0.62
   }
 }
