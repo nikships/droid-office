@@ -41,6 +41,6 @@ export function lanIPv4s(): string[] {
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const ni of list ?? []) if (ni.family === 'IPv4' && !ni.internal) out.push({ name, address: ni.address });
   }
-  // en0 is the Mac's Wi-Fi; put it first so the QR points at the network the headset is likely on.
+
   return out.sort((a, b) => Number(b.name === 'en0') - Number(a.name === 'en0')).map((i) => i.address);
 }

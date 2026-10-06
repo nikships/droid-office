@@ -55,7 +55,7 @@ test('welcome and floor.enter carry the connection and the arrival', { timeout: 
   const home = mkdtempSync(path.resolve('tests/.arrival-'));
   const project = path.join(home, 'shop');
   mkdirSync(project, { recursive: true });
-  const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--no-discovery', '--weather', 'clear', project]);
+  const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--weather', 'clear', project]);
   cfg.port = 0;
   const office = await startServer(cfg);
   const base = `http://127.0.0.1:${(office.server.address() as AddressInfo).port}`;

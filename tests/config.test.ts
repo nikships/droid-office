@@ -80,27 +80,3 @@ test('the default agent is droid', (t) => {
   });
   assert.equal(load(t).agentCmd, 'droid');
 });
-
-test('discovery is enabled by default and --no-discovery turns it off', (t) => {
-  const previous = process.env.DROID_OFFICE_DISCOVERY;
-  delete process.env.DROID_OFFICE_DISCOVERY;
-  t.after(() => {
-    if (previous === undefined) delete process.env.DROID_OFFICE_DISCOVERY;
-    else process.env.DROID_OFFICE_DISCOVERY = previous;
-  });
-  assert.equal(load(t).discovery, true);
-  assert.equal(load(t, '--no-discovery').discovery, false);
-});
-
-test('DROID_OFFICE_DISCOVERY=0 disables discovery; the CLI opt-out wins over the environment', (t) => {
-  const previous = process.env.DROID_OFFICE_DISCOVERY;
-  t.after(() => {
-    if (previous === undefined) delete process.env.DROID_OFFICE_DISCOVERY;
-    else process.env.DROID_OFFICE_DISCOVERY = previous;
-  });
-  process.env.DROID_OFFICE_DISCOVERY = '0';
-  assert.equal(load(t).discovery, false);
-  process.env.DROID_OFFICE_DISCOVERY = '1';
-  assert.equal(load(t).discovery, true);
-  assert.equal(load(t, '--no-discovery').discovery, false);
-});

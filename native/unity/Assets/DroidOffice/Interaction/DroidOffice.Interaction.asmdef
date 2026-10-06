@@ -1,4 +1,0 @@
-{
-  "name": "DroidOffice.Interaction",
-  "references": ["DroidOffice.World", "DroidOffice.Core", "DroidOffice.Protocol", "DroidOffice.Settings", "Unity.XR.Interaction.Toolkit", "Unity.XR.CoreUtils", "Unity.InputSystem"]
-}

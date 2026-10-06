@@ -1,4 +1,0 @@
-{
-  "name": "DroidOffice.Workers",
-  "references": ["DroidOffice.World", "DroidOffice.Core", "Unity.TextMeshPro"]
-}

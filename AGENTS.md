@@ -2,15 +2,13 @@
 
 A 3D office in the browser where its owner hires claude, opencode, codex and droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
-Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files). Read [docs/vr-webxr.md](docs/vr-webxr.md) before touching WebXR code.
+Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files).
 
 Planned work has written plans; follow them and keep them current when doing that work:
 
 | Work | Plan |
 | --- | --- |
 | The single-owner shape (why there is no multiplayer, accounts, voice, chat or presence) | [docs/single-owner.md](docs/single-owner.md) (implemented) |
-| Device pairing, bearer auth, headset protocol messages, terminal grids, layout export | [docs/headset-protocol.md](docs/headset-protocol.md) |
-| The Unity headset app (`native/unity/`) | [docs/unity-headset.md](docs/unity-headset.md) |
 
 ## Repository map
 
@@ -18,14 +16,13 @@ Planned work has written plans; follow them and keep them current when doing tha
 | --- | --- |
 | `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, meetings, floors |
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
-| `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene), `vr/` (WebXR), `iwsdk-scripts/` (IWSDK emulator scripts) |
-| `native/android/` | Installed Galaxy XR OpenXR client; renderer and Android host instructions in `native/AGENTS.md` |
+| `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `bin/droid-office.js` | Published CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `install.sh`, `install.ps1` | Release installers for macOS/Linux and Windows |
-| `docs/` | `guide.md` (every feature, setup and how each subsystem works), `vr-webxr.md`, and the README pictures |
+| `docs/` | `guide.md` (every feature, setup and how each subsystem works) and the README pictures |
 
 ## Commands
 

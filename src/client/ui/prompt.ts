@@ -1,6 +1,5 @@
 import type { AgentEffort, AgentProvider, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
 import { h, openModal } from './dom';
-import { controlHintsShown } from '../native/mode';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 
@@ -34,7 +33,7 @@ export function worktreePref(): boolean {
     return false;
   }
 }
-/** Remembers the worktree choice without hiring (the VR hire view's toggle). */
+
 export function setWorktreePref(worktree: boolean) {
   try {
     localStorage.setItem(WT_KEY, worktree ? '1' : '0');
@@ -94,8 +93,7 @@ export function openPrompt(opts: PromptOptions) {
       wtRow,
       repos.element,
     ),
-    // The headset app names no keys; a keyboard paired to it still sends with Enter.
-    h('footer', {}, h('span.grow', {}, controlHintsShown() ? 'Enter to send · Shift+Enter for a new line' : ''), cancel, submit),
+    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
 

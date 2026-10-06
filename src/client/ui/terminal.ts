@@ -76,13 +76,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
-  const native = document.body.classList.contains('native-xr');
-  const picture = native ? h('button.btn.term-picture', { type: 'button', title: 'Attach a screenshot or picture from the headset', 'aria-label': 'Attach a picture to this terminal' }, '📎 Picture') : null;
-  const pictureInput = native ? h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true }) : null;
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, zoom, picture, modelsBtn, onChanges ? changesBtn : null, closeBtn), host, pictureInput);
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, zoom, modelsBtn, onChanges ? changesBtn : null, closeBtn), host);
 
   const term = new Terminal({
     fontFamily: TERM_FONT,
@@ -320,16 +317,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
   };
   const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
-  picture?.addEventListener('click', () => {
-    if (!pictureInput) return;
-    pictureInput.value = '';
-    pictureInput.click();
-  });
-  pictureInput?.addEventListener('change', () => {
-    const files = [...(pictureInput.files ?? [])];
-    pictureInput.value = '';
-    if (current?.modal === modal) void insertFiles(files);
-  });
   // The whole screen is the drop zone while the terminal is open, so a near miss doesn't open the file in the browser.
   let dragDepth = 0;
   const dragEnd = () => {

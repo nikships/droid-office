@@ -2,7 +2,6 @@ import { FRAMES, checkImageUrl, type Decoration } from '../../shared/decor';
 import { store } from '../state';
 import { holdPicture, loadPicture, type Picture } from '../world/gallery';
 import { h, openModal, timeAgo } from './dom';
-import { controlHintsShown } from '../native/mode';
 import { confirmDialog } from './prompt';
 
 export interface HangChoice {
@@ -42,7 +41,7 @@ export function openHangDialog(opts: { initial?: Decoration; onDone(choice: Hang
     { role: 'dialog', 'aria-label': init ? 'Edit picture' : 'Hang a picture' },
     h('header', {}, h('h2', {}, init ? 'Edit picture' : 'Hang a picture'), close),
     h('div.body', {}, h('label', {}, 'Image link'), urlIn, h('label', { style: 'margin-top:12px' }, 'Title'), titleIn, h('label', { style: 'margin-top:12px' }, 'Frame'), frames, preview, status),
-    h('footer', {}, h('span.grow', {}, init || !controlHintsShown() ? '' : 'Then aim at a wall and click.'), cancel, submit),
+    h('footer', {}, h('span.grow', {}, init ? '' : 'Then aim at a wall and click.'), cancel, submit),
   ) as HTMLFormElement;
 
   let pic: Picture | null = null;

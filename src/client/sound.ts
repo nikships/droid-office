@@ -317,24 +317,6 @@ export class OfficeSound {
     this.count('paper');
   }
 
-  /**
-   * A menu floating in the headset app (native/menus.ts): a soft rising chirp as it opens, falling as
-   * it folds away, and a short tick for a press.
-   */
-  menu(kind: 'open' | 'close' | 'press') {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count(`menu-${kind}`);
-    const t0 = ctx.currentTime + 0.005;
-    if (kind === 'press') {
-      this.blip(this.ambience, t0, 1500, 0.8, 0.035, 0.05, 'triangle');
-      return;
-    }
-    const up = kind === 'open';
-    this.blip(this.ambience, t0, up ? 520 : 780, up ? 1.5 : 0.66, 0.11, 0.045, 'triangle');
-    this.blip(this.ambience, t0 + 0.05, up ? 780 : 520, up ? 1.3 : 0.75, 0.09, 0.03, 'sine');
-  }
-
   // ---- The ladder and the fire poles -----------------------------------------------------------
 
   /** Your hand closing on a steel rung, or on the pole: a soft clank. */
@@ -922,61 +904,6 @@ export class OfficeSound {
       .connect(out);
     thump.start(t0);
     thump.stop(t0 + 0.22);
-  }
-
-  /**
-   * One heartbeat from a shot worker lying on the floor, from its chest: a low lub-dub that is
-   * only really heard up close. Its session is still running; `strength` (0 → 1) fades as its
-   * revival window runs out.
-   */
-  heartbeat(at: Pos, strength = 1) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('heartbeat');
-    const out = this.panner(at, 0.8, 1.6);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.005;
-    const k = Math.max(0.05, Math.min(1, strength));
-    for (const [delay, freq, loud] of [
-      [0, 58, 0.55],
-      [0.17, 72, 0.4],
-    ] as const) {
-      const level = loud * k;
-      const o = ctx.createOscillator();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(freq, t0 + delay);
-      o.frequency.exponentialRampToValueAtTime(freq * 0.6, t0 + delay + 0.12);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t0 + delay);
-      g.gain.exponentialRampToValueAtTime(level, t0 + delay + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.14);
-      o.connect(g).connect(out);
-      o.start(t0 + delay);
-      o.stop(t0 + delay + 0.16);
-    }
-  }
-
-  /** A shot worker comes round as a hand revives it: a sharp gasp, from its head. */
-  gasp(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('gasp');
-    const out = this.panner(at, 1.5, 1.2);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.005;
-    const n = this.noise(this.buf.white);
-    const f = biquad(ctx, 'bandpass', 900, 2.2);
-    f.frequency.setValueAtTime(700, t0);
-    f.frequency.exponentialRampToValueAtTime(1900, t0 + 0.32);
-    const g = ctx.createGain();
-    envelope(g.gain, t0, [
-      [0.05, 0.32],
-      [0.26, 0.22],
-      [0.36, 0],
-    ]);
-    n.connect(f).connect(g).connect(out);
-    n.start(t0);
-    n.stop(t0 + 0.4);
   }
 
   /** A missed shot cracking into the wall or floor, from where it hit. */

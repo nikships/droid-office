@@ -14,11 +14,11 @@ export interface HudAction {
   key?: string;
   /** A number worth knowing before you open it: open issues, tasks waiting… */
   count?: () => number;
-  /** Pressed while its state holds, like Enter VR while you're in VR. */
+
   on?: () => boolean;
   /** Stands out: an update to install, a worker waiting. */
   tone?: () => 'primary' | 'danger' | undefined;
-  /** Only offered some of the time (Upgrade, the rooftop bar, Enter VR). */
+
   shown?: () => boolean;
   /** Up on the top bar by itself while true, pinned or not: a meeting is on, an update is out. */
   status?: () => boolean;
@@ -53,23 +53,6 @@ export interface Hud {
   toggleMenu(): void;
 }
 
-/** The mounted HUD's actions, for other views of the same menu (the headset panel's home screen). */
-let mountedActions: readonly HudAction[] = [];
-const renderListeners = new Set<() => void>();
-
-export function hudActions(): readonly HudAction[] {
-  return mountedActions;
-}
-
-/** Hears every redraw of the top bar, which is when what the menu's actions show may have changed; returns the unlisten. */
-export function onHudRender(fn: () => void): () => void {
-  renderListeners.add(fn);
-  return () => {
-    renderListeners.delete(fn);
-  };
-}
-
-/** Whether an action is offered right now (Upgrade, the rooftop bar and Enter VR come and go). */
 export function actionOffered(a: HudAction): boolean {
   return a.shown?.() ?? true;
 }
@@ -88,7 +71,6 @@ export function actionIcon(a: HudAction): string {
  */
 export function mountHud(actions: HudAction[], settings: Settings, save: () => void): Hud {
   const dock = $('dock');
-  mountedActions = actions;
   const labelOf = actionLabel;
   const iconOf = actionIcon;
   const classOf = (a: HudAction, blocked?: string) => [a.on?.() && 'on', a.tone?.(), blocked && 'dim'].filter(Boolean).join(' ');
@@ -173,7 +155,6 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
     )
       dock.replaceChildren(...items, menuBtn);
     else if (!menuBtn.isConnected) dock.append(menuBtn);
-    for (const fn of renderListeners) fn();
   }
 
   function toggleMenu() {

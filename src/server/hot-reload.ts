@@ -21,7 +21,7 @@ export function sourceAppDir(url = import.meta.url): string | undefined {
 
 function run(file: string, args: string[], cwd: string, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { cwd, signal, timeout: 120_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, IWSDK: '', IWSDK_HEADLESS: '' } }, (err, out, errOut) => {
+    execFile(file, args, { cwd, signal, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }, (err, out, errOut) => {
       if (err) reject(new Error(`${out}\n${errOut}`.trim().slice(-8000) || err.message));
       else resolve();
     });
@@ -53,7 +53,7 @@ async function sourceStamp(appDir: string): Promise<SourceStamp> {
     }
     const files = await Promise.all(
       entries
-        .filter((e) => !['node_modules', '.git', 'dist', 'iwsdk-scripts'].includes(e.name))
+        .filter((e) => !['node_modules', '.git', 'dist'].includes(e.name))
         .map(async (e) => {
           const name = path.join(relative, e.name);
           if (e.isDirectory()) return tree(name);

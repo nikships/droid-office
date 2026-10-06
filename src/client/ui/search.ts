@@ -11,7 +11,6 @@ import type { TerminalFind } from './terminal';
 /** What was searched last, so the window opens where you left it. */
 let lastQuery = '';
 
-/** The search itself (main.ts runs the same fetch for the VR search view). */
 export async function search(q: string): Promise<SearchResults> {
   // The terminals searched are the workers on your floor.
   const floor = store.floor ? `&floor=${encodeURIComponent(store.floor)}` : '';

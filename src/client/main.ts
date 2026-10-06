@@ -35,15 +35,14 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
-import type { AgentEffort, AgentProvider, CarriedIssue, CarriedObject, ChangesState, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
-import { GRAB_REACH, type Grabbable } from './vr/grab';
-import { MEETING_PATTERNS, defaultMeetingRequest, reviewMeetingRequest } from '../shared/meetings';
+import type { AgentEffort, AgentProvider, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
+import { MEETING_PATTERNS } from '../shared/meetings';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
-import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveProfile, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
@@ -68,10 +67,9 @@ import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world/b
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts, MONO } from './fonts';
 import { Gallery } from './world/gallery';
-import { pickTouchTarget } from './world/touch';
 import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
-import { Casualties, RISE_TIME } from './world/casualties';
+import { Casualties } from './world/casualties';
 import { BloodSpray, gunHit, Puff } from './world/gun';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
@@ -79,18 +77,17 @@ import { disposeSprite, redrawText, textSprite } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, closeTopModal, hintToast, modalOpen, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
-import { openSearch, search } from './ui/search';
+import { openSearch } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
-import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref, setWorktreePref } from './ui/prompt';
+import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
-import { mergePref, mergeStatus, onClosed, onCommented, onMerged, openIssue, openPull, pullDetail, routePullMessage } from './ui/pull';
+import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
-import { copy, guessOs } from './ui/clipboard';
-import { openServices, serviceTunnel, serviceUrl } from './ui/services';
+import { openServices, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openQueue } from './ui/queue';
@@ -100,9 +97,9 @@ import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
-import { elevatorPanelOpen, onFloorAdded, openElevator, routeElevatorMessage } from './ui/elevator';
+import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
-import { providerLabel, rememberedChoice, resolvedProvider, modelBadge, supportedProviders, choiceForProvider, rememberProvider } from './ui/provider';
+import { providerLabel, rememberedChoice, resolvedProvider, modelBadge } from './ui/provider';
 import { renderLimits } from './ui/limits';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
 import { mountHud } from './ui/menu';
@@ -110,75 +107,25 @@ import { openJukebox } from './ui/jukebox';
 import { openBookshelf } from './ui/bookshelf';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
-import { trackTitle, checkStreamUrl } from '../shared/jukebox';
+import { trackTitle } from '../shared/jukebox';
 import { GAME, scoreText } from '../shared/cabinet';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
 import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/meeting';
 import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
-import { VRSession, type VRHooks } from './vr/session';
-import { NativeControls } from './native/controls';
-import { NativePuppet } from './native/puppet';
-import { NativeScene } from './native/scene';
-import { ShotStage, TargetStage, type ShotOutcome, type StageReviveOptions, type StageShotOptions, type StageTargetOptions, matchWorker } from './native/stage';
-import { bodyAt, PendingShots, REVIVE_TOUCH, SHOT_ECHO_MS } from './native/downed';
-import { initNativeUi, isNativeMode, type NativeUi } from './native/ui';
-import { NativeMenus } from './native/menus';
-import { KioskDraft, NativeTyping, type TypingTarget } from './native/typing';
-import { nativeUse } from './native/world-use';
-import { calibrateNativeHeight, nativeEyeHeightNow, nativeFloorOffset, nativeHeight, setNativeHeight } from './native/height';
-import { modifiedEnter, wantsCsiEnter } from './term-keys';
-import { controlHintsShown, floatingTagsShown, withControlHint } from './native/mode';
-import { Nameplate } from './world/nameplate';
-import { getNativeGraphicsSettings, nativeGraphicsMetrics, setNativeGraphicsSettings, syncNativeGraphicsSettings, updateNativeGraphicsMetrics } from './native/graphics';
-import { nativeGraphicsPacket } from './native/graphics-settings';
-import { nativeStatus } from './native/performance';
-import { attachVrUi, type VrUiHandle } from './vr/attach';
-import type { MenuView, VrMergeInfo, VrSearchState } from './vr/menu';
-import { captureVrKeys, type KeyLike } from './vr/physical-keys';
-import { probeXRSupport } from './vr/support';
 
 // Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
 const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
-const nativeMode = isNativeMode();
-/** Names, status bubbles and pitches float over characters; the headset app puts them on seats' nameplates and laptops instead (see plateAt). */
-const floatingTags = floatingTagsShown();
-let nativeControls: NativeControls | null = null;
-let nativeScene: NativeScene | null = null;
-let nativeUi: NativeUi | null = null;
-/** The headset app's two menus, settings and hire, floating where they open (native/menus.ts). */
-let nativeMenus: NativeMenus | null = null;
-/** Where a keyboard paired to the headset types: the laptop or kiosk you are at (native/typing.ts). */
-let nativeTyping: NativeTyping | null = null;
-/** Debug-only shot and revival staging for headset captures (native/stage.ts); inert unless the host is debuggable. */
-let shotStage: ShotStage | null = null;
-/** Debug-only practice targets for those staged shots: hired through the office, and sent home again (native/stage.ts). */
-let targetStage: TargetStage | null = null;
-/** Debug builds of the headset app only: synthetic controllers for headless captures (__office.puppet). */
-let nativePuppet: NativePuppet | null = null;
-function headsetActive() {
-  return vr.active || nativeControls?.active === true;
-}
-function headsetControls() {
-  return nativeControls?.active ? nativeControls : vr;
-}
 const canvas = $('scene') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !nativeMode, powerPreference: 'high-performance' });
-// On from boot so an immersive session can take over the loop; every XR branch in the renderer is
-// gated on isPresenting, so the desktop picture is unchanged.
-renderer.xr.enabled = !nativeMode;
-renderer.setPixelRatio(nativeMode ? 1 : Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = !nativeMode;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const effect = new OutlineEffect(renderer, { defaultThickness: 0.0032, defaultColor: [0.17, 0.18, 0.26] });
-// No outline pass in the headset: a nested render inside the XR framebuffer (e.g. via onAfterRender)
-// clears and overwrites each eye's buffer, which shows up as a black screen. VR renders plain;
-// outlines stay a desktop-only effect through `effect.render` below.
-
 const scene = new THREE.Scene();
 // It is always night; the sky's color and the fog change with the weather (world/sky.ts).
 scene.background = new THREE.Color('#0a0720');
@@ -230,10 +177,7 @@ noOutline(office.group);
 noOutline(holiday.group);
 
 // ---- Board agents -------------------------------------------------------------------------------
-/**
- * What each board agent is for: its board's icon, what it offers on the card over its head, and an
- * example ask. The headset app shows the offer on its kiosk's screen only once you talk to it.
- */
+
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
@@ -245,156 +189,12 @@ const idleAgents = STATIONS.map((def) => {
   const agent = STATION_AGENT[kind];
   const model = new Worker(agent.name, agent.color);
   model.setStatus('idle', false);
-  if (floatingTags) model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
-  // Its nameplate says which board it's for (see seatIdleAgents).
-  else model.setRole(def.label);
+  model.setTask({ name: STATION_INFO[kind].offer, summary: STATION_INFO[kind].does });
   const view = office.desks.get(def.id)!;
   view.vacancy.children[0].add(model.root);
   noOutline(model.root);
   return { model, view };
 });
-
-// ---- Nameplates (the headset app) ----------------------------------------------------------------
-/**
- * The headset app's nameplates, one for each seat someone has sat in (world/nameplate.ts): who sits
- * there and what it is, engraved where it sits instead of floating over its head, with a status lamp
- * for how it's doing (its laptop's title bar says the rest). A kiosk's is the screen set into its front.
- */
-const plates = new Map<string, Nameplate>();
-
-/** The nameplate on `deskId`'s seat, made the first time it's asked for; null where tags float (desktop, WebXR). */
-function plateAt(deskId: string): Nameplate | null {
-  if (floatingTags) return null;
-  let plate = plates.get(deskId);
-  const desk = office.desks.get(deskId);
-  if (!plate && desk) {
-    plate = new Nameplate(desk.plate);
-    desk.plate.anchor.add(plate.root);
-    plates.set(deskId, plate);
-  }
-  return plate ?? null;
-}
-
-/** A board agent waiting at its kiosk has the kiosk's screen, and gives it up while someone's hired there. */
-function seatIdleAgents() {
-  if (floatingTags) return;
-  for (const a of idleAgents) a.model.setPlate(a.view.vacancy.visible ? plateAt(a.view.def.id) : null);
-}
-
-/**
- * The kiosk whose agent you've started talking to, in the headset app. Nothing says what a board
- * agent is for until then: its kiosk's screen shows its pitch (STATION_INFO) from your hello until
- * you ask it something or walk away.
- */
-let talkingTo: string | null = null;
-/** How far (meters) from a kiosk you can walk before its agent stops talking to you. */
-const TALK_LEAVE = 3.5;
-
-/** Whoever stands at a kiosk: the agent hired there, or the one waiting to be asked. */
-function agentAt(deskId: string): Worker | undefined {
-  const w = store.workerAtDesk(deskId);
-  return (w && workerViews.get(w.id)?.model) || idleAgents.find((a) => a.view.def.id === deskId)?.model;
-}
-
-/** Hello at a kiosk: its agent looks up with a little hop, and the kiosk's screen shows its pitch. */
-function startTalking(deskId: string) {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  const plate = plateAt(deskId);
-  if (!kind || !plate) return;
-  if (talkingTo !== deskId) stopTalking();
-  talkingTo = deskId;
-  paintKiosk(deskId);
-  agentAt(deskId)?.cheer(0.6);
-}
-
-/** What you have typed to each kiosk's agent on a keyboard paired to the headset, not yet sent. */
-const kioskDrafts = new Map<string, KioskDraft>();
-/** The kiosk that just took a request, and until when its screen says so. */
-let kioskSent: { deskId: string; text: string; until: number } | null = null;
-
-/** A kiosk's screen while you talk to its agent: its pitch, what you are typing to it, or what it just took. */
-function paintKiosk(deskId: string) {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  const plate = plates.get(deskId);
-  if (!kind || !plate || talkingTo !== deskId) return;
-  const info = STATION_INFO[kind];
-  const heading = `${info.icon} ${STATION_AGENT[kind].name}`;
-  const draft = kioskDrafts.get(deskId)?.value ?? '';
-  if (draft) plate.pitch({ heading, title: '', body: '', typing: draft });
-  else if (kioskSent?.deskId === deskId && performance.now() < kioskSent.until) plate.pitch({ heading, title: 'On it', body: kioskSent.text });
-  else plate.pitch({ heading, title: info.offer, body: info.does });
-}
-
-/** A key typed to a kiosk's agent: onto its screen, and Enter hands it the request (as the desktop's ask form does). */
-function kioskKey(deskId: string, key: KeyLike) {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  if (!kind) return;
-  if (talkingTo !== deskId) startTalking(deskId);
-  let draft = kioskDrafts.get(deskId);
-  if (!draft) kioskDrafts.set(deskId, (draft = new KioskDraft()));
-  const changed = draft.key(key, (text) => {
-    const w = store.workerAtDesk(deskId);
-    // Nobody there yet: asking hires the agent, which a full office can't.
-    if (!w && officeFull(store.machine)) {
-      kioskSent = { deskId, text: `The office is at its limit of ${store.machine.limit} workers`, until: performance.now() + 4000 };
-      return;
-    }
-    const c = rememberedChoice(store.project, `desk:${deskId}`);
-    net.send({ t: 'station.prompt', deskId, prompt: text, provider: c.provider, model: c.model, effort: c.effort });
-    kioskSent = { deskId, text: clip(text, 90), until: performance.now() + 4000 };
-    agentAt(deskId)?.cheer(0.4);
-    setTimeout(() => paintKiosk(deskId), 4100);
-  });
-  if (changed) paintKiosk(deskId);
-}
-
-/** A paired keyboard types into a laptop you are within this far of (metres, flat), and lets go of it beyond. */
-const TYPE_AT = 1.7;
-const TYPE_LEAVE = 2.6;
-
-/** A worker whose terminal takes keys: at a desk (a kiosk agent takes requests instead), awake, and not shot. */
-function typingWorker(w: WorkerInfo): boolean {
-  return !DESK_BY_ID.get(w.deskId)?.station && !w.lost && !isAsleep(w.status) && w.downedUntil === undefined;
-}
-
-/** The laptop you are standing at: the nearest one in front of you, within TYPE_AT. */
-function nearestLaptop(): TypingTarget | null {
-  if (!nativeControls?.active || upTop || trip) return null;
-  const eye = camera.getWorldPosition(new THREE.Vector3());
-  const look = nativeControls.lookDir(new THREE.Vector3()).setY(0);
-  if (look.lengthSq() < 1e-6) return null;
-  look.normalize();
-  const at = new THREE.Vector3();
-  let best: TypingTarget | null = null;
-  let bestD = TYPE_AT;
-  for (const [id, v] of workerViews) {
-    const w = store.workers.get(id);
-    if (!w || !typingWorker(w)) continue;
-    v.laptop.root.getWorldPosition(at);
-    const dx = at.x - eye.x;
-    const dz = at.z - eye.z;
-    const d = Math.hypot(dx, dz);
-    // Ahead of you: within about 60 degrees of where you look.
-    if (d > bestD || (d > 0.05 && (dx * look.x + dz * look.z) / d < 0.5)) continue;
-    bestD = d;
-    best = { kind: 'laptop', workerId: id };
-  }
-  return best;
-}
-
-/** The kiosk's screen goes back to the agent's nameplate. */
-function stopTalking() {
-  if (!talkingTo) return;
-  plates.get(talkingTo)?.pitch(null);
-  talkingTo = null;
-}
-
-/** Each frame: the nameplates' lamps, and the agent you're talking to letting you go once you walk off. */
-function updatePlates(dt: number) {
-  for (const plate of plates.values()) plate.update(dt);
-  const def = talkingTo ? DESK_BY_ID.get(talkingTo) : undefined;
-  if (talkingTo && (!def || upTop || Math.hypot(player.pos.x - def.x, player.pos.z - def.z) > TALK_LEAVE)) stopTalking();
-}
 
 // Boards: each draws onto a canvas texture, redrawn whenever what it shows changes.
 /** How much of its light a wall board gives off in the dark room: dim, but its text stays easy to read. */
@@ -409,7 +209,6 @@ function mountBoard(mesh: THREE.Mesh, texture: THREE.Texture, render: () => void
 }
 /** The issue card in your hands, taken off this floor's issues board (see Carrying an issue card), or null. */
 let carrying: CarriedIssue | null = null;
-let physicalCarry: CarriedObject | null = null;
 const issuesTex = new BoardTexture('issues');
 const renderIssuesBoard = () => {
   // The card in your hands is missing from the board until you put it back.
@@ -510,7 +309,6 @@ function theRoof(): Rooftop {
     roof.group.visible = false;
     scene.add(roof.group);
     noOutline(roof.group);
-    syncElevatorButtons();
   }
   return roof;
 }
@@ -545,745 +343,7 @@ const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
-player.view = nativeMode ? 'first' : settings.view;
-// WebXR in the headset browser: the session owns the rig, the rays and locomotion, and drives the
-// same interact dispatch as the keyboard (vr/session.ts). Idle on desktop: no rays, no loop cost,
-// and the Enter VR button stays hidden where XR is unavailable.
-/** World-space VR panels (menu, terminal, keyboard): attached on session enter, disposed on end. Null on desktop. */
-let vrUi: VrUiHandle | null = null;
-/** The VR search view's latest answer (the menu reads it; a fetch replaces it, then resends the view). */
-let vrSearch: VrSearchState | null = null;
-/** The VR merge box's answer for a PR detail (the menu reads it; each open refetches). */
-let vrMerge: VrMergeInfo | null = null;
-/** The menu's current view (the changes watch follows it: leaving the view unwatches). */
-let vrMenuView: MenuView = 'main';
-/** The watched checkout for the VR changes view, and its latest answer (null until it lands). */
-let vrChangesWorker: string | null = null;
-let vrChanges: ChangesState | null = null;
-/** The picture E armed in VR (the terminal ⏻ button's tap-twice, for the walls). */
-let decorArmed = { id: '', until: 0 };
-/** What E would do to the ray's target, in words for the headset's aim bar (null hides it). Mirrors vrUseE branch for branch, minus the keys only the desktop has. */
-function vrAimLabel(it: Interactable, note: GhIssue | null, spot: BoardSpot | null = null): string | null {
-  // A card in hand changes what E means (the desktop carryHint's lines, shortened).
-  if (carrying) {
-    if (note && !physicalCarry?.pose) return `E · swap for #${note.number}`;
-    if (it.kind === 'issues') return `E · pin #${carrying.issue} back`;
-    if (it.kind === 'queue') return `E · queue #${carrying.issue}`;
-    if (it.kind === 'meeting') return `E · meet about #${carrying.issue}`;
-  }
-  const roomDesk = it.kind === 'desk' && it.deskId && DESK_BY_ID.get(it.deskId)?.room && !store.workerAtDesk(it.deskId);
-  if (carrying && roomDesk) return `E · meet about #${carrying.issue}`;
-  switch (it.kind) {
-    case 'desk': {
-      if (!it.deskId) return null;
-      if (roomDesk) return 'E · the meeting room';
-      const w = store.workerAtDesk(it.deskId);
-      if (carrying) return w ? `E · hand #${carrying.issue} to ${w.name}` : `E · hire for #${carrying.issue}`;
-      return w ? `E · ${w.name}'s terminal` : 'E · hire here';
-    }
-    case 'station': {
-      const kind = (it.deskId && DESK_BY_ID.get(it.deskId)?.station) || null;
-      const what = kind === 'pulls' ? 'PRs' : kind === 'queue' ? 'the queue' : 'issues';
-      return `E · ask about ${what}`;
-    }
-    case 'elevator': {
-      if (!it.floorId) return 'E · ride the elevator';
-      const floor = store.floors.find((f) => f.id === it.floorId);
-      const name = it.floorId === ROOF ? 'Rooftop bar' : floor?.name;
-      if (!name) return null;
-      return it.floorId === store.floor ? `${name} · you are here` : `E · ride to ${name}`;
-    }
-    case 'issues':
-      if (spot?.kind === 'tab') return issuesTex.tab === spot.tab ? null : spot.tab === 'jira' ? 'E · show the Jira epic' : `E · show ${words().site} issues`;
-      if (spot?.kind === 'ticket') return `E · about ${spot.key}`;
-      return note ? `Squeeze / pinch-hold near #${note.number} · grab` : 'E · the issues board';
-    case 'pulls':
-      return 'E · the pull requests';
-    case 'queue':
-      return 'E · the task queue';
-    case 'jukebox':
-      return store.jukebox.on ? 'E · change the song' : 'E · put on a song';
-    case 'bar':
-      return 'E · order a drink';
-    case 'meeting':
-      return 'E · the meeting room';
-    case 'services':
-      return 'E · running servers';
-    case 'bookshelf':
-      return '📚 Bookshelf · desktop only';
-    case 'tv':
-      return '📺 TV';
-    case 'cabinet':
-      return '🕹️ Arcade · desktop only';
-    case 'ball':
-      return 'Basketball · desktop only';
-    case 'golf':
-      return 'Golf tee · desktop only';
-    case 'decor':
-      return it.decorId ? 'E · about this picture' : null;
-    case 'seat': {
-      if (!it.seatId) return null;
-      if (player.seat?.seatId !== it.seatId) return 'E · sit down';
-      const seat = SEATING_BY_ID.get(it.seatId);
-      if (seat?.bar) return 'E · order a drink';
-      if (seat?.game) return '💣 Minesweeper · desktop only';
-      return 'E · stand up';
-    }
-    case 'coffee':
-      return 'Squeeze / pinch-hold near the cup · grab';
-    case 'smoke':
-      return smokeBreakUntil ? 'E · stub it out' : 'E · smoke break';
-    case 'gong':
-      return 'E · bang the gong';
-    case 'ladder':
-      return climber.active ? null : 'E · climb';
-    case 'pole':
-      return office.stack.polesGoDown() ? 'E · slide down' : 'E · spin round it';
-    case 'dj':
-      return 'E · the air horn';
-    case 'proxy':
-      return store.proxy.refreshing ? 'DroidProxy limits · reading…' : 'E · refresh DroidProxy limits';
-    default:
-      return null;
-  }
-}
-/** E in VR: modal flows open world-space panels instead of invisible DOM windows. The carried card drops first, exactly as on desktop; what stays physical falls through to use(). */
-function vrUseE(it: Interactable | null, note: GhIssue | null, spot: BoardSpot | null = null) {
-  // On the ladder, E gets you off it — exactly like the desktop key, before everything else.
-  if (climber.active) {
-    climber.letGo();
-    return;
-  }
-  // In the headset a body is revived by a hand at it (native/physical.ts trigger), never by E
-  // landing on something else nearby.
-  if (!nativeMode && reviveNearby()) return;
-  // Aiming at nothing (the ladder's let-go fires this way too): E lands on nothing, as on desktop.
-  if (!it) return;
-  if ((it.kind === 'desk' || it.kind === 'station') && it.deskId) {
-    const w = store.workerAtDesk(it.deskId);
-    // A downed worker's desk opens nothing; the headset (no control hints) says nothing either: the body on the floor is what you deal with.
-    if (w?.downedUntil !== undefined) return hintToast(`Walk closer to ${w.name}'s body to revive`);
-  }
-  if (it.kind === 'coffee') {
-    hintToast('☕ Reach for the cup and hold a pinch or squeeze to pick it up.');
-    return;
-  }
-  if (it.kind === 'elevator' && it.floorId) {
-    if (!trip && lift().pressFloor(it.floorId)) ride(it.floorId);
-    return;
-  }
-  // Native physical actions stay in the world; office windows use the compositor workspace.
-  if (nativeMode) return nativeUseE(it, note, spot);
-  if (vrUi) {
-    // The same issue preset as desktop, in a world-space prompt.
-    if (carrying && (it.kind === 'meeting' || (it.kind === 'desk' && it.deskId && DESK_BY_ID.get(it.deskId)?.room && !store.workerAtDesk(it.deskId)))) {
-      const preset = issueMeeting(carrying.issue, carrying.title);
-      putBack();
-      vrMeeting(preset);
-      return;
-    }
-    if (carrying && dropCard(it, carrying, physicalCarry?.pose ? null : note)) return;
-    if (it.kind === 'desk' && it.deskId) {
-      const w = store.workerAtDesk(it.deskId);
-      // Nobody is hired at the meeting table: E there opens the room, like the desktop key.
-      if (!w && DESK_BY_ID.get(it.deskId)?.room) return vrUi.showMenu('meeting');
-      if (w) vrUi.openTerminal(w.id);
-      else vrHire(it.deskId);
-      return;
-    }
-    if (it.kind === 'station' && it.deskId) {
-      vrAskStation(it.deskId);
-      return;
-    }
-    if (it.kind === 'issues' && !carrying && useSpot(spot, 'E')) return;
-    if (it.kind === 'elevator') return vrUi.showMenu('floors');
-    if (it.kind === 'issues' || it.kind === 'pulls') return vrUi.showMenu('board');
-    if (it.kind === 'queue') return vrUi.showMenu('queue');
-    if (it.kind === 'jukebox') return vrUi.showMenu('jukebox');
-    if (it.kind === 'bar') return vrUi.showMenu('bar');
-    if (it.kind === 'meeting') return vrUi.showMenu('meeting');
-    if (it.kind === 'services') return vrUi.showMenu('services');
-    // E at the seat you're on: the bar opens its VR menu (the roof's E does the same); the
-    // boss's Minesweeper stays desktop — sitting down and standing up fall through below.
-    if (it.kind === 'seat' && it.seatId && player.seat?.seatId === it.seatId) {
-      const seat = SEATING_BY_ID.get(it.seatId);
-      if (seat?.bar) return vrUi.showMenu('bar');
-      if (seat?.game) {
-        toast("The boss's Minesweeper isn't in VR yet — hop on the desktop for that one", 'warn');
-        return;
-      }
-    }
-    // The picture is right there on the wall; E says who hung it, and E again takes it down
-    // (the DOM dialog's take-down + confirm, without the dialog — move/edit stay desktop).
-    if (it.kind === 'decor' && it.decorId) {
-      const d = store.decor.find((x) => x.id === it.decorId);
-      if (!d) return;
-      const now = performance.now();
-      if (decorArmed.id === d.id && now < decorArmed.until) {
-        decorArmed = { id: '', until: 0 };
-        net.send({ t: 'decor.remove', id: d.id });
-        toast(`🖼️ “${d.title || 'The picture'}” comes down`);
-        return;
-      }
-      decorArmed = { id: d.id, until: now + 6000 };
-      toast(withControlHint(`🖼️ ${d.title || 'A picture'} — hung by ${d.by}, ${timeAgo(d.at)}`, '. E again to take it down'));
-      return;
-    }
-    if (it.kind === 'cabinet' || it.kind === 'bookshelf' || it.kind === 'ball' || it.kind === 'golf') {
-      toast(`The ${it.kind} isn't in VR yet — hop on the desktop for that one`, 'warn');
-      return;
-    }
-  }
-  use(it, 'E', note, spot);
-}
-/**
- * The trigger on something in the world, in the headset app (native/world-use.ts): it does its job in
- * the world, or uses the shared office action on the compositor workspace.
- */
-function nativeUseE(it: Interactable, note: GhIssue | null, spot: BoardSpot | null) {
-  const w = it.deskId ? store.workerAtDesk(it.deskId) : undefined;
-  const def = it.deskId ? DESK_BY_ID.get(it.deskId) : undefined;
-  const action = nativeUse(it.kind, {
-    carrying: !!carrying,
-    worker: w ? { asleep: isAsleep(w.status), lost: !!w.lost, downed: w.downedUntil !== undefined } : null,
-    room: !!def?.room,
-    note: !!note,
-    spot: it.kind === 'issues' && spot ? (spot.kind === 'tab' ? 'tab' : 'ticket') : null,
-    seated: !!it.seatId && player.seat?.seatId === it.seatId,
-  });
-  switch (action.do) {
-    case 'hire-menu':
-      if (it.deskId) nativeMenus?.openHire(it.deskId);
-      return;
-    case 'terminal':
-      nativeTyping?.clear();
-      if (w) openWorkerTerminal(w.id);
-      return;
-    case 'workspace':
-      use(it, 'E', note, spot);
-      return;
-    case 'talk':
-      if (it.deskId) {
-        if (talkingTo !== it.deskId) startTalking(it.deskId);
-        else askStation(it.deskId);
-      }
-      return;
-    case 'card':
-      if (carrying) dropCard(it, carrying, physicalCarry?.pose ? null : note);
-      return;
-    case 'note':
-      if (note) pickUp(note);
-      return;
-    case 'tab':
-      useSpot(spot, 'E');
-      return;
-    case 'sit':
-      if (it.seatId) sitOn(it.seatId);
-      return;
-    case 'stand':
-      standUp();
-      return;
-    case 'smoke':
-      setSmoking(!smokeBreakUntil);
-      return;
-    case 'horn':
-      blowHorn();
-      return;
-    case 'proxy':
-      if (!store.proxy.refreshing) net.send({ t: 'proxy.refresh' });
-      return;
-    case 'none':
-      return;
-  }
-}
-const vrHooks: VRHooks = {
-  player,
-  settings,
-  useE: vrUseE,
-  pickFromRay: (ray, slack) => pickFromRay(ray, slack),
-  touchTarget: (point, indexTip) => {
-    if (climber.active || trip) return null;
-    const it = (indexTip && inElevator(player.pos.x, player.pos.z) ? lift().touchTarget(point) : null) ?? pickTouchTarget(point, usable());
-    eye.set(player.pos.x, player.pos.y + EYE_HEIGHT, player.pos.z);
-    return it && point.distanceTo(eye) <= REACH[it.kind] ? it : null;
-  },
-  noteUnder: (aim) => noteUnder(aim),
-  spotUnder: (aim) => spotUnder(aim),
-  nextWaiting: () => goToNextWaiting(),
-  putBack: () => putBack(),
-  carrying: () => carrying,
-  grab: {
-    pick: (point) => pickVrGrab(point),
-    changed: (item) => {
-      physicalCarry = item;
-      me.carry(item?.pose ? null : carrying);
-      vrUi?.setCarrying(carrying);
-      nativeUi?.setCarrying(carrying);
-    },
-    ground: (point) => Math.max(player.street, player.groundBelow(point.x, point.z, point.y)),
-  },
-  closeTop: () => closeTopModal(),
-  modalOpen: () => modalOpen(),
-  toast: (text, level) => toast(text, level),
-  hudRefresh: () => hud.refresh(),
-  reachOf: (kind) => REACH[kind],
-  reachAnim: () => reach(),
-  onTarget: (it, note, spot) => {
-    target = it;
-    aimedNote = note;
-    aimedSpot = spot ?? null;
-  },
-  aimLabel: (it, note) => vrAimLabel(it, note, aimedSpot),
-  resize: () => resize(),
-  // The roof is small and mostly moving lights; the office is where the draw calls are.
-  batchRoot: () => (upTop || trip ? null : office.group),
-  // The office only: the roof's few pickables are cheap to walk.
-  pickRoot: () => (upTop ? null : office.group),
-  onEnter: () => {
-    // A desktop card has no grabbing hand. Put it back before physical input takes over.
-    if (carrying) putBack();
-    // Nor a way to shoot: the ball drops where you stand, and the club goes back in the bag.
-    dropBall();
-    golf.stop();
-    // Put the desktop gun away; shared revival deadlines keep running in VR.
-    holsterGun(true);
-    // A focused DOM field would take IME text the capture below can't cancel.
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    syncElevatorButtons();
-    vrUi = attachVrUi(scene, {
-      send: (msg) => net.send(msg),
-      subscribe: (topic, fn) => store.on(topic, fn),
-      getScreen: (id) => store.screens.get(id),
-      getWorker: (id) => store.workers.get(id),
-      providerOf: (w) => resolvedProvider(w.provider, store.project),
-      getWorkers: () => [...store.workers.values()],
-      getIssues: () => store.issues,
-      getPulls: () => store.pulls,
-      getQueue: () => store.queue,
-      getFreeDesks: () => DESKS.filter((d) => !d.station && !d.room && !store.workerAtDesk(d.id)).map((d) => ({ id: d.id, label: d.label })),
-      getFloors: () => store.floors,
-      currentFloor: () => store.floor,
-      getJukebox: () => store.jukebox,
-      onRoof: () => upTop,
-      barCutOff: () => booze.cutOff(performance.now() / 1000),
-      getVrSettings: () => settings.vr,
-      getMeeting: () => store.meeting,
-      getServices: () => store.services,
-      getSound: () => ({ volume: settings.volume, muted: settings.muted, music: settings.music, musicMuted: settings.musicMuted }),
-      getWorktree: () => worktreePref(),
-      getSearch: () => vrSearch,
-      getMerge: () => vrMerge,
-      // The main row follows the focused terminal; the changes view holds its watched worker.
-      getChangesWorker: () => (vrMenuView === 'changes' ? vrChangesWorker : (vrUi?.terminal.focused() ?? null)),
-      getChanges: () => vrChanges,
-      actions: {
-        hire: (deskId) => vrHire(deskId),
-        toggleWorktree: () => setWorktreePref(!worktreePref()),
-        nextWaiting: () => goToNextWaiting(),
-        promptWorker: (workerId, n, title) => net.send({ t: 'worker.prompt', workerId, prompt: issuePrompt({ number: n, title }) }),
-        queueIssue: (n, title) => net.send({ t: 'queue.add', prompt: issuePrompt({ number: n, title }), title, issue: n }),
-        ride: (floorId) => ride(floorId),
-        jukebox: (op, track) => net.send(op === 'play' ? { t: 'jukebox.play', ...(track ? { track } : {}) } : op === 'stop' ? { t: 'jukebox.stop' } : { t: 'jukebox.skip' }),
-        playStream: () => vrJukeboxStream(),
-        orderDrink: (id) => {
-          const d = DRINK_BY_ID.get(id);
-          if (d) orderDrink(d);
-        },
-        meetingCall: () => vrMeeting(),
-        meetingStop: () => net.send({ t: 'meeting.stop' }),
-        meetingClear: () => net.send({ t: 'meeting.clear' }),
-        copyServiceTunnel: (port) => void copyServiceTunnel(port),
-        addFloor: () => vrAddFloor(),
-        addQueueTask: () => vrQueueAdd(),
-        queueLimit: (maxWorkers) => net.send({ t: 'queue.limit', maxWorkers }),
-        removeQueueTask: (taskId) => net.send({ t: 'queue.remove', taskId }),
-        retryQueueTask: (taskId) => net.send({ t: 'queue.retry', taskId }),
-        clearQueue: () => net.send({ t: 'queue.clear' }),
-        commentOn: (kind, number) => vrComment(kind, number),
-        closeItem: (kind, number) => vrClose(kind, number),
-        reviewPanel: (number) => vrReviewPanel(number),
-        mergePull: (number) => vrMergeFire(number),
-        openChanges: (workerId) => {
-          if (vrChangesWorker && vrChangesWorker !== workerId) net.send({ t: 'changes.unwatch', workerId: vrChangesWorker });
-          vrChangesWorker = workerId;
-          vrChanges = null;
-          net.send({ t: 'changes.watch', workerId });
-          vrUi?.showMenu('changes');
-        },
-        commitChanges: (workerId) => vrChangesCommit(workerId),
-        discardChangesArm: (workerId) => {
-          // The window's confirm dialog, as a toast (the red Discard? is the confirm).
-          if (vrChanges?.workerId !== workerId) return;
-          const w = store.workers.get(workerId);
-          const n = vrChanges.files.filter((f) => f.uncommitted).length;
-          const where = vrChanges.dir ? vrChanges.dir : 'the project folder';
-          toast(
-            `Discard ${n} file${n === 1 ? '' : 's'} at ${w?.name ?? 'the desk'}? This puts ${where} back to the last commit and deletes new files. Commits stay.${vrChanges.dir ? '' : " That folder is shared: anyone's uncommitted edits there go too."} Tap again to discard.`,
-            'warn',
-          );
-        },
-        discardChanges: (workerId) => net.send({ t: 'changes.discard', workerId }),
-        openChangesPr: (workerId) => vrChangesPr(workerId),
-        copyPrUrl: (url) => void copy(url).then((ok) => toast(ok ? '✅ PR link copied — paste it anywhere' : "Couldn't copy the PR link", ok ? 'info' : 'warn')),
-        viewChanged: (view) => {
-          // Leaving the changes view stops the watch (the office polls the checkout while watched).
-          if (vrMenuView === 'changes' && view !== 'changes' && vrChangesWorker) {
-            net.send({ t: 'changes.unwatch', workerId: vrChangesWorker });
-            vrChangesWorker = null;
-            vrChanges = null;
-          }
-          vrMenuView = view;
-        },
-        detailOpened: (kind, number) => {
-          // Issues have no merge box; a PR refetches (the loading line paints first).
-          if (kind !== 'pull') vrMerge = null;
-          else {
-            vrMerge = { number, state: 'loading' };
-            vrUi?.menu.refresh();
-            void vrMergeFetch(number);
-          }
-        },
-        toggleSound: (kind) => {
-          // The ⚙️ Settings mute buttons: flip it, save it, hear it (levels stay desktop — sliders).
-          if (kind === 'music') {
-            settings.musicMuted = !settings.musicMuted;
-            sound.setMusicVolume(settings.music, settings.musicMuted);
-          } else {
-            settings.muted = !settings.muted;
-            sound.setVolume(settings.volume, settings.muted);
-          }
-          saveSettings(settings);
-        },
-        searchOffice: (query) => void vrSearchOffice(query),
-        vrSettings: (patch) => {
-          Object.assign(settings.vr, patch);
-          saveSettings(settings);
-        },
-        exitVr: () => void vr.toggle(),
-      },
-      workerActions: {
-        resume: (workerId) => {
-          const w = store.workers.get(workerId);
-          if (w) resumeWorker(w);
-        },
-        kill: (workerId) => vrKill(workerId),
-        killWarning: (workerId) => killWarning(workerId),
-      },
-    });
-    vr.setUi(vrUi);
-  },
-  onEnd: () => {
-    setCarrying(null);
-    syncElevatorButtons();
-    vr.setUi(null);
-    if (vrChangesWorker) net.send({ t: 'changes.unwatch', workerId: vrChangesWorker });
-    vrChangesWorker = null;
-    vrChanges = null;
-    vrUi?.dispose();
-    vrUi = null;
-  },
-};
-const vr = new VRSession(renderer, scene, camera, vrHooks);
-// A physical keyboard while presenting types into the VR prompt or terminal, and no desktop
-// keybind sees it. Registered at module load, so it's ahead of every later window listener.
-captureVrKeys(window, { active: () => vr.active, onBytes: (bytes, key) => vrUi?.physicalKey(bytes, key) });
-// Emulator test hook (?vrtest=1): the XR emulator has no controllers to push, so this drives the
-// live session over DevTools instead. Movement stays client-authoritative, exactly as on desktop.
-if (new URLSearchParams(location.search).has('vrtest')) {
-  (window as unknown as { __vrtest?: unknown }).__vrtest = {
-    inVR: () => vr.active,
-    pos: () => [player.pos.x, player.pos.y, player.pos.z],
-    facing: () => player.facing,
-    teleport: (x: number, y: number, z: number) => vr.debugTeleport(x, y, z),
-    turn: (rad: number) => vr.debugTurn(rad),
-    // The world-space UI: which panels are up, where they are (for aiming the emulated
-    // rays at them), and a way to walk every menu view without precise aiming.
-    ui: () =>
-      !vrUi
-        ? null
-        : {
-            menu: vrUi.menu.visible,
-            controls: vrUi.controls.visible,
-            terminal: vrUi.terminal.visible,
-            prompt: vrUi.prompt.visible,
-            keyboard: vrUi.keyboard.visible,
-            physical: vrUi.physicalTyping,
-          },
-    panelPos: (which: 'menu' | 'controls' | 'terminal' | 'prompt' | 'keyboard' | 'toast') => {
-      const g = vrUi?.[which]?.panel.group;
-      if (!g) return null;
-      const v = new THREE.Vector3();
-      g.getWorldPosition(v);
-      return [v.x, v.y, v.z] as [number, number, number];
-    },
-    showMenu: (view: 'main' | 'hire' | 'queue' | 'board' | 'detail' | 'floors' | 'jukebox' | 'bar' | 'search' | 'assign' | 'settings' | 'meeting' | 'services' | 'changes') => vrUi?.showMenu(view),
-    // Hides the dash (controls card + menu) so the rays aim at the world, not a panel.
-    hideDash: () => {
-      vrUi?.controls.hide();
-      vrUi?.menu.hide();
-    },
-    toast: (text: string) => vrUi?.showToast(text),
-    workers: () => [...store.workers.values()].map((w) => ({ id: w.id, name: w.name, desk: w.deskId, status: w.status })),
-    openTerminal: (id: string) => vrUi?.openTerminal(id),
-    askDemo: () => vrUi?.askText({ title: '✨ Hire at Desk 1', subtitle: 'First task (optional)', placeholder: 'Optional first task…', submitLabel: 'Hire & start', allowEmpty: true, onSubmit: () => {} }),
-    // The real VR hire prompt at a free desk (engine row included), without aiming at it.
-    hireAt: () => {
-      const d = freeDesk();
-      if (d) vrHire(d);
-      return d;
-    },
-    // Spawns a shell worker (no agent, no cost) at the nearest free desk, for terminal tests.
-    shell: () => {
-      const d = freeDesk();
-      if (d) net.send({ t: 'worker.spawn', deskId: d, kind: 'shell' });
-      return d;
-    },
-    screen: (id: string) => {
-      const s = store.screens.get(id);
-      if (!s) return null;
-      const sample = s.lines.slice(0, 6).map((runs) => (runs ?? []).map((r) => r[0]).join(''));
-      return { cols: s.cols, rows: s.rows, lines: s.lines.length, version: s.version, cursor: s.cursor, sample };
-    },
-    // Types into the focused VR terminal (the VR keyboard's path, without aiming at keys).
-    type: (text: string) => vrUi?.terminal.type(text),
-    // Drops the socket (it reconnects on its own) + whether it's up (reconnect checks).
-    dropNet: () => net.debugDrop(),
-    netUp: () => net.up,
-    // Clicks a menu/prompt button by id (the panel's own button registry + onClick).
-    mclick: (id: string) => vrUi?.menu.panel.clickButton(id) ?? false,
-    promptButton: (id: string) => vrUi?.prompt.panel.clickButton(id) ?? false,
-    tclick: (id: string) => vrUi?.terminal.panel.clickButton(id) ?? false,
-    // The menu's current view (E-routing checks read this back).
-    menuView: () => vrUi?.menu.currentView() ?? null,
-    // E through the session's own dispatch, at a made-up target (E-routing checks).
-    tapUse: (kind: string, deskId?: string, decorId?: string, seatId?: string) => vrUseE({ kind, deskId, decorId, seatId } as Interactable, null),
-    // A DOM modal is up (invisible in the headset — the seat checks assert none opens).
-    modal: () => modalOpen(),
-    // What the headset's aim bar says (null while it hides).
-    aim: () => vr.debugAim(),
-    // Takes an issue card into hand (the meeting-carry check's setup).
-    carry: (issue: number, title: string) => setCarrying({ issue, title }),
-    // The fresh VR toast's words, while one is up.
-    toastText: () => vrUi?.toast.current ?? null,
-    // The task queue's width and tasks (the queue checks read this back).
-    queue: () => ({ max: store.queue.maxWorkers, tasks: store.queue.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status })) }),
-    // Drops a queue task the checks added (mirrors the worker `kill` hook).
-    queueRemove: (taskId: string) => net.send({ t: 'queue.remove', taskId }),
-    // Sets the queue's width (the checks pause and resume the line through here).
-    queueLimit: (maxWorkers: number) => net.send({ t: 'queue.limit', maxWorkers }),
-    // Seeds a fake finished task into this client's queue (reload clears it).
-    seedQueueTask: (id: string, title: string) => {
-      store.queue.tasks = store.queue.tasks.filter((t) => t.id !== id);
-      store.queue.tasks.push({ id, title, prompt: 'Seeded by the VR queue-row check.', addedBy: 'vrtest', addedAt: Date.now(), status: 'done', outcome: 'done' });
-      store.emit('queue');
-    },
-    // One issue or PR in the menu's detail view (the comment check's setup).
-    detail: (kind: 'issue' | 'pull', number: number) => vrUi?.openDetail(kind, number),
-    // Seeds a fake open issue into this client's board (gh is unreachable here; reload clears it).
-    seedIssue: (number: number, title: string) => {
-      store.issues.items = store.issues.items.filter((i) => i.number !== number);
-      const at = new Date().toISOString();
-      store.issues.items.push({ number, title, state: 'OPEN', url: '', author: 'vrtest', labels: [], assignees: [], createdAt: at, updatedAt: at, body: 'Seeded by the VR comment check.', comments: 0 });
-      store.emit('issues');
-    },
-    // Seeds a fake open PR into this client's board (reload clears it).
-    seedPull: (number: number, title: string) => {
-      store.pulls.items = store.pulls.items.filter((p) => p.number !== number);
-      const at = new Date().toISOString();
-      store.pulls.items.push({
-        number,
-        title,
-        state: 'OPEN',
-        isDraft: false,
-        url: '',
-        author: 'vrtest',
-        labels: [],
-        reviewDecision: '',
-        headRefName: 'zzz',
-        baseRefName: 'main',
-        createdAt: at,
-        updatedAt: at,
-        additions: 1,
-        deletions: 0,
-        checks: 'none',
-        body: 'Seeded by the VR review check.',
-        closes: [],
-      });
-      store.emit('pulls');
-    },
-    // Seeds a fake running meeting into this client's room (reload clears it).
-    seedMeetingBusy: (title: string) => {
-      store.meeting.current = {
-        id: 'zzz-meeting',
-        pattern: 'debate',
-        title,
-        prompt: 'Seeded by the VR review check.',
-        output: 'docs/zzz.md',
-        seats: [],
-        rounds: 3,
-        round: 1,
-        step: 1,
-        turns: [],
-        budget: 1000000,
-        tokens: 0,
-        cost: 0,
-        costKnown: true,
-        status: 'running',
-        calledBy: 'vrtest',
-        startedAt: Date.now(),
-        notes: '.meeting',
-      };
-      store.emit('meeting');
-    },
-    // Seeds a fake earlier meeting into this client's room (reload clears it).
-    seedMeetingPast: (title: string) => {
-      store.meeting.past = store.meeting.past.filter((r) => r.title !== title);
-      store.meeting.past.unshift({ id: 'zzz-past', pattern: 'debate', title, status: 'done', summary: 'Seeded by the VR meeting-history check.', calledBy: 'vrtest', finishedAt: Date.now(), output: 'docs/zzz-past.md' });
-      store.emit('meeting');
-    },
-    // What's on the jukebox (the stream check reads this back).
-    jukebox: () => ({ on: store.jukebox.on, track: store.jukebox.track, url: store.jukebox.url ?? null }),
-    // Your own mute switches (the sound-rows check reads these back).
-    soundMuted: () => ({ music: settings.musicMuted, sounds: settings.muted }),
-    // Whether the next hire gets its own worktree (the hire-toggle check reads this back).
-    worktree: () => worktreePref(),
-    // The pictures on the walls (the decor E-again check reads this back).
-    decor: () => store.decor.map((d) => ({ id: d.id, title: d.title, by: d.by })),
-    // What the VR prompt field holds (assert scripts read this back after pressing keys).
-    promptText: () => vrUi?.promptText() ?? null,
-    // The VR prompt's engine row label (the meeting-pattern check reads this back).
-    promptEngine: () => vrUi?.promptEngine() ?? null,
-    // The VR search view's latest answer (the search check reads the hit count back).
-    search: () => vrSearch && { query: vrSearch.query, status: vrSearch.status, terminals: vrSearch.results?.terminals.length ?? 0 },
-    // The VR terminal's search jump target (the search check reads the landed row back).
-    termFind: () => vrUi?.terminal.findState() ?? null,
-    // The VR merge box's answer (the merge check reads the status back).
-    merge: () => vrMerge && { number: vrMerge.number, state: vrMerge.state, can: vrMerge.status?.can ?? null, short: vrMerge.status?.short ?? null },
-    // The VR changes view's watch (the changes check reads the files back).
-    changes: () =>
-      vrChangesWorker && {
-        worker: vrChangesWorker,
-        files: vrChanges?.files.map((f) => ({ path: f.path, status: f.status, uncommitted: f.uncommitted })) ?? null,
-        ahead: vrChanges?.ahead ?? null,
-        branch: vrChanges?.branch ?? null,
-        prBase: vrChanges?.prBase ?? null,
-        pr: vrChanges?.pr ?? null,
-        error: vrChanges?.error ?? null,
-      },
-    // Flips this client's VR merge box to mergeable (the merge check fires at a PR GitHub
-    // refuses — conflicted — so the send, the waiter and the toast verify with no merge).
-    seedMerge: () => {
-      if (vrMerge?.state !== 'ready' || !vrMerge.status) return null;
-      vrMerge = { ...vrMerge, status: { ...vrMerge.status, icon: '✅', short: 'Ready to merge', cls: 'ok', can: true, auto: false } };
-      vrUi?.menu.refresh();
-      return vrMerge.number;
-    },
-    // Downs shots for the drunk-in-VR check (strength adds up; water sobers): returns the level.
-    drink: (id: 'beer' | 'wine' | 'martini' | 'maitai' | 'shot' | 'mojito' | 'water' = 'shot') => {
-      const d = DRINK_BY_ID.get(id);
-      if (d) booze.drink(d, performance.now() / 1000);
-      return { drunk: player.drunk, sway: vr.sway };
-    },
-    // The rig's roll now (the drunk-sway check reads the wobble back).
-    rigRoll: () => (vr.active ? vr.dolly.rotation.z : null),
-    // Per-panel draw order + depth test (the wall-clipping check reads these back).
-    panelFlags: () => {
-      if (!vrUi) return null;
-      const out: Record<string, { depthTest: boolean; renderOrder: number }> = {};
-      for (const k of ['menu', 'controls', 'terminal', 'prompt', 'keyboard', 'toast'] as const) {
-        const m = vrUi[k].panel.mesh;
-        out[k] = { depthTest: (m.material as THREE.MeshBasicMaterial).depthTest, renderOrder: m.renderOrder };
-      }
-      return out;
-    },
-    // Keyboard key centers, world + rig-local (hand-aiming scripts look the hands at these).
-    keyPos: (ids: string[]) => {
-      const kb = vrUi?.keyboard;
-      if (!kb) return null;
-      const out: Record<string, [number, number, number] | null> = {};
-      for (const id of ids) {
-        const r = kb.keyRectOf(id);
-        if (!r) {
-          out[id] = null;
-          continue;
-        }
-        const p = new THREE.Vector3((r.x + r.w / 2 - 0.5) * kb.panel.width, (0.5 - (r.y + r.h / 2)) * kb.panel.height, 0);
-        kb.panel.mesh.localToWorld(p);
-        out[id] = [p.x, p.y, p.z];
-      }
-      const head = new THREE.Vector3();
-      camera.getWorldPosition(head);
-      // The emulator drives hands in rig-local space (clamped to reach): the same keys there.
-      const local: Record<string, [number, number, number] | null> = {};
-      for (const id of ids) {
-        const w = out[id];
-        if (!w) {
-          local[id] = null;
-          continue;
-        }
-        const l = vr.dolly.worldToLocal(new THREE.Vector3(w[0], w[1], w[2]));
-        local[id] = [l.x, l.y, l.z];
-      }
-      return { keys: out, head: [head.x, head.y, head.z] as [number, number, number], local };
-    },
-    // Presses a VR keyboard key through the panel's own per-ray press path:
-    // key(0, 'k:a', true) holds, (…, false) lets go (and types, when still on the key).
-    key: (rayId: number, keyId: string, down: boolean) => {
-      const kb = vrUi?.keyboard;
-      const r = kb?.keyRectOf(keyId);
-      if (!kb || !r) return false;
-      const uv = { u: r.x + r.w / 2, v: 1 - (r.y + r.h / 2) };
-      if (down) {
-        kb.panel.pointerMove(rayId, uv);
-        return kb.panel.pointerDown(rayId, uv);
-      }
-      kb.panel.pointerMove(rayId, uv);
-      kb.panel.pointerUp(rayId, uv);
-      return true;
-    },
-    // Per-ray input state (controller vs hand, holds, aims).
-    rays: () => vr.debugRays(),
-    held: () => physicalCarry,
-    // Each ray's world origin + direction (aiming checks).
-    rayPos: () => vr.debugRayPos(),
-    // Sends test workers home (shells spawned by `shell`).
-    kill: (id: string) => net.send({ t: 'worker.kill', workerId: id }),
-    // Grabs the ladder outright (climber-level, skipping the other-floors check), for climb tests.
-    ladder: () => climber.grabLadder(),
-    // The real E-at-ladder path (refuses with a toast when there's nowhere to climb to).
-    ladderE: () => grabLadder(),
-    // Grabs the nearest fire pole (E-at-pole without aiming): slides where it goes down, else twirls.
-    pole: () => {
-      const spots = office.stack.poles();
-      let best = null;
-      let bd = Infinity;
-      for (const s of spots) {
-        const d = Math.hypot(player.pos.x - s.x, player.pos.z - s.z);
-        if (d < bd) {
-          bd = d;
-          best = s;
-        }
-      }
-      if (!best || trip || climber.active) return null;
-      if (office.stack.polesGoDown()) climber.slide(best);
-      else climber.twirl(best);
-      return { x: best.x, z: best.z, down: office.stack.polesGoDown() };
-    },
-    poles: () => office.stack.poles().map((s) => ({ x: s.x, z: s.z })),
-    rigged: () => climber.grip ?? null,
-    // Rides the elevator (the floors menu's path, without aiming at rows).
-    ride: (floorId: string) => ride(floorId),
-    roof: () => ROOF,
-    floors: () => store.floors.map((f) => ({ id: f.id, name: f.name })),
-    floor: () => store.floor,
-    vrSettings: () => ({ ...settings.vr }),
-    // Forces the insecure-origin Enter VR chip (dimmed, with the reason) for UI tests.
-    forceInsecureXR: (on: boolean) => {
-      xrInsecure = on;
-      hud.refresh();
-    },
-  };
-}
+player.view = settings.view;
 const hands = new Hands(store.profile.color, me.skinColor);
 const caffeine = new Caffeine();
 /** No shaking the view for the coffee jitters when the system asks for less motion. */
@@ -1378,9 +438,7 @@ balls.onRest = (f: Flight) => {
 /** E at the tee: take a club out and step up to the ball. */
 function teeOff() {
   if (golf.active || trip || climber.active) return;
-  // The golf camera and the tee stance take over the player rig, which the headset and VR climbing own.
-  if (vr.active) return toast("The golf tee isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
+  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (errand) stopWalking();
@@ -1456,24 +514,24 @@ const whoosh = h('div', { id: 'whoosh' });
 $('app').append(whoosh);
 
 /** E at the ladder: onto it, facing the wall. */
-function grabLadder(physical = false) {
+function grabLadder() {
   if (trip || climber.active) return;
   if (!floorThere(1) && !floorThere(-1)) return toast('No other floors yet — add a project in the elevator', 'warn');
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (errand) stopWalking();
-  climber.grabLadder(physical);
+  climber.grabLadder();
 }
 
 /** E at a fire pole: down it, if there's a floor below; else (on the bottom floor) a spin round it. */
-function usePole(i: number, physical = false) {
+function usePole(i: number) {
   const spot = POLES[i];
   if (trip || climber.active || !spot) return;
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (errand) stopWalking();
-  if (office.stack.polesGoDown()) climber.slide(spot, physical);
-  else climber.twirl(spot, physical);
+  if (office.stack.polesGoDown()) climber.slide(spot);
+  else climber.twirl(spot);
 }
 
 /**
@@ -1530,29 +588,7 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
   },
   onLand: (at) => sound.thud(at),
   onSiren: (at) => sound.siren(at),
-  // Back in its seat, session untouched: a little hop.
-  onBack: (id) => workerViews.get(id)?.model.cheer(0.8),
-  // In the headset the body keeps the server's revival window in the world: a heartbeat you hear
-  // up close and feel in a hand near it, slowing and fading as the window runs out, and it gets
-  // back up into its chair rather than popping into it.
-  ...(nativeMode
-    ? {
-        onBeat: (at: THREE.Vector3, strength: number) => {
-          sound.heartbeat(at, strength);
-          nativeControls?.pulseNear(at, REVIVE_TOUCH + 0.25, 0.15 + 0.3 * strength, 40);
-        },
-        left: (id: string) => {
-          const until = store.workers.get(id)?.downedUntil;
-          return until === undefined ? null : (until - store.officeNow()) / 1000;
-        },
-        riseTime: RISE_TIME,
-      }
-    : {}),
 });
-/** Native: shots resolved here whose downed state the server has not echoed yet (native/downed.ts). */
-const pendingShots = new PendingShots();
-/** Native: workers seen shot on this floor, whose dismissal the medics already tell in the world. */
-const gunDowned = new Set<string>();
 /** The gun in your right hand (`7` draws and holsters it). */
 let gunOut = false;
 /** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
@@ -1560,19 +596,16 @@ const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): vo
 
 /** `7`: the .44 Magnum out of its holster, or back in. */
 function toggleGun() {
-  // The headset draws it physically, from the holster behind your back (native/physical.ts).
-  if (nativeControls?.active) return;
   if (gunOut) {
     holsterGun();
     return;
   }
-  if (vr.active) return toast("The gun isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (golf.active) return toast(withControlHint('Your hands are full: put the club back first', ' (E)'), 'warn');
+  if (golf.active) return toast('Your hands are full: put the club back first (E)', 'warn');
   if (climber.active) return toast('Your hands are full: both hands on the climb', 'warn');
-  if (hanger.active) return toast(withControlHint('Your hands are full: hang the picture first', ' (or F to stop)'), 'warn');
-  if (carrying) return toast(withControlHint(`Your hands are full: put #${carrying.issue} down first`, ' (Q)'), 'warn');
+  if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
+  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
-  if (holdingBall()) return toast(withControlHint('Your hands are full: drop the ball first', ' (Q)'), 'warn');
+  if (holdingBall()) return toast('Your hands are full: drop the ball first (Q)', 'warn');
   gunOut = true;
   hands.holdGun(true);
   me.setGun(true);
@@ -1582,7 +615,6 @@ function toggleGun() {
 
 /** The gun back in its holster. */
 function holsterGun(quiet = false) {
-  nativeControls?.cancelGun();
   if (!gunOut) return;
   gunOut = false;
   hands.holdGun(false);
@@ -1613,52 +645,33 @@ function fireGun(ndc: THREE.Vector2) {
   resolveGunShot();
 }
 
-/** The native gun fires from its real muzzle; the desktop and headset share hit blocking and the server's downed state. */
-function fireNativeGun(origin: THREE.Vector3, direction: THREE.Vector3) {
-  sound.gunshot();
-  smoke.wisp(origin);
-  raycaster.set(origin, direction);
-  raycaster.camera = camera;
-  raycaster.near = 0;
-  raycaster.far = Infinity;
-  resolveGunShot();
-}
-
 function resolveGunShot() {
   if (upTop) return;
   const byRoot = new Map<THREE.Object3D, string>();
   for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
   // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
   const result = gunHit(raycaster, office.group, byRoot);
-  const hit = result?.hit;
-  const workerId = result?.workerId ?? null;
   const direction = raycaster.ray.direction.clone();
-  const outcome = landShot(result, direction);
-  const solid = hit?.object.name || (hit?.object as THREE.Mesh | undefined)?.geometry?.type || null;
-  const distance = hit ? Math.round(hit.distance * 1000) / 1000 : null;
-  if (nativeMode) console.info(`XR_GUN_SHOT ${JSON.stringify({ worker: workerId !== null, outcome, solid, distance })}`);
-  shotStage?.shot({ workerId, outcome, solid, distance });
+  landShot(result, direction);
 }
 
 /**
  * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
  * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
  * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. No menu opens anywhere. In the headset it goes down at once, reeling back
- * out of its chair along the bullet and over onto the floor where the shooter can see it, without
- * waiting for the server (native/downed.ts PendingShots).
+ * session still running. No menu opens anywhere.
  */
-function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): ShotOutcome {
+function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
-    if (!hit) return 'miss';
+    if (!hit) return;
     const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
     const puff = new Puff(hit.point, normal);
     scene.add(puff.group);
     puffs.push(puff);
     sound.impact(hit.point);
-    return 'miss';
+    return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
   const spray = new BloodSpray(hit.point, out, direction);
@@ -1668,18 +681,8 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3): 
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk || w.downedUntil !== undefined) return 'hit';
-  if (nativeMode) {
-    arrivals.forget(v.model);
-    // It reels from the hit where the shooter (the headset's eyes) can see it go down.
-    if (casualties.shoot(workerId, v.model, desk.seatAnchor, direction, camera.getWorldPosition(new THREE.Vector3()))) {
-      pendingShots.add(workerId, performance.now());
-      // Should the server never echo it, the body gets back up rather than lying there for good.
-      window.setTimeout(syncWorkers, SHOT_ECHO_MS + 50);
-    }
-  }
+  if (!v || !w || !desk || w.downedUntil !== undefined) return;
   net.send({ t: 'worker.shoot', workerId });
-  return 'down';
 }
 
 /** Walk up to a body to revive it; the gun can stay drawn. */
@@ -1698,20 +701,6 @@ function reviveNearby(): boolean {
   return true;
 }
 
-/**
- * Native: the use action with a free hand at a body (native/physical.ts useAtBody). It comes to
- * with a gasp and stirs at once while the server revives it; it gets back up into its chair when
- * the server says so. False when its window has closed or there is no office to ask.
- */
-function reviveBody(id: string): boolean {
-  const w = store.workers.get(id);
-  if (!net.up || upTop || trip || !w || w.downedUntil === undefined || w.downedUntil <= store.officeNow()) return false;
-  if (!casualties.rouse(id)) return false;
-  const v = workerViews.get(id);
-  if (v) sound.gasp(v.model.root.localToWorld(new THREE.Vector3(0, 0.9, 0)));
-  net.send({ t: 'worker.revive', workerId: id });
-  return true;
-}
 /** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
 let seatedAlready = false;
 let firstWelcome = true;
@@ -1721,10 +710,6 @@ let upgradePhase = '';
 
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
-  if (!up && headsetActive()) {
-    headsetControls().clearGrab();
-    setCarrying(null);
-  }
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
@@ -1733,8 +718,6 @@ net.onMessage((msg) => {
     departures.clear();
     arrivals.clear();
     casualties.clear();
-    pendingShots.clear();
-    gunDowned.clear();
     seatedAlready = true;
   }
   if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
@@ -1743,11 +726,6 @@ net.onMessage((msg) => {
   sentHome.clear();
   routeTerminalMessage(msg);
   routeChangesMessage(msg);
-  // The VR changes view follows the watched checkout too (its own copy, repainted in).
-  if (msg.t === 'changes' && msg.state.workerId === vrChangesWorker) {
-    vrChanges = msg.state;
-    vrUi?.menu.refresh();
-  }
   routePullMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
@@ -1783,9 +761,6 @@ net.onMessage((msg) => {
       // After a reconnect the server has forgotten which terminal we had open.
       const openId = openTerminalFor();
       if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
-      // The VR terminal too (else its screen freezes where the connection dropped).
-      const vrId = vrUi?.terminal.focused();
-      if (vrId && vrId !== openId && store.workers.has(vrId)) net.send({ t: 'worker.attach', workerId: vrId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
       renderProject();
@@ -1797,7 +772,6 @@ net.onMessage((msg) => {
       break;
     }
     case 'floor.enter':
-      headsetControls().clearGrab();
       // Not a trip of yours: the floor you were on was taken off the building, and the elevator took you away.
       if (!trip) takenAway();
       // The card belongs to the board downstairs (or up): the office already put it back there.
@@ -1820,8 +794,6 @@ net.onMessage((msg) => {
       routeWorktreeMessage(msg);
       break;
     case 'toast':
-      // In the headset, a shot worker's dismissal is told by the medics who carry it out.
-      if (nativeMode && msg.workerId !== undefined && msg.level === 'info' && gunDowned.has(msg.workerId)) break;
       toast(msg.text, msg.level);
       break;
     case 'upgrade':
@@ -1933,12 +905,6 @@ window.addEventListener('pagehide', saveSpot);
 function fade(on: boolean, quick = false) {
   $('fade').classList.toggle('quick', quick);
   $('fade').classList.toggle('on', on);
-  // The DOM overlay is invisible in the headset: the session fades its own quad (trips hold
-  // the black until the far side arrives; teleports fade straight back on their own).
-  if (headsetActive()) {
-    if (on) headsetControls().fadeOut();
-    else headsetControls().fadeIn();
-  }
 }
 
 /** How you're going to another floor: by elevator, straight there from the floor list, or by the ladder or a pole. */
@@ -1955,22 +921,11 @@ function lift() {
   return upTop && roof ? roof.elevator : office.elevator;
 }
 
-/** Both cabs follow the live list, including additions/removals and a lazily built roof. */
-function syncElevatorButtons() {
-  for (const elevator of [office.elevator, roof?.elevator]) {
-    if (!elevator) continue;
-    elevator.setVR(headsetActive());
-    if (headsetActive()) elevator.setFloors(store.floors, store.floor);
-  }
-}
-store.on('floors', syncElevatorButtons);
-
 /** Rides the elevator to another floor (or up to the roof). From outside the car, you step in while the lights are down. */
 function ride(floorId: string) {
   if (trip || floorId === store.floor) return;
   holsterGun(true);
   closeAllModals();
-  nativeMenus?.close(true);
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
@@ -2008,7 +963,6 @@ function switchFloor(floorId: string) {
   if (trip || floorId === store.floor) return;
   holsterGun(true);
   closeAllModals();
-  nativeMenus?.close(true);
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (golf.active) golf.stop();
@@ -2039,7 +993,7 @@ function tripFailed() {
   fade(false);
   if (t.how === 'elevator') lift().setOpen(!!store.floor);
   if (t.how === 'ladder' || t.how === 'pole') climber.abort();
-  player.enabled = !modalOpen() && !headsetActive();
+  player.enabled = !modalOpen();
 }
 
 /** Arrived in a spot that's a pole's hole on this floor: step out of it, the way in. */
@@ -2100,8 +1054,6 @@ function usable(): Interactable[][] {
 function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   // The balls lying about were this floor's, and so were a menu left open and the laptop you typed into.
   balls.clear();
-  nativeMenus?.close(true);
-  nativeTyping?.clear();
   setPlace();
   paintFloor();
   renderProject();
@@ -2111,27 +1063,24 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
     clearTimeout(trip.timer);
     trip = null;
   }
-  syncElevatorButtons();
   if (!store.floor) {
     // Nowhere to go yet: the doors stay shut until there's a floor, and the panel says how to add one.
     office.elevator.setOpen(false);
     fade(false);
-    player.enabled = !modalOpen() && !headsetActive();
+    player.enabled = !modalOpen();
     showElevator();
     return;
   }
   fade(false);
-  // The rig rebases itself onto the new spot (followHead); face where the avatar faces.
-  if (headsetActive()) headsetControls().faceAvatar();
   if (how === 'back') {
     // The doors stand open, the way the last one out left them.
     lift().setOpen(true);
-    player.enabled = !modalOpen() && !headsetActive();
+    player.enabled = !modalOpen();
     if (!upTop) unstick();
     return;
   }
   if (how !== 'elevator') {
-    player.enabled = !modalOpen() && !headsetActive();
+    player.enabled = !modalOpen();
     if (how === 'switch') unstick();
     else climber.arrived();
     return;
@@ -2139,7 +1088,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   setTimeout(() => {
     lift().setOpen(true);
     sound.ding('done');
-    player.enabled = !modalOpen() && !headsetActive();
+    player.enabled = !modalOpen();
   }, 450);
 }
 
@@ -2164,7 +1113,6 @@ function noticeWaiting() {
   $('project').title = elsewhere ? `${elsewhere} worker${elsewhere === 1 ? '' : 's'} on other floors waiting on someone — click to go there` : 'Floors: go to another project';
 }
 
-// ---- Peers --------------------------------------------------------------------------------------
 // ---- Walking over to a spot -----------------------------------------------------------------------
 /** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
 let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void } | null = null;
@@ -2188,11 +1136,11 @@ player.onPathEnd = (why) => {
 
 /**
  * Walks you over to `at` on this floor and does `then` when you get there. Where there's no walking
- * to be done (up on the roof, riding the elevator, on the ladder, in the headset) it just does it.
+ * to be done (up on the roof, riding the elevator, on the ladder) it just does it.
  * A key of yours takes over, and then it doesn't happen.
  */
 function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }) {
-  if (upTop || trip || climber.active || headsetActive()) return then();
+  if (upTop || trip || climber.active) return then();
   closeAllModals();
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
@@ -2243,7 +1191,6 @@ function syncWorkers() {
       desk.chair.rotation.y = 0;
       v = { model, laptop, deskId: w.deskId, status: '', acked: true };
       workerViews.set(w.id, v);
-      model.setPlate(plateAt(w.deskId));
     }
     if (v.status !== w.status || v.acked !== w.acked) {
       // It just finished or started waiting on you (not already so when this page first saw it): ding, and notify if you're away.
@@ -2268,41 +1215,26 @@ function syncWorkers() {
     v.model.setLost(!!w.lost);
     const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
-    if (floatingTags) v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
-    else {
-      // Its nameplate has a line of its own for what it is, under its name: a board agent's says
-      // which board it's for first, as it did while it waited at its kiosk (see idleAgents).
-      const provider = providerLabel(w.provider, store.project);
-      const engine = w.kind === 'shell' ? 'Shell' : engineBadge ? `${provider} · ${engineBadge}` : provider;
-      v.model.setRole(deskDef?.station ? `${deskDef.label} · ${engineBadge ?? provider}` : engine);
-      v.model.setTask(meetingCard(w) ?? w.task);
-    }
+    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
-    const lost = withControlHint(`🌿 ${w.name}'s worktree was deleted`, ' — press E to fix it');
-    v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? withControlHint(`💤 ${w.name} is asleep`, ` — press R to ${again}`) : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    const lost = `🌿 ${w.name}'s worktree was deleted — press E to fix it`;
+    v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
-      pendingShots.settle(w.id);
-      gunDowned.add(w.id);
       arrivals.forget(v.model);
       casualties.shoot(w.id, v.model, desk.seatAnchor);
-    } else if (!pendingShots.holds(w.id, performance.now())) casualties.revive(w.id);
+    } else if (casualties.revive(w.id)) v.model.cheer(0.8);
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
-    v.model.setPlate(null);
-    pendingShots.settle(id);
-    // Revived and still getting back up into its chair: it is there now, before it walks out.
-    casualties.settle(id);
     const desk = office.desks.get(v.deskId);
     // A shot worker: the medics take the body instead of the send-home walk-out.
     if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
         casualties.revive(id);
-        casualties.settle(id);
         v.model.root.removeFromParent();
         v.laptop.root.removeFromParent();
         v.model.dispose();
@@ -2351,7 +1283,6 @@ function arrangeSeats() {
   const free = vacantSeats(store.workers.values(), (id) => departures.seated(id));
   for (const [id, desk] of office.desks) desk.vacancy.visible = free.has(id);
   const appeared = office.setBeanbags(beanbagsOut((id) => !free.has(id)));
-  seatIdleAgents();
   // One came out right where you're standing (on the office floor, not down in the garage): you end up on top of it.
   const p = player.pos;
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
@@ -2462,7 +1393,7 @@ function promptAtDesk(deskId: string) {
   } else if (w.lost) {
     fixLostWorktree(w);
   } else if (isAsleep(w.status)) {
-    toast(withControlHint(`${w.name} is asleep`, ' — press R to resume first'), 'warn');
+    toast(`${w.name} is asleep — press R to resume first`, 'warn');
   } else if (w.kind === 'shell') {
     openPrompt({
       title: `🐚 Run in ${w.name}`,
@@ -2477,42 +1408,6 @@ function promptAtDesk(deskId: string) {
       onSubmit: (text) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text }),
     });
   }
-}
-
-/** Direct hire from an empty desk, with an optional first prompt and provider choice. */
-/** E at an empty desk in VR: the hire prompt as a world-space panel. The engine row names the engine (tap it to cycle the project's providers — model and effort follow each provider's last use at this desk, the desktop picker's memory); the worktree follows the last desktop hire. */
-function vrHire(deskId: string) {
-  const desk = DESK_BY_ID.get(deskId)!;
-  if (officeIsFull() || !vrUi) return;
-  const key = `desk:${deskId}`;
-  const options = supportedProviders(store.project);
-  let provider = rememberedChoice(store.project, key).provider;
-  if (!options.includes(provider)) provider = options[0];
-  const engineLabel = () => {
-    const c = choiceForProvider(store.project, key, provider);
-    const badge = modelBadge(c.provider, c.model, c.effort);
-    return `🤖 ${providerLabel(c.provider, store.project)}${badge ? ` · ${badge}` : ''}${options.length > 1 ? ' · tap to change' : ''}`;
-  };
-  vrUi.askText({
-    title: `✨ Hire at ${desk.label}`,
-    subtitle: `First task (optional) · ${worktreePref() ? 'own worktree' : 'main checkout'}`,
-    placeholder: 'Optional first task…',
-    submitLabel: 'Hire & start',
-    allowEmpty: true,
-    // The B key's seat: a bare shell, no agent (the desktop key's function, no dialog).
-    alt: { label: '🐚 Shell', onAlt: () => openShell(deskId) },
-    engine: {
-      label: engineLabel,
-      onCycle: () => {
-        provider = options[(options.indexOf(provider) + 1) % options.length];
-        rememberProvider(provider);
-      },
-    },
-    onSubmit: (text) => {
-      const c = choiceForProvider(store.project, key, provider);
-      hire(deskId, text || undefined, worktreePref(), c.provider, c.model, c.effort);
-    },
-  });
 }
 
 function hireAtDesk(deskId: string) {
@@ -2537,7 +1432,7 @@ function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.downedUntil !== undefined) {
-    const revive = controlHintsShown() ? `Walk up to ${w.name} and press E to revive — otherwise` : `${w.name} is down: unless it's revived,`;
+    const revive = `Walk up to ${w.name} and press E to revive — otherwise`;
     return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
   }
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
@@ -2567,302 +1462,6 @@ function killWorker(id: string) {
     : `This stops the ${session} at ${where} for everyone and frees the desk.`;
   confirmDialog(`Send ${w.name} home?`, body, 'Send home', () => net.send({ t: 'worker.kill', workerId: id }));
 }
-/** What the terminal's ⏻ button says on its arming tap: the desktop send-home dialog, in one line. */
-function killWarning(id: string): string | null {
-  const w = store.workers.get(id);
-  if (!w) return null;
-  if (w.downedUntil !== undefined) return `Walk up to ${w.name} to revive before the deadline; otherwise its worktree and branch are deleted`;
-  const again = `Tap ⏻ again to send ${w.name} home`;
-  if (w.meeting) {
-    const m = store.meeting.current;
-    return m?.id === w.meeting && m.status === 'running' ? `${w.name} is in the meeting on “${m.title}”, which stops without it. ${again}` : `${w.name} leaves the meeting room. ${again}`;
-  }
-  if (w.worktree) return `${again} (the ${w.worktree.branch} worktree stays unless it's empty)`;
-  if (DESK_BY_ID.get(w.deskId)?.station) return `${again} (this stops its session for everyone)`;
-  return `${again} and free the desk`;
-}
-/** The VR jukebox view's 📻 row: internet radio or an audio file, for everyone on this floor (the window's URL box — same check, same message). */
-function vrJukeboxStream() {
-  if (!vrUi) return;
-  vrUi.askText({
-    title: '📻 Play a stream',
-    subtitle: 'Internet radio or a link to an .mp3',
-    placeholder: 'https://…',
-    submitLabel: 'Play',
-    onSubmit: (text) => {
-      const u = checkStreamUrl(text);
-      if ('error' in u) {
-        toast(u.error, 'warn');
-        return;
-      }
-      net.send({ t: 'jukebox.play', url: u.url });
-    },
-  });
-}
-/** The PR detail view's 🔍 button, confirmed: a review panel with the pattern defaults on the meeting engine (the window's Review panel button — its form's confirm is the tap-twice). */
-function vrReviewPanel(number: number) {
-  const pr = store.pulls.items.find((p) => p.number === number);
-  if (!pr) return;
-  if (store.meeting.current?.status === 'running') {
-    toast(`The room is busy with “${store.meeting.current.title}” until it ends or someone stops it`, 'warn');
-    return;
-  }
-  const c = rememberedChoice(store.project, 'meeting');
-  net.send({ t: 'meeting.start', ...reviewMeetingRequest(pr, c) });
-  toast(`🔍 Calling the Review panel for PR #${number}: the reviewers are heading for the meeting room`);
-}
-/** The detail view's ✕ button, confirmed: close the issue or PR at the dialog's defaults (completed, no branch delete, no comment — the close dialog with nothing changed). */
-function vrClose(kind: 'issue' | 'pull', number: number) {
-  toast(`Closing #${number}…`);
-  const off = onClosed(kind, number, (msg) => {
-    clearTimeout(timer);
-    off();
-    if (!msg.error) toast(`Closed #${number}`);
-    else toast(msg.error, 'warn');
-  });
-  // The office drops messages while it's disconnected, and then no answer comes.
-  const timer = window.setTimeout(() => {
-    off();
-    toast('No answer from the office — check whether it closed before trying again', 'warn');
-  }, 45_000);
-  net.send({ t: 'gh.close', kind, number });
-}
-/** A PR detail opened in VR: the PR window's detail fetch, answered into the menu's merge box. */
-async function vrMergeFetch(number: number) {
-  try {
-    const d = await pullDetail(number);
-    if (vrMerge?.number !== number) return;
-    vrMerge = { number, state: 'ready', status: mergeStatus(d), methods: d.repo.methods };
-  } catch {
-    if (vrMerge?.number !== number) return;
-    vrMerge = { number, state: 'error' };
-  }
-  vrUi?.menu.refresh();
-}
-/** The detail view's ✓ button, confirmed: the merge dialog's Merge button at its defaults (remembered method, delete the branch, auto-merge when the dialog would tick it). */
-function vrMergeFire(number: number) {
-  const info = vrMerge;
-  if (!info || info.number !== number || info.state !== 'ready' || !info.status?.can || !info.methods) return;
-  const { method, deleteBranch } = mergePref(info.methods);
-  const auto = info.status.auto && info.status.cls !== 'ok';
-  toast(auto ? `Asking ${words().site} to merge it when ready…` : 'Merging…');
-  const off = onMerged(number, (msg) => {
-    clearTimeout(timer);
-    off();
-    if (!msg.error) toast(`Merged #${number} 🎉`);
-    else toast(msg.error, 'warn');
-  });
-  // The office drops messages while it's disconnected, and then no answer comes.
-  const timer = window.setTimeout(() => {
-    off();
-    toast('No answer from the office — check whether it merged before trying again', 'warn');
-  }, 45_000);
-  net.send({ t: 'gh.merge', number, method, deleteBranch, auto });
-}
-/** The changes view's ✓ button: what changed, and why (the window's Commit prompt — one line, the prompt has no ⏎ for more). */
-function vrChangesCommit(workerId: string) {
-  if (!vrUi || vrChanges?.workerId !== workerId) return;
-  const n = vrChanges.files.filter((f) => f.uncommitted).length;
-  if (!n) return;
-  const where = vrChanges.dir ? vrChanges.dir : 'the project folder';
-  vrUi.askText({
-    title: `Commit ${n} file${n === 1 ? '' : 's'}`,
-    subtitle: `Stages everything in ${where} and commits it${vrChanges.branch ? ` on ${vrChanges.branch}` : ''}`,
-    placeholder: 'What changed, and why',
-    submitLabel: 'Commit',
-    onSubmit: (text) => {
-      net.send({ t: 'changes.commit', workerId, message: text });
-      // The prompt hides the menu; the view comes back for the answer (the search resend).
-      vrUi?.showMenu('changes');
-    },
-    // Cancelling lands back on the view too (closing the window's dialog does).
-    onCancel: () => vrUi?.showMenu('changes'),
-  });
-}
-/** The changes view's ↗ button: the title, then the description (the window's Open PR prompt — its first line is the title, so VR asks them apart). */
-function vrChangesPr(workerId: string) {
-  if (!vrUi || vrChanges?.workerId !== workerId || !vrChanges.prBase || !vrChanges.ahead) return;
-  const s = vrChanges;
-  vrUi.askText({
-    title: 'Open a pull request',
-    subtitle: `Pushes ${s.branch} to origin and opens a PR against ${s.prBase}`,
-    placeholder: 'Title',
-    initial: s.subject ?? '',
-    submitLabel: 'Next →',
-    onCancel: () => vrUi?.showMenu('changes'),
-    onSubmit: (title) => {
-      vrUi?.askText({
-        title: 'Open a pull request',
-        subtitle: title.length > 42 ? `${title.slice(0, 41)}…` : title,
-        placeholder: 'Description (optional)',
-        submitLabel: 'Open PR ↗',
-        allowEmpty: true,
-        onSubmit: (body) => {
-          net.send({ t: 'changes.pr', workerId, title: title.trim(), body: body.trim() });
-          // The prompt hides the menu; the view comes back for the answer (the search resend).
-          vrUi?.showMenu('changes');
-        },
-        onCancel: () => vrUi?.showMenu('changes'),
-      });
-    },
-  });
-}
-/** The VR menu's 🔎 button, submitted: the search window's fetch, answered into the menu's search view. */
-async function vrSearchOffice(query: string) {
-  vrSearch = { query, status: 'searching' };
-  try {
-    vrSearch = { query, status: 'done', results: await search(query) };
-  } catch (err) {
-    vrSearch = { query, status: 'error', error: (err as Error).message };
-  }
-  // The fetch lands after the view opened: resend it so the rows repaint (shows it, harmlessly, if it closed).
-  vrUi?.showMenu('search');
-}
-/** The detail view's 💬 button: a line on the issue or PR (the windows' comment box, one line — the prompt has no ⏎ for more). */
-function vrComment(kind: 'issue' | 'pull', number: number) {
-  if (!vrUi) return;
-  vrUi.askText({
-    title: `💬 Comment on #${number}`,
-    placeholder: 'Markdown works…',
-    submitLabel: 'Post',
-    onSubmit: (text) => {
-      toast('💬 Posting…');
-      const off = onCommented(kind, number, (msg) => {
-        clearTimeout(timer);
-        off();
-        if (msg.comment) toast(`💬 Posted on #${number}`);
-        else toast(msg.error ?? `${words().site} did not take the comment`, 'warn');
-      });
-      // The office drops messages while it's disconnected, and then no answer comes.
-      const timer = window.setTimeout(() => {
-        off();
-        toast('No answer from the office — check whether it went through before posting again', 'warn');
-      }, 45_000);
-      net.send({ t: 'gh.comment', kind, number, body: text });
-    },
-  });
-}
-/** The VR queue view's ➕ button: describe a task; a fresh worker picks it up when a desk is free (the window's form, minus the provider picker — it remembers the queue's). */
-function vrQueueAdd() {
-  if (!vrUi) return;
-  vrUi.askText({
-    title: '📋 Add to the queue',
-    subtitle: 'A fresh worker picks it up when a desk is free',
-    placeholder: 'Describe the task…',
-    submitLabel: 'Add to queue',
-    onSubmit: (text) => {
-      const { provider, model, effort } = rememberedChoice(store.project, 'queue');
-      net.send({ t: 'queue.add', prompt: text, provider, model, effort });
-    },
-  });
-}
-/** The VR floors view's ➕ button: name a checkout's folder; the office makes it a floor where it is and the elevator rides there (the panel's add, minus the browsing). */
-function vrAddFloor() {
-  if (!vrUi) return;
-  vrUi.askText({
-    title: '➕ Add a project',
-    subtitle: 'Full path of a git checkout in the workspace folder',
-    placeholder: `${store.projectsDir.dir || '~/Workspace'}/my-project…`,
-    submitLabel: 'Add floor',
-    onSubmit: (text) => {
-      const dir = text.trim();
-      if (!dir) return;
-      const off = onFloorAdded((msg) => {
-        if (msg.dir !== dir) return;
-        off();
-        if (msg.error || !msg.floor) {
-          toast(msg.error ?? `Couldn't add ${dir}`, 'warn');
-          return;
-        }
-        ride(msg.floor);
-      });
-      net.send({ t: 'floor.add', dir });
-    },
-  });
-}
-/** A services row in VR: the DOM list's tap (copies the tunnel command, says what happened). */
-async function copyServiceTunnel(port: number) {
-  const svc = store.services.items.find((i) => i.port === port);
-  if (!svc) return toast(`The server on :${port} stopped`, 'warn');
-  const ok = await copy(serviceTunnel(store.services, port, guessOs()));
-  if (ok) toast(`✅ Tunnel command for :${port} copied — paste it in a terminal`);
-  else toast(`Copy failed — tunnel to the office, then open http://localhost:${port}`, 'warn');
-}
-/** The terminal's ⏻ button, confirmed: the X key's send without the dialog (the server keeps a worktree that holds work). */
-function vrKill(id: string) {
-  if (!store.workers.get(id)) return;
-  net.send({ t: 'worker.kill', workerId: id });
-}
-
-/** E at a board-agent kiosk in VR: ask it something (or meet its terminal when it's waiting on an answer). */
-function vrAskStation(deskId: string) {
-  const kind = DESK_BY_ID.get(deskId)?.station;
-  if (!kind || !vrUi) return;
-  const w = store.workerAtDesk(deskId);
-  const name = STATION_AGENT[kind].name;
-  if (w?.status === 'needs_input') {
-    toast(`The ${name} is waiting on an answer — here's its terminal`, 'warn');
-    vrUi.openTerminal(w.id);
-    return;
-  }
-  if (!w && officeIsFull()) return;
-  vrUi.askText({
-    title: `${name}: ask away`,
-    placeholder: 'What should it do?',
-    submitLabel: 'Send ✨',
-    onSubmit: (text) => {
-      const c = rememberedChoice(store.project, `desk:${deskId}`);
-      net.send({ t: 'station.prompt', deskId, prompt: text, provider: c.provider, model: c.model, effort: c.effort });
-    },
-  });
-}
-/** The VR meeting view's 🤝 call in VR: what's it about, an optional title, then a meeting with the pattern defaults (seats, rounds, output, budget) on the meeting engine. The pattern row cycles the three that run from a bare question — the review panel needs its PR and map-reduce needs its parts (the desktop form asks for those). */
-function vrMeeting(preset?: MeetingPreset) {
-  if (!vrUi) return;
-  if (store.meeting.current?.status === 'running') {
-    toast(`The room is busy with “${store.meeting.current.title}” until it ends or someone stops it`, 'warn');
-    return;
-  }
-  const options = ['debate', 'lead', 'redblue'] as const;
-  let pattern: (typeof options)[number] = 'debate';
-  const patternLabel = () => {
-    const p = MEETING_PATTERNS[pattern];
-    return `${p.icon} ${p.label} · ${p.seats.default} workers · tap to change`;
-  };
-  vrUi.askText({
-    title: '🤝 Call a meeting',
-    subtitle: 'The workers head for the meeting room',
-    placeholder: 'The question to settle…',
-    initial: preset?.prompt,
-    submitLabel: 'Next →',
-    engine: {
-      label: patternLabel,
-      onCycle: () => {
-        pattern = options[(options.indexOf(pattern) + 1) % options.length];
-      },
-    },
-    onSubmit: (about) => {
-      vrUi?.askText({
-        title: '🤝 Call a meeting',
-        subtitle: about.length > 42 ? `${about.slice(0, 41)}…` : about,
-        placeholder: 'Title (optional)',
-        initial: preset?.title,
-        submitLabel: 'Start it 🤝',
-        allowEmpty: true,
-        onSubmit: (title) => {
-          if (store.meeting.current?.status === 'running') {
-            toast(`The room is busy with “${store.meeting.current.title}” until it ends or someone stops it`, 'warn');
-            return;
-          }
-          const c = rememberedChoice(store.project, 'meeting');
-          net.send({ t: 'meeting.start', ...defaultMeetingRequest(about, title || undefined, c, pattern), ...(preset?.issue ? { issue: preset.issue } : {}) });
-          toast(`🤝 Calling the ${MEETING_PATTERNS[pattern].label} meeting: the workers are heading for the meeting room`);
-        },
-      });
-    },
-  });
-}
-
 /** E at a board agent: type it a request. It's hired with it when nobody is there yet. */
 function askStation(deskId: string) {
   const kind = DESK_BY_ID.get(deskId)?.station;
@@ -2878,7 +1477,7 @@ function askStation(deskId: string) {
   // Nobody there yet: asking hires the agent.
   if (!w && officeIsFull()) return;
   const subtitle = !w
-    ? `${withControlHint(`${info.does}, in a terminal of my own`, ': press O at the kiosk to watch')}.`
+    ? `${info.does}, in a terminal of my own: press O at the kiosk to watch.`
     : isAsleep(w.status)
       ? `The ${name} is asleep: this wakes it up, and it carries on where it left off.`
       : isBusy(w.status)
@@ -2893,7 +1492,6 @@ function askStation(deskId: string) {
     providerOption: !w,
     deskId,
     onSubmit: (text, o) => {
-      stopTalking();
       net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort });
     },
   });
@@ -2982,7 +1580,6 @@ function goToDesk(deskId: string) {
   if (!desk) return;
   closeAllModals();
   standAt(desk);
-  if (headsetActive()) headsetControls().faceAvatar();
   const w = store.workerAtDesk(deskId);
   toast(w ? `You're at ${desk.label}, ${w.name}'s desk` : `You're at ${desk.label}`);
 }
@@ -3021,10 +1618,9 @@ function goToNextWaiting() {
   }
   closeAllModals();
   standAt(desk);
-  if (headsetActive()) headsetControls().faceAvatar();
   const waiting = waitingInOrder(store.workers.values());
   const of = waiting.length > 1 ? ` (${waiting.findIndex((x) => x.id === w.id) + 1} of ${waiting.length})` : '';
-  nextToast = toast(withControlHint(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}`, '. E opens its terminal'));
+  nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
 }
 
 /** The waiting worker you're standing at, if any: N skips it while anyone else is waiting. */
@@ -3330,9 +1926,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   }
   if (target.kind === 'station' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
-    // In the headset app you say hello first: the agent looks up and its pitch lights its counter
-    // display. Asking it something comes next. One waiting on an answer goes straight to it.
-    if (key === 'E' && !floatingTags && talkingTo !== target.deskId && w?.status !== 'needs_input') return startTalking(target.deskId);
     if (key === 'E' || key === 'P') return askStation(target.deskId);
     if (key === 'O' && w) return openWorkerTerminal(w.id);
     if (key === 'X' && w) return killWorker(w.id);
@@ -3515,8 +2108,7 @@ let windFrom = 0;
 
 /** E at the ball: it's yours, if it isn't held. */
 function takeBall() {
-  if (vr.active) return toast("The basketball isn't in VR yet — hop on the desktop for that one", 'warn');
-  if (carrying) return toast(withControlHint('Your hands are full: put the card back first', ' (Q)'), 'warn');
+  if (carrying) return toast('Your hands are full: put the card back first (Q)', 'warn');
   if (ball.holding || ball.heldAway) return;
   reach();
   sound.ball('bounce', ball.at, 1.5);
@@ -3683,73 +2275,12 @@ function ballAtFeet(): Interactable | null {
 }
 
 // ---- Carrying an issue card ------------------------------------------------------------------------
-/** World geometry opts in via userData.grabbable. The hand must be near the actual surface. */
-function pickVrGrab(point: THREE.Vector3): Grabbable | null {
-  if (upTop || !net.up) return null;
-  for (const object of office.grabbables) {
-    if (object.userData.grabbable === 'coffee') {
-      const at = object.getWorldPosition(new THREE.Vector3());
-      if (at.distanceTo(point) > GRAB_REACH) continue;
-      const item: CarriedObject = { kind: 'coffee', empty: false, pose: { hand: 'right', position: at.toArray(), quaternion: [0, 0, 0, 1] } };
-      return {
-        point: at,
-        item,
-        take: () => {
-          putBack();
-          dropBall();
-          hintToast('☕ Bring the mug to your mouth, or press trigger. Let go to put it down.');
-        },
-        use: () => {
-          if (item.empty) return;
-          item.empty = true;
-          drinkCoffee();
-        },
-        release: () => {},
-        valid: () => !carrying,
-        place: true,
-        mouthUse: true,
-      };
-    }
-    if (object.userData.grabbable !== 'issue') continue;
-    const local = object.worldToLocal(point.clone());
-    const { width, height } = (object.geometry as THREE.PlaneGeometry).parameters;
-    if (local.z < -0.02 || Math.abs(local.x) > width / 2 || Math.abs(local.y) > height / 2) continue;
-    const at = object.localToWorld(new THREE.Vector3(local.x, local.y, 0));
-    if (at.distanceTo(point) > GRAB_REACH) continue;
-    const number = issuesTex.noteAt(new THREE.Vector2(local.x / width + 0.5, local.y / height + 0.5));
-    const issue = store.issues.items.find((i) => i.number === number);
-    if (!issue || carrying?.issue === issue.number) continue;
-    const use = (aim: { it: Interactable } | null) => {
-      // Physical use never swaps for a different note while pinning the held card back.
-      if (aim && ['issues', 'queue', 'meeting', 'desk'].includes(aim.it.kind)) vrUseE(aim.it, null);
-    };
-    return {
-      point: at,
-      item: { issue: issue.number, title: issue.title },
-      take: () => {
-        pickUp(issue);
-        hintToast(`✋ Holding #${issue.number}: trigger or free-hand tap to pin, queue or meet. Let go to return it.`);
-      },
-      use,
-      release: (aim) => {
-        if (carrying?.issue !== issue.number) return;
-        use(aim);
-        if (carrying?.issue === issue.number) putBack();
-      },
-      valid: () => carrying?.issue === issue.number,
-    };
-  }
-  return null;
-}
-
 function setCarrying(card: CarriedIssue | null) {
   if ((card?.issue ?? 0) === (carrying?.issue ?? 0)) return;
   if (card) holsterGun(true);
   carrying = card;
   me.carry(card);
   hands.carry(card);
-  nativeControls?.syncCarrying();
-  nativeUi?.setCarrying(card);
   renderIssuesBoard();
   hintKey = '';
 }
@@ -3762,7 +2293,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(withControlHint(`✋ You took #${it.number} off the board`, ': take it to an empty desk, a worker or the 📋 queue and press E'));
+  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -3829,10 +2360,10 @@ function onQueue(issue: number): boolean {
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
-  if (w.downedUntil !== undefined) return controlHintsShown() ? `Walk up to ${w.name}'s body and press E to revive first` : `${w.name} is down`;
+  if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
-  if (w.lost) return withControlHint(`${w.name}'s worktree was deleted`, ' — press E at its desk to fix it');
-  if (isAsleep(w.status)) return withControlHint(`${w.name} is asleep`, ' — press R to resume first');
+  if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
+  if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
   return '';
 }
@@ -4438,7 +2969,7 @@ window.addEventListener('keydown', (e) => {
   }
   // On the ladder, E gets you off it (and nothing else is in reach); W, S and Space climb.
   if (climber.active && (e.code === 'KeyE' || e.code === 'KeyF' || e.code in DESK_KEYS)) {
-    if (e.code === 'KeyE' && !nativeControls?.active) climber.letGo();
+    if (e.code === 'KeyE') climber.letGo();
     return;
   }
   // At the golf tee, E puts the club back (Space swings, see Golfer); nothing else is in reach, and no emotes mid-swing.
@@ -4452,7 +2983,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // With the ball in your hands (and no card), E winds up a shot (let go to shoot) and Q drops it.
-  if (holdingBall() && !carrying && !vr.active && (e.code === 'KeyE' || e.code === 'KeyQ')) {
+  if (holdingBall() && !carrying && (e.code === 'KeyE' || e.code === 'KeyQ')) {
     if (e.repeat) return;
     if (e.code === 'KeyE') windUp();
     else dropBall();
@@ -4548,7 +3079,7 @@ let pressedMouse = false;
 window.addEventListener('pointerdown', () => (pressedMouse = true), true);
 window.addEventListener('keydown', () => (pressedMouse = false), true);
 onModalChange((open) => {
-  player.enabled = !open && !headsetActive();
+  player.enabled = !open;
   player.clearKeys();
   // Reading off the bookshelf: an open book in your hands, and your character's.
   const reading = readingNow();
@@ -4572,7 +3103,7 @@ onModalChange((open) => {
 
 /** Once the last window is closed, the game has the keyboard again and, in first person, the mouse. */
 function backToGame() {
-  if (nativeMode || modalOpen()) return;
+  if (modalOpen()) return;
   if (!isTyping()) canvas.focus({ preventScroll: true });
   if (!player.canLock || player.hasMouse) return;
   // The browser lets a page re-capture the mouse it let go of itself (see yieldMouse), even on Esc
@@ -4621,17 +3152,8 @@ const eye = new THREE.Vector3();
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
 function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
   raycaster.setFromCamera(ndc, camera);
-  return pickFromRay(raycaster, slack);
-}
-
-/**
- * What a ray lands on first, whether it is within reach (plus `slack` meters), and where it hit.
- * The mouse aims the shared raycaster through the camera; VR hands its own raycasters from the
- * controller poses. One picker, one notion of reach, both paths.
- */
-function pickFromRay(ray: THREE.Raycaster, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
   eye.set(player.pos.x, player.pos.y + EYE_HEIGHT, player.pos.z);
-  for (const hit of ray.intersectObjects(upTop && roof ? roof.pickables : [office.group], true)) {
+  for (const hit of raycaster.intersectObjects(upTop && roof ? roof.pickables : [office.group], true)) {
     let it: Interactable | undefined;
     let shown = true;
     for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
@@ -4672,14 +3194,13 @@ function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
   }
   const t = store.jiraBoard?.items.find((x) => x.key === spot.key);
   if (!t) return false;
-  if (vr.active) toast(`🎫 ${t.key} ${t.summary} · ${t.status} · ${t.assignee ?? 'unassigned'}. Open it on the desktop to read it or hand it to a worker.`);
-  else openTicket(t, boardActions());
+  openTicket(t, boardActions());
   return true;
 }
 
 /** The note on the issues board under the crosshair (or, in third person, the mouse), which E takes. */
 let aimedNote: GhIssue | null = null;
-/** The tab or Jira card on the issues board under the crosshair, the mouse or the VR ray. */
+/** The tab or Jira card on the issues board under the crosshair or the mouse. */
 let aimedSpot: BoardSpot | null = null;
 /** Where the mouse is over the scene, for pointing at notes in third person; null when it's off it. */
 let pointer: THREE.Vector2 | null = null;
@@ -4737,9 +3258,6 @@ $('project').addEventListener('click', () => {
 
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------
 const waitingNow = () => waitingInOrder(store.workers.values());
-/** This page came over plain http:// on the LAN: WebXR stays undefined there, so Enter VR shows dimmed with the reason instead of hiding. Set by the probe below. */
-let xrInsecure = false;
-const noXr = () => (xrInsecure ? 'Enter VR needs HTTPS or localhost — reopen this office over https:// (start it with --self-signed)' : undefined);
 const hud = mountHud(
   [
     { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
@@ -4769,27 +3287,6 @@ const hud = mountHud(
       on: () => hanger.active,
       status: () => hanger.active,
       run: () => (hanger.active ? hanger.cancel() : startHanging()),
-    },
-    // Up on the top bar — but only where this browser can do immersive VR. Elsewhere
-    // (desktop Chrome without XR) the probe says no and the bar stays exactly as it was. On an
-    // insecure origin (http:// over the LAN) it shows dimmed with the reason: a headset opening
-    // that address would otherwise find no Enter VR and no word on why.
-    {
-      id: 'entervr',
-      icon: () => (vr.active ? '⏻' : '🕶️'),
-      label: () => (vr.active ? 'Exit VR' : 'Enter VR'),
-      section: 'Together',
-      shown: () => !nativeMode && (vr.available || xrInsecure),
-      status: () => !nativeMode && (vr.available || xrInsecure),
-      chip: () => (vr.active ? 'In VR' : 'Enter VR'),
-      on: () => vr.active,
-      blocked: noXr,
-      title: () => (vr.active ? 'Leave the immersive session' : 'Enter the office in VR, from the headset browser'),
-      run: () => {
-        const why = noXr();
-        if (why) return toast(`🥽 ${why}`, 'warn');
-        void vr.toggle();
-      },
     },
     { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
     { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
@@ -4825,15 +3322,6 @@ const hud = mountHud(
   settings,
   () => saveSettings(settings),
 );
-// Whether this browser can do immersive VR: when it can, the Enter VR button joins the top bar.
-// Insecure origins keep a dimmed button that says why (see noXr), so the headset browser that
-// opened the http:// address learns the fix instead of finding nothing.
-if (!nativeMode)
-  void probeXRSupport().then((availability) => {
-    vr.available = availability === 'supported';
-    xrInsecure = availability === 'insecure';
-    if (vr.available || xrInsecure) hud.refresh();
-  });
 /** F: hang a picture on a wall of this floor. There are no walls for them up on the roof. */
 function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
@@ -4846,7 +3334,7 @@ function showSettings(pane?: SettingsPane) {
     (s) => {
       Object.assign(settings, s);
       saveSettings(settings);
-      player.setView(nativeMode ? 'first' : settings.view);
+      player.setView(settings.view);
       sound.setVolume(settings.volume, settings.muted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
     },
@@ -4867,12 +3355,6 @@ function editProfile() {
 
 // ---- Main loop ---------------------------------------------------------------------------------------
 function resize() {
-  // Presenting, three owns the canvas size (the headset's framebuffer, per eye); hands off.
-  if (renderer.xr.isPresenting) return;
-  if (nativeMode) {
-    renderer.setSize(1, 1, false);
-    return;
-  }
   const w = window.innerWidth;
   const hgt = window.innerHeight;
   renderer.setSize(w, hgt, false);
@@ -4895,8 +3377,7 @@ const fpsEl = $('fps');
 let fpsFrames = 0;
 let fpsSince = performance.now();
 
-function frame(ts?: number, xrFrame?: XRFrame) {
-  void xrFrame;
+function frame(ts?: number) {
   fpsFrames++;
   const fpsNow = performance.now();
   if (fpsNow - fpsSince >= 500) {
@@ -4908,9 +3389,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   const dt = Math.min(timer.getDelta(), 0.1);
   const t = timer.getElapsed();
   const now = performance.now();
-  // Presenting in the headset: the VR session steers the player instead of the keyboard, the rays
-  // pick the target, and the cartoon hands and post effects sit out (the eyes are real ones).
-  const inVR = headsetActive();
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
   const secs = now / 1000;
@@ -4920,27 +3398,21 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   player.jitter = reduceMotion.matches ? 0 : Math.max(caffeine.jitter(secs), thud);
   const mug = caffeine.buzzed(secs);
   // Both hands are on the club at the tee.
-  me.holdMug(mug && !inVR && !golf.active);
+  me.holdMug(mug && !golf.active);
   hands.holdMug(mug);
   renderCaffeine(caffeine, secs);
   // Drinks from the rooftop bar: a glass in hand, and the world swaying.
   const drunk = drinking(now);
-  vr.sway = vr.active ? player.drunk : 0;
-  if (nativeControls) nativeControls.sway = nativeControls.active ? player.drunk : 0;
-
-  if (nativeControls?.active) nativeControls.update(dt);
-  else if (vr.active) vr.update(dt);
-  else player.update(dt);
-  // Walked into a pole's hole: you grab the pole on your way down it. (In VR the keys are
-  // off all session, so the headset counts as having the controls here.)
+  player.update(dt);
+  // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
-  if (hole && !nativeControls?.active && !climber.active && !trip && !player.seat && (player.enabled || inVR) && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
+  if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
   arcade.update(camera, dt);
   cabinet.update(camera, dt);
-  // Pulled away from the tee (sat down, off up the ladder, into the elevator, into the headset): the club goes back.
-  if (golf.active && (trip || hanger.active || climber.active || player.seat || upTop || inVR)) golf.stop();
-  // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof, into the headset): it goes back.
-  if (gunOut && (trip || hanger.active || climber.active || upTop || (inVR && !nativeControls?.holdingGun))) holsterGun(true);
+  // Pulled away from the tee (sat down, off up the ladder, into the elevator): the club goes back.
+  if (golf.active && (trip || hanger.active || climber.active || player.seat || upTop)) golf.stop();
+  // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
+  if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
   golf.update(dt);
   balls.update(dt);
   office.tee.ball.visible = golf.doing !== 'watch';
@@ -4953,9 +3425,8 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   const firstPerson = player.view === 'first';
   // In first person you are the camera; in third, hide yourself when it's zoomed in right behind your head.
   // At the tee the camera's behind the ball, and you're the one holding the club.
-  me.root.visible = !inVR && (golf.active || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5));
-  if (firstPerson && !inVR && !golf.active)
-    hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
+  me.root.visible = golf.active || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5);
+  if (firstPerson && !golf.active) hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
   const fov = 55 + rush * 16;
@@ -4964,10 +3435,7 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     camera.updateProjectionMatrix();
   }
   whoosh.style.opacity = rush > 0.02 ? String(rush * 0.85) : '0';
-
-  // Your ears are in your head, facing wherever the camera looks.
-  if (inVR) headsetControls().lookDir(lookDir);
-  else camera.getWorldDirection(lookDir);
+  camera.getWorldDirection(lookDir);
   sound.update({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z, fx: lookDir.x, fz: lookDir.z });
 
   // Where you are, to come back to next time.
@@ -4986,8 +3454,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     v.model.update(dt, t);
     // A board agent's kiosk has no laptop to paint (see buildKiosk).
     if (desk.station) continue;
-    // In the headset app its screen's title bar says who it is and how it's doing (null elsewhere).
-    v.laptop.setTitle(v.model.plateText);
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
     glow.power = v.laptop.glow(glow.pos, glow.dir);
@@ -4995,11 +3461,6 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   }
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
-  updatePlates(dt);
-  if (nativeMode) {
-    nativeMenus?.update(dt);
-    nativeTyping?.update();
-  }
   departures.update(dt, t);
   arrivals.update(dt);
   casualties.update(dt, t);
@@ -5027,34 +3488,24 @@ function frame(ts?: number, xrFrame?: XRFrame) {
     ambient.intensity += strobe * 1.5;
     hemi.intensity += strobe * 0.8;
   }
-
-  if (inVR) {
-    // The session set target/aimedNote from the controller rays; a window still hides them.
-    if (modalOpen() || hanger.active || climber.active) {
-      target = null;
-      aimedNote = null;
-      aimedSpot = null;
+  aimedNote = null;
+  aimedSpot = null;
+  if (modalOpen() || hanger.active || climber.active || golf.active) target = null;
+  else if (firstPerson) {
+    const aim = aimedAt(CROSSHAIR);
+    target = aim?.near ? aim.it : (mySeat() ?? ballAtFeet());
+    if (aim?.near) {
+      aimedNote = noteUnder(aim);
+      aimedSpot = spotUnder(aim);
     }
   } else {
-    aimedNote = null;
-    aimedSpot = null;
-    if (modalOpen() || hanger.active || climber.active || golf.active) target = null;
-    else if (firstPerson) {
-      const aim = aimedAt(CROSSHAIR);
-      target = aim?.near ? aim.it : (mySeat() ?? ballAtFeet());
+    target = mySeat() ?? pickTarget();
+    // By the issues board, the mouse points at the note you'd take, a tab or a Jira card.
+    if (target?.kind === 'issues' && pointer) {
+      const aim = aimedAt(pointer, 2.5);
       if (aim?.near) {
         aimedNote = noteUnder(aim);
         aimedSpot = spotUnder(aim);
-      }
-    } else {
-      target = mySeat() ?? pickTarget();
-      // By the issues board, the mouse points at the note you'd take, a tab or a Jira card.
-      if (target?.kind === 'issues' && pointer) {
-        const aim = aimedAt(pointer, 2.5);
-        if (aim?.near) {
-          aimedNote = noteUnder(aim);
-          aimedSpot = spotUnder(aim);
-        }
       }
     }
   }
@@ -5064,19 +3515,14 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   renderCrosshair();
 
   // A few drinks in, the frame goes to the screen through the drunk vision (see world/drunk.ts).
-  // No post effects in the headset: drunk vision's render targets don't mix with the XR framebuffer.
-  const blurry = drunk > 0.01 && !inVR;
+  const blurry = drunk > 0.01;
   if (blurry) drunkVision.begin();
   else if (drunkVisionOn) drunkVision.release();
   drunkVisionOn = blurry;
-  // VR renders plain into the XR framebuffer; on desktop the effect renders both passes itself,
-  // exactly as before.
-  if (nativeMode) nativeScene?.capture();
-  else if (vr.active) renderer.render(scene, camera);
-  else effect.render(scene, camera);
+  effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (firstPerson && !inVR && !arcade.zoomed && !cabinet.zoomed && !golf.active) {
+  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();
@@ -5089,284 +3535,11 @@ function frame(ts?: number, xrFrame?: XRFrame) {
   loading.drew();
 }
 
-// The loop runs through the renderer, so an immersive session can take it over; on desktop this is
-// the same rAF timestamp every frame, and XR start/stop swaps the driver by itself.
 let loopStarted = false;
 function startLoop() {
   if (loopStarted) return;
   loopStarted = true;
-  if (nativeMode) {
-    nativeControls?.start();
-    syncElevatorButtons();
-    // The native host advances gameplay with each input batch. OpenXR owns the display loop.
-  } else renderer.setAnimationLoop(frame);
-}
-
-// Native keeps the original scene, interact dispatch, windows and Net instance.
-if (nativeMode) {
-  // Office windows share the existing compositor workspace; graphics settings belong to the APK.
-  nativeUi = initNativeUi();
-  const headNow = () => (nativeControls?.active ? { pos: camera.getWorldPosition(new THREE.Vector3()), dir: nativeControls.lookDir(new THREE.Vector3()) } : null);
-  /** A floor correction moves you up or down in the world: the open settings menu comes along, so it stays in front of you. */
-  const keepMenu = (change: () => void) => {
-    const before = nativeFloorOffset();
-    change();
-    nativeMenus?.shift(before - nativeFloorOffset());
-  };
-  nativeMenus = new NativeMenus(scene, {
-    head: headNow,
-    // The closest drawn solid, as a bullet would find it: no sprites, nothing hidden.
-    obstacle: (origin, dir, far) => (upTop ? null : (gunHit(new THREE.Raycaster(origin, dir, 0, far), office.group, new Map())?.hit.distance ?? null)),
-    feedback: (kind) => sound.menu(kind),
-    settings: {
-      heightCm: () => nativeHeight().heightCm,
-      setHeightCm: (cm) => setNativeHeight({ heightCm: cm }),
-      calibrate: () => {
-        let ok = false;
-        keepMenu(() => (ok = calibrateNativeHeight().ok));
-        return ok;
-      },
-      resetFloor: () => keepMenu(() => setNativeHeight({ floorOffset: 0 })),
-      eyes: nativeEyeHeightNow,
-      floorOffset: nativeFloorOffset,
-      graphics: getNativeGraphicsSettings,
-      setGraphics: (patch) => setNativeGraphicsSettings(patch),
-      metrics: nativeGraphicsMetrics,
-    },
-    hire: {
-      desk: (deskId) => {
-        const def = DESK_BY_ID.get(deskId);
-        const view = office.desks.get(deskId);
-        if (!def || !view || def.room || def.station || upTop || trip || store.workerAtDesk(deskId) || departures.seated(deskId)) return null;
-        return { label: def.label, marker: view.vacancy };
-      },
-      engines: (deskId) =>
-        supportedProviders(store.project).map((provider) => {
-          const c = choiceForProvider(store.project, `desk:${deskId}`, provider);
-          const badge = modelBadge(c.provider, c.model, c.effort);
-          const name = providerLabel(provider, store.project);
-          return { id: provider, label: badge ? `${name} · ${badge}` : name };
-        }),
-      engine: (deskId) => rememberedChoice(store.project, `desk:${deskId}`).provider,
-      setEngine: (_deskId, engine) => rememberProvider(engine as AgentProvider),
-      worktree: () => ({ offered: !!store.project?.branch, on: worktreePref() }),
-      setWorktree: setWorktreePref,
-      blocked: () => (officeFull(store.machine) ? `The office is at its limit of ${store.machine.limit} worker${store.machine.limit === 1 ? '' : 's'}` : hiringPaused() ? 'The budget is spent: hiring resumes tomorrow' : null),
-      pressure: () => (store.machine.pressure ? `This machine is under pressure: ${store.machine.pressure}` : null),
-      hire: (deskId, engine, worktree) => {
-        const c = choiceForProvider(store.project, `desk:${deskId}`, engine as AgentProvider);
-        hire(deskId, undefined, worktree, c.provider, c.model, c.effort);
-      },
-      shell: (deskId) => openShell(deskId),
-    },
-  });
-  const menus = nativeMenus;
-  /** The laptop a paired keyboard types into: attached to its terminal while linked, like an open terminal window. */
-  nativeTyping = new NativeTyping(
-    {
-      aimed: () => {
-        const it = target;
-        if (!it?.deskId) return null;
-        if (it.kind === 'station') return { kind: 'kiosk', deskId: it.deskId };
-        const w = it.kind === 'desk' ? store.workerAtDesk(it.deskId) : undefined;
-        return w && typingWorker(w) ? { kind: 'laptop', workerId: w.id } : null;
-      },
-      talking: () => talkingTo,
-      nearest: () => nearestLaptop(),
-      near: (t) => {
-        if (t.kind === 'kiosk') return talkingTo === t.deskId;
-        const w = store.workers.get(t.workerId);
-        const v = workerViews.get(t.workerId);
-        if (!w || !v || !typingWorker(w)) return false;
-        const at = v.laptop.root.getWorldPosition(new THREE.Vector3());
-        return Math.hypot(at.x - player.pos.x, at.z - player.pos.z) <= TYPE_LEAVE;
-      },
-    },
-    {
-      terminal: (workerId, bytes, key) => {
-        const w = store.workers.get(workerId);
-        if (!w) return;
-        const enter = key.key === 'Enter' ? modifiedEnter(wantsCsiEnter(w.kind, resolvedProvider(w.provider, store.project)), { ctrl: key.ctrlKey, shift: key.shiftKey, alt: key.altKey, meta: key.metaKey }) : undefined;
-        net.send({ t: 'term.input', workerId, data: enter ?? bytes });
-      },
-      kiosk: (deskId, _bytes, key) => kioskKey(deskId, key),
-      linked: (next, prev) => {
-        if (prev?.kind === 'laptop') {
-          workerViews.get(prev.workerId)?.laptop.setLinked(false);
-          net.send({ t: 'worker.detach', workerId: prev.workerId });
-        }
-        if (next?.kind === 'laptop') {
-          workerViews.get(next.workerId)?.laptop.setLinked(true);
-          // Keys reach a terminal only from someone attached to it (server.ts term.input).
-          net.send({ t: 'worker.attach', workerId: next.workerId });
-        }
-      },
-    },
-  );
-  const typing = nativeTyping;
-  // Reconnected: attach to the linked laptop's terminal again.
-  net.onStatus((up) => {
-    const t = typing.linked;
-    if (up && t?.kind === 'laptop') net.send({ t: 'worker.attach', workerId: t.workerId });
-  });
-  // Visible workspace fields/xterm receive their own keys; otherwise type into the world laptop.
-  captureVrKeys(window, { active: () => nativeControls?.active === true && !nativeUi?.blocked(), onBytes: (bytes, key) => void typing.key(bytes, key) });
-  nativeControls = new NativeControls(scene, camera, {
-    ...vrHooks,
-    useE: vrUseE,
-    togglePanel: () => nativeUi?.setPanelOpen(!nativeUi.panelState().open),
-    panelOpen: () => nativeUi?.blocked() === true,
-    back: () => nativeUi?.back(),
-    openCommands: () => togglePalette(paletteEntries),
-    menus,
-    physical: {
-      player,
-      climber,
-      gong: office.gong.group,
-      strikeGong: hitGong,
-      ladderAvailable: () => !trip && !upTop && !!(floorThere(1) || floorThere(-1)),
-      poles: () => (trip || upTop ? [] : office.stack.poles()),
-      grabLadder: () => grabLadder(true),
-      grabPole: (spot) => usePole(POLES.indexOf(spot), true),
-      canDraw: () => !trip && !upTop && !climber.active && !golf.active && !hanger.active && !carrying && !readingNow() && !holdingBall(),
-      gunChanged: (held, quiet) => {
-        gunOut = held;
-        if (held) sound.gunDraw();
-        else if (!quiet) sound.gunHolster();
-        hintKey = 'stale';
-      },
-      fireGun: fireNativeGun,
-      bodies: {
-        at: (grip, ray) => (trip || upTop ? null : bodyAt(casualties, grip, ray)),
-        revive: reviveBody,
-      },
-      // The held gun is lit like the desktop's first-person hands are (Hands.setLight).
-      lightAt: (p) => sky.lightAt(p),
-    },
-    setCarrying: (card) => nativeUi?.setCarrying(card),
-  });
-  nativeScene = new NativeScene(scene, camera);
-  const controls = nativeControls;
-  shotStage = new ShotStage({
-    controls,
-    player,
-    worker: (key) =>
-      matchWorker(
-        key,
-        [...workerViews].map(([id, v]) => {
-          const w = store.workers.get(id);
-          return { id, name: w?.name ?? id, root: v.model.root, kind: w?.kind, worktree: w?.worktree, repos: w?.repos, meeting: w?.meeting };
-        }),
-      ),
-    downed: (id) => {
-      const chest = casualties.dying(id) ? casualties.chest(id) : null;
-      const v = workerViews.get(id);
-      const desk = v ? office.desks.get(v.deskId) : undefined;
-      if (!chest || !desk) return null;
-      const open = chest.clone().sub(desk.seatAnchor.getWorldPosition(new THREE.Vector3())).setY(0);
-      const until = store.workers.get(id)?.downedUntil;
-      const state = until !== undefined && until <= store.officeNow() ? 'closed' : casualties.roused(id) ? 'roused' : casualties.lyingFor(id) === null ? 'falling' : 'lying';
-      return { state, chest, open };
-    },
-    lineOfFire: (muzzle, direction, id) => {
-      const ray = new THREE.Raycaster(muzzle, direction);
-      ray.camera = camera;
-      const byRoot = new Map<THREE.Object3D, string>();
-      for (const [wid, v] of workerViews) byRoot.set(v.model.root, wid);
-      return gunHit(ray, office.group, byRoot)?.workerId === id;
-    },
-    blocked: () => {
-      if (upTop) return 'on the roof: no workers to stage';
-      if (trip) return 'between floors';
-      if (climber.active || player.rig) return 'climbing or riding';
-      if (golf.active || hanger.active || carrying || readingNow() || holdingBall()) return 'hands full: put down what you are holding';
-      return null;
-    },
-    eye: () => (nativeControls?.active ? camera.position.clone() : null),
-    clearPanel: () => {
-      nativeUi?.setPanelOpen(false);
-      nativeMenus?.close(true);
-    },
-    revive: (id) => {
-      if (reviveBody(id)) return;
-      if (store.workers.get(id)?.downedUntil !== undefined) net.send({ t: 'worker.revive', workerId: id });
-    },
-    now: () => performance.now(),
-  });
-  // Both stages go by one list of worker ids, never by name (see TargetAllowlist).
-  targetStage = new TargetStage(
-    {
-      crew: () => [...store.workers.values()],
-      taken: (deskId) => !!store.workerAtDesk(deskId) || departures.seated(deskId),
-      you: () => ({ x: player.pos.x, z: player.pos.z }),
-      present: (id) => workerViews.has(id),
-      hire: (deskId) => net.send({ t: 'worker.spawn', deskId, kind: 'shell', target: true }),
-      sendHome: (id) => net.send({ t: 'worker.kill', workerId: id }),
-      officeNow: () => store.officeNow(),
-      lastToast: () => document.querySelector('#toasts .toast:last-child')?.textContent ?? '',
-    },
-    100,
-    shotStage.targets,
-  );
-  nativePuppet = new NativePuppet({ head: () => nativeControls?.headPose() ?? null, rig: () => (nativeControls?.active ? nativeControls.rig.matrixWorld : null) });
-  (window as any).officeNative = {
-    frame: (
-      frames: unknown[],
-      metrics?: unknown,
-      events?: { resetInput?: boolean; recenter?: boolean; sceneReady?: boolean; sceneReset?: boolean; puppet?: boolean; graphics?: unknown; nativeSettingsOpen?: boolean },
-      host?: { debuggable?: boolean; nativeSettings?: boolean },
-    ) => {
-      if (host?.nativeSettings === true) {
-        if (events?.graphics) syncNativeGraphicsSettings(events.graphics);
-        nativeUi?.setNativeSettingsOpen(events?.nativeSettingsOpen === true);
-        if (nativeMenus?.open === 'settings') nativeMenus.close(true);
-      }
-      // Only a debuggable Android build says so (OfficeActivity passes BuildConfig.DEBUG).
-      if (shotStage) shotStage.debuggable = host?.debuggable === true;
-      if (targetStage) targetStage.debuggable = host?.debuggable === true;
-      // Only a debug build of the headset app reports the capture puppet. The host cannot change
-      // while this page lives, so a manual frame() call without events never withdraws it.
-      if (events?.puppet === true) nativePuppet?.host(true);
-      nativePuppet?.observe(frames);
-      if (events?.sceneReset) nativeScene?.reset();
-      if (events?.resetInput) nativeControls?.reset();
-      if (events?.recenter) nativeControls?.rebase();
-      // A frozen staged shot holds this instant on the headset until it is released.
-      const frozen = shotStage?.frozen === true;
-      if (!frozen) nativeControls?.consume(frames);
-      if (loopStarted && !frozen) frame(performance.now());
-      shotStage?.tick();
-      (window as any).officeNative.metrics = metrics;
-      updateNativeGraphicsMetrics(metrics);
-      const control = nativeControls?.state();
-      const puppet = nativePuppet?.packet() ?? null;
-      const message = document.querySelector('#toasts .toast:last-child')?.textContent ?? '';
-      return {
-        scene: events?.sceneReady === false ? null : nativeScene?.drain(),
-        control: control ? { ...control, ...(host?.nativeSettings === true ? {} : { graphics: nativeGraphicsPacket(getNativeGraphicsSettings()) }), ...(puppet ? { puppet } : {}) } : control,
-        panel: { ...nativeUi?.panelState(), status: nativeStatus(metrics, getNativeGraphicsSettings().fps, message) },
-      };
-    },
-    reset: () => nativeScene?.reset(),
-    recenter: () => nativeControls?.recenter(),
-    // Headset checks switch foveation levels and the density view from devtools.
-    graphics: { get: getNativeGraphicsSettings, set: setNativeGraphicsSettings },
-    height: {
-      get: () => ({ heightCm: nativeHeight().heightCm, floorOffset: nativeFloorOffset(), eyes: nativeEyeHeightNow() }),
-      set: (heightCm: number) => {
-        if (Number.isFinite(heightCm)) keepMenu(() => setNativeHeight({ heightCm }));
-      },
-      calibrate: () => {
-        let ok = false;
-        keepMenu(() => (ok = calibrateNativeHeight().ok));
-        return ok;
-      },
-      resetFloor: () => keepMenu(() => setNativeHeight({ floorOffset: 0 })),
-    },
-    report: () => nativeScene?.report(),
-    controls: nativeControls,
-    ui: nativeUi,
-  };
+  renderer.setAnimationLoop(frame);
 }
 
 // ---- Boot ------------------------------------------------------------------------------------------
@@ -5388,13 +3561,6 @@ loading.until([]);
   const saved = loadProfile();
   if (saved?.look) {
     store.profile = { ...saved, look: saved.look };
-    showMyProfile(store.profile);
-    boot();
-  } else if (nativeMode) {
-    // The headset app has no character window: you come straight in with a look of your own
-    // (and your name), and change it on the desktop.
-    if (saved) Object.assign(store.profile, { name: saved.name, color: saved.color });
-    saveProfile(store.profile);
     showMyProfile(store.profile);
     boot();
   } else {
@@ -5421,7 +3587,6 @@ loading.until([]);
   arcade,
   cabinet,
   workerViews,
-  plates,
   departures,
   arrivals,
   casualties,
@@ -5446,35 +3611,7 @@ loading.until([]);
   carried: () => carrying,
   emoteWheel,
   emote,
-  vr,
-  native: nativeControls,
-  nativeScene,
-  nativeUi,
-  // The headset app's settings and hire menus, and where its paired keyboard types (debug and capture hooks).
-  nativeMenus: nativeMenus && {
-    state: () => nativeMenus!.state(),
-    openSettings: () => nativeMenus!.openSettings(),
-    openHire: (deskId: string) => nativeMenus!.openHire(deskId),
-    close: () => nativeMenus!.close(),
-    press: (id: string) => nativeMenus!.pressTarget(id),
-    targetPoint: (id: string) => nativeMenus!.targetPoint(id),
-  },
-  nativeTyping: nativeTyping && { linked: () => nativeTyping!.linked, target: () => nativeTyping!.target() },
-  puppet: nativePuppet?.api,
   ball,
-  // Debuggable headset builds only (inert otherwise): hire a practice target or list a harness's
-  // target ids, stage a shot or a revival through the real controller path, and send the target
-  // home again.
-  ...(shotStage && targetStage
-    ? {
-        stageTarget: (options?: StageTargetOptions) => targetStage!.hire(options),
-        stageShot: (options: StageShotOptions) => shotStage!.run(options),
-        stageRevive: (options: StageReviveOptions) => shotStage!.revive(options),
-        releaseShot: (revive?: boolean) => shotStage!.release(revive !== false),
-        dismissTarget: (worker: string) => targetStage!.dismiss(worker),
-        allowTargets: (ids: string[]) => targetStage!.allow(ids),
-      }
-    : {}),
 };
 (window as any).__sound = sound;
 (window as any).__notify = notifier;

@@ -11,7 +11,7 @@ export const STEP = 0.3;
 const WALK = 4.6;
 const RUN = 7.5;
 const JUMP_V = 6.4;
-/** Gravity, shared with the VR session (whose update replaces player.update while presenting). */
+
 export const GRAVITY = 18;
 /** Camera height above your feet in first person (the Person's eyes). */
 export const EYE_HEIGHT = 1.4;
@@ -74,11 +74,6 @@ export class PlayerController {
    * frame, with no walking, falling or bumping into things, and the camera follows.
    */
   rig: ((dt: number) => void) | null = null;
-  /**
-   * VR ladder climbing: the headset has no W/S keys, so the XR session drives the rungs from a
-   * thumbstick through this instead (-1 down, 0 still, 1 up). OR'd into holding() below.
-   */
-  climbInput = 0;
   /**
    * A click (not a drag) on the scene, in normalized device coordinates.
    * In first person it is always the crosshair, (0, 0).
@@ -287,9 +282,6 @@ export class PlayerController {
 
   /** Whether any of these keys is held down (and you have the controls). */
   holding(...codes: string[]): boolean {
-    // The VR thumbstick climbs the ladder through climbInput, with no keys behind it.
-    if (this.climbInput > 0 && codes.some((c) => c === 'KeyW' || c === 'ArrowUp')) return true;
-    if (this.climbInput < 0 && codes.some((c) => c === 'KeyS' || c === 'ArrowDown')) return true;
     return this.enabled && codes.some((c) => this.keys.has(c));
   }
 
@@ -593,10 +585,6 @@ export class PlayerController {
     return new THREE.Vector2(Math.sin(this.facing), Math.cos(this.facing));
   }
 
-  /**
-   * A step toward (x, z) that bumps into things exactly like walking does: stairs step up, walls
-   * slide. For VR locomotion, which steers the same body without the keyboard.
-   */
   stepTo(x: number, z: number) {
     this.tryMove(x, this.pos.z);
     this.tryMove(this.pos.x, z);
@@ -612,19 +600,11 @@ export class PlayerController {
     return groundAt(this.colliders, x, z, y);
   }
 
-  /** The same jump for keyboard and headset controls. */
+  /** Jump when grounded and outside a movement rig or seat. */
   jump(): void {
     if (!this.grounded || this.rig || this.seat) return;
     this.vy = JUMP_V * this.jumpBoost;
     this.grounded = false;
-  }
-
-  /** Keep the avatar's head below solid ceilings when native gravity owns the body. */
-  limitCeiling(ground: number): void {
-    const ceiling = ceilingAt(this.colliders, this.pos.x, this.pos.z, this.pos.y);
-    if (this.pos.y + HEIGHT <= ceiling) return;
-    this.pos.y = Math.max(ground, ceiling - HEIGHT);
-    this.vy = Math.min(this.vy, 0);
   }
 
   /** What stands in your way at (x, z) with your feet at `y`, or null. */

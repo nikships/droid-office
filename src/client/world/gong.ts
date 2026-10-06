@@ -10,9 +10,6 @@ const BRASS = '#e9b949';
 const LACQUER = '#b23a48';
 const INK = '#2b2d42';
 
-/** The fixed disc contact surface. Its animated swing never moves the interaction boundary. */
-export const GONG_TOUCH = { y: GONG.height - 0.34 - 1.02, radius: 0.62 + 0.035, minZ: -0.06, maxZ: 0.12 } as const;
-
 export interface Gong {
   group: THREE.Group;
   colliders: Collider[];
@@ -92,8 +89,6 @@ export function buildGong(): Gong {
 
   const colliders: Collider[] = [{ minX: x - half - 0.12, maxX: x + half + 0.3, minZ: z - 0.3, maxZ: z + 0.3, top: height + 0.1 }];
   const interactable: Interactable = { kind: 'gong', x, z: z + 1.3, radius: 1.5 };
-  // The disc at rest, not the frame or walk-up point. Its swing must not rearm a held hand.
-  interactable.touch = [{ object: group, containsPoint: (p) => p.x ** 2 + (p.y - GONG_TOUCH.y) ** 2 <= GONG_TOUCH.radius ** 2 && p.z >= GONG_TOUCH.minZ && p.z <= GONG_TOUCH.maxZ }];
   group.userData.interact = interactable;
 
   let swing = 0;

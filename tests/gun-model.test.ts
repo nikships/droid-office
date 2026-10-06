@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { NativeScene } from '../src/client/native/scene';
-import type { Packet } from '../src/client/native/wire';
 import { disposeGun, GUN_LEN, magnum, MUZZLE_AT } from '../src/client/world/gun';
 
 function hits(gun: THREE.Group, origin: THREE.Vector3, direction: THREE.Vector3) {
@@ -54,7 +52,7 @@ test('up is +Y and back is -Z: sights on top, hammer behind the grip, grip below
   disposeGun(gun);
 });
 
-test('the complete gun is a finite, compact model with four opaque native-supported draws', () => {
+test('the complete gun is a finite, compact model with four opaque material batches', () => {
   const gun = magnum();
   let triangles = 0;
   let meshes = 0;
@@ -74,21 +72,10 @@ test('the complete gun is a finite, compact model with four opaque native-suppor
     }
   });
   assert.equal(meshes, 4);
-  assert.ok(triangles <= 1200, 'the shared close-up model remains inexpensive on the headset');
+  assert.ok(triangles <= 1200, 'the shared close-up model remains inexpensive to render');
   const size = new THREE.Box3().setFromObject(gun).getSize(new THREE.Vector3());
   assert.ok(size.x < 0.07 && size.y < 0.21 && size.z < 0.35, 'the model is in meters without a hidden scale or rotation');
 
-  const scene = new THREE.Scene();
-  scene.add(gun);
-  const native = new NativeScene(scene, new THREE.PerspectiveCamera(55, 1, 0.1, 50));
-  native.capture();
-  const packets: Packet[] = [];
-  for (let packet = native.drain(); packet; packet = native.drain()) packets.push(packet);
-  assert.deepEqual(native.report().unsupported, [], 'all surfaces reach the native renderer without approximations');
-  assert.deepEqual(native.report().errors, []);
-  assert.equal(packets.flatMap((packet) => packet.objects ?? []).length, 4);
-  assert.equal(packets.flatMap((packet) => packet.materials ?? []).length, 4);
-  assert.equal(packets.flatMap((packet) => packet.textures ?? []).length, 0);
   disposeGun(gun);
 });
 

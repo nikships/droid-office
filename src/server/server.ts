@@ -640,7 +640,7 @@ export async function startServer(cfg: Config) {
         return;
       }
       // In a source checkout props can change under the same name; releases keep immutable caching.
-      if (p.startsWith('/props/') || p.startsWith('/xr-hands/')) {
+      if (p.startsWith('/props/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, !hotReload.state().available);
         res.writeHead(404).end();
@@ -1141,7 +1141,6 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         const kind = msg.kind === 'shell' ? 'shell' : 'agent';
-        const target = msg.target === true;
         if (kind === 'agent' && msg.provider !== undefined && (!isAgentProvider(msg.provider) || !floor.project.agentProviders.includes(msg.provider))) {
           warn(c, 'Unknown agent provider');
           break;
@@ -1156,19 +1155,11 @@ export async function startServer(cfg: Config) {
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, repos, target);
+          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, repos);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') warn(c, r);
-          else
-            toastFloor(
-              floor,
-              target
-                ? `${who} set up ${r.name.replace(/ 🐚$/u, '')} for target practice`
-                : kind === 'shell'
-                  ? `${who} opened a shell at a desk`
-                  : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`,
-            );
+          else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
         };
         // Every project it gets a worktree of starts from what's on the forge now.

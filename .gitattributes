@@ -1,8 +1,0 @@
-# Unity binary art uses LFS; metadata, scenes, prefabs and JSON stay in plain git.
-native/unity/Assets/Art/**/*.glb filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.blend filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.fbx filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.png filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.jpg filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.wav filter=lfs diff=lfs merge=lfs -text
-native/unity/Assets/Art/**/*.ogg filter=lfs diff=lfs merge=lfs -text

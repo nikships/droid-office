@@ -7,7 +7,6 @@ import { officePrompt } from './prompts';
 import { mergeCommand, pullPromptVars } from '../../shared/prompts';
 import { issueMeeting } from './meeting';
 import { h, openModal, timeAgo, type Modal } from './dom';
-import { withControlHint } from '../native/mode';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
 import { providerPicker } from './provider';
@@ -49,30 +48,6 @@ export function routePullMessage(msg: ServerMsg) {
   if (msg.t === 'gh.labeled') labelWaiters.get(`${msg.kind}:${msg.number}`)?.(msg);
 }
 
-/** Hears the next gh.commented for the item (the VR comment flow's ears); returns the unlisten. */
-export function onCommented(kind: 'issue' | 'pull', number: number, fn: (msg: Extract<ServerMsg, { t: 'gh.commented' }>) => void): () => void {
-  const key = `${kind}#${number}`;
-  commentWaiters.set(key, fn);
-  return () => {
-    if (commentWaiters.get(key) === fn) commentWaiters.delete(key);
-  };
-}
-/** Hears the next gh.closed for the item (the VR close flow's ears); returns the unlisten. */
-export function onClosed(kind: 'issue' | 'pull', number: number, fn: (msg: Extract<ServerMsg, { t: 'gh.closed' }>) => void): () => void {
-  const key = `${kind}:${number}`;
-  closeWaiters.set(key, fn);
-  return () => {
-    if (closeWaiters.get(key) === fn) closeWaiters.delete(key);
-  };
-}
-/** Hears the next gh.merged for the PR (the VR merge flow's ears); returns the unlisten. */
-export function onMerged(number: number, fn: (msg: Extract<ServerMsg, { t: 'gh.merged' }>) => void): () => void {
-  mergeWaiters.set(number, fn);
-  return () => {
-    if (mergeWaiters.get(number) === fn) mergeWaiters.delete(number);
-  };
-}
-
 function pref<T>(key: string, fallback: T): T {
   try {
     return (JSON.parse(localStorage.getItem(key) ?? 'null') as T) ?? fallback;
@@ -108,7 +83,7 @@ function methodLabel(m: GhMergeMethod): string {
   return (store.project?.forge === 'gitlab' ? GITLAB_METHOD_LABEL : METHOD_LABEL)[m];
 }
 
-/** The merge dialog's remembered defaults (the VR merge fires with the same ones). */
+/** The merge dialog's remembered defaults. */
 export function mergePref(methods: GhMergeMethod[]): { method: GhMergeMethod; deleteBranch: boolean } {
   const p = pref<MergePref>(MERGE_KEY, {});
   return { method: p.method && methods.includes(p.method) ? p.method : methods[0], deleteBranch: p.deleteBranch ?? true };
@@ -186,15 +161,14 @@ function stateOf(it: { state: string; isDraft?: boolean }): [string, string] {
 export interface MergeStatus {
   icon: string;
   text: string;
-  /** The status in two words, for the VR merge box (the window shows `text`). */
-  short: string;
+
   cls: 'ok' | 'warn' | 'bad' | 'muted';
   /** False when merging can't work at all (draft, conflicts, already merged). */
   can: boolean;
   /** GitHub or GitLab could merge it on its own once the requirements pass. */
   auto: boolean;
 }
-/** The PR window's detail fetch (main.ts runs the same fetch for the VR merge box). */
+
 export function pullDetail(number: number): Promise<GhPullDetail> {
   return getJson<GhPullDetail>(`/api/gh/pull?number=${number}`);
 }
@@ -204,15 +178,15 @@ function conflicted(d: GhPullDetail) {
   return d.state === 'OPEN' && !d.isDraft && (d.mergeable === 'CONFLICTING' || d.mergeStateStatus === 'DIRTY');
 }
 
-/** Whether a PR can merge, and what the merge box says (the VR merge box reads the same). */
+/** Whether a PR can merge, and what the merge box says. */
 export function mergeStatus(d: GhPullDetail): MergeStatus {
   const failing = d.checks.filter((c) => c.state === 'fail').length;
   const pending = d.checks.filter((c) => c.state === 'pending').length;
-  if (d.state === 'MERGED') return { icon: '🎉', text: 'Merged.', short: 'Merged', cls: 'ok', can: false, auto: false };
-  if (d.state === 'CLOSED') return { icon: '🗑️', text: 'Closed without merging.', short: 'Closed', cls: 'muted', can: false, auto: false };
-  if (d.isDraft) return { icon: '📝', text: `This is still a draft. Mark it ready for review on ${words().site} before merging.`, short: 'Draft', cls: 'muted', can: false, auto: false };
-  if (conflicted(d)) return { icon: '⚠️', text: `This branch has conflicts with ${d.baseRefName} that must be resolved first.`, short: 'Conflicts', cls: 'bad', can: false, auto: false };
-  if (d.mergeStateStatus === 'BEHIND') return { icon: '⤵️', text: `The branch is behind ${d.baseRefName}, and this repo wants it up to date before merging.`, short: 'Behind base', cls: 'warn', can: true, auto: true };
+  if (d.state === 'MERGED') return { icon: '🎉', text: 'Merged.', cls: 'ok', can: false, auto: false };
+  if (d.state === 'CLOSED') return { icon: '🗑️', text: 'Closed without merging.', cls: 'muted', can: false, auto: false };
+  if (d.isDraft) return { icon: '📝', text: `This is still a draft. Mark it ready for review on ${words().site} before merging.`, cls: 'muted', can: false, auto: false };
+  if (conflicted(d)) return { icon: '⚠️', text: `This branch has conflicts with ${d.baseRefName} that must be resolved first.`, cls: 'bad', can: false, auto: false };
+  if (d.mergeStateStatus === 'BEHIND') return { icon: '⤵️', text: `The branch is behind ${d.baseRefName}, and this repo wants it up to date before merging.`, cls: 'warn', can: true, auto: true };
   if (d.mergeStateStatus === 'BLOCKED') {
     const why =
       d.reviewDecision === 'CHANGES_REQUESTED'
@@ -226,12 +200,12 @@ export function mergeStatus(d: GhPullDetail): MergeStatus {
               : pending
                 ? 'required checks are still running'
                 : 'a branch rule is not met yet';
-    return { icon: '🚫', text: `Merging is blocked: ${why}.`, short: 'Blocked', cls: 'bad', can: true, auto: true };
+    return { icon: '🚫', text: `Merging is blocked: ${why}.`, cls: 'bad', can: true, auto: true };
   }
-  if (failing) return { icon: '❌', text: `${failing} check${failing > 1 ? 's' : ''} failing. It can still be merged.`, short: 'Checks failing', cls: 'warn', can: true, auto: false };
-  if (pending || d.mergeStateStatus === 'UNSTABLE') return { icon: '🟡', text: 'Checks are still running. It can be merged now, or once they pass.', short: 'Checks running', cls: 'warn', can: true, auto: true };
-  if (d.mergeStateStatus === 'UNKNOWN' || d.mergeable === 'UNKNOWN') return { icon: '⏳', text: `${words().site} is still working out whether this can merge. Refresh in a moment.`, short: 'Checking…', cls: 'muted', can: true, auto: false };
-  return { icon: '✅', text: `Ready to merge: no conflicts with ${d.baseRefName}${d.checks.length ? ' and all checks passed' : ''}.`, short: 'Ready to merge', cls: 'ok', can: true, auto: false };
+  if (failing) return { icon: '❌', text: `${failing} check${failing > 1 ? 's' : ''} failing. It can still be merged.`, cls: 'warn', can: true, auto: false };
+  if (pending || d.mergeStateStatus === 'UNSTABLE') return { icon: '🟡', text: 'Checks are still running. It can be merged now, or once they pass.', cls: 'warn', can: true, auto: true };
+  if (d.mergeStateStatus === 'UNKNOWN' || d.mergeable === 'UNKNOWN') return { icon: '⏳', text: `${words().site} is still working out whether this can merge. Refresh in a moment.`, cls: 'muted', can: true, auto: false };
+  return { icon: '✅', text: `Ready to merge: no conflicts with ${d.baseRefName}${d.checks.length ? ' and all checks passed' : ''}.`, cls: 'ok', can: true, auto: false };
 }
 
 function checksList(checks: GhCheck[]) {
@@ -260,7 +234,7 @@ function commentBox(kind: 'issue' | 'pull', number: number, itemUrl: string, net
   const waitKey = `${kind}#${number}`;
   let busy = false;
   let timer = 0;
-  const ta = h('textarea', { rows: 4, placeholder: `${withControlHint('Leave a comment. Markdown works', '; ⌘/Ctrl+Enter posts it')}.`, 'aria-label': 'Comment' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: 4, placeholder: `${'Leave a comment. Markdown works' + '; ⌘/Ctrl+Enter posts it'}.`, 'aria-label': 'Comment' }) as HTMLTextAreaElement;
   ta.value = pref<string>(draftKey, '');
   const shown = h('div.gh-compose-preview.hidden');
   const write = h('button.btn.on', { type: 'button' }, 'Write');

@@ -1,10 +1,7 @@
 # Terminal glyph correction, 2026-09-30
 
-The owner's worn-headset screenshots of native v0.1.284 showed a clipped `git` icon
-in the terminal window and crowded prompt text on the original laptop screen.
-Read-only extraction of the released Android canvas confirmed that Geist Mono and
-Symbols Nerd Font Mono had loaded. Its source was still 2048×1360, with a 130×31
-PTY grid and a 25.9307 px source font. This issue was present in the source pixels.
+Terminal screenshots showed a clipped `git` icon and crowded prompt text on the
+original laptop screen. A browser replay reproduced the font-metric mismatch.
 
 Geist Mono advances each text cell by 0.6em. The former bundled symbols font
 advances its Nerd Font icons by 1em, with outlines that can also occupy 1em.
@@ -27,8 +24,7 @@ including an idle PTY. A failed unrelated face no longer finishes the font-load
 callback before the remaining icon requests settle.
 
 These are browser replays of the captured terminal grid, using the original
-laptop painter at its original canvas size. They do not establish headset
-readability or the native renderer's sampling quality.
+laptop painter at its original canvas size.
 
 Before:
 
@@ -47,7 +43,7 @@ After:
   U+F126, U+E0B0 and U+E0B2, plus BMP and supplementary devicons. All 112
   checks passed at 10, 14, 16, 20, 25.9307, 30 and 36 px, in regular and bold.
   Mixed icon/text runs advanced by their intended cell count.
-- The real terminal UI passed desktop (14 px) and native (20 px) browser
+- The real terminal UI passed 14 px and 20 px browser
   fixtures. A delayed font load, closing before completion and reopening left
   only one terminal and one attach. These fixtures used a local message stub;
   they did not connect to or type into workers.
@@ -57,7 +53,7 @@ After:
 - Node 22 lint, typecheck and all 642 coverage tests passed (84.55% lines,
   80.67% functions). The client/server build includes the replacement asset.
 
-Physical headset confirmation remains open. Symbols outside the bundled ranges
+Symbols outside the bundled ranges
 still use the existing system fallbacks; this change does not replace the
 existing Unicode/grapheme handling for other scripts.
 

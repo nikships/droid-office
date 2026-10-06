@@ -105,22 +105,6 @@ export type HudPanel = 'workers' | 'spend' | 'limits' | 'floor';
 /** The workers show by default; the rest wait in the ☰ menu until turned on. */
 export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, spend: false, limits: false, floor: false };
 
-/** How turning works with a thumbstick in VR. */
-export type VrTurn = 'snap' | 'smooth';
-
-export interface VrSettings {
-  /** Thumbstick gliding on top of teleport. Off by default: teleport-only is the comfortable default. */
-  glide: boolean;
-  /** Snap-turn in fixed steps, or smooth turning at `turnSpeed`. */
-  turn: VrTurn;
-  /** Smooth-turn speed, degrees per second (30–180). Snap turns are always 45°. */
-  turnSpeed: number;
-  /** Fade through black on teleport. */
-  fade: boolean;
-}
-
-export const VR_DEFAULTS: VrSettings = { glide: false, turn: 'snap', turnSpeed: 90, fade: true };
-
 export interface Settings {
   view: ViewMode;
   /** Office sounds, 0–1. */
@@ -135,8 +119,6 @@ export interface Settings {
   hud: Record<HudPanel, boolean>;
   /** The ☰ menu's actions you pinned to the top bar, by id. */
   pins: string[];
-  /** WebXR locomotion and comfort, from the VR section of ⚙️ Settings. */
-  vr: VrSettings;
 }
 
 const SETTINGS_KEY = 'droid-office.settings';
@@ -201,7 +183,7 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [], vr: { ...VR_DEFAULTS } };
+  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (saved?.view === 'first' || saved?.view === 'third') s.view = saved.view;
@@ -213,10 +195,6 @@ export function loadSettings(): Settings {
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
     // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
     if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string' && p !== 'people' && p !== 'chat').slice(0, 30);
-    if (typeof saved?.vr?.glide === 'boolean') s.vr.glide = saved.vr.glide;
-    if (saved?.vr?.turn === 'snap' || saved?.vr?.turn === 'smooth') s.vr.turn = saved.vr.turn;
-    if (typeof saved?.vr?.turnSpeed === 'number' && Number.isFinite(saved.vr.turnSpeed)) s.vr.turnSpeed = Math.max(30, Math.min(180, saved.vr.turnSpeed));
-    if (typeof saved?.vr?.fade === 'boolean') s.vr.fade = saved.vr.fade;
   } catch {
     // storage blocked
   }

@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import { FLOOR, LADDER, POLE, POLES, SLAB, WALL_HEIGHT, WALL_T, WINDOWS, type PoleSpot } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
-import { signsPrinted } from '../native/mode';
-import { SIGN_BACK, mesh, textPlane, toon } from './toon';
+import { mesh, textPlane, toon } from './toon';
 
 /** A fire pole's railing: how high its top bar is, and how thick its bars and the caps on its posts are (meters). */
 const RAIL_TOP = 1.02;
@@ -531,20 +530,9 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
           // Hung on the rail across from the way in, facing it, beside the pole rather than behind it.
           const sign = textPlane(text, { bg: '#0a0a0a', color: '#ef4444', size: 40, border: '#2f2f2f' });
           sign.scale.multiplyScalar(0.6);
-          let back = POLE.rail + 0.06;
-          let side = POLE.rail * 0.5;
-          let y = 0.72;
-          if (signsPrinted()) {
-            // In the headset app a board strapped flat to the inside of the far rail's top bar,
-            // hanging under it, between the pole and the corner post's cap.
-            const { width, height } = sign.geometry.parameters;
-            const room = POLE.rail - RAIL_CAP - POLE.radius - 0.06;
-            sign.scale.setScalar(Math.min(0.6, room / width));
-            const k = sign.scale.x;
-            back = POLE.rail - RAIL_BAR - SIGN_BACK * k + 0.002;
-            side = POLE.radius + 0.03 + (width * k) / 2;
-            y = RAIL_TOP + 0.02 - (height * k) / 2;
-          }
+          const back = POLE.rail + 0.06;
+          const side = POLE.rail * 0.5;
+          const y = 0.72;
           const c = Math.cos(p.spot.open);
           const sn = Math.sin(p.spot.open);
           sign.position.set(p.spot.x - sn * back + c * side, y, p.spot.z - c * back - sn * side);

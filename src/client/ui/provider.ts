@@ -231,15 +231,6 @@ export function rememberedChoice(project: ProjectInfo | null, key: string): { pr
   return choiceForProvider(project, key, provider);
 }
 
-/** Remembers a provider picked without the picker (the VR hire prompt's engine cycler). */
-export function rememberProvider(provider: AgentProvider): void {
-  try {
-    localStorage.setItem(PROVIDER_KEY, provider);
-  } catch {
-    // storage blocked
-  }
-}
-
 /** The remembered model/effort for `provider` at `key` (each desk keeps its own Claude/Droid/Grok/Muse choice). Falls back to the project's default when `provider` isn't offered. */
 export function choiceForProvider(project: ProjectInfo | null, key: string, provider: AgentProvider): { provider: AgentProvider; model?: string; effort?: AgentEffort } {
   if (!supportedProviders(project).includes(provider)) provider = supportedProviders(project)[0];

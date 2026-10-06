@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { BALCONY, FLOOR, GOLF_HOLE, GOLF_TEE, ROAD, SLAB, STOREY, STREET_Y, WALL_HEIGHT, WALL_T } from '../../shared/layout';
 import type { Collider, Interactable } from './office';
 import { bulb, neighbourBoxes, streetLamp, tree, type NightParts } from './outside';
-import { signsPrinted } from '../native/mode';
 import { ANISOTROPY, TILE_SCALE } from './texture-quality';
 import { disposeSprite, mergeByMaterial, mesh, textPlane, textSprite, toon } from './toon';
 
@@ -251,11 +250,6 @@ export function buildGreen(ground: THREE.Group, colliders: Collider[], night: Ni
   }
   ground.add(mergeByMaterial(parts));
   const sign = textPlane('⛳ Hole 1 · Par 1', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
-  if (signsPrinted()) {
-    // In the headset app a board fixed across the tops of both posts, as wide as they stand apart.
-    const board = sign.getObjectByName('sign-board') as THREE.Mesh<THREE.BoxGeometry>;
-    sign.scale.setScalar((2 * POST_X + POST_W) / board.geometry.parameters.width);
-  }
   sign.position.set(sx, G + 1.5, sz - 0.07);
   sign.rotation.y = Math.PI;
   ground.add(sign);

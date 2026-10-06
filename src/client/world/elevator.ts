@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import { ELEVATOR, ELEVATOR_CAR, ELEVATOR_FRONT, FLOOR, WALL_HEIGHT } from '../../shared/layout';
-import type { FloorInfo } from '../../shared/protocol';
-import { ROOF } from '../../shared/rooftop';
-import { mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
-import { signsPrinted } from '../native/mode';
+import { mesh, roundedBox, textPlane, toon } from './toon';
 import type { Collider, Interactable } from './office';
 
 // The elevator: a steel shaft against the north wall, doors facing into the room. Every floor has
@@ -12,11 +9,6 @@ import type { Collider, Interactable } from './office';
 const STEEL = '#5b6068';
 const STEEL_DARK = '#3f444c';
 const BRASS = '#e9b949';
-/** The headset app's floor indicator over the doors: its dark display, the amber its words light up in, and how tall its housing is (meters). */
-const INDICATOR = '#0d0e11';
-const INDICATOR_LIT = '#ffb347';
-const INDICATOR_H = 0.24;
-
 export interface Elevator {
   group: THREE.Group;
   /** What stops you walking out through shut doors. Part of the office's colliders. */
@@ -30,13 +22,6 @@ export interface Elevator {
   readonly settled: boolean;
   /** The sign over the doors, and the display inside: which floor this is. */
   setSign(text: string): void;
-  /** Swap the decorative desktop panel for the live VR buttons. */
-  setVR(active: boolean): void;
-  setFloors(floors: readonly Pick<FloorInfo, 'id' | 'name'>[], current: string | null): void;
-  /** Animate a valid destination press. The caller rides through the normal trip sequence. */
-  pressFloor(id: string): boolean;
-  /** The cab button under a tracked fingertip, in world space. */
-  touchTarget(point: THREE.Vector3): Interactable | null;
   update(dt: number): void;
 }
 
@@ -116,97 +101,6 @@ export function buildElevator(): Elevator {
   panelIn.rotation.y = Math.PI;
   group.add(panelIn);
 
-  // VR: broad, labeled keys on the west wall, facing into the cab. Up to 16 floors and the
-  // roof fit in three columns, above the handrail and within arm's reach.
-  const floorPanel = new THREE.Group();
-  floorPanel.name = 'elevator-floor-buttons';
-  floorPanel.position.set(ELEVATOR_CAR.minX + 0.025, 1.52, (ELEVATOR_CAR.minZ + ELEVATOR_CAR.maxZ) / 2);
-  floorPanel.rotation.y = Math.PI / 2;
-  floorPanel.visible = false;
-  group.add(floorPanel);
-  const buttons: {
-    id: string;
-    group: THREE.Group;
-    material: THREE.MeshToonMaterial;
-    interactable: Interactable;
-    pressed: number;
-  }[] = [];
-  let floorKey = '';
-  let currentFloor: string | null = null;
-  const touchPoint = new THREE.Vector3();
-  const paintButtons = () => {
-    for (const b of buttons) {
-      const here = b.id === currentFloor;
-      b.material.color.set(here ? BRASS : '#fff7d6');
-      b.material.emissive.set(here ? '#6c4c0b' : '#000000');
-    }
-  };
-  const setFloors: Elevator['setFloors'] = (floors, current) => {
-    currentFloor = current;
-    const entries = floors.map((f, i) => ({ id: f.id, name: `${i + 1} · ${f.name}` }));
-    if (floors.length) entries.push({ id: ROOF, name: 'R · Rooftop bar' });
-    const key = JSON.stringify(entries);
-    if (key !== floorKey) {
-      floorKey = key;
-      // These meshes/materials belong only to this panel, never to the shared toon cache.
-      floorPanel.traverse((o) => {
-        if (!(o instanceof THREE.Mesh)) return;
-        o.geometry.dispose();
-        const material = o.material as THREE.MeshBasicMaterial | THREE.MeshToonMaterial;
-        material.map?.dispose();
-        material.dispose();
-      });
-      floorPanel.clear();
-      buttons.length = 0;
-      if (entries.length) {
-        const columns = Math.min(3, entries.length);
-        const rows = Math.ceil(entries.length / columns);
-        floorPanel.add(mesh(roundedBox(columns * 0.52 + 0.06, rows * 0.16 + 0.06, 0.04, 0.02), toonUnique(STEEL_DARK), 0, 0, 0, false));
-        entries.forEach((f, i) => {
-          const keycap = new THREE.Group();
-          keycap.name = `elevator-floor:${f.id}`;
-          keycap.position.set(((i % columns) - (columns - 1) / 2) * 0.52, ((rows - 1) / 2 - Math.floor(i / columns)) * 0.16, 0.045);
-          const material = toonUnique('#fff7d6');
-          keycap.add(mesh(roundedBox(0.46, 0.12, 0.034, 0.015), material, 0, 0, 0, false));
-          // Keep long repository names legible at arm's length; the aim hint has the full name.
-          const label = textPlane(f.name.length > 26 ? `${f.name.slice(0, 25)}…` : f.name, { color: '#171a20', size: 48 });
-          label.scale.setScalar(Math.min(0.42 / label.geometry.parameters.width, 0.075 / label.geometry.parameters.height));
-          label.position.z = 0.019;
-          keycap.add(label);
-          const it: Interactable = { kind: 'elevator', floorId: f.id, x: floorPanel.position.x, z: floorPanel.position.z - keycap.position.x, radius: 0.3 };
-          keycap.userData.interact = it;
-          floorPanel.add(keycap);
-          buttons.push({ id: f.id, group: keycap, material, interactable: it, pressed: 0 });
-        });
-      }
-    }
-    paintButtons();
-  };
-  const setVR = (active: boolean) => {
-    panelIn.visible = !active;
-    floorPanel.visible = active;
-    if (!active) {
-      for (const b of buttons) {
-        b.pressed = 0;
-        b.group.position.z = 0.045;
-      }
-    }
-  };
-  const pressFloor = (id: string): boolean => {
-    const b = buttons.find((b) => b.id === id);
-    if (!floorPanel.visible || !b || id === currentFloor) return false;
-    b.pressed = 0.24;
-    b.group.position.z = 0.029;
-    return true;
-  };
-  const touchTarget = (point: THREE.Vector3): Interactable | null => {
-    if (!floorPanel.visible || !group.visible) return null;
-    floorPanel.worldToLocal(touchPoint.copy(point));
-    // Keep the touch volume fixed while the cap travels, so a held finger cannot re-press it.
-    if (touchPoint.z < 0.02 || touchPoint.z > 0.085) return null;
-    return buttons.find((b) => Math.abs(touchPoint.x - b.group.position.x) <= 0.24 && Math.abs(touchPoint.y - b.group.position.y) <= 0.07)?.interactable ?? null;
-  };
-
   // The call button outside, on the right-hand pillar.
   const call = new THREE.Group();
   call.add(mesh(roundedBox(0.2, 0.36, 0.04, 0.02), brass, 0, 0, 0, false));
@@ -237,9 +131,7 @@ export function buildElevator(): Elevator {
   const doorCollider: Collider = { minX: x - doorWidth / 2, maxX: x + doorWidth / 2, minZ: front - wall - 0.06, maxZ: front, top: 99 };
   colliders.push(doorCollider);
 
-  // What floor this is: a sign over the doors, facing the room. In the headset app it is the
-  // elevator's floor indicator instead: amber words lit on a dark display in a steel housing that sits
-  // on the head of the door frame, its back against the shaft, as wide as fits over the frame.
+  // The floor's name on a sign over the doors.
   let sign: ReturnType<typeof textPlane> | null = null;
   const setSign = (text: string) => {
     if (sign) {
@@ -248,21 +140,11 @@ export function buildElevator(): Elevator {
       sign.material.dispose();
       sign.geometry.dispose();
     }
-    if (signsPrinted()) {
-      sign = textPlane(text, { bg: INDICATOR, color: INDICATOR_LIT, size: 64, border: INDICATOR, board: STEEL_DARK, glow: 1 });
-      sign.updateMatrixWorld(true);
-      const unit = new THREE.Box3().setFromObject(sign);
-      sign.scale.setScalar(Math.min(INDICATOR_H / (unit.max.y - unit.min.y), (doorWidth + 2 * frameT - 0.06) / (unit.max.x - unit.min.x)));
-      sign.updateMatrixWorld(true);
-      const housing = new THREE.Box3().setFromObject(sign);
-      sign.position.set(x, doorHeight + frameT - housing.min.y, front - housing.min.z);
-    } else {
-      sign = textPlane(text, { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
-      const { width: sw } = sign.geometry.parameters;
-      // As big as fits over the doors.
-      sign.scale.multiplyScalar(Math.min(1.6, (width + 0.6) / sw));
-      sign.position.set(x, doorHeight + 0.75, front + 0.03);
-    }
+    sign = textPlane(text, { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+    const { width: sw } = sign.geometry.parameters;
+    // As big as fits over the doors.
+    sign.scale.multiplyScalar(Math.min(1.6, (width + 0.6) / sw));
+    sign.position.set(x, doorHeight + 0.75, front + 0.03);
     group.add(sign);
   };
 
@@ -274,11 +156,6 @@ export function buildElevator(): Elevator {
     if (!v) doorCollider.top = 99;
   };
   const update = (dt: number) => {
-    for (const b of buttons) {
-      if (b.pressed <= 0) continue;
-      b.pressed = Math.max(0, b.pressed - dt);
-      b.group.position.z = 0.045 - 0.016 * Math.min(1, b.pressed / 0.16);
-    }
     const target = open ? 1 : 0;
     if (openness !== target) {
       openness = target > openness ? Math.min(1, openness + dt / 0.7) : Math.max(0, openness - dt / 0.6);
@@ -304,10 +181,6 @@ export function buildElevator(): Elevator {
       return openness === (open ? 1 : 0);
     },
     setSign,
-    setVR,
-    setFloors,
-    pressFloor,
-    touchTarget,
     update,
   };
 }

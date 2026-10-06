@@ -70,16 +70,15 @@ body:
       multiple: true
       options:
         - Desktop browser
-        - WebXR headset
     validations:
       required: true
 
   - type: input
     id: client-details
     attributes:
-      label: Browser or headset
-      description: The browser and version, or the headset and its browser.
-      placeholder: Chrome 140, Meta Quest 3 with Meta Quest Browser
+      label: Browser
+      description: The browser and version.
+      placeholder: Chrome 140
 
   - type: textarea
     id: steps

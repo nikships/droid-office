@@ -19,8 +19,6 @@ export interface Config {
   project?: string;
   host: string;
   port: number;
-  /** Advertise this office to nearby Galaxy XR apps over DNS-SD, unless bound only to loopback. */
-  discovery: boolean;
   agentCmd: string;
   agentArgs: string[];
   tls?: { cert: string; key: string };
@@ -81,8 +79,6 @@ Options:
                           in the office
   -p, --port <n>          Port to listen on (default 4600, env PORT)
   -H, --host <addr>       Address to bind (default 0.0.0.0)
-      --no-discovery      Disable local-network discovery for the Galaxy XR app
-                          (also DROID_OFFICE_DISCOVERY=0; enabled by default)
       --agent <cmd>       Default agent command (default "droid", env DROID_OFFICE_AGENT)
       --agent-args <str>  Extra args for the configured agent, e.g. "--model opus"
                           Workers can also select Droid, Claude Code, OpenCode, Codex, Grok or Muse in the UI
@@ -185,7 +181,6 @@ export function loadConfig(argv: string[]): Config {
   let projects = process.env.DROID_OFFICE_PROJECTS ? path.resolve(process.env.DROID_OFFICE_PROJECTS) : '';
   let port = Number(process.env.PORT) || 4600;
   let host = '0.0.0.0';
-  let discovery = process.env.DROID_OFFICE_DISCOVERY !== '0';
   let agentCmd = process.env.DROID_OFFICE_AGENT || 'droid';
   let agentArgs: string[] = splitArgs(process.env.DROID_OFFICE_AGENT_ARGS || '');
   let tlsCert = '';
@@ -213,9 +208,6 @@ export function loadConfig(argv: string[]): Config {
       case '-H':
       case '--host':
         host = takeValue(argv, i++, a);
-        break;
-      case '--no-discovery':
-        discovery = false;
         break;
       case '--agent':
         agentCmd = takeValue(argv, i++, a);
@@ -330,7 +322,6 @@ export function loadConfig(argv: string[]): Config {
     project: project || undefined,
     host,
     port,
-    discovery,
     agentCmd,
     agentArgs,
     tls,

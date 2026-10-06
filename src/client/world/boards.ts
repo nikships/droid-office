@@ -5,7 +5,6 @@ import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, Work
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
-import { controlHintsShown, signsPrinted, worldNotice } from '../native/mode';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
@@ -17,11 +16,6 @@ const BOARD_H = 600;
 export const NOTE_COLORS = ['#161616', '#15181c', '#17151a', '#141618', '#16161a'];
 export const PINS = ['#ee6018', '#5aa9e6', '#3ccf91', '#f2b84b'];
 
-/**
- * How far down a board's own heading reaches (see drawHeading). The task queue always heads its
- * screen this way; in the headset app (signsPrinted) every board does, since no sign hangs on the
- * wall over it (world/office.ts): its name is part of the screen, inside its frame.
- */
 const HEAD_H = 110;
 
 /** A board's heading across the top of its screen: its name in orange over a rule, and how it stands (`summary`) on the right. */
@@ -183,18 +177,15 @@ export class BoardTexture {
     for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
     const open = (state.items as (GhIssue | GhPull)[]).filter((i) => i.state === 'OPEN');
     const jira = this.kind === 'issues' ? this.jira : null;
-    // A Jira epic's tab strip names the views; otherwise the headset app's board heads its screen with its name.
-    const headed = !jira && signsPrinted();
-    const top = jira ? TAB_H : headed ? HEAD_H : 0;
+    const top = jira ? TAB_H : 0;
     if (jira) this.drawTabs(jira, open.length);
-    else if (headed) drawHeading(g, this.kind === 'issues' ? 'ISSUES' : `${words().pull.toUpperCase()}S`, open.length ? `${open.length} open` : '');
     if (jira && this.shown === 'jira') {
       this.drawJira(jira, top);
       this.texture.needsUpdate = true;
       return;
     }
     if (!open.length) {
-      this.centerNote(state.error ? `⚠️ ${worldNotice(state.error)}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
+      this.centerNote(state.error ? `⚠️ ${state.error}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
       this.texture.needsUpdate = true;
       return;
     }
@@ -313,14 +304,14 @@ export class BoardTexture {
     g.textBaseline = 'middle';
     g.fillStyle = '#8c8c8c';
     g.font = `500 20px ${MONO}`;
-    if (controlHintsShown()) g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
+    g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
   }
 
   /** The Jira tab: the epic's tickets in To Do, In Progress and Done, like the board window's. */
   private drawJira(jira: JiraBoardState, top: number) {
-    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${worldNotice(jira.error)}`, top);
+    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
     if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top);
     const g = this.ctx;
     const cols = ticketColumns(jira.items);
@@ -419,27 +410,23 @@ export class ServicesBoardTexture {
     // A faint dot grid, like the issues and PRs boards.
     g.fillStyle = 'rgba(255, 255, 255, .045)';
     for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
-    const top = signsPrinted() ? HEAD_H : 0;
-    if (top) drawHeading(g, 'SERVICES', rows.length ? `${rows.length} running` : '');
     if (!rows.length) {
       g.textAlign = 'center';
       g.fillStyle = '#eeeeee';
       g.font = `700 44px ${MONO}`;
-      // The headset app's board states only what is so; the line on how it fills is desktop help.
-      const help = controlHintsShown();
-      g.fillText('No web servers running', W / 2, help ? H / 2 - 20 : (H + top) / 2 + 14);
+      g.fillText('No web servers running', W / 2, H / 2 - 20);
       g.fillStyle = 'rgba(140, 140, 140, .9)';
       g.font = `500 28px ${SANS}`;
-      if (help) g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
+      g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;
     }
     const shown = rows.slice(0, 5);
-    const rowH = Math.min(140, (H - 40 - top) / shown.length);
+    const rowH = Math.min(140, (H - 40) / shown.length);
     const fs = Math.round(rowH * 0.36);
     shown.forEach((r, i) => {
-      const y = top + 20 + i * rowH;
+      const y = 20 + i * rowH;
       g.fillStyle = 'rgba(255, 255, 255, .04)';
       g.fillRect(24, y + 6, W - 48, rowH - 12);
       g.strokeStyle = 'rgba(255, 255, 255, .12)';
@@ -535,8 +522,7 @@ export class QueueBoardTexture {
       g.fillText('Nothing queued', W / 2, H / 2 - 10);
       g.fillStyle = '#8c8c8c';
       g.font = `500 28px ${SANS}`;
-      // How to fill it is the desktop's to say; the headset app's board only says it's empty.
-      if (controlHintsShown()) g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
+      g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;

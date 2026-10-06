@@ -5,7 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  * A stylized .44 revolver in meters: the fist closes around the grip at the origin, the bore
  * points along +Z and +Y is up. Holders rotate the whole prop to their aiming axis; the model
  * adds no wrist tilt. Solid side profiles keep the frame, guard and grip in the gun's YZ plane.
- * Four opaque toon batches work identically in the desktop and native scene renderer.
+ * Static parts are grouped into four opaque toon batches.
  * No DOM or WebGL at import time, so tests can load it in Node.
  */
 
@@ -186,7 +186,7 @@ export function magnum(): THREE.Group {
   );
 
   // Sculpted walnut panels on a visible metal backstrap. The origin is inside the upper grip,
-  // where a controller or cartoon fist holds it, rather than above the old dangling handle.
+  // where the cartoon fist holds it.
   const grip: readonly (readonly [number, number])[] = [
     [-0.032, 0.035],
     [-0.005, 0.033],
@@ -210,8 +210,7 @@ export function magnum(): THREE.Group {
     add(new THREE.CylinderGeometry(0.0015, 0.0015, 0.0017, 6).rotateZ(Math.PI / 2), dark, side * 0.023, -0.019, -0.014);
   }
 
-  // Bake the static parts into one draw per material. No texture or unsupported material work is
-  // required by the native exporter, and each returned gun owns its GPU resources.
+  // Bake the static parts into one draw per material. Each returned gun owns its GPU resources.
   for (const [material, parts] of batches) {
     const surfaces = parts.map((geometry) => (geometry.index ? geometry.toNonIndexed() : geometry));
     const merged = mergeGeometries(surfaces)!;
@@ -254,43 +253,6 @@ export interface FlashLight {
 
 /** A flash seen from across the room: a hard physical light right at the barrel, thrown on the walls. */
 const ROOM_FLASH: FlashLight = { color: '#ffb347', intensity: 14, distance: 7, decay: 2, ahead: 0.1 };
-
-/**
- * A flash seen down the barrel of a gun in your own hand (native/physical.ts). The physical light
- * above falls off with the square of the distance, so in the headset it clipped everything within
- * an arm's length of the muzzle to white: the gun itself, the chair in front of it and the worker.
- * This one has no hot spot: a warm pool of up to about half the surfaces' own color round the shot
- * (the gun, what it is pointed at, the desk under it), softening out to 1.4 m, whatever is right
- * at the muzzle. The floor and the walls beyond stay as they were, rather than washing pink.
- */
-export const HELD_FLASH: FlashLight = { color: '#ffb347', intensity: 1.5, distance: 1.4, decay: 0, ahead: 0.35 };
-
-/** A held gun's light level where Sky.lightAt has nothing to say: indoors in the office. */
-export const INDOOR_LIGHT = 0.4;
-/** How much of its own color a held gun shows at a clear day's light level. */
-const HELD_FILL = 0.85;
-
-/**
- * The fill a held gun gets at `level` (Sky.lightAt, 0–1), as a share of its own color: the curve
- * Hands.setLight lights the desktop's first-person fist and gun with. Indoors that is about half,
- * like the native hand renderer's ambient term (0.55), so the gun reads as steel and walnut in the
- * hand that holds it; the office's night light alone gives it a tenth, and it goes navy.
- */
-export function heldGunFill(level: number): number {
-  return HELD_FILL * (0.25 + 0.75 * THREE.MathUtils.clamp(Number.isFinite(level) ? level : INDOOR_LIGHT, 0, 1));
-}
-
-/**
- * Lights a gun from magnum() like the hand holding it: each of its toon batches glows with
- * heldGunFill(level) of its own color, under whatever the room adds (lamps, the moon, a flash).
- */
-export function lightHeldGun(gun: THREE.Object3D, level: number): void {
-  const fill = heldGunFill(level);
-  gun.traverse((o) => {
-    const material = (o as THREE.Mesh).material;
-    if (material instanceof THREE.MeshToonMaterial) material.emissive.copy(material.color).multiplyScalar(fill);
-  });
-}
 
 /** How long a muzzle flash lasts, in seconds. */
 const FLASH_TIME = 0.09;
@@ -347,8 +309,8 @@ export class Muzzle {
 
   update(dt: number) {
     if (this.t >= FLASH_TIME) return;
-    // The first frame drawn after the shot shows the whole flash; at the headset's 30 Hz
-    // gameplay rate that is the difference between a pop and a two-frame glimmer.
+
+    // Keep the flash at full brightness for its first frame.
     if (this.fresh) {
       this.fresh = false;
       return;
@@ -437,7 +399,6 @@ export class Puff {
 /** How long a hit's spray hangs in the air, in seconds. */
 const SPRAY_TIME = 0.45;
 
-/** Every spray's one small sphere: the headset uploads it once. */
 let sprayBall: THREE.SphereGeometry | null = null;
 
 /**

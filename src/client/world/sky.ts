@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Theme, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
-import { lampHalosShown } from '../native/mode';
 import type { NightParts } from './outside';
 
 /*
@@ -39,12 +38,7 @@ const HAZE_ABOVE = 17.5;
 /** The building, walls included: the office upstairs and the garage under it. */
 const B = { minX: FLOOR.minX - WALL_T, maxX: FLOOR.maxX + WALL_T, minZ: FLOOR.minZ - WALL_T, maxZ: FLOOR.maxZ + WALL_T } as const;
 
-/**
- * The lamp and screen arrays live in flat Float32Arrays, `size` floats per entry. three re-sends a
- * lit material's uniforms at every material switch, and an array of Vector4s or Colors it first
- * copies element by element into a scratch array; a Float32Array it hands to WebGL as it is. With
- * ~100 draws per eye in VR that copying was the frame: on Galaxy XR, 51 fps became 72.
- */
+/** Flat uniform arrays avoid copying each light's vectors and colors at every material switch. */
 class Slots {
   readonly data: Float32Array;
   constructor(
@@ -182,8 +176,7 @@ material.diffuseColor = mix( material.diffuseColor, vec3( 0.93, 0.96, 1.0 ), sky
 const LIGHT = /* glsl */ `
 if ( skyOn > 0.0 ) {
   vec3 skyLight = skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + skyScreensAt( vSkyWorld, skyN );
-  // The lamps and the garage light only what's outside the office, so indoors (most of the view)
-  // skips their loop outright: the same picture, and on Galaxy XR 33 fps became 47.
+  // The lamps and the garage light only what's outside the office, so indoors skips their loop.
   if ( skyIndoor < 1.0 ) skyLight += ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) );
   reflectedLight.indirectDiffuse += skyLight * BRDF_Lambert( material.diffuseColor );
 }
@@ -523,28 +516,25 @@ export class Sky {
     this.moonDisc.material.map = moonTexture();
     this.dome.add(this.spookyDome, this.stars, this.moonDisc);
     scene.add(this.dome);
-
     // Halos round the bulbs at night, one set of points per size (and per floor or street).
-    if (lampHalosShown()) {
-      const halo = blobTexture(0.25);
-      const bySize = new Map<string, { size: number; ground: boolean; pos: number[]; col: number[] }>();
-      for (const h of night.halos) {
-        const key = `${h.size}|${!!h.ground}`;
-        let set = bySize.get(key);
-        if (!set) bySize.set(key, (set = { size: h.size, ground: !!h.ground, pos: [], col: [] }));
-        set.pos.push(h.at.x, h.at.y, h.at.z);
-        const c = new THREE.Color(h.color);
-        set.col.push(c.r, c.g, c.b);
-      }
-      for (const { size, ground, pos, col } of bySize.values()) {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-        const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: halo, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
-        p.visible = false;
-        this.halos.push(p);
-        (ground ? this.groundHalos : scene).add(p);
-      }
+    const halo = blobTexture(0.25);
+    const bySize = new Map<string, { size: number; ground: boolean; pos: number[]; col: number[] }>();
+    for (const h of night.halos) {
+      const key = `${h.size}|${!!h.ground}`;
+      let set = bySize.get(key);
+      if (!set) bySize.set(key, (set = { size: h.size, ground: !!h.ground, pos: [], col: [] }));
+      set.pos.push(h.at.x, h.at.y, h.at.z);
+      const c = new THREE.Color(h.color);
+      set.col.push(c.r, c.g, c.b);
+    }
+    for (const { size, ground, pos, col } of bySize.values()) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: halo, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      p.visible = false;
+      this.halos.push(p);
+      (ground ? this.groundHalos : scene).add(p);
     }
     scene.add(this.groundHalos);
 

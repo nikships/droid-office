@@ -1,5 +1,5 @@
 // The office's per-start LAN token, when this page was opened with ?t= (a device on the LAN,
-// like the headset): every request back to the office carries it. The laptop's own browser on
+
 // loopback has none and needs none. The office checks it once per connection (see server/lan.ts).
 
 /** The LAN token this page carries, if any. */
