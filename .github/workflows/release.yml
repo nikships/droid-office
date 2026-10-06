@@ -1,11 +1,13 @@
 name: Release
 
-# Every change to the app that lands on main is built, tested and published as a GitHub release,
-# and install.sh installs the newest one. The version is package.json's major.minor plus the
-# number of commits on main (v0.1.68, v0.1.69, ...); bump package.json for a new minor.
+# Every change to the app that lands on main is built, tested and published as a GitHub release
+# marked Latest: install.sh installs its tarball, and the Mac app (src/desktop) updates itself to
+# it through electron-updater, which reads the release's latest-mac.yml. Every release gets a new
+# version, package.json's major.minor plus the number of commits on main (v0.1.68, v0.1.69, ...),
+# so the app always sees it as newer; bump package.json for a new minor.
 #
-# Pull requests get the same build, tests and a real install of the packed release through
-# install.sh, but publish nothing.
+# Pull requests get the same build, tests, a real install of the packed release through install.sh
+# and an unsigned build of the Mac app, but publish nothing.
 
 on:
   push:
@@ -24,6 +26,8 @@ on:
       - 'install.ps1'
       - '.env.example'
       - '.gitignore'
+      - 'electron-builder.yml'
+      - 'build/**'
       - '.github/workflows/release.yml'
   pull_request:
     paths:
@@ -40,6 +44,8 @@ on:
       - 'install.ps1'
       - '.env.example'
       - '.gitignore'
+      - 'electron-builder.yml'
+      - 'build/**'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -53,8 +59,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    env:
+      # Electron is only for the Mac app, which the mac job builds.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    outputs:
+      version: ${{ steps.pack.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -112,16 +121,119 @@ jobs:
           grep -qx "v${{ steps.pack.outputs.version }}" install/current
           kill -INT "$office"
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: droid-office.tgz
+          if-no-files-found: error
+
+  mac:
+    runs-on: macos-26
+    env:
+      # Signed and notarized only for a release; a pull request's build skips both.
+      PUBLISHING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the version counts the commits on main
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build
+        run: npm ci # its prepare script builds the client, the server and the app's main process
+
+      - name: Set the release version
+        id: version
+        run: |
+          version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$(git rev-list --count HEAD)"
+          npm version "$version" --no-git-tag-version --allow-same-version
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign and notarize the app
+        if: env.PUBLISHING == 'true'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTS }}
+          CSC_KEY_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --mac --arm64 --publish never
+
+      - name: Build the app unsigned
+        if: env.PUBLISHING != 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac --arm64 --publish never -c.mac.identity=null
+
+      - name: Start the office on the app's own Electron
+        run: |
+          app="release/mac-arm64/Droid Office.app"
+          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Droid Office" "$app/Contents/Resources/app/bin/droid-office.js" \
+            --home "$RUNNER_TEMP/office" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
+          office=$!
+          for _ in $(seq 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/ || true)
+            [ "$code" = 200 ] && break
+            sleep 1
+          done
+          cat office.log
+          [ "$code" = 200 ] || { echo "the app's office didn't answer (last status: $code)"; exit 1; }
+          kill -INT "$office"
+          grep -qx "version: ${{ steps.version.outputs.version }}" release/latest-mac.yml
+
+      - name: Check the signature and notarize the disk image
+        if: env.PUBLISHING == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app="release/mac-arm64/Droid Office.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute -vv "$app" 2>&1 | tee spctl.log
+          grep -q 'source=Notarized Developer ID' spctl.log
+          # electron-builder notarizes the app inside; the disk image around it gets its own ticket.
+          dmg="release/Droid-Office-${{ steps.version.outputs.version }}-arm64.dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+
+  publish:
+    needs: [release, mac]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+
       - name: Publish
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: v${{ steps.pack.outputs.version }}
+          TAG: v${{ needs.release.outputs.version }}
         run: |
+          grep -qx "version: ${{ needs.release.outputs.version }}" assets/latest-mac.yml
           if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "$TAG is already released"
-            exit 0
+            # A rerun: replace the assets together, so latest-mac.yml matches the zip it lists.
+            gh release upload "$TAG" assets/* --clobber
+            gh release edit "$TAG" --latest
+          else
+            gh release create "$TAG" assets/* \
+              --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest
           fi
-          gh release create "$TAG" droid-office.tgz \
-            --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest

@@ -1,5 +1,7 @@
 node_modules
 dist
+# The Mac app that `npm run package:mac` builds.
+release
 .droid-office
 *.log
 .DS_Store

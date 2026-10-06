@@ -66,7 +66,9 @@ const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb'
 
 // Env vars from a parent terminal session (e.g. starting the office from inside another agent)
 // that don't belong in a worker's terminal.
-const SCRUB_ENV = new Set(['NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION']);
+// ELECTRON_RUN_AS_NODE: the Mac app runs the office on Electron's Node; a worker that kept it would
+// turn every Electron app it starts (VS Code's `code`, another app) into a bare Node process.
+const SCRUB_ENV = new Set(['NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ELECTRON_RUN_AS_NODE']);
 const SCRUB_PREFIXES = ['NEBULA_', 'DROID_OFFICE_'];
 const scrubbed = (k: string) => SCRUB_ENV.has(k) || SCRUB_PREFIXES.some((p) => k.startsWith(p));
 
@@ -1684,7 +1686,7 @@ process.stdin.on('end', () => {
       return (
         `if [ -z "$DROID_OFFICE_WORKER_ID" ] || [ -z "$DROID_OFFICE_HOOK_URL" ]; then exit 0; fi; ` +
         `if command -v curl >/dev/null 2>&1; then ${curl} >/dev/null 2>&1; ` +
-        `else ${shq(process.execPath)} ${shq(nodeHook)} ${event} >/dev/null 2>&1; fi; true`
+        `else ${runAsNode().sh}${shq(process.execPath)} ${shq(nodeHook)} ${event} >/dev/null 2>&1; fi; true`
       );
     };
     const droidHooks: Record<string, unknown[]> = {};
@@ -1722,10 +1724,11 @@ process.stdin.on('end', () => {
     const dir = path.join(this.dataDir, sub);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, name);
-    writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\nexec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
+    const node = runAsNode();
+    writeFileSync(file, `#!/bin/sh\n# ${what} (see bin/${name}.js).\n${node.sh}exec ${shq(process.execPath)} ${shq(script)} "$@"\n`, { mode: 0o700 });
     chmodSync(file, 0o700);
     // cmd.exe and PowerShell find it by PATHEXT; Git Bash (Droid's shell there) runs the sh one.
-    if (WIN) writeFileSync(`${file}.cmd`, `@"${process.execPath}" "${script}" %*\r\n`);
+    if (WIN) writeFileSync(`${file}.cmd`, `@${node.cmd}"${process.execPath}" "${script}" %*\r\n`);
     return dir;
   }
 
@@ -1941,6 +1944,15 @@ function officeScript(name: string): string | undefined {
     if (existsSync(file)) return file;
   }
   return undefined;
+}
+
+/**
+ * What a script prefixes to `process.execPath` to run a .js file with it. Under the Mac app that's
+ * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and workers don't
+ * inherit that (SCRUB_ENV), so the commands written for them set it themselves.
+ */
+export function runAsNode(versions: NodeJS.ProcessVersions = process.versions): { sh: string; cmd: string } {
+  return versions.electron ? { sh: 'ELECTRON_RUN_AS_NODE=1 ', cmd: 'set "ELECTRON_RUN_AS_NODE=1" & ' } : { sh: '', cmd: '' };
 }
 
 const WIN = process.platform === 'win32';
