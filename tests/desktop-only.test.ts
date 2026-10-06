@@ -5,9 +5,9 @@ import { join } from 'node:path';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 
-test('the release has only browser and server build targets', () => {
+test('the release builds only the browser client, the server and the Mac app', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts.build, 'npm run build:client && npm run build:server');
+  assert.equal(pkg.scripts.build, 'npm run build:client && npm run build:server && npm run build:desktop');
   assert.deepEqual(pkg.files, ['bin', 'dist']);
   assert.doesNotMatch(JSON.stringify(pkg), /@iwsdk|bonjour|three-mesh-bvh|dev:runtime|build:android|test:vr|tools\/vr/);
   const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');

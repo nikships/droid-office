@@ -61,6 +61,10 @@ Every new feature that ships in the original project is brought over, adapted to
 
 You need Node.js 20+, `git`, and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab.
 
+**The Mac app (Apple Silicon)**
+
+Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest) and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed; `droid`, `git` and `gh` are. See [the Mac app](docs/guide.md#the-mac-app).
+
 **macOS and Linux**
 
 ```bash

@@ -1,0 +1,51 @@
+# The Droid Office Mac app (src/desktop): `npm run package:mac` builds it into release/.
+# .github/workflows/release.yml builds, signs and notarizes it for every release, and the app
+# updates itself from the newest GitHub release through electron-updater (latest-mac.yml).
+appId: com.nikships.droid-office
+productName: Droid Office
+copyright: Copyright © Nikhil Anand
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - package.json
+  - bin/**/*
+  - dist/**/*
+  - '!dist/**/*.map'
+
+# The office runs bin/droid-office.js, its PTY host and the workers' office-queue / office-workers
+# commands as files on disk with Electron's Node, and node-pty spawns its spawn-helper from disk,
+# so nothing is packed into an asar archive.
+asar: false
+# node-pty ships Node-API prebuilds, which load in Electron as they are.
+npmRebuild: false
+electronLanguages:
+  - en
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  identity: Nikhil Anand (NW6B3R27LQ)
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # GitHub turns spaces in asset names into dots, which would break the names latest-mac.yml lists.
+  artifactName: Droid-Office-${version}-${arch}.${ext}
+  target:
+    - target: dmg
+      arch: [arm64]
+    # electron-updater installs updates from the zip.
+    - target: zip
+      arch: [arm64]
+
+dmg:
+  title: Droid Office
+
+publish:
+  provider: github
+  owner: nikships
+  repo: droid-office
+  releaseType: release
