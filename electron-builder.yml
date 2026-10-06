@@ -43,6 +43,8 @@ mac:
 
 dmg:
   title: Droid Office
+  # Signed like the app, so Gatekeeper accepts the disk image itself (the release job notarizes it).
+  sign: true
 
 publish:
   provider: github
