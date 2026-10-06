@@ -17,7 +17,7 @@ export const BRANCH_PREFIX = 'office/';
 const FETCH_FRESH_MS = 15_000;
 const FETCH_TIMEOUT_MS = 15_000;
 /** What the office writes into a worker's workspace (see WorkerInfo.repos), besides the worktrees. */
-export const WORKSPACE_FILES = new Set(['AGENTS.md', 'CLAUDE.md']);
+export const WORKSPACE_FILES = new Set(['AGENTS.md']);
 
 export interface WorktreeRef {
   /** Folder relative to the project dir; missing for a branch whose worktree is already gone. */

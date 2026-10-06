@@ -7,7 +7,6 @@ import path from 'node:path';
 import { Changes } from '../src/server/changes.js';
 import { excludeFromGit } from '../src/server/config.js';
 import { landedWorkers } from '../src/server/leave-on-merge.js';
-import { Ledger } from '../src/server/usage.js';
 import { WorkerManager, relatedBlock, withRelated, workspaceNames, type RepoSource, type WorkerEvents } from '../src/server/workers.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { ChangesState, GhPull, WorkerInfo } from '../src/shared/protocol.js';
@@ -129,25 +128,21 @@ const events: WorkerEvents = { update() {}, remove() {}, data() {}, screen() {},
 function manager(f: Fixture, t: { after(fn: () => void): void }): WorkerManager {
   const data = path.join(f.a, '.droid-office');
   mkdirSync(data, { recursive: true });
-  const workers = new WorkerManager(
-    f.a,
-    data,
-    f.agent,
-    [],
-    { url: 'http://127.0.0.1:1', token: '' },
-    events,
-    new Ledger(
-      data,
-      { pauseHiring: false },
-      () => {},
-      () => {},
-    ),
-  );
+  const workers = new WorkerManager(f.a, data, f.agent, [], { url: 'http://127.0.0.1:1', token: '' }, events);
   t.after(() => workers.shutdown());
   return workers;
 }
 
 const source = (floor: string, dir: string): RepoSource => ({ floor, name: path.basename(dir), repo: `acme/${path.basename(dir)}`, dir });
+
+/** The fake agent fires no hooks, so its worker is seated the way Droid's SessionStart would seat it. */
+async function sessionStart(workers: WorkerManager, data: string, id: string) {
+  const token = await waitFor(
+    () => (JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')) as { id: string; hookToken?: string }[]).find((s) => s.id === id)?.hookToken,
+    (t) => typeof t === 'string' && t.length > 0,
+  );
+  assert.equal(workers.handleHook(id, token, 'SessionStart', { hook_event_name: 'SessionStart', session_id: 'session-1' }), true);
+}
 
 async function waitFor<T>(read: () => T, ok: (v: T) => boolean, timeout = 5000): Promise<T> {
   const end = Date.now() + timeout;
@@ -163,7 +158,7 @@ async function waitFor<T>(read: () => T, ok: (v: T) => boolean, timeout = 5000):
 test('a worker across repositories gets a workspace with a worktree of each on one branch, and starts in it', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const w = workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]);
+  const w = workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]);
   assert.equal(typeof w, 'object', String(w));
   if (typeof w === 'string') return;
   const slug = w.worktree!.branch.replace(/^office\//, '');
@@ -185,9 +180,8 @@ test('a worker across repositories gets a workspace with a worktree of each on o
     assert.equal(git(path.join(ws, name), 'rev-parse', '--abbrev-ref', 'HEAD'), w.worktree!.branch);
     assert.equal(realpathSync(path.resolve(path.join(ws, name), git(path.join(ws, name), 'rev-parse', '--git-common-dir'))), realpathSync(path.join(dir, '.git')));
   }
-  // The brief says which folder is which, for Claude (CLAUDE.md) and the others (AGENTS.md).
-  const brief = readFileSync(path.join(ws, 'CLAUDE.md'), 'utf8');
-  assert.equal(readFileSync(path.join(ws, 'AGENTS.md'), 'utf8'), brief);
+  // The brief says which folder is which (AGENTS.md, the one file the office writes).
+  const brief = readFileSync(path.join(ws, 'AGENTS.md'), 'utf8');
   for (const line of ['`web/`: acme/web, cut from main', '`api/`: acme/api, cut from main', '`admin/`: acme/admin', w.worktree!.branch, 'acme/web#12']) assert.ok(brief.includes(line), line);
   assert.ok(!brief.includes('{{'), brief);
 
@@ -212,7 +206,7 @@ test('a worker across repositories gets a workspace with a worktree of each on o
 test('hiring across repositories needs its own worktree and different repositories, and leaves nothing behind when it fails', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const hire = (repos: RepoSource[], worktree = true) => workers.spawn('desk-1', 'Cody', undefined, worktree, 'agent', undefined, undefined, undefined, undefined, repos);
+  const hire = (repos: RepoSource[], worktree = true) => workers.spawn('desk-1', 'Cody', undefined, worktree, 'agent', undefined, undefined, undefined, repos);
   assert.match(String(hire([source('floor-api', f.b)], false)), /own worktree/);
   // Another checkout of the web repository is still the web repository.
   const twin = path.join(f.root, 'web-twin');
@@ -243,7 +237,7 @@ test('hiring across repositories needs its own worktree and different repositori
 test('sending a worker across repositories home checks every worktree, and deletes them all and its workspace', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
+  const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
   const w = hire();
   const ws = path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
   writeFileSync(path.join(ws, 'api', 'server.js'), 'wip\n');
@@ -273,12 +267,9 @@ test('sending a worker across repositories home checks every worktree, and delet
 test('O opens a pull request in each repository with commits, and each one lists them all', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const w = workers.spawn('desk-1', 'Cody', 'Work on GitHub issue #12: "Sign in with passkeys".', true, 'agent', undefined, undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]) as WorkerInfo;
+  const w = workers.spawn('desk-1', 'Cody', 'Work on GitHub issue #12: "Sign in with passkeys".', true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]) as WorkerInfo;
   const ws = path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
-  await waitFor(
-    () => workers.get(w.id)?.status,
-    (s) => s !== 'starting',
-  );
+  await sessionStart(workers, path.join(f.a, '.droid-office'), w.id);
   // Work in web and api; nothing in admin.
   for (const name of ['web', 'api']) {
     writeFileSync(path.join(ws, name, 'passkeys.js'), `// ${name}\n`);

@@ -1,7 +1,7 @@
 {
   "name": "droid-office",
   "version": "0.1.0",
-  "description": "A 3D office in the browser where its owner hires claude, opencode, codex and droid workers at desks and works in their live PTYs.",
+  "description": "A 3D office in the browser where its owner hires Droid workers at desks and works in their live PTYs.",
   "type": "module",
   "bin": {
     "droid-office": "bin/droid-office.js"

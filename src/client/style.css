@@ -135,7 +135,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .hud-off { display: none !important; }
 .project-meta.hud-off.lobby { display: block !important; }
 .panel-x { flex: none; margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius); background: none; color: var(--text-secondary); font: 500 12px/1 var(--font-mono); cursor: pointer; opacity: 0; transition: opacity var(--duration) var(--ease); align-self: center; }
-.side h3 :is(.cost, .plan) ~ .panel-x { margin-left: 2px; }
 .side section:hover .panel-x, .panel-x:focus-visible { opacity: 1; }
 .panel-x:hover { background: var(--surface-hover); color: var(--text); }
 @media (hover: none) { .panel-x { opacity: .6; } }
@@ -154,33 +153,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border-strong); flex: none; }
 .workers .sub { display: block; font: 400 10px/1.5 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workers .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workers h3 .cost { margin-left: auto; font-size: 10px; text-transform: none; letter-spacing: .02em; }
-.workers .cost { font: 500 10px var(--font-mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.workers .name .cost { display: block; white-space: normal; overflow-wrap: anywhere; }
-/* Spend: today, the budget and all time. Its panel only shows once there's something to say. */
-.side .spend { flex: none; }
-.spend:has(> .usage.hidden) { display: none; }
-.usage { font: 400 11px var(--font-mono); display: flex; flex-direction: column; gap: 5px; font-variant-numeric: tabular-nums; }
-.usage .row { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.usage .row.muted { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
-.usage .row b { font-weight: 700; font-variant-numeric: tabular-nums; }
-.usage .muted { color: var(--text-secondary); font-weight: 400; }
-.usage.over .row b { color: var(--danger); }
-.budget, .meter { height: 6px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface-raised); overflow: hidden; }
-.budget .fill, .meter .fill { height: 100%; background: var(--success); transition: width .3s var(--ease); }
-.budget.near .fill, .meter.near .fill { background: var(--warning); }
-.budget.over .fill, .meter.over .fill { background: var(--danger); }
-/* Claude plan limits: the 5-hour session and the week */
-.side .limits { flex: none; cursor: pointer; font: 400 11px var(--font-mono); display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
-.limits h3 { margin-bottom: 2px; }
-.limits .plan { margin-left: auto; font-size: 10px; text-transform: none; letter-spacing: .02em; color: var(--text-secondary); }
-.limits .row { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
-.limits .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.limits .row b { font-weight: 700; font-variant-numeric: tabular-nums; }
-.limits .row b.over { color: var(--danger); }
-.limits .reset { margin-left: auto; font-size: 10px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-.limits .meter + .row { margin-top: 3px; }
-.limits .muted { color: var(--text-secondary); font-weight: 400; }
 /* Status badges: square, mono, with a small indicator in the status's color. */
 .pill { display: inline-flex; align-items: center; gap: 5px; flex: none; font: 500 9.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; padding: 3px 6px; border-radius: var(--radius-xs); border: 1px solid var(--border); background: var(--surface-raised); color: var(--text-secondary); white-space: nowrap; }
 .pill::before { content: ''; width: 5px; height: 5px; border-radius: 1px; background: currentColor; flex: none; }
@@ -360,22 +332,14 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .close.corner { position: absolute; top: 10px; right: 10px; z-index: 1; }
 
 .seg { display: flex; gap: 8px; flex-wrap: wrap; }
-.provider-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-width: 190px; }
-.provider-choice label { margin: 0; white-space: nowrap; }
-.provider-select { min-width: 132px; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
-.provider-note { display: block; flex: 1 1 160px; min-width: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.25; }
-.provider-model { display: flex; flex: 1 1 220px; flex-direction: column; gap: 3px; min-width: 180px; margin-top: 4px; }
-.provider-model input { width: 100%; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
-.provider-model input:invalid { border-color: var(--danger); }
-.provider-model-hint { color: var(--text-secondary); font-size: 11px; line-height: 1.25; }
-.provider-model.claude-model, .provider-model.droid-model { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 8px; }
-.provider-model.claude-model label, .provider-model.droid-model label { white-space: nowrap; }
-.provider-model.claude-model select, .provider-model.droid-model select { width: 100%; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
-.provider-model.claude-model .provider-model-hint, .provider-model.droid-model .provider-model-hint { grid-column: 1 / -1; }
-.modal.gh-window.issue footer .provider-choice { margin: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
-.modal.gh-window.issue footer .provider-choice label { font-size: 10px; }
-.modal.gh-window.issue footer .provider-note { flex: 0 1 auto; max-width: 150px; }
-.modal.gh-window.issue footer .provider-model { flex: 0 1 auto; min-width: 190px; }
+/* The Droid model and effort a new worker runs on: one line in a form, its hint under. */
+.model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-width: 190px; }
+.model-choice label { margin: 0; white-space: nowrap; }
+.model-choice select { min-width: 132px; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
+.model-hint { display: block; flex: 1 1 160px; min-width: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.25; }
+.modal.gh-window.issue footer .model-choice { margin: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+.modal.gh-window.issue footer .model-choice label { font-size: 10px; }
+.modal.gh-window.issue footer .model-hint { flex: 0 1 auto; max-width: 150px; }
 .setting-note { margin: 10px 0 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); line-height: 1.4; }
 .setting-note.bad { color: var(--danger); }
 .webhook { display: flex; gap: 8px; }
@@ -444,7 +408,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal.term.uploading:not(.dropping) .term-host::after { content: '📎 Putting it in the terminal…'; }
 .term-zoom-group { display: inline-flex; gap: 4px; flex: none; }
 .term-zoom { padding: 4px 8px; text-transform: none; }
-.modal.term header .cost { font: 400 11px var(--font-mono); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Changes window: changed files + diff at a desk */
 .modal.desk-changes { width: min(1300px, 100%); height: min(860px, calc(100vh - 32px)); outline: none; }
@@ -961,19 +924,17 @@ a.when:hover { text-decoration: underline; }
 /* The prompt gets its own row; the picker's pieces flow into one line under it, then its notes. */
 .queue-add { display: flex; gap: 8px 6px; align-items: center; flex-wrap: wrap; }
 .queue-add textarea { flex: 1 1 100%; min-height: 60px; }
-.queue-add .provider-choice, .queue-add .provider-model:not(.hidden) { display: contents; }
+.queue-add .model-choice { display: contents; }
 .queue-add label { margin: 0 0 0 8px; font-size: 10px; white-space: nowrap; }
-.queue-add .provider-choice > label:first-child { margin-left: 0; }
 /* A zero basis keeps the row from wrapping: the pickers shrink first (down to a readable floor) and grow back to their natural width when there's room. */
-.queue-add .provider-select, .queue-add .provider-model.claude-model select, .queue-add .provider-model.droid-model select { flex: 1 1 0; width: auto; min-width: 84px; max-width: max-content; }
-.queue-add .provider-model input[type=text] { flex: 1 1 0; width: auto; min-width: 140px; }
+.queue-add .model-choice select { flex: 1 1 0; width: auto; min-width: 84px; max-width: max-content; }
 .queue-add button[type=submit] { margin-left: auto; }
 .queue-add::after { content: ''; order: 1; flex-basis: 100%; margin-top: -6px; }
-.queue-add .provider-note, .queue-add .provider-model-hint { order: 2; flex: 0 1 auto; margin-top: -6px; }
+.queue-add .model-hint { order: 2; flex: 0 1 auto; margin-top: -6px; }
 /* Too narrow for one line: each label and its picker take a row, so a label never ends up stranded from its picker. */
 @media (max-width: 640px) {
   .queue-add label { flex: 0 0 64px; margin-left: 0; }
-  .queue-add .provider-select, .queue-add .provider-model.claude-model select, .queue-add .provider-model.droid-model select, .queue-add .provider-model input[type=text] { flex: 1 1 calc(100% - 70px); max-width: none; }
+  .queue-add .model-choice select { flex: 1 1 calc(100% - 70px); max-width: none; }
 }
 .queue h4 { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-secondary); }
 .queue h4 .no { color: var(--accent); }
@@ -1139,6 +1100,7 @@ a.when:hover { text-decoration: underline; }
 .meeting-field label { margin: 0; }
 .meeting-field input[type=number] { width: 150px; font: inherit; font-size: 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 10px; background: var(--surface-raised); color: var(--text); }
 .meeting-field input:disabled { opacity: .55; }
+.meeting-select { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
 .meeting-count { display: flex !important; align-items: center; gap: 8px; }
 .meeting-roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
 .meeting-role { display: flex; align-items: center; gap: 6px; }
@@ -1151,9 +1113,6 @@ a.when:hover { text-decoration: underline; }
 .meeting-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
 .meeting-title { font-weight: 600; }
 .meeting-line { margin: 8px 0; font-weight: 500; }
-.meeting-budget { display: flex; align-items: center; gap: 10px; font: 400 12px var(--font-mono); font-variant-numeric: tabular-nums; }
-.meeting-bar { flex: 1; height: 6px; border: 1px solid var(--border); border-radius: var(--radius-xs); overflow: hidden; background: var(--surface-hover); }
-.meeting-bar i { display: block; height: 100%; }
 .meeting-seats { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
 .meeting-seats li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; }
 .meeting-seats .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }

@@ -10,7 +10,7 @@
 
 ## How it was validated
 
-<!-- Commands you ran and what you checked by hand (desktop browser, GitHub or GitLab floor, provider). -->
+<!-- Commands you ran and what you checked by hand (desktop browser, GitHub or GitLab floor, Droid worker). -->
 
 ## CI checks
 

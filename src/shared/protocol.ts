@@ -26,30 +26,16 @@ export type WorkerKind = 'agent' | 'shell';
  */
 export type WorkerAction = 'read' | 'edit' | 'test' | 'web' | 'failing';
 
-export type AgentProvider = 'claude' | 'opencode' | 'codex' | 'droid' | 'grok' | 'muse' | 'custom';
-
-export function isAgentProvider(value: unknown): value is AgentProvider {
-  return value === 'claude' || value === 'opencode' || value === 'codex' || value === 'droid' || value === 'grok' || value === 'muse' || value === 'custom';
-}
-
-/** A Claude model alias the hire dialog and queue can request explicitly (see server/agents.ts). */
-export type ClaudeModel = 'fable' | 'opus' | 'sonnet' | 'haiku';
-export const CLAUDE_MODELS: readonly ClaudeModel[] = ['fable', 'opus', 'sonnet', 'haiku'];
-export function isClaudeModel(value: unknown): value is ClaudeModel {
-  return value === 'fable' || value === 'opus' || value === 'sonnet' || value === 'haiku';
-}
-
-/** Reasoning effort levels, from fastest/cheapest to most thorough. Claude Code and Grok take them as `--effort`; Droid as `reasoningEffort`; Muse as `--reasoning-effort`. */
+/** Reasoning effort levels, from fastest/cheapest to most thorough. Droid takes them as `reasoningEffort`. */
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const AGENT_EFFORTS: readonly AgentEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 export function isAgentEffort(value: unknown): value is AgentEffort {
   return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max';
 }
 
-/** Which agent a worker runs: its provider, and optionally the model and (Claude, Droid, Grok or Muse) the reasoning effort. */
+/** Which Droid model and reasoning effort a worker runs on. */
 export interface AgentChoice {
-  provider: AgentProvider;
-  /** An OpenCode provider/model id, a Droid model id, a Claude model alias, or a Grok/Muse model id; unset for the provider's own default. */
+  /** A Droid model id; unset for Droid's own default. */
   model?: string;
   effort?: AgentEffort;
 }
@@ -62,8 +48,8 @@ export interface PromptsState {
   /** Prompts someone rewrote, by id; the rest are the defaults. */
   custom: Partial<Record<PromptId, { text: string; by: string; at: number }>>;
   /**
-   * What a worker starts on when whoever starts it sends no provider (the Queue agent's tasks, say).
-   * Unset: the agent the office was started with (--agent), on its own default model.
+   * What a worker starts on when whoever starts it picks no model (the Queue agent's tasks, say).
+   * Unset: Droid's own default model.
    */
   agent?: AgentChoice & { by: string; at: number };
 }
@@ -79,12 +65,11 @@ export const WORKER_REVIVE_MS = 30_000;
 
 export interface WorkerInfo {
   id: string;
-  /** 'agent' runs the selected provider; 'shell' is a plain shared login shell. */
+  /** 'agent' runs Droid; 'shell' is a plain shared login shell. */
   kind: WorkerKind;
-  provider?: AgentProvider;
-  /** Model requested for this worker, instead of the office's configured default: an OpenCode provider/model id, a Droid model id, a Claude model alias, or a Grok/Muse model id. */
+  /** Droid model requested for this worker, instead of Droid's own default. */
   model?: string;
-  /** Reasoning effort requested for this worker, when one was chosen (Claude, Droid, Grok or Muse). */
+  /** Reasoning effort requested for this worker, when one was chosen. */
   effort?: AgentEffort;
   /** The model its session is running now, as the agent reports it (Droid), even when none was requested. Wins over `model` for display. */
   activeModel?: string;
@@ -138,8 +123,6 @@ export interface WorkerInfo {
   action?: WorkerAction;
   /** Written by a small model from its prompts and recent tool calls (see server/tasks.ts). */
   task?: WorkerTask;
-  /** Reported session tokens and cost, when the provider supplies them (agents only). */
-  usage?: Usage;
   /** When its terminal last took input (keystrokes or a prompt). */
   lastInputAt?: number;
   /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
@@ -154,85 +137,6 @@ export interface WorkerInfo {
 
 /** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
 export type LostBranch = 'here' | 'origin' | 'gone';
-
-/** Session usage. The persistent office ledger continues to cover Claude Code only. */
-export interface Usage {
-  /** Input tokens that missed the prompt cache. */
-  input: number;
-  output: number;
-  /** Reasoning tokens reported separately from output, when available. */
-  reasoning?: number;
-  /** False when the provider supplies tokens without usable pricing. Omitted for legacy Claude usage. */
-  costKnown?: boolean;
-  /** Provider history is still loading, failed to load, or reached a traversal limit. */
-  incomplete?: boolean;
-  /** Tokens written to the prompt cache. */
-  cacheWrite: number;
-  /** Tokens read from the prompt cache. */
-  cacheRead: number;
-  /** USD: estimated from the office's price list while a session runs, Claude Code's own figure once it has ended. */
-  cost: number;
-  /** API calls (assistant messages) counted. */
-  calls: number;
-  /** False when the provider reports cumulative tokens without a reliable call count. */
-  callsKnown?: boolean;
-  /** Authoritative provider total when it cannot be reconstructed from the displayed buckets. */
-  totalTokens?: number;
-}
-
-/** Every token a session used, cache reads and writes included: what the office shows and budgets meetings by. */
-export function tokensOf(u: Usage): number {
-  return u.totalTokens ?? u.input + u.output + (u.reasoning ?? 0) + u.cacheWrite + u.cacheRead;
-}
-
-/** e.g. 950, 12k, 1.25M */
-export function fmtTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1e6) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1e6).toFixed(n < 10e6 ? 2 : 1)}M`;
-}
-
-export function fmtCost(usd: number): string {
-  if (usd > 0 && usd < 0.005) return '<$0.01';
-  return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** Spend across the whole office, kept on disk (see server/usage.ts). */
-export interface UsageState {
-  /** Every worker the office ever ran, including ones sent home. */
-  total: Usage;
-  /** Since midnight on the office's machine. */
-  today: Usage;
-  /** The day `today` covers, YYYY-MM-DD on the office's machine. */
-  day: string;
-  /** Daily budget in USD (--budget), when one is set. */
-  budget?: number;
-  /** New hires are refused for the rest of the day once the budget is spent (--budget-pause). */
-  pauseHiring: boolean;
-}
-
-/** One of the Claude plan's usage windows: the 5-hour session, the week, or a model's week. */
-export interface PlanWindow {
-  /** e.g. "5h session", "Week", "Fable week". */
-  label: string;
-  /** Percent of the window used, 0-100. */
-  pct: number;
-  /** When it starts over (ms since epoch), when known. */
-  resetsAt?: number;
-}
-
-/**
- * The Claude plan limits of the account the office's Claude workers run on, as Claude Code's
- * /usage shows them (see server/limits.ts). One account for the whole building.
- */
-export interface PlanLimits {
-  /** 'pro', 'max', 'team', 'enterprise'…, when known. */
-  plan?: string;
-  /** The 5-hour session first, then the week, then per-model weeks. Empty until first read, or when there is no plan. */
-  windows: PlanWindow[];
-  /** When the numbers were read (ms since epoch); 0 before the first read. */
-  at: number;
-}
 
 /**
  * One other floor's repository a worker works in (see WorkerInfo.repos): a worktree of that floor's
@@ -344,10 +248,9 @@ export type TaskStatus = 'queued' | 'running' | 'done';
 /** A task on the 📋 queue whiteboard: a GitHub issue or free text, seated to a worker by itself. */
 export interface QueueTask {
   id: string;
-  provider?: AgentProvider;
-  /** Model requested for this task, instead of the office's configured default: an OpenCode provider/model id, a Droid model id, or a Claude model alias. */
+  /** Droid model requested for this task, instead of Droid's own default. */
   model?: string;
-  /** Reasoning effort requested for this task, when one was chosen (Claude and Droid only). */
+  /** Reasoning effort requested for this task, when one was chosen. */
   effort?: AgentEffort;
   /** The GitHub issue it came from, when it did. */
   issue?: number;
@@ -387,9 +290,6 @@ export interface MeetingSeat {
   deskId: string;
   workerId?: string;
   workerName?: string;
-  /** What its worker has used, kept after it goes home. `cost` is missing when its provider doesn't say. */
-  tokens?: number;
-  cost?: number;
 }
 
 /** One worker's part in a round: what it's doing, and the file that says it has done it. */
@@ -411,7 +311,7 @@ export type MeetingStatus = 'running' | 'done' | 'stopped';
 
 /**
  * A meeting in the meeting room: 2–5 workers on one question or task, in rounds, following a pattern.
- * It ends when its output file is written, or stops at its round limit or token budget and says why.
+ * It ends when its output file is written, or stops at its round limit and says why.
  */
 export interface Meeting {
   id: string;
@@ -429,7 +329,6 @@ export interface Meeting {
   pr?: number;
   /** The GitHub issue it's about, when it was called from one. */
   issue?: number;
-  provider?: AgentProvider;
   model?: string;
   effort?: AgentEffort;
   /** The round limit. */
@@ -441,13 +340,6 @@ export interface Meeting {
   lastRound?: number;
   /** The current step's parts. */
   turns: MeetingTurn[];
-  /** Tokens every worker in the meeting may use between them, and how many they have. */
-  budget: number;
-  tokens: number;
-  /** USD, where the providers report it. */
-  cost: number;
-  /** False when a worker's provider reports no cost, so `cost` leaves it out. */
-  costKnown: boolean;
   status: MeetingStatus;
   /** Why it stopped short. */
   reason?: string;
@@ -474,7 +366,7 @@ export interface MeetingRecord {
   pattern: MeetingPattern;
   title: string;
   status: MeetingStatus;
-  /** The line on the room's door: pattern, rounds, tokens, cost, and the output (or why it stopped). */
+  /** The line on the room's door: pattern, rounds, and the output (or why it stopped). */
   summary: string;
   calledBy: string;
   finishedAt: number;
@@ -502,8 +394,6 @@ export interface MeetingRequest {
   pr?: number;
   issue?: number;
   rounds?: number;
-  budget?: number;
-  provider?: AgentProvider;
   model?: string;
   effort?: AgentEffort;
 }
@@ -543,46 +433,6 @@ export interface MachineState {
   ceiling?: number;
   /** The limit someone set in ⚙️ Settings, when there is one. */
   set?: { limit: number; by: string; at: number };
-}
-
-export type ProxyProvider = 'claude' | 'codex' | 'grok';
-
-/** One of an account's limits: how much of it is used, and when it starts over. */
-export interface ProxyWindow {
-  /** Short: '5h', 'Week', 'Fable wk', 'Extra'… */
-  label: string;
-  /** 0-100. */
-  pct: number;
-  /** ms since epoch, when known. */
-  resetsAt?: number;
-}
-
-/** One account DroidProxy serves. Never its email or tokens: this goes to everyone in the office. */
-export interface ProxyAccount {
-  provider: ProxyProvider;
-  /** 'Claude', 'Grok', or 'Codex 1', 'Codex 2'… when a provider has more than one. */
-  label: string;
-  /** 'plus', 'team'…, when the provider says. */
-  plan?: string;
-  windows: ProxyWindow[];
-  /** A limit is used up, so DroidProxy has to fail over to another account or wait. */
-  limited?: boolean;
-  /** Why there are no numbers for it. */
-  error?: string;
-}
-
-/**
- * The subscription limits of the accounts DroidProxy serves on the office's machine (see
- * server/droidproxy.ts), for the machine monitor. No accounts when DroidProxy isn't set up.
- */
-export interface ProxyState {
-  /** Whether DroidProxy's proxy answered; missing before the first read. */
-  running?: boolean;
-  accounts: ProxyAccount[];
-  /** When the numbers were read (ms since epoch); 0 before the first read. */
-  at: number;
-  /** A read is under way; the numbers shown are the last ones. */
-  refreshing?: boolean;
 }
 
 export interface GhState<T> {
@@ -685,8 +535,6 @@ export interface ProjectInfo {
   /** Where its repository is hosted, and so which CLI its boards and workers use. */
   forge: Forge;
   agentCmd: string;
-  defaultProvider: AgentProvider;
-  agentProviders: AgentProvider[];
 }
 
 /**
@@ -960,7 +808,7 @@ export type ClientMsg =
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
    */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
@@ -978,9 +826,9 @@ export type ClientMsg =
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.
-   * `provider`/`model`/`effort` pick its engine when it's hired; an agent that's already there keeps its own.
+   * `model`/`effort` pick its engine when it's hired; an agent that's already there keeps its own.
    */
-  | { t: 'station.prompt'; deskId: string; prompt: string; provider?: AgentProvider; model?: string; effort?: AgentEffort }
+  | { t: 'station.prompt'; deskId: string; prompt: string; model?: string; effort?: AgentEffort }
   /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
@@ -998,7 +846,7 @@ export type ClientMsg =
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh or glab account; answered with gh.labeled. */
   | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; add: string[]; remove: string[] }
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; provider?: AgentProvider; model?: string; effort?: AgentEffort }
+  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; model?: string; effort?: AgentEffort }
   | { t: 'queue.remove'; taskId: string }
   /** Move a queued task up (-1) or down (+1) the queue. */
   | { t: 'queue.move'; taskId: string; delta: number }
@@ -1040,8 +888,6 @@ export type ClientMsg =
   | { t: 'changes.pr'; workerId: string; title: string; body: string; repo?: string }
   | { t: 'upgrade.check' }
   | { t: 'upgrade.start' }
-  /** Read the Claude plan limits again now, instead of at the next poll. */
-  | { t: 'limits.refresh' }
   /** Hang a picture on a wall. */
   | { t: 'decor.add'; decor: DecorPlacement }
   /** Move, resize, re-frame or swap the image of a picture. */
@@ -1090,8 +936,6 @@ export type ClientMsg =
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
-  /** Read DroidProxy's limits again now (E at the machine monitor); answered with `proxy`, or a toast when it can't yet. */
-  | { t: 'proxy.refresh' }
   | { t: 'ping'; at: number };
 
 /**
@@ -1122,11 +966,8 @@ export type ServerMsg =
       /** The running server's version; a change after a reconnect means the office was upgraded. */
       version: string;
       upgrade: UpgradeState;
-      usage: UsageState;
-      limits: PlanLimits;
       notify: NotifyState;
       machine: MachineState;
-      proxy: ProxyState;
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
       /** Halloween or Christmas decorations, all over the building, or none. */
@@ -1180,8 +1021,6 @@ export type ServerMsg =
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }
-  | { t: 'usage'; state: UsageState }
-  | { t: 'limits'; state: PlanLimits }
   | { t: 'queue'; state: QueueState }
   | { t: 'meeting'; state: MeetingState }
   | { t: 'notify'; state: NotifyState }
@@ -1191,7 +1030,6 @@ export type ServerMsg =
   /** To whoever is setting Jira up: done, or why not. */
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
-  | { t: 'proxy'; state: ProxyState }
   | { t: 'sky'; state: SkyState }
   | { t: 'theme'; state: ThemeState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }

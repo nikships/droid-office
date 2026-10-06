@@ -1,7 +1,7 @@
 // Names what each worker is on: a few words and a one-line summary for the card above its head.
-// A small model (Claude Haiku, through the `claude` CLI the office already needs) writes them from
-// the worker's prompts and recent tool calls, told how by the 'office.namer' prompt (shared/prompts.ts).
-// Without it, the card falls back to the prompt itself.
+// A small model (Haiku, through `droid exec`, the Droid the office already needs) writes them from
+// the worker's prompts and recent tool calls, told how by the 'office.namer' prompt
+// (shared/prompts.ts). Without it, the card falls back to the prompt itself.
 
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -26,13 +26,6 @@ const TIMEOUT_MS = 45_000;
 const FAILS_BEFORE_BACKOFF = 3;
 const BACKOFF_MS = 10 * 60_000;
 
-const SCHEMA = JSON.stringify({
-  type: 'object',
-  properties: { name: { type: 'string' }, summary: { type: 'string' } },
-  required: ['name', 'summary'],
-  additionalProperties: false,
-});
-
 export class TaskNamer {
   private pending = new Map<string, TaskContext>();
   private timers = new Map<string, NodeJS.Timeout>();
@@ -42,19 +35,19 @@ export class TaskNamer {
   private pausedUntil = 0;
 
   /**
-   * @param claude the `claude` binary, or null to only ever use the prompt as the label
-   * @param env environment for it (the office's own, minus anything that marks a child session)
+   * @param droid the `droid` binary, or null to only ever use the prompt as the label
+   * @param env environment for it (the office's own, minus anything that marks a nested session)
    * @param system its instructions, as the office has them now (the 'office.namer' prompt)
    */
   constructor(
-    private claude: string | null,
+    private droid: string | null,
     private env: Record<string, string>,
     private system: () => string,
     private done: (workerId: string, task: WorkerTask, ctx: TaskContext) => void,
   ) {}
 
   get enabled(): boolean {
-    return this.claude !== null && Date.now() >= this.pausedUntil;
+    return this.droid !== null && Date.now() >= this.pausedUntil;
   }
 
   /** Asks for a fresh label. Calls for the same worker close together collapse into one. */
@@ -99,7 +92,7 @@ export class TaskNamer {
 
   private async generate(ctx: TaskContext): Promise<WorkerTask | null> {
     if (!this.enabled) return null;
-    const out = await run(this.claude!, this.env, this.system(), describe(ctx));
+    const out = await run(this.droid!, this.env, this.system(), describe(ctx));
     const task = out === null ? null : parse(out);
     if (task) this.fails = 0;
     else if (++this.fails >= FAILS_BEFORE_BACKOFF) {
@@ -129,25 +122,24 @@ function describe(ctx: TaskContext): string {
   return parts.join('\n\n');
 }
 
-function run(claude: string, env: Record<string, string>, system: string, input: string): Promise<string | null> {
+function run(droid: string, env: Record<string, string>, system: string, input: string): Promise<string | null> {
   const args = [
-    '-p',
+    'exec',
     '--model',
-    'haiku',
+    'claude-haiku-4-5-20251001',
     '--output-format',
     'json',
-    '--json-schema',
-    SCHEMA,
-    '--system-prompt',
+    '--only-tools',
+    '',
+    '--disable-builtin-skills',
+    '--tag',
+    'droid-office-namer',
+    '--append-system-prompt',
     system,
-    '--tools',
-    '',
-    // Not the user's or the project's settings: no hooks, no MCP servers, no plugins, no transcript.
-    '--setting-sources',
-    '',
-    '--strict-mcp-config',
-    '--disable-slash-commands',
-    '--no-session-persistence',
+    // A neutral directory, so it doesn't pick up a project's own instructions.
+    '--cwd',
+    os.tmpdir(),
+    input,
   ];
   return new Promise((resolve) => {
     let out = '';
@@ -158,11 +150,10 @@ function run(claude: string, env: Record<string, string>, system: string, input:
       clearTimeout(timer);
       resolve(v);
     };
-    const child = spawn(claude, args, {
-      // A neutral directory, so it doesn't pick up the project's CLAUDE.md.
+    const child = spawn(droid, args, {
       cwd: os.tmpdir(),
-      env: { ...env, MAX_THINKING_TOKENS: '0' },
-      stdio: ['pipe', 'pipe', 'ignore'],
+      env,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
@@ -172,8 +163,6 @@ function run(claude: string, env: Record<string, string>, system: string, input:
     child.stdout.on('data', (d: string) => (out += d));
     child.on('error', () => finish(null));
     child.on('close', (code) => finish(code === 0 ? out : null));
-    child.stdin.on('error', () => {});
-    child.stdin.end(input);
   });
 }
 

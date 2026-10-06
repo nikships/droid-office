@@ -9,11 +9,9 @@ import type {
   MachineState,
   MeetingState,
   NotifyState,
-  PlanLimits,
   ProjectInfo,
   ProjectsDirState,
   PromptsState,
-  ProxyState,
   QueueState,
   QueueTask,
   RepoChoice,
@@ -22,8 +20,6 @@ import type {
   SkyState,
   ThemeState,
   UpgradeState,
-  Usage,
-  UsageState,
   WorkerInfo,
 } from '../shared/protocol';
 import type { ScreenState } from './world/laptop';
@@ -44,12 +40,9 @@ export type Topic =
   | 'upgrade'
   | 'services'
   | 'decor'
-  | 'usage'
-  | 'limits'
   | 'queue'
   | 'notify'
   | 'machine'
-  | 'proxy'
   | 'floors'
   | 'floor'
   | 'projectsDir'
@@ -65,8 +58,6 @@ export type Topic =
   | 'jira'
   | 'jiraBoard'
   | 'ball';
-
-const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, calls: 0 });
 
 export interface Profile {
   name: string;
@@ -101,9 +92,9 @@ export function saveProfile(p: Profile) {
 export type ViewMode = 'first' | 'third';
 
 /** The panels you can show or hide on screen, from the ☰ menu. */
-export type HudPanel = 'workers' | 'spend' | 'limits' | 'floor';
+export type HudPanel = 'workers' | 'floor';
 /** The workers show by default; the rest wait in the ☰ menu until turned on. */
-export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, spend: false, limits: false, floor: false };
+export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, floor: false };
 
 export interface Settings {
   view: ViewMode;
@@ -245,9 +236,6 @@ class Store {
   cabinet: CabinetState = { player: null, scores: [] };
   /** Your game on the cabinet as you last sent it; null while you're not playing. */
   cabinetFrame: CabinetFrame | null = null;
-  usage: UsageState = { total: zeroUsage(), today: zeroUsage(), day: '', pauseHiring: false };
-  /** The Claude plan's 5-hour and weekly limits. */
-  limits: PlanLimits = { windows: [], at: 0 };
   queue: QueueState = { tasks: [], maxWorkers: 0 };
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState = {};
@@ -259,8 +247,6 @@ class Store {
   notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
   machine: MachineState = { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
-  /** The limits of the accounts DroidProxy serves on the office's machine. */
-  proxy: ProxyState = { accounts: [], at: 0 };
   /** The basketball on this floor, as the office last said (see world/hoop.ts). */
   ball: BallState = {};
   /** Outside the windows; null until the server says. */
@@ -340,18 +326,15 @@ class Store {
         this.floors = msg.floors;
         this.projectsDir = msg.projectsDir;
         this.upgrade = msg.upgrade;
-        this.usage = msg.usage;
-        this.limits = msg.limits;
         this.notify = msg.notify;
         this.machine = msg.machine;
-        this.proxy = msg.proxy ?? { accounts: [], at: 0 };
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
         this.theme = msg.theme;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.prompts = msg.prompts ?? { custom: {} };
         this.enter(msg);
-        for (const t of ['upgrade', 'usage', 'limits', 'notify', 'machine', 'proxy', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -430,14 +413,6 @@ class Store {
         if (Math.abs(this.jukebox.since - was) > 20) this.emit('jukebox');
         break;
       }
-      case 'usage':
-        this.usage = msg.state;
-        this.emit('usage');
-        break;
-      case 'limits':
-        this.limits = msg.state;
-        this.emit('limits');
-        break;
       case 'queue':
         this.queue = msg.state;
         this.emit('queue');
@@ -461,10 +436,6 @@ class Store {
       case 'machine':
         this.machine = msg.state;
         this.emit('machine');
-        break;
-      case 'proxy':
-        this.proxy = msg.state;
-        this.emit('proxy');
         break;
       case 'ball':
         this.ball = msg.ball;

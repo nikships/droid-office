@@ -35,7 +35,7 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
-import type { AgentEffort, AgentProvider, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
+import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
 import { MEETING_PATTERNS } from '../shared/meetings';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
@@ -77,7 +77,7 @@ import { disposeSprite, redrawText, textSprite } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, timeAgo, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -96,11 +96,9 @@ import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
-import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
-import { providerLabel, rememberedChoice, resolvedProvider, modelBadge } from './ui/provider';
-import { renderLimits } from './ui/limits';
+import { modelBadge, rememberedChoice } from './ui/models';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
 import { mountHud } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
@@ -236,8 +234,8 @@ const renderQueueBoard = () => queueTex.render(store.queue, store.workers);
 mountBoard(office.boardMeshes.queue, queueTex.texture, renderQueueBoard, ['queue', 'workers']);
 // The machine monitor on the west wall.
 const machineTex = new MachineTexture();
-const renderMachineBoard = () => office.setMachineTall(machineTex.render(store.machine, store.proxy));
-mountBoard(office.machineScreen, machineTex.texture, renderMachineBoard, ['machine', 'proxy']);
+const renderMachineBoard = () => machineTex.render(store.machine);
+mountBoard(office.machineScreen, machineTex.texture, renderMachineBoard, ['machine']);
 // The meeting room: its output as it's written on the back wall, and how it's going on the door.
 const meetingBoardTex = new MeetingBoardTexture();
 const renderMeetingBoard = () => meetingBoardTex.render(store.meeting);
@@ -841,7 +839,7 @@ function renderProject() {
   const n = store.floors.findIndex((f) => f.id === store.floor);
   $('project-meta').classList.remove('lobby');
   $('project-name').textContent = `🏢 ${p.name}`;
-  $('project-meta').textContent = [n >= 0 && `🛗 floor ${n + 1} of ${store.floors.length}`, p.branch && `⎇ ${p.branch}`, p.dir, `default: ${providerLabel(p.defaultProvider, p)}`].filter(Boolean).join(' · ');
+  $('project-meta').textContent = [n >= 0 && `🛗 floor ${n + 1} of ${store.floors.length}`, p.branch && `⎇ ${p.branch}`, p.dir, `agent: ${p.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'droid'}`].filter(Boolean).join(' · ');
   office.setProjectName(p.name);
 }
 store.on('floors', renderProject);
@@ -1213,7 +1211,7 @@ function syncWorkers() {
     v.model.setAction(w.action);
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
-    const engineBadge = w.kind === 'agent' ? modelBadge(w.provider, w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const engineBadge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
     v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
     // Keys clack while it types, not while it reads, watches its tests or browses.
@@ -1307,7 +1305,6 @@ const paintPrs = () => {
 };
 store.on('pulls', paintPrs);
 store.on('queue', paintPrs);
-store.on('workers', renderUsage);
 
 /**
  * Dresses the building up for the holiday it's set to (⚙️ Settings), or takes it all down: the sky and
@@ -1323,11 +1320,6 @@ function dressUp() {
   for (const a of idleAgents) a.model.setCostume(theme);
 }
 store.on('theme', dressUp);
-store.on('usage', renderUsage);
-store.on('limits', renderLimits);
-// The reset countdowns tick down between reads.
-setInterval(renderLimits, 30_000);
-$('limits').addEventListener('click', () => net.send({ t: 'limits.refresh' }));
 
 // ---- Actions ------------------------------------------------------------------------------------
 function freeDesk(): string | null {
@@ -1355,8 +1347,8 @@ function officeIsFull(): boolean {
   return true;
 }
 
-function hire(deskId: string, prompt?: string, worktree = false, provider?: AgentProvider, model?: string, effort?: AgentEffort, issue?: number, repos?: string[]) {
-  net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, repos: repos?.length ? repos : undefined });
+function hire(deskId: string, prompt?: string, worktree = false, model?: string, effort?: AgentEffort, issue?: number, repos?: string[]) {
+  net.send({ t: 'worker.spawn', deskId, prompt, worktree, model, effort, issue, repos: repos?.length ? repos : undefined });
   // The moment notifications start to matter: ask once (it has to come from a key press or click).
   if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
     askedToNotify = true;
@@ -1381,14 +1373,14 @@ function promptAtDesk(deskId: string) {
     if (officeIsFull()) return;
     openPrompt({
       title: `✨ New task at ${desk.label}`,
-      subtitle: 'A fresh worker will sit down and start on this right away. Choose the worker engine below.',
+      subtitle: 'A fresh worker will sit down and start on this right away. Pick its model below.',
       warning: pressureNote(store.machine),
       submitLabel: 'Hire & start',
-      providerOption: true,
+      modelOption: true,
       worktreeOption: !!store.project?.branch,
       deskId,
       repoOptions: repoChoices(),
-      onSubmit: (text, o) => hire(deskId, text, o.worktree, o.provider, o.model, o.effort, undefined, o.repos),
+      onSubmit: (text, o) => hire(deskId, text, o.worktree, o.model, o.effort, undefined, o.repos),
     });
   } else if (w.lost) {
     fixLostWorktree(w);
@@ -1415,16 +1407,16 @@ function hireAtDesk(deskId: string) {
   if (officeIsFull()) return;
   openPrompt({
     title: `✨ Hire a worker at ${desk.label}`,
-    subtitle: 'Choose the worker engine. You can start with an empty prompt and send work later.',
+    subtitle: 'Pick its model. You can start with an empty prompt and send work later.',
     warning: pressureNote(store.machine),
     placeholder: 'Optional first task…',
     submitLabel: 'Hire & start',
     allowEmpty: true,
-    providerOption: true,
+    modelOption: true,
     worktreeOption: !!store.project?.branch,
     deskId,
     repoOptions: repoChoices(),
-    onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.provider, o.model, o.effort, undefined, o.repos),
+    onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos),
   });
 }
 
@@ -1436,7 +1428,7 @@ function killWorker(id: string) {
     return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
   }
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
-  const session = w.kind === 'shell' ? 'shared shell' : `${providerLabel(w.provider, store.project)} session`;
+  const session = w.kind === 'shell' ? 'shared shell' : 'Droid session';
   if (w.meeting) {
     // The meeting's worktree is the whole table's: it's tidied away once they've all gone.
     const m = store.meeting.current;
@@ -1489,17 +1481,17 @@ function askStation(deskId: string) {
     placeholder: `e.g. ${info.example}`,
     submitLabel: 'Send ✨',
     warning: w ? undefined : pressureNote(store.machine),
-    providerOption: !w,
+    modelOption: !w,
     deskId,
     onSubmit: (text, o) => {
-      net.send({ t: 'station.prompt', deskId, prompt: text, provider: o.provider, model: o.model, effort: o.effort });
+      net.send({ t: 'station.prompt', deskId, prompt: text, model: o.model, effort: o.effort });
     },
   });
 }
 
 function resumeWorker(w: WorkerInfo) {
   if (w.lost) return fixLostWorktree(w);
-  if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved ${providerLabel(w.provider, store.project)} session — starting a fresh one`, 'warn');
+  if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved Droid session — starting a fresh one`, 'warn');
   net.send({ t: 'worker.resume', workerId: w.id });
 }
 
@@ -1875,18 +1867,18 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     newDesk: desk ? DESK_BY_ID.get(desk)!.label : undefined,
     workers: awake.map((w) => ({ id: w.id, name: w.name, color: w.color, status: w.status })),
     worktreeOption: !!store.project?.branch,
-    providerOption: true,
+    modelOption: true,
     repoOptions: repoChoices(),
-    onSubmit: (prompt, to, worktree, provider, model, effort, repos) => {
+    onSubmit: (prompt, to, worktree, model, effort, repos) => {
       if (to) net.send({ t: 'worker.prompt', workerId: to, prompt });
-      else if (desk) hire(desk, prompt, worktree, provider, model, effort, undefined, repos);
+      else if (desk) hire(desk, prompt, worktree, model, effort, undefined, repos);
     },
   });
 }
 
 function boardActions() {
   return {
-    queue: (prompt: string, title: string, issue: number, provider?: AgentProvider, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, provider, model, effort }),
+    queue: (prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, model, effort }),
     assign: (prompt: string, title: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
     meeting: (preset: MeetingPreset) => showMeeting(preset),
@@ -1944,9 +1936,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
-  else if (target.kind === 'proxy') {
-    if (!store.proxy.refreshing) net.send({ t: 'proxy.refresh' });
-  } else if (target.kind === 'coffee') drinkCoffee();
+  else if (target.kind === 'coffee') drinkCoffee();
   else if (target.kind === 'smoke') {
     if (smokeBreakUntil) {
       setSmoking(false);
@@ -2320,8 +2310,8 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
   if (it.kind === 'queue') {
     if (onQueue(card.issue)) toast(`#${card.issue} is already on the queue`, 'warn');
     else {
-      const { provider, model, effort } = rememberedChoice(store.project, 'queue');
-      net.send({ t: 'queue.add', prompt, title: `#${card.issue} ${card.title}`, issue: card.issue, provider, model, effort });
+      const { model, effort } = rememberedChoice('queue');
+      net.send({ t: 'queue.add', prompt, title: `#${card.issue} ${card.title}`, issue: card.issue, model, effort });
       putDown();
     }
     return true;
@@ -2334,14 +2324,14 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
   }
   if (it.kind !== 'desk' || !it.deskId) return false;
   const w = store.workerAtDesk(it.deskId);
-  const why = w ? cantTakeCard(w) : hiringPaused() ? '💸 Budget spent — hiring resumes tomorrow' : '';
+  const why = w ? cantTakeCard(w) : '';
   if (why) toast(why, 'warn');
   else if (w) {
     net.send({ t: 'worker.prompt', workerId: w.id, prompt, issue: card.issue });
     putDown();
   } else if (!officeIsFull()) {
-    const { provider, model, effort } = rememberedChoice(store.project, `desk:${it.deskId}`);
-    hire(it.deskId, prompt, !!store.project?.branch && worktreePref(), provider, model, effort, card.issue);
+    const { model, effort } = rememberedChoice(`desk:${it.deskId}`);
+    hire(it.deskId, prompt, !!store.project?.branch && worktreePref(), model, effort, card.issue);
     putDown();
   }
   return true;
@@ -2689,11 +2679,6 @@ function hintFor(it: Interactable): Hint {
     }
     case 'ball':
       return { k: String(ball.still), parts: [title('Basketball'), ball.still ? aside('shoot some hoops') : '', key('E', ball.still ? 'Pick it up' : 'Catch it!')] };
-    case 'proxy': {
-      const p = store.proxy;
-      const read = p.at ? `read ${timeAgo(p.at)}` : 'not read yet';
-      return { k: `${p.refreshing}|${read}`, parts: [title('DroidProxy limits'), aside(p.refreshing ? 'reading…' : read), p.refreshing ? '' : key('E', 'Refresh')] };
-    }
   }
 }
 
@@ -2711,10 +2696,7 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   }
   if (it?.kind === 'desk' && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
-    if (!w) {
-      const paused = hiringPaused();
-      return { k: String(paused), parts: parts(paused ? h('span.cost', {}, '💸 Budget spent — hiring resumes tomorrow') : key('E', 'Hire a worker for it')) };
-    }
+    if (!w) return { k: '', parts: parts(key('E', 'Hire a worker for it')) };
     const why = cantTakeCard(w);
     return { k: w.id + w.status + why, parts: parts(why ? aside(why) : key('E', `Hand it to ${w.name}`)) };
   }
@@ -2738,20 +2720,15 @@ function deskHint(deskId: string): Hint {
   const w = store.workerAtDesk(deskId);
   if (!w && DESK_BY_ID.get(deskId)?.room) return { k: 'room', parts: [h('span.title', {}, `🤝 ${DESK_BY_ID.get(deskId)!.label} · free`), key('E', 'Call a meeting')] };
   if (!w) {
-    const paused = hiringPaused();
     const m = store.machine;
     const full = officeFull(m);
     return {
-      k: `${paused}|${full}|${m.workers}|${m.limit}|${!!m.pressure}`,
+      k: `${full}|${m.workers}|${m.limit}|${!!m.pressure}`,
       parts: [
         h('span.title', {}, `${DESK_BY_ID.get(deskId)!.label} · empty`),
         ...(full
           ? [h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`)]
-          : [
-              m.pressure ? h('span.cost', { title: `This machine is under pressure: ${m.pressure}` }, '⚠️ Machine under pressure') : '',
-              ...(paused ? [h('span.cost', {}, '💸 Budget spent — hiring resumes tomorrow')] : [key('E', 'Hire a worker'), key('P', 'Hire with a task')]),
-              key('B', 'Shell'),
-            ]),
+          : [m.pressure ? h('span.cost', { title: `This machine is under pressure: ${m.pressure}` }, '⚠️ Machine under pressure') : '', key('E', 'Hire a worker'), key('P', 'Hire with a task'), key('B', 'Shell')]),
       ],
     };
   }
@@ -2763,15 +2740,12 @@ function deskHint(deskId: string): Hint {
     };
   }
   const doing = w.activity ? clip(w.activity, 48) : '';
-  const workerProvider = w.kind === 'agent' ? resolvedProvider(w.provider, store.project) : undefined;
-  const spent = w.kind === 'agent' && w.usage ? usageLabel(w.usage, workerProvider) : '';
   const shell = w.kind === 'shell';
   return {
-    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + spent,
+    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing,
     parts: [
       h('span.title', {}, `${w.name} · ${STATUS_LABEL[w.status]}`),
       doing ? aside(doing) : '',
-      spent ? h('span.cost', { title: usageTitle(w.usage!, workerProvider) }, spent) : '',
       key('E', 'Open terminal'),
       key('C', 'Changes'),
       isAsleep(w.status) ? key('R', shell ? 'Restart' : 'Resume') : key('P', shell ? 'Run command' : 'Prompt'),
@@ -2805,18 +2779,9 @@ function stationHint(deskId: string): Hint {
   }
   if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
   const doing = w.activity ? clip(w.activity, 48) : '';
-  const provider = resolvedProvider(w.provider, store.project);
-  const spent = w.usage ? usageLabel(w.usage, provider) : '';
   return {
-    k: w.status + w.id + doing + spent,
-    parts: [
-      h('span.title', {}, `${info.icon} ${w.name} · ${STATUS_LABEL[w.status]}`),
-      doing ? aside(doing) : '',
-      spent ? h('span.cost', { title: usageTitle(w.usage!, provider) }, spent) : '',
-      key('E', isAsleep(w.status) ? 'Wake with a prompt' : 'Prompt'),
-      key('O', 'Terminal'),
-      key('X', 'Send home'),
-    ],
+    k: w.status + w.id + doing,
+    parts: [h('span.title', {}, `${info.icon} ${w.name} · ${STATUS_LABEL[w.status]}`), doing ? aside(doing) : '', key('E', isAsleep(w.status) ? 'Wake with a prompt' : 'Prompt'), key('O', 'Terminal'), key('X', 'Send home')],
   };
 }
 
@@ -3142,7 +3107,6 @@ const REACH: Record<InteractKind, number> = {
   meeting: 7,
   bar: 3.5,
   dj: 6,
-  proxy: 4,
   bookshelf: 4,
   golf: 3.5,
   ball: 3.2,

@@ -9,7 +9,7 @@ import { issueMeeting } from './meeting';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
-import { providerPicker } from './provider';
+import { agentPicker } from './models';
 
 // The windows behind the board cards. A PR opens on its conversation (description, comments,
 // reviews, line comments, checks) with a Files tab for the diff, where you tick files off as
@@ -1203,13 +1203,12 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   });
   conv.append(h('div.gh-col', {}, thread, comment.el));
   // The footer stays put and renderFrame only shows, hides and relabels, so a board refresh never
-  // pulls focus out of the provider picker.
+  // pulls focus out of the model picker.
   const closeIssue = h('button.btn', { type: 'button', title: `Close this issue on ${words().site}`, onclick: () => openClose('issue', it, net, load) }, 'Close issue…');
-  const queueProvider = providerPicker(store.project, `issue-provider-${it.number}`, 'Queue provider');
+  const queueModels = agentPicker(`issue-queue-models-${it.number}`);
   const addIssueToQueue = () => {
-    if (!queueProvider.valid()) return;
     modal.close();
-    actions.queue(issuePrompt(it), `#${it.number} ${it.title}`, it.number, queueProvider.value(), queueProvider.model(), queueProvider.effort());
+    actions.queue(issuePrompt(it), `#${it.number} ${it.title}`, it.number, queueModels.model(), queueModels.effort());
   };
   const queue = h('button.btn', { type: 'button', onclick: addIssueToQueue }) as HTMLButtonElement;
   const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk, a worker or the queue board, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
@@ -1227,7 +1226,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
       h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a worker…'),
       h('button.btn', { type: 'button', title: 'Workers take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title)) }, 'Meeting…'),
       closeIssue,
-      queueProvider.element,
+      queueModels.element,
       queue,
       pickUp,
       h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`) }, 'Hand to a worker'),
@@ -1256,7 +1255,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     const onQueue = !!task && task.status !== 'done';
     closeIssue.classList.toggle('hidden', !isOpen);
     pickUp.classList.toggle('hidden', !isOpen);
-    queueProvider.element.classList.toggle('hidden', !isOpen || onQueue);
+    queueModels.element.classList.toggle('hidden', !isOpen || onQueue);
     queue.classList.toggle('hidden', !isOpen);
     queue.disabled = onQueue;
     queue.title = onQueue ? '' : 'A worker picks it up by itself when a desk is free and there is room under the worker limit';

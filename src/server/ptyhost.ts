@@ -1,6 +1,6 @@
 /**
- * The workers' terminal host: owns every worker's PTY so a restarting office doesn't take Claude
- * down with it. The office starts it detached (see ptys.ts) and talks to it over a Unix socket
+ * The workers' terminal host: owns every worker's PTY so a restarting office doesn't take its
+ * agents down with it. The office starts it detached (see ptys.ts) and talks to it over a Unix socket
  * that only its own token opens. It keeps a headless copy of each screen, so the next office
  * gets the scrollback back, and ends everything once no office has come back for a while.
  *
@@ -27,7 +27,6 @@ interface Session {
   snapshot: () => string;
   cols: number;
   rows: number;
-  busy: boolean;
   title: string;
   /** The connected office knows this one: its output goes there. */
   attached: boolean;
@@ -103,13 +102,8 @@ function spawn(id: string, opts: SpawnOpts) {
   term.unicode.activeVersion = '11';
   const snapshot = screenSnapshot(term, ser);
   if (opts.prelude) term.write(opts.prelude);
-  const s: Session = { id, proc, term, snapshot, cols: opts.cols, rows: opts.rows, busy: false, title: '', attached: true };
+  const s: Session = { id, proc, term, snapshot, cols: opts.cols, rows: opts.rows, title: '', attached: true };
   sessions.set(id, s);
-  term.parser.registerOscHandler(9, (data: string) => {
-    const m = /^4;(\d)/.exec(data);
-    if (m) s.busy = m[1] !== '0';
-    return true;
-  });
   term.onTitleChange((title: string) => (s.title = title));
   proc.onData((data) => {
     term.write(data);
@@ -145,7 +139,7 @@ function attach(id: string) {
     s.held = undefined;
     if (office !== to) return;
     const snapshot = s.snapshot();
-    send({ t: 'attached', id, pid: s.proc.pid, cols: s.cols, rows: s.rows, busy: s.busy, title: s.title, snapshot });
+    send({ t: 'attached', id, pid: s.proc.pid, cols: s.cols, rows: s.rows, title: s.title, snapshot });
     for (const data of held) send({ t: 'data', id, data });
     if (s.exitCode !== undefined) {
       send({ t: 'exit', id, exitCode: s.exitCode });

@@ -1605,7 +1605,7 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 /** How high a hop between the seat and the desk goes, over the straight line. */
 const HOP = 0.5;
 
-/** The little Claude worker that sits at a desk. Forward is +z. */
+/** The little Droid worker that sits at a desk. Forward is +z. */
 export class Worker {
   readonly root = new THREE.Group();
   private body = new THREE.Group();

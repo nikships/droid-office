@@ -4,23 +4,21 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentEffort, AgentProvider, WorkerInfo } from '../src/shared/protocol.js';
+import type { AgentEffort, WorkerInfo } from '../src/shared/protocol.js';
 
-function fixture(defaultProvider: AgentProvider = 'claude') {
+function fixture() {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-queue-'));
   const workers: WorkerInfo[] = [];
   let hired = 0;
   const manager: QueueWorkers = {
-    defaultProvider,
     list: () => workers,
     deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, worktree, kind, provider, model, effort) {
+    spawn(deskId, by, prompt, worktree, kind, model, effort) {
       const id = `worker-${hired++}`;
       const worker: WorkerInfo = {
         id,
         deskId,
         kind,
-        provider,
         model,
         effort,
         prompt,
@@ -72,12 +70,13 @@ function fixture(defaultProvider: AgentProvider = 'claude') {
   };
 }
 
-test('queue seats the selected provider and preserves it through completion and retry', (t) => {
+test('queue seats the picked model and effort and preserves them through completion and retry', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'opencode'), undefined);
-  assert.equal(f.workers[0].provider, 'opencode');
+  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'glm-5.3-flash', 'high'), undefined);
+  assert.equal(f.workers[0].model, 'glm-5.3-flash');
+  assert.equal(f.workers[0].effort, 'high');
   f.workers[0].status = 'needs_input';
   q.onWorker(f.workers[0]);
   assert.equal(q.state().tasks[0].status, 'running');
@@ -85,157 +84,56 @@ test('queue seats the selected provider and preserves it through completion and 
   q.onWorker(f.workers[0]);
   assert.equal(q.state().tasks[0].outcome, 'done');
   q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].provider, 'opencode');
+  assert.equal(f.workers[1].model, 'glm-5.3-flash');
+  assert.equal(f.workers[1].effort, 'high');
 });
 
-test('Droid tasks retain their provider through retry and restart', (t) => {
+test('queue rejects models that are not valid Droid model ids', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open();
-  assert.equal(q.add('First', 'Tester', undefined, undefined, 'droid'), undefined);
-  assert.equal(f.workers[0].provider, 'droid');
-  f.workers[0].status = 'done';
-  q.onWorker(f.workers[0]);
-  q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].provider, 'droid');
-  q.setLimit(0);
-  q.add('Later', 'Tester', undefined, undefined, 'droid');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(3);
-  assert.equal(f.workers[2].provider, 'droid');
-});
-
-test('queued provider survives restart even when the configured default differs', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  q.setLimit(0);
-  q.add('Fix login', 'Tester', undefined, undefined, 'opencode');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(1);
-  assert.equal(f.workers[0].provider, 'opencode');
-});
-
-test('new and legacy tasks without a provider use the configured agent', (t) => {
-  const f = fixture('custom');
-  t.after(() => f.close());
-  writeFileSync(path.join(f.dir, 'queue.json'), JSON.stringify({ maxWorkers: 0, tasks: [{ id: 'legacy', title: 'Legacy', prompt: 'Legacy task', status: 'queued' }] }));
-  const q = f.open();
-  q.add('New task', 'Tester');
-  q.setLimit(2);
-  assert.deepEqual(
-    f.workers.map((w) => w.provider),
-    ['custom', 'custom'],
-  );
-});
-
-test('invalid or unavailable providers are rejected before a task is queued', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'bad' as AgentProvider) ?? '', /provider/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'custom') ?? '', /provider/i);
+  assert.match(q.add('Task', 'Tester', undefined, undefined, 'has a space') ?? '', /Invalid Droid model/);
+  assert.match(q.add('Task', 'Tester', undefined, undefined, `x${'y'.repeat(300)}`) ?? '', /Invalid Droid model/);
   assert.equal(q.state().tasks.length, 0);
 });
 
-test('queue preserves the selected OpenCode model through seating, retry, and restart', (t) => {
+test('queue rejects an unknown effort level before a task is queued', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'opencode', 'openai/gpt-5/nested'), undefined);
-  assert.equal(f.workers[0].model, 'openai/gpt-5/nested');
-  assert.equal(q.state().tasks[0].model, 'openai/gpt-5/nested');
-  f.workers[0].status = 'done';
-  q.onWorker(f.workers[0]);
-  q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].model, 'openai/gpt-5/nested');
-
-  q.setLimit(0);
-  q.add('Queued', 'Tester', undefined, undefined, 'opencode', 'anthropic/claude-sonnet-4');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(2);
-  assert.equal(f.workers[2].model, 'anthropic/claude-sonnet-4');
-});
-
-test('queue rejects models unless they are valid Claude aliases, OpenCode model ids, Droid model ids, or Grok/Muse model ids', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'claude', 'openai/gpt-5') ?? '', /model/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'opencode', 'gpt-5') ?? '', /model|format|provider/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'opencode', 'openai/gpt 5') ?? '', /model|format|whitespace/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'droid', 'custom:droidproxy:gpt 6') ?? '', /model|whitespace/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'grok', 'openai/gpt-5') ?? '', /model/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'muse', 'openai/gpt-5') ?? '', /model/i);
-  assert.equal(q.state().tasks.length, 0);
-});
-
-test('queue preserves a Grok model and effort through seating, retry, and restart', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'grok', 'grok-4.6', 'high'), undefined);
-  assert.equal(f.workers[0].model, 'grok-4.6');
-  assert.equal(f.workers[0].effort, 'high');
-  assert.equal(q.state().tasks[0].model, 'grok-4.6');
-  assert.equal(q.state().tasks[0].effort, 'high');
-  f.workers[0].status = 'done';
-  q.onWorker(f.workers[0]);
-  q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].model, 'grok-4.6');
-  assert.equal(f.workers[1].effort, 'high');
-
-  q.setLimit(0);
-  q.add('Queued', 'Tester', undefined, undefined, 'grok', 'grok-4.5', 'low');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(2);
-  assert.equal(f.workers[2].model, 'grok-4.5');
-  assert.equal(f.workers[2].effort, 'low');
-});
-
-test('queue preserves a Muse model and effort through seating, retry, and restart', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'muse', 'muse-spark-1.3-contributor', 'high'), undefined);
-  assert.equal(f.workers[0].model, 'muse-spark-1.3-contributor');
-  assert.equal(f.workers[0].effort, 'high');
-  assert.equal(q.state().tasks[0].model, 'muse-spark-1.3-contributor');
-  assert.equal(q.state().tasks[0].effort, 'high');
-  f.workers[0].status = 'done';
-  q.onWorker(f.workers[0]);
-  q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].model, 'muse-spark-1.3-contributor');
-  assert.equal(f.workers[1].effort, 'high');
-
-  q.setLimit(0);
-  q.add('Queued', 'Tester', undefined, undefined, 'muse', 'muse-spark-1.3-contributor', 'low');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(2);
-  assert.equal(f.workers[2].model, 'muse-spark-1.3-contributor');
-  assert.equal(f.workers[2].effort, 'low');
-});
-
-test('queue rejects reasoning effort unless the task is Claude, Droid, Grok or Muse and the level is known', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'opencode', undefined, 'high' as AgentEffort) ?? '', /effort|Claude/i);
-  assert.match(q.add('Task', 'Tester', undefined, undefined, 'claude', undefined, 'overdrive' as AgentEffort) ?? '', /effort/i);
-  assert.equal(q.add('Task', 'Tester', undefined, undefined, 'droid', 'custom:droidproxy:gpt-6-sol', 'high'), undefined);
+  assert.match(q.add('Task', 'Tester', undefined, undefined, undefined, 'overdrive' as AgentEffort) ?? '', /Invalid effort/);
+  assert.equal(q.add('Task', 'Tester', undefined, undefined, 'custom:droidproxy:gpt-6-sol', 'high'), undefined);
   assert.equal(q.state().tasks.length, 1);
+});
+
+test('a saved task keeps a valid model and effort, without an invalid one', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  writeFileSync(
+    path.join(f.dir, 'queue.json'),
+    JSON.stringify({
+      maxWorkers: 0,
+      tasks: [
+        { id: 'kept', title: 'Kept', prompt: 'First task', status: 'queued', model: 'glm-5.3-flash', effort: 'max' },
+        { id: 'dropped', title: 'Dropped', prompt: 'Second task', status: 'queued', model: 'has a space', effort: 'turbo' },
+      ],
+    }),
+  );
+  const q = f.open();
+  q.setLimit(2);
+  const models = f.workers.map((w) => w.model);
+  assert.deepEqual(models, ['glm-5.3-flash', undefined]);
+  assert.deepEqual(
+    f.workers.map((w) => w.effort),
+    ['max', undefined],
+  );
 });
 
 test('queue preserves a Droid model and effort through seating, retry, and restart', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'droid', 'custom:droidproxy:gpt-6-sol', 'high'), undefined);
+  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'custom:droidproxy:gpt-6-sol', 'high'), undefined);
   assert.equal(f.workers[0].model, 'custom:droidproxy:gpt-6-sol');
   assert.equal(f.workers[0].effort, 'high');
   assert.equal(q.state().tasks[0].model, 'custom:droidproxy:gpt-6-sol');
@@ -247,35 +145,11 @@ test('queue preserves a Droid model and effort through seating, retry, and resta
   assert.equal(f.workers[1].effort, 'high');
 
   q.setLimit(0);
-  q.add('Queued', 'Tester', undefined, undefined, 'droid', 'glm-5.3-flash', 'max');
+  q.add('Queued', 'Tester', undefined, undefined, 'glm-5.3-flash', 'max');
   q.shutdown();
   const restored = f.open();
   restored.setLimit(2);
   assert.equal(f.workers[2].model, 'glm-5.3-flash');
-  assert.equal(f.workers[2].effort, 'max');
-});
-
-test('queue preserves a Claude model and effort through seating, retry, and restart', (t) => {
-  const f = fixture();
-  t.after(() => f.close());
-  const q = f.open();
-  assert.equal(q.add('Fix login', 'Tester', undefined, undefined, 'claude', 'haiku', 'low'), undefined);
-  assert.equal(f.workers[0].model, 'haiku');
-  assert.equal(f.workers[0].effort, 'low');
-  assert.equal(q.state().tasks[0].model, 'haiku');
-  assert.equal(q.state().tasks[0].effort, 'low');
-  f.workers[0].status = 'done';
-  q.onWorker(f.workers[0]);
-  q.retry(q.state().tasks[0].id);
-  assert.equal(f.workers[1].model, 'haiku');
-  assert.equal(f.workers[1].effort, 'low');
-
-  q.setLimit(0);
-  q.add('Queued', 'Tester', undefined, undefined, 'claude', 'opus', 'max');
-  q.shutdown();
-  const restored = f.open();
-  restored.setLimit(2);
-  assert.equal(f.workers[2].model, 'opus');
   assert.equal(f.workers[2].effort, 'max');
 });
 
@@ -284,7 +158,7 @@ test('queue takes Fable and restores it from queue.json', (t) => {
   t.after(() => f.close());
   const q = f.open();
   q.setLimit(0);
-  assert.equal(q.add('Big task', 'Tester', undefined, undefined, 'claude', 'fable', 'xhigh'), undefined);
+  assert.equal(q.add('Big task', 'Tester', undefined, undefined, 'fable', 'xhigh'), undefined);
   q.shutdown();
   const saved = JSON.parse(readFileSync(path.join(f.dir, 'queue.json'), 'utf8'));
   assert.equal(saved.tasks[0].model, 'fable');
@@ -333,7 +207,6 @@ test("a board agent at work does not hold one of the queue's slots", (t) => {
     id: 'issues-agent',
     deskId: 'station-issues',
     kind: 'agent',
-    provider: 'claude',
     name: 'Issues agent',
     color: '#ef476f',
     status: 'working',
@@ -361,7 +234,6 @@ test("workers hired by hand, or left at their prompt after a restart, do not hol
       id: `resumed-${i}`,
       deskId: `desk-${i}`,
       kind: 'agent',
-      provider: 'claude',
       name: `Resumed ${i}`,
       color: '#ffffff',
       status: i <= 4 ? 'idle' : 'working',
@@ -517,17 +389,15 @@ test('a worktree task waits for the fetch of what its worktree starts from, then
   let inFlight: Promise<void> | undefined;
   let fresh = false;
   const manager: QueueWorkers = {
-    defaultProvider: 'claude',
     list: () => workers,
     deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, worktree, kind, provider) {
+    spawn(deskId, by, prompt, worktree, kind) {
       assert.equal(worktree, true);
       assert.ok(fresh, 'seated before its base was fetched');
       const worker: WorkerInfo = {
         id: `worker-${workers.length}`,
         deskId,
         kind,
-        provider,
         prompt,
         name: 'Test',
         color: '#ffffff',
@@ -588,7 +458,6 @@ test("a queue that has nowhere to seat anyone doesn't fetch", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-queue-'));
   let fetches = 0;
   const manager: QueueWorkers = {
-    defaultProvider: 'claude',
     list: () => [],
     deskOccupied: () => false,
     spawn: () => 'unreachable',

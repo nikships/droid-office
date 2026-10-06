@@ -7,11 +7,11 @@
  *
  * Droid binds Ctrl+Enter (queue a message while it works) and Shift+Enter (newline) to exactly
  * those sequences, and parses them even when it has not negotiated the kitty protocol, so its
- * workers get them. Everything else keeps xterm.js's default bytes: a plain shell or another
- * agent that never asked for CSI u would print them as garbage.
+ * workers get them. Everything else keeps xterm.js's default bytes: a plain shell that never
+ * asked for CSI u would print them as garbage.
  */
 
-import type { AgentProvider, WorkerInfo } from '../shared/protocol';
+import type { WorkerInfo } from '../shared/protocol';
 
 export const CTRL_ENTER = '\x1b[13;5u';
 export const SHIFT_ENTER = '\x1b[13;2u';
@@ -23,9 +23,9 @@ export interface KeyMods {
   meta?: boolean;
 }
 
-/** Whether a worker's program understands CSI u Enter (resolve the provider first: old workers have none). */
-export function wantsCsiEnter(kind: WorkerInfo['kind'] | undefined, provider: AgentProvider | undefined): boolean {
-  return kind === 'agent' && provider === 'droid';
+/** Whether a worker's program understands CSI u Enter: every agent runs Droid, which does; a shell doesn't. */
+export function wantsCsiEnter(kind: WorkerInfo['kind'] | undefined): boolean {
+  return kind === 'agent';
 }
 
 /** The bytes Enter with these modifiers should send, or undefined for the terminal's default. */

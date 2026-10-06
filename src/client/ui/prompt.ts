@@ -1,7 +1,6 @@
-import type { AgentEffort, AgentProvider, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
+import type { AgentEffort, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
 import { h, openModal } from './dom';
-import { store } from '../state';
-import { providerPicker, type ProviderPicker } from './provider';
+import { agentPicker, type AgentFields } from './models';
 
 export interface PromptOptions {
   title: string;
@@ -15,13 +14,13 @@ export interface PromptOptions {
   allowEmpty?: boolean;
   /** Offer the "own git worktree" option (only when hiring a new worker). */
   worktreeOption?: boolean;
-  /** Offer the configured agent provider choice (only when hiring a new worker). */
-  providerOption?: boolean;
+  /** Offer the model and effort pickers (only when hiring a new worker). */
+  modelOption?: boolean;
   /** The desk being hired at, so the model/effort choice remembered here is this desk's, not the whole office's. */
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
-  onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort; repos: string[] }): void;
+  onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[] }): void;
 }
 
 const WT_KEY = 'droid-office.worktree';
@@ -76,7 +75,7 @@ export function openPrompt(opts: PromptOptions) {
       )
     : null;
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);
-  const provider: ProviderPicker | null = opts.providerOption ? providerPicker(store.project, 'prompt-provider', 'Worker provider', opts.deskId ? `desk:${opts.deskId}` : 'prompt-provider') : null;
+  const models: AgentFields | null = opts.modelOption ? agentPicker('hire-models', opts.deskId ? `desk:${opts.deskId}` : 'hire') : null;
   const submit = h('button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send');
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
   const form = h(
@@ -89,7 +88,7 @@ export function openPrompt(opts: PromptOptions) {
       opts.warning ? h('p.setting-note.bad', { style: 'margin:0 0 10px', role: 'alert' }, opts.warning) : null,
       opts.subtitle ? h('p', { style: 'margin:0 0 10px;font-weight:700;color:var(--muted)' }, opts.subtitle) : null,
       ta,
-      provider?.element ?? null,
+      models?.element ?? null,
       wtRow,
       repos.element,
     ),
@@ -105,11 +104,10 @@ export function openPrompt(opts: PromptOptions) {
       ta.focus();
       return;
     }
-    if (provider && !provider.valid()) return;
     modal.close();
     if (opts.worktreeOption) setWorktreePref(wtBox.checked);
     const worktree = !!opts.worktreeOption && wtBox.checked;
-    opts.onSubmit(text, { worktree, provider: provider?.value(), model: provider?.model(), effort: provider?.effort(), repos: worktree ? repos.value() : [] });
+    opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [] });
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();

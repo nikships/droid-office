@@ -1,6 +1,6 @@
 # Droid Office
 
-A 3D office in the browser where its owner hires claude, opencode, codex and droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
+A 3D office in the browser where its owner hires droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
 Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files).
 

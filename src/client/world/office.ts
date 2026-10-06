@@ -24,7 +24,6 @@ import {
   MEETING_SEATS,
   MEETING_TABLE,
   PLANTS,
-  PROXY_REFRESH,
   SEATING_BY_ID,
   SLAB,
   STAIRS,
@@ -95,8 +94,6 @@ export type InteractKind =
   | 'meeting'
   | 'bar'
   | 'dj'
-  /** The refresh button on the machine monitor's DroidProxy limits. */
-  | 'proxy'
   | 'bookshelf'
   | 'golf'
   | 'ball';
@@ -152,8 +149,6 @@ export interface Office {
   bossScreen: THREE.Mesh;
   /** The monitor on the west wall showing how busy the office's machine is (world/machine.ts). */
   machineScreen: THREE.Mesh;
-  /** Grows the machine monitor to MACHINE_MONITOR.tallHeight, for DroidProxy's limits, or shrinks it back. */
-  setMachineTall(tall: boolean): void;
   /** The meeting room's board, showing the meeting's output as it's written, and the sign by its door. */
   meetingBoard: THREE.Mesh;
   meetingSign: THREE.Mesh;
@@ -1438,28 +1433,8 @@ export function buildOffice(): Office {
   monitor.position.set(MACHINE_MONITOR.x + 0.07, MACHINE_MONITOR.y, MACHINE_MONITOR.z);
   monitor.rotation.y = Math.PI / 2;
   group.add(monitor);
-  // Pictures keep clear of the tall monitor, so growing it never covers one.
-  fixture('west', MACHINE_MONITOR.z, MACHINE_MONITOR.y, MACHINE_MONITOR.width + 0.2, MACHINE_MONITOR.tallHeight + 0.2);
-  // DroidProxy's refresh button: drawn on the screen (world/machine.ts), clicked through this.
-  const refreshButton = new THREE.Mesh(new THREE.PlaneGeometry(PROXY_REFRESH.width, PROXY_REFRESH.height), new THREE.MeshBasicMaterial({ visible: false }));
-  refreshButton.position.set(-MACHINE_MONITOR.width / 2 + PROXY_REFRESH.x + PROXY_REFRESH.width / 2, MACHINE_MONITOR.tallHeight / 2 - PROXY_REFRESH.y - PROXY_REFRESH.height / 2, 0.07);
-  refreshButton.visible = false;
-  monitor.add(refreshButton);
-  const proxyRefresh: Interactable = { kind: 'proxy', x: MACHINE_MONITOR.x + 1.6, z: MACHINE_MONITOR.z, radius: 1.8, off: true };
-  refreshButton.userData.interact = proxyRefresh;
-  interactables.push(proxyRefresh);
-  let machineTall = false;
-  const setMachineTall = (tall: boolean) => {
-    if (tall === machineTall) return;
-    machineTall = tall;
-    refreshButton.visible = tall;
-    proxyRefresh.off = !tall;
-    const height = tall ? MACHINE_MONITOR.tallHeight : MACHINE_MONITOR.height;
-    bezel.geometry.dispose();
-    bezel.geometry = roundedBox(MACHINE_MONITOR.width + 0.16, 0.1, height + 0.16, 0.06);
-    machineScreen.geometry.dispose();
-    machineScreen.geometry = new THREE.PlaneGeometry(MACHINE_MONITOR.width, height);
-  };
+  // Pictures keep clear of the monitor, so it never covers one.
+  fixture('west', MACHINE_MONITOR.z, MACHINE_MONITOR.y, MACHINE_MONITOR.width + 0.2, MACHINE_MONITOR.height + 0.2);
 
   // A long charcoal sofa on a black steel plinth, with a light and a dark cushion.
   const sofa = new THREE.Group();
@@ -1676,7 +1651,6 @@ export function buildOffice(): Office {
     tvScreen,
     bossScreen,
     machineScreen,
-    setMachineTall,
     meetingBoard: meeting.board,
     meetingSign: meeting.sign,
     fixtures: () => fixtures,

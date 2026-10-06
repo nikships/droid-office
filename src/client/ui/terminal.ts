@@ -7,13 +7,10 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
-import { usageLabel, usageTitle } from './usage';
 import type { ServerMsg } from '../../shared/protocol';
-import { isAsleep } from '../../shared/status';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
-import { providerLabel, providerUsageNote, providerUsageState, resolvedProvider } from './provider';
 import { enterKeyAction, wantsCsiEnter } from '../term-keys';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
 
@@ -61,25 +58,15 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   if (!info) return;
 
   const dot = h('span.dot', { style: `background:${info.color}` });
-  const title = h('h2', {}, info.kind === 'agent' ? `${providerLabel(info.provider, store.project)} · ${info.name}` : info.name);
+  const title = h('h2', {}, info.kind === 'agent' ? `Droid · ${info.name}` : info.name);
   const pill = h('span.pill', {}, '');
-  const cost = h('span.cost', {});
-  const modelsBtn = h(
-    'button.btn',
-    {
-      type: 'button',
-      title: 'OpenCode models: Ctrl+X then M (use /models if custom bindings override it)',
-      'aria-label': 'OpenCode models',
-    },
-    '🧠 Models',
-  );
   const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, cost, zoom, modelsBtn, onChanges ? changesBtn : null, closeBtn), host);
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, closeBtn), host);
 
   const term = new Terminal({
     fontFamily: TERM_FONT,
@@ -137,35 +124,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       modal.close();
       return;
     }
-    title.textContent = [
-      w.kind === 'agent' ? providerLabel(w.provider, store.project) : null,
-      w.name,
-      w.title,
-      w.worktree && `🌿 ${w.worktree.branch}`,
-      w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
-    ]
+    title.textContent = [w.kind === 'agent' ? 'Droid' : null, w.name, w.title, w.worktree && `🌿 ${w.worktree.branch}`, w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`]
       .filter(Boolean)
       .join(' · ');
     pill.className = `pill ${w.status}`;
     pill.textContent = STATUS_LABEL[w.status] ?? w.status;
-    const workerProvider = w.kind === 'agent' ? resolvedProvider(w.provider, store.project) : undefined;
-    const usageState = w.kind === 'agent' ? providerUsageState(w.provider, store.project, w.usage) : undefined;
-    cost.textContent =
-      w.kind !== 'agent'
-        ? ''
-        : usageState === 'tracked' && w.usage
-          ? usageLabel(w.usage, workerProvider)
-          : workerProvider === 'opencode' && usageState === 'waiting'
-            ? 'waiting for metrics'
-            : workerProvider === 'codex' && usageState === 'waiting'
-              ? 'waiting for first report'
-              : usageState === 'untracked'
-                ? 'usage untracked'
-                : '';
-    cost.title = w.kind === 'agent' && w.usage ? usageTitle(w.usage, workerProvider) : w.kind === 'agent' ? providerUsageNote(workerProvider!) : '';
-    const openCode = w.kind === 'agent' && resolvedProvider(w.provider, store.project) === 'opencode';
-    modelsBtn.classList.toggle('hidden', !openCode);
-    modelsBtn.toggleAttribute('disabled', !openCode || !ready || isAsleep(w.status));
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
     const ptySize = `${w.cols}x${w.rows}`;
@@ -245,10 +208,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (current?.modal === modal) current = null;
     },
   });
-  const csiEnter = () => {
-    const w = store.workers.get(workerId);
-    return wantsCsiEnter(w?.kind, w && resolvedProvider(w.provider, store.project));
-  };
+  const csiEnter = () => wantsCsiEnter(store.workers.get(workerId)?.kind);
   current = {
     workerId,
     modal,
@@ -299,7 +259,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   // Files dropped in, or a screenshot pasted, go up to the office's machine and the terminal types
-  // where they are, as a terminal does with a file dragged into it: Claude Code attaches a picture.
+  // where they are, as a terminal does with a file dragged into it: Droid attaches a picture.
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
     if (!files.length) return;
@@ -356,14 +316,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     },
     true,
   );
-  modelsBtn.addEventListener('click', () => {
-    if (modelsBtn.hasAttribute('disabled')) return;
-    sendSize(true);
-    // OpenCode's native model picker is Ctrl+X, then M. Injecting the
-    // control sequence preserves any draft already in the TUI input box.
-    term.input('\x18m');
-    term.focus();
-  });
 
   refresh();
   // xterm caches glyph widths when it opens. Opening after the shared font load prevents a
