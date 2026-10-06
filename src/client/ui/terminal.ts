@@ -7,7 +7,8 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
-import type { ServerMsg } from '../../shared/protocol';
+import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
+import { teamSummary } from '../../shared/team';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
@@ -34,6 +35,12 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
 }
 
 let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;
+/** Opens a teammate's terminal from the team strip (main wires it up, to resume or fix it first). */
+let openTeammate: (workerId: string) => void = () => {};
+
+export function onOpenTeammate(fn: (workerId: string) => void) {
+  openTeammate = fn;
+}
 /** Whether we've said, this page load, that Esc now goes to the terminal and how to leave instead. */
 let escHinted = false;
 const listeners = new Set<(msg: ServerMsg) => void>();
@@ -66,7 +73,28 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, closeBtn), host);
+  // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
+  const team = h('div.term-team.hidden', { role: 'group', 'aria-label': 'Team' });
+  let teamKey = '';
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, closeBtn), team, host);
+  const paintTeam = (w: WorkerInfo) => {
+    const lead = w.lead ? store.workers.get(w.lead) : undefined;
+    const mates = lead ? store.teamOf(lead.id).filter((s) => s.id !== w.id) : store.teamOf(w.id);
+    const key = [lead, ...mates].map((x) => x && `${x.id}:${x.name}:${x.status}:${x.title ?? ''}`).join('|');
+    if (key === teamKey) return;
+    teamKey = key;
+    const chip = (x: WorkerInfo) =>
+      h(
+        'button.team-chip',
+        { type: 'button', title: `Open ${x.name}'s terminal${x.title ? `: ${x.title}` : ''}`, onclick: () => openTeammate(x.id) },
+        h('span.dot', { style: `background:${x.color}` }),
+        x.name,
+        h('span.pill', { class: x.status }, STATUS_LABEL[x.status] ?? x.status),
+      );
+    team.classList.toggle('hidden', !lead && !mates.length);
+    if (lead) team.replaceChildren(h('span.term-team-label', {}, '🧭 Subagent of'), chip(lead), ...(mates.length ? [h('span.term-team-label', {}, 'with'), ...mates.map(chip)] : []));
+    else team.replaceChildren(h('span.term-team-label', {}, teamSummary(mates) ?? ''), ...mates.map(chip));
+  };
 
   const term = new Terminal({
     fontFamily: TERM_FONT,
@@ -129,6 +157,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       .join(' · ');
     pill.className = `pill ${w.status}`;
     pill.textContent = STATUS_LABEL[w.status] ?? w.status;
+    paintTeam(w);
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
     const ptySize = `${w.cols}x${w.rows}`;

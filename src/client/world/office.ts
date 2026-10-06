@@ -1166,7 +1166,15 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY };
 }
 
-const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', queue: '02 ASK ME' };
+const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', queue: '02 ASK ME', lead: '04 ASK ME' };
+
+/** The wall behind a kiosk: the one the agent stands with its back to. */
+export function kioskWall(def: DeskDef): WallId {
+  // Behind the counter is +z in the kiosk's own frame (see buildKiosk).
+  const bx = Math.round(Math.sin(def.rotY));
+  const bz = Math.round(Math.cos(def.rotY));
+  return bx > 0 ? 'east' : bx < 0 ? 'west' : bz > 0 ? 'south' : 'north';
+}
 
 /**
  * A board agent's kiosk: a little counter in its color with a sign on the front, and the agent standing
@@ -1350,19 +1358,27 @@ export function buildOffice(): Office {
     const view = buildKiosk(def);
     group.add(view.group);
     desks.set(def.id, view);
-    // The kiosk and the agent behind it, back to the wall (they all stand by the north wall) so
-    // nobody squeezes in behind, and up over the agent's head so nobody hops on it.
+    // The kiosk and the agent behind it, back to the wall it stands by (north for the boards, east for
+    // the Team lead) so nobody squeezes in behind, and up over the agent's head so nobody hops on it.
     const corners = [-1, 1].flatMap((t) => [-KIOSK.depth / 2, KIOSK.stand + 0.35].map((sz) => deskPoint(def, (t * KIOSK.width) / 2, sz)));
     const xs = corners.map(([x]) => x);
     const zs = corners.map(([, z]) => z);
-    colliders.push({ minX: Math.min(...xs), maxX: Math.max(...xs), minZ: FLOOR.minZ, maxZ: Math.max(...zs), top: 1.5, fence: true });
+    const wall = kioskWall(def);
+    colliders.push({
+      minX: wall === 'west' ? FLOOR.minX : Math.min(...xs),
+      maxX: wall === 'east' ? FLOOR.maxX : Math.max(...xs),
+      minZ: wall === 'north' ? FLOOR.minZ : Math.min(...zs),
+      maxZ: wall === 'south' ? FLOOR.maxZ : Math.max(...zs),
+      top: 1.5,
+      fence: true,
+    });
     // Walk up to its front.
     const [fx, fz] = deskPoint(def, 0, -1);
     const it: Interactable = { kind: 'station', deskId: def.id, x: fx, z: fz, radius: 1.3 };
     interactables.push(it);
     view.group.userData.interact = it;
     // The agent, its name tag and the card over its head, up against the wall.
-    fixture('north', def.x, 1.45, 1.4, 2.9);
+    fixture(wall, wall === 'north' || wall === 'south' ? def.x : def.z, 1.45, 1.4, 2.9);
   }
   const setBeanbags = (out: Set<string>) => {
     const appeared: Collider[] = [];

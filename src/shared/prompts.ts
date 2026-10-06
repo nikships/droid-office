@@ -10,7 +10,7 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'stations' | 'meetings' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'stations' | 'subagents' | 'meetings' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -19,6 +19,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   queue: 'Task queue',
   repos: '🗂️ Across repositories',
   stations: 'Board agents',
+  subagents: '🧭 Team lead & subagents',
   meetings: 'Meeting room',
   office: 'Worker signs',
 };
@@ -102,7 +103,9 @@ export function mergeCommand(forge: Forge | undefined, n: number, method: 'merge
 
 // --- Board agents ---------------------------------------------------------------------------------
 
-const BOARD: Record<StationKind, string> = {
+type BoardKind = Exclude<StationKind, 'lead'>;
+
+const BOARD: Record<BoardKind, string> = {
   issues: 'the 📌 Issues board',
   pulls: 'the 🔀 Pull Requests board',
   queue: 'the 📋 task queue',
@@ -118,7 +121,7 @@ const QUEUE_API = `The task queue gives each task a fresh worker in its own git 
 - Take a waiting task off: office-queue remove <id>`;
 
 /** What a board agent is told ahead of the first request typed to it. */
-function stationDefault(kind: StationKind): string {
+function stationDefault(kind: BoardKind): string {
   const queue = kind === 'queue';
   return [
     `You're the ${STATION_AGENT[kind].name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk by ${BOARD[kind]}, and whoever walks up types you a request. The first one is at the end of this message.`,
@@ -129,6 +132,37 @@ function stationDefault(kind: StationKind): string {
     `The request:`,
   ].join('\n\n');
 }
+
+// --- The Team lead and its subagents (see server/team.ts and bin/office-workers.js) ---------------
+
+const LEAD_DEFAULT = [
+  `You're the ${STATION_AGENT.lead.name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk on the east wall, looking out over the desks, and whoever walks up types you a request. The first one is at the end of this message.`,
+  'You get things done by running a team, not by doing the work yourself. For each request you hire subagents: fresh coding agents who sit down at the desks in this room, each with its own laptop and terminal that anyone can walk up to and watch. You brief them, keep track of them, answer their questions, check what they did, and tell whoever asked how it went. {{job}}',
+  `You do all of it with the office-workers command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself). Run \`office-workers help\` before you hire anyone: it is the whole guide. In short:
+- office-workers hire --title "Short title", with the subagent's brief on stdin in a quoted heredoc so nothing in it gets expanded. It prints the subagent's name and desk.
+- office-workers wait: waits until one of your subagents reports, finishes its turn, needs input or leaves, and prints what happened. office-workers list shows your whole team.
+- office-workers read <name> shows the end of its terminal; office-workers send <name> answers it or asks for more, the message on stdin.
+- office-workers dismiss <name> sends one home, keeping its worktree and branch when they hold work.`,
+  `How to run a request:
+1. Read only as much of the code as it takes to split the work into independent pieces that don't touch the same files. A small request is one piece: don't hire more subagents than the work needs.
+2. Hire one subagent per piece. Each starts knowing nothing, so give it a complete brief: the goal, where to look, what's off limits, how to check its work, and how to finish (usually committing in its own worktree and opening a {{pullName}}).
+3. Wait for their reports and deal with what comes back: answer questions, send follow-ups, and look at their changes (git -C <their worktree> diff) before you count a piece as done.
+4. When every piece is done, tell the person in a few lines what each subagent did, with links, and what's left. Leave your team at their desks unless you're asked to send them home: people may want to look at their work.`,
+  `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. When you've reported back, wait: the next request may come from someone else.`,
+  `The request:`,
+].join('\n\n');
+
+const SUBAGENT_DEFAULT = [
+  "You're {{name}}, a subagent in Droid Office, a shared 3D office where people work alongside coding agents. {{lead}} hired you for the task at the end of this message. You sit at a desk in the same room, where anyone can watch your terminal.",
+  '{{where}}',
+  `When you're done, report back to {{lead}} with the office-workers command, which is on your PATH, your report on stdin in a quoted heredoc:
+  office-workers report <<'EOF'
+  What you did, how you checked it, what's left, and any links ({{pullName}}, commits)
+  EOF
+Then end your turn. {{lead}} reads it and may send you a follow-up here.`,
+  "If you're stuck on something only {{lead}} can decide, ask with office-workers report --question (the question on stdin the same way) and end your turn: the answer comes as your next message. Don't hire subagents of your own.",
+  'Your task:',
+].join('\n\n');
 
 // --- Placeholders several prompts share -----------------------------------------------------------
 
@@ -142,7 +176,7 @@ const PULL_WORDS = {
   pr: 'PR, or MR on a GitLab floor',
 };
 
-const station = (kind: StationKind): PromptDef => ({
+const station = (kind: BoardKind): PromptDef => ({
   group: 'stations',
   label: `${STATION_AGENT[kind].name}'s brief`,
   used: `Told to the ${STATION_AGENT[kind].name} at ${BOARD[kind].replace(/^the \S+ /, 'the ')} when it's hired, with the first request typed to it right after.`,
@@ -279,6 +313,39 @@ const DEFS = {
   'station.issues': station('issues'),
   'station.pulls': station('pulls'),
   'station.queue': station('queue'),
+
+  // --- Team lead & subagents ---
+  'station.lead': {
+    group: 'subagents',
+    label: `${STATION_AGENT.lead.name}'s brief`,
+    used: `Told to the ${STATION_AGENT.lead.name} at its kiosk on the east wall when it's hired, with the first request typed to it right after.`,
+    vars: {
+      job: "Where the team's work goes: the office's own wording for GitHub or GitLab",
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    text: LEAD_DEFAULT,
+  },
+  'subagent.brief': {
+    group: 'subagents',
+    label: 'Subagent brief',
+    used: 'Told to every subagent a lead hires with office-workers, ahead of the task its lead wrote for it.',
+    vars: {
+      name: "The subagent's name",
+      lead: 'The worker that hired it',
+      where: 'Where it works: its own worktree and branch, or the main checkout',
+      ...PULL_WORDS,
+    },
+    text: SUBAGENT_DEFAULT,
+  },
+  'subagent.nudge': {
+    group: 'subagents',
+    label: 'Wake the lead',
+    used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave (⚙️ Settings → Subagents → Waking the lead).',
+    vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
+    needs: ['news'],
+    text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',
+  },
 
   // --- Meeting room ---
   'meeting.brief': {

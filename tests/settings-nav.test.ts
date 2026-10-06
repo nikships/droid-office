@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
 
-test('settings has the five categories, in order', () => {
+test('settings has the six categories, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound', 'Notifications', 'Building', 'Workers'],
+    ['You', 'Sound', 'Notifications', 'Building', 'Workers', 'Subagents'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'notify', 'building', 'workers'],
+    ['you', 'sound', 'notify', 'building', 'workers', 'subagents'],
   );
 });
 
@@ -32,6 +32,12 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Prompts', 'workers', 'office'],
     ['Worker limit', 'workers', 'office'],
     ['Workers whose pull request merged', 'workers', 'office'],
+    ['Subagents', 'subagents', 'office'],
+    ['Subagent worker', 'subagents', 'office'],
+    ['Team size', 'subagents', 'office'],
+    ['Where subagents work', 'subagents', 'office'],
+    ['Waking the lead', 'subagents', 'office'],
+    ['Droid skill', 'subagents', 'office'],
   ];
   assert.equal(byTitle.size, expect.length);
   for (const [title, pane, scope] of expect) {
@@ -46,12 +52,13 @@ test('every fork setting is in a category, with who it is for', () => {
 test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('you', 'ArrowDown'), 'sound');
   assert.equal(settingsPaneAfter('you', 'ArrowRight'), 'sound');
-  assert.equal(settingsPaneAfter('you', 'ArrowUp'), 'workers');
-  assert.equal(settingsPaneAfter('you', 'ArrowLeft'), 'workers');
-  assert.equal(settingsPaneAfter('workers', 'ArrowDown'), 'you');
+  assert.equal(settingsPaneAfter('you', 'ArrowUp'), 'subagents');
+  assert.equal(settingsPaneAfter('you', 'ArrowLeft'), 'subagents');
+  assert.equal(settingsPaneAfter('workers', 'ArrowDown'), 'subagents');
+  assert.equal(settingsPaneAfter('subagents', 'ArrowDown'), 'you');
   assert.equal(settingsPaneAfter('building', 'ArrowUp'), 'notify');
   assert.equal(settingsPaneAfter('sound', 'Home'), 'you');
-  assert.equal(settingsPaneAfter('sound', 'End'), 'workers');
+  assert.equal(settingsPaneAfter('sound', 'End'), 'subagents');
   assert.equal(settingsPaneAfter('you', 'Enter'), null);
   assert.equal(settingsPaneAfter('you', 'Escape'), null);
   assert.equal(settingsPaneAfter('notify', 'a'), null);

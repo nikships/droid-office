@@ -22,6 +22,7 @@ import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { Themes } from './theme.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
+import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
@@ -185,8 +186,8 @@ export async function startServer(cfg: Config) {
   });
   /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
-  // Droid's selectable models come from its own settings, on this machine.
-  const droidModels = createDroidModelCatalogue();
+  // Droid lists its own models (built-in and custom); its settings file is the fallback.
+  const droidModels = createDroidModelCatalogue({ command: cfg.agentCmd.includes('/') ? path.resolve(cfg.agentCmd) : cfg.agentCmd, cwd: cfg.dir });
 
   const sendTo = (c: Client, msg: ServerMsg) => {
     if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -255,6 +256,7 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(req, res, url);
+    if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -308,6 +310,30 @@ export async function startServer(cfg: Config) {
     toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue #${issue}` : `“${task.title}”`}`);
     send(res, 200, { ok: true, task: { id: task.id, title: task.title, status: task.status } });
   };
+  /**
+   * A lead's subagents, for the office-workers command (see team.ts): a POST with the action in its
+   * JSON body. The worker's own hook token says who's asking, and so whose team it is.
+   */
+  const officeWorkers = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
+    const workerId = url.searchParams.get('worker') ?? '';
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const floor = workerFloor(workerId);
+    const agent = floor?.workers.authenticate(workerId, token);
+    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST, with the action in a JSON body' });
+    let body: unknown;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: 'Send JSON: {"action": "list"}' });
+    }
+    try {
+      const r = await floor.team.handle(agent, body);
+      send(res, r.status, r.body);
+    } catch (err) {
+      send(res, 500, { error: (err as Error).message });
+    }
+  };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');
@@ -344,6 +370,9 @@ export async function startServer(cfg: Config) {
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
+  // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
+  const subagents = new Subagents(cfg.dataDir, (state) => broadcast({ t: 'subagents', state }), cfg.skillsDir);
+  subagents.syncSkill();
 
   // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
@@ -421,6 +450,7 @@ export async function startServer(cfg: Config) {
       return n;
     },
     leaveOnMerge: () => leaveOnMerge.on,
+    subagents: () => subagents.settings,
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
@@ -843,6 +873,7 @@ export async function startServer(cfg: Config) {
       sky: sky.state,
       theme: themes.state(),
       leaveOnMerge: leaveOnMerge.state(),
+      subagents: subagents.state(),
       prompts: prompts.state(),
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
@@ -1041,6 +1072,8 @@ export async function startServer(cfg: Config) {
         console.log(`  ${who} added a floor for ${r.repo ?? r.name} (${r.dir})`);
         toastAll(`🛗 New floor: ${r.name}, added by ${who}`);
         sendTo(c, { t: 'floor.added', dir, floor: floor.id });
+        // Its Droid workers find out how to hire subagents from the skill: put it back if it went missing.
+        if (subagents.syncSkill()) broadcast({ t: 'subagents', state: subagents.state() });
         break;
       }
       case 'floor.remove': {
@@ -1404,6 +1437,15 @@ export async function startServer(cfg: Config) {
         toastAll(on ? `🏠 ${who} set workers to go home by themselves once their pull request merges` : `🪑 ${who} set workers whose pull request merged to stay until they're sent home`);
         // The ones already merged go now.
         if (on) for (const f of floors.values()) f.sendLandedHome();
+        break;
+      }
+      case 'subagents.set': {
+        const before = subagents.settings;
+        const err = subagents.set(msg.settings, who);
+        if (err) return warn(c, err);
+        const after = subagents.settings;
+        if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let workers hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
+        else toastAll(`🧭 ${who} changed the Subagents settings`);
         break;
       }
       case 'theme.set': {

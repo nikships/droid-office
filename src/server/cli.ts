@@ -5,6 +5,7 @@ import { loadConfig, ensureSelfSigned } from './config.js';
 import { startServer } from './server.js';
 import { tildify } from './building.js';
 import { lanIPv4s } from './lan.js';
+import { FACTORY_SKILLS_DIR } from './subagents.js';
 
 const argv = process.argv.slice(2);
 if (argv[0] === 'prune') {
@@ -18,6 +19,7 @@ if (argv[0] === 'setup') {
 
 const cfg = loadConfig(argv);
 cfg.homeFloor = os.homedir();
+cfg.skillsDir = FACTORY_SKILLS_DIR;
 await ensureSelfSigned(cfg);
 // A new office started in a terminal: where projects go, GitHub or GitLab, and the first floor, before it opens.
 if (!cfg.project) {

@@ -79,13 +79,17 @@ export const BEANBAGS: DeskDef[] = (
 /** Everywhere a worker can sit: the desks, then the bean bags. */
 export const SEATS: DeskDef[] = [...DESKS, ...BEANBAGS];
 
-/** The boards with an agent standing by: the Issues board, the PR board and the task queue. */
-export type StationKind = 'issues' | 'pulls' | 'queue';
+/**
+ * The agents standing at kiosks: one by each of the Issues board, the PR board and the task queue, and
+ * the Team lead, who hires subagents at the desks for whatever it's asked (see server/team.ts).
+ */
+export type StationKind = 'issues' | 'pulls' | 'queue' | 'lead';
 
 /**
  * The board agents: a worker standing behind a little kiosk just west of each of those boards (see
- * BOARDS), there for anyone to prompt about it. (x, z) is the kiosk. They face into the room, so at
- * rotY PI the worker stands on the wall side of it. Nobody hires them from the desks or the queue.
+ * BOARDS), there for anyone to prompt about it, and the Team lead's on the east wall. (x, z) is the
+ * kiosk. They face into the room, so the worker stands on the wall side of it: at rotY PI by the north
+ * wall, at PI / 2 by the east one. Nobody hires them from the desks or the queue.
  */
 export const STATIONS: DeskDef[] = [
   // Between the plant in the north-west corner and the Issues board.
@@ -94,6 +98,8 @@ export const STATIONS: DeskDef[] = [
   { id: 'station-pulls', station: 'pulls', x: 0, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'PR board' },
   // Between the Issues board and the task queue.
   { id: 'station-queue', station: 'queue', x: -7.8, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Task queue' },
+  // On the east wall between the Services board and the TV, looking out over the desks it hires at.
+  { id: 'station-lead', station: 'lead', x: FLOOR.maxX - 1.3, z: -4.2, rotY: Math.PI / 2, label: 'Team kiosk' },
 ];
 /** A board agent's kiosk: its top, and how far behind its middle (toward the wall) the agent stands. */
 export const KIOSK = { width: 0.8, depth: 0.5, height: 0.55, stand: 0.55 } as const;
@@ -102,6 +108,7 @@ export const STATION_AGENT: Record<StationKind, { name: string; color: string }>
   issues: { name: 'Issues agent', color: '#ef476f' },
   pulls: { name: 'PR agent', color: '#118ab2' },
   queue: { name: 'Queue agent', color: '#06d6a0' },
+  lead: { name: 'Team lead', color: '#ffd166' },
 };
 
 /** The upstairs office: a glass-walled loft on posts in the south-east corner, looking down on the desks. */
@@ -140,6 +147,21 @@ export const DESK_BY_ID = new Map([...SEATS, ...STATIONS, ...MEETING_SEATS].map(
 /** The seat a new worker takes when nobody picks one: the first free desk, else the first free bean bag. */
 export function nextFreeSeat(taken: (id: string) => boolean): DeskDef | undefined {
   return SEATS.find((d) => !taken(d.id));
+}
+
+/** The free desk nearest (x, z), else the first free bean bag: where a subagent sits, close to its lead. */
+export function nearestFreeSeat(x: number, z: number, taken: (id: string) => boolean): DeskDef | undefined {
+  let best: DeskDef | undefined;
+  let bestD = Infinity;
+  for (const d of DESKS) {
+    if (taken(d.id)) continue;
+    const dist = Math.hypot(d.x - x, d.z - z);
+    if (dist < bestD) {
+      bestD = dist;
+      best = d;
+    }
+  }
+  return best ?? nextFreeSeat(taken);
 }
 
 /**

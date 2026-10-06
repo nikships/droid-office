@@ -1,5 +1,5 @@
 /** The categories down the side of Settings. */
-export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'workers';
+export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'workers' | 'subagents';
 
 /** Who a setting is for. */
 export type SettingsScope = 'you' | 'floor' | 'office';
@@ -10,6 +10,13 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The decorations, the sky, Jira, where the elevator looks for projects, and local source reload.' },
   { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home and what the office tells them.' },
+  {
+    id: 'subagents',
+    icon: '🧭',
+    label: 'Subagents',
+    blurb:
+      'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk.',
+  },
 ];
 
 /** The badge by a setting's name, and what it means. */
@@ -37,6 +44,12 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Prompts', scope: 'office' },
   { pane: 'workers', title: 'Worker limit', scope: 'office' },
   { pane: 'workers', title: 'Workers whose pull request merged', scope: 'office' },
+  { pane: 'subagents', title: 'Subagents', scope: 'office' },
+  { pane: 'subagents', title: 'Subagent worker', scope: 'office' },
+  { pane: 'subagents', title: 'Team size', scope: 'office' },
+  { pane: 'subagents', title: 'Where subagents work', scope: 'office' },
+  { pane: 'subagents', title: 'Waking the lead', scope: 'office' },
+  { pane: 'subagents', title: 'Droid skill', scope: 'office' },
 ] as const satisfies readonly { pane: SettingsPane; title: string; scope: SettingsScope | null }[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];
