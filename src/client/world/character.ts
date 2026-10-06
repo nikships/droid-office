@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue, Theme, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
@@ -9,7 +10,8 @@ import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
 import { Muzzle, disposeGun, magnum } from './gun';
-import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
+import { glyphFlat } from './glyph3d';
+import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -350,6 +352,193 @@ function undress(parts: THREE.Object3D[]) {
   parts.length = 0;
 }
 
+// ---- Factory crew kit ---------------------------------------------------------------------------
+// Everyone in the building is Factory crew: an orange lanyard and an ID card, a pinwheel patch on
+// the chest and a pinwheel printed on the back. Each kit is a single vertex-colored mesh, built once
+// and shared, so a room full of workers wears it for one draw call apiece.
+
+const CREW = {
+  black: '#121212',
+  graphite: '#2a2a2a',
+  steel: '#3a3a3a',
+  light: '#eeeeee',
+  orange: '#ee6018',
+} as const;
+
+/** A capsule body to dress: its middle `y`, half the straight part's height, and its radius. */
+interface Capsule {
+  readonly y: number;
+  readonly half: number;
+  readonly r: number;
+}
+/** The worker's bean (see Worker) and a person's torso (see Person). */
+const BEAN: Capsule = { y: 0.55, half: 0.15, r: 0.28 };
+const TORSO: Capsule = { y: 0.72, half: 0.14, r: 0.26 };
+
+/** The point on `c` at height `y`, `a` round from the front (+z; +x is positive), `out` off its surface, into `at`; returns the outward normal. */
+function onCapsule(c: Capsule, y: number, a: number, out: number, at: THREE.Vector3): THREE.Vector3 {
+  const dy = y - THREE.MathUtils.clamp(y, c.y - c.half, c.y + c.half);
+  const rr = Math.sqrt(Math.max(1e-6, c.r * c.r - dy * dy));
+  const normal = new THREE.Vector3(Math.sin(a) * rr, dy, Math.cos(a) * rr).normalize();
+  at.set(Math.sin(a) * rr, y, Math.cos(a) * rr).addScaledVector(normal, out);
+  return normal;
+}
+
+/**
+ * A flat piece (built facing +z around 0,0,0) bent over `c` with its middle at (y, a), `out` off
+ * the surface, in `color`. Its x runs round the body and its y up it, so it hugs the curve
+ * instead of cutting into it at the edges.
+ */
+function hug(c: Capsule, geo: THREE.BufferGeometry, color: string, y: number, a: number, out: number): THREE.BufferGeometry {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  if (g !== geo) geo.dispose();
+  for (const name of Object.keys(g.attributes)) if (name !== 'position') g.deleteAttribute(name);
+  const pos = g.getAttribute('position') as THREE.BufferAttribute;
+  const normals = new Float32Array(pos.count * 3);
+  const at = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    const py = y + pos.getY(i);
+    const ring = Math.sqrt(Math.max(1e-6, c.r * c.r - (py - THREE.MathUtils.clamp(py, c.y - c.half, c.y + c.half)) ** 2));
+    const n = onCapsule(c, py, a + pos.getX(i) / ring, out + pos.getZ(i), at);
+    pos.setXYZ(i, at.x, at.y, at.z);
+    normals.set([n.x, n.y, n.z], i * 3);
+  }
+  g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  return tint(g, color);
+}
+
+/** Paints every vertex of `geo` (plain triangles with normals) one color, ready to merge into a kit. */
+function tint(geo: THREE.BufferGeometry, color: string): THREE.BufferGeometry {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  if (g !== geo) geo.dispose();
+  for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
+  const c = new THREE.Color(color);
+  const n = g.getAttribute('position').count;
+  const rgb = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) rgb.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+  g.userData.signal = color === CREW.orange;
+  return g;
+}
+
+/**
+ * A lanyard round `c`, high at the back (`back`) and down to a V at the front (`front`), where the
+ * card hangs; `steep` under 1 lifts the straps off the front sooner.
+ */
+function lanyard(c: Capsule, front: number, back: number, steep: number, color: string): THREE.BufferGeometry {
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * Math.PI * 2;
+    const y = front + (back - front) * (Math.min(a, Math.PI * 2 - a) / Math.PI) ** steep;
+    const p = new THREE.Vector3();
+    onCapsule(c, y, a, 0.01, p);
+    pts.push(p);
+  }
+  return tint(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 24, 0.009, 3, true), color);
+}
+
+/** An ID card on its clip, `w` by `h`, centered on 0,0 and facing +z: an orange band across the top, a photo and two lines. */
+function idCard(c: Capsule, y: number, w: number, h: number): THREE.BufferGeometry[] {
+  const at = (geo: THREE.BufferGeometry, x: number, dy: number, z: number) => geo.translate(x, dy, z);
+  return [
+    hug(c, new THREE.BoxGeometry(w, h, 0.006), CREW.light, y, 0, 0.006),
+    hug(c, at(new THREE.PlaneGeometry(w, h * 0.22), 0, h * 0.39, 0.0035), CREW.orange, y, 0, 0.006),
+    hug(c, at(new THREE.PlaneGeometry(w * 0.34, w * 0.34), -w * 0.22, -h * 0.06, 0.0035), CREW.graphite, y, 0, 0.006),
+    hug(c, at(new THREE.PlaneGeometry(w * 0.34, w * 0.07), w * 0.2, 0, 0.0035), CREW.steel, y, 0, 0.006),
+    hug(c, at(new THREE.PlaneGeometry(w * 0.26, w * 0.07), w * 0.16, -h * 0.13, 0.0035), CREW.steel, y, 0, 0.006),
+    hug(c, at(new THREE.BoxGeometry(w * 0.3, h * 0.12, 0.01), 0, h * 0.53, 0), CREW.steel, y, 0, 0.006),
+  ];
+}
+
+/** A pinwheel patch `size` across sewn on at (y, a): an orange pinwheel on a dark square. */
+function patch(c: Capsule, y: number, a: number, size: number): THREE.BufferGeometry[] {
+  return [hug(c, new THREE.PlaneGeometry(size, size), CREW.black, y, a, 0.004), hug(c, glyphFlat(size * 0.72, 1).translate(0, 0, 0.002), CREW.orange, y, a, 0.004)];
+}
+
+let kitMats: { plain: THREE.MeshToonMaterial; signal: THREE.MeshToonMaterial } | null = null;
+/**
+ * What every crew kit draws with, each piece's color in its vertices: plain for the card and
+ * patches, and a lit one for the orange (lanyard, stripes, pinwheels), which reads like safety
+ * tape against a dark floor. Both are too small for the cartoon outline.
+ */
+function kitMaterials(): { plain: THREE.MeshToonMaterial; signal: THREE.MeshToonMaterial } {
+  if (!kitMats) {
+    const make = (emissive: string) => {
+      const m = toonUnique('#ffffff');
+      m.vertexColors = true;
+      m.emissive.set(emissive);
+      m.userData.outlineParameters = { visible: false };
+      return m;
+    };
+    kitMats = { plain: make('#000000'), signal: make('#5e2208') };
+  }
+  return kitMats;
+}
+
+const kits = new Map<string, { plain: THREE.BufferGeometry; signal: THREE.BufferGeometry }>();
+/** The kit `key` names, built by `make` the first time anyone wears one and shared after that: two meshes, plain and signal orange. */
+function kit(key: string, make: () => THREE.BufferGeometry[]): THREE.Group {
+  let geo = kits.get(key);
+  if (!geo) {
+    const parts = make();
+    geo = { plain: mergeGeometries(parts.filter((p) => !p.userData.signal))!, signal: mergeGeometries(parts.filter((p) => p.userData.signal))! };
+    kits.set(key, geo);
+  }
+  const mats = kitMaterials();
+  const g = new THREE.Group();
+  g.name = 'crew-kit';
+  g.add(mesh(geo.plain, mats.plain, 0, 0, 0, false), mesh(geo.signal, mats.signal, 0, 0, 0, false));
+  return g;
+}
+
+/** A person's crew kit: lanyard, ID card, chest patch and the pinwheel on the back. */
+function personKit(): THREE.Group {
+  return kit('person', () => [lanyard(TORSO, 0.86, 1.05, 0.6, CREW.orange), ...idCard(TORSO, 0.775, 0.095, 0.13), ...patch(TORSO, 0.83, 0.74, 0.085), hug(TORSO, glyphFlat(0.22, 2), CREW.orange, 0.78, Math.PI, 0.004)]);
+}
+
+/** A worker's crew kit, under its headset: the lanyard runs below its ear cups, the card hangs below its eyes. */
+function workerKit(): THREE.Group {
+  return kit('worker', () => [lanyard(BEAN, 0.49, 0.8, 0.75, CREW.orange), ...idCard(BEAN, 0.425, 0.095, 0.125), ...patch(BEAN, 0.47, 0.76, 0.07), hug(BEAN, glyphFlat(0.17, 2), CREW.orange, 0.58, Math.PI, 0.004)]);
+}
+
+let headsetGeo: THREE.BufferGeometry | null = null;
+/** A worker's headset in graphite: the band (front to back, under the antenna), the ear cups and a boom out to its mic. */
+function headset(): THREE.BufferGeometry {
+  let geo = headsetGeo;
+  if (!geo) {
+    const band = new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI).translate(0, 0.72, 0).rotateY(Math.PI / 2);
+    const parts: THREE.BufferGeometry[] = [band];
+    for (const sx of [-1, 1]) parts.push(new THREE.SphereGeometry(0.07, 10, 8).translate(sx * 0.29, 0.72, 0));
+    const boom = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0.3, 0.7, 0.04), new THREE.Vector3(0.37, 0.6, 0.2), MIC);
+    parts.push(new THREE.TubeGeometry(boom, 8, 0.012, 5, false));
+    geo = mergeGeometries(parts.map((p) => tint(p, CREW.graphite)))!;
+    geo.deleteAttribute('color');
+    headsetGeo = geo;
+  }
+  return geo;
+}
+/** The tip of a worker's mic boom, where its orange LED is. */
+const MIC = new THREE.Vector3(0.17, 0.565, 0.255);
+let ledMat: THREE.MeshToonMaterial | null = null;
+/** The LED's lit orange, without the cartoon outline that would swallow something so small. */
+function ledMaterial(): THREE.MeshToonMaterial {
+  if (!ledMat) {
+    ledMat = toonUnique(CREW.orange);
+    ledMat.emissive.set(CREW.orange);
+    ledMat.userData.outlineParameters = { visible: false };
+  }
+  return ledMat;
+}
+
+let bootGeo: THREE.BufferGeometry | null = null;
+/** A person's black work boot, at the end of a leg (see Person's legs, whose pivot is the hip). */
+function boot(): THREE.Mesh {
+  bootGeo ??= roundedBox(0.17, 0.1, 0.25, 0.05);
+  const m = mesh(bootGeo, toon(CREW.black), 0, -0.335, 0.035);
+  m.name = 'crew-boot';
+  return m;
+}
+
 /** A chibi cartoon person — used for every human in the office. Forward is +z. */
 export class Person {
   readonly root = new THREE.Group();
@@ -362,6 +551,9 @@ export class Person {
   private skin: THREE.MeshToonMaterial;
   private hairMat: THREE.MeshToonMaterial;
   private hair = new THREE.Group();
+  /** Their Factory crew kit (lanyard, card, patches) and work boots, off while they wear a medic's uniform. */
+  private crew: THREE.Group;
+  private boots: THREE.Mesh[];
   private look: Look;
   private label: THREE.Sprite | null = null;
   private head: THREE.Group;
@@ -427,12 +619,14 @@ export class Person {
     const skin = (this.skin = toonUnique(SKIN_TONES[look.skin]));
     this.hairMat = toonUnique(HAIR_COLORS[look.hair]);
     this.hairMat.side = THREE.DoubleSide;
-    const pants = toon('#3d405b');
+    const pants = toon('#1e1e1e');
     const ink = toon('#1d1d1d');
 
     this.root.add(this.body);
     // Torso
     this.body.add(mesh(new THREE.CapsuleGeometry(0.26, 0.28, 6, 12), this.shirt, 0, 0.72, 0));
+    this.crew = personKit();
+    this.body.add(this.crew);
     // Head
     const head = (this.head = new THREE.Group());
     head.position.y = 1.32;
@@ -457,6 +651,9 @@ export class Person {
     };
     this.legL = limb(0.22, 0.1, pants, -0.12, HIPS);
     this.legR = limb(0.22, 0.1, pants, 0.12, HIPS);
+    this.boots = [boot(), boot()];
+    this.legL.add(this.boots[0]);
+    this.legR.add(this.boots[1]);
     this.armL = limb(0.24, 0.08, this.shirt, -0.33, 0.9);
     this.armR = limb(0.24, 0.08, this.shirt, 0.33, 0.9);
     for (const arm of [this.armL, this.armR]) arm.add(mesh(new THREE.SphereGeometry(0.085, 12, 10), skin, 0, -0.38, 0));
@@ -954,6 +1151,7 @@ export class Person {
       this.medicRig.limbs.forEach((limb, i) => limb.restore(i < 2));
       for (const item of this.medicRig.uniform) item.removeFromParent();
       for (const geometry of this.medicRig.geometries) geometry.dispose();
+      for (const o of [this.crew, ...this.boots]) o.visible = true;
       const tag = this.label;
       if (tag) tag.visible = this.medicRig.labelVisible;
       this.medicRig = null;
@@ -991,6 +1189,7 @@ export class Person {
         this.body.add(cross);
         uniform.push(cross);
       }
+      for (const o of [this.crew, ...this.boots]) o.visible = false;
       this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.label?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
     }
     const rig = this.medicRig;
@@ -1173,14 +1372,17 @@ const STATUS_BULB: Record<string, string> = {
 
 /** Status pill on a worker's task card: [text, background, text color]. */
 const TASK_CHIP: Record<string, [string, string, string]> = {
-  starting: ['⏳ STARTING', STATUS_BULB.starting, '#2b2d42'],
-  idle: ['💬 READY', STATUS_BULB.idle, '#2b2d42'],
-  working: ['⌨️ WORKING', STATUS_BULB.working, '#2b2d42'],
-  needs_input: ['❗ NEEDS YOU', STATUS_BULB.needs_input, '#ffffff'],
-  done: ['✅ DONE', STATUS_BULB.done, '#2b2d42'],
-  exited: ['💤 ASLEEP', STATUS_BULB.exited, '#ffffff'],
-  offline: ['💤 ASLEEP', STATUS_BULB.offline, '#ffffff'],
+  starting: ['STARTING', STATUS_BULB.starting, '#2b2d42'],
+  idle: ['READY', STATUS_BULB.idle, '#2b2d42'],
+  working: ['WORKING', STATUS_BULB.working, '#2b2d42'],
+  needs_input: ['NEEDS YOU', STATUS_BULB.needs_input, '#ffffff'],
+  done: ['DONE', STATUS_BULB.done, '#2b2d42'],
+  exited: ['ASLEEP', STATUS_BULB.exited, '#ffffff'],
+  offline: ['ASLEEP', STATUS_BULB.offline, '#ffffff'],
 };
+
+/** Card chips are drawn like the DOM's status pills: the status color as ink on a dark pill. */
+const CHIP_BG = '#101010';
 
 /** A worker's pull request as its bubble shows it: open or merged, and the words to label it with ("🎉 MR !12 merged"). */
 export interface PrBadge {
@@ -1189,7 +1391,7 @@ export interface PrBadge {
 }
 
 /** The chip (or bubble) of a worker whose worktree was deleted outside the office. */
-const LOST_CHIP: [string, string, string] = ['🌿 WORKTREE DELETED', '#ffb703', '#2b2d42'];
+const LOST_CHIP: [string, string, string] = ['WORKTREE DELETED', '#ffb703', '#2b2d42'];
 
 /** The outline of a worker's bubble, and its pill, once it has a pull request: GitHub's open green, or the PR board's merged purple. */
 const PR_INK: Record<WorkerPr['state'], string> = { open: '#2da44e', merged: '#9d4edd' };
@@ -1203,7 +1405,7 @@ function prShown(status: WorkerStatus, pr: PrBadge | undefined): PrBadge | undef
 function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean): readonly [string, string, string] {
   if (lost) return LOST_CHIP;
   const shown = prShown(status, pr);
-  if (shown) return [shown.label.toUpperCase(), PR_INK[shown.state], '#ffffff'];
+  if (shown) return [plainLabel(shown.label).toUpperCase(), PR_INK[shown.state], '#ffffff'];
   return TASK_CHIP[status] ?? TASK_CHIP.idle;
 }
 
@@ -1462,6 +1664,8 @@ export class Worker {
   /** Beside its laptop, where the globe floats (see setPropSpot). */
   private spot = new THREE.Vector3(-1, 1.1, 1.3);
   private skin: THREE.MeshToonMaterial;
+  /** Its Factory crew kit: lanyard, ID card and pinwheel patches. */
+  private crew: THREE.Group;
   /** Dressed up for a holiday (see setCostume), and what it's wearing. */
   private costume: Theme | null = null;
   private outfit: THREE.Object3D[] = [];
@@ -1492,13 +1696,16 @@ export class Worker {
       this.eyes.push(eye, pupil);
       this.pupils.push(pupil);
     }
-    // Audio headset: the band runs front to back, under the antenna.
-    const band = mesh(new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI), toon('#2b2d42'), 0, 0.72, 0, false);
-    band.rotation.y = Math.PI / 2;
-    this.body.add(band);
-    for (const sx of [-1, 1]) this.body.add(mesh(new THREE.SphereGeometry(0.07, 10, 8), toon('#2b2d42'), sx * 0.29, 0.72, 0, false));
+    // Headset: band, ear cups and a mic with Factory's orange LED on it.
+    this.body.add(mesh(headset(), toon(CREW.graphite), 0, 0, 0, false));
+    const led = mesh(new THREE.SphereGeometry(0.024, 8, 6), ledMaterial(), MIC.x, MIC.y, MIC.z, false);
+    led.name = 'headset-led';
+    this.body.add(led);
+    // Its crew kit: lanyard, ID card and patches (a holiday costume goes on in its place).
+    this.crew = workerKit();
+    this.body.add(this.crew);
     // Antenna with status bulb.
-    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon('#2b2d42'), 0, 1.07, 0, false));
+    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon(CREW.graphite), 0, 1.07, 0, false));
     const mat = toonUnique(STATUS_BULB.starting);
     mat.emissive = new THREE.Color(STATUS_BULB.starting).multiplyScalar(0.6);
     this.bulb = { mat, mesh: mesh(new THREE.SphereGeometry(0.075, 12, 10), mat, 0, 1.2, 0, false) };
@@ -1513,8 +1720,9 @@ export class Worker {
     };
     this.armL = arm(-0.3);
     this.armR = arm(0.3);
+    // Black work boots.
     for (const sx of [-1, 1]) {
-      const foot = mesh(new THREE.CapsuleGeometry(0.06, 0.1, 4, 8), skin, sx * 0.12, 0.2, 0.05);
+      const foot = mesh(new THREE.CapsuleGeometry(0.06, 0.1, 4, 8), toon(CREW.black), sx * 0.12, 0.2, 0.05);
       this.body.add(foot);
       this.feet.push(foot);
     }
@@ -1559,6 +1767,7 @@ export class Worker {
       this.outfit.push(o);
     };
     this.skin.color.set(this.color);
+    this.crew.visible = !theme;
     if (theme === 'halloween') {
       this.skin.color.lerp(ZOMBIE, 0.6).multiplyScalar(0.85);
       wear(this.body, zombieWorker(this.skin));
@@ -1740,11 +1949,23 @@ export class Worker {
     if (this.leaving || this.dead) return;
     const { status, bouncing: bounce, task, pr, lost } = this;
     const hot = status === 'needs_input' || (status === 'done' && bounce);
-    // Resting cards used to be cream. They sit black with white type, like the name tag.
-    const bg = hot ? (status === 'done' ? '#caffbf' : '#ffd6e0') : status === 'working' ? '#ffec99' : '#0a0a0a';
-    const border = pr && PR_INK[pr.state];
+    // Every card is a dark panel; what it needs from you shows in its outline, not a pastel fill.
+    const signal = hot || status === 'working' ? STATUS_BULB[status] : undefined;
+    const border = (pr && PR_INK[pr.state]) || signal;
     const prLabel = prShown(status, pr)?.label;
-    const bubble = lost ? '🌿 worktree deleted' : (prLabel ?? (status === 'needs_input' ? '❗ needs you' : status === 'done' && bounce ? '✅ done!' : status === 'working' ? '⌨️ working' : isAsleep(status) ? '💤' : ''));
+    const bubble = lost
+      ? 'WORKTREE DELETED'
+      : prLabel !== undefined
+        ? plainLabel(prLabel).toUpperCase()
+        : status === 'needs_input'
+          ? '! NEEDS YOU'
+          : status === 'done' && bounce
+            ? '\u2713 DONE'
+            : status === 'working'
+              ? '\u25B8 WORKING'
+              : isAsleep(status)
+                ? 'ZZZ'
+                : '';
     const key = `${lost}|${border}|${prLabel}|${task ? `${status}|${bounce}|${task.name}|${task.summary}` : bubble}`;
     if (key === this.bubbleKey) return;
     this.bubbleKey = key;
@@ -1755,18 +1976,17 @@ export class Worker {
     }
     this.bubbleIsCard = !!task;
     if (task) {
-      const [text, chipBg, color] = cardChip(status, pr, lost);
-      const dark = bg === '#0a0a0a';
+      const [text, ink] = cardChip(status, pr, lost);
       this.bubble = cardSprite({
-        chip: { text, bg: chipBg, color },
+        chip: { text, bg: CHIP_BG, color: ink },
         title: task.name,
         body: task.summary,
-        bg,
-        border: border ?? (dark ? '#eeeeee' : undefined),
-        color: dark ? '#ffffff' : undefined,
-        muted: dark ? '#e6e6ee' : undefined,
+        bg: '#0a0a0a',
+        border: border ?? '#eeeeee',
+        color: '#ffffff',
+        muted: '#a6a6a6',
       });
-    } else if (bubble) this.bubble = textSprite(bubble, { bg: lost ? LOST_CHIP[1] : '#0a0a0a', color: lost ? LOST_CHIP[2] : '#eeeeee', border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });
+    } else if (bubble) this.bubble = textSprite(bubble, { bg: '#0a0a0a', color: lost ? LOST_CHIP[1] : (border ?? '#eeeeee'), border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });
     if (this.bubble) this.root.add(this.bubble);
   }
 

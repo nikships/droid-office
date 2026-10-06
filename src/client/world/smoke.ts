@@ -16,6 +16,84 @@ function puffTexture(): THREE.CanvasTexture {
   return t;
 }
 
+let steamTex: THREE.CanvasTexture | null = null;
+const steamMats = new Map<number, THREE.PointsMaterial>();
+
+function steamMaterial(size: number): THREE.PointsMaterial {
+  let m = steamMats.get(size);
+  if (!m) {
+    steamTex ??= puffTexture();
+    m = new THREE.PointsMaterial({ size, map: steamTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    m.userData.outlineParameters = { visible: false };
+    steamMats.set(size, m);
+  }
+  return m;
+}
+
+const STEAM = 36;
+/** How long a puff of steam lasts, from the stack's mouth until it's thinned out to nothing, in seconds. */
+const STEAM_LIFE = 11;
+
+/**
+ * A slow plume of steam off a stack's mouth at `at`, leaning off on the breeze (+x). It needs no
+ * update: each puff is wherever its age (from the clock) puts it, worked out as it's drawn, so it's
+ * two point clouds, the young puffs small and the old ones spread wide, and every window sees the same plume.
+ */
+export class Steam {
+  readonly group = new THREE.Group();
+
+  constructor(at: THREE.Vector3, brightness = 0.025) {
+    const pos = new THREE.BufferAttribute(new Float32Array(STEAM * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const layers = [1.8, 5.2].map((size) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', pos);
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(STEAM * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      const p = new THREE.Points(geo, steamMaterial(size));
+      p.frustumCulled = false;
+      p.raycast = () => {};
+      this.group.add(p);
+      return p;
+    });
+    const seeds = Array.from({ length: STEAM }, (_, i) => {
+      const a = Math.sin(i * 12.9898) * 43758.5453;
+      const b = Math.sin(i * 78.233) * 12543.1234;
+      return [a - Math.floor(a), b - Math.floor(b)];
+    });
+    let drawn = -1;
+    const place = () => {
+      const t = performance.now() / 1000;
+      if (t === drawn) return;
+      drawn = t;
+      const a = pos.array as Float32Array;
+      const young = layers[0].geometry.getAttribute('color').array as Float32Array;
+      const old = layers[1].geometry.getAttribute('color').array as Float32Array;
+      for (let i = 0; i < STEAM; i++) {
+        const [s0, s1] = seeds[i];
+        const age = (t + (i / STEAM) * STEAM_LIFE + s0 * 0.3) % STEAM_LIFE;
+        const k = age / STEAM_LIFE;
+        const spread = 0.25 + 0.24 * age;
+        const turn = s1 * Math.PI * 2 + age * 0.35;
+        a[i * 3] = at.x + 0.32 * age + 0.025 * age * age + Math.cos(turn) * spread;
+        a[i * 3 + 1] = at.y + 6.5 * (1 - Math.exp(-age / 4.2));
+        a[i * 3 + 2] = at.z + Math.sin(turn) * spread;
+        const born = Math.min(1, age * 1.5);
+        const y = brightness * 0.5 * born * (1 - THREE.MathUtils.smoothstep(k, 0.05, 0.4));
+        const o = brightness * 0.45 * THREE.MathUtils.smoothstep(k, 0.08, 0.35) * (1 - k) ** 1.6;
+        young.fill(y, i * 3, i * 3 + 3);
+        old.fill(o, i * 3, i * 3 + 3);
+      }
+      pos.needsUpdate = true;
+      for (const l of layers) l.geometry.getAttribute('color').needsUpdate = true;
+    };
+    place();
+    layers[0].onBeforeRender = place;
+  }
+
+  dispose() {
+    for (const c of this.group.children) (c as THREE.Points).geometry.dispose();
+  }
+}
+
 interface Puff {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   vel: THREE.Vector3;

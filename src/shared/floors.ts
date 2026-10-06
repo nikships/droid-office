@@ -4,33 +4,39 @@
 /** The most floors a building has. */
 export const MAX_FLOORS = 16;
 
-/** How a floor looks: its walls, their trim, and its planks. */
+/** How a floor looks: its walls, their trim, and its poured floor. */
 export interface FloorPalette {
   name: string;
   wall: string;
   trim: string;
+  /** The polished slab. */
   floor: string;
+  /** Every other pour of the slab, a shade off the first. */
   floorAlt: string;
-  /** The gaps between planks. */
+  /** The hairline grid scored into the slab, a meter apart. */
   seam: string;
 }
 
 /**
- * How a floor looks, in the industrial palette: charcoal walls, concrete or dark wood floors, and a
- * trim color that keeps every floor distinguishable from the next. The first is the office's own
- * look; every new floor takes the next one nobody has.
+ * How a floor looks, in the factory palette: graphite walls over a near-black polished slab with a
+ * hairline grid, and a trim (the baseboard, and the floor's swatch in the elevator) that keeps every
+ * floor distinguishable from the next. Trims stay dark enough for white type on them. The first is
+ * the office's own look; every new floor takes the next one nobody has.
+ *
+ * Wall and floor are surface colors under the office's dim night fill, which renders a mid grey near
+ * black (#6a6a6a comes out about #0d0d0d), so they read lighter here than they look in the room.
  */
 export const FLOOR_PALETTES: FloorPalette[] = [
-  { name: 'Graphite', wall: '#26292f', trim: '#ee6018', floor: '#34383f', floorAlt: '#30343b', seam: '#1f2226' },
-  { name: 'Steel', wall: '#2a2e34', trim: '#8fa3b8', floor: '#3b4048', floorAlt: '#363b42', seam: '#23262b' },
-  { name: 'Concrete', wall: '#2e3136', trim: '#72ddf7', floor: '#3f434a', floorAlt: '#3a3e45', seam: '#26292e' },
-  { name: 'Walnut', wall: '#33302c', trim: '#c99559', floor: '#433a30', floorAlt: '#3d352c', seam: '#2a2521' },
-  { name: 'Moss', wall: '#2c312d', trim: '#6fae7f', floor: '#3a403b', floorAlt: '#353b36', seam: '#232824' },
-  { name: 'Plum', wall: '#2e2a33', trim: '#b689ef', floor: '#3c3842', floorAlt: '#37333d', seam: '#252329' },
-  { name: 'Slate', wall: '#2b2f36', trim: '#5aa9e6', floor: '#3d424a', floorAlt: '#383d45', seam: '#24272d' },
-  { name: 'Umber', wall: '#322e2a', trim: '#f2b84b', floor: '#423931', floorAlt: '#3c342d', seam: '#292420' },
-  { name: 'Harbor', wall: '#2a3033', trim: '#3ccf91', floor: '#3a4144', floorAlt: '#353c3f', seam: '#222829' },
-  { name: 'Ember', wall: '#302b2b', trim: '#f27e93', floor: '#3e3838', floorAlt: '#393333', seam: '#262222' },
+  { name: 'Graphite', wall: '#878787', trim: '#ee6018', floor: '#6a6a6a', floorAlt: '#727272', seam: '#a2a2a2' },
+  { name: 'Steel', wall: '#84898e', trim: '#5c636b', floor: '#686c72', floorAlt: '#707478', seam: '#a0a6ac' },
+  { name: 'Concrete', wall: '#8c8a87', trim: '#75716a', floor: '#72706c', floorAlt: '#787774', seam: '#a9a8a2' },
+  { name: 'Carbon', wall: '#7b7b7b', trim: '#3a3a3a', floor: '#5c5c5c', floorAlt: '#626262', seam: '#8e8e8e' },
+  { name: 'Oxide', wall: '#8a817d', trim: '#a2481a', floor: '#70665e', floorAlt: '#776e64', seam: '#a99a8e' },
+  { name: 'Gunmetal', wall: '#83868e', trim: '#484c55', floor: '#666a72', floorAlt: '#6e7278', seam: '#9ea4ae' },
+  { name: 'Ash', wall: '#969696', trim: '#7a7a7a', floor: '#787878', floorAlt: '#7e7e7e', seam: '#b2b2b2' },
+  { name: 'Ember', wall: '#8a807b', trim: '#d15010', floor: '#6e6461', floorAlt: '#756c68', seam: '#a89890' },
+  { name: 'Iron', wall: '#818181', trim: '#565656', floor: '#646464', floorAlt: '#6c6c6c', seam: '#9a9a9a' },
+  { name: 'Signal', wall: '#878481', trim: '#b8541c', floor: '#6c6866', floorAlt: '#74706e', seam: '#a6a09c' },
 ];
 
 export function floorPalette(i: number): FloorPalette {

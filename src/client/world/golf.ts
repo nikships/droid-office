@@ -249,7 +249,7 @@ export function buildGreen(ground: THREE.Group, colliders: Collider[], night: Ni
     colliders.push({ minX: sx + dx - 0.08, maxX: sx + dx + 0.08, minZ: sz - 0.08, maxZ: sz + 0.08, bottom: G, top: G + 1.5 });
   }
   ground.add(mergeByMaterial(parts));
-  const sign = textPlane('⛳ Hole 1 · Par 1', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+  const sign = textPlane('01 HOLE · PAR 1', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
   sign.position.set(sx, G + 1.5, sz - 0.07);
   sign.rotation.y = Math.PI;
   ground.add(sign);

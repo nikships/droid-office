@@ -13,7 +13,8 @@ export interface BookshelfModel {
   interactable: Interactable;
 }
 
-const SPINES = ['#b5413b', '#2a6f97', '#2d6a4f', '#e9c46a', '#6a4c93', '#f4a261', '#264653', '#ef476f', '#8ecae6', '#fffaf3'];
+// Binders and manuals in graphite, steel and light gray, with a Factory orange one now and then.
+const SPINES = ['#1c1c1c', '#2a2a2a', '#3a3a3a', '#8c8c8c', '#d8d8d8', '#161616', '#ee6018', '#2a2a2a', '#101010', '#5a5a5a'];
 const SHELVES = 5;
 /** The case's boards, how far the shelves sit off the floor, and how thick they are. */
 const SIDE = 0.05;
@@ -29,8 +30,8 @@ export function buildBookshelf(): BookshelfModel {
 
   // Built facing +z, back against z = -D/2.
   const parts = new THREE.Group();
-  const wood = toon('#9c6644');
-  const woodDark = toon('#7f5539');
+  const wood = toon('#1c1c1c');
+  const woodDark = toon('#101010');
   const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number) => parts.add(mesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z));
   box(W, H, 0.03, woodDark, 0, H / 2, -D / 2 + 0.015);
   for (const sx of [-1, 1]) box(SIDE, H, D, wood, sx * (W / 2 - SIDE / 2), H / 2, 0);
@@ -55,11 +56,11 @@ export function buildBookshelf(): BookshelfModel {
         if (ornament === 'globe') {
           parts.add(mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.03, 12), woodDark, x + 0.13, floor + 0.015, 0));
           parts.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.07, 6), woodDark, x + 0.13, floor + 0.06, 0));
-          parts.add(mesh(new THREE.SphereGeometry(0.11, 14, 10), toon('#4cc9f0'), x + 0.13, floor + 0.18, 0));
-          parts.add(mesh(new THREE.SphereGeometry(0.075, 10, 8), toon('#80b918'), x + 0.16, floor + 0.21, 0.05));
+          parts.add(mesh(new THREE.SphereGeometry(0.11, 14, 10), toon('#8c8c8c'), x + 0.13, floor + 0.18, 0));
+          parts.add(mesh(new THREE.SphereGeometry(0.075, 10, 8), toon('#3a3a3a'), x + 0.16, floor + 0.21, 0.05));
         } else {
-          parts.add(mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.12, 10), toon('#e76f51'), x + 0.11, floor + 0.06, 0.02));
-          parts.add(mesh(new THREE.SphereGeometry(0.1, 10, 8), toon('#52b788'), x + 0.11, floor + 0.19, 0.02));
+          parts.add(mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.12, 10), toon('#2a2a2a'), x + 0.11, floor + 0.06, 0.02));
+          parts.add(mesh(new THREE.SphereGeometry(0.1, 10, 8), toon('#4f7a5e'), x + 0.11, floor + 0.19, 0.02));
         }
         ornament = null;
         x += 0.28;
@@ -97,14 +98,14 @@ export function buildBookshelf(): BookshelfModel {
       }
       box(t, h, d, mat, x + t / 2, floor + h / 2, front - d / 2);
       // A band across some spines, near the top.
-      if (rand() < 0.35) box(t + 0.004, 0.018, d + 0.004, toon('#e9c46a'), x + t / 2, floor + h * 0.82, front - d / 2);
+      if (rand() < 0.35) box(t + 0.004, 0.018, d + 0.004, toon(rand() < 0.25 ? '#ee6018' : '#8c8c8c'), x + t / 2, floor + h * 0.82, front - d / 2);
       x += t + (rand() < 0.1 ? 0.012 : 0.002);
     }
   }
   const group = new THREE.Group();
   group.add(mergeByMaterial(parts));
-  // A sign along the crown.
-  const sign = textPlane('📚 Docs', { size: 40, bg: '#fffaf3' });
+  // A label along the crown; the zone's 06 DOCUMENTATION plate hangs on the wall over it (world/factory-floor.ts).
+  const sign = textPlane('PROJECT DOCS', { size: 28, bg: '#0a0a0a', color: '#eeeeee', border: '#2e2e2e' });
   sign.position.set(0, H + 0.3, 0.02);
   group.add(sign);
 

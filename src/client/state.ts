@@ -220,7 +220,7 @@ class Store {
   connection = '';
   /** Where the server last put this connection (see welcome, floor.enter). */
   arrival: Arrival | null = null;
-  profile: Profile = { name: 'Guest', color: AVATAR_COLORS[1], look: randomLook() };
+  profile: Profile = { name: 'Guest', color: '#161616', look: randomLook() };
   workers = new Map<string, WorkerInfo>();
   screens = new Map<string, ScreenState>();
   project: ProjectInfo | null = null;

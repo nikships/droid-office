@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import { HAIR_COLOR_NAMES, HAIR_COLORS, HAIR_STYLES, SKIN_TONES, randomLook, type Look } from '../../shared/avatar';
-import { AVATAR_COLORS, saveProfile, store, type Profile } from '../state';
+import { AVATAR_COLORS, loadProfile, saveProfile, store, type Profile } from '../state';
 import { Person } from '../world/character';
 import { toonUnique } from '../world/toon';
 import { h, openModal } from './dom';
+
+/** Factory crew black (what a new face starts in), graphite and light gray, ahead of the colors. */
+const CREW_SHIRTS = ['#161616', '#3a3a3a', '#eeeeee'];
+const SHIRTS = [...CREW_SHIRTS, ...AVATAR_COLORS.filter((c) => !CREW_SHIRTS.includes(c))];
 
 /** A turntable with your character on it, drawn with its own small renderer. */
 class Preview {
@@ -138,6 +142,8 @@ export function characterName(typed: string, saved: string): string {
  */
 export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const pick: Profile = { ...store.profile, look: { ...store.profile.look } };
+  // Someone new starts out in Factory crew black; anyone who has picked a shirt before keeps theirs.
+  if (first && !loadProfile()) pick.color = CREW_SHIRTS[0];
   const canvas = h('canvas', { 'aria-label': 'Your character, drag to spin' }) as HTMLCanvasElement;
   const preview = new Preview(canvas, pick);
 
@@ -166,12 +172,12 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
     skinRow.replaceChildren(...SKIN_TONES.map((c, i) => swatch(c, `Skin tone ${i + 1} of ${SKIN_TONES.length}`, i === skin, () => change({ skin: i }))));
     styleRow.replaceChildren(...HAIR_STYLES.map((name, i) => h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(i === style), class: i === style ? 'on' : '', onclick: () => change({ style: i }) }, name)));
     hairRow.replaceChildren(...HAIR_COLORS.map((c, i) => swatch(c, HAIR_COLOR_NAMES[i], i === hair, () => change({ hair: i }))));
-    shirtRow.replaceChildren(...AVATAR_COLORS.map((c) => swatch(c, `Shirt ${c}`, c === pick.color, () => change({}, c))));
+    shirtRow.replaceChildren(...SHIRTS.map((c) => swatch(c, `Shirt ${c}`, c === pick.color, () => change({}, c))));
   };
   paint();
 
   const surprise = h('button.btn', { type: 'button', title: 'Random look' }, '🎲 Surprise me');
-  surprise.addEventListener('click', () => change(randomLook(), AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]));
+  surprise.addEventListener('click', () => change(randomLook(), SHIRTS[Math.floor(Math.random() * SHIRTS.length)]));
   const save = h('button.btn.primary', { type: 'submit' }, first ? 'Enter the office 🚪' : 'Save');
   const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: first ? 'Skip: go in with this look (Esc)' : 'Close (Esc)' }, '✕');
 

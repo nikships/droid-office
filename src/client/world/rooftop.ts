@@ -6,6 +6,8 @@ import { buildCity, type City } from './city';
 import { buildElevator, type Elevator } from './elevator';
 import type { Collider, Interactable } from './office';
 import { bulb, type NightParts } from './outside';
+import { Steam } from './smoke';
+import { STACK, buildStack, stackBeacon } from './tower';
 import { ANISOTROPY, LABEL_SCALE, TILE_SCALE, fitScale } from './texture-quality';
 import { mergeByMaterial, mesh, roundedBox, toon, toonUnique } from './toon';
 import { SANS } from '../fonts';
@@ -19,7 +21,7 @@ import { SANS } from '../fonts';
 
 /** The building, walls included: the roof's edge. */
 const B = { minX: FLOOR.minX - WALL_T, maxX: FLOOR.maxX + WALL_T, minZ: FLOOR.minZ - WALL_T, maxZ: FLOOR.maxZ + WALL_T } as const;
-const INK = '#2b2d42';
+const INK = '#141414';
 
 export interface RoofEnv {
   /** How dark it is, 0 by day to 1 at night: lights show up more. */
@@ -85,21 +87,22 @@ function canvasTexture(w: number, h: number, draw?: (g: CanvasRenderingContext2D
   return t;
 }
 
-/** Teak decking, the boards running east–west. */
+/** Charcoal composite decking, the boards running east–west. */
 function deckTexture(): THREE.CanvasTexture {
   const w = B.maxX - B.minX;
   const d = B.maxZ - B.minZ;
   const px = 24;
   return canvasTexture(Math.round(w * px), Math.round(d * px), (g) => {
-    g.fillStyle = '#b98457';
+    g.fillStyle = '#0c0c0c';
     g.fillRect(0, 0, w * px, d * px);
     const board = 0.14 * px;
     for (let y = 0, row = 0; y < d * px; y += board, row++) {
       // Each row of boards a slightly different tone, with joints staggered along it.
       const tone = 0.9 + ((row * 37) % 11) / 55;
-      g.fillStyle = `rgb(${Math.round(185 * tone)}, ${Math.round(132 * tone)}, ${Math.round(87 * tone)})`;
+      const v = Math.round(50 * tone);
+      g.fillStyle = `rgb(${v}, ${v}, ${v})`;
       g.fillRect(0, y, w * px, board - 1.5);
-      g.fillStyle = 'rgba(70, 40, 20, 0.35)';
+      g.fillStyle = 'rgba(0, 0, 0, 0.45)';
       for (let x = ((row * 53) % 7) * px * 0.4; x < w * px; x += 2.4 * px) g.fillRect(x, y, 1.5, board);
     }
   });
@@ -185,12 +188,12 @@ class Dj {
     this.root.add(this.body);
     this.body.add(mesh(new THREE.CapsuleGeometry(0.26, 0.28, 6, 12), shirt, 0, 0.72, 0));
     // A print on the front of the tee.
-    this.body.add(mesh(new THREE.CircleGeometry(0.1, 16), toon('#06d6a0'), 0, 0.78, 0.262, false));
+    this.body.add(mesh(new THREE.CircleGeometry(0.1, 16), toon('#ee6018'), 0, 0.78, 0.262, false));
     const head = this.head;
     head.position.y = 1.32;
     head.add(mesh(new THREE.SphereGeometry(0.34, 20, 16), skin));
     // The cap, on backwards.
-    const capMat = toon('#ef476f');
+    const capMat = toon('#1c1c1c');
     const cap = mesh(new THREE.SphereGeometry(0.36, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), capMat, 0, 0.04, 0);
     head.add(cap);
     head.add(mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), capMat, 0, 0.06, -0.4));
@@ -269,13 +272,13 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   deck.position.set(cx, 0.002, cz);
   deck.receiveShadow = true;
   group.add(deck);
-  statics.add(mesh(new THREE.BoxGeometry(w, 0.3, d), toon('#c9c4bb'), cx, -0.15, cz, false));
+  statics.add(mesh(new THREE.BoxGeometry(w, 0.3, d), toon('#1c1c1c'), cx, -0.15, cz, false));
   colliders.push({ minX: B.minX, maxX: B.maxX, minZ: B.minZ, maxZ: B.maxZ, bottom: -0.3, top: 0 });
 
   // Round the edge: a concrete curb with glass panels on it and a steel rail on top. Nobody goes over it.
-  const curb = toon('#d8d3ca');
-  const steel = toon('#aeb6bf');
-  const glassMat = new THREE.MeshBasicMaterial({ color: '#d6f1ff', transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
+  const curb = toon('#161616');
+  const steel = toon('#8c8c8c');
+  const glassMat = new THREE.MeshBasicMaterial({ color: '#c9d2da', transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
   const edges: [number, number, number, number][] = [
     [B.minX, B.maxX, B.minZ, FLOOR.minZ],
     [B.minX, B.maxX, FLOOR.maxZ, B.maxZ],
@@ -304,20 +307,20 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
 
   // The elevator, in its housing: a back wall and a roof over the shaft (as tall as a floor), with a light on top.
   const elevator = buildElevator();
-  elevator.setSign('🍸 Rooftop bar');
+  elevator.setSign('Rooftop bar');
   group.add(elevator.group);
   colliders.push(...elevator.colliders);
   interactables.push(elevator.interactable);
   const hw = ELEVATOR.width / 2;
-  const housing = toon('#b8c1cc');
+  const housing = toon('#2a2a2a');
   statics.add(mesh(new THREE.BoxGeometry(ELEVATOR.width, WALL_HEIGHT + 0.3, WALL_T), housing, ELEVATOR.x, (WALL_HEIGHT + 0.3) / 2, FLOOR.minZ - WALL_T / 2));
-  statics.add(mesh(new THREE.BoxGeometry(ELEVATOR.width + 0.3, 0.3, ELEVATOR_FRONT - B.minZ + 0.2), toon('#8d99ae'), ELEVATOR.x, WALL_HEIGHT + 0.15, (B.minZ + ELEVATOR_FRONT) / 2 + 0.05));
-  const beacon = bulb(night, '#ff5d5d', 0.6);
-  statics.add(mesh(new THREE.SphereGeometry(0.12, 10, 8), beacon, ELEVATOR.x, WALL_HEIGHT + 0.4, (B.minZ + ELEVATOR_FRONT) / 2, false));
+  statics.add(mesh(new THREE.BoxGeometry(ELEVATOR.width + 0.3, 0.3, ELEVATOR_FRONT - B.minZ + 0.2), toon('#0e0e0e'), ELEVATOR.x, WALL_HEIGHT + 0.15, (B.minZ + ELEVATOR_FRONT) / 2 + 0.05));
+  const beacon = bulb(night, '#ee6018', 0.6);
+  statics.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, WALL_HEIGHT + 0.38, (B.minZ + ELEVATOR_FRONT) / 2, false));
   colliders.push({ minX: ELEVATOR.x - hw, maxX: ELEVATOR.x + hw, minZ: B.minZ, maxZ: FLOOR.minZ, top: 99 });
 
   // ---- The stage ----------------------------------------------------------------------------------
-  const stageMat = toon('#2b2d42');
+  const stageMat = toon('#101010');
   const sw = STAGE.maxX - STAGE.minX;
   const sd = STAGE.maxZ - STAGE.minZ;
   const scx = (STAGE.minX + STAGE.maxX) / 2;
@@ -339,22 +342,21 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   const TH = 0.8;
   const tz = DJ_BOOTH.z + 0.75;
   const riser = 0.25;
-  table.add(mesh(new THREE.BoxGeometry(3.4, TH, 0.7), toon('#1d1d1d'), DJ_BOOTH.x, tableY + TH / 2, tz));
-  statics.add(mesh(new THREE.BoxGeometry(1.8, riser, 0.9), toon('#3d405b'), DJ_BOOTH.x, tableY + riser / 2, DJ_BOOTH.z - 0.05));
+  table.add(mesh(new THREE.BoxGeometry(3.4, TH, 0.7), toon('#0e0e0e'), DJ_BOOTH.x, tableY + TH / 2, tz));
+  statics.add(mesh(new THREE.BoxGeometry(1.8, riser, 0.9), toon('#1c1c1c'), DJ_BOOTH.x, tableY + riser / 2, DJ_BOOTH.z - 0.05));
   const nameplate = canvasTexture(
     512,
     128,
     (g) => {
-      g.fillStyle = '#111018';
+      g.fillStyle = '#020202';
       g.fillRect(0, 0, 512, 128);
-      fitFont(g, 'DJ MERGE CONFLICT', 64, 470);
+      g.fillStyle = '#ee6018';
+      g.fillRect(0, 122, 512, 6);
+      fitFont(g, 'DJ MERGE CONFLICT', 60, 460);
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.shadowColor = '#ff4fd8';
-      // Shadow blur ignores the context's scale.
-      g.shadowBlur = 18 * g.getTransform().a;
-      g.fillStyle = '#ffe3fb';
-      g.fillText('DJ MERGE CONFLICT', 256, 66);
+      g.fillStyle = '#eeeeee';
+      g.fillText('DJ MERGE CONFLICT', 256, 62);
     },
     LABEL_SCALE,
   );
@@ -364,11 +366,11 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   const jog = new THREE.MeshBasicMaterial({ color: '#4cc9f0' });
   jog.toneMapped = false;
   for (const s of [-1, 1]) {
-    table.add(mesh(new THREE.BoxGeometry(0.62, 0.07, 0.5), toon('#3d405b'), DJ_BOOTH.x + s * 0.95, tableY + TH + 0.035, tz, false));
+    table.add(mesh(new THREE.BoxGeometry(0.62, 0.07, 0.5), toon('#2a2a2a'), DJ_BOOTH.x + s * 0.95, tableY + TH + 0.035, tz, false));
     table.add(mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.02, 24), jog, DJ_BOOTH.x + s * 0.95, tableY + TH + 0.08, tz - 0.03, false));
   }
-  table.add(mesh(new THREE.BoxGeometry(0.5, 0.09, 0.45), toon('#565a75'), DJ_BOOTH.x, tableY + TH + 0.045, tz, false));
-  for (let i = 0; i < 4; i++) table.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.04, 8), toon('#ffd166'), DJ_BOOTH.x - 0.18 + i * 0.12, tableY + TH + 0.1, tz - 0.1, false));
+  table.add(mesh(new THREE.BoxGeometry(0.5, 0.09, 0.45), toon('#3a3a3a'), DJ_BOOTH.x, tableY + TH + 0.045, tz, false));
+  for (let i = 0; i < 4; i++) table.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.04, 8), toon('#ee6018'), DJ_BOOTH.x - 0.18 + i * 0.12, tableY + TH + 0.1, tz - 0.1, false));
   group.add(table);
   colliders.push({ minX: DJ_BOOTH.x - 1.7, maxX: DJ_BOOTH.x + 1.7, minZ: tz - 0.35, maxZ: tz + 0.35, top: 99 });
   const djIt: Interactable = { kind: 'dj', x: DJ_BOOTH.x, z: STAGE.maxZ + 0.4, radius: 2.4 };
@@ -382,8 +384,8 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
 
   // Speaker stacks at either front corner of the stage; their cones thump with the kick.
   const cones: THREE.Mesh[] = [];
-  const box = toon('#1d1d1d');
-  const coneMat = toon('#3d405b');
+  const box = toon('#0e0e0e');
+  const coneMat = toon('#2a2a2a');
   for (const sx of [STAGE.minX + 1.1, STAGE.maxX - 1.1]) {
     const z = STAGE.maxZ - 0.55;
     statics.add(mesh(new THREE.BoxGeometry(1.2, 1.0, 0.9), box, sx, STAGE.height + 0.5, z));
@@ -408,13 +410,13 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   const ledW = 8;
   const ledH = 4;
   group.add(mesh(new THREE.PlaneGeometry(ledW, ledH), ledMat, scx, STAGE.height + 0.35 + ledH / 2, STAGE.minZ + 0.2, false));
-  statics.add(mesh(new THREE.BoxGeometry(ledW + 0.3, ledH + 0.3, 0.25), toon('#1d1d1d'), scx, STAGE.height + 0.35 + ledH / 2, STAGE.minZ + 0.06));
+  statics.add(mesh(new THREE.BoxGeometry(ledW + 0.3, ledH + 0.3, 0.25), toon('#0e0e0e'), scx, STAGE.height + 0.35 + ledH / 2, STAGE.minZ + 0.06));
   colliders.push({ minX: scx - ledW / 2, maxX: scx + ledW / 2, minZ: STAGE.minZ, maxZ: STAGE.minZ + 0.35, top: 99 });
   const ledCtx = (led.image as HTMLCanvasElement).getContext('2d')!;
   let ledAt = -1;
 
   // The rig: a truss tower either side of the stage and a beam across, with moving heads hanging off it.
-  const truss = toon('#c9d1d9');
+  const truss = toon('#4a4a4a');
   const rigZ = STAGE.maxZ - 0.15;
   const rigTop = 5.6;
   for (const x of [STAGE.minX + 0.2, STAGE.maxX - 0.2]) {
@@ -492,7 +494,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   }
   tiles.receiveShadow = false;
   group.add(tiles);
-  const underFloor = mesh(new THREE.PlaneGeometry(cols, rows).rotateX(-Math.PI / 2), toon('#15141c'), (DANCE_FLOOR.minX + DANCE_FLOOR.maxX) / 2, 0.008, (DANCE_FLOOR.minZ + DANCE_FLOOR.maxZ) / 2, false);
+  const underFloor = mesh(new THREE.PlaneGeometry(cols, rows).rotateX(-Math.PI / 2), toon('#080808'), (DANCE_FLOOR.minX + DANCE_FLOOR.maxX) / 2, 0.008, (DANCE_FLOOR.minZ + DANCE_FLOOR.maxZ) / 2, false);
   group.add(underFloor);
 
   // Colored washes over the dance floor.
@@ -509,11 +511,11 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   const blen = ROOF_BAR.maxZ - ROOF_BAR.minZ;
   const bz = (ROOF_BAR.minZ + ROOF_BAR.maxZ) / 2;
   const front = bx - ROOF_BAR.depth / 2;
-  bar.add(mesh(new THREE.BoxGeometry(ROOF_BAR.depth, ROOF_BAR.height - 0.06, blen), toon('#6b3f2a'), bx, (ROOF_BAR.height - 0.06) / 2, bz));
+  bar.add(mesh(new THREE.BoxGeometry(ROOF_BAR.depth, ROOF_BAR.height - 0.06, blen), toon('#141414'), bx, (ROOF_BAR.height - 0.06) / 2, bz));
   // Slats up the front of it.
-  for (let z = ROOF_BAR.minZ + 0.25; z < ROOF_BAR.maxZ; z += 0.5) bar.add(mesh(new THREE.BoxGeometry(0.03, ROOF_BAR.height - 0.3, 0.08), toon('#8a5a3b'), front - 0.012, ROOF_BAR.height / 2, z, false));
-  bar.add(mesh(new THREE.BoxGeometry(ROOF_BAR.depth + 0.2, 0.06, blen + 0.2), toon('#f4f1ea'), bx - 0.05, ROOF_BAR.height - 0.03, bz));
-  const footRail = mesh(new THREE.CylinderGeometry(0.03, 0.03, blen, 8), toon('#e9b949'), front - 0.2, 0.22, bz, false);
+  for (let z = ROOF_BAR.minZ + 0.25; z < ROOF_BAR.maxZ; z += 0.5) bar.add(mesh(new THREE.BoxGeometry(0.03, ROOF_BAR.height - 0.3, 0.08), toon('#262626'), front - 0.012, ROOF_BAR.height / 2, z, false));
+  bar.add(mesh(new THREE.BoxGeometry(ROOF_BAR.depth + 0.2, 0.06, blen + 0.2), toon('#d8d8d8'), bx - 0.05, ROOF_BAR.height - 0.03, bz));
+  const footRail = mesh(new THREE.CylinderGeometry(0.03, 0.03, blen, 8), toon('#8c8c8c'), front - 0.2, 0.22, bz, false);
   footRail.rotation.x = Math.PI / 2;
   bar.add(footRail);
   // A glow along its foot that shifts color with the music.
@@ -522,8 +524,8 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   group.add(mesh(new THREE.BoxGeometry(0.02, 0.05, blen), barGlow, front - 0.02, 0.06, bz, false));
   // Beer taps, and a few glasses waiting on the counter.
   for (const z of [-0.6, 0, 0.6]) {
-    bar.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.4, 8), toon('#e9b949'), bx + 0.12, ROOF_BAR.height + 0.2, z, false));
-    bar.add(mesh(new THREE.BoxGeometry(0.03, 0.16, 0.03), toon(['#ef476f', '#06d6a0', '#ffd166'][Math.round(z / 0.6) + 1]), bx + 0.05, ROOF_BAR.height + 0.46, z, false));
+    bar.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.4, 8), toon('#8c8c8c'), bx + 0.12, ROOF_BAR.height + 0.2, z, false));
+    bar.add(mesh(new THREE.BoxGeometry(0.03, 0.16, 0.03), toon(['#1c1c1c', '#ee6018', '#1c1c1c'][Math.round(z / 0.6) + 1]), bx + 0.05, ROOF_BAR.height + 0.46, z, false));
   }
   group.add(bar);
   colliders.push({ minX: front, maxX: bx + ROOF_BAR.depth / 2, minZ: ROOF_BAR.minZ, maxZ: ROOF_BAR.maxZ, top: ROOF_BAR.height });
@@ -533,9 +535,9 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
 
   // The back bar: shelves of bottles against a warm glow, along the east edge.
   const back = FLOOR.maxX - 0.35;
-  const shelf = toon('#4a2c1d');
+  const shelf = toon('#101010');
   bar.add(mesh(new THREE.BoxGeometry(0.6, 1.0, blen - 0.6), shelf, back, 0.5, bz));
-  const glowMat = new THREE.MeshBasicMaterial({ color: '#ffb55a' });
+  const glowMat = new THREE.MeshBasicMaterial({ color: '#f0d3a4' });
   const glowPanel = mesh(new THREE.PlaneGeometry(blen - 1, 1.5).rotateY(-Math.PI / 2), glowMat, FLOOR.maxX - 0.08, 1.85, bz, false);
   group.add(glowPanel);
   const bottles = new THREE.Group();
@@ -554,7 +556,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   colliders.push({ minX: back - 0.3, maxX: FLOOR.maxX, minZ: ROOF_BAR.minZ + 0.3, maxZ: ROOF_BAR.maxZ - 0.3, top: 99 });
 
   // A pergola over it, hung with string lights, and a neon sign facing the dance floor.
-  const wood = toon('#8a5a3b');
+  const wood = toon('#1c1c1c');
   const p0 = { x: front - 0.9, z: ROOF_BAR.minZ - 0.8 };
   const p1 = { x: FLOOR.maxX - 0.1, z: ROOF_BAR.maxZ + 0.8 };
   const roofY = 3.3;
@@ -571,19 +573,15 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     192,
     (g) => {
       g.clearRect(0, 0, 768, 192);
-      g.font = `900 104px ${SANS}`;
+      g.fillStyle = '#020202';
+      g.fillRect(0, 24, 768, 144);
+      g.fillStyle = '#ee6018';
+      g.fillRect(40, 84, 24, 24);
+      g.font = `600 96px ${SANS}`;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      for (const [blur, color] of [
-        [36, '#ff4fd8'],
-        [14, '#ff4fd8'],
-        [0, '#ffe3fb'],
-      ] as const) {
-        g.shadowColor = '#ff4fd8';
-        g.shadowBlur = blur * g.getTransform().a;
-        g.fillStyle = color;
-        g.fillText('🍸 SKY BAR', 384, 100);
-      }
+      g.fillStyle = '#eeeeee';
+      g.fillText('SKY BAR', 404, 100);
     },
     LABEL_SCALE,
   );
@@ -610,14 +608,14 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.03, 16), steel, 0, 0.015, 0, false));
     stool.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.66, 8), steel, 0, 0.36, 0, false));
     stool.add(mesh(new THREE.TorusGeometry(0.16, 0.015, 6, 16).rotateX(Math.PI / 2), steel, 0, 0.32, 0, false));
-    stool.add(mesh(new THREE.CylinderGeometry(0.22, 0.2, 0.1, 16), toon('#c1121f'), 0, 0.72, 0));
+    stool.add(mesh(new THREE.CylinderGeometry(0.22, 0.2, 0.1, 16), toon('#1c1c1c'), 0, 0.72, 0));
     stool.position.set(s.x, 0, s.z);
     seatable(stool, s.id, 0.75, interactables);
     group.add(stool);
   }
 
   // String lights: over the pergola, and criss-crossing the dance floor from the rig to poles along the south side of it.
-  const bulbColors = ['#ffd166', '#ff8fa3', '#8ecae6', '#caffbf'];
+  const bulbColors = ['#f3dcb2', '#efe6d6', '#f3dcb2', '#ee6018'];
   const bulbMats = bulbColors.map((c) => bulb(night, c, 0.45));
   const glowAt: number[] = [];
   const glowColor: number[] = [];
@@ -677,8 +675,8 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   group.add(barLight);
 
   // ---- The lounge: sofas round a fire pit, open to the view ----------------------------------------
-  const cushion = toon('#2a9d8f');
-  const frame = toon('#f4f1ea');
+  const cushion = toon('#2a2a2a');
+  const frame = toon('#121212');
   const sofa = (id: string, len: number) => {
     const s = SEATING_BY_ID.get(id)!;
     const g = new THREE.Group();
@@ -695,9 +693,9 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   sofa('roof-sofa-1', 3.4);
   sofa('roof-sofa-2', 2.2);
   sofa('roof-sofa-3', 2.2);
-  statics.add(mesh(new THREE.CylinderGeometry(3.3, 3.3, 0.01, 40), toon('#f2cc8f'), FIRE_PIT.x, 0.006, FIRE_PIT.z + 0.3, false));
-  statics.add(mesh(new THREE.CylinderGeometry(FIRE_PIT.r, FIRE_PIT.r + 0.05, 0.42, 20), toon('#8d99ae'), FIRE_PIT.x, 0.21, FIRE_PIT.z));
-  statics.add(mesh(new THREE.CylinderGeometry(FIRE_PIT.r - 0.12, FIRE_PIT.r - 0.12, 0.02, 20), toon('#3d405b'), FIRE_PIT.x, 0.43, FIRE_PIT.z, false));
+  statics.add(mesh(new THREE.CylinderGeometry(3.3, 3.3, 0.01, 40), toon('#1a1a1a'), FIRE_PIT.x, 0.006, FIRE_PIT.z + 0.3, false));
+  statics.add(mesh(new THREE.CylinderGeometry(FIRE_PIT.r, FIRE_PIT.r + 0.05, 0.42, 20), toon('#3a3a3a'), FIRE_PIT.x, 0.21, FIRE_PIT.z));
+  statics.add(mesh(new THREE.CylinderGeometry(FIRE_PIT.r - 0.12, FIRE_PIT.r - 0.12, 0.02, 20), toon('#0a0a0a'), FIRE_PIT.x, 0.43, FIRE_PIT.z, false));
   colliders.push({ minX: FIRE_PIT.x - FIRE_PIT.r, maxX: FIRE_PIT.x + FIRE_PIT.r, minZ: FIRE_PIT.z - FIRE_PIT.r, maxZ: FIRE_PIT.z + FIRE_PIT.r, top: 0.42 });
   const flames: THREE.Mesh[] = [];
   const flameMats = ['#ff9f1c', '#ffbf69', '#ff5d2b'].map((c) => {
@@ -721,8 +719,8 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     const s = SEATING_BY_ID.get(`roof-lounger-${i}`)!;
     const g = new THREE.Group();
     g.add(mesh(new THREE.BoxGeometry(0.72, 0.28, 1.9), frame, 0, 0.14, 0.15));
-    g.add(mesh(new THREE.BoxGeometry(0.66, 0.08, 1.3), toon('#f4a261'), 0, 0.32, 0.45));
-    const backrest = mesh(new THREE.BoxGeometry(0.66, 0.08, 0.8), toon('#f4a261'), 0, 0.55, -0.5);
+    g.add(mesh(new THREE.BoxGeometry(0.66, 0.08, 1.3), toon('#8c8c8c'), 0, 0.32, 0.45));
+    const backrest = mesh(new THREE.BoxGeometry(0.66, 0.08, 0.8), toon('#8c8c8c'), 0, 0.55, -0.5);
     backrest.rotation.x = 0.75;
     g.add(backrest);
     g.position.set(s.x, 0, s.z);
@@ -733,7 +731,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   for (const x of [-0.8, 2]) {
     const z = FLOOR.maxZ - 1.1;
     statics.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 8), frame, x, 1.3, z, false));
-    statics.add(mesh(new THREE.ConeGeometry(1.5, 0.5, 12, 1, true), toon('#ef476f'), x, 2.6, z, true));
+    statics.add(mesh(new THREE.ConeGeometry(1.5, 0.4, 12, 1, true), toon('#161616'), x, 2.6, z, true));
     statics.add(mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.45, 12), frame, x, 0.225, z, false));
     statics.add(mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.04, 12), frame, x, 0.47, z, false));
     colliders.push({ minX: x - 0.3, maxX: x + 0.3, minZ: z - 0.3, maxZ: z + 0.3, top: 0.49 });
@@ -744,13 +742,13 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   for (const { x, z } of ROOF_TABLES) {
     statics.add(mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.04, 16), toon(INK), x, 0.02, z, false));
     statics.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.05, 8), toon(INK), x, 0.55, z, false));
-    statics.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 20), toon('#f4f1ea'), x, 1.08, z));
+    statics.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 20), toon('#2a2a2a'), x, 1.08, z));
     statics.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.1, 8), candle, x, 1.16, z, false));
     colliders.push({ minX: x - 0.3, maxX: x + 0.3, minZ: z - 0.3, maxZ: z + 0.3, top: 1.1 });
   }
 
   // Planters along the edges, and the air conditioning behind a screen in the north-east corner.
-  const planter = toon('#6d6875');
+  const planter = toon('#161616');
   const leaf = toon('#5fb760');
   const leafDark = toon('#3f8f45');
   const planterRow = (x0: number, x1: number, z0: number, z1: number) => {
@@ -769,7 +767,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   planterRow(5.2, FLOOR.maxX - 0.4, FLOOR.maxZ - 0.7, FLOOR.maxZ);
   const screenX = 10.9;
   const screenZ = -8.2;
-  const slat = toon('#8d99ae');
+  const slat = toon('#2a2a2a');
   for (let z = FLOOR.minZ; z < screenZ; z += 0.3) statics.add(mesh(new THREE.BoxGeometry(0.06, 2.2, 0.14), slat, screenX, 1.1, z, false));
   for (let x = screenX; x < FLOOR.maxX; x += 0.3) statics.add(mesh(new THREE.BoxGeometry(0.14, 2.2, 0.06), slat, x, 1.1, screenZ, false));
   colliders.push({ minX: screenX - 0.1, maxX: screenX + 0.1, minZ: FLOOR.minZ, maxZ: screenZ, top: 99 });
@@ -779,11 +777,11 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     [13.2, -11],
     [16.2, -11],
   ]) {
-    statics.add(mesh(new THREE.BoxGeometry(2.2, 1.3, 2.4), toon('#dfe3e8'), x, 0.65, z));
-    statics.add(mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.06, 20), toon('#565a75'), x, 1.31, z, false));
+    statics.add(mesh(new THREE.BoxGeometry(2.2, 1.3, 2.4), toon('#3a3a3a'), x, 0.65, z));
+    statics.add(mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.06, 20), toon('#141414'), x, 1.31, z, false));
     const fan = new THREE.Group();
     for (let b = 0; b < 3; b++) {
-      const blade = mesh(new THREE.BoxGeometry(1.2, 0.02, 0.22), toon('#2b2d42'), 0, 0, 0, false);
+      const blade = mesh(new THREE.BoxGeometry(1.2, 0.02, 0.22), toon('#8c8c8c'), 0, 0, 0, false);
       blade.rotation.y = (b / 3) * Math.PI;
       fan.add(blade);
     }
@@ -791,6 +789,13 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     group.add(fan);
     fans.push(fan);
   }
+
+  // The factory's stack in the north-west corner, steaming, with its beacon blinking on top.
+  const stack = buildStack(night);
+  statics.add(stack.parts);
+  group.add(new Steam(stack.mouth).group, stackBeacon(stack.mouth));
+  const half = STACK.plinth / 2;
+  colliders.push({ minX: STACK.x - half, maxX: STACK.x + half, minZ: STACK.z - half, maxZ: STACK.z + half, top: 99 });
 
   group.add(mergeByMaterial(statics));
 

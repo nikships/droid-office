@@ -17,11 +17,11 @@ const GAP: [number, number] = [1.6, 3.6];
 /** Strips across the turning page, for its curl. */
 const STRIPS = 8;
 
-const COVERS = ['#b5413b', '#2a6f97', '#2d6a4f', '#6a4c93', '#bc6c25', '#264653'];
+const COVERS = ['#1c1c1c', '#2a2a2a', '#ee6018', '#3a3a3a', '#101010', '#8c8c8c'];
 
 let pages: { print: THREE.MeshToonMaterial; leaf: THREE.MeshToonMaterial } | null = null;
 
-/** Printed pages: a heading, then rows of words in grey lines, drawn once and shared by every book. */
+/** Printed pages, dark like the docs on screen: an orange heading, then rows of words in gray lines, drawn once and shared by every book. */
 function pageMaterials(): { print: THREE.MeshToonMaterial; leaf: THREE.MeshToonMaterial } {
   if (pages) return pages;
   const W = 128;
@@ -30,14 +30,16 @@ function pageMaterials(): { print: THREE.MeshToonMaterial; leaf: THREE.MeshToonM
   canvas.width = W;
   canvas.height = H;
   const g = canvas.getContext('2d')!;
-  g.fillStyle = '#fffaf0';
+  g.fillStyle = '#121212';
   g.fillRect(0, 0, W, H);
   // Seeded, so every page (and every browser) prints the same.
   let seed = 7;
   const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  g.fillStyle = '#5c5f7a';
-  g.fillRect(14, 14, 62, 7);
-  g.fillStyle = '#a3a6b8';
+  g.fillStyle = '#ee6018';
+  g.fillRect(14, 14, 8, 7);
+  g.fillStyle = '#d8d8d8';
+  g.fillRect(26, 14, 50, 7);
+  g.fillStyle = '#5a5a5a';
   for (let y = 32; y < H - 12; y += 9) {
     // A short last line now and then, as at the end of a paragraph.
     const end = rand() < 0.18 ? 30 + rand() * 50 : W - 14;
@@ -75,7 +77,7 @@ export class OpenBook {
   constructor(cover = COVERS[Math.floor(Math.random() * COVERS.length)]) {
     const coverMat = toon(cover);
     const { print, leaf } = pageMaterials();
-    const edge = toon('#f3ead8');
+    const edge = toon('#2a2a2a');
     for (const side of [-1, 1]) {
       // Each half turns on the spine, its outer edge coming toward the reader.
       const half = new THREE.Group();

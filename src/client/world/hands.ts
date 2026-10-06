@@ -7,7 +7,8 @@ import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
 import { Muzzle, disposeGun, magnum } from './gun';
 import { UNDEAD_SKIN, raggedCuff, warlockHand, witchFire } from './costumes';
-import { mesh, toon, toonUnique } from './toon';
+import { glyphFlat } from './glyph3d';
+import { mesh, toonUnique } from './toon';
 import { ballMesh } from './hoop';
 
 export interface HandsInput {
@@ -22,6 +23,10 @@ export interface HandsInput {
   grip?: 'ladder' | 'pole' | null;
 }
 
+/** Factory work gloves: black, with graphite steel at the cuff and knuckles. */
+const GLOVE = '#1a1a1a';
+const CUFF = '#3a3a3a';
+
 /** Lifting the mug for a sip and lowering it again, in seconds. */
 const SIP_TIME = 1.1;
 
@@ -30,11 +35,13 @@ interface Arm {
   base: THREE.Vector3;
   baseRot: THREE.Euler;
   side: 1 | -1;
-  /** The white cuff at the wrist. */
+  /** The steel cuff at the wrist (a mitten's fluffy one at Christmas). */
   cuff: THREE.Mesh;
-  /** The cartoon hand: palm, thumb, and on the right hand the pointing finger. */
+  /** The gloved hand: palm, thumb, and on the right hand the pointing finger. */
   mitten: THREE.Mesh[];
   finger: THREE.Mesh | null;
+  /** The glove's knuckle guard and the pinwheel on its back, off under a holiday hand. */
+  crew: THREE.Mesh[];
   /** A holiday hand in place of the mitten (see setCostume), and the witch-fire round it. */
   dressed: THREE.Group | null;
   fire: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null;
@@ -48,7 +55,12 @@ export class Hands {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(55, 1, 0.01, 5);
   private sleeve: THREE.MeshToonMaterial;
+  /** Your own skin, under a holiday hand (see setCostume). */
   private skin: THREE.MeshToonMaterial;
+  /** Your Factory work gloves and their steel cuffs (green mittens with fluffy cuffs at Christmas). */
+  private glove: THREE.MeshToonMaterial;
+  private cuffMat: THREE.MeshToonMaterial;
+  private pinwheel: THREE.MeshToonMaterial;
   private right: Arm;
   private left: Arm;
   private reachT = -1;
@@ -108,6 +120,12 @@ export class Hands {
     this.skinTone = skin;
     this.sleeve = toonUnique(shirt);
     this.skin = toonUnique(skin);
+    this.glove = toonUnique(GLOVE);
+    this.cuffMat = toonUnique(CUFF);
+    this.pinwheel = toonUnique('#ee6018');
+    this.pinwheel.emissive.set('#5a2408');
+    // A cartoon outline would swallow its thin blades.
+    this.pinwheel.userData.outlineParameters = { visible: false };
     this.rags.side = THREE.DoubleSide;
     const sun = new THREE.DirectionalLight('#fff1d6', 2);
     sun.position.set(-0.6, 1.4, 0.9);
@@ -132,7 +150,7 @@ export class Hands {
     this.cig.position.set(-0.035, 0.03, -0.075);
     this.cig.visible = false;
     this.right.group.add(this.cig);
-    this.thumbUp = mesh(new THREE.CapsuleGeometry(0.027, 0.035, 4, 10), this.skin, -0.035, 0.065, -0.005, false);
+    this.thumbUp = mesh(new THREE.CapsuleGeometry(0.027, 0.035, 4, 10), this.glove, -0.035, 0.065, -0.005, false);
     this.thumbUp.rotation.z = 0.3;
     this.thumbUp.visible = false;
     this.right.group.add(this.thumbUp);
@@ -216,6 +234,7 @@ export class Hands {
         arm.dressed = arm.fire = null;
       }
       for (const m of arm.mitten) m.visible = !warlock && !(theme === 'christmas' && m === arm.finger);
+      for (const m of arm.crew) m.visible = !theme;
       arm.cuff.visible = !warlock;
       // A mitten's fluffy cuff.
       arm.cuff.scale.set(theme === 'christmas' ? 1.3 : 1, theme === 'christmas' ? 1.3 : 1, theme === 'christmas' ? 1.9 : 1);
@@ -233,8 +252,10 @@ export class Hands {
   private paint() {
     const c = this.costume;
     this.sleeve.color.set(c === 'halloween' ? '#3b1d5a' : c === 'christmas' ? '#d62828' : this.shirt);
-    this.skin.color.set(c === 'christmas' ? '#2e9e48' : this.skinTone);
+    this.skin.color.set(this.skinTone);
     if (c === 'halloween') this.skin.color.lerp(UNDEAD_SKIN, 0.8);
+    this.glove.color.set(c === 'christmas' ? '#2e9e48' : GLOVE);
+    this.cuffMat.color.set(c === 'christmas' ? '#fffaf3' : CUFF);
   }
 
   /** How lit it is where you stand, 0–1 (see Sky.lightAt): your hands go dark out on a night street. */
@@ -356,23 +377,31 @@ export class Hands {
     const group = new THREE.Group();
     // Sleeve runs from the wrist back past the camera, so its far end is always off screen.
     group.add(mesh(new THREE.CapsuleGeometry(0.058, 0.42, 6, 14).rotateX(Math.PI / 2), this.sleeve, 0, 0, 0.34, false));
-    const cuff = mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.045, 18).rotateX(Math.PI / 2), toon('#fffaf3'), 0, 0, 0.075, false);
+    const cuff = mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.045, 18).rotateX(Math.PI / 2), this.cuffMat, 0, 0, 0.075, false);
     group.add(cuff);
-    // Cartoon mitten: a chunky palm, a thumb on the inside, and a pointing finger on the right hand.
-    const palm = mesh(new THREE.SphereGeometry(0.062, 18, 14), this.skin, 0, 0, 0, false);
+    // A Factory work glove: a chunky palm, a thumb on the inside, and a pointing finger on the right hand.
+    const palm = mesh(new THREE.SphereGeometry(0.062, 18, 14), this.glove, 0, 0, 0, false);
     palm.scale.set(1, 0.78, 1.18);
     group.add(palm);
-    const thumb = mesh(new THREE.CapsuleGeometry(0.02, 0.03, 4, 10).rotateX(Math.PI / 2), this.skin, -side * 0.05, 0.014, -0.02, false);
+    const thumb = mesh(new THREE.CapsuleGeometry(0.02, 0.03, 4, 10).rotateX(Math.PI / 2), this.glove, -side * 0.05, 0.014, -0.02, false);
     thumb.rotation.y = side * 0.55;
     group.add(thumb);
-    const finger = side === 1 ? mesh(new THREE.CapsuleGeometry(0.019, 0.05, 4, 10).rotateX(Math.PI / 2), this.skin, -0.016, 0.022, -0.085, false) : null;
+    const finger = side === 1 ? mesh(new THREE.CapsuleGeometry(0.019, 0.05, 4, 10).rotateX(Math.PI / 2), this.glove, -0.016, 0.022, -0.085, false) : null;
     if (finger) group.add(finger);
+    // A graphite knuckle guard, and the pinwheel on the back of the hand (the palm's top is y 0.048).
+    const guard = mesh(new THREE.CapsuleGeometry(0.012, 0.062, 3, 8).rotateZ(Math.PI / 2), this.cuffMat, 0, 0.03, -0.048, false);
+    guard.rotation.x = -0.55;
+    group.add(guard);
+    const badge = mesh(glyphFlat(0.046, 4).rotateX(-Math.PI / 2), this.pinwheel, 0, 0.0478, 0.016, false);
+    // Laid along the back of the hand where it starts to slope down to the wrist, toward your eye.
+    badge.rotation.x = 0.2;
+    group.add(badge);
     const base = new THREE.Vector3(side * 0.25, -0.185, -0.44);
     const baseRot = new THREE.Euler(0.2, side * 0.22, side * -0.25);
     group.position.copy(base);
     group.rotation.copy(baseRot);
     this.scene.add(group);
-    return { group, base, baseRot, side, cuff, mitten: [palm, thumb, ...(finger ? [finger] : [])], finger, dressed: null, fire: null };
+    return { group, base, baseRot, side, cuff, mitten: [palm, thumb, ...(finger ? [finger] : [])], finger, crew: [guard, badge], dressed: null, fire: null };
   }
 
   /** Witch-fire curling up round your fingers, and flickering. */

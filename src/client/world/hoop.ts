@@ -5,8 +5,10 @@ import { BALL, HOOP, RETURN_AFTER, THREE_POINT, backboard, launch, nearSolids, o
 import type { Collider, Interactable } from './office';
 import { mergeByMaterial, mesh, toon, toonUnique } from './toon';
 
-const ORANGE = '#ff6b1a';
-const INK = '#2b2d42';
+const ORANGE = '#ee6018';
+const INK = '#808080';
+/** The board's lines, the net and the lines of the key on the floor. */
+const LINE = '#c8c8c8';
 
 export interface HoopView {
   group: THREE.Group;
@@ -18,8 +20,8 @@ export interface HoopView {
 }
 
 /**
- * The hoop on the west wall: a backboard on arms off the wall, an orange rim and a white net, over a
- * painted key on the floor with its free-throw circle.
+ * The hoop on the west wall: a black backboard with light lines on steel arms off the wall, an
+ * orange rim and a pale net, over a painted key on the floor with its free-throw circle.
  */
 export function buildHoop(): HoopView {
   const group = new THREE.Group();
@@ -29,10 +31,11 @@ export function buildHoop(): HoopView {
   const back = face - board.thick;
   const midY = (board.bottom + board.top) / 2;
 
-  // The board: white, with an orange border and the shooter's square over the rim.
-  parts.add(mesh(new THREE.BoxGeometry(board.thick, board.top - board.bottom, board.width), toon('#f8f9fa'), face - board.thick / 2, midY, z));
+  // The board: black, with a light border and the shooter's square over the rim.
+  parts.add(mesh(new THREE.BoxGeometry(board.thick, board.top - board.bottom, board.width), toon('#6a6a6a'), face - board.thick / 2, midY, z));
   const orange = toon(ORANGE);
-  const line = (w: number, h: number, y: number, dz: number) => parts.add(mesh(new THREE.BoxGeometry(0.012, h, w), orange, face + 0.006, y, z + dz, false));
+  const lines = toon(LINE);
+  const line = (w: number, h: number, y: number, dz: number) => parts.add(mesh(new THREE.BoxGeometry(0.012, h, w), lines, face + 0.006, y, z + dz, false));
   const e = 0.05;
   line(board.width, e, board.top - e / 2, 0);
   line(board.width, e, board.bottom + e / 2, 0);
@@ -57,12 +60,12 @@ export function buildHoop(): HoopView {
   ring.rotation.x = Math.PI / 2;
   parts.add(ring);
   const gap = rim.x - rim.r - face;
-  parts.add(mesh(new THREE.BoxGeometry(gap + 0.02, 0.03, 0.16), orange, face + gap / 2, rim.y - 0.01, z));
-  parts.add(mesh(new THREE.BoxGeometry(0.02, 0.16, 0.2), orange, face + 0.01, rim.y - 0.06, z, false));
+  parts.add(mesh(new THREE.BoxGeometry(gap + 0.02, 0.03, 0.16), ink, face + gap / 2, rim.y - 0.01, z));
+  parts.add(mesh(new THREE.BoxGeometry(0.02, 0.16, 0.2), ink, face + 0.01, rim.y - 0.06, z, false));
   group.add(mergeByMaterial(parts));
 
   // The net: a wireframe cone of diamonds, hanging from the rim.
-  const netMat = toonUnique('#ffffff');
+  const netMat = toonUnique(LINE);
   netMat.wireframe = true;
   const net = new THREE.Mesh(new THREE.CylinderGeometry(rim.r - 0.01, HOOP.net.r, HOOP.net.depth, 14, 3, true), netMat);
   net.geometry.translate(0, -HOOP.net.depth / 2, 0);
@@ -87,18 +90,18 @@ export function buildHoop(): HoopView {
     return m;
   };
   const keyLen = lineX - FLOOR.minX;
-  const key = paint(new THREE.PlaneGeometry(keyLen, keyW), '#ee9a5d', 0.013);
+  const key = paint(new THREE.PlaneGeometry(keyLen, keyW), '#7e7e7e', 0.013);
   key.position.set(FLOOR.minX + keyLen / 2, key.position.y, z);
   const w = 0.06;
   const stripe = (len: number, x: number, sz: number, alongZ: boolean) => {
-    const s = paint(new THREE.PlaneGeometry(alongZ ? w : len, alongZ ? len : w), '#ffffff', 0.015);
+    const s = paint(new THREE.PlaneGeometry(alongZ ? w : len, alongZ ? len : w), LINE, 0.015);
     s.position.set(x, s.position.y, sz);
   };
   stripe(keyLen, FLOOR.minX + keyLen / 2, z - keyW / 2, false);
   stripe(keyLen, FLOOR.minX + keyLen / 2, z + keyW / 2, false);
   stripe(keyW, lineX, z, true);
   // Half a circle, out past the line.
-  const arc = paint(new THREE.RingGeometry(keyW / 2 - w, keyW / 2, 40, 1, -Math.PI / 2, Math.PI), '#ffffff', 0.015);
+  const arc = paint(new THREE.RingGeometry(keyW / 2 - w, keyW / 2, 24, 1, -Math.PI / 2, Math.PI), LINE, 0.015);
   arc.position.set(lineX, arc.position.y, z);
 
   const colliders: Collider[] = [backboard(), { minX: FLOOR.minX, maxX: back, minZ: z - 0.45, maxZ: z + 0.45, bottom: midY - 0.8, top: midY + 0.3 }];

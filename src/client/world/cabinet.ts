@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { CABINET, FLOOR } from '../../shared/layout';
 import { mesh, roundedBox, toon } from './toon';
-import { SANS } from '../fonts';
+import { MONO } from '../fonts';
+import { track } from './toon';
 import type { Collider, Interactable } from './office';
 
-// The arcade cabinet in the lounge: an upright in blue side panels, a lit marquee on top, the screen
+// The arcade cabinet in the lounge: an upright in graphite side panels, a lit marquee on top, the screen
 // leaning back under it (ui/cabinet.ts paints the game on it), a joystick and buttons, and a coin door.
 
 export interface CabinetModel {
@@ -50,7 +51,8 @@ const LEAN = Math.atan2(SCREEN_BOTTOM[0] - SCREEN_TOP[0], SCREEN_TOP[1] - SCREEN
 /** The control panel's top, which rises a little toward the screen. */
 const PANEL_FRONT: [number, number] = [0.4, 0.98];
 const PANEL_BACK: [number, number] = [0.13, 1.05];
-const PIECES = ['#4cc9f0', '#ffd166', '#b388eb', '#06d6a0', '#ef476f', '#4f86f7', '#ff8a5b'];
+/** The side art's falling blocks: steel and light gray, with Factory orange for one of them. */
+const PIECES = ['#3a3a3a', '#8c8c8c', '#5a5a5a', '#d8d8d8', '#ee6018', '#3a3a3a', '#8c8c8c'];
 
 /** A side-view outline pulled out `thick` wide across the cabinet, from `x0`. */
 function slab(points: [number, number][], thick: number, x0: number): THREE.BufferGeometry {
@@ -66,8 +68,8 @@ export function buildCabinet(): CabinetModel {
   const { width: W } = CABINET;
   const group = new THREE.Group();
   const inner = W - 2 * SIDE_T;
-  group.add(mesh(slab(BODY, inner, -inner / 2), toon('#1b1d3a')));
-  const sideMat = toon('#4361ee');
+  group.add(mesh(slab(BODY, inner, -inner / 2), toon('#101010')));
+  const sideMat = toon('#2a2a2a');
   for (const x0 of [-W / 2, W / 2 - SIDE_T]) group.add(mesh(slab(SIDE, SIDE_T, x0), sideMat));
 
   // Falling blocks down each side, as side art: a Z, an L and a T.
@@ -110,7 +112,7 @@ export function buildCabinet(): CabinetModel {
   const [bu, bv] = SCREEN_BOTTOM;
   const [tu, tv] = SCREEN_TOP;
   const out = new THREE.Vector2(Math.cos(LEAN), Math.sin(LEAN));
-  const bezel = mesh(new THREE.PlaneGeometry(inner - 0.04, 0.5), toon('#0b1320'), 0, (bv + tv) / 2 + out.y * 0.002, (bu + tu) / 2 + out.x * 0.002, false);
+  const bezel = mesh(new THREE.PlaneGeometry(inner - 0.04, 0.5), toon('#050505'), 0, (bv + tv) / 2 + out.y * 0.002, (bu + tu) / 2 + out.x * 0.002, false);
   bezel.rotation.x = -LEAN;
   group.add(bezel);
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.42), new THREE.MeshBasicMaterial({ color: '#070b14', toneMapped: false }));
@@ -124,18 +126,18 @@ export function buildCabinet(): CabinetModel {
   const [pu, pv] = PANEL_BACK;
   panel.position.set(0, (fv + pv) / 2, (fu + pu) / 2);
   panel.rotation.x = Math.atan2(pv - fv, fu - pu);
-  panel.add(mesh(new THREE.BoxGeometry(inner, 0.012, Math.hypot(fu - pu, fv - pv)), toon('#ffd166'), 0, 0.006, 0, false));
-  panel.add(mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.02, 16), toon('#2b2d42'), -0.16, 0.02, 0.01, false));
-  panel.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.11, 8), toon('#adb5bd'), -0.16, 0.075, 0.01, false));
-  panel.add(mesh(new THREE.SphereGeometry(0.035, 14, 10), toon('#ef476f'), -0.16, 0.135, 0.01));
-  ['#ef476f', '#4cc9f0', '#06d6a0'].forEach((c, i) => panel.add(mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.025, 14), toon(c, { emissive: c }), 0.02 + i * 0.1, 0.02, i === 1 ? -0.03 : 0.02, false)));
+  panel.add(mesh(new THREE.BoxGeometry(inner, 0.012, Math.hypot(fu - pu, fv - pv)), toon('#1c1c1c'), 0, 0.006, 0, false));
+  panel.add(mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.02, 16), toon('#0a0a0a'), -0.16, 0.02, 0.01, false));
+  panel.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.11, 8), toon('#8c8c8c'), -0.16, 0.075, 0.01, false));
+  panel.add(mesh(new THREE.SphereGeometry(0.035, 14, 10), toon('#ee6018'), -0.16, 0.135, 0.01));
+  ['#ee6018', '#d8d8d8', '#8c8c8c'].forEach((c, i) => panel.add(mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.025, 14), toon(c, { emissive: c }), 0.02 + i * 0.1, 0.02, i === 1 ? -0.03 : 0.02, false)));
   group.add(panel);
 
   // The coin door, with its two slots lit, and a kick plate.
-  group.add(mesh(roundedBox(0.34, 0.32, 0.02, 0.02), toon('#2b2d42'), 0, 0.5, 0.265, false));
-  for (const sx of [-1, 1]) group.add(mesh(new THREE.BoxGeometry(0.035, 0.075, 0.012), toon('#ff8a5b', { emissive: '#ff5a1f' }), sx * 0.07, 0.56, 0.278, false));
-  group.add(mesh(new THREE.BoxGeometry(0.1, 0.02, 0.012), toon('#8d99ae'), 0, 0.43, 0.278, false));
-  group.add(mesh(new THREE.BoxGeometry(inner, 0.1, 0.01), toon('#0b1320'), 0, 0.05, 0.266, false));
+  group.add(mesh(roundedBox(0.34, 0.32, 0.02, 0.008), toon('#1c1c1c'), 0, 0.5, 0.265, false));
+  for (const sx of [-1, 1]) group.add(mesh(new THREE.BoxGeometry(0.035, 0.075, 0.012), toon('#ee6018', { emissive: '#ee6018' }), sx * 0.07, 0.56, 0.278, false));
+  group.add(mesh(new THREE.BoxGeometry(0.1, 0.02, 0.012), toon('#8c8c8c'), 0, 0.43, 0.278, false));
+  group.add(mesh(new THREE.BoxGeometry(inner, 0.1, 0.01), toon('#050505'), 0, 0.05, 0.266, false));
 
   // Built facing +z; it stands against the east wall facing into the room (-x).
   group.position.set(CABINET.x, 0, CABINET.z);
@@ -146,25 +148,27 @@ export function buildCabinet(): CabinetModel {
   return { group, collider, interactable, screen };
 }
 
+/** The marquee: the game's name in tracked mono on a dark lit panel, BLOCK in Factory orange, under a hairline. */
 function paintMarquee(c: HTMLCanvasElement) {
   const g = c.getContext('2d')!;
-  const grad = g.createLinearGradient(0, 0, 0, c.height);
-  grad.addColorStop(0, '#3a0ca3');
-  grad.addColorStop(1, '#1b1d3a');
-  g.fillStyle = grad;
+  g.fillStyle = '#050505';
   g.fillRect(0, 0, c.width, c.height);
-  g.textAlign = 'center';
+  g.strokeStyle = 'rgba(255, 255, 255, .18)';
+  g.lineWidth = 3;
+  g.strokeRect(1.5, 1.5, c.width - 3, c.height - 3);
+  g.textAlign = 'left';
   g.textBaseline = 'middle';
-  g.font = `900 84px ${SANS}`;
-  const letters = [...'BLOCKFALL'];
-  const widths = letters.map((ch) => g.measureText(ch).width);
-  let x = c.width / 2 - widths.reduce((a, b) => a + b, 0) / 2;
-  letters.forEach((ch, i) => {
-    g.fillStyle = PIECES[i % PIECES.length];
-    g.shadowColor = g.fillStyle;
-    g.shadowBlur = 16;
-    g.fillText(ch, x + widths[i] / 2, c.height / 2 + 4);
-    x += widths[i];
-  });
-  g.shadowBlur = 0;
+  g.font = `700 64px ${MONO}`;
+  track(g, 8);
+  const block = 'BLOCK';
+  const fall = 'FALL';
+  const bw = g.measureText(block).width;
+  const x = (c.width - bw - g.measureText(fall).width + 8) / 2;
+  g.fillStyle = '#ee6018';
+  g.fillText(block, x, c.height / 2 + 4);
+  g.fillStyle = '#eeeeee';
+  g.fillText(fall, x + bw, c.height / 2 + 4);
+  track(g, 0);
+  g.fillStyle = '#ee6018';
+  g.fillRect(c.width / 2 - 24, c.height - 22, 48, 4);
 }

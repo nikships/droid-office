@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { FLOOR, ROAD, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
+import { MONO, SANS } from '../fonts';
 import { CAR, supercar, type CarKind } from './cars';
+import { glyphFlat } from './glyph3d';
 import type { Collider } from './office';
 import { ANISOTROPY, TILE_SCALE, fitScale } from './texture-quality';
 import { mergeByMaterial, mesh, textPlane, toon, toonUnique } from './toon';
@@ -81,18 +83,18 @@ function garageFloorTexture(): THREE.CanvasTexture {
   const d = B.maxZ - B.minZ;
   const px = 32; // pixels per meter
   return canvasTexture(Math.round(w * px), Math.round(d * px), (g) => {
-    g.fillStyle = '#c9ccd4';
+    g.fillStyle = '#2c2c2c';
     g.fillRect(0, 0, w * px, d * px);
     // A few darker blotches, so it isn't a flat slab.
     for (let i = 0; i < 70; i++) {
-      g.fillStyle = `rgba(90, 96, 110, ${0.015 + Math.random() * 0.025})`;
+      g.fillStyle = `rgba(0, 0, 0, ${0.04 + Math.random() * 0.06})`;
       g.beginPath();
       g.ellipse(Math.random() * w * px, Math.random() * d * px, 10 + Math.random() * 30, 6 + Math.random() * 20, Math.random() * 3, 0, Math.PI * 2);
       g.fill();
     }
     const X = (x: number) => (x - B.minX) * px;
     const Z = (z: number) => (z - B.minZ) * px;
-    g.fillStyle = '#fffaf0';
+    g.fillStyle = '#9a9a9a';
     for (const [z0, z1] of [
       [B.minZ + 0.3, B.minZ + 5.8],
       [B.maxZ - 5.8, B.maxZ - 0.3],
@@ -100,7 +102,7 @@ function garageFloorTexture(): THREE.CanvasTexture {
       for (let x = -16; x <= 16.01; x += BAY) g.fillRect(X(x) - 2, Z(z0), 4, (z1 - z0) * px);
     }
     // Arrows down the aisle, pointing out to the street.
-    g.fillStyle = '#ffd166';
+    g.fillStyle = '#ee6018';
     for (const x of [-8, 8]) {
       const cx = X(x);
       const cz = Z(0);
@@ -126,25 +128,27 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
   const cx = (B.minX + B.maxX) / 2;
   const cz = (B.minZ + B.maxZ) / 2;
   const ceiling = -SLAB;
-  const concrete = toon('#d3d6dd');
+  const concrete = toon('#3a3a3a');
   // The slab over it, which is the office's floor, is world/stack.ts's: holes go through it to the floor below.
 
   group.add(groundPlane(w, d, cx, G + 0.004, cz, garageFloorTexture()));
 
-  // The back and west walls, with a yellow band along them, and the columns and lights: all merged at the end.
+  // The back and west walls, with an orange line along them, and the columns and lights: all merged at the end.
   const parts = new THREE.Group();
   const wallH = ceiling - G;
-  const yellow = toon('#ffd166');
+  const yellow = toon('#ee6018');
+  const plinth = toon('#141414');
   const walls: [number, number, number, number][] = [
     [B.minX, B.maxX, B.minZ, B.minZ + WALL_T],
     [B.minX, B.minX + WALL_T, B.minZ, B.maxZ],
   ];
   for (const [x0, x1, z0, z1] of walls) {
     parts.add(mesh(box(x1 - x0, wallH, z1 - z0), concrete, (x0 + x1) / 2, G + wallH / 2, (z0 + z1) / 2));
-    parts.add(mesh(box(x1 - x0 + 0.02, 0.35, z1 - z0 + 0.02), yellow, (x0 + x1) / 2, G + 1.1, (z0 + z1) / 2, false));
+    parts.add(mesh(box(x1 - x0 + 0.02, 0.06, z1 - z0 + 0.02), yellow, (x0 + x1) / 2, G + 1.1, (z0 + z1) / 2, false));
+    parts.add(mesh(box(x1 - x0 + 0.02, 0.5, z1 - z0 + 0.02), plinth, (x0 + x1) / 2, G + 0.25, (z0 + z1) / 2, false));
     colliders.push({ minX: x0, maxX: x1, minZ: z0, maxZ: z1, bottom: G, top: ceiling });
   }
-  const sign = textPlane('🏎️  GARAGE', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+  const sign = textPlane('P1  GARAGE', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
   sign.scale.multiplyScalar(1.6);
   sign.position.set(0, G + 2.3, B.minZ + WALL_T + 0.02);
   group.add(sign);
@@ -153,28 +157,29 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
   const cols: [number, number][] = [];
   for (const x of [B.maxX - 0.25, -9.6, 0, 9.6]) cols.push([x, B.maxZ - 0.25], [x, 0]);
   cols.push([B.maxX - 0.25, -6.5], [B.maxX - 0.25, 6.5], [B.maxX - 0.25, B.minZ + 0.25]);
-  const colMat = toon('#e6e8ee');
+  const colMat = toon('#2a2a2a');
   for (const [x, z] of cols) {
     parts.add(mesh(box(0.5, wallH, 0.5), colMat, x, G + wallH / 2, z));
-    parts.add(mesh(box(0.52, 0.5, 0.52), yellow, x, G + 0.25, z, false));
+    parts.add(mesh(box(0.52, 0.5, 0.52), plinth, x, G + 0.25, z, false));
+    parts.add(mesh(box(0.53, 0.05, 0.53), yellow, x, G + 0.52, z, false));
     colliders.push({ minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25, bottom: G, top: ceiling });
   }
 
   // Strip lights on the ceiling.
-  const light = toon('#ffffff', { emissive: '#fff4d6' });
+  const light = toon('#ffffff', { emissive: '#f4ecdc' });
   for (const x of [-13, -4.8, 4.8, 13]) for (const z of [-4.5, 4.5]) parts.add(mesh(box(2.6, 0.07, 0.22), light, x, ceiling - 0.04, z, false));
   group.add(mergeByMaterial(parts));
 
   // The cars: Lambos nose-in along the back wall, Ferraris backed in facing the street.
   const cars: [CarKind, string, number, number][] = [
-    ['lambo', '#8ac926', -14.4, -1],
-    ['lambo', '#ff7b00', -8, -1],
-    ['lambo', '#ffd000', 1.6, -1],
-    ['lambo', '#7b2cbf', 11.2, -1],
-    ['ferrari', '#d90429', -14.4, 1],
-    ['ferrari', '#d90429', -4.8, 1],
-    ['ferrari', '#ffc300', 4.8, 1],
-    ['ferrari', '#e5383b', 14.4, 1],
+    ['lambo', '#e6e6e6', -14.4, -1],
+    ['lambo', '#161616', -8, -1],
+    ['lambo', '#8c8c8c', 1.6, -1],
+    ['lambo', '#2a2a2a', 11.2, -1],
+    ['ferrari', '#0c0c0c', -14.4, 1],
+    ['ferrari', '#3a3a3a', -4.8, 1],
+    ['ferrari', '#d8d8d8', 4.8, 1],
+    ['ferrari', '#1c1c1c', 14.4, 1],
   ];
   const lot = new THREE.Group();
   for (const [kind, color, x, face] of cars) {
@@ -182,7 +187,7 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
     park(lot, colliders, kind, color, x, z, face < 0 ? Math.PI : 0);
   }
   // One left out front, for everyone upstairs to look at.
-  park(lot, colliders, 'lambo', '#00b4d8', 9, 18.2, Math.PI / 2);
+  park(lot, colliders, 'lambo', '#ee6018', 9, 18.2, Math.PI / 2);
   group.add(mergeByMaterial(lot));
 }
 
@@ -206,10 +211,10 @@ function park(group: THREE.Group, colliders: Collider[], kind: CarKind, color: s
 
 export function tree(scale: number): THREE.Group {
   const t = new THREE.Group();
-  t.add(mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 8), toon('#8a5a3b'), 0, 1.1, 0));
-  t.add(mesh(new THREE.SphereGeometry(1.6, 12, 10), toon('#5fb760'), 0, 3.2, 0));
-  t.add(mesh(new THREE.SphereGeometry(1.1, 12, 10), toon('#3f8f45'), 0.8, 3.9, 0.4));
-  t.add(mesh(new THREE.SphereGeometry(1.0, 12, 10), toon('#6fcf6a'), -0.7, 3.8, -0.3));
+  t.add(mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 8), toon('#3b3029'), 0, 1.1, 0));
+  t.add(mesh(new THREE.SphereGeometry(1.6, 12, 10), toon('#3d6b45'), 0, 3.2, 0));
+  t.add(mesh(new THREE.SphereGeometry(1.1, 12, 10), toon('#2d5537'), 0.8, 3.9, 0.4));
+  t.add(mesh(new THREE.SphereGeometry(1.0, 12, 10), toon('#4a7a50'), -0.7, 3.8, -0.3));
   t.scale.setScalar(scale);
   return t;
 }
@@ -222,9 +227,14 @@ function building(w: number, h: number, d: number, color: string, lit: THREE.Mes
     canvasTexture(256, 256, (c) => {
       c.fillStyle = color;
       c.fillRect(0, 0, 256, 256);
-      c.fillStyle = '#bfe3ff';
+      // A slab line across each floor, then the windows, dark glass in a black frame.
+      c.fillStyle = 'rgba(255,255,255,0.05)';
+      c.fillRect(0, 250, 256, 6);
+      c.fillStyle = '#0a0a0a';
+      for (let i = 0; i < n; i++) c.fillRect(((i + 0.25) / n) * 256 - 4, 66, (0.5 / n) * 256 + 8, 128);
+      c.fillStyle = '#1d2126';
       for (let i = 0; i < n; i++) c.fillRect(((i + 0.25) / n) * 256, 70, (0.5 / n) * 256, 120);
-      c.fillStyle = 'rgba(255,255,255,0.55)';
+      c.fillStyle = 'rgba(255,255,255,0.08)';
       for (let i = 0; i < n; i++) c.fillRect(((i + 0.25) / n) * 256, 70, (0.12 / n) * 256, 120);
     });
   // At night about half of them are lit: lamps, a ceiling light, the odd TV.
@@ -235,7 +245,7 @@ function building(w: number, h: number, d: number, color: string, lit: THREE.Mes
       for (let f = 0; f < floors; f++) {
         for (let i = 0; i < n; i++) {
           if (Math.random() < 0.45) continue;
-          c.fillStyle = Math.random() < 0.15 ? '#9ec9ff' : Math.random() < 0.5 ? '#ffd27a' : '#ffe6b0';
+          c.fillStyle = Math.random() < 0.4 ? '#e9d3ac' : Math.random() < 0.5 ? '#f1e6d2' : '#d8c4a0';
           c.fillRect(((i + 0.25) / n) * 64, f * 64 + (70 / 256) * 64, (0.5 / n) * 64, (120 / 256) * 64);
         }
       }
@@ -256,13 +266,144 @@ function building(w: number, h: number, d: number, color: string, lit: THREE.Mes
   g.add(new THREE.Mesh(box(w, h, d), mats));
   (g.children[0] as THREE.Mesh).position.y = h / 2;
   (g.children[0] as THREE.Mesh).castShadow = true;
-  g.add(mesh(box(w + 0.4, 0.4, d + 0.4), toon('#fffaf3'), 0, h + 0.2, 0));
+  g.add(mesh(box(w + 0.4, 0.4, d + 0.4), toon('#121212'), 0, h + 0.2, 0));
   return g;
 }
 
+/** What a billboard says: an eyebrow with its index in orange, then a headline, or a command line in mono. */
+export interface BillboardCopy {
+  index: string;
+  eyebrow: string;
+  lines: string[];
+  mono?: boolean;
+}
+
+/**
+ * Paints `draw` on a canvas `w` by `h` (in its own units) and paints it again once the office's
+ * fonts have loaded, since a sign painted before then would keep the fallback face.
+ */
+function signTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, scale = 2): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  const k = fitScale(w, h, scale);
+  c.width = Math.round(w * k);
+  c.height = Math.round(h * k);
+  const g = c.getContext('2d')!;
+  const paint = () => {
+    g.setTransform(c.width / w, 0, 0, c.height / h, 0, 0);
+    draw(g);
+  };
+  paint();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = ANISOTROPY;
+  document.fonts?.ready?.then(() => {
+    paint();
+    t.needsUpdate = true;
+  });
+  return t;
+}
+
+/** Sets letter tracking where the canvas has it (it's ignored elsewhere). */
+function track(g: CanvasRenderingContext2D, px: number) {
+  (g as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${px}px`;
+}
+
+/** A flat color that shows the same by day and by night, for the pinwheel on a lit sign. */
+function flatColor(color: string): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ color });
+  m.userData.outlineParameters = { visible: false };
+  return m;
+}
+
+/**
+ * A rooftop billboard `w` by `h` meters in Factory's colors: near-black board, light type, the
+ * index and the pinwheel in orange, standing on steel legs, its foot at y = 0 and its face toward +z.
+ * Lit from within, so it reads at night.
+ */
+export function billboard(copy: BillboardCopy, w: number, h: number, wall = false): THREE.Group {
+  const g = new THREE.Group();
+  const W = 1024;
+  const H = Math.round((W * h) / w);
+  const tex = signTexture(W, H, (c) => {
+    c.fillStyle = '#020202';
+    c.fillRect(0, 0, W, H);
+    c.strokeStyle = '#2e2e2e';
+    c.lineWidth = 2;
+    c.strokeRect(14, 14, W - 28, H - 28);
+    c.textBaseline = 'alphabetic';
+    c.textAlign = 'left';
+    const pad = 48;
+    const room = W - pad * 2 - H * 0.5;
+    c.font = `500 26px ${MONO}`;
+    track(c, 4);
+    c.fillStyle = '#ee6018';
+    c.fillText(copy.index, pad, pad + 26);
+    const iw = c.measureText(`${copy.index}  `).width;
+    c.fillStyle = '#8c8c8c';
+    c.fillText(copy.eyebrow.toUpperCase(), pad + iw, pad + 26);
+    c.fillStyle = '#2e2e2e';
+    c.fillRect(pad, pad + 46, room, 2);
+    const size = copy.mono ? 40 : 66;
+    const font = (px: number) => (copy.mono ? `500 ${px}px ${MONO}` : `600 ${px}px ${SANS}`);
+    track(c, copy.mono ? 0 : -1);
+    c.font = font(size);
+    const widest = Math.max(...copy.lines.map((l) => c.measureText(l).width));
+    const px = widest > room ? Math.floor((size * room) / widest) : size;
+    c.font = font(px);
+    const lead = px * 1.08;
+    const top = H - pad - lead * (copy.lines.length - 1) - 6;
+    copy.lines.forEach((line, i) => {
+      const y = top + i * lead;
+      if (copy.mono && line.startsWith('>')) {
+        c.fillStyle = '#ee6018';
+        c.fillText('>', pad, y);
+        c.fillStyle = '#eeeeee';
+        c.fillText(line.slice(1), pad + c.measureText('>').width, y);
+        const end = pad + c.measureText(line).width + 10;
+        c.fillRect(end, y - px * 0.78, px * 0.55, px * 0.92);
+      } else {
+        c.fillStyle = '#eeeeee';
+        c.fillText(line, pad, y);
+      }
+    });
+  });
+  const face = new THREE.MeshBasicMaterial({ map: tex });
+  face.userData.outlineParameters = { visible: false };
+  const steel = toon('#2a2a2a');
+  const frame = toon('#0a0a0a');
+  // On a roof it stands on legs; on a wall it hangs straight on it, its foot at y = 0.
+  const legH = wall ? 0 : 1.4;
+  // Everything but the face merged (merging drops the face's texture coordinates).
+  const rig = new THREE.Group();
+  rig.add(mesh(box(w + 0.3, h + 0.3, 0.3), frame, 0, legH + h / 2, -0.16, false));
+  rig.add(mesh(glyphFlat(h * 0.46, 5), flatColor('#ee6018'), w / 2 - h * 0.36, legH + h * 0.6, 0.012, false));
+  if (!wall) {
+    for (const sx of [-0.36, 0.36]) {
+      rig.add(mesh(box(0.16, legH + h * 0.6, 0.16), steel, sx * w, (legH + h * 0.6) / 2, -0.4));
+      rig.add(mesh(box(0.1, 0.1, 1.2), steel, sx * w, legH * 0.55, -0.4, false));
+    }
+    // A catwalk along the foot, as billboards have.
+    rig.add(mesh(box(w, 0.06, 0.7), steel, 0, legH - 0.1, 0.25, false));
+  }
+  // The lamps over the top, on arms.
+  for (let i = 0; i < 4; i++) {
+    const x = -w * 0.375 + (i * w * 0.75) / 3;
+    rig.add(mesh(box(0.05, 0.05, 0.6), steel, x, legH + h + 0.2, 0.15, false));
+    rig.add(mesh(box(0.3, 0.1, 0.22), frame, x, legH + h + 0.2, 0.5, false));
+  }
+  g.add(mergeByMaterial(rig), mesh(new THREE.PlaneGeometry(w, h), face, 0, legH + h / 2, 0.001, false));
+  return g;
+}
+
+/** The billboards on the roofs across the street, facing the office: which neighbour (in NEIGHBOURS) each stands on, and what it says. */
+const BILLBOARDS: [number, BillboardCopy][] = [
+  [2, { index: '01', eyebrow: 'Factory.ai', lines: ['MAKE YOUR SOFTWARE', 'IMPROVE ITSELF'] }],
+  [1, { index: '02', eyebrow: 'Install Droid', lines: ['> curl -fsSL https://app.factory.ai/cli | sh'], mono: true }],
+];
+
 /** A street lamp on the sidewalk at (x, z), its arm reaching out over the road toward `toward` (±1 in z). */
 export function streetLamp(parts: THREE.Group, night: NightParts, glass: THREE.MeshToonMaterial, colliders: Collider[], x: number, z: number, toward: number) {
-  const ink = toon('#3d405b');
+  const ink = toon('#1c1c1c');
   const H = 5;
   parts.add(mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.5, 10), ink, x, G + 0.25, z));
   parts.add(mesh(new THREE.CylinderGeometry(0.07, 0.09, H, 8), ink, x, G + H / 2, z));
@@ -287,14 +428,14 @@ const REACH = 1200;
  * (GOLF_HOLE in layout).
  */
 const NEIGHBOURS: [number, number, number, number, number, string][] = [
-  [-38, 45, 12, 10, 9, '#8ecae6'],
-  [-22, 46, 14, 16, 10, '#ffb4a2'],
-  [12, 47, 16, 19, 12, '#cdb4db'],
-  [30, 45, 12, 9, 9, '#ffd6a5'],
-  [-20, -42, 18, 14, 10, '#a2d2ff'],
-  [8, -44, 16, 20, 12, '#f4acb7'],
-  [-48, -6, 10, 12, 16, '#ffe5b4'],
-  [50, 4, 10, 15, 18, '#bde0fe'],
+  [-38, 45, 12, 10, 9, '#2a2a2a'],
+  [-22, 46, 14, 16, 10, '#1c1c1c'],
+  [12, 47, 16, 19, 12, '#242424'],
+  [30, 45, 12, 9, 9, '#3a3a3a'],
+  [-20, -42, 18, 14, 10, '#202020'],
+  [8, -44, 16, 20, 12, '#2e2e2e'],
+  [-48, -6, 10, 12, 16, '#1a1a1a'],
+  [50, 4, 10, 15, 18, '#333333'],
 ];
 
 /** Which way a neighbour at (x, z) is turned: its front to the office. */
@@ -314,7 +455,7 @@ export function neighbourBoxes(): { minX: number; maxX: number; minZ: number; ma
  * sidewalks and street lamps, trees and neighbours' buildings, and in `sky` some clouds.
  */
 export function buildStreet(group: THREE.Group, colliders: Collider[], night: NightParts, sky: THREE.Group) {
-  const lawn = new THREE.Mesh(new THREE.PlaneGeometry(REACH, REACH), toon('#a7d98b'));
+  const lawn = new THREE.Mesh(new THREE.PlaneGeometry(REACH, REACH), toon('#58744f'));
   lawn.rotation.x = -Math.PI / 2;
   lawn.position.y = G - 0.03;
   lawn.receiveShadow = true;
@@ -323,19 +464,19 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
   colliders.push({ minX: -200, maxX: 200, minZ: -200, maxZ: 200, bottom: G - 1, top: G });
 
   // The lot in front of the garage, out to the sidewalk.
-  const lot = groundPlane(60, 21 - B.maxZ, 0, G - 0.01, (B.maxZ + 21) / 2, null, '#9a9ea8');
+  const lot = groundPlane(60, 21 - B.maxZ, 0, G - 0.01, (B.maxZ + 21) / 2, null, '#3c3c3c');
   group.add(lot);
-  const sideways = groundPlane(12, B.maxZ - B.minZ + 6, B.maxX + 6, G - 0.012, (B.minZ + B.maxZ) / 2 + 1, null, '#9a9ea8');
+  const sideways = groundPlane(12, B.maxZ - B.minZ + 6, B.maxX + 6, G - 0.012, (B.minZ + B.maxZ) / 2 + 1, null, '#3c3c3c');
   group.add(sideways);
 
   // The road: asphalt, white edge lines and a dashed yellow middle.
   const road = canvasTexture(256, 128, (g) => {
-    g.fillStyle = '#5b606c';
+    g.fillStyle = '#2c2c2c';
     g.fillRect(0, 0, 256, 128);
-    g.fillStyle = '#f1f1f1';
+    g.fillStyle = '#cfcfcf';
     g.fillRect(0, 6, 256, 4);
     g.fillRect(0, 118, 256, 4);
-    g.fillStyle = '#ffd166';
+    g.fillStyle = '#c9a23e';
     g.fillRect(0, 61, 150, 6);
   });
   road.wrapS = THREE.RepeatWrapping;
@@ -345,7 +486,7 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
     [21, ROAD.minZ],
     [ROAD.maxZ, ROAD.maxZ + 2],
   ]) {
-    group.add(mesh(box(REACH, 0.08, z1 - z0), toon('#e3ddd0'), 0, G, (z0 + z1) / 2));
+    group.add(mesh(box(REACH, 0.08, z1 - z0), toon('#6e6e6e'), 0, G, (z0 + z1) / 2));
   }
   const forest = new THREE.Group();
 
@@ -389,6 +530,18 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
     b.rotation.y = facing(x, z);
     group.add(b);
   }
+  const boards = new THREE.Group();
+  for (const [i, copy] of BILLBOARDS) {
+    // Hung on the front wall, high enough to clear the street lamps, low enough to read from every floor.
+    const [x, z, w, h, d] = NEIGHBOURS[i];
+    const bw = w - 2.4;
+    const bb = billboard(copy, bw, bw * 0.3, true);
+    const turn = facing(x, z);
+    bb.position.set(x + Math.sin(turn) * (d / 2 + 0.32), G + Math.min(h - bw * 0.3 - 1.2, 7.5), z + Math.cos(turn) * (d / 2 + 0.32));
+    bb.rotation.y = turn;
+    boards.add(bb);
+  }
+  group.add(boards);
 
   // Puffy clouds, too far off for the fog to hide.
   const cloud = night.clouds;
