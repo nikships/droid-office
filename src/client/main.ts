@@ -39,6 +39,7 @@ import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo
 import { MEETING_PATTERNS } from '../shared/meetings';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
+import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } from '../shared/guests';
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
@@ -671,6 +672,17 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
     sound.impact(hit.point);
     return;
   }
+  // A guest isn't the office's to shoot: the round goes into its chair like a miss.
+  const guest = store.workers.get(workerId)?.guest;
+  if (guest) {
+    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
+    const puff = new Puff(hit.point, normal);
+    scene.add(puff.group);
+    puffs.push(puff);
+    sound.impact(hit.point);
+    hintToast(`${store.workers.get(workerId)?.name} is a guest from outside the office: the office leaves it alone`, 'info');
+    return;
+  }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
   const spray = new BloodSpray(hit.point, out, direction);
   scene.add(spray.group);
@@ -1223,7 +1235,8 @@ function syncWorkers() {
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
     const lost = `🌿 ${w.name}'s worktree was deleted — press E to fix it`;
-    v.laptop.setPlaceholder(w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
+    const outside = w.guest && `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}`;
+    v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
       arrivals.forget(v.model);
       casualties.shoot(w.id, v.model, desk.seatAnchor);
@@ -1680,6 +1693,7 @@ function pointToWaiting(now: number) {
 function openWorkerTerminal(id: string, find?: TerminalFind) {
   const w = store.workers.get(id);
   if (!w) return;
+  if (w.guest) return openTerminal(net, id, undefined, find);
   if (w.lost) return fixLostWorktree(w);
   if (isAsleep(w.status)) resumeWorker(w);
   openTerminal(net, id, () => openWorkerChanges(id), find);
@@ -1695,6 +1709,7 @@ function showSearch() {
 function openWorkerChanges(id: string, repo?: string) {
   const w = store.workers.get(id);
   if (!w) return;
+  if (w.guest) return toast(guestKeyNote(w, 'C'), 'warn');
   if (w.lost) return fixLostWorktree(w);
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
@@ -1750,7 +1765,7 @@ function paletteEntries(): PaletteEntry[] {
       icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : '🧑‍💻',
       kind: 'Worker',
       title: w.name,
-      detail: [w.task?.name, desk?.label, STATUS_LABEL[w.status]].filter(Boolean).join(' · '),
+      detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office'].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
       open,
       walk: desk && spot ? () => walkThen(spot, `${w.name} at ${desk.label}`, open, desk) : undefined,
@@ -1873,7 +1888,7 @@ function turnPage() {
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
 function sendToWorker(title: string, text: { context?: string; initial?: string }) {
   const desk = freeDesk();
-  const awake = [...store.workers.values()].filter((w) => w.kind === 'agent' && !isAsleep(w.status));
+  const awake = [...store.workers.values()].filter((w) => w.kind === 'agent' && !w.guest && !isAsleep(w.status));
   if (!desk && !awake.length) {
     toast('Every desk and bean bag is taken — send a worker home first', 'warn');
     return;
@@ -1925,6 +1940,8 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     // Nobody is hired at the meeting table: a meeting seats its own workers there.
     if (!w && DESK_BY_ID.get(target.deskId)?.room) return key === 'E' ? showMeeting() : undefined;
     if (key === 'B' && !w) return openShell(target.deskId);
+    // A guest runs outside the office: there's only what the office knows of it to look at.
+    if (w?.guest && key !== 'E') return toast(guestKeyNote(w, key), 'warn');
     if (key === 'P') return promptAtDesk(target.deskId);
     if (key === 'E') return w ? openWorkerTerminal(w.id) : hireAtDesk(target.deskId);
     if (key === 'C' && w) return openWorkerChanges(w.id);
@@ -2369,6 +2386,7 @@ function onQueue(issue: number): boolean {
 function cantTakeCard(w: WorkerInfo): string {
   if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
+  if (w.guest) return guestKeyNote(w, 'P');
   if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
   if (isAsleep(w.status)) return `${w.name} is asleep — press R to resume first`;
   if (w.status === 'needs_input') return `${w.name} is waiting on an answer — open the terminal first`;
@@ -2756,9 +2774,16 @@ function deskHint(deskId: string): Hint {
       parts: [h('span.title', {}, `${w.name} · 🌿 worktree deleted`), aside('deleted outside droid-office'), key('E', 'Fix it'), key('X', 'Send home')],
     };
   }
+  if (w.guest) {
+    const doing = w.activity ? clip(w.activity, 48) : '';
+    return {
+      k: `guest|${w.id}|${w.status}|${w.guest.seen}|${doing}`,
+      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(`🚪 outside the office · ${processLabel(w.guest)}`), doing ? aside(doing) : '', key('E', 'Look')],
+    };
+  }
   const doing = w.activity ? clip(w.activity, 48) : '';
   const shell = w.kind === 'shell';
-  const team = teamNote(w);
+  const team = [teamNote(w), outsideNote(w)].filter(Boolean).join(' · ');
   return {
     k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team,
     parts: [

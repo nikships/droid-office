@@ -138,6 +138,43 @@ export interface WorkerInfo {
    */
   workedMs?: number;
   workingSince?: number;
+  /**
+   * Set for a guest: an agent process the office didn't start, running on the office's machine in
+   * this floor's checkout (see server/guests.ts). The office only watches it: it has no terminal
+   * here, takes no prompts or tasks, and is never stopped by the office.
+   */
+  guest?: GuestInfo;
+  /**
+   * Agent processes started by hand inside this worker's own worktree, outside the office (see
+   * server/guests.ts): they're this worker's, rather than guests of their own.
+   */
+  outside?: OutsideProcess[];
+}
+
+/** The agent CLIs whose processes the office recognises as guests. */
+export type GuestProvider = 'droid' | 'claude' | 'codex' | 'opencode' | 'grok' | 'muse';
+
+/** An agent process running outside the office: which CLI, and where. */
+export interface OutsideProcess {
+  pid: number;
+  /** Its controlling terminal, like /dev/ttys004. */
+  tty: string;
+  provider: GuestProvider;
+}
+
+/** What the office knows of a guest (see WorkerInfo.guest). */
+export interface GuestInfo extends OutsideProcess {
+  /** Its working directory, symlinks resolved. */
+  cwd: string;
+  /** When the process started (ms). */
+  startedAt: number;
+  /**
+   * Where its status comes from: Droid's session transcript (`~/.factory/sessions/`), or only that
+   * the process is running, when there's no transcript the office can tie to it.
+   */
+  seen: 'transcript' | 'process';
+  /** When its transcript was last written (ms), when it has one. */
+  writtenAt?: number;
 }
 
 /** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */

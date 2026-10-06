@@ -13,6 +13,7 @@ import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
 import { Services } from './services.js';
+import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
@@ -215,6 +216,11 @@ export async function startServer(cfg: Config) {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
     return undefined;
   };
+  /** The floor a guest sits on (see guests.ts): an agent someone runs outside the office, which the office only watches. */
+  const guestFloor = (workerId: string): Floor | undefined => {
+    for (const f of floors.values()) if (f.guests.get(workerId)) return f;
+    return undefined;
+  };
   /** To everyone on one floor. */
   const toFloor = (floor: Floor, msg: ServerMsg, droppable = false) => {
     const json = JSON.stringify(msg);
@@ -369,7 +375,7 @@ export async function startServer(cfg: Config) {
   // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
     cfg.dataDir,
-    (workerId) => (workerId && workerFloor(workerId)?.def.name) || officeName,
+    (workerId) => (workerId && (workerFloor(workerId) ?? guestFloor(workerId))?.def.name) || officeName,
     (state) => broadcast({ t: 'notify', state }),
   );
   if (cfg.webhook !== undefined) {
@@ -515,7 +521,7 @@ export async function startServer(cfg: Config) {
   const floorView = (floor: Floor | undefined, c: Client): FloorView => ({
     floor: floor?.id ?? null,
     project: floor?.project ?? null,
-    workers: floor?.workers.list() ?? [],
+    workers: floor?.everyone() ?? [],
     issues: floor?.board.issues ?? { items: [], fetchedAt: 0, loading: false },
     pulls: floor?.board.pulls ?? { items: [], fetchedAt: 0, loading: false },
     queue: floor?.queue.state() ?? { tasks: [], maxWorkers: 0 },
@@ -911,6 +917,7 @@ export async function startServer(cfg: Config) {
       stopPlaying(client);
       for (const f of floors.values()) {
         f.workers.detachAll(id);
+        f.guests.detachAll(id);
         f.changes.unwatchAll(id);
         if (f.court.left(id)) ballChanged(f);
       }
@@ -989,6 +996,7 @@ export async function startServer(cfg: Config) {
     const was = floorOf(c);
     if (was) {
       was.workers.detachAll(c.id);
+      was.guests.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
     // The ball stays on its floor, back under the hoop. That floor hears so once they're off it (see
@@ -1034,6 +1042,9 @@ export async function startServer(cfg: Config) {
     });
   };
 
+  /** Opens a worker's terminal for `c`, or the banner a guest has instead of one. */
+  const attachTerminal = (wid: string, c: Client) => workerFloor(wid)?.workers.attach(wid, c.id) ?? guestFloor(wid)?.guests.attach(wid, c.id);
+
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
     /** The floor `c` is on, or a note to them that they have to be on one. */
@@ -1048,6 +1059,10 @@ export async function startServer(cfg: Config) {
       const floor = workerFloor(wid);
       return floor ? { wid, floor, info: floor.workers.get(wid)! } : undefined;
     };
+    // A guest runs outside the office: nothing the office does with its own workers is done to it.
+    const asked = (msg as { workerId?: unknown }).workerId;
+    const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
+    if (guest?.guest) return warn(c, guestRefusal(guest, msg.t));
     switch (msg.t) {
       case 'profile': {
         // Display provenance only (see Client.peer).
@@ -1218,11 +1233,11 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'worker.attach': {
-        const w = worker(msg.workerId);
-        const snap = w?.floor.workers.attach(w.wid, c.id);
-        if (w && snap) {
-          c.attached.add(w.wid);
-          sendTo(c, { t: 'term.snapshot', workerId: w.wid, ...snap });
+        const wid = str(msg.workerId, 32);
+        const snap = attachTerminal(wid, c);
+        if (snap) {
+          c.attached.add(wid);
+          sendTo(c, { t: 'term.snapshot', workerId: wid, ...snap });
         }
         break;
       }
@@ -1230,6 +1245,7 @@ export async function startServer(cfg: Config) {
         const wid = str(msg.workerId, 32);
         c.attached.delete(wid);
         workerFloor(wid)?.workers.detach(wid, c.id);
+        guestFloor(wid)?.guests.detach(wid, c.id);
         break;
       }
       case 'worker.prompt': {
@@ -1682,7 +1698,7 @@ export async function startServer(cfg: Config) {
     for (const c of clients.values()) {
       if (!c.stale.size || c.ws.bufferedAmount > SLOW_CLIENT_BYTES / 8) continue;
       for (const wid of c.stale) {
-        const snap = c.attached.has(wid) ? workerFloor(wid)?.workers.attach(wid, c.id) : undefined;
+        const snap = c.attached.has(wid) ? attachTerminal(wid, c) : undefined;
         if (snap) sendTo(c, { t: 'term.snapshot', workerId: wid, ...snap });
       }
       c.stale.clear();
@@ -1706,6 +1722,12 @@ export async function startServer(cfg: Config) {
     server.listen(cfg.port, cfg.host, () => resolve());
   });
   services.start();
+  // Agents someone started by hand in a floor's checkout, at desks of their own (see guests.ts).
+  const guestScanner = new GuestScanner(
+    () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, home: building.isHome(f.id), syncGuests: (procs: AgentProcess[]) => f.syncGuests(procs) })),
+    () => [...floors.values()].flatMap((f) => f.workers.owners().flatMap((o) => (o.pid ? [o.pid] : []))),
+  );
+  guestScanner.start();
   await hotReload.start();
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
@@ -1717,6 +1739,7 @@ export async function startServer(cfg: Config) {
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     services.stop();
+    guestScanner.stop();
     webhook.stop();
     machine.stop();
     sky.stop();
