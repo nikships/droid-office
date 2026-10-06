@@ -4,6 +4,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
+import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopPath } from './shell-path.js';
 import { Updates } from './updates.js';
@@ -141,7 +142,7 @@ async function openOffice() {
     } else {
       const dir = settings.officeDir ?? defaultOfficeDir();
       mkdirSync(logDir, { recursive: true });
-      office = await startOffice({ runtime: process.execPath, cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), args: officeArgs(dir, port), port, env: { ...process.env, PATH }, log: officeLog });
+      office = await startOffice({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), args: officeArgs(dir, port), port, env: { ...process.env, PATH }, log: officeLog });
       officeUrl = office.url;
       const mine = office;
       void mine.exited.then((code) => {

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
+import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
 import { fencedPath, knownDirs, loginShellPath, mergePath } from '../src/desktop/shell-path.ts';
 import { runAsNode } from '../src/server/workers.ts';
@@ -168,4 +169,25 @@ test('commands written for workers run Electron as Node only under the Mac app',
   assert.deepEqual(runAsNode({ ...process.versions, electron: '44.5.1' }), { sh: 'ELECTRON_RUN_AS_NODE=1 ', cmd: 'set "ELECTRON_RUN_AS_NODE=1" & ' });
   const { electron: _, ...plainNode } = process.versions as NodeJS.ProcessVersions & { electron?: string };
   assert.deepEqual(runAsNode(plainNode as NodeJS.ProcessVersions), { sh: '', cmd: '' });
+});
+
+test('the Mac app runs its office on the helper binary, which has no Dock icon, and falls back to Electron itself', () => {
+  const main = '/Applications/Droid Office.app/Contents/MacOS/Droid Office';
+  const helper = '/Applications/Droid Office.app/Contents/Frameworks/Droid Office Helper.app/Contents/MacOS/Droid Office Helper';
+  assert.equal(
+    officeRuntime(main, 'darwin', (p) => p === helper),
+    helper,
+  );
+  assert.equal(
+    officeRuntime(main, 'darwin', () => false),
+    main,
+  );
+  assert.equal(
+    officeRuntime(main, 'win32', () => true),
+    main,
+  );
+  assert.equal(
+    officeRuntime('/usr/local/bin/node', 'darwin', () => true),
+    '/usr/local/bin/node',
+  );
 });

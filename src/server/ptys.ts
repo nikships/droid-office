@@ -14,8 +14,11 @@ import * as pty from '@lydell/node-pty';
  * in-process as before and die with the office.
  */
 
-/** Bump whenever the host's messages change: an office that finds an older host stops it and starts its own. */
-export const PTY_PROTOCOL = 3;
+/**
+ * Bump whenever the host's messages change: an office that finds an older host stops it and starts its own.
+ * 4: the Mac app runs the host on its Helper binary; hosts started on the main binary have a Dock icon.
+ */
+export const PTY_PROTOCOL = 4;
 export const SCROLLBACK = 3000;
 
 export interface SpawnOpts {
