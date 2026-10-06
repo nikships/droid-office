@@ -234,7 +234,7 @@ export async function startServer(cfg: Config) {
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
     if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
-  const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}) }))];
+  const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }))];
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
   let floorsSent = '';
   let floorsTimer: NodeJS.Timeout | undefined;
@@ -486,6 +486,8 @@ export async function startServer(cfg: Config) {
   };
   // Started in a project: it's a floor too (the one it has always been).
   if (cfg.project) building.ensureLocal(cfg.project, 'the office');
+  // The home folder is always a floor, after the projects.
+  if (cfg.homeFloor) building.ensureHome(cfg.homeFloor);
   for (const def of building.list()) openFloor(def);
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));

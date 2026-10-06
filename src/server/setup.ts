@@ -50,7 +50,7 @@ export function interactive(): boolean {
  */
 export async function welcome(cfg: Config): Promise<void> {
   const building = new Building(cfg.dataDir, cfg.projectsDir);
-  if (building.list().length) return;
+  if (building.hasProjects()) return;
   // --projects is the answer to the first question (the office applies it again as it starts).
   const folderGiven = !!cfg.projects && !building.setProjectsDir(cfg.projects, 'the command line');
   console.log(`
@@ -61,7 +61,7 @@ export async function welcome(cfg: Config): Promise<void> {
   works in it right where it is and never clones or copies anything. Press Enter
   to skip any question and do it from the office's elevator instead.`);
   await walkthrough(building, !folderGiven && !building.projectsDirState().custom);
-  console.log(building.list().length ? '\n  All set. Opening the office…' : '\n  Opening the office: its elevator asks for your first project.');
+  console.log(building.hasProjects() ? '\n  All set. Opening the office…' : '\n  Opening the office: its elevator asks for your first project.');
 }
 
 /** `droid-office setup …`: returns the exit code. */

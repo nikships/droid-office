@@ -717,6 +717,8 @@ export interface FloorInfo {
   palette: number;
   /** The project the office was started in (`droid-office <dir>`): the office keeps its own data in its checkout. */
   local?: boolean;
+  /** The home folder's floor: always in the building, so it can't be taken off. */
+  home?: boolean;
   addedBy: string;
   addedAt: number;
   /**

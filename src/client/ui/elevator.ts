@@ -131,7 +131,7 @@ export function openElevator(opts: ElevatorOptions): void {
     const btn = floorButton(f, i);
     const off = h('button.btn.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
     off.addEventListener('click', () => confirmRemove(f));
-    return h('div.floor-row', {}, btn, off);
+    return h('div.floor-row', {}, btn, ...(f.home ? [] : [off]));
   };
 
   const confirmRemove = (f: FloorInfo) => {

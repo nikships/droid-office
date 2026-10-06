@@ -11,6 +11,8 @@ export interface Config {
   dataDir: string;
   /** Where the office looks for existing checkouts to add as floors, unless another folder is picked (see defaultProjectsDir). */
   projectsDir: string;
+  /** The folder that is always a floor (the CLI sets the home folder; unset in tests so they never touch it). */
+  homeFloor?: string;
   /** --projects / DROID_OFFICE_PROJECTS: picks the workspace folder, as ⚙️ Settings in the office does. */
   projects?: string;
   /** Started as `droid-office <dir>`: that checkout is a floor of its own (it's also `dir`). */

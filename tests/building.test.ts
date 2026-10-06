@@ -188,3 +188,47 @@ test('the workspace folder has to be an existing folder, and moving it changes w
   assert.equal(building.projectsDirState().custom, true);
   assert.match(building.add(notes, 'Sam') as string, /isn't in the workspace folder/);
 });
+
+test("the home folder is always a floor, added after the others, once, and can't be taken off", (t) => {
+  const { root, dataDir } = office(t);
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  const building = new Building(dataDir, root);
+
+  const def = building.ensureHome(home);
+  assert.equal(def?.name, 'Home');
+  assert.equal(def?.dir, home);
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs', 'home']);
+  assert.ok(building.isHome('home'));
+  assert.ok(!building.isHome('api'));
+  assert.equal(building.ensureHome(home)?.id, 'home');
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs', 'home']);
+
+  assert.match(building.remove('home') as string, /always in the building/);
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs', 'home']);
+
+  // It's still there at the next start, even if nothing else is.
+  const again = new Building(dataDir, root);
+  assert.equal(again.ensureHome(home)?.id, 'home');
+  assert.equal(again.list().length, 4);
+});
+
+test('a home floor with no projects does not count as the office having any', (t) => {
+  const { root, dataDir } = office(t);
+  writeFileSync(path.join(dataDir, 'floors.json'), '[]');
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  const building = new Building(dataDir, root);
+  building.ensureHome(home);
+  assert.equal(building.list().length, 1);
+  assert.equal(building.hasProjects(), false);
+});
+
+test('a home folder that was already added by hand is the home floor', (t) => {
+  const { root, dataDir, defs } = office(t);
+  const building = new Building(dataDir, root);
+  assert.equal(building.ensureHome(defs[1].dir)?.id, 'web');
+  assert.ok(building.isHome('web'));
+  assert.match(building.remove('web') as string, /always in the building/);
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs']);
+});

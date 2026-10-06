@@ -61,6 +61,8 @@ export class Building {
   /** The floor that checkout is, while it is one. */
   private localId?: string;
   private localFile: string;
+  /** The folder whose floor is always in the building (see ensureHome). */
+  private homeDir = path.resolve(os.homedir());
   /** That checkout was taken off the building: a restart doesn't put it back. */
   private localOff?: LocalOff;
 
@@ -137,6 +139,38 @@ export class Building {
     return def;
   }
 
+  /**
+   * Makes sure the home folder is a floor. It is added once, after the floors there already are
+   * so none of them change number, and it can't be taken off (see remove). A home folder that is
+   * already a floor, added by hand, counts as it. Returns the floor, or undefined when the
+   * building is full.
+   */
+  ensureHome(home = os.homedir()): FloorDef | undefined {
+    const dir = path.resolve(home);
+    this.homeDir = dir;
+    const known = this.defs.find((d) => path.resolve(d.dir) === dir);
+    if (known) return known;
+    if (this.defs.length >= MAX_FLOORS) {
+      console.error(`droid-office: the building is full (${MAX_FLOORS} floors), so the home floor (${tildify(dir)}) can't be added`);
+      return undefined;
+    }
+    const def = this.newDef('Home', originRepo(dir), dir, 'the office');
+    this.defs.push(def);
+    this.save();
+    return def;
+  }
+
+  /** The home folder's floor, which is always there. */
+  isHome(id: string): boolean {
+    const def = this.defs.find((d) => d.id === id);
+    return !!def && path.resolve(def.dir) === this.homeDir;
+  }
+
+  /** Whether any floor is a project the owner added, rather than just the home floor. */
+  hasProjects(): boolean {
+    return this.defs.some((d) => !this.isHome(d.id));
+  }
+
   /** The office keeps its own data in this floor's checkout. */
   isLocal(id: string): boolean {
     return id === this.localId;
@@ -150,6 +184,7 @@ export class Building {
   remove(id: string, by = '?'): FloorDef | string {
     const def = this.defs.find((d) => d.id === id);
     if (!def) return 'No such floor';
+    if (this.isHome(id)) return `${def.name} is the home floor: it's always in the building`;
     this.defs = this.defs.filter((d) => d !== def);
     if (this.isLocal(id)) {
       this.localId = undefined;

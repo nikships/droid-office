@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { renderUnicodeCompact } from 'uqr';
 import { loadConfig, ensureSelfSigned } from './config.js';
@@ -17,6 +18,7 @@ if (argv[0] === 'setup') {
 }
 
 const cfg = loadConfig(argv);
+cfg.homeFloor = os.homedir();
 await ensureSelfSigned(cfg);
 // A new office started in a terminal: where projects go, GitHub or GitLab, and the first floor, before it opens.
 if (!cfg.project) {
