@@ -206,7 +206,7 @@ for (const name of names) {
       for (const m of [].concat(o.material)) {
         mats.add(m);
         if (m.color) hasColor++;
-        for (const texture of [m.map, m.metalnessMap, m.roughnessMap]) {
+        for (const texture of [m.map, m.metalnessMap, m.roughnessMap, m.emissiveMap]) {
           if (texture?.image?.data) images.add(texture.image);
         }
       }

@@ -492,7 +492,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       [s.down, '⬇', 0.62],
     ] as const) {
       if (!others || !name) continue;
-      const sign = textPlane(`🪜 ${arrow} ${name.length > 22 ? `${name.slice(0, 21)}…` : name}`, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 44 });
+      const sign = textPlane(`${arrow} ${name.length > 22 ? `${name.slice(0, 21)}…` : name}`, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 44 });
       sign.scale.multiplyScalar(0.7);
       sign.position.set(FLOOR.minX + 0.02, y, LADDER.z + LADDER.width / 2 + 0.15 + (sign.geometry.parameters.width * 0.7) / 2);
       sign.rotation.y = Math.PI / 2;

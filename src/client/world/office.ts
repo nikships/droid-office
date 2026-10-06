@@ -992,10 +992,12 @@ function buildCeiling(night: NightParts): THREE.Group {
       night.halos.push({ at: new THREE.Vector3(cx, barY - 0.04, cz + dz), size: 1.0, color: '#fff1dc' });
     }
   }
-  // High-bay lamps: over the lounge, hung from the middle purlin, and over the kitchen.
+  // High-bay lamps: a pair over the lounge, hung from the purlins either side of the east wall's
+  // mural (one on the middle purlin hides it from across the room), and one over the kitchen.
   const bayY = 4.3;
   for (const [x, z, top] of [
-    [13, 0, H - PURLIN_DEPTH],
+    [13, PURLIN_ZS[1], H - PURLIN_DEPTH],
+    [13, PURLIN_ZS[3], H - PURLIN_DEPTH],
     [-14.5, 10.4, H],
   ]) {
     const lamp = highBay(top - bayY - 0.3, lit);

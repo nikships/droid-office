@@ -32,7 +32,7 @@ import shutil
 import sys
 
 import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 # --------------------------------------------------------------------------------------
 # config
@@ -205,7 +205,7 @@ def weld(obj, merge: float = 1e-4):
 
 
 def drop_uvs(obj):
-    """No prop has a texture, so TEXCOORD_0 is 8 bytes per vertex of dead weight."""
+    """Untextured props do not need TEXCOORD_0's eight bytes per vertex."""
     while obj.data.uv_layers:
         obj.data.uv_layers.remove(obj.data.uv_layers[0])
     return obj
@@ -325,23 +325,25 @@ class Prop:
     another node's space (the laptop's base and lid) turn it off. A `multipart` build
     returns (body_parts, loose_parts) instead of one parts list: the body joins into a
     single mesh as usual, and each loose (name, object, material) exports as its own
-    node, so the client can find it by name.
+    node, so the client can find it by name. `keep_uvs` keeps the body's UVs for props
+    painted from a palette atlas (see `palette_material`); untextured props drop them.
     """
 
-    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False):
+    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
         self.name = name
         self.build = build
         self.tags = tags
         self.recenter = recenter
         self.multipart = multipart
+        self.keep_uvs = keep_uvs
 
 
 REGISTRY: list[Prop] = []
 
 
-def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False):
+def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
     def wrap(fn):
-        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart))
+        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart, keep_uvs=keep_uvs))
         return fn
 
     return wrap
@@ -448,11 +450,364 @@ def build_macbook_lid():
     return body, [("Display", display, M["screen_off"])]
 
 
+# Palette-atlas helpers
+# --------------------------------------------------------------------------------------
+
+
+def palette_material(name, swatches):
+    """One Principled shader, with embedded colour and metallic/roughness atlases.
+
+    Each part samples the centre of one eight-pixel swatch. Keeping these UVs gives
+    steel, graphite, glass and signal orange their own finish without extra material slots.
+    A swatch is (color, roughness, metallic) or (color, roughness, metallic, glow): a glow
+    of 0..1 adds an emission atlas that lights that swatch with its own colour, so a signal
+    colour still reads in a dim room without lifting the swatches around it.
+    """
+    width, height = len(swatches) * 8, 8
+    colors, finishes, glows = [], [], []
+    for _ in range(height):
+        for color, roughness, metallic, *glow in swatches.values():
+            h = color.lstrip("#")
+            rgb = tuple(int(h[i : i + 2], 16) / 255 for i in (0, 2, 4))
+            k = glow[0] if glow else 0.0
+            colors.extend((*rgb, 1.0) * 8)
+            finishes.extend((1.0, roughness, metallic, 1.0) * 8)
+            glows.extend((*(c * k for c in rgb), 1.0) * 8)
+    color_image = bpy.data.images.new(f"{name}Color", width, height)
+    color_image.pixels[:] = colors
+    color_image.pack()
+    finish_image = bpy.data.images.new(f"{name}MetalRough", width, height)
+    finish_image.colorspace_settings.name = "Non-Color"
+    finish_image.pixels[:] = finishes
+    finish_image.pack()
+    layers = [(color_image, "Base Color"), (finish_image, None)]
+    if any(len(s) > 3 and s[3] for s in swatches.values()):
+        glow_image = bpy.data.images.new(f"{name}Glow", width, height)
+        glow_image.pixels[:] = glows
+        glow_image.pack()
+        layers.append((glow_image, "Emission Color"))
+
+    mat = material(name, "#ffffff")
+    mat.use_backface_culling = True
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    bsdf = nodes["Principled BSDF"]
+    if len(layers) > 2:
+        bsdf.inputs["Emission Strength"].default_value = 1.0
+    for image, socket in layers:
+        texture = nodes.new("ShaderNodeTexImage")
+        texture.image = image
+        texture.interpolation = "Closest"
+        if socket:
+            links.new(texture.outputs["Color"], bsdf.inputs[socket])
+        else:
+            separate = nodes.new("ShaderNodeSeparateColor")
+            links.new(texture.outputs["Color"], separate.inputs["Color"])
+            links.new(separate.outputs["Green"], bsdf.inputs["Roughness"])
+            links.new(separate.outputs["Blue"], bsdf.inputs["Metallic"])
+    uv = {key: ((i + 0.5) / len(swatches), 0.5) for i, key in enumerate(swatches)}
+    return mat, uv
+
+
+def paint(obj, palette, swatch):
+    obj = attach(obj, palette[0])
+    layer = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
+    # Join matches layers by name: custom meshes and primitives must share one layer.
+    layer.name = "UVMap"
+    for loop in layer.data:
+        loop.uv = palette[1][swatch]
+    return obj
+
+
+def mesh_object(name, vertices, faces):
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def tube_path(name, points, radius, sides=8, closed=False):
+    """A low-poly swept tube along `points`, for cables and handles."""
+    points = [Vector(p) for p in points]
+    vertices, faces = [], []
+    for i, point in enumerate(points):
+        previous = points[(i - 1) % len(points)] if closed or i else point
+        following = points[(i + 1) % len(points)] if closed or i < len(points) - 1 else point
+        tangent = (following - previous).normalized()
+        axis = Vector((1, 0, 0)) if abs(tangent.x) < 0.9 else Vector((0, 1, 0))
+        normal = tangent.cross(axis).normalized()
+        bitangent = tangent.cross(normal).normalized()
+        for j in range(sides):
+            a = j * math.tau / sides
+            vertices.append(point + radius * (normal * math.cos(a) + bitangent * math.sin(a)))
+    for i in range(len(points) if closed else len(points) - 1):
+        for j in range(sides):
+            a, b = i * sides + j, i * sides + (j + 1) % sides
+            c, d = ((i + 1) % len(points)) * sides + (j + 1) % sides, ((i + 1) % len(points)) * sides + j
+            faces.append((a, b, c, d))
+    if not closed:
+        faces += [tuple(reversed(range(sides))), tuple(range(len(vertices) - sides, len(vertices)))]
+    obj = mesh_object(name, vertices, faces)
+    for face in obj.data.polygons:
+        face.use_smooth = len(face.vertices) == 4
+    return obj
+
+
+# Factory hero props: the Droid Computer, the robot cell and its PR crates
+# --------------------------------------------------------------------------------------
+
+# Factory's monochrome industrial palette, with orange only as a signal. One atlas is
+# shared by every factory prop so their finishes match exactly.
+FACTORY_SWATCHES = {
+    "base": ("#0a0a0a", 0.85, 0.0),
+    "body": ("#161616", 0.42, 0.35),
+    "graphite": ("#2a2a2a", 0.40, 0.55),
+    "steel": ("#3a3a3a", 0.35, 0.80),
+    "light": ("#8c8c8c", 0.30, 0.90),
+    # The only swatch that glows: about the lift the office's own orange trim gets.
+    "orange": ("#ee6018", 0.55, 0.0, 0.35),
+    "glass": ("#050505", 0.08, 0.0),
+}
+
+
+def factory_palette():
+    return palette_material("Factory", FACTORY_SWATCHES)
+
+
+def smooth_obj(obj):
+    """Angle-limited smooth shading on a specific object (smooth() acts on the active one)."""
+    o = raw(obj)
+    bpy.ops.object.select_all(action="DESELECT")
+    o.select_set(True)
+    bpy.context.view_layer.objects.active = o
+    smooth(o)
+    return obj
+
+
+def x_cyl(name, radius, length, loc, verts=RENDER_SEGMENTS):
+    """A cylinder lying along X (a joint axis), smooth-sided with crisp caps."""
+    return smooth_obj(cyl(name, radius, length, loc=loc, rot=(0, 0, math.radians(90)), verts=verts))
+
+
+def y_cyl(name, radius, height, loc, verts=RENDER_SEGMENTS, bevel_w=0.0):
+    return smooth_obj(cyl(name, radius, height, loc=loc, verts=verts, bevel_w=bevel_w))
+
+
+def loose(parts):
+    """Join painted parts into one loose node, back in the builder's Y-up space."""
+    obj = assemble(parts, recenter=False, keep_uvs=True)
+    obj.data.transform(Matrix.Rotation(math.radians(-90), 4, "X"))
+    return obj
+
+
+@prop("droid-computer", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
+def build_droid_computer():
+    """Factory's Droid Computer: a 0.45 m brushed black aluminium cube with softly rounded
+    edges on four small rubber feet, a status LED bezel at the top right of its front (+Z)
+    and a recessed glass readout at the bottom right.
+
+    `Shell` is a loose node with its own material and box UVs, so the client can give it a
+    brushed finish. The client lights the LED (centre (0.145, 0.387, 0.229), r 0.011) and
+    paints the CPU/MEM/DSK readout (centre (0.085, 0.092, 0.2265), 0.15 x 0.058).
+    """
+    palette = factory_palette()
+    size, foot = 0.45, 0.022
+    body = []
+
+    def add(obj, swatch):
+        body.append((paint(obj, palette, swatch), None))
+
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(box(f"Foot{sx}{sz}", (0.07, foot + 0.004, 0.07), loc=(sx * 0.15, (foot + 0.004) / 2, sz * 0.15), bevel_w=0.006, bevel_seg=1), "base")
+    front = size / 2
+    bezel = cyl("LedBezel", 0.017, 0.006, loc=(0.145, foot + size - 0.085, front + 0.001), rot=(math.radians(90), 0, 0), verts=16)
+    add(smooth_obj(bezel), "graphite")
+    add(box("Readout", (0.156, 0.064, 0.003), loc=(0.085, foot + 0.07, front + 0.0)), "glass")
+
+    shell_mat = material("DroidShell", "#1c1c1e", roughness=0.36, metallic=0.75)
+    shell = box("Shell", (size, size, size), loc=(0, foot + size / 2, 0), bevel_w=0.03, bevel_seg=4)
+    smooth_obj(shell)
+    return body, [("Shell", raw(shell), shell_mat)]
+
+
+# The arm's links, in metres: each joint's pivot sits on the previous link's +Y axis.
+ARM = {
+    "pedestal": 0.44,  # yaw axis origin, on top of the pedestal cap
+    "shoulder": 0.26,  # shoulder pitch axis above the turret's base
+    "upper": 0.62,  # shoulder to elbow
+    "fore": 0.55,  # elbow to wrist
+    "wrist": 0.12,  # wrist pitch axis to the tool flange
+    "tool": 0.1125,  # flange to the suction cups' faces
+}
+
+
+@prop("robot-arm", "factory", "hero", "animated", recenter=False, multipart=True, keep_uvs=True)
+def build_robot_arm():
+    """A graphite industrial arm with orange joint rings and a four-cup vacuum tool.
+
+    The body is the static pedestal (origin on the floor). Each loose node is authored with
+    its own joint at the origin and its link running up +Y, so the client nests them and
+    turns them: `Turret` yaws about Y at y=ARM.pedestal; `UpperArm`, `Forearm` and `Wrist`
+    pitch about X at ARM.shoulder / upper / fore along the previous link; `Tool` rolls
+    about Y at ARM.wrist. The cups' faces are ARM.tool out from the flange.
+    """
+    palette = factory_palette()
+    body = []
+
+    def add(obj, swatch, into=None):
+        (body if into is None else into).append((paint(obj, palette, swatch), None))
+
+    # Pedestal: a bolted base plate, a square column and a turned cap.
+    add(box("BasePlate", (0.62, 0.04, 0.62), loc=(0, 0.02, 0), bevel_w=0.008, bevel_seg=1), "steel")
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(y_cyl(f"Bolt{sx}{sz}", 0.02, 0.022, loc=(sx * 0.255, 0.05, sz * 0.255), verts=8), "light")
+    add(box("Column", (0.42, 0.36, 0.42), loc=(0, 0.04 + 0.18, 0), bevel_w=0.02, bevel_seg=2), "body")
+    add(box("ColumnBand", (0.43, 0.02, 0.43), loc=(0, 0.36, 0), bevel_w=0.004, bevel_seg=1), "graphite")
+    add(y_cyl("Cap", 0.2, 0.04, loc=(0, 0.42, 0), verts=24), "steel")
+
+    turret = []
+    add(y_cyl("YawRing", 0.186, 0.02, loc=(0, 0.01, 0), verts=24), "orange", turret)
+    add(y_cyl("Disc", 0.18, 0.09, loc=(0, 0.065, 0), verts=24, bevel_w=0.01), "body", turret)
+    add(box("Housing", (0.2, 0.16, 0.22), loc=(0, 0.17, -0.01), bevel_w=0.03, bevel_seg=2), "body", turret)
+    s = ARM["shoulder"]
+    for sx in (-1, 1):
+        add(box(f"Cheek{sx}", (0.05, 0.2, 0.2), loc=(sx * 0.125, 0.19, 0), bevel_w=0.015, bevel_seg=2), "body", turret)
+        add(x_cyl(f"ShoulderCap{sx}", 0.1, 0.05, loc=(sx * 0.125, s, 0), verts=20), "graphite", turret)
+        add(x_cyl(f"ShoulderRing{sx}", 0.102, 0.014, loc=(sx * 0.157, s, 0), verts=20), "orange", turret)
+        add(x_cyl(f"ShoulderHub{sx}", 0.05, 0.012, loc=(sx * 0.17, s, 0), verts=12), "light", turret)
+
+    up = ARM["upper"]
+    upper = []
+    add(x_cyl("ShoulderBoss", 0.088, 0.19, loc=(0, 0, 0), verts=20), "steel", upper)
+    add(box("UpperBeam", (0.15, up - 0.04, 0.13), loc=(0, up / 2, 0), bevel_w=0.03, bevel_seg=2), "body", upper)
+    add(box("UpperRib", (0.155, up - 0.24, 0.02), loc=(0, up / 2, 0.06), bevel_w=0.006, bevel_seg=1), "graphite", upper)
+    add(x_cyl("ElbowHub", 0.076, 0.17, loc=(0, up, 0), verts=20), "graphite", upper)
+    for sx in (-1, 1):
+        add(x_cyl(f"ElbowRing{sx}", 0.078, 0.012, loc=(sx * 0.091, up, 0), verts=20), "orange", upper)
+    cable = tube_path("UpperCable", [(0, 0.06, -0.075), (0, 0.16, -0.105), (0, up - 0.16, -0.105), (0, up - 0.06, -0.075)], 0.016, sides=6)
+    add(cable, "base", upper)
+
+    fore = ARM["fore"]
+    forearm = []
+    add(box("ElbowHousing", (0.14, 0.16, 0.22), loc=(0, 0.01, -0.035), bevel_w=0.035, bevel_seg=2), "body", forearm)
+    add(box("ForeBeam", (0.1, fore - 0.1, 0.1), loc=(0, fore / 2 + 0.03, 0), bevel_w=0.022, bevel_seg=2), "body", forearm)
+    add(x_cyl("WristHub", 0.058, 0.12, loc=(0, fore, 0), verts=16), "graphite", forearm)
+    for sx in (-1, 1):
+        add(x_cyl(f"WristRing{sx}", 0.06, 0.01, loc=(sx * 0.065, fore, 0), verts=16), "orange", forearm)
+
+    wr = ARM["wrist"]
+    wrist = []
+    add(box("WristBody", (0.09, 0.1, 0.09), loc=(0, 0.05, 0), bevel_w=0.018, bevel_seg=2), "body", wrist)
+    add(y_cyl("Flange", 0.046, 0.02, loc=(0, wr - 0.01, 0), verts=16), "steel", wrist)
+
+    tl = ARM["tool"]
+    tool = []
+    add(y_cyl("ToolRing", 0.048, 0.012, loc=(0, 0.006, 0), verts=16), "orange", tool)
+    add(y_cyl("ToolNeck", 0.034, 0.06, loc=(0, 0.042, 0), verts=12), "graphite", tool)
+    add(box("SuctionPlate", (0.16, 0.02, 0.16), loc=(0, 0.08, 0), bevel_w=0.006, bevel_seg=1), "steel", tool)
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(y_cyl(f"Cup{sx}{sz}", 0.022, tl - 0.09, loc=(sx * 0.048, 0.09 + (tl - 0.09) / 2, sz * 0.048), verts=10), "base", tool)
+
+    return body, [
+        ("Turret", loose(turret), palette[0]),
+        ("UpperArm", loose(upper), palette[0]),
+        ("Forearm", loose(forearm), palette[0]),
+        ("Wrist", loose(wrist), palette[0]),
+        ("Tool", loose(tool), palette[0]),
+    ]
+
+
+# The conveyor's belt top, and its length along X.
+CONVEYOR = {"belt": 0.52, "length": 2.6, "width": 0.36}
+
+
+@prop("conveyor", "factory", "hero", recenter=False, keep_uvs=True)
+def build_conveyor():
+    """A 2.6 m belt conveyor along X (belt top y=0.52, 0.36 wide) on four legs, with a
+    tunnel hood over its +X end: crates ride into it and out of sight. The open end of
+    the hood carries an orange signal edge and a short strip-curtain valance; a beacon
+    base on its roof takes the client's emissive lamp at (1.05, 0.905, 0)."""
+    palette = factory_palette()
+    parts = []
+
+    def add(obj, swatch):
+        parts.append((paint(obj, palette, swatch), None))
+
+    length, belt = CONVEYOR["length"], CONVEYOR["belt"]
+    add(box("Belt", (length - 0.1, 0.03, CONVEYOR["width"]), loc=(0, belt - 0.015, 0)), "base")
+    for sz in (-1, 1):
+        add(box(f"Rail{sz}", (length, 0.09, 0.03), loc=(0, belt - 0.02, sz * 0.2), bevel_w=0.006, bevel_seg=1), "graphite")
+        add(box(f"RailLip{sz}", (length, 0.008, 0.034), loc=(0, belt + 0.029, sz * 0.2)), "steel")
+    for sx in (-1, 1):
+        roller = cyl(f"Roller{sx}", 0.035, CONVEYOR["width"] + 0.01, loc=(sx * (length / 2 - 0.05), belt - 0.03, 0), rot=(math.radians(90), 0, 0), verts=12)
+        add(smooth_obj(roller), "light")
+        for sz in (-1, 1):
+            leg_x, leg_z = sx * 1.05, sz * 0.17
+            add(box(f"Leg{sx}{sz}", (0.05, belt - 0.065, 0.05), loc=(leg_x, (belt - 0.065) / 2, leg_z), bevel_w=0.006, bevel_seg=1), "graphite")
+            add(box(f"Pad{sx}{sz}", (0.09, 0.015, 0.09), loc=(leg_x, 0.0075, leg_z)), "base")
+        add(box(f"Strut{sx}", (0.04, 0.04, 0.34), loc=(sx * 1.05, 0.15, 0)), "graphite")
+    for sz in (-1, 1):
+        add(box(f"Brace{sz}", (2.1, 0.04, 0.04), loc=(0, 0.15, sz * 0.17)), "graphite")
+    # Drive: a gear motor hung under the hood end on the -Z side.
+    add(box("Gearbox", (0.16, 0.14, 0.12), loc=(0.9, 0.36, -0.27), bevel_w=0.012, bevel_seg=1), "body")
+    add(smooth_obj(cyl("Motor", 0.055, 0.17, loc=(0.9, 0.36, -0.39), rot=(math.radians(90), 0, 0), verts=14)), "graphite")
+    add(smooth_obj(cyl("MotorCap", 0.057, 0.012, loc=(0.9, 0.36, -0.48), rot=(math.radians(90), 0, 0), verts=14)), "steel")
+
+    # The hood, x 0.8..1.3, open toward -X.
+    x0, x1, top = 0.8, 1.3, 0.86
+    mid = (x0 + x1) / 2
+    for sz in (-1, 1):
+        add(box(f"HoodSide{sz}", (x1 - x0, top - belt + 0.03, 0.02), loc=(mid, (top + belt) / 2, sz * 0.235), bevel_w=0.004, bevel_seg=1), "body")
+        add(box(f"HoodJamb{sz}", (0.03, top - belt + 0.03, 0.03), loc=(x0, (top + belt) / 2, sz * 0.235), bevel_w=0.004, bevel_seg=1), "graphite")
+    add(box("HoodRoof", (x1 - x0 + 0.02, 0.02, 0.5), loc=(mid, top + 0.01, 0), bevel_w=0.005, bevel_seg=1), "body")
+    add(box("HoodBack", (0.02, top - belt + 0.03, 0.47), loc=(x1, (top + belt) / 2, 0)), "body")
+    add(box("HoodLintel", (0.03, 0.04, 0.5), loc=(x0, top - 0.01, 0)), "graphite")
+    add(box("HoodSignal", (0.012, 0.012, 0.5), loc=(x0 - 0.016, top - 0.02, 0)), "orange")
+    for i in range(7):
+        z = -0.18 + i * 0.06
+        add(box(f"Curtain{i}", (0.004, 0.09, 0.05), loc=(x0 + 0.02, top - 0.075, z)), "base")
+    add(y_cyl("BeaconBase", 0.03, 0.03, loc=(1.05, top + 0.035, 0), verts=12), "steel")
+    return parts
+
+
+@prop("pr-crate", "factory", "hero", recenter=False, multipart=True, keep_uvs=True)
+def build_pr_crate():
+    """A small black shipping crate (0.26 x 0.2 x 0.26) with steel corner posts and rims.
+
+    Its ±Z faces keep a clear panel (0.17 x 0.075, centred y=0.095) for the client's PR
+    number stencil, and a loose `Status` node holds the two status bars above it, so the
+    client can swap their material from in-review to shipped."""
+    palette = factory_palette()
+    body = []
+
+    def add(obj, swatch, into=None):
+        (body if into is None else into).append((paint(obj, palette, swatch), None))
+
+    w, h = 0.26, 0.2
+    add(box("Core", (w - 0.02, h - 0.02, w - 0.02), loc=(0, h / 2, 0), bevel_w=0.004, bevel_seg=1), "body")
+    c = w / 2 - 0.015
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            add(box(f"Post{sx}{sz}", (0.03, h, 0.03), loc=(sx * c, h / 2, sz * c), bevel_w=0.005, bevel_seg=1), "steel")
+    for y in (0.0125, h - 0.0125):
+        for s in (-1, 1):
+            add(box(f"RimX{y}{s}", (w - 0.06, 0.025, 0.026), loc=(0, y, s * c)), "graphite")
+            add(box(f"RimZ{y}{s}", (0.026, 0.025, w - 0.06), loc=(s * c, y, 0)), "graphite")
+    status = []
+    for s in (-1, 1):
+        add(box(f"Status{s}", (0.08, 0.012, 0.004), loc=(0, 0.158, s * (w / 2 - 0.009))), "light", status)
+    return body, [("Status", loose(status), palette[0])]
+
+
 # build / measure / export
 # --------------------------------------------------------------------------------------
 
 
-def assemble(parts, recenter: bool = True):
+def assemble(parts, recenter: bool = True, keep_uvs: bool = False):
     """Join every part, applying modifiers first so the mesh is final before merging."""
     meshes = []
     for entry in parts:
@@ -478,19 +833,20 @@ def assemble(parts, recenter: bool = True):
     bpy.context.view_layer.objects.active = joined
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     upright(joined)
-    drop_uvs(joined)
+    if not keep_uvs:
+        drop_uvs(joined)
     weld(joined)
     if recenter:
         set_origin_to_bottom_center(joined)
     return joined
 
 
-def assemble_multipart(body_parts, loose_parts, recenter: bool = True):
+def assemble_multipart(body_parts, loose_parts, recenter: bool = True, keep_uvs: bool = False):
     """A multipart prop: the body joins into one mesh like a normal prop, and each loose
     (name, object, material) finishes as its own node, keeping its UVs — the reason a
     part stays loose is that the client addresses it directly (the laptop's display is
     painted as a texture, which needs UVs and a node the client can find by name)."""
-    objs = [assemble(body_parts, recenter=recenter)]
+    objs = [assemble(body_parts, recenter=recenter, keep_uvs=keep_uvs)]
     for name, obj, mat in loose_parts:
         obj = raw(obj)
         obj.name = name
@@ -607,8 +963,13 @@ def build_prop(entry: Prop, reset: bool = True) -> list:
     result = entry.build()
     if entry.multipart:
         body_parts, loose_parts = result
-        return assemble_multipart(body_parts, loose_parts, entry.recenter)
-    return [assemble(result, entry.recenter)]
+        objs = assemble_multipart(body_parts, loose_parts, entry.recenter, entry.keep_uvs)
+    else:
+        objs = [assemble(result, entry.recenter, entry.keep_uvs)]
+    if entry.keep_uvs:
+        # A joined body keeps its first part's name; give it the prop's instead.
+        objs[0].name = entry.name
+    return objs
 
 
 def export_prop(entry: Prop) -> dict:

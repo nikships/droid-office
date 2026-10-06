@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import { HAIR_COLOR_NAMES, HAIR_COLORS, HAIR_STYLES, SKIN_TONES, randomLook, type Look } from '../../shared/avatar';
 import { AVATAR_COLORS, loadProfile, saveProfile, store, type Profile } from '../state';
-import { Person } from '../world/character';
+import { isSharedGeometry, Person } from '../world/character';
 import { toonUnique } from '../world/toon';
 import { h, openModal } from './dom';
 
@@ -124,7 +124,8 @@ class Preview {
     cancelAnimationFrame(this.raf);
     this.resize.disconnect();
     this.scene.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose();
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !isSharedGeometry(m.geometry)) m.geometry.dispose();
     });
     this.renderer.dispose();
     this.renderer.forceContextLoss();
