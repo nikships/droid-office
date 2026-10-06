@@ -8,13 +8,3 @@ pw.txt
 .env
 .env.*
 !.env.example
-# IWSDK XR test runtime state (session, owner socket records, dev cert).
-.iwsdk/
-src/client/.iwsdk/
-# Native Android build products and local SDK paths.
-native/android/.gradle/
-*.jks
-*.keystore
-native/android/**/build/
-native/android/**/.cxx/
-native/android/local.properties

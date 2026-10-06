@@ -1,8 +1,0 @@
-{
-  "name": "DroidOffice.Tests",
-  "references": ["DroidOffice.Protocol", "DroidOffice.Core", "DroidOffice.World", "DroidOffice.Net", "DroidOffice.Settings", "DroidOffice.Interaction", "DroidOffice.Terminal", "DroidOffice.Editor", "DroidOffice.UI", "DroidOffice.Diagnostics", "DroidOffice.Workers", "Unity.ugui", "Unity.TextMeshPro", "Unity.XR.CoreUtils", "Unity.XR.Interaction.Toolkit", "Unity.XR.OpenXR"],
-  "overrideReferences": true,
-  "precompiledReferences": ["Newtonsoft.Json.dll"],
-  "includePlatforms": ["Editor"],
-  "optionalUnityReferences": ["TestAssemblies"]
-}

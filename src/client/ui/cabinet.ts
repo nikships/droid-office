@@ -6,7 +6,6 @@ import type { WorkerInfo } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, toast, type Modal } from './dom';
-import { controlHintsShown } from '../native/mode';
 import { ScreenZoom } from './arcade';
 import { Blocks, H, W, paintScreen, type ScreenView } from './blocks';
 
@@ -328,7 +327,7 @@ export class Cabinet {
       };
     }
     const left = this.leftAt !== null;
-    const prompt = !controlHintsShown() ? undefined : left ? 'PRESS E TO CARRY ON' : 'PRESS E TO PLAY';
+    const prompt = left ? 'PRESS E TO CARRY ON' : 'PRESS E TO PLAY';
     return { frame: null, scores: c.scores, mine: g?.id, prompt, t };
   }
 

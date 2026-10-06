@@ -153,7 +153,7 @@ export function meetingRecord(m: Meeting): MeetingRecord {
 /**
  * A review panel for a pull request with everything defaulted: the pattern's seats, rounds
  * and output, a per-seat token budget, and the caller's engine. The desktop Review panel
- * button fills its form with these words; the VR detail button sends them after tap-twice.
+ * button fills its form with these words.
  */
 export function reviewMeetingRequest(pr: { number: number; title: string }, engine: { provider: AgentProvider; model?: string; effort?: AgentEffort }): MeetingRequest {
   const def = MEETING_PATTERNS.review;
@@ -164,30 +164,6 @@ export function reviewMeetingRequest(pr: { number: number; title: string }, engi
     title: `Review of PR #${pr.number}`,
     output: def.output('', pr.number),
     pr: pr.number,
-    roles: [...roles],
-    rounds: def.rounds.default,
-    budget: roles.length * TOKENS_PER_SEAT,
-    provider: engine.provider,
-    model: engine.model,
-    effort: engine.effort,
-  };
-}
-/**
- * A meeting with everything the form would default to: the pattern's default seats,
- * rounds and output, a per-seat token budget, and the caller's engine. The VR call flow
- * sends this (two prompts, one pattern row); the desktop form sends the same shape with
- * chosen values. Only patterns that run from a bare question take the default seat here —
- * map-reduce needs its parts and the review panel needs its PR (the desktop form asks).
- */
-export function defaultMeetingRequest(prompt: string, title: string | undefined, engine: { provider: AgentProvider; model?: string; effort?: AgentEffort }, pattern: MeetingPattern = 'debate'): MeetingRequest {
-  const def = MEETING_PATTERNS[pattern];
-  const roles = def.roles.slice(0, def.seats.default);
-  const slug = slugify(title?.trim() || prompt.trim().split('\n')[0] || 'meeting', 32);
-  return {
-    pattern,
-    prompt,
-    title: title?.trim() || undefined,
-    output: def.output(slug),
     roles: [...roles],
     rounds: def.rounds.default,
     budget: roles.length * TOKENS_PER_SEAT,

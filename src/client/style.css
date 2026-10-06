@@ -1102,7 +1102,7 @@ a.when:hover { text-decoration: underline; }
 .mi-label small { display: block; font: 400 10px/1.4 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
 .menu-item .svc-count { margin-left: 0; }
 .mi-key, .menu-foot kbd { flex: none; min-width: 20px; padding: 0 5px; font: 500 10px/16px var(--font-mono); text-align: center; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-xs); }
-/* On right now: hanging a picture, in VR. */
+
 .menu-item.on .mi-label::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 1px; background: var(--success); vertical-align: 1px; }
 .menu-item.on.danger .mi-label::after { background: var(--danger); }
 .menu-item.primary .mi-label { color: var(--accent); }

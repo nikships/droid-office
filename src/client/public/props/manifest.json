@@ -22,47 +22,5 @@
     "triangles": 506,
     "url": "/props/macbook-lid.glb",
     "width": 0.78
-  },
-  "magnum-44": {
-    "bytes": 23896,
-    "depth": 0.32,
-    "height": 0.1808,
-    "materials": 1,
-    "tags": [
-      "u6",
-      "gun",
-      "right-hand"
-    ],
-    "triangles": 3788,
-    "url": "/props/magnum-44.glb",
-    "width": 0.052
-  },
-  "medic": {
-    "bytes": 45144,
-    "depth": 0.516,
-    "height": 1.792,
-    "materials": 1,
-    "tags": [
-      "u6",
-      "casualty",
-      "character"
-    ],
-    "triangles": 5720,
-    "url": "/props/medic.glb",
-    "width": 0.626
-  },
-  "stretcher": {
-    "bytes": 24760,
-    "depth": 2.238,
-    "height": 0.1325,
-    "materials": 1,
-    "tags": [
-      "u6",
-      "casualty",
-      "split-scoop"
-    ],
-    "triangles": 3968,
-    "url": "/props/stretcher.glb",
-    "width": 0.56
   }
 }

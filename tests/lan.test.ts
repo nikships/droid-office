@@ -53,7 +53,7 @@ test('lanIPv4s lists dotted IPv4 addresses', () => {
 
 async function startOffice(t: { after(fn: () => unknown): unknown }, ...argv: string[]) {
   const home = mkdtempSync(path.resolve('tests/.lan-'));
-  const cfg = loadConfig(['--home', home, '--projects', home, '--no-discovery', '--weather', 'clear', ...argv]);
+  const cfg = loadConfig(['--home', home, '--projects', home, '--weather', 'clear', ...argv]);
   cfg.port = 0;
   const office = await startServer(cfg);
   t.after(async () => {

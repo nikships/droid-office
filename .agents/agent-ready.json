@@ -101,12 +101,12 @@
     {
       "id": "lockfile",
       "status": "pass",
-      "notes": "package-lock.json is tracked for the root package.json, and src/client/package-lock.json for the src/client IWSDK shim; tests/iwsdk-shim.test.ts checks the shim pin matches the root lockfile."
+      "notes": "package-lock.json is tracked for the root package.json."
     },
     {
       "id": "gitignore_hygiene",
       "status": "pass",
-      "notes": "Root .gitignore ignores node_modules, dist, .env files and IWSDK runtime state; no generated directories or env files are tracked."
+      "notes": "Root .gitignore ignores node_modules, dist, runtime office state and .env files."
     }
   ]
 }

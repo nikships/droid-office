@@ -18,7 +18,6 @@ test('every fork setting is in a category, with who it is for', () => {
   const expect: [string, SettingsPane, 'you' | 'floor' | 'office' | null][] = [
     ['Your character', 'you', null],
     ['Camera view', 'you', 'you'],
-    ['VR (headset browser)', 'you', 'you'],
     ['Office sounds', 'sound', 'you'],
     ['Jukebox', 'sound', 'you'],
     ['Desktop notifications', 'notify', 'you'],

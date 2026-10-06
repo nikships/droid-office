@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { NativeScene } from '../src/client/native/scene';
 import { Casualties, LOAD_TIME, type CasualtyLaptop } from '../src/client/world/casualties';
 import { Person, Worker, type MedicPose } from '../src/client/world/character';
 
@@ -269,37 +268,6 @@ test('medic pose restores ordinary geometry and frees helper geometry exactly on
     });
     assert.equal(medic.root.getObjectByName('medic-left-hand'), undefined);
     assert.equal(label.visible, false, 'original label visibility is restored');
-  } finally {
-    restore();
-  }
-});
-
-test('native export accepts the actual medic scene and only transforms change during pickup', () => {
-  const restore = canvasDocument();
-  try {
-    const f = fixture();
-    f.casualties.confirm('patient', f.laptop);
-    f.until('load');
-    const camera = new THREE.PerspectiveCamera();
-    const native = new NativeScene(f.scene, camera, { encodeImage: async () => ({ fmt: 'png', bytes: new Uint8Array([1]) }), now: () => 0 });
-    native.capture();
-    while (native.drain()) {}
-    for (let i = 0; i < 90; i++) f.frame();
-    native.capture();
-    const packets = [];
-    for (let packet = native.drain(); packet; packet = native.drain()) packets.push(packet);
-    assert.deepEqual(native.report().errors, []);
-    assert.deepEqual(native.report().unsupported, []);
-    assert.ok(
-      packets.some((packet) => packet.xf),
-      'animated objects send transforms',
-    );
-    assert.ok(
-      packets.every((packet) => !packet.geometries?.length),
-      'no per-frame geometry rebuilds or uploads',
-    );
-    native.dispose();
-    f.casualties.clear();
   } finally {
     restore();
   }

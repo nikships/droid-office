@@ -4,7 +4,6 @@ import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
-import { withControlHint } from '../native/mode';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
@@ -27,14 +26,6 @@ const addedWaiters = new Set<(msg: Extract<ServerMsg, { t: 'floor.added' }>) => 
 /** Main feeds server messages through here, so a panel waiting on its new floor hears back. */
 export function routeElevatorMessage(msg: ServerMsg) {
   if (msg.t === 'floor.added') for (const fn of addedWaiters) fn(msg);
-}
-
-/** Hears every floor.added (the VR add-a-floor flow reuses the panel's ears); returns the unlisten. */
-export function onFloorAdded(fn: (msg: Extract<ServerMsg, { t: 'floor.added' }>) => void): () => void {
-  addedWaiters.add(fn);
-  return () => {
-    addedWaiters.delete(fn);
-  };
 }
 
 let current: Modal | null = null;
@@ -313,7 +304,7 @@ export function openElevator(opts: ElevatorOptions): void {
     { role: 'dialog', 'aria-label': 'Elevator' },
     h('header', {}, h('h2', {}, setup ? 'Welcome to Droid Office' : 'Elevator'), close),
     h('div.body', {}, intro, floorsEl, addEl),
-    h('footer', {}, h('span.grow', {}, setup ? withControlHint('Your office, one floor per project', ' · Esc to look around first') : withControlHint('Pick a floor', ' · Esc to stay here')), addBtn),
+    h('footer', {}, h('span.grow', {}, setup ? 'Your office, one floor per project' + ' · Esc to look around first' : 'Pick a floor' + ' · Esc to stay here'), addBtn),
   );
   const unsubs = [store.on('floors', () => (renderFloors(), renderAdd())), store.on('repos', renderAdd), store.on('projectsDir', () => (editDir(false), renderAdd())), store.on('floor', renderFloors)];
   const modal = openModal(el, {

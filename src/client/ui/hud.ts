@@ -4,8 +4,6 @@ import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { usageLabel, usageTitle } from './usage';
 import { providerLabel, providerUsageState, resolvedProvider, modelBadge } from './provider';
 import { DESK_BY_ID } from '../../shared/layout';
-import { controlHintsShown } from '../native/mode';
-import { NATIVE_CONTROL_ROWS } from '../native/panel-text';
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
@@ -37,7 +35,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
       ),
     );
   }
-  if (!workers.length) ul.append(h('li.empty', {}, controlHintsShown() ? 'Walk up to a desk and press E to hire one' : 'Walk up to a desk to hire one'));
+  if (!workers.length) ul.append(h('li.empty', {}, 'Walk up to a desk and press E to hire one'));
   // The count is the workers hired onto desks and bean bags (and a meeting's table): the board agents
   // standing at the Issues, PR and queue kiosks are listed but aren't counted.
   const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
@@ -63,10 +61,6 @@ export function renderCaffeine(caffeine: Caffeine, now: number) {
 }
 
 export function openHelp() {
-  if (document.body.classList.contains('native-xr')) {
-    openNativeHelp();
-    return;
-  }
   const rows: [string, string][] = [
     ['W A S D', 'Walk (hold Shift to run)'],
     ['Space', 'Jump'],
@@ -109,32 +103,6 @@ export function openHelp() {
   ];
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h('div.modal', { role: 'dialog', 'aria-label': 'Controls' }, h('header', {}, h('h2', {}, 'Controls'), close), h('div.body', {}, h('div.help-grid', {}, ...rows.flatMap(([k, v]) => [h('span.key', {}, k), h('span', {}, v)]))));
-  const modal = openModal(el);
-  close.addEventListener('click', () => modal.close());
-}
-
-function openNativeHelp() {
-  const rows: readonly (readonly [string, string])[] = [
-    ['Controllers', 'Galaxy XR motion controllers are required. Look around naturally; the headset tracks your head directly.'],
-    ...NATIVE_CONTROL_ROWS,
-    ['Find anything', 'Choose Find anything on Home or in the menu to search workers, issues, PRs, services and boards.'],
-    ['Workers', 'Use a desk to hire a worker or open its terminal. Home has Prompt, Resume, Changes, Pull request and Send home for each worker, plus Hire a worker and Open a shell.'],
-    [
-      'Terminal',
-      'Type on a keyboard paired to the headset: its keys go to the open terminal or the field you chose. There is no on-screen keyboard. The terminal’s − and + change text size; Picture attaches a screenshot or image from the headset.',
-    ],
-    ['Issues & PRs', 'Open a board in the office or from Home. Read an issue, pick up its card, assign it to a worker or add it to the queue. PRs keep the desktop conversation, file review and confirmation actions.'],
-    ['Held card', 'Aim at a desk or the queue and press the trigger to place the card. Put back in Home returns it to the board. A physical card grab uses the same shared issue.'],
-    ['Floors', 'Aim at a physical floor button in the elevator and press the trigger. The Elevator tile and the floor name also open the original floor chooser.'],
-    ['Graphics', 'Graphics & performance controls foveation, world resolution, the rendering-detail view and the persistent FPS counter. The app requests 90 Hz; delayed office updates or a lower rate are shown explicitly.'],
-  ];
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h(
-    'section.modal.native-help',
-    { role: 'dialog', 'aria-label': 'Headset controls' },
-    h('header', {}, h('h2', {}, 'Headset controls'), close),
-    h('div.body', {}, h('div.help-grid', {}, ...rows.flatMap(([label, description]) => [h('strong', {}, label), h('span', {}, description)]))),
-  );
   const modal = openModal(el);
   close.addEventListener('click', () => modal.close());
 }

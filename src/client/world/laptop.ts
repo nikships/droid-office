@@ -1,11 +1,9 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
-import { mesh, roundedBox, toon, wrapText } from './toon';
+import { mesh, roundedBox, toon } from './toon';
 import { propReady, useProp } from './props';
-import { fontRevision, SANS, TERM_FONT } from '../fonts';
-import { fillGlyphText, measureGlyphText, withGlyph } from './glyph';
-import type { PlateText } from './nameplate';
+import { fontRevision, TERM_FONT } from '../fonts';
 
 /**
  * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
@@ -113,15 +111,7 @@ function activeWindow(s: ScreenState, width: number, height: number, preferredRo
   return { top, rows, cols, first: contentFirst, last: contentLast };
 }
 
-/** The frame a laptop's screen lights in while a paired keyboard types into it (the headset app's Laptop.setLinked). */
-export const LINKED_FRAME = '#72ddf7';
-
-/**
- * Paints a terminal screen onto a canvas. Shared by the 3D laptops and the HUD previews. `linked`
- * (the headset app's laptop that a paired keyboard types into) lights the screen's frame and shows
- * the terminal's cursor, so you can see where your keys land.
- */
-export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number, s: ScreenState | undefined, placeholder?: string, zoomRows = 0, linked = false) {
+export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number, s: ScreenState | undefined, placeholder?: string, zoomRows = 0) {
   ctx.fillStyle = TERM_THEME.background;
   ctx.fillRect(0, 0, w, h);
   if (!s) {
@@ -131,7 +121,6 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     ctx.textBaseline = 'middle';
     ctx.fillText(placeholder ?? 'booting…', w / 2, h / 2);
     ctx.textAlign = 'left';
-    if (linked) paintLinkedFrame(ctx, w, h);
     return;
   }
   const pad = w * 0.01;
@@ -176,64 +165,6 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
       x += len;
     }
   }
-  if (!linked) return;
-  paintLinkedFrame(ctx, w, h);
-  const [cx, cy] = s.cursor;
-  if (cy < win.top || cy >= win.top + win.rows || cx < 0 || cx >= win.cols) return;
-  ctx.fillStyle = TERM_THEME.cursor;
-  ctx.globalAlpha = 0.85;
-  ctx.fillRect(left + cx * charW, top + (cy - win.first) * lineH, charW, lineH);
-  ctx.globalAlpha = 1;
-}
-
-function paintLinkedFrame(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  const t = Math.max(4, Math.round(h * 0.008));
-  ctx.strokeStyle = LINKED_FRAME;
-  ctx.lineWidth = t;
-  ctx.strokeRect(t / 2, t / 2, w - t, h - t);
-}
-
-/** How tall the headset app's title bar across the top of a laptop's screen is, as a fraction of the screen (see Laptop.setTitle). */
-const TITLE_BAR = 0.065;
-const TITLE_BG = '#16181f';
-const TITLE_INK = '#eeeeee';
-const TITLE_MUTED = '#8f93a6';
-
-/**
- * A terminal window's title bar across the top `h` pixels of a `w` wide screen, in the headset app:
- * who works at it and what it is on the left, and on the right what it's on and its state, a lit dot
- * and a word in its status color.
- */
-export function paintTitleBar(ctx: CanvasRenderingContext2D, w: number, h: number, text: PlateText) {
-  ctx.fillStyle = TITLE_BG;
-  ctx.fillRect(0, 0, w, h);
-  const pad = h * 0.45;
-  const px = h * 0.56;
-  const mid = h * 0.54;
-  ctx.textBaseline = 'middle';
-  const fit = (s: string, weight: number, color: string, x: number, width: number, align: CanvasTextAlign) => {
-    if (width <= px) return 0;
-    ctx.textAlign = align;
-    ctx.font = `${weight} ${px}px ${SANS}`;
-    const line = wrapText(ctx, withGlyph(s), width, 1, px)[0] ?? '';
-    ctx.fillStyle = color;
-    fillGlyphText(ctx, line, x, mid, px);
-    return measureGlyphText(ctx, line, px);
-  };
-  // The right side first: its state always shows, and what it's on gets what's left of the half.
-  const [word, color] = text.state;
-  const wordW = fit(word, 800, color, w - pad, w / 2 - pad, 'right');
-  const dot = px * 0.34;
-  const dotX = w - pad - wordW - px * 0.45 - dot;
-  ctx.beginPath();
-  ctx.arc(dotX, mid, dot, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  const right = dotX - dot - pad;
-  if (text.line) fit(text.line, 600, TITLE_MUTED, right, right - w / 2, 'right');
-  const nameW = fit(text.name, 800, TITLE_INK, pad, w / 2 - 2 * pad, 'left');
-  if (text.role) fit(text.role, 600, TITLE_MUTED, pad + nameW + px * 0.7, w / 2 - 2 * pad - nameW - px * 0.7, 'left');
-  ctx.textAlign = 'left';
 }
 
 /** The lit screen in lid space, nearly edge to edge on the 0.78 x 0.5 lid. */
@@ -262,10 +193,6 @@ export class Laptop {
   private paintedAt = 0;
   private openT = 0;
   private placeholder = 'booting…';
-  /** The headset app's title bar (see setTitle), and what it last said. */
-  private title: PlateText | null = null;
-  private titleKey = '';
-  private linked = false;
 
   constructor() {
     this.canvas.width = 2048;
@@ -276,10 +203,6 @@ export class Laptop {
     this.texture.anisotropy = ANISOTROPY;
     this.texture.minFilter = THREE.LinearMipmapLinearFilter;
     this.screenMat = new THREE.MeshBasicMaterial({ map: this.texture, toneMapped: false });
-    // The native headset also draws this screen, from the same texture, in an unfoveated
-    // high-resolution layer (src/client/native/scene.ts `sharpText`).
-    this.screenMat.userData.nativeSharpText = true;
-
     // The procedural laptop below is the stand-in: it shows until the MacBook GLBs land
     // (see maybeSwap), the way every prop keeps a procedural version. The GLBs are
     // authored in this same space, so the swap changes nothing but the meshes.
@@ -315,31 +238,6 @@ export class Laptop {
     this.drawnVersion = -2;
   }
 
-  /**
-   * In the headset app, where nothing floats over a worker, a title bar across the top of its screen
-   * says who works here and how it's doing, as a terminal window's does (paintTitleBar): its name and
-   * engine, what it's on and its state. null for none, as on the desktop and in WebXR.
-   */
-  setTitle(text: PlateText | null) {
-    if (text === this.title) return;
-    this.title = text;
-    const key = text ? JSON.stringify([text.name, text.role, text.state, text.line]) : '';
-    if (key === this.titleKey) return;
-    this.titleKey = key;
-    this.drawnVersion = -2;
-  }
-
-  /** A paired keyboard types into this laptop (the headset app): its screen frame lights and shows the cursor. */
-  setLinked(on: boolean) {
-    if (on === this.linked) return;
-    this.linked = on;
-    this.drawnVersion = -2;
-  }
-
-  get isLinked(): boolean {
-    return this.linked;
-  }
-
   /** `distance` to the camera throttles repaints: far-away laptops refresh rarely. */
   update(dt: number, screen: ScreenState | undefined, distance = 0) {
     this.maybeSwap();
@@ -353,15 +251,7 @@ export class Laptop {
       this.drawnVersion = version;
       this.drawnFonts = fonts;
       const { width, height } = this.canvas;
-      if (this.title) {
-        // The terminal under the title bar.
-        const bar = Math.round(height * TITLE_BAR);
-        this.ctx.save();
-        this.ctx.translate(0, bar);
-        paintScreen(this.ctx, width, height - bar, screen, this.placeholder, 22, this.linked);
-        this.ctx.restore();
-        paintTitleBar(this.ctx, width, bar, this.title);
-      } else paintScreen(this.ctx, width, height, screen, this.placeholder, 22, this.linked);
+      paintScreen(this.ctx, width, height, screen, this.placeholder, 22);
       this.texture.needsUpdate = true;
     }
   }

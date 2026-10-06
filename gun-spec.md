@@ -86,7 +86,7 @@ collect it and its owned worktrees and branches are deleted.
 | `docs/guide.md` | `7` row in Controls plus a short section |
 | `tests/casualties.test.ts` (new) | State-machine and timeline unit tests (Node-loadable, like other world modules) |
 
-Out of scope: VR support, kill confirmations for other players,
+Out of scope: kill confirmations for other players,
 persistent blood.
 
 ## Validation

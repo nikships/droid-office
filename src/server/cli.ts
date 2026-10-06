@@ -5,7 +5,6 @@ import { loadConfig, ensureSelfSigned } from './config.js';
 import { startServer } from './server.js';
 import { tildify } from './building.js';
 import { lanIPv4s } from './lan.js';
-import { startDiscovery } from './discovery.js';
 
 const argv = process.argv.slice(2);
 if (argv[0] === 'prune') {
@@ -35,11 +34,10 @@ try {
   else console.error(`droid-office: ${e.message}`);
   process.exit(1);
 }
-const discovery = startDiscovery(cfg, office.server.address());
 
 const scheme = cfg.tls ? 'https' : 'http';
 const localUrl = `${scheme}://localhost:${cfg.port}`;
-// A device on the LAN (the headset) opens the join URL, token and all; this machine's own browser
+// A device on the LAN (another browser) opens the join URL, token and all; this machine's own browser
 // on loopback needs no token. A loopback-only bind (--host 127.0.0.1) has no join URL.
 const wildcard = cfg.host === '0.0.0.0' || cfg.host === '::';
 const loopbackOnly = cfg.host === '127.0.0.1' || cfg.host === '::1' || cfg.host === 'localhost';
@@ -67,7 +65,7 @@ console.log(`
   choose Claude Code, OpenCode, Codex or Droid when hiring or queueing a task`);
 if (joinUrl) {
   console.log(`
-  📱 A device on the same Wi-Fi opens the join URL (the headset scans the QR):
+  📱 A device on the same Wi-Fi opens the join URL (scan the QR code or open the link):
 
   ${joinUrl}
 `);
@@ -84,7 +82,6 @@ let closing = false;
 const stop = (signal: NodeJS.Signals) => {
   if (closing) process.exit(1);
   closing = true;
-  discovery.stop();
   const keep = signal === 'SIGTERM';
   console.log(keep ? '\n  closing the office — workers keep running for the next one…' : '\n  closing the office…');
   office.shutdown(keep);

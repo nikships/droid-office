@@ -286,16 +286,6 @@ export interface CarriedIssue {
   title: string;
 }
 
-/** World-space object pose, in meters. Coffee can rest on a surface instead of in a hand. */
-export interface CarryPose {
-  hand: 'left' | 'right';
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  placed?: boolean;
-}
-
-export type CarriedObject = (CarriedIssue & { kind?: 'issue'; pose?: CarryPose }) | { kind: 'coffee'; empty: boolean; pose: CarryPose };
-
 /** A styled run of text on a terminal row: [text, fg, bg, flags]. */
 export type Run = [string, number, number, number];
 /** Color encoding: -1 default, 0..255 palette, >= 0x1000000 means 0x1000000 | rgb. */
@@ -969,9 +959,8 @@ export type ClientMsg =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
-   * With `target`, it's a practice target: a plain shell (`kind: 'shell'`, no worktree) that the office names "Target <n>" (see shared/targets.ts).
    */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; target?: boolean }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
@@ -1180,8 +1169,7 @@ export type ServerMsg =
   | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string }
   /**
    * A line for the toast stack. `workerId` names the worker it is about, when one is: a client
-   * already showing that in its world (the headset's medics carrying off a shot worker whose
-   * revival window ran out) can leave the text out.
+   * already showing that in its world can leave the text out.
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
   | { t: 'upgrade'; state: UpgradeState }

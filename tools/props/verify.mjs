@@ -25,7 +25,7 @@ if (typeof globalThis.ProgressEvent === 'undefined') {
 }
 // The palette props embed small PNGs. Decode their actual pixels rather than letting
 // GLTFLoader silently drop textures because Node has neither Image nor ImageBitmap.
-// This is a CPU-only bitmap substitute, not evidence of WebGL/Unity rendering.
+// This is a CPU-only bitmap substitute, not evidence of WebGL rendering.
 globalThis.createImageBitmap = async (blob) => {
   const png = Buffer.from(await blob.arrayBuffer());
   if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {

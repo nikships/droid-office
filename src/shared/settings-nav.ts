@@ -23,7 +23,6 @@ export const SETTINGS_SCOPE: Record<SettingsScope, readonly [label: string, titl
 export const SETTINGS_CARDS = [
   { pane: 'you', title: 'Your character', scope: null },
   { pane: 'you', title: 'Camera view', scope: 'you' },
-  { pane: 'you', title: 'VR (headset browser)', scope: 'you' },
   { pane: 'sound', title: 'Office sounds', scope: 'you' },
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },

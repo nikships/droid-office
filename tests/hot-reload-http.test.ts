@@ -11,7 +11,7 @@ import { startServer } from '../src/server/server.js';
 
 test('local built-office reload API has independent recovery, validates controls, and leaves the live socket intact', { timeout: 30_000 }, async (t) => {
   const home = mkdtempSync(path.resolve('tests/.reload-http-'));
-  const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--no-discovery', '--weather', 'clear']);
+  const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--weather', 'clear']);
   cfg.port = 0;
   const office = await startServer(cfg);
   const base = `http://127.0.0.1:${(office.server.address() as AddressInfo).port}`;

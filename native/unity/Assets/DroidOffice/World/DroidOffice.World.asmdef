@@ -1,4 +1,0 @@
-{
-  "name": "DroidOffice.World",
-  "references": ["DroidOffice.Core", "DroidOffice.Protocol", "DroidOffice.Net", "DroidOffice.Settings", "Unity.RenderPipelines.Universal.Runtime", "Unity.XR.AndroidOpenXR", "Unity.XR.OpenXR", "Unity.XR.OpenXR.Editor", "Unity.XR.ARSubsystems"]
-}

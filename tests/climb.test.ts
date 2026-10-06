@@ -37,20 +37,19 @@ function rig(t: TestContext, floors: { up?: string; down?: string }) {
   function frames(count: number, dt = 1 / 60) {
     for (let i = 0; i < count; i++) player.update(dt);
   }
-  return { player, climber, sounds, travels, dones, frames };
+  const key = (type: 'keydown' | 'keyup', code: string) => win.dispatchEvent(Object.assign(new Event(type), { code }));
+  return { player, climber, sounds, travels, dones, frames, key };
 }
 
-test('VR stick climbs the ladder through climbInput; E drops, gravity lands', (t) => {
-  const { player, climber, dones, frames } = rig(t, {});
+test('W climbs the ladder; E drops, gravity lands', (t) => {
+  const { player, climber, dones, frames, key } = rig(t, {});
   player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
   climber.grabLadder();
   assert.equal(climber.grip, 'ladder');
-  // The headset has no W key: the XR session drives the rungs through climbInput.
-  player.climbInput = 1;
+  key('keydown', 'KeyW');
   frames(90);
   assert.ok(player.pos.y > 2, `climbed to y=${player.pos.y}`);
-  // E above the floor: let go and drop (the session clears climbInput once released).
-  player.climbInput = 0;
+  key('keyup', 'KeyW');
   climber.letGo();
   assert.equal(climber.active, false);
   assert.equal(player.rig, null);
@@ -62,11 +61,12 @@ test('VR stick climbs the ladder through climbInput; E drops, gravity lands', (t
 });
 
 test('climbing back down to the floor steps off onto it', (t) => {
-  const { player, climber, dones, frames } = rig(t, {});
+  const { player, climber, dones, key } = rig(t, {});
   player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
   climber.grabLadder();
-  player.climbInput = -1;
-  frames(90);
+  key('keydown', 'KeyS');
+  for (let i = 0; i < 90 && climber.active; i++) player.update(1 / 60);
+  key('keyup', 'KeyS');
   assert.equal(climber.active, false);
   assert.equal(player.pos.y, 0);
   assert.ok(Math.abs(player.pos.x - (LADDER.hatch.maxX + 0.4)) < 0.05, `stepped off to x=${player.pos.x}`);
@@ -74,10 +74,10 @@ test('climbing back down to the floor steps off onto it', (t) => {
 });
 
 test('the ladder carries you through the hatch to the floor above', (t) => {
-  const { player, climber, travels, frames } = rig(t, { up: 'upstairs' });
+  const { player, climber, travels, frames, key } = rig(t, { up: 'upstairs' });
   player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
   climber.grabLadder();
-  player.climbInput = 1;
+  key('keydown', 'KeyW');
   for (let i = 0; i < 400 && travels.length === 0; i++) player.update(1 / 60);
   assert.equal(travels.length, 1);
   assert.equal(travels[0].way, 1);
@@ -86,7 +86,7 @@ test('the ladder carries you through the hatch to the floor above', (t) => {
   climber.letGo();
   assert.equal(climber.active, true);
   // The far side arrives: up through its hatch, then off onto its floor.
-  player.climbInput = 0;
+  key('keyup', 'KeyW');
   climber.arrived();
   frames(300);
   assert.equal(climber.active, false);

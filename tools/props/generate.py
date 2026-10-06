@@ -32,7 +32,7 @@ import shutil
 import sys
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix
 
 # --------------------------------------------------------------------------------------
 # config
@@ -205,7 +205,7 @@ def weld(obj, merge: float = 1e-4):
 
 
 def drop_uvs(obj):
-    """Untextured props do not need TEXCOORD_0's eight bytes per vertex."""
+    """No prop has a texture, so TEXCOORD_0 is 8 bytes per vertex of dead weight."""
     while obj.data.uv_layers:
         obj.data.uv_layers.remove(obj.data.uv_layers[0])
     return obj
@@ -325,25 +325,23 @@ class Prop:
     another node's space (the laptop's base and lid) turn it off. A `multipart` build
     returns (body_parts, loose_parts) instead of one parts list: the body joins into a
     single mesh as usual, and each loose (name, object, material) exports as its own
-    node, so the client can find it by name. `keep_uvs` preserves embedded palette
-    atlas coordinates; existing untextured props still drop their body UVs.
+    node, so the client can find it by name.
     """
 
-    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
+    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False):
         self.name = name
         self.build = build
         self.tags = tags
         self.recenter = recenter
         self.multipart = multipart
-        self.keep_uvs = keep_uvs
 
 
 REGISTRY: list[Prop] = []
 
 
-def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
+def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False):
     def wrap(fn):
-        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart, keep_uvs=keep_uvs))
+        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart))
         return fn
 
     return wrap
@@ -450,369 +448,11 @@ def build_macbook_lid():
     return body, [("Display", display, M["screen_off"])]
 
 
-# U6 gun and medic collection props
-# --------------------------------------------------------------------------------------
-
-
-def palette_material(name, swatches):
-    """One Principled shader, with embedded colour and metallic/roughness atlases.
-
-    Each part samples the centre of one eight-pixel swatch. Keeping these UVs gives
-    steel, wood, cloth and rubber their own finish without extra material slots.
-    """
-    width, height = len(swatches) * 8, 8
-    colors, finishes = [], []
-    for _ in range(height):
-        for color, roughness, metallic in swatches.values():
-            h = color.lstrip("#")
-            rgba = tuple(int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)) + (1.0,)
-            colors.extend(rgba * 8)
-            finishes.extend((1.0, roughness, metallic, 1.0) * 8)
-    color_image = bpy.data.images.new(f"{name}Color", width, height)
-    color_image.pixels[:] = colors
-    color_image.pack()
-    finish_image = bpy.data.images.new(f"{name}MetalRough", width, height)
-    finish_image.colorspace_settings.name = "Non-Color"
-    finish_image.pixels[:] = finishes
-    finish_image.pack()
-
-    mat = material(name, "#ffffff")
-    mat.use_backface_culling = True
-    nodes, links = mat.node_tree.nodes, mat.node_tree.links
-    bsdf = nodes["Principled BSDF"]
-    for image, socket in ((color_image, "Base Color"), (finish_image, None)):
-        texture = nodes.new("ShaderNodeTexImage")
-        texture.image = image
-        texture.interpolation = "Closest"
-        if socket:
-            links.new(texture.outputs["Color"], bsdf.inputs[socket])
-        else:
-            separate = nodes.new("ShaderNodeSeparateColor")
-            links.new(texture.outputs["Color"], separate.inputs["Color"])
-            links.new(separate.outputs["Green"], bsdf.inputs["Roughness"])
-            links.new(separate.outputs["Blue"], bsdf.inputs["Metallic"])
-    uv = {key: ((i + 0.5) / len(swatches), 0.5) for i, key in enumerate(swatches)}
-    return mat, uv
-
-
-def paint(obj, palette, swatch):
-    obj = attach(obj, palette[0])
-    layer = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")
-    # Join matches layers by name: custom meshes and primitives must share one layer.
-    layer.name = "UVMap"
-    for loop in layer.data:
-        loop.uv = palette[1][swatch]
-    return obj
-
-
-def mesh_object(name, vertices, faces):
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(vertices, [], faces)
-    mesh.update()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    return obj
-
-
-def side_profile(name, outline, width, bevel_w=0.0):
-    """Extrude a Y/Z silhouette across X (grip, frame, scoop shell)."""
-    n = len(outline)
-    vertices = [(x, y, z) for x in (-width / 2, width / 2) for y, z in outline]
-    faces = [tuple(reversed(range(n))), tuple(range(n, 2 * n))]
-    faces += [(i, (i + 1) % n, (i + 1) % n + n, i + n) for i in range(n)]
-    obj = mesh_object(name, vertices, faces)
-    if bevel_w:
-        bevel(obj, bevel_w)
-    return obj
-
-
-def limb(name, start, end, r1, r2=None, verts=12):
-    """A tapered segment between two authored Y-up endpoints."""
-    start, end = Vector(start), Vector(end)
-    obj = raw(cone(name, r1, r1 if r2 is None else r2, (end - start).length,
-                   loc=(start + end) * 0.5, verts=verts))
-    obj.rotation_euler = Vector((0, 1, 0)).rotation_difference(end - start).to_euler()
-    for face in obj.data.polygons:
-        face.use_smooth = len(face.vertices) == 4
-    return obj
-
-
-def tube_path(name, points, radius, sides=8, closed=False):
-    """A low-poly swept tube; useful for open guards, handles and the curved trigger."""
-    points = [Vector(p) for p in points]
-    vertices, faces = [], []
-    for i, point in enumerate(points):
-        previous = points[(i - 1) % len(points)] if closed or i else point
-        following = points[(i + 1) % len(points)] if closed or i < len(points) - 1 else point
-        tangent = (following - previous).normalized()
-        axis = Vector((1, 0, 0)) if abs(tangent.x) < 0.9 else Vector((0, 1, 0))
-        normal = tangent.cross(axis).normalized()
-        bitangent = tangent.cross(normal).normalized()
-        for j in range(sides):
-            a = j * math.tau / sides
-            vertices.append(point + radius * (normal * math.cos(a) + bitangent * math.sin(a)))
-    for i in range(len(points) if closed else len(points) - 1):
-        for j in range(sides):
-            a, b = i * sides + j, i * sides + (j + 1) % sides
-            c, d = ((i + 1) % len(points)) * sides + (j + 1) % sides, ((i + 1) % len(points)) * sides + j
-            faces.append((a, b, c, d))
-    if not closed:
-        faces += [tuple(reversed(range(sides))), tuple(range(len(vertices) - sides, len(vertices)))]
-    obj = mesh_object(name, vertices, faces)
-    for face in obj.data.polygons:
-        face.use_smooth = len(face.vertices) == 4
-    return obj
-
-
-def barrel_tube(name, y, z_start, z_end, outer, inner, sides=32):
-    """An actual hollow bore along +Z, including its muzzle annulus."""
-    vertices = []
-    for z, radius in ((z_start, outer), (z_end, outer), (z_start, inner), (z_end, inner)):
-        vertices += [(radius * math.cos(i * math.tau / sides),
-                      y + radius * math.sin(i * math.tau / sides), z) for i in range(sides)]
-    faces = []
-    for i in range(sides):
-        j = (i + 1) % sides
-        faces += [(i, j, sides + j, sides + i),
-                  (2 * sides + j, 2 * sides + i, 3 * sides + i, 3 * sides + j),
-                  (sides + i, sides + j, 3 * sides + j, 3 * sides + i),
-                  (j, i, 2 * sides + i, 2 * sides + j)]
-    obj = mesh_object(name, vertices, faces)
-    for i, face in enumerate(obj.data.polygons):
-        face.use_smooth = i % 4 < 2
-    return obj
-
-
-@prop("magnum-44", "u6", "gun", "right-hand", recenter=False, keep_uvs=True)
-def build_magnum_44():
-    """Six-inch stainless .44 revolver; +Z is the bore, origin is the grip centre."""
-    palette = palette_material("Magnum44", {
-        "steel": ("#c9ced4", 0.26, 0.95),
-        "brushed": ("#9fa8b3", 0.38, 0.90),
-        "dark": ("#20242b", 0.66, 0.05),
-        "wood": ("#542e20", 0.48, 0.0),
-        "checkering": ("#351e17", 0.62, 0.0),
-    })
-    parts = []
-
-    def add(obj, swatch="steel"):
-        parts.append((paint(obj, palette, swatch), None))
-        return raw(obj)
-
-    # Build in a convenient floor-based space, then move the grip into the origin.
-    add(box("TopStrap", (0.031, 0.014, 0.089), (0, 0.161, -0.002), bevel_w=0.003))
-    add(side_profile("RecoilShield", [(0.094, -0.067), (0.160, -0.067),
-                                     (0.160, -0.046), (0.097, -0.040)], 0.036, 0.003))
-    add(side_profile("LowerFrame", [(0.083, -0.063), (0.097, -0.062),
-                                   (0.100, 0.042), (0.084, 0.032)], 0.028, 0.002))
-    add(box("Crane", (0.020, 0.027, 0.014), (0, 0.113, 0.033), bevel_w=0.002), "brushed")
-    cylinder = raw(cyl("FlutedCylinder", 0.026, 0.049, (0, 0.130, -0.005),
-                       rot=(math.pi / 2, 0, 0), verts=48, bevel_w=0.001))
-    apply_modifiers(cylinder)
-    for i in range(6):
-        a = i * math.tau / 6
-        cutter = raw(cyl("FluteCutter", 0.007, 0.038,
-                         (0.030 * math.cos(a), 0.130 + 0.030 * math.sin(a), -0.009),
-                         rot=(math.pi / 2, 0, 0), verts=12))
-        mod = cylinder.modifiers.new("CylinderFlute", "BOOLEAN")
-        mod.operation = "DIFFERENCE"
-        mod.object = cutter
-        bpy.context.view_layer.objects.active = cylinder
-        bpy.ops.object.modifier_apply(modifier=mod.name)
-        bpy.data.objects.remove(cutter, do_unlink=True)
-    for face in cylinder.data.polygons:
-        face.use_smooth = len(face.vertices) == 4
-    add(cylinder, "brushed")
-    for i in range(6):
-        a = i * math.tau / 6
-        add(cyl(f"Chamber{i}", 0.0054, 0.0006,
-                (0.017 * math.cos(a), 0.130 + 0.017 * math.sin(a), 0.0197),
-                rot=(math.pi / 2, 0, 0), verts=16), "dark")
-    add(barrel_tube("SixInchBarrel", 0.142, 0.035, 0.205, 0.012, 0.0056))
-    add(cyl("BoreShadow", 0.0055, 0.001, (0, 0.142, 0.061),
-            rot=(math.pi / 2, 0, 0), verts=16), "dark")
-    add(box("BarrelRib", (0.013, 0.005, 0.163), (0, 0.155, 0.120), bevel_w=0.001))
-    add(side_profile("FullUnderlug", [(0.118, 0.040), (0.133, 0.040),
-                                    (0.133, 0.199), (0.121, 0.199)], 0.017, 0.002))
-    add(cyl("EjectorRod", 0.003, 0.062, (0, 0.119, 0.058),
-            rot=(math.pi / 2, 0, 0), verts=12), "brushed")
-    add(box("FrontSight", (0.004, 0.012, 0.015), (0, 0.163, 0.191), bevel_w=0.001), "dark")
-    add(box("RearSight", (0.019, 0.006, 0.016), (0, 0.171, -0.038), bevel_w=0.001), "dark")
-    guard = [(0, 0.067 + 0.023 * math.sin(i * math.tau / 32),
-              -0.026 + 0.030 * math.cos(i * math.tau / 32)) for i in range(32)]
-    add(tube_path("OpenTriggerGuard", guard, 0.003, closed=True))
-    add(tube_path("CurvedTrigger", [(0, 0.092, -0.024), (0, 0.082, -0.019),
-                                   (0, 0.069, -0.024), (0, 0.058, -0.033)], 0.0022))
-    add(side_profile("Hammer", [(0.143, -0.067), (0.174, -0.067),
-                               (0.176, -0.079), (0.184, -0.080),
-                               (0.184, -0.063), (0.162, -0.053)], 0.010, 0.001), "brushed")
-    grip_outline = [(0.002, -0.096), (0.014, -0.116), (0.074, -0.101),
-                    (0.101, -0.065), (0.089, -0.048), (0.072, -0.064),
-                    (0.020, -0.071)]
-    add(side_profile("WoodGrip", grip_outline, 0.032, 0.004), "wood")
-    for sx in (-1, 1):
-        add(box(f"CheckeredPanel{sx}", (0.0018, 0.047, 0.026),
-                (sx * 0.016, 0.046, -0.086), rot=(math.radians(15), 0, 0),
-                bevel_w=0.001), "checkering")
-        add(cyl(f"GripScrew{sx}", 0.003, 0.002, (sx * 0.018, 0.052, -0.086),
-                rot=(0, 0, math.pi / 2), verts=12), "brushed")
-        add(cyl(f"FramePin{sx}", 0.0024, 0.001, (sx * 0.0185, 0.116, -0.055),
-                rot=(0, 0, math.pi / 2), verts=12), "brushed")
-        add(box(f"CylinderLatch{sx}", (0.004, 0.010, 0.013),
-                (sx * 0.019, 0.141, -0.056), bevel_w=0.001), "brushed")
-    for obj, _ in parts:
-        obj.location += Vector((0, -0.052, 0.086))
-    return parts
-
-
-@prop("medic", "u6", "casualty", "character", recenter=False, keep_uvs=True)
-def build_medic():
-    """White-uniform paramedic in a planted carry reference pose, facing +Z.
-
-    Hands at (+/-0.23, 0.82, 0.30) meet the stretcher's end grips. Duplicate and
-    rotate one medic 180 degrees at the other end; the front medic backpedals.
-    This is a static mesh, not an animation rig.
-    """
-    palette = palette_material("Medic", {
-        "white": ("#f1f0e9", 0.83, 0.0),
-        "seam": ("#c5cbd0", 0.87, 0.0),
-        "skin": ("#b98261", 0.72, 0.0),
-        "hair": ("#302620", 0.91, 0.0),
-        "boots": ("#222a33", 0.74, 0.0),
-        "gloves": ("#95c4ce", 0.72, 0.0),
-        "mark": ("#bd2938", 0.77, 0.0),
-    })
-    parts = []
-
-    def add(obj, swatch="white"):
-        parts.append((paint(obj, palette, swatch), None))
-
-    add(box("UniformShirt", (0.40, 0.48, 0.22), (0, 1.245, 0), bevel_w=0.045, bevel_seg=3))
-    add(box("TrouserSeat", (0.34, 0.17, 0.21), (0, 0.985, 0), bevel_w=0.035))
-    add(box("Belt", (0.35, 0.033, 0.225), (0, 1.021, 0), bevel_w=0.008), "boots")
-    add(box("Buckle", (0.040, 0.028, 0.008), (0, 1.021, 0.118), bevel_w=0.003), "seam")
-    add(cyl("Neck", 0.058, 0.095, (0, 1.510, 0), verts=16), "skin")
-    add(sphere("Head", 1, (0, 1.648, 0.005), segs=20, rings=12,
-               scale=(0.093, 0.125, 0.087)), "skin")
-    add(sphere("Nose", 1, (0, 1.635, 0.091), segs=12, rings=6,
-               scale=(0.016, 0.025, 0.022)), "skin")
-    for sx in (-1, 1):
-        add(sphere(f"Ear{sx}", 1, (sx * 0.090, 1.642, 0), segs=12, rings=6,
-                   scale=(0.016, 0.033, 0.022)), "skin")
-        add(box(f"Eye{sx}", (0.018, 0.005, 0.004), (sx * 0.032, 1.668, 0.086),
-                bevel_w=0.001), "hair")
-        add(box(f"Brow{sx}", (0.028, 0.006, 0.006), (sx * 0.032, 1.685, 0.082),
-                bevel_w=0.001), "hair")
-        add(box(f"Collar{sx}", (0.080, 0.042, 0.016), (sx * 0.050, 1.468, 0.107),
-                rot=(0, 0, sx * math.radians(26)), bevel_w=0.007))
-        add(box(f"ShirtPocket{sx}", (0.087, 0.081, 0.014), (sx * 0.098, 1.320, 0.115),
-                bevel_w=0.005), "seam")
-        add(box(f"PocketFlap{sx}", (0.089, 0.024, 0.009), (sx * 0.098, 1.359, 0.126),
-                bevel_w=0.003))
-    add(box("ShirtPlacket", (0.012, 0.385, 0.007), (0, 1.245, 0.114),
-            bevel_w=0.002), "seam")
-    for y in (1.13, 1.22, 1.31, 1.40):
-        add(sphere("Button", 0.004, (0, y, 0.122), segs=8, rings=4), "white")
-    add(box("MedicalPatch", (0.051, 0.052, 0.008), (-0.098, 1.322, 0.129),
-            bevel_w=0.003))
-    add(box("ChestCrossVertical", (0.012, 0.038, 0.005), (-0.098, 1.322, 0.135)), "mark")
-    add(box("ChestCrossHorizontal", (0.037, 0.012, 0.005), (-0.098, 1.322, 0.135)), "mark")
-    add(box("CapCrown", (0.194, 0.076, 0.179), (0, 1.754, 0), bevel_w=0.026))
-    add(box("CapBand", (0.195, 0.023, 0.180), (0, 1.718, 0), bevel_w=0.009), "seam")
-    add(box("CapVisor", (0.160, 0.012, 0.100), (0, 1.719, 0.097), bevel_w=0.014))
-    add(box("CapCrossVertical", (0.009, 0.034, 0.005), (0, 1.750, 0.091)), "mark")
-    add(box("CapCrossHorizontal", (0.031, 0.009, 0.005), (0, 1.750, 0.091)), "mark")
-    for sx in (-1, 1):
-        shoulder = (sx * 0.205, 1.419, 0.0)
-        elbow = (sx * 0.258, 1.080, 0.105)
-        wrist = (sx * 0.230, 0.851, 0.265)
-        add(sphere(f"Shoulder{sx}", 0.072, shoulder, segs=12, rings=8))
-        add(limb(f"UpperSleeve{sx}", shoulder, elbow, 0.065, 0.055))
-        add(sphere(f"Elbow{sx}", 0.055, elbow, segs=12, rings=8))
-        add(limb(f"LowerSleeve{sx}", elbow, wrist, 0.053, 0.034))
-        add(limb(f"Cuff{sx}", (sx * 0.231, 0.881, 0.244), wrist, 0.036), "seam")
-        add(box(f"GlovedPalm{sx}", (0.059, 0.058, 0.088),
-                (sx * 0.230, 0.824, 0.305), bevel_w=0.020), "gloves")
-        add(box(f"CurledFingers{sx}", (0.055, 0.039, 0.026),
-                (sx * 0.230, 0.797, 0.322), bevel_w=0.010), "gloves")
-        add(sphere(f"Thumb{sx}", 1, (sx * 0.204, 0.814, 0.292), segs=10, rings=6,
-                   scale=(0.014, 0.021, 0.027)), "gloves")
-        # Staggered feet suggest a walking step, with both soles on the floor.
-        hip = (sx * 0.093, 0.957, 0)
-        knee = (sx * 0.115, 0.530, sx * 0.055)
-        ankle = (sx * 0.117, 0.134, sx * 0.100)
-        add(limb(f"Thigh{sx}", hip, knee, 0.091, 0.067))
-        add(sphere(f"Knee{sx}", 0.068, knee, segs=12, rings=8))
-        add(limb(f"Shin{sx}", knee, ankle, 0.066, 0.047))
-        add(box(f"Boot{sx}", (0.114, 0.140, 0.221),
-                (sx * 0.117, 0.075, sx * 0.100 + 0.046), bevel_w=0.023), "boots")
-        add(box(f"Sole{sx}", (0.117, 0.022, 0.226),
-                (sx * 0.117, 0.011, sx * 0.100 + 0.046), bevel_w=0.006), "boots")
-    return parts
-
-
-@prop("stretcher", "u6", "casualty", "split-scoop", recenter=False, multipart=True, keep_uvs=True)
-def build_stretcher():
-    """Orange split scoop, 1.86 m bed / 2.24 m handle span, floor-resting at origin.
-
-    ScoopLeft and ScoopRight retain a shared origin for outward translation during
-    loading. The head pad is split with the bed; no rigid bridge joins the halves.
-    """
-    palette = palette_material("Stretcher", {
-        "orange": ("#ee6a20", 0.69, 0.0),
-        "steel": ("#bac6cd", 0.31, 0.85),
-        "pad": ("#2a3947", 0.91, 0.0),
-        "grip": ("#273039", 0.86, 0.0),
-        "seam": ("#b84b18", 0.77, 0.0),
-    })
-    halves = []
-    for sx, name in ((-1, "ScoopLeft"), (1, "ScoopRight")):
-        parts = []
-
-        def add(obj, swatch="orange"):
-            parts.append((paint(obj, palette, swatch), None))
-
-        add(box(f"{name}Bed", (0.265, 0.038, 1.86), (sx * 0.135, 0.070, 0),
-                bevel_w=0.014))
-        # Raised outer edge reads as a shallow scoop without hard edges under the body.
-        add(box(f"{name}Lip", (0.024, 0.046, 1.77), (sx * 0.268, 0.091, 0),
-                bevel_w=0.010))
-        for z in (-0.940, 0.940):
-            add(box(f"{name}End", (0.258, 0.043, 0.055), (sx * 0.136, 0.074, z),
-                    bevel_w=0.010))
-        for z in (-0.75, -0.45, -0.15, 0.15, 0.45, 0.75):
-            add(box(f"{name}Rib", (0.220, 0.008, 0.020), (sx * 0.139, 0.092, z),
-                    bevel_w=0.003), "seam")
-        add(limb(f"{name}Rail", (sx * 0.230, 0.034, -1.090),
-                 (sx * 0.230, 0.034, 1.090), 0.015, verts=16), "steel")
-        for sz in (-1, 1):
-            handle = [(sx * 0.230, 0.034, sz * 0.900),
-                      (sx * 0.230, 0.034, sz * 1.075),
-                      (sx * 0.213, 0.034, sz * 1.105),
-                      (sx * 0.150, 0.034, sz * 1.105)]
-            add(tube_path(f"{name}Handle{sz}", handle, 0.014, sides=12), "steel")
-            add(limb(f"{name}Grip{sz}", (sx * 0.230, 0.034, sz * 0.985),
-                     (sx * 0.230, 0.034, sz * 1.080), 0.020, verts=16), "grip")
-            add(box(f"{name}Latch{sz}", (0.028, 0.025, 0.036),
-                    (sx * 0.018, 0.072, sz * 0.947), bevel_w=0.005), "steel")
-        add(box(f"{name}HeadPad", (0.165, 0.045, 0.265), (sx * 0.086, 0.110, -0.665),
-                bevel_w=0.018), "pad")
-        for z in (-0.660, 0.660):
-            add(box(f"{name}Skid", (0.027, 0.035, 0.250), (sx * 0.230, 0.0175, z),
-                    bevel_w=0.006), "grip")
-        halves.append(parts)
-    # Assemble the right half using the same atlas-preserving finish as the left.
-    right = assemble(halves[1], recenter=False, keep_uvs=True)
-    # assemble_multipart expects loose parts in the builder's Y-up space.
-    right.data.transform(Matrix.Rotation(math.radians(-90), 4, "X"))
-    return halves[0], [("ScoopRight", right, palette[0])]
-
-
 # build / measure / export
 # --------------------------------------------------------------------------------------
 
 
-def assemble(parts, recenter: bool = True, keep_uvs: bool = False):
+def assemble(parts, recenter: bool = True):
     """Join every part, applying modifiers first so the mesh is final before merging."""
     meshes = []
     for entry in parts:
@@ -838,20 +478,19 @@ def assemble(parts, recenter: bool = True, keep_uvs: bool = False):
     bpy.context.view_layer.objects.active = joined
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     upright(joined)
-    if not keep_uvs:
-        drop_uvs(joined)
+    drop_uvs(joined)
     weld(joined)
     if recenter:
         set_origin_to_bottom_center(joined)
     return joined
 
 
-def assemble_multipart(body_parts, loose_parts, recenter: bool = True, keep_uvs: bool = False):
+def assemble_multipart(body_parts, loose_parts, recenter: bool = True):
     """A multipart prop: the body joins into one mesh like a normal prop, and each loose
     (name, object, material) finishes as its own node, keeping its UVs — the reason a
     part stays loose is that the client addresses it directly (the laptop's display is
     painted as a texture, which needs UVs and a node the client can find by name)."""
-    objs = [assemble(body_parts, recenter=recenter, keep_uvs=keep_uvs)]
+    objs = [assemble(body_parts, recenter=recenter)]
     for name, obj, mat in loose_parts:
         obj = raw(obj)
         obj.name = name
@@ -968,12 +607,8 @@ def build_prop(entry: Prop, reset: bool = True) -> list:
     result = entry.build()
     if entry.multipart:
         body_parts, loose_parts = result
-        objs = assemble_multipart(body_parts, loose_parts, entry.recenter, entry.keep_uvs)
-    else:
-        objs = [assemble(result, entry.recenter, entry.keep_uvs)]
-    if entry.keep_uvs:
-        objs[0].name = "ScoopLeft" if entry.name == "stretcher" else entry.name
-    return objs
+        return assemble_multipart(body_parts, loose_parts, entry.recenter)
+    return [assemble(result, entry.recenter)]
 
 
 def export_prop(entry: Prop) -> dict:

@@ -8,7 +8,6 @@ import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { agentFields, officeChoice } from './provider';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
-import { NATIVE_SETTINGS } from '../native/panel-text';
 import { hotReloadSettings } from './hot-reload';
 
 const VIEWS: [ViewMode, string, string][] = [
@@ -37,7 +36,6 @@ let lastPane: SettingsPane = 'you';
 
 /** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
 export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, outside?: { now: string; live: boolean }, first?: SettingsPane) {
-  const native = document.body.classList.contains('native-xr');
   const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
   const note = h('p.setting-note');
   const paint = () => {
@@ -64,63 +62,6 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     note.textContent = VIEWS.find(([v]) => v === settings.view)![2];
   };
   paint();
-
-  // WebXR in the headset browser: how moving and turning feel in the headset.
-  const locoRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'VR locomotion' });
-  const turnRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'VR turning' });
-  const fadeRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'VR teleport fade' });
-  const speedSlider = h('input', { type: 'range', min: 30, max: 180, step: 5, 'aria-label': 'Smooth-turn speed' });
-  const speedPct = h('span.vol-pct');
-  const speedRow = h('div.volume', {}, speedSlider, speedPct);
-  const segBtn = (on: boolean, label: string, onclick: () => void) => h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(on), class: on ? 'on' : '', onclick }, label);
-  const paintVr = () => {
-    locoRow.replaceChildren(
-      segBtn(!settings.vr.glide, 'Teleport only', () => {
-        settings = { ...settings, vr: { ...settings.vr, glide: false } };
-        onChange(settings);
-        paintVr();
-      }),
-      segBtn(settings.vr.glide, '+ Smooth glide', () => {
-        settings = { ...settings, vr: { ...settings.vr, glide: true } };
-        onChange(settings);
-        paintVr();
-      }),
-    );
-    turnRow.replaceChildren(
-      segBtn(settings.vr.turn === 'snap', 'Snap turn', () => {
-        settings = { ...settings, vr: { ...settings.vr, turn: 'snap' } };
-        onChange(settings);
-        paintVr();
-      }),
-      segBtn(settings.vr.turn === 'smooth', 'Smooth turn', () => {
-        settings = { ...settings, vr: { ...settings.vr, turn: 'smooth' } };
-        onChange(settings);
-        paintVr();
-      }),
-    );
-    fadeRow.replaceChildren(
-      segBtn(settings.vr.fade, 'Fade on', () => {
-        settings = { ...settings, vr: { ...settings.vr, fade: true } };
-        onChange(settings);
-        paintVr();
-      }),
-      segBtn(!settings.vr.fade, 'Fade off', () => {
-        settings = { ...settings, vr: { ...settings.vr, fade: false } };
-        onChange(settings);
-        paintVr();
-      }),
-    );
-    speedSlider.value = String(settings.vr.turnSpeed);
-    speedSlider.style.setProperty('--fill', `${((settings.vr.turnSpeed - 30) / 150) * 100}%`);
-    speedPct.textContent = `${settings.vr.turnSpeed}°/s`;
-    speedRow.classList.toggle('muted', settings.vr.turn !== 'smooth');
-  };
-  paintVr();
-  speedSlider.addEventListener('input', () => {
-    settings = { ...settings, vr: { ...settings.vr, turnSpeed: Number(speedSlider.value) } };
-    onChange(settings);
-    paintVr();
-  });
 
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
@@ -534,35 +475,12 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   paintJira();
   const sourceReload = hotReloadSettings();
   const panes: Record<SettingsPane, Node[]> = {
-    you: [
-      card('Your character', character),
-      native
-        ? setting(NATIVE_SETTINGS.viewTitle, 'you', h('div.seg', { role: 'group', 'aria-label': 'Camera view' }, h('span.native-fixed-choice', {}, `🥽 ${NATIVE_SETTINGS.viewMode}`)), h('p.setting-note', {}, NATIVE_SETTINGS.view))
-        : card('Camera view', seg, note),
-      setting(
-        native ? NATIVE_SETTINGS.movementTitle : 'VR (headset browser)',
-        'you',
-        ...(native ? [h('p.setting-note', { style: 'margin:0 0 10px' }, NATIVE_SETTINGS.movementControls)] : []),
-        h('p.setting-note', { style: 'margin:0 0 6px' }, 'Locomotion'),
-        locoRow,
-        h('p.setting-note', {}, 'Teleport aims with A held (or the left stick pushed forward); gliding walks the stick. Teleport-only is the comfortable default.'),
-        h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Turning (right stick)'),
-        turnRow,
-        speedRow,
-        h('p.setting-note', {}, 'Snap turn steps 45° per push; smooth turn spins at the speed above.'),
-        h('p.setting-note', { style: 'margin:10px 0 6px' }, 'Teleport fade'),
-        fadeRow,
-        h('p.setting-note', {}, 'A blink through black as you land, or a straight cut when it’s off.'),
-      ),
-    ],
+    you: [card('Your character', character), card('Camera view', seg, note)],
     sound: [
       card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done.')),
       card('Jukebox', musicRow, h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.')),
     ],
-    notify: [
-      native ? card('Desktop notifications', h('p.setting-note', {}, NATIVE_SETTINGS.notify)) : card('Desktop notifications', notifyRow, notifyNote),
-      card('Channel notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus),
-    ],
+    notify: [card('Desktop notifications', notifyRow, notifyNote), card('Channel notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus)],
     building: [
       card('Holiday theme', themeRow, themeNote),
       ...(outside

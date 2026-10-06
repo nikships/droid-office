@@ -60,9 +60,6 @@ import { buildCoffeeMachine } from './coffee';
 import { buildHoop, type HoopView } from './hoop';
 import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { HOOP } from '../../shared/hoop';
-import type { TouchVolume } from './touch';
-import type { PlateMount } from './nameplate';
-import { floatingTagsShown, signsPrinted } from '../native/mode';
 
 export interface Collider {
   minX: number;
@@ -114,14 +111,10 @@ export interface Interactable {
   deskId?: string;
   decorId?: string;
   seatId?: string;
-  /** A physical cab button's destination (VR only; desktop still opens the floors menu). */
-  floorId?: string;
   /** Which of POLES, for a fire pole. */
   pole?: number;
   /** Put away for now (a bean bag nobody needs yet): can't be used. */
   off?: boolean;
-  /** VR hand contact zones, independent of desktop/ray reach. Absent means ray/keyboard only. */
-  touch?: readonly TouchVolume[];
 }
 
 /** A desk, a bean bag, a board agent's kiosk or a chair at the meeting table: somewhere a worker sits (or stands). */
@@ -139,8 +132,6 @@ export interface DeskView {
   vacancy: THREE.Group;
   /** How high the vacancy marker floats. */
   vacancyY: number;
-  /** Where the headset app engraves who sits here, in place of the tags over their head (world/nameplate.ts). */
-  plate: PlateMount;
 }
 
 export interface Office {
@@ -155,8 +146,6 @@ export interface Office {
    */
   setBeanbags(out: Set<string>): Collider[];
   boardMeshes: Record<keyof typeof BOARDS, THREE.Mesh>;
-  /** VR opt-in surfaces; userData.grabbable identifies the object factory. */
-  grabbables: THREE.Mesh[];
   tvScreen: THREE.Mesh;
   /** The monitor on the boss's desk upstairs, where Minesweeper plays (ui/arcade.ts). */
   bossScreen: THREE.Mesh;
@@ -421,7 +410,7 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
   g.add(hinge);
 
   // Lit from inside, as an exit sign is.
-  const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', size: 64, border: '#ffffff', glow: 1 });
+  const exit = textPlane('EXIT', { bg: '#2a9d4b', color: '#ffffff', size: 64, border: '#ffffff' });
   exit.scale.multiplyScalar(0.7);
   exit.position.set(0, o.y1 + 0.35, -(WALL_T / 2 + 0.03));
   exit.rotation.y = Math.PI;
@@ -873,13 +862,7 @@ function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskVi
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  // A wooden name block lying on the desk left of the laptop, clear of the stage, the mug and the
-  // books: one brass plate to the chair and the aisle behind it, the other to the desk's front.
-  const plateAnchor = new THREE.Object3D();
-  plateAnchor.position.set(-width / 2 + 0.22, height, depth / 2 - 0.25);
-  group.add(plateAnchor);
-
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'block', width: 0.3, height: 0.11 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY };
 }
 
 /** The floating green "+" over an empty seat. */
@@ -941,13 +924,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const vacancy = vacancyMarker(vacancyY);
   group.add(vacancy);
 
-  // A brass plate on a leather patch sewn to the back of the bag, tipped up toward whoever walks up behind it.
-  const plateAnchor = new THREE.Object3D();
-  plateAnchor.position.set(0, 0.64, 0.7);
-  plateAnchor.rotation.x = -0.3;
-  bag.add(plateAnchor);
-
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY, plate: { anchor: plateAnchor, shape: 'plate', width: 0.42, height: 0.16 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY };
 }
 
 const KIOSK_SIGN: Record<StationKind, string> = { issues: '📌 Ask me', pulls: '🔀 Ask me', queue: '📋 Ask me' };
@@ -968,26 +945,11 @@ function buildKiosk(def: DeskDef): DeskView {
   group.add(mesh(roundedBox(width - 0.16, height - 0.1, depth - 0.12, 0.06), color, 0, (height - 0.1) / 2 + 0.04, 0));
   group.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.05), toon(PALETTE.ink), 0, 0.03, 0));
   group.add(mesh(roundedBox(width, 0.06, depth, 0.05), toon(PALETTE.desk), 0, height - 0.03, 0));
-  // The "Ask me" sign is the agent's pitch, which the headset app keeps to its screen (below) until
-  // you start talking to it.
-  if (floatingTagsShown()) {
-    const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
-    sign.scale.multiplyScalar(0.62);
-    sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);
-    sign.rotation.y = Math.PI;
-    group.add(sign);
-  }
-  // The headset app's nameplate is a screen set into the kiosk's front, where the desktop's sign
-  // hangs, facing whoever walks up: the agent's name, board and state, and its pitch once you start
-  // talking to it. Its status lamp stands on the counter's front corner, to your right.
-  const front = -(depth - 0.12) / 2 - 0.0095;
-  const screenY = 0.27;
-  const plateAnchor = new THREE.Object3D();
-  plateAnchor.position.set(0, screenY, front);
-  plateAnchor.rotation.y = Math.PI;
-  group.add(plateAnchor);
-  // In the screen's space (turned to face the front): x and z run the other way.
-  const lamp = { at: [width / 2 - 0.09, height - screenY, front + depth / 2 - 0.1] as const, radius: 0.035 };
+  const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
+  sign.scale.multiplyScalar(0.62);
+  sign.position.set(0, height * 0.55, -(depth - 0.12) / 2 - 0.012);
+  sign.rotation.y = Math.PI;
+  group.add(sign);
 
   // No laptop: its lid would hide the agent's face from whoever walks up, and its screen would face
   // the wall. The agent's terminal is a key press away (O).
@@ -1011,7 +973,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'screen', width: 0.48, height: 0.24, lamp } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0 };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
@@ -1196,15 +1158,12 @@ export function buildOffice(): Office {
     bg.rotation.y = b.rotY;
     group.add(bg);
     boardMeshes[key] = face;
-    // Its title on a sign over it, half as far out from the wall. The headset app hangs nothing on
-    // the wall over a board: its title heads the board's own screen, inside its frame (world/boards.ts).
-    if (!signsPrinted()) {
-      const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
-      label.scale.multiplyScalar(1.3);
-      label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
-      label.rotation.y = b.rotY;
-      group.add(label);
-    }
+    // Its title on a sign over it, half as far out from the wall.
+    const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
+    label.scale.multiplyScalar(1.3);
+    label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
+    label.rotation.y = b.rotY;
+    group.add(label);
     const it: Interactable = { kind: key, x: b.x + nx * 1.6, z: b.z + nz * 1.6, radius: 2.4 };
     interactables.push(it);
     bg.userData.interact = it;
@@ -1248,7 +1207,6 @@ export function buildOffice(): Office {
   refreshButton.visible = false;
   monitor.add(refreshButton);
   const proxyRefresh: Interactable = { kind: 'proxy', x: MACHINE_MONITOR.x + 1.6, z: MACHINE_MONITOR.z, radius: 1.8, off: true };
-  proxyRefresh.touch = [{ object: refreshButton, containsPoint: (p) => Math.abs(p.x) <= PROXY_REFRESH.width / 2 + 0.02 && Math.abs(p.y) <= PROXY_REFRESH.height / 2 + 0.02 && p.z >= -0.04 && p.z <= 0.1 }];
   refreshButton.userData.interact = proxyRefresh;
   interactables.push(proxyRefresh);
   let machineTall = false;
@@ -1318,8 +1276,7 @@ export function buildOffice(): Office {
   kitchen.add(mesh(box(5, 0.95, 1), toon('#8ecae6'), 0, 0.475, 0));
   kitchen.add(mesh(box(5.1, 0.08, 1.1), toon(PALETTE.desk), 0, 0.99, 0));
   const cup: Interactable = { kind: 'coffee', x: -15.7, z: 10.9, radius: 1.4 };
-  const { machine: coffee, cup: coffeeCup } = buildCoffeeMachine(cup);
-  boardMeshes.issues.userData.grabbable = 'issue';
+  const { machine: coffee } = buildCoffeeMachine(cup);
   coffee.position.set(-1.2, 1.03, 0);
   kitchen.add(coffee);
   kitchen.add(mesh(roundedBox(1.1, 2.2, 1, 0.1), toon('#f8f9fa'), 3.2, 1.1, 0));
@@ -1451,7 +1408,6 @@ export function buildOffice(): Office {
     desks,
     setBeanbags,
     boardMeshes,
-    grabbables: [coffeeCup, boardMeshes.issues],
     tvScreen,
     bossScreen,
     machineScreen,
@@ -1500,12 +1456,7 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
   // Nobody is hired here from the floor, so there's no '+' over a free chair: a meeting fills them.
   const vacancy = new THREE.Group();
   group.add(vacancy);
-  // On the back of the chair, like a director's chair: the laptops leave no room on the table.
-  const plateAnchor = new THREE.Object3D();
-  plateAnchor.position.set(0, 0.93, 0.33);
-  plateAnchor.rotation.x = -0.12;
-  ch.add(plateAnchor);
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0, plate: { anchor: plateAnchor, shape: 'plate', width: 0.5, height: 0.2 } };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0 };
 }
 
 /**

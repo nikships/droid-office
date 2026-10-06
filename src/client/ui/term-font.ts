@@ -1,14 +1,12 @@
-// The terminal window's text size. The desktop keeps xterm's 14 px; a headset panel starts larger,
-// and anyone can step it up or down there. The choice is kept in this browser, apart for each.
+// The terminal window starts at 14 px. Its adjustable size is saved in this browser.
 
 export const TERM_FONT_DESKTOP = 14;
-export const TERM_FONT_NATIVE = 20;
 export const TERM_FONT_MIN = 10;
 export const TERM_FONT_MAX = 36;
 const STEP = 2;
 
-let base = TERM_FONT_DESKTOP;
-let storageKey = 'droid-office.term-font';
+const base = TERM_FONT_DESKTOP;
+const storageKey = 'droid-office.term-font';
 const listeners = new Set<(px: number) => void>();
 
 export function clampTermFont(px: number): number {
@@ -19,12 +17,6 @@ export function clampTermFont(px: number): number {
 /** One step bigger (+1) or smaller (-1). */
 export function stepTermFont(px: number, dir: 1 | -1): number {
   return clampTermFont(px + dir * STEP);
-}
-
-/** From now on the terminal starts at the headset panel's size, and remembers its own choice. */
-export function useNativeTermFont() {
-  base = TERM_FONT_NATIVE;
-  storageKey = 'droid-office.term-font.native';
 }
 
 /** The size a terminal opens at: the saved choice, else the default for where the office runs. */
