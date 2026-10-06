@@ -20,7 +20,6 @@ import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
-import { Themes } from './theme.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
@@ -35,7 +34,6 @@ import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
-import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
 
@@ -360,14 +358,6 @@ export async function startServer(cfg: Config) {
   // Day, night and the weather outside the windows, the same for everyone.
   const sky = new Sky({ city: cfg.city, weather: cfg.weather }, (state) => broadcast({ t: 'sky', state }));
   sky.start();
-  // Halloween or Christmas all over the building, the same for everyone (⚙️ Settings). On 'auto' it
-  // goes by the calendar at the office, the sky's clock.
-  const themes = new Themes(
-    cfg.dataDir,
-    () => sky.state.utcOffset,
-    (state) => broadcast({ t: 'theme', state }),
-  );
-  themes.start();
   // Whether a worker whose pull request merged goes home by itself, on every floor (⚙️ Settings).
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
@@ -893,7 +883,6 @@ export async function startServer(cfg: Config) {
       notify: webhook.state(),
       machine: machine.state(),
       sky: sky.state,
-      theme: themes.state(),
       leaveOnMerge: leaveOnMerge.state(),
       subagents: subagents.state(),
       prompts: prompts.state(),
@@ -1486,22 +1475,6 @@ export async function startServer(cfg: Config) {
         else toastAll(`🧭 ${who} changed the Subagents settings`);
         break;
       }
-      case 'theme.set': {
-        if (!isThemePick(msg.pick)) return;
-        if (msg.pick === themes.state().pick) break;
-        themes.set(msg.pick, who);
-        const now = themes.state().active;
-        toastAll(
-          msg.pick === 'halloween'
-            ? `🎃 ${who} dressed the office up for Halloween`
-            : msg.pick === 'christmas'
-              ? `🎄 ${who} dressed the office up for Christmas`
-              : msg.pick === 'off'
-                ? `${who} took the holiday decorations down`
-                : `📅 ${who} set the decorations to follow the calendar${now ? ` (it's ${now === 'halloween' ? 'Halloween 🎃' : 'Christmas 🎄'} season)` : ''}`,
-        );
-        break;
-      }
       case 'prompts.set': {
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
         const was = !!prompts.state().custom[msg.id];
@@ -1747,7 +1720,6 @@ export async function startServer(cfg: Config) {
     webhook.stop();
     machine.stop();
     sky.stop();
-    themes.stop();
     for (const f of floors.values()) f.shutdown(keep);
     for (const c of clients.values()) c.ws.close();
     server.close();

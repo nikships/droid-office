@@ -22,7 +22,6 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Jukebox', 'sound', 'you'],
     ['Desktop notifications', 'notify', 'you'],
     ['Channel notifications (Slack / Discord)', 'notify', 'office'],
-    ['Holiday theme', 'building', 'office'],
     ['Outside', 'building', 'office'],
     ['Jira', 'building', 'office'],
     ["This floor's Jira epic", 'building', 'floor'],

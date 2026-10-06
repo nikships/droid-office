@@ -2,13 +2,12 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import type { CarriedIssue, Theme, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
+import type { CarriedIssue, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import type { Drink } from '../../shared/rooftop';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
-import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
 import { Muzzle, disposeGun, magnum } from './gun';
 import { glyphFlat } from './glyph3d';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
@@ -340,18 +339,6 @@ export function boxOfStuff(): THREE.Group {
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 
-/** What a zombie worker's skin is mixed toward. */
-const ZOMBIE = new THREE.Color('#7fa36b');
-
-/** Takes a costume off whatever wore it, and frees what it was made of (its materials are shared). */
-function undress(parts: THREE.Object3D[]) {
-  for (const o of parts) {
-    o.removeFromParent();
-    o.traverse((m) => (m as THREE.Mesh).geometry?.dispose());
-  }
-  parts.length = 0;
-}
-
 // ---- Factory crew kit ---------------------------------------------------------------------------
 // Everyone in the building is Factory crew: an orange lanyard and an ID card, a pinwheel patch on
 // the chest and a pinwheel printed on the back. Each kit is a single vertex-colored mesh, built once
@@ -603,9 +590,6 @@ export class Person {
    * `autoT` is a whole swing playing by itself (golfSwing), taken back to `power`.
    */
   private golf: { swing: THREE.Group; back: number; want: number; top: number; swingT: number; autoT: number; power: number } | null = null;
-  /** Dressed up for a holiday (see setCostume): a warlock's hat and undead skin, or a Santa hat. */
-  private costume: Theme | null = null;
-  private hat: THREE.Object3D[] = [];
   /**
    * A .44 Magnum in the right fist (see setGun): the prop, its muzzle flash, how far into the draw
    * (0–1), and seconds into the shot's recoil, or -1.
@@ -715,26 +699,10 @@ export class Person {
     this.dress();
   }
 
-  /** Dresses up for a holiday: a crooked warlock's hat and undead skin for Halloween, a Santa hat for Christmas. Null takes it off. */
-  setCostume(theme: Theme | null) {
-    if (theme === this.costume) return;
-    this.costume = theme;
-    undress(this.hat);
-    const hat = theme === 'halloween' ? warlockHat() : theme === 'christmas' ? santaHat() : null;
-    if (hat) {
-      hat.traverse((o) => ((o as THREE.Mesh).castShadow = true));
-      this.head.add(hat);
-      this.hat.push(hat);
-    }
-    this.dress();
-  }
-
-  /** The skin and hair under the costume: hair that would poke through a hat's crown hides under it. */
+  /** The skin and hair. */
   private dress() {
     this.skin.color.set(SKIN_TONES[this.look.skin]);
-    if (this.costume === 'halloween') this.skin.color.lerp(UNDEAD_SKIN, 0.7);
-    const style = HAIR_STYLES[this.look.style];
-    this.hair.visible = !this.costume || !(style === 'Spiky' || style === 'Bun' || style === 'Curly');
+    this.hair.visible = true;
   }
 
   /** Hair is a set of shapes on the head (whose center is 0,0,0; the face looks down +z). */
@@ -1666,11 +1634,6 @@ export class Worker {
   private skin: THREE.MeshToonMaterial;
   /** Its Factory crew kit: lanyard, ID card and pinwheel patches. */
   private crew: THREE.Group;
-  /** Dressed up for a holiday (see setCostume), and what it's wearing. */
-  private costume: Theme | null = null;
-  private outfit: THREE.Object3D[] = [];
-  /** Where it is in its own shamble, so a room full of zombies doesn't sway in step. */
-  private phase = Math.random() * Math.PI * 2;
   /** How far through its stride it is, walking in. */
   private stride = 0;
 
@@ -1701,7 +1664,7 @@ export class Worker {
     const led = mesh(new THREE.SphereGeometry(0.024, 8, 6), ledMaterial(), MIC.x, MIC.y, MIC.z, false);
     led.name = 'headset-led';
     this.body.add(led);
-    // Its crew kit: lanyard, ID card and patches (a holiday costume goes on in its place).
+    // Its crew kit: lanyard, ID card and patches.
     this.crew = workerKit();
     this.body.add(this.crew);
     // Antenna with status bulb.
@@ -1754,28 +1717,6 @@ export class Worker {
     if (this.dead) return;
     this.twirlT = 0;
     this.cheer(1.2);
-  }
-
-  /** Dresses it up for a holiday (a zombie for Halloween, an elf for Christmas), or back in its own skin (null). */
-  setCostume(theme: Theme | null) {
-    if (theme === this.costume) return;
-    this.costume = theme;
-    undress(this.outfit);
-    const wear = (parent: THREE.Object3D, o: THREE.Object3D) => {
-      o.traverse((m) => ((m as THREE.Mesh).castShadow = true));
-      parent.add(o);
-      this.outfit.push(o);
-    };
-    this.skin.color.set(this.color);
-    this.crew.visible = !theme;
-    if (theme === 'halloween') {
-      this.skin.color.lerp(ZOMBIE, 0.6).multiplyScalar(0.85);
-      wear(this.body, zombieWorker(this.skin));
-    } else if (theme === 'christmas') {
-      wear(this.body, elfHat());
-      wear(this.body, elfWorker(this.skin));
-      for (const f of this.feet) wear(f, elfBoot());
-    }
   }
 
   setName(name: string) {
@@ -2016,13 +1957,6 @@ export class Worker {
     }
     const act: Act = hopping || (this.bouncing && this.status === 'done') ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest';
     const s = this.pose(act, dt, t);
-    // A zombie at rest stands with its arms out in front of it, groping, listing to one side and swaying.
-    const shamble = this.costume === 'halloween' ? Math.min(1, this.acts.get('rest') ?? 0) : 0;
-    if (shamble > 0) {
-      s.armLx += (-1.4 + Math.sin(t * 1.6 + this.phase) * 0.12 - s.armLx) * shamble;
-      s.armRx += (-1.4 + Math.sin(t * 1.6 + this.phase + 1.3) * 0.12 - s.armRx) * shamble;
-      s.roll += (0.09 + Math.sin(t * 1.1 + this.phase) * 0.05) * shamble;
-    }
 
     this.armL.rotation.set(s.armLx, 0, s.armLz);
     this.armR.rotation.set(s.armRx, 0, s.armRz);
@@ -2255,6 +2189,5 @@ export class Worker {
   dispose() {
     if (this.bubble) disposeSprite(this.bubble);
     if (this.nameTag) disposeSprite(this.nameTag);
-    undress(this.outfit);
   }
 }

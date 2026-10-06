@@ -67,7 +67,6 @@ import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world/b
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts, MONO } from './fonts';
 import { Gallery } from './world/gallery';
-import { Holiday } from './world/holiday';
 import { Arrivals, Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
@@ -162,9 +161,6 @@ const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
 /** The laptop screens that light the room, reused every frame (see Sky.setScreens). */
 const screenGlows: ScreenGlow[] = [];
 store.on('sky', () => store.sky && sky.set(store.sky));
-// Halloween or Christmas decorations, up while the building's dressed up for one (see dressUp).
-const holiday = new Holiday(office);
-scene.add(holiday.group);
 
 const noOutline = (obj: THREE.Object3D) =>
   obj.traverse((o) => {
@@ -176,7 +172,6 @@ const noOutline = (obj: THREE.Object3D) =>
     for (const mat of mats) if (flat || mat instanceof THREE.MeshBasicMaterial) mat.userData.outlineParameters = { visible: false };
   });
 noOutline(office.group);
-noOutline(holiday.group);
 
 // ---- Board agents -------------------------------------------------------------------------------
 
@@ -1038,8 +1033,6 @@ function setPlace() {
   upTop = up;
   const r = up ? theRoof() : roof;
   office.group.visible = !up;
-  // The holiday decorations are dressed round the office and the street below it, not up here.
-  holiday.group.visible = !up;
   if (r) r.group.visible = up;
   player.colliders = up ? r!.colliders : office.colliders;
   sky.setRoof(up, roofDrop(roofFloors()));
@@ -1188,7 +1181,6 @@ function syncWorkers() {
     if (!v) {
       departures.vacate(w.deskId);
       const model = new Worker(w.name, w.color);
-      model.setCostume(store.theme.active);
       desk.seatAnchor.add(model.root);
       // Its globe floats beside the laptop (or the kiosk's counter), out from behind the card over
       // its head and the back of its chair, so it shows from across the room.
@@ -1340,21 +1332,6 @@ const paintPrs = () => {
 };
 store.on('pulls', paintPrs);
 store.on('queue', paintPrs);
-
-/**
- * Dresses the building up for the holiday it's set to (⚙️ Settings), or takes it all down: the sky and
- * the decorations, your hands and your character, and every worker.
- */
-function dressUp() {
-  const theme = store.theme.active;
-  holiday.set(theme);
-  sky.setTheme(theme);
-  hands.setCostume(theme);
-  me.setCostume(theme);
-  for (const v of workerViews.values()) v.model.setCostume(theme);
-  for (const a of idleAgents) a.model.setCostume(theme);
-}
-store.on('theme', dressUp);
 
 // ---- Actions ------------------------------------------------------------------------------------
 function freeDesk(): string | null {
@@ -3503,7 +3480,6 @@ function frame(ts?: number) {
   if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);
   hanger.update();
   sky.update(dt, t, camera);
-  if (!upTop) holiday.update(t, sky.lampsOn, camera);
   if (upTop && roof) {
     // Everything up there moves to the DJ's set; strobes flash the whole roof as a drop lands.
     const strobe = roof.update(t, dt, djFrame(djAt()), { dark: sky.lampsOn, motion: !reduceMotion.matches });
@@ -3629,7 +3605,6 @@ loading.until([]);
   elevatorPanelOpen,
   confetti,
   sky,
-  holiday,
   carried: () => carrying,
   emoteWheel,
   emote,
