@@ -19,7 +19,6 @@ import type {
   ServicesState,
   SkyState,
   SubagentsState,
-  ThemeState,
   UpgradeState,
   WorkerInfo,
 } from '../shared/protocol';
@@ -52,7 +51,6 @@ export type Topic =
   | 'repos'
   | 'jukebox'
   | 'sky'
-  | 'theme'
   | 'leaveOnMerge'
   | 'subagents'
   | 'cabinet'
@@ -255,8 +253,6 @@ class Store {
   ball: BallState = {};
   /** Outside the windows; null until the server says. */
   sky: SkyState | null = null;
-  /** The building's holiday decorations: the same on every floor. */
-  theme: ThemeState = { pick: 'auto', active: null };
   /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
   leaveOnMerge: LeaveOnMergeState = { on: false };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
@@ -341,12 +337,11 @@ class Store {
         this.machine = msg.machine;
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
-        this.theme = msg.theme;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.prompts = msg.prompts ?? { custom: {} };
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'leaveOnMerge', 'subagents', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -456,10 +451,6 @@ class Store {
       case 'sky':
         this.sky = msg.state;
         this.emit('sky');
-        break;
-      case 'theme':
-        this.theme = msg.state;
-        this.emit('theme');
         break;
       case 'leaveOnMerge':
         this.leaveOnMerge = msg.state;

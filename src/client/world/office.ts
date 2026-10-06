@@ -179,7 +179,7 @@ export interface Office {
   setLevel(index: number, count: number): void;
   /** Lights, windows and glass for the sky to change with the time of day and the weather. */
   night: NightParts;
-  /** The potted plants round the room, in PLANTS' order: pot first, then the leaves (world/holiday.ts trims them for Christmas). */
+  /** The potted plants round the room. */
   plants: THREE.Group[];
   /** Animates the office; doors open for anyone in `people` who comes up to them. */
   update(t: number, dt: number, people: Iterable<{ x: number; y: number; z: number }>): void;
@@ -341,8 +341,8 @@ function box(w: number, h: number, d: number) {
 }
 
 /**
- * A plant in a square black planter. The planter comes first and then the three clumps of leaves
- * (world/holiday.ts swaps those for a tree); its rim and soil come after them.
+ * A plant in a square black planter. The planter comes first and then the three clumps of leaves;
+ * its rim and soil come after them.
  */
 function plant(scale = 1): THREE.Group {
   const g = new THREE.Group();

@@ -157,9 +157,8 @@ const pending: Pending[] = [];
  * next call to `flushPendingProps()` swaps the contents in.
  *
  * Swapping the *contents* rather than the node itself is deliberate. Callers keep
- * references to these groups - `main.ts` turns `desk.chair` to face the desk, and the
- * holiday theme hides the plant's leaves by index - so the node has to keep its identity,
- * transform, and children order.
+ * references to these groups - `main.ts` turns `desk.chair` to face the desk - so the node has
+ * to keep its identity, transform, and children order.
  */
 export function useProp(node: THREE.Object3D, name: string): boolean {
   const entry = cache.get(name);

@@ -761,21 +761,6 @@ export interface SkyState {
   temp?: number;
 }
 
-/** A holiday the whole building dresses up for (see shared/theme.ts). */
-export type Theme = 'halloween' | 'christmas';
-/** What someone picked in ⚙️ Settings: a holiday, none, or whichever the calendar says. */
-export type ThemePick = Theme | 'auto' | 'off';
-
-/** The building's holiday theme: the same on every floor, for everyone. */
-export interface ThemeState {
-  pick: ThemePick;
-  /** What's up right now: the pick, or for 'auto' the holiday it is at the office. Null for none. */
-  active: Theme | null;
-  /** Who picked it, and when. Unset for the default (auto). */
-  by?: string;
-  at?: number;
-}
-
 /**
  * Whether a worker whose pull request merged goes home by itself (⚙️ Settings), for every floor:
  * once it's at rest and nobody has its terminal open, it leaves and its worktree and branch are deleted.
@@ -958,8 +943,6 @@ export type ClientMsg =
   | { t: 'floor.add'; dir: string }
   /** Take a floor off the building. Its checkout stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
-  /** Dress the building up for a holiday, take the decorations down ('off'), or follow the calendar ('auto'). */
-  | { t: 'theme.set'; pick: ThemePick }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
@@ -1008,8 +991,6 @@ export type ServerMsg =
       machine: MachineState;
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
-      /** Halloween or Christmas decorations, all over the building, or none. */
-      theme: ThemeState;
       leaveOnMerge: LeaveOnMergeState;
       subagents: SubagentsState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
@@ -1070,7 +1051,6 @@ export type ServerMsg =
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
-  | { t: 'theme'; state: ThemeState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'prompts'; state: PromptsState }
