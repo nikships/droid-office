@@ -10,10 +10,14 @@ function fixture() {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-queue-'));
   const workers: WorkerInfo[] = [];
   let hired = 0;
+  const pictures: { prompt: string; images?: readonly string[] }[] = [];
+  const unstaged: string[][] = [];
   const manager: QueueWorkers = {
     list: () => workers,
     deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, worktree, kind, model, effort) {
+    unstage: (ids) => unstaged.push([...ids]),
+    spawn(deskId, by, prompt, worktree, kind, model, effort, images) {
+      pictures.push({ prompt, images });
       const id = `worker-${hired++}`;
       const worker: WorkerInfo = {
         id,
@@ -61,6 +65,8 @@ function fixture() {
   return {
     dir,
     workers,
+    pictures,
+    unstaged,
     open,
     emptied: () => emptied,
     close() {
@@ -482,4 +488,38 @@ test("a queue that has nowhere to seat anyone doesn't fetch", (t) => {
   });
   q.add('Fix login', 'Tester');
   assert.equal(fetches, 0);
+});
+
+test('a task can be pictures alone: they go to its worker, and the queue lets go of them', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const q = f.open();
+  assert.match(q.add('', 'Tester') ?? '', /Empty task/);
+  assert.equal(q.add('', 'Tester', undefined, undefined, undefined, undefined, ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']), undefined);
+  assert.deepEqual(f.pictures, [{ prompt: '', images: ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'] }]);
+  assert.deepEqual(f.unstaged, [['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']]);
+  assert.equal(q.state().tasks[0].images, undefined);
+  assert.equal(q.state().tasks[0].title, 'Attached images');
+});
+
+test('pictures waiting on a queued task are thrown away when the task is removed', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const q = f.open(() => 0);
+  assert.equal(q.add('Look at this', 'Tester', undefined, undefined, undefined, undefined, ['cccccccccccccccc']), undefined);
+  assert.deepEqual(q.state().tasks[0].images, ['cccccccccccccccc']);
+  assert.equal(f.pictures.length, 0);
+  assert.equal(q.remove(q.state().tasks[0].id), undefined);
+  assert.deepEqual(f.unstaged, [['cccccccccccccccc']]);
+});
+
+test('queued pictures survive a restart and go to the worker the task gets', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const first = f.open(() => 0);
+  first.add('Look at this', 'Tester', undefined, undefined, undefined, undefined, ['dddddddddddddddd', 'not-an-id']);
+  first.shutdown();
+  const second = f.open();
+  second.pump();
+  assert.deepEqual(f.pictures, [{ prompt: 'Look at this', images: ['dddddddddddddddd'] }]);
 });

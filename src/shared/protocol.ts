@@ -276,6 +276,8 @@ export interface QueueTask {
   error?: string;
   /** The pull request that closes the issue, or was opened from the worker's branch. */
   pr?: { number: number; url: string; state: string; title: string };
+  /** Ids of the pictures pasted into the task (see ClientMsg `images`), kept until it starts. */
+  images?: string[];
 }
 
 export interface QueueState {
@@ -401,6 +403,8 @@ export interface MeetingRequest {
   rounds?: number;
   model?: string;
   effort?: AgentEffort;
+  /** Pictures pasted into the dialog, as the ids their upload answered with; every worker at the table is given them. */
+  images?: string[];
 }
 
 /** Where a team webhook posts: Slack and Discord get their own message format, anything else plain JSON. */
@@ -829,7 +833,7 @@ export type ClientMsg =
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
    */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[] }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
@@ -843,13 +847,13 @@ export type ClientMsg =
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
   /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number }
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[] }
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.
    * `model`/`effort` pick its engine when it's hired; an agent that's already there keeps its own.
    */
-  | { t: 'station.prompt'; deskId: string; prompt: string; model?: string; effort?: AgentEffort }
+  | { t: 'station.prompt'; deskId: string; prompt: string; model?: string; effort?: AgentEffort; images?: string[] }
   /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
@@ -867,7 +871,7 @@ export type ClientMsg =
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh or glab account; answered with gh.labeled. */
   | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; add: string[]; remove: string[] }
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; model?: string; effort?: AgentEffort }
+  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; model?: string; effort?: AgentEffort; images?: string[] }
   | { t: 'queue.remove'; taskId: string }
   /** Move a queued task up (-1) or down (+1) the queue. */
   | { t: 'queue.move'; taskId: string; delta: number }

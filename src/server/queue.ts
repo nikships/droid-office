@@ -5,6 +5,7 @@ import { isAgentEffort, type AgentChoice, type AgentEffort, type GhPull, type Qu
 import { DESK_BY_ID, SEATS, nextFreeSeat } from '../shared/layout.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { PROMPTS } from '../shared/prompts.js';
+import { PROMPT_IMAGE_ID } from '../shared/drops.js';
 
 /** What the queue needs from the worker manager. Narrow on purpose, so a smoke test can fake it. */
 export interface QueueWorkers {
@@ -12,7 +13,9 @@ export interface QueueWorkers {
   readonly officeDefault?: AgentChoice;
   list(): WorkerInfo[];
   deskOccupied(deskId: string): boolean;
-  spawn(deskId: string, by: string, prompt: string, worktree: boolean, kind: 'agent', model?: string, effort?: AgentEffort): WorkerInfo | string;
+  spawn(deskId: string, by: string, prompt: string, worktree: boolean, kind: 'agent', model?: string, effort?: AgentEffort, images?: readonly string[]): WorkerInfo | string;
+  /** Throws away pictures staged for a task that won't start (see Workers.stageImage). */
+  unstage?(ids: readonly string[]): void;
   /** Resolves with a line about what became of the worker's worktree. */
   kill(id: string): Promise<{ note?: string; error?: string }>;
   /** Fetches what a new worktree starts from; undefined when there's nothing to wait for (see Worktrees.fetch). */
@@ -78,7 +81,7 @@ export class TaskQueue {
   }
 
   /** Queues a task. With no `model`, it runs on the office's default model and effort. */
-  add(prompt: string, by: string, title?: string, issue?: number, model?: string, effort?: AgentEffort): string | undefined {
+  add(prompt: string, by: string, title?: string, issue?: number, model?: string, effort?: AgentEffort, images: readonly string[] = []): string | undefined {
     const picked = model === undefined ? this.workers.officeDefault : undefined;
     if (picked) ({ model, effort } = picked);
     const modelError = validateWorkerModel('agent', model);
@@ -86,7 +89,7 @@ export class TaskQueue {
     const effortError = validateWorkerEffort('agent', effort);
     if (effortError) return effortError;
     const clean = prompt.replace(/\r\n?/g, '\n').trim();
-    if (!clean) return 'Empty task';
+    if (!clean && !images.length) return 'Empty task';
     if (issue !== undefined && this.tasks.some((t) => t.issue === issue && t.status !== 'done')) return `Issue #${issue} is already on the queue`;
     if (this.tasks.filter((t) => t.status !== 'done').length >= MAX_TASKS) return `The queue is full (${MAX_TASKS} tasks)`;
     const task: QueueTask = {
@@ -94,8 +97,9 @@ export class TaskQueue {
       model,
       effort,
       issue,
-      title: (title?.trim() || firstLine(clean)).slice(0, 120),
+      title: (title?.trim() || firstLine(clean) || 'Attached images').slice(0, 120),
       prompt: clean,
+      images: images.length ? [...images] : undefined,
       addedBy: by,
       addedAt: Date.now(),
       status: 'queued',
@@ -111,6 +115,7 @@ export class TaskQueue {
     if (!t) return 'No such task';
     if (t.status === 'running') return `${t.workerName ?? 'Its worker'} is on it — send the worker home to stop it`;
     this.tasks.splice(this.tasks.indexOf(t), 1);
+    this.discard(t);
     this.changed();
     this.pump();
     return undefined;
@@ -120,7 +125,7 @@ export class TaskQueue {
   dropIssue(issue: number): boolean {
     const i = this.tasks.findIndex((t) => t.issue === issue && t.status === 'queued');
     if (i < 0) return false;
-    this.tasks.splice(i, 1);
+    this.discard(...this.tasks.splice(i, 1));
     this.changed();
     return true;
   }
@@ -145,7 +150,7 @@ export class TaskQueue {
     if (t.status !== 'done') return 'That task is still on the queue';
     if (t.issue !== undefined && this.tasks.some((x) => x !== t && x.issue === t.issue && x.status !== 'done')) return `Issue #${t.issue} is already on the queue`;
     this.tasks.splice(this.tasks.indexOf(t), 1);
-    const fresh: QueueTask = { id: t.id, model: t.model, effort: t.effort, issue: t.issue, title: t.title, prompt: t.prompt, addedBy: t.addedBy, addedAt: Date.now(), status: 'queued' };
+    const fresh: QueueTask = { id: t.id, model: t.model, effort: t.effort, issue: t.issue, title: t.title, prompt: t.prompt, addedBy: t.addedBy, addedAt: Date.now(), status: 'queued', images: t.images };
     this.tasks.push(fresh);
     this.changed();
     this.pump();
@@ -155,6 +160,7 @@ export class TaskQueue {
   /** Forgets the finished tasks. */
   clear() {
     const before = this.tasks.length;
+    this.discard(...this.tasks.filter((t) => t.status === 'done'));
     this.tasks = this.tasks.filter((t) => t.status !== 'done');
     if (this.tasks.length !== before) this.changed();
   }
@@ -322,7 +328,7 @@ export class TaskQueue {
       const desk = free ?? this.recycleDesk();
       if (!desk) break;
       const note = this.useWorktree ? (this.events.worktreeNote?.() ?? PROMPTS['queue.worktree'].text) : '';
-      const r = this.workers.spawn(desk, `${t.addedBy} (queue)`, note ? `${t.prompt}\n\n${note}` : t.prompt, this.useWorktree, 'agent', t.model, t.effort);
+      const r = this.workers.spawn(desk, `${t.addedBy} (queue)`, note && t.prompt ? `${t.prompt}\n\n${note}` : t.prompt || note, this.useWorktree, 'agent', t.model, t.effort, t.images);
       changed = true;
       if (typeof r === 'string') {
         t.status = 'done';
@@ -332,6 +338,8 @@ export class TaskQueue {
         this.events.toast(`📋 Couldn't start ${label(t)}: ${r}`, 'error');
         continue;
       }
+      // The worker has its own copy of the pictures now.
+      this.discard(t);
       t.status = 'running';
       t.workerId = r.id;
       t.workerName = r.name;
@@ -348,6 +356,15 @@ export class TaskQueue {
       }
     }
     if (changed) this.changed();
+  }
+
+  /** Throws away the pictures staged for tasks that aren't going to start, or already have. */
+  private discard(...tasks: QueueTask[]) {
+    for (const t of tasks) {
+      if (!t.images) continue;
+      this.workers.unstage?.(t.images);
+      t.images = undefined;
+    }
   }
 
   private changed() {
@@ -388,6 +405,7 @@ export class TaskQueue {
           outcome: s.outcome,
           error: s.error,
           pr: s.pr,
+          images: Array.isArray(s.images) ? s.images.filter((i): i is string => typeof i === 'string' && PROMPT_IMAGE_ID.test(i)) : undefined,
         };
         // Whatever was running died with the old office process; its worker comes back asleep at best.
         if (t.status === 'running') {

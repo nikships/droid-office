@@ -1,5 +1,6 @@
 import type { AgentEffort, WorkerStatus } from '../../shared/protocol';
 import { h, openModal, STATUS_LABEL } from './dom';
+import { promptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
 import { repoPicker } from './prompt';
 
@@ -30,7 +31,7 @@ export interface AskOptions {
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
   /** `to` is a worker id, or null for a new worker. */
-  onSubmit(prompt: string, to: string | null, worktree: boolean, model?: string, effort?: AgentEffort, repos?: string[]): void;
+  onSubmit(prompt: string, to: string | null, worktree: boolean, model?: string, effort?: AgentEffort, repos?: string[], images?: string[]): void;
 }
 
 // Shared with the hire prompt, so the choice sticks either way.
@@ -40,6 +41,7 @@ export function openAsk(opts: AskOptions) {
   let to: string | null = opts.newDesk ? null : (opts.workers[0]?.id ?? null);
   const ta = h('textarea', { rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
+  const images = promptImages(ta);
   const wtBox = h('input', { type: 'checkbox', id: 'ask-wt' }) as HTMLInputElement;
   try {
     wtBox.checked = localStorage.getItem(WT_KEY) === '1';
@@ -80,24 +82,38 @@ export function openAsk(opts: AskOptions) {
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
       h('label', { style: 'margin-top:14px' }, 'Prompt'),
       ta,
+      images.element,
       models?.element ?? null,
       wtRow,
       repos.element,
     ),
 
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
+    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line · paste or drop pictures'), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
   pick(to);
 
-  const modal = openModal(form);
+  const modal = openModal(form, { onClose: () => images.discard() });
+  images.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
+  let waiting = false;
   const send = () => {
+    if (waiting) return;
     const text = ta.value.trim();
-    if (!text) {
+    if (!text && !images.ids().length && !images.busy()) {
       ta.focus();
       return;
     }
+    // A picture still going up is sent with the prompt once it's there.
+    if (images.busy()) {
+      waiting = true;
+      void images.settled().then(() => {
+        waiting = false;
+        send();
+      });
+      return;
+    }
+    const picked = images.take();
     modal.close();
     if (!to && opts.worktreeOption) {
       try {
@@ -113,6 +129,7 @@ export function openAsk(opts: AskOptions) {
       !to ? models?.model() : undefined,
       !to ? models?.effort() : undefined,
       !to && opts.worktreeOption && wtBox.checked ? repos.value() : undefined,
+      picked,
     );
   };
   form.addEventListener('submit', (e) => {

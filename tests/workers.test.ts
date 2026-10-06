@@ -1240,3 +1240,89 @@ test('a subagent sits down told who hired it and where it works; every agent get
   await after.kill(lead.id);
   assert.equal(after.get(sub.id)?.lead, undefined);
 });
+
+/** Everything the agent has read from its terminal so far: a pty hands it over a line at a time. */
+const typed = (records: Invocation[]) => records.map((r) => r.stdin ?? '').join('');
+
+const PICTURE = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('pixels')]);
+
+test('pictures staged for a prompt are listed, numbered, after a new worker’s first prompt and after later ones', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, updates);
+  t.after(() => workers.shutdown());
+  const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
+
+  assert.equal(workers.stageImage('notes.png', Buffer.from('not a picture')), undefined);
+  const [a, b] = [workers.stageImage('first.png', PICTURE)!, workers.stageImage('second.png', PICTURE)!];
+  assert.ok(a && b);
+
+  // Hired with a prompt and two pictures: its card shows the prompt alone, the agent is given the list too.
+  const hired = workers.spawn('desk-2', 'test', 'What is wrong here?', false, 'agent', undefined, undefined, undefined, [], undefined, [a, b]);
+  assert.equal(typeof hired, 'object');
+  if (typeof hired === 'string') return;
+  assert.equal(hired.prompt, 'What is wrong here?');
+  const drops = path.join(f.data, 'drops', hired.id);
+  const [first] = await waitFor(launches, (l) => l.length === 1);
+  const given = first.args.at(-1)!;
+  assert.match(given, new RegExp(`^What is wrong here\\?\\n\\nImage 1: ${drops.replace(/[\\/^$.*+?()[\]{}|]/g, '\\$&')}[\\\\/][0-9a-f]{8}-first\\.png\\nImage 2: .*[0-9a-f]{8}-second\\.png$`));
+  assert.deepEqual(readFileSync(given.match(/Image 1: (.*)/)![1]), PICTURE);
+
+  // Later prompts: the pictures go in the same bracketed paste, so they're one message.
+  const c = workers.stageImage('third.png', PICTURE)!;
+  assert.equal(workers.prompt(hired.id, 'And this one?', [c]), undefined);
+  await waitFor(
+    () => f.read(),
+    (records) => typed(records).includes('And this one?\n\nImage 1: '),
+  );
+  // Pictures alone are a prompt, and the card says so.
+  const d = workers.stageImage('fourth.png', PICTURE)!;
+  assert.equal(workers.prompt(hired.id, '  ', [d]), undefined);
+  assert.equal(workers.get(hired.id)?.activity, 'See the attached images');
+  await waitFor(
+    () => f.read(),
+    (records) => typed(records).includes('\x1b[200~Image 1: '),
+  );
+  assert.equal(workers.prompt(hired.id, '  ', []), 'Empty prompt');
+  assert.equal(workers.prompt(hired.id, '  ', ['ffffffffffffffff']), 'Empty prompt');
+
+  // The pictures go when the worker does; the staged originals when they're thrown away.
+  workers.unstage([a, b, c, d]);
+  assert.deepEqual(workers.stageImage('x.png', PICTURE)?.length, 16);
+  await workers.kill(hired.id);
+  assert.ok(!existsSync(drops));
+});
+
+test('a picture-only first prompt hires a worker with the list as its prompt', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, updates);
+  t.after(() => workers.shutdown());
+  const a = workers.stageImage('shot.png', PICTURE)!;
+  const hired = workers.station('station-issues', 'Ada', '', undefined, undefined, [a]);
+  assert.equal(typeof hired, 'object');
+  if (typeof hired === 'string') return;
+  assert.equal(hired.info.prompt, 'See the attached images');
+  const [first] = await waitFor(
+    () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined),
+    (l) => l.length === 1,
+  );
+  assert.match(first.args.at(-1)!, /\n\nImage 1: .*[0-9a-f]{8}-shot\.png$/);
+  assert.equal(workers.station('station-issues', 'Ada', '', undefined, undefined, []), 'Empty prompt');
+});

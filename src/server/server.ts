@@ -32,7 +32,7 @@ import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
-import { DROP_MAX_BYTES } from '../shared/drops.js';
+import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
@@ -160,6 +160,8 @@ function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
   const [x, y, z, rotY] = ['x', 'y', 'z', 'rotY'].map(n);
   return Number.isFinite(x) && Number.isFinite(z) ? arrivalSpot({ x, y, z, rotY }) : undefined;
 }
+/** The ids of the pictures a prompt carries, in the order they were added: well-formed, no repeats, no more than a prompt can take. */
+const imageIds = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => str(x, 16)).filter((x) => PROMPT_IMAGE_ID.test(x)))].slice(0, PROMPT_IMAGES_MAX) : []);
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 /** The most lines per worker's terminal a search answers with. */
@@ -698,6 +700,26 @@ export async function startServer(cfg: Config) {
         const file = floor.workers.drop(workerId, str(url.searchParams.get('name'), 256), str(req.headers['content-type'], 128), body);
         return file ? send(res, 200, { path: file }) : send(res, 500, { error: 'The office could not keep that file' });
       }
+      if (p === '/api/prompt/image') {
+        // A picture pasted into a prompt that isn't sent yet, kept on this machine until it is (POST), or taken out again (DELETE).
+        if (req.method !== 'POST' && req.method !== 'DELETE') return send(res, 405, { error: 'Method not allowed' });
+        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
+        if (!floor) return send(res, 404, { error: 'No such floor' });
+        if (req.method === 'DELETE') {
+          floor.workers.unstage(imageIds([url.searchParams.get('id')]));
+          return send(res, 200, {});
+        }
+        const tooBig = `That picture is too big to send with a prompt (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
+        if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
+        let body: Buffer;
+        try {
+          body = await readBytes(req, DROP_MAX_BYTES);
+        } catch (err) {
+          return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
+        }
+        const id = floor.workers.stageImage(str(url.searchParams.get('name'), 256), body);
+        return id ? send(res, 200, { id }) : send(res, 415, { error: 'Only PNG, JPEG, GIF and WebP pictures can be sent with a prompt' });
+      }
       if (p === '/api/changes/file') {
         // A changed picture in the Changes window at a desk: before (old) or after (new) the worker's edits.
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
@@ -1095,6 +1117,7 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'worker.spawn': {
+        const images = imageIds(msg.images);
         const floor = here();
         if (!floor) break;
         const kind = msg.kind === 'shell' ? 'shell' : 'agent';
@@ -1104,11 +1127,15 @@ export async function startServer(cfg: Config) {
         const repos: RepoSource[] = [];
         for (const id of Array.isArray(msg.repos) ? [...new Set(msg.repos.slice(0, MAX_REPOS + 1).map((x) => str(x, 64)))] : []) {
           const other = floors.get(id);
-          if (!other || other === floor) return warn(c, other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
+          if (!other || other === floor) {
+            floor.workers.unstage(images);
+            return warn(c, other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
+          }
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos);
+          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos, undefined, images);
+          floor.workers.unstage(images);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') warn(c, r);
@@ -1207,7 +1234,9 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.prompt': {
         const w = worker(msg.workerId);
-        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000)) : 'No such worker';
+        const images = imageIds(msg.images);
+        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images) : 'No such worker';
+        w?.floor.workers.unstage(images);
         warn(c, err);
         const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
         if (w && !err && issue) {
@@ -1221,7 +1250,9 @@ export async function startServer(cfg: Config) {
         if (!floor) break;
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const r = floor.workers.station(str(msg.deskId, 32), who, str(msg.prompt, 20000), model, effort);
+        const images = imageIds(msg.images);
+        const r = floor.workers.station(str(msg.deskId, 32), who, str(msg.prompt, 20000), model, effort, images);
+        floor.workers.unstage(images);
         if (typeof r === 'string') warn(c, r);
         else if (r.hired) toastFloor(floor, `${who} asked the ${r.info.name} something`);
         break;
@@ -1355,9 +1386,12 @@ export async function startServer(cfg: Config) {
         const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
         const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, model, effort);
-        if (err) warn(c, err);
-        else toastFloor(floor, `📋 ${who} queued ${issue !== undefined ? `issue #${issue}` : 'a task'}`);
+        const images = imageIds(msg.images);
+        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, model, effort, images);
+        if (err) {
+          floor.workers.unstage(images);
+          warn(c, err);
+        } else toastFloor(floor, `📋 ${who} queued ${issue !== undefined ? `issue #${issue}` : 'a task'}`);
         break;
       }
       case 'queue.remove': {
@@ -1395,8 +1429,12 @@ export async function startServer(cfg: Config) {
           rounds: count(msg.rounds),
           model: msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1),
           effort: isAgentEffort(msg.effort) ? msg.effort : undefined,
+          images: imageIds(msg.images),
         };
-        withFreshBase(c, floor, () => warn(c, floor.meetings.start(request, who)));
+        withFreshBase(c, floor, () => {
+          warn(c, floor.meetings.start(request, who));
+          floor.workers.unstage(request.images ?? []);
+        });
         break;
       }
       case 'meeting.stop': {

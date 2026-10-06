@@ -1,5 +1,6 @@
 import type { AgentEffort, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
 import { h, openModal } from './dom';
+import { promptImages, type PromptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
 
 export interface PromptOptions {
@@ -16,11 +17,13 @@ export interface PromptOptions {
   worktreeOption?: boolean;
   /** Offer the model and effort pickers (only when hiring a new worker). */
   modelOption?: boolean;
+  /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
+  imagesOption?: boolean;
   /** The desk being hired at, so the model/effort choice remembered here is this desk's, not the whole office's. */
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
-  onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[] }): void;
+  onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[] }): void;
 }
 
 const WT_KEY = 'droid-office.worktree';
@@ -64,6 +67,7 @@ export function repoPicker(options: { id: string; name: string }[] | undefined, 
 export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea', { rows: 7, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
+  const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
   const wtBox = h('input', { type: 'checkbox', id: 'wt-toggle' }) as HTMLInputElement;
   wtBox.checked = worktreePref();
   const wtRow = opts.worktreeOption
@@ -88,26 +92,40 @@ export function openPrompt(opts: PromptOptions) {
       opts.warning ? h('p.setting-note.bad', { style: 'margin:0 0 10px', role: 'alert' }, opts.warning) : null,
       opts.subtitle ? h('p', { style: 'margin:0 0 10px;font-weight:700;color:var(--muted)' }, opts.subtitle) : null,
       ta,
+      images?.element ?? null,
       models?.element ?? null,
       wtRow,
       repos.element,
     ),
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
+    h('footer', {}, h('span.grow', {}, `Enter to send · Shift+Enter for a new line${images ? ' · paste or drop pictures' : ''}`), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
 
-  const modal = openModal(form);
+  const modal = openModal(form, { onClose: () => images?.discard() });
+  images?.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
+  let waiting = false;
   const send = () => {
+    if (waiting) return;
     const text = ta.value.trim();
-    if (!text && !opts.allowEmpty) {
+    if (!text && !images?.ids().length && !images?.busy() && !opts.allowEmpty) {
       ta.focus();
       return;
     }
+    // A picture still going up is sent with the prompt once it's there.
+    if (images?.busy()) {
+      waiting = true;
+      void images.settled().then(() => {
+        waiting = false;
+        send();
+      });
+      return;
+    }
+    const picked = images?.take() ?? [];
     modal.close();
     if (opts.worktreeOption) setWorktreePref(wtBox.checked);
     const worktree = !!opts.worktreeOption && wtBox.checked;
-    opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [] });
+    opts.onSubmit(text, { worktree, model: models?.model(), effort: models?.effort(), repos: worktree ? repos.value() : [], images: picked });
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();

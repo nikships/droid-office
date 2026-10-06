@@ -5,6 +5,7 @@ import { store, words } from '../state';
 import { meetingStage } from '../world/meeting';
 import { h, openModal, timeAgo, toast, STATUS_LABEL, type Modal } from './dom';
 import { confirmDialog } from './prompt';
+import { promptImages } from './images';
 import { agentPicker } from './models';
 import { officePrompt } from './prompts';
 import { issueVars } from './boards';
@@ -46,6 +47,7 @@ export function openMeeting(net: Net, actions: MeetingActions, preset?: MeetingP
   let form: ReturnType<typeof meetingForm> | null = null;
   const render = () => {
     if (view === 'status' && store.meeting.current) {
+      form?.images.discard();
       form = null;
       title.textContent = 'Meeting room';
       renderStatus(store.meeting.current, body, foot, net, actions, () => {
@@ -71,7 +73,13 @@ export function openMeeting(net: Net, actions: MeetingActions, preset?: MeetingP
     form.refresh();
   };
   const offs = [store.on('meeting', render), store.on('workers', () => view === 'status' && render()), store.on('pulls', () => form?.refresh())];
-  const modal: Modal = openModal(el, { doing: '🤝 at the meeting room', onClose: () => offs.forEach((off) => off()) });
+  const modal: Modal = openModal(el, {
+    doing: '🤝 at the meeting room',
+    onClose: () => {
+      offs.forEach((off) => off());
+      form?.images.discard();
+    },
+  });
   close.addEventListener('click', () => modal.close());
   render();
 }
@@ -159,6 +167,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   const patterns = h('div.meeting-patterns', { role: 'radiogroup', 'aria-label': 'Pattern' });
   const about = h('textarea', { rows: 4, placeholder: 'The question to settle, or the task to do: e.g. “Should workers use A* or a navmesh?”', 'aria-label': 'What the meeting is about' }) as HTMLTextAreaElement;
   about.value = preset?.prompt ?? '';
+  const images = promptImages(about);
   const titleIn = h('input', { type: 'text', placeholder: 'Title (optional): the first line otherwise', maxlength: 100, 'aria-label': 'Title' }) as HTMLInputElement;
   titleIn.value = preset?.title ?? '';
   const outputIn = h('input', { type: 'text', 'aria-label': 'Output file', spellcheck: 'false' }) as HTMLInputElement;
@@ -246,7 +255,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     'form.meeting-form',
     {},
     patterns,
-    h('div.meeting-field', {}, h('label', {}, 'What’s it about?'), about),
+    h('div.meeting-field', {}, h('label', {}, 'What’s it about?'), about, images.element),
     h('div.meeting-field', {}, titleIn),
     prRow,
     partsRow,
@@ -257,11 +266,13 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     busy,
   ) as HTMLFormElement;
   bodyEl.noValidate = true;
+  images.dropZone(bodyEl);
 
+  let waiting = false;
   const send = () => {
-    if (store.meeting.current?.status === 'running') return;
+    if (waiting || store.meeting.current?.status === 'running') return;
     const prompt = about.value.trim();
-    if (!prompt) return about.focus();
+    if (!prompt && !images.ids().length && !images.busy()) return about.focus();
     if (def().needs === 'pr' && !pr()) return prSel.focus();
     const parts = partsIn.value
       .split('\n')
@@ -273,6 +284,16 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     }
     const output = outputIn.value.trim();
     if (outputProblem(output)) return outputIn.focus();
+    // A picture still going up goes to the meeting once it's there.
+    if (images.busy()) {
+      waiting = true;
+      void images.settled().then(() => {
+        waiting = false;
+        send();
+      });
+      return;
+    }
+    const picked = images.take();
     net.send({
       t: 'meeting.start',
       pattern,
@@ -286,6 +307,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       rounds: Number(roundsIn.value) || undefined,
       model: models.model(),
       effort: models.effort(),
+      images: picked.length ? picked : undefined,
     });
     toast(`🤝 Calling the ${def().label} meeting: the workers are heading for the meeting room`);
     done();
@@ -324,5 +346,5 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   if (preset?.pr) prSel.value = String(preset.pr);
   refresh();
   setTimeout(() => (preset?.prompt ? titleIn : about).focus(), 0);
-  return { body: bodyEl, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings short.'), cancel, submit], refresh };
+  return { body: bodyEl, images, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings short.'), cancel, submit], refresh };
 }

@@ -3,6 +3,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { glyphText, h, openModal, timeAgo, STATUS_LABEL } from './dom';
 import { confirmDialog } from './prompt';
+import { promptImages } from './images';
 import { agentPicker, modelBadge } from './models';
 import { officeFull } from '../world/machine';
 
@@ -50,18 +51,31 @@ export function openQueue(net: Net, actions: QueueActions) {
     h('footer', {}, h('span.grow', {}, 'The queue keeps going while you are away. Set “workers at once” to 0 to pause it.')),
   );
 
-  const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free worker…', 'aria-label': 'New task' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free worker… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
+  const images = promptImages(ta);
   const models = agentPicker('queue-models', 'queue');
   const addBtn = h('button.btn.primary', { type: 'submit' }, 'Add to queue');
-  const form = h('form.queue-add', {}, ta, models.element, addBtn) as HTMLFormElement;
+  const form = h('form.queue-add', {}, ta, images.element, models.element, addBtn) as HTMLFormElement;
   form.noValidate = true;
+  let waiting = false;
   const submit = () => {
+    if (waiting) return;
     const text = ta.value.trim();
-    if (!text) {
+    if (!text && !images.ids().length && !images.busy()) {
       ta.focus();
       return;
     }
-    net.send({ t: 'queue.add', prompt: text, model: models.model(), effort: models.effort() });
+    // A picture still going up is queued with the task once it's there.
+    if (images.busy()) {
+      waiting = true;
+      void images.settled().then(() => {
+        waiting = false;
+        submit();
+      });
+      return;
+    }
+    const picked = images.take();
+    net.send({ t: 'queue.add', prompt: text, model: models.model(), effort: models.effort(), images: picked.length ? picked : undefined });
     ta.value = '';
   };
   form.addEventListener('submit', (e) => {
@@ -113,6 +127,7 @@ export function openQueue(net: Net, actions: QueueActions) {
       pos = String(i + 1);
       meta.push(`⚙️ Droid${model}`);
       meta.push(`added by ${t.addedBy} ${timeAgo(t.addedAt)}`);
+      if (t.images?.length) meta.push(`📎 ${t.images.length} picture${t.images.length === 1 ? '' : 's'}`);
       buttons.push(h('button.btn', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: -1 }) }, '↑'));
       buttons.push(h('button.btn', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === queued.length - 1, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: 1 }) }, '↓'));
       buttons.push(h('button.btn', { type: 'button', title: 'Remove from the queue', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
@@ -181,8 +196,10 @@ export function openQueue(net: Net, actions: QueueActions) {
     onClose: () => {
       unsubs.forEach((u) => u());
       clearInterval(tick);
+      images.discard();
     },
   });
+  images.dropZone(modal.backdrop, form);
   close.addEventListener('click', () => modal.close());
   render();
   setTimeout(() => ta.focus(), 30);

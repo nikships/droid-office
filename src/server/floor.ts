@@ -200,22 +200,38 @@ export class Floor {
     );
 
     // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
-    this.queue = new TaskQueue(dataDir, this.workers, !!this.project.branch, {
-      update: (state) => {
-        ctx.emit(this, { t: 'queue', state });
-        // A task's pull request may just have been linked (or merged).
-        this.sendLandedHome();
+    const queued = this.workers;
+    this.queue = new TaskQueue(
+      dataDir,
+      {
+        get officeDefault() {
+          return queued.officeDefault;
+        },
+        list: () => queued.list(),
+        deskOccupied: (id) => queued.deskOccupied(id),
+        spawn: (deskId, by, prompt, worktree, kind, model, effort, images) => queued.spawn(deskId, by, prompt, worktree, kind, model, effort, undefined, [], undefined, images),
+        unstage: (ids) => queued.unstage(ids),
+        kill: (id) => queued.kill(id),
+        fetchBase: () => queued.fetchBase(),
       },
-      toast: (text, level) => ctx.toast(this, text, level),
-      claimIssue: (issue) => this.board.claim(issue),
-      refreshGitHub: () => void this.board.refresh(),
-      room: () => ctx.capacity.room(),
-      emptied: () => {
-        ctx.toast(this, '📋 The queue is empty: every task is done 🎉');
-        ctx.emit(this, { t: 'gong', why: 'queue' });
+      !!this.project.branch,
+      {
+        update: (state) => {
+          ctx.emit(this, { t: 'queue', state });
+          // A task's pull request may just have been linked (or merged).
+          this.sendLandedHome();
+        },
+        toast: (text, level) => ctx.toast(this, text, level),
+        claimIssue: (issue) => this.board.claim(issue),
+        refreshGitHub: () => void this.board.refresh(),
+        room: () => ctx.capacity.room(),
+        emptied: () => {
+          ctx.toast(this, '📋 The queue is empty: every task is done 🎉');
+          ctx.emit(this, { t: 'gong', why: 'queue' });
+        },
+        worktreeNote: () => officePrompt(ctx.prompts, 'queue.worktree'),
       },
-      worktreeNote: () => officePrompt(ctx.prompts, 'queue.worktree'),
-    });
+    );
 
     // Meetings seat their own workers round the meeting room's table and run them round by round.
     const workers = this.workers;
@@ -253,7 +269,7 @@ export class Floor {
           return workers.officeDefault;
         },
         list: () => this.workers.list(),
-        seat: (deskId, by, prompt, model, effort, meeting) => this.workers.spawn(deskId, by, prompt, false, 'agent', model, effort, meeting),
+        seat: (deskId, by, prompt, model, effort, meeting, images) => this.workers.spawn(deskId, by, prompt, false, 'agent', model, effort, meeting, [], undefined, images),
         prompt: (id, text) => this.workers.prompt(id, text),
         write: (id, data) => this.workers.write(id, data),
         kill: (id) => this.workers.kill(id),
