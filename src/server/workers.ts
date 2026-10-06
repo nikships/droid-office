@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
 import { withImages } from '../shared/drops.js';
@@ -34,7 +34,8 @@ import type { Capacity } from './machine.js';
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
 
-const NAMES = [
+/** Workers' names, and their colors; guests (see guests.ts) pick from the same. */
+export const NAMES = [
   'Pixel',
   'Byte',
   'Nibble',
@@ -64,7 +65,7 @@ const NAMES = [
   'Waffle',
   'Zippy',
 ];
-const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb', '#f7aef8', '#72ddf7', '#ffb400', '#00a6a6'];
+export const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb', '#f7aef8', '#72ddf7', '#ffb400', '#00a6a6'];
 
 // Env vars from a parent terminal session (e.g. starting the office from inside another agent)
 // that don't belong in a worker's terminal.
@@ -216,6 +217,9 @@ export class WorkerManager {
   private droidSessions = new DroidSessionReader();
   private agentPath: string | null = null;
 
+  /** Desks and names taken by the floor's guests (see guests.ts), which the office's hires leave alone. */
+  holds?: { desk(deskId: string): boolean; names(): Iterable<string> };
+
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
@@ -362,7 +366,34 @@ export class WorkerManager {
 
   deskOccupied(deskId: string): boolean {
     for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
+    return !!this.holds?.desk(deskId);
+  }
+
+  /** Whether one of the office's own workers sits there, guests aside. */
+  ownDesk(deskId: string): boolean {
+    for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
     return false;
+  }
+
+  /** Each worker in a folder of its own (its worktree or workspace), with that folder: whose a process started by hand there is. */
+  folders(): { id: string; folder?: string }[] {
+    return [...this.workers.values()].map((w) => ({ id: w.info.id, folder: w.info.worktree ? this.cwd(w.info) : undefined }));
+  }
+
+  /** The Droid sessions the office's own workers here are in, which are never a guest's. */
+  sessionIds(): Set<string> {
+    return new Set([...this.workers.values()].flatMap((w) => (w.info.sessionId ? [w.info.sessionId] : [])));
+  }
+
+  /** The agent processes someone started by hand in each worker's own folder (see guests.ts attribute). */
+  setOutside(outside: ReadonlyMap<string, OutsideProcess[]>) {
+    for (const w of this.workers.values()) {
+      const now = outside.get(w.info.id);
+      if (JSON.stringify(now) === JSON.stringify(w.info.outside)) continue;
+      if (now?.length) w.info.outside = now;
+      else delete w.info.outside;
+      this.emitUpdate(w);
+    }
   }
 
   /**
@@ -409,7 +440,7 @@ export class WorkerManager {
     }
     const full = this.capacity?.full();
     if (full) return full;
-    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')));
+    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
     const agent = seat.station && STATION_AGENT[seat.station];
     const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');

@@ -8,6 +8,7 @@ import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
+import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary } from '../../shared/team';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
@@ -65,14 +66,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   if (!info) return;
 
   const dot = h('span.dot', { style: `background:${info.color}` });
-  const title = h('h2', {}, info.kind === 'agent' ? `Droid · ${info.name}` : info.name);
+  const engine = (w: WorkerInfo) => (w.kind !== 'agent' ? null : w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid');
+  // A guest has no terminal here: its window shows what the office knows of it, and takes no input.
+  const guest = !!info.guest;
+  const title = h('h2', {}, [engine(info), info.name].filter(Boolean).join(' · '));
   const pill = h('span.pill', {}, '');
   const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
-  const host = h('div.term-host', { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
+  const host = h('div.term-host', guest ? {} : { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
@@ -101,7 +105,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     fontSize: termFontSize(),
     lineHeight: 1.1,
     theme: TERM_THEME,
-    cursorBlink: true,
+    cursorBlink: !guest,
+    disableStdin: guest,
     scrollback: 5000,
     allowProposedApi: true,
     macOptionIsMeta: true,
@@ -128,6 +133,15 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
   const sendSize = (typing = false) => {
     if (!ready || !opened) return;
+    // No terminal to size: the banner just fills the window.
+    if (guest) {
+      try {
+        fit.fit();
+      } catch {
+        // not laid out yet
+      }
+      return;
+    }
     if (!typing && adoptSharedSize) {
       const w = store.workers.get(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
@@ -152,16 +166,24 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       modal.close();
       return;
     }
-    title.textContent = [w.kind === 'agent' ? 'Droid' : null, w.name, w.title, w.worktree && `🌿 ${w.worktree.branch}`, w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`]
+    title.textContent = [
+      engine(w),
+      w.name,
+      w.guest && `🚪 outside the office · pid ${w.guest.pid}`,
+      outsideNote(w),
+      w.title,
+      w.worktree && `🌿 ${w.worktree.branch}`,
+      w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
+    ]
       .filter(Boolean)
       .join(' · ');
     pill.className = `pill ${w.status}`;
-    pill.textContent = STATUS_LABEL[w.status] ?? w.status;
+    pill.textContent = statusWord(w, STATUS_LABEL);
     paintTeam(w);
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
     const ptySize = `${w.cols}x${w.rows}`;
-    if (ready && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
+    if (ready && !guest && ptySize !== `${term.cols}x${term.rows}` && ptySize !== lastSentSize) {
       term.resize(w.cols, w.rows);
       lastSentSize = '';
     }
@@ -283,6 +305,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return false;
   });
   term.onData((data) => {
+    if (guest) return;
     sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
@@ -292,6 +315,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
     if (!files.length) return;
+    if (guest) return toast(`${info.name} runs outside the office: drop files into its own terminal`, 'warn');
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));

@@ -6,7 +6,8 @@ import { isBusy } from '../shared/status.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
-import { WorkerManager, type HookEnv } from './workers.js';
+import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
+import { Guests, attribute, type AgentProcess } from './guests.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
 import type { Board } from './forge.js';
@@ -117,6 +118,8 @@ export class Floor {
   readonly docs: Docs;
   /** Leads and the subagents they hire with office-workers (see team.ts). */
   readonly team: Team;
+  /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
+  readonly guests: Guests;
   /** Settles once the workers whose terminals outlived the last office are picked back up, and the rest woken. */
   readonly ready: Promise<void>;
   /** The basketball by the hoop: who has it, or how it was last thrown. */
@@ -198,6 +201,25 @@ export class Floor {
       this.board,
       ctx.prompts,
     );
+
+    // Someone's own droid (or claude, codex…) in this checkout: watched at a desk, never run by the office.
+    const own = this.workers;
+    this.guests = new Guests(
+      dataDir,
+      { deskTaken: (id) => own.ownDesk(id), names: () => own.list().map((w) => w.name.replace(/ 🐚$/, '')), pool: { names: NAMES, colors: COLORS } },
+      {
+        update: (worker) => {
+          ctx.emit(this, { t: 'worker.update', worker });
+          ctx.workerChanged(this, worker);
+        },
+        remove: (workerId) => {
+          ctx.emit(this, { t: 'worker.remove', workerId });
+          ctx.workerChanged(this, workerId);
+        },
+        data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
+      },
+    );
+    this.workers.holds = { desk: (id) => this.guests.deskTaken(id), names: () => this.guests.names() };
 
     // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
     const queued = this.workers;
@@ -375,6 +397,21 @@ export class Floor {
     });
   }
 
+  /**
+   * The agent processes working in this floor's checkout, from the building's scan (see GuestScanner):
+   * one started by hand in a worker's own worktree is that worker's, the rest are guests.
+   */
+  async syncGuests(procs: AgentProcess[]): Promise<void> {
+    const { guests, outside } = attribute(procs, this.workers.folders());
+    this.workers.setOutside(outside);
+    await this.guests.sync(guests, this.workers.sessionIds());
+  }
+
+  /** Everyone at a desk here, the office's workers and the guests. */
+  everyone(): WorkerInfo[] {
+    return [...this.workers.list(), ...this.guests.list()];
+  }
+
   /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
   arrived() {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
@@ -386,7 +423,7 @@ export class Floor {
   }
 
   info(): FloorInfo {
-    const ws = this.workers.list();
+    const ws = this.everyone();
     return {
       id: this.id,
       name: this.def.name,
@@ -410,6 +447,7 @@ export class Floor {
     this.queue.shutdown();
     this.meetings.shutdown();
     this.team.stop();
+    this.guests.stop();
     this.changes.stop();
     this.workers.shutdown(keep);
   }
