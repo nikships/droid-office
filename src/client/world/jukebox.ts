@@ -3,10 +3,11 @@ import { ANISOTROPY } from './texture-quality';
 import { JUKEBOX } from '../../shared/layout';
 import { mesh, roundedBox, textSprite, toon, toonUnique } from './toon';
 import { MONO } from '../fonts';
+import { track } from './toon';
 import type { Collider, Interactable } from './office';
 
-// The lounge jukebox: a cherry-red cabinet with a rounded top, a neon tube round its face that
-// glows to the beat while it plays, a little display saying what's on, and notes floating up.
+// The lounge jukebox: a graphite cabinet with a rounded top, an LED tube round its face that
+// glows Factory orange to the beat while it plays, a little display saying what's on, and notes floating up.
 
 export interface JukeboxView {
   group: THREE.Group;
@@ -34,13 +35,13 @@ export function buildJukebox(): JukeboxView {
   shape.lineTo(-r, 0);
   const body = new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 2, curveSegments: 24 });
   body.translate(0, 0, -D / 2);
-  group.add(mesh(body, toon('#d64545')));
-  group.add(mesh(new THREE.BoxGeometry(W + 0.12, 0.1, D + 0.12), toon('#2b2d42'), 0, 0.05, 0));
+  group.add(mesh(body, toon('#1c1c1c')));
+  group.add(mesh(new THREE.BoxGeometry(W + 0.12, 0.1, D + 0.12), toon('#0a0a0a'), 0, 0.05, 0));
 
   const front = D / 2 + 0.035;
-  // The neon tube: up one side, over the arch and down the other.
-  const neon = toonUnique('#ffd166');
-  neon.emissive = new THREE.Color('#ffd166');
+  // The LED tube: up one side, over the arch and down the other.
+  const neon = toonUnique('#3a3a3a');
+  neon.emissive = new THREE.Color('#5a2208');
   const tubeR = r - 0.1;
   const legLen = H - r - 0.3;
   group.add(mesh(new THREE.TorusGeometry(tubeR, 0.045, 8, 36, Math.PI), neon, 0, H - r, front, false));
@@ -58,13 +59,13 @@ export function buildJukebox(): JukeboxView {
   group.add(screen);
 
   // Selector buttons, and the speaker grille below them.
-  ['#ef476f', '#ffd166', '#06d6a0', '#4cc9f0', '#9d4edd'].forEach((c, i) => group.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.02), toon(c), (i - 2) * 0.14, 0.98, front, false)));
-  group.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#2b2d42'), 0, 0.58, front - 0.01, false));
-  for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#dfe6ee'), 0, 0.38 + i * 0.1, front + 0.01, false));
+  ['#3a3a3a', '#3a3a3a', '#ee6018', '#3a3a3a', '#3a3a3a'].forEach((c, i) => group.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.008), toon(c), (i - 2) * 0.14, 0.98, front, false)));
+  group.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#0a0a0a'), 0, 0.58, front - 0.01, false));
+  for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#2a2a2a'), 0, 0.38 + i * 0.1, front + 0.01, false));
 
   // Notes drift up out of the top while it plays.
   const notes = NOTES.map((n, i) => {
-    const s = textSprite(n, { color: ['#ef476f', '#4f86f7', '#06d6a0', '#9d4edd', '#ff8a5b'][i], size: 96 });
+    const s = textSprite(n, { color: ['#ee6018', '#eeeeee', '#8c8c8c', '#ee6018', '#eeeeee'][i], size: 96 });
     s.scale.multiplyScalar(0.55);
     s.visible = false;
     group.add(s);
@@ -82,20 +83,28 @@ export function buildJukebox(): JukeboxView {
   let shown = '';
   const paint = (title: string) => {
     const g = canvas.getContext('2d')!;
-    const grad = g.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, on ? '#101010' : '#0a0a0a');
-    grad.addColorStop(1, '#020202');
-    g.fillStyle = grad;
+    g.fillStyle = '#050505';
     g.fillRect(0, 0, 512, 256);
-    g.textAlign = 'center';
+    g.strokeStyle = 'rgba(255, 255, 255, .18)';
+    g.lineWidth = 3;
+    g.strokeRect(1.5, 1.5, 509, 253);
+    // An eyebrow with a status light, a hairline, then what's on.
+    g.textAlign = 'left';
     g.textBaseline = 'middle';
-    g.fillStyle = on ? '#ee6018' : '#8c8c8c';
-    g.font = `700 44px ${MONO}`;
-    g.fillText(on ? '♪ NOW PLAYING ♪' : 'JUKEBOX', 256, 70);
+    g.fillStyle = on ? '#ee6018' : '#3a3a3a';
+    g.fillRect(36, 60, 18, 18);
+    g.fillStyle = on ? '#eeeeee' : '#8c8c8c';
+    g.font = `600 32px ${MONO}`;
+    track(g, 5);
+    g.fillText(on ? 'NOW PLAYING' : 'JUKEBOX', 72, 70);
+    track(g, 0);
+    g.fillStyle = 'rgba(255, 255, 255, .12)';
+    g.fillRect(36, 104, 440, 2);
+    g.textAlign = 'center';
     g.fillStyle = on ? '#eeeeee' : '#8c8c8c';
     let size = 58;
     const text = on ? title : 'press E to play';
-    do g.font = `600 ${size--}px ${MONO}`;
+    do g.font = `500 ${size--}px ${MONO}`;
     while (g.measureText(text).width > 470 && size > 26);
     g.fillText(text, 256, 160);
     tex.needsUpdate = true;
@@ -107,10 +116,12 @@ export function buildJukebox(): JukeboxView {
     shown = k;
     on = playing;
     paint(title);
-    // Lit, the glow is the color; dark, it's dull glass.
-    neon.color.set(on ? '#1b1d2e' : '#b8b2a7');
+    // Lit, the glow is the color; dark, it's a dull steel tube.
+    neon.color.set(on ? '#2a1206' : '#3a3a3a');
     if (!on) {
-      neon.emissive.set('#000000');
+      // Idle, a dim ember, so the jukebox still reads against the dark wall at night.
+      neon.emissive.set('#5a2208');
+      neon.emissiveIntensity = 1;
       for (const n of notes) n.visible = false;
     }
   };
@@ -118,9 +129,9 @@ export function buildJukebox(): JukeboxView {
 
   const update = (t: number, _dt: number, beat: number) => {
     if (!on) return;
-    // The tube slowly runs through the colors and flares on every beat.
-    neon.emissive.setHSL((t * 0.05) % 1, 0.85, 0.55);
-    neon.emissiveIntensity = 0.55 + 0.9 * beat;
+    // The tube glows orange and flares on every beat.
+    neon.emissive.set('#ee6018');
+    neon.emissiveIntensity = 0.45 + 0.9 * beat;
     notes.forEach((n, i) => {
       const k = (t * 0.35 + i / notes.length) % 1;
       n.visible = true;

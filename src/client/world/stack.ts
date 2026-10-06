@@ -8,6 +8,8 @@ import { mesh, textPlane, toon } from './toon';
 const RAIL_TOP = 1.02;
 const RAIL_BAR = 0.035;
 const RAIL_CAP = 0.07;
+/** Factory orange: the hazard stripe, the rim of a pole's hole and the ring on its mat. */
+const ACCENT = '#ee6018';
 
 // The floors above and below this one: the ceiling (and the hatches and holes in it and in the floor),
 // the ladder up the west wall, and the fire poles. Every floor is built from the same office, so
@@ -113,20 +115,26 @@ function rectOutline(r: Rect): [number, number][] {
   ];
 }
 
-/** Ceiling tiles: a dark industrial grid, one tile per repeat. */
+/**
+ * The ceiling: a black corrugated steel deck, its ribs running east–west across the beams under it
+ * (world/office.ts), four ribs per repeat.
+ */
 function tileTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = c.height = 128 * TILE_SCALE;
   const g = c.getContext('2d')!;
   g.scale(TILE_SCALE, TILE_SCALE);
-  g.fillStyle = '#2e3138';
+  g.fillStyle = '#1e1e1e';
   g.fillRect(0, 0, 128, 128);
-  g.fillStyle = '#22252b';
-  g.fillRect(0, 0, 128, 5);
-  g.fillRect(0, 0, 5, 128);
-  // A few speckles, like the mineral fibre in real tiles.
-  g.fillStyle = '#383d45';
-  for (let i = 0; i < 40; i++) g.fillRect(8 + ((i * 53) % 116), 8 + ((i * 97) % 116), 3, 2);
+  for (let i = 0; i < 4; i++) {
+    const y = i * 32;
+    g.fillStyle = '#2c2c2c';
+    g.fillRect(0, y + 4, 128, 14);
+    g.fillStyle = '#3a3a3a';
+    g.fillRect(0, y + 4, 128, 2);
+    g.fillStyle = '#141414';
+    g.fillRect(0, y + 18, 128, 2);
+  }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(1 / 1.2, 1 / 1.2);
@@ -142,7 +150,7 @@ function shaft(shape: 'square' | 'round', half: number, from: number, to: number
   const geo = shape === 'round' ? new THREE.CylinderGeometry(half, half, h, 24, 6, true) : new THREE.CylinderGeometry(half * Math.SQRT2, half * Math.SQRT2, h, 4, 6, true).rotateY(Math.PI / 4);
   const pos = geo.getAttribute('position');
   const colors: number[] = [];
-  const near = new THREE.Color('#4a4e55');
+  const near = new THREE.Color('#3a3a3a');
   const far = new THREE.Color('#0a0a0a');
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
@@ -179,15 +187,15 @@ function trapdoor(down: boolean): Trapdoor {
   const lid = new THREE.Group();
   const t = 0.06;
   // Flush with the floor (a touch proud of it, so it reads as a hatch), or with the ceiling.
-  lid.add(mesh(new THREE.BoxGeometry(w - 0.02, t, d - 0.02), toon(down ? '#2e3138' : '#3a3129'), -w / 2, down ? t / 2 : -t / 2 + 0.012, 0, false));
+  lid.add(mesh(new THREE.BoxGeometry(w - 0.02, t, d - 0.02), toon(down ? '#6a6a6a' : '#808080'), -w / 2, down ? t / 2 : -t / 2 + 0.012, 0, false));
   // A frame round it, and a ring to pull it by, on the side you see.
-  const rim = toon(down ? '#22252b' : '#241f1a');
+  const rim = toon(down ? '#535353' : '#a6a6a6');
   const y = down ? -0.012 : 0.022;
   for (const s of [-1, 1]) {
     lid.add(mesh(new THREE.BoxGeometry(w - 0.02, 0.025, 0.05), rim, -w / 2, y, (s * (d - 0.07)) / 2, false));
     lid.add(mesh(new THREE.BoxGeometry(0.05, 0.025, d - 0.02), rim, -w / 2 + (s * (w - 0.07)) / 2, y, 0, false));
   }
-  const ring = mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 16), toon('#adb5bd'), -w + 0.16, down ? -0.02 : 0.03, 0, false);
+  const ring = mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 16), toon('#eaeaea'), -w + 0.16, down ? -0.02 : 0.03, 0, false);
   ring.rotation.x = Math.PI / 2;
   lid.add(ring);
   pivot.add(lid);
@@ -252,21 +260,23 @@ export interface Stack {
 export function buildStack(colliders: Collider[], planks: THREE.Material): Stack {
   const group = new THREE.Group();
   const B = { minX: FLOOR.minX - WALL_T, maxX: FLOOR.maxX + WALL_T, minZ: FLOOR.minZ - WALL_T, maxZ: FLOOR.maxZ + WALL_T };
-  const concrete = toon('#d3d6dd');
-  const band = toon('#e8a87c');
+  const concrete = toon('#a9a9a9');
+  const band = toon('#a6a6a6');
   // Big flat surfaces get no cartoon outline, as the floor never has.
   planks.userData.outlineParameters = { visible: false };
   const tiles = toon('#ffffff').clone();
   tiles.userData.outlineParameters = { visible: false };
   tiles.map = tileTexture();
   // Lit from below by the room's lamps, not left in the shade the sun would give it.
-  tiles.emissive = new THREE.Color('#3a3d44');
+  tiles.emissive = new THREE.Color('#3a3a3a');
   tiles.emissiveMap = tiles.map;
   const ceilingMat = tiles;
-  const brass = toon('#f2c14e', { emissive: '#3a2a00' });
-  const red = toon('#e63946');
-  const steel = toon('#ffd166');
-  const rungMat = toon('#e09f3e');
+  // Brushed steel for the poles and their caps, black for the rails, and the ladder in steel with
+  // orange rungs' worth of signal kept to its hazard stripe on the floor.
+  const chrome = toon('#eeeeee', { emissive: '#565656' });
+  const rail = toon('#808080');
+  const steel = toon('#c0c0c0');
+  const rungMat = toon('#eaeaea');
 
   /** What set() builds, to take down again next time. */
   let built: THREE.Object3D[] = [];
@@ -296,7 +306,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   // A stripe of hazard paint on the floor in front of it.
   const stripe = new THREE.Group();
   for (let i = 0; i < 5; i++) {
-    const s = mesh(new THREE.PlaneGeometry(0.1, 0.34), toon(i % 2 ? '#2b2d42' : '#ffd166'), LADDER.hatch.maxX + 0.08, 0.006, LADDER.z - 0.4 + i * 0.2, false);
+    const s = mesh(new THREE.PlaneGeometry(0.1, 0.34), toon(i % 2 ? '#484848' : ACCENT), LADDER.hatch.maxX + 0.08, 0.006, LADDER.z - 0.4 + i * 0.2, false);
     s.rotation.x = -Math.PI / 2;
     s.rotation.z = 0.6;
     stripe.add(s);
@@ -325,17 +335,17 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   const poles: PoleView[] = POLES.map((spot, index) => {
     const g = new THREE.Group();
     const r = POLE.radius;
-    g.add(mesh(new THREE.CylinderGeometry(r, r, WALL_HEIGHT, 14), brass, spot.x, WALL_HEIGHT / 2, spot.z, false));
-    const below = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), brass, spot.x, -1.15, spot.z, false);
-    const above = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), brass, spot.x, WALL_HEIGHT + 1.15, spot.z, false);
+    g.add(mesh(new THREE.CylinderGeometry(r, r, WALL_HEIGHT, 14), chrome, spot.x, WALL_HEIGHT / 2, spot.z, false));
+    const below = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, -1.15, spot.z, false);
+    const above = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, WALL_HEIGHT + 1.15, spot.z, false);
     g.add(below, above);
 
-    // Going down: a railing round three sides of the hole, red with brass caps, open on the fourth.
+    // Going down: a railing round three sides of the hole, rail with chrome caps, open on the fourth.
     const down = new THREE.Group();
     const half = POLE.rail;
     const post = (x: number, z: number) => {
-      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), red, x, RAIL_TOP / 2, z, false));
-      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), brass, x, RAIL_TOP + 0.03, z, false));
+      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), rail, x, RAIL_TOP / 2, z, false));
+      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), chrome, x, RAIL_TOP + 0.03, z, false));
     };
     // The sides, as [dx0, dz0, dx1, dz1] from the pole, turned so the open one faces `open`.
     const c = Math.round(Math.cos(spot.open));
@@ -351,7 +361,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       const [x1, z1] = turn(bx, bz);
       const len = Math.hypot(x1 - x0, z1 - z0);
       for (const y of [RAIL_TOP, RAIL_TOP * 0.55]) {
-        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? brass : red, (x0 + x1) / 2, y, (z0 + z1) / 2, false);
+        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? chrome : rail, (x0 + x1) / 2, y, (z0 + z1) / 2, false);
         bar.rotation.z = Math.PI / 2;
         bar.rotation.y = -Math.atan2(z1 - z0, x1 - x0);
         down.add(bar);
@@ -360,25 +370,25 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       post(x1, z1);
     }
     // The rim of the hole.
-    const rim = mesh(new THREE.TorusGeometry(POLE.hole, 0.035, 6, 32), toon('#2b2d42'), spot.x, 0.005, spot.z, false);
+    const rim = mesh(new THREE.TorusGeometry(POLE.hole, 0.035, 6, 32), toon(ACCENT), spot.x, 0.005, spot.z, false);
     rim.rotation.x = Math.PI / 2;
     down.add(rim);
     g.add(down);
     const downShaft = shaft('round', POLE.hole, 0, -2.3, spot);
     g.add(downShaft);
-    // At the top, a brass flange where it's bolted to the ceiling.
-    const flange = mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.08, 16), brass, spot.x, WALL_HEIGHT - 0.04, spot.z, false);
+    // At the top, a steel flange where it's bolted to the ceiling.
+    const flange = mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.08, 16), chrome, spot.x, WALL_HEIGHT - 0.04, spot.z, false);
     g.add(flange);
 
-    // At the bottom, a fat landing mat.
+    // At the bottom, a fat black landing mat with an orange ring to aim for.
     const landing = new THREE.Group();
-    landing.add(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.07, 32), red, spot.x, 0.035, spot.z, false));
-    const ring = mesh(new THREE.TorusGeometry(0.62, 0.05, 8, 32), toon('#ffd166'), spot.x, 0.07, spot.z, false);
+    landing.add(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.07, 24), rail, spot.x, 0.035, spot.z, false));
+    const ring = mesh(new THREE.TorusGeometry(0.62, 0.025, 4, 24), toon(ACCENT), spot.x, 0.07, spot.z, false);
     ring.rotation.x = Math.PI / 2;
     landing.add(ring);
     g.add(landing);
-    // Coming down from above: a brass collar round the hole it comes out of.
-    const collar = mesh(new THREE.TorusGeometry(POLE.hole, 0.06, 8, 32), brass, spot.x, WALL_HEIGHT - 0.02, spot.z, false);
+    // Coming down from above: a steel collar round the hole it comes out of.
+    const collar = mesh(new THREE.TorusGeometry(POLE.hole, 0.06, 8, 32), chrome, spot.x, WALL_HEIGHT - 0.02, spot.z, false);
     collar.rotation.x = Math.PI / 2;
     g.add(collar);
     const upShaft = shaft('round', POLE.hole, WALL_HEIGHT, WALL_HEIGHT + 2.3, spot);

@@ -3,9 +3,24 @@ import { ANISOTROPY } from './texture-quality';
 import { MEETING_PATTERNS, meetingSummary } from '../../shared/meetings';
 import { fmtCost, fmtTokens, type Meeting, type MeetingState } from '../../shared/protocol';
 import { SANS, MONO } from '../fonts';
+import { paintGlyph, plainLabel, track } from './toon';
 
 const INK = '#eeeeee';
 const MUTED = '#8c8c8c';
+const ORANGE = '#ee6018';
+const HAIR = 'rgba(255, 255, 255, .12)';
+/** A meeting's status light: orange while it's live, green once done, red when stopped. */
+const STATUS = { running: ORANGE, done: '#3ccf91', stopped: '#ef4444' } as const;
+
+/** The eyebrow both screens carry: the pinwheel and MISSION CONTROL in tracked mono. */
+function eyebrow(g: CanvasRenderingContext2D, x: number, y: number, px: number) {
+  g.fillStyle = ORANGE;
+  paintGlyph(g, x + px * 0.5, y - px * 0.36, px * 1.05);
+  g.font = `600 ${px}px ${MONO}`;
+  track(g, px * 0.16);
+  g.fillText('MISSION CONTROL', x + px * 1.5, y);
+  track(g, 0);
+}
 
 function canvasTexture(w: number, h: number): { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; texture: THREE.CanvasTexture } {
   const canvas = document.createElement('canvas');
@@ -69,35 +84,41 @@ export class MeetingBoardTexture {
     const { g } = this;
     const W = this.canvas.width;
     const H = this.canvas.height;
-    g.fillStyle = '#0a0a0a';
+    g.fillStyle = '#050505';
     g.fillRect(0, 0, W, H);
     const m = state.current;
     g.textBaseline = 'alphabetic';
     if (!m) {
-      g.fillStyle = INK;
-      g.textAlign = 'center';
-      g.font = `700 56px ${SANS}`;
-      g.fillText('🤝 The meeting room is free', W / 2, H / 2 - 10);
-      g.font = `500 34px ${SANS}`;
-      g.fillStyle = MUTED;
-      g.fillText('Press E at the table to call a meeting: whatever it writes shows up here.', W / 2, H / 2 + 50);
       g.textAlign = 'left';
+      eyebrow(g, 60, 92, 26);
+      g.fillStyle = HAIR;
+      g.fillRect(60, 122, W - 120, 2);
+      g.fillStyle = INK;
+      g.font = `600 64px ${SANS}`;
+      g.fillText('The table is free', 60, 250);
+      g.font = `500 28px ${MONO}`;
+      g.fillStyle = MUTED;
+      g.fillText('Press E at the table to call a meeting: whatever it writes shows up here.', 60, 320);
       this.texture.needsUpdate = true;
       return;
     }
     const p = MEETING_PATTERNS[m.pattern];
-    // Across the top: the file, and where the meeting is, on a tinted band with an accent edge.
-    g.fillStyle = m.status === 'stopped' ? 'rgba(239, 68, 68, .12)' : m.status === 'done' ? 'rgba(60, 207, 145, .12)' : 'rgba(90, 169, 230, .1)';
+    // Across the top: the file, and where the meeting is, over a hairline with a status light.
+    g.fillStyle = '#0c0c0c';
     g.fillRect(0, 0, W, 70);
-    g.fillStyle = m.status === 'stopped' ? '#ef4444' : m.status === 'done' ? '#3ccf91' : '#5aa9e6';
-    g.fillRect(0, 0, 8, 70);
-    g.fillStyle = '#ee6018';
-    g.font = `600 36px ${MONO}`;
-    g.fillText(`📄 ${m.output}`, 24, 48);
-    g.font = `500 30px ${SANS}`;
+    g.fillStyle = HAIR;
+    g.fillRect(0, 70, W, 2);
+    g.fillStyle = STATUS[m.status];
+    g.fillRect(24, 28, 14, 14);
+    g.fillStyle = INK;
+    g.font = `600 32px ${MONO}`;
+    g.fillText(m.output, 54, 47);
+    g.font = `500 22px ${MONO}`;
+    track(g, 2);
     g.fillStyle = MUTED;
     g.textAlign = 'right';
-    g.fillText(`${p.icon} ${p.label} · ${m.status === 'running' ? meetingStage(m) : m.status === 'done' ? '✅ done' : '⛔ stopped'}`, W - 24, 48);
+    g.fillText(`${plainLabel(p.label).toUpperCase()} · ${m.status === 'running' ? meetingStage(m).toUpperCase() : m.status === 'done' ? 'DONE' : 'STOPPED'}`, W - 24, 46);
+    track(g, 0);
     g.textAlign = 'left';
 
     const text = (m.preview ?? '').replace(/\r/g, '');
@@ -105,7 +126,7 @@ export class MeetingBoardTexture {
       g.fillStyle = '#8c8c8c';
       g.font = `500 42px ${SANS}`;
       g.textAlign = 'center';
-      g.fillText(m.status === 'running' ? `Nothing written yet: ${speaking(m).join(', ') || 'the table'} ${speaking(m).length === 1 ? 'is' : 'are'} on it` : m.reason ? `⛔ ${m.reason}` : 'Nothing was written', W / 2, H / 2 + 30);
+      g.fillText(m.status === 'running' ? `Nothing written yet: ${speaking(m).join(', ') || 'the table'} ${speaking(m).length === 1 ? 'is' : 'are'} on it` : (m.reason ?? 'Nothing was written'), W / 2, H / 2 + 30);
       g.textAlign = 'left';
       this.texture.needsUpdate = true;
       return;
@@ -166,41 +187,48 @@ export class MeetingSignTexture {
       }
       return y;
     };
-    g.fillStyle = !m ? '#0a0a0a' : m.status === 'running' ? '#10141a' : m.status === 'done' ? '#0f1a13' : '#1f0d0f';
-    g.fillRect(0, 0, W, H);
-    g.textBaseline = 'alphabetic';
-    // A strip across the top says whether the room is taken.
-    const [strip, label] = !m ? ['#3ccf91', '● FREE'] : m.status === 'running' ? ['#f2b84b', '● IN A MEETING'] : m.status === 'done' ? ['#8ae65c', '✅ DONE'] : ['#f27e93', '⛔ STOPPED'];
-    g.fillStyle = strip;
-    g.fillRect(0, 0, W, 78);
     g.fillStyle = '#0a0a0a';
-    g.font = `700 34px ${SANS}`;
-    g.fillText(label, pad, 53);
+    g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(255, 255, 255, .18)';
+    g.lineWidth = 3;
+    g.strokeRect(1.5, 1.5, W - 3, H - 3);
+    g.textBaseline = 'alphabetic';
+    // A status light and a word across the top say whether the room is taken.
+    const [light, label] = !m ? ['#3ccf91', 'FREE'] : m.status === 'running' ? [ORANGE, 'IN SESSION'] : m.status === 'done' ? ['#3ccf91', 'DONE'] : ['#ef4444', 'STOPPED'];
+    g.fillStyle = light;
+    g.fillRect(pad, 34, 18, 18);
+    g.font = `600 30px ${MONO}`;
+    track(g, 4);
+    g.fillText(label, pad + 34, 54);
+    track(g, 0);
+    g.fillStyle = HAIR;
+    g.fillRect(0, 84, W, 2);
+    eyebrow(g, pad, 136, 20);
     if (!m) {
-      const y = lines('🤝 Meeting room', `700 46px ${SANS}`, '#eeeeee', 160, 2, 58);
-      lines('Press E at the table to call a meeting: a debate, lead & team, map-reduce, red / blue or a review panel.', `500 30px ${SANS}`, '#c9c9c9', y + 30, 8, 42);
+      const y = lines('The table is free', `600 46px ${SANS}`, '#eeeeee', 210, 2, 56);
+      lines('Press E at the table to call a meeting: a debate, lead & team, map-reduce, red / blue or a review panel.', `500 26px ${MONO}`, MUTED, y + 30, 9, 38);
       this.texture.needsUpdate = true;
       return;
     }
     const p = MEETING_PATTERNS[m.pattern];
-    let y = lines(`${p.icon} ${p.label}`, `600 30px ${SANS}`, '#ee6018', 130, 1, 40);
+    let y = lines(plainLabel(p.label).toUpperCase(), `600 26px ${MONO}`, MUTED, 186, 1, 36);
     y = lines(m.title, `700 42px ${SANS}`, '#eeeeee', y + 16, 3, 50);
     y += 18;
     if (m.status === 'running') {
       y = lines(meetingStage(m), `500 30px ${SANS}`, '#c9c9c9', y, 3, 40);
       const who = speaking(m);
-      if (who.length) lines(`💬 ${who.join(', ')}`, `500 28px ${SANS}`, '#8fc0ea', y + 8, 3, 38);
+      if (who.length) lines(`> ${who.join(', ')}`, `500 26px ${MONO}`, ORANGE, y + 8, 3, 36);
       // The budget, as a bar that fills up, and what's been spent.
       const f = Math.min(1, m.tokens / Math.max(1, m.budget));
       const barY = H - 118;
-      g.fillStyle = 'rgba(255, 255, 255, .14)';
+      g.fillStyle = '#1c1c1c';
       g.fillRect(pad, barY, W - 2 * pad, 20);
-      g.fillStyle = f > 0.9 ? '#ef4444' : f > 0.7 ? '#f2b84b' : '#3ccf91';
+      g.fillStyle = f > 0.9 ? '#ef4444' : f > 0.7 ? '#f2b84b' : ORANGE;
       g.fillRect(pad, barY, (W - 2 * pad) * f, 20);
       g.fillStyle = '#eeeeee';
-      g.font = `500 28px ${SANS}`;
-      g.fillText(`${fmtTokens(m.tokens)} of ${fmtTokens(m.budget)} tokens`, pad, H - 58);
-      g.font = `500 26px ${SANS}`;
+      g.font = `500 26px ${MONO}`;
+      g.fillText(`${fmtTokens(m.tokens)} / ${fmtTokens(m.budget)} TOKENS`, pad, H - 58);
+      g.font = `500 24px ${MONO}`;
       g.fillStyle = '#c9c9c9';
       if (m.cost > 0) g.fillText(`${fmtCost(m.cost)}${m.costKnown ? '' : '+'} so far`, pad, H - 22);
     } else {

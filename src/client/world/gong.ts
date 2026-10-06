@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { GONG } from '../../shared/layout';
-import { mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
+import { mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from './toon';
 import type { Collider, Interactable } from './office';
 
-// The gong: a brass disc hung in a red lacquered frame, next to the PR board. It rings when a pull
-// request merges, and anyone can walk up and hit it.
+// The gong: a steel disc hung in a black steel frame, next to the PR board. It rings when a pull
+// request merges, and anyone can walk up and hit it; struck, it flashes orange.
 
-const BRASS = '#e9b949';
-const LACQUER = '#b23a48';
-const INK = '#2b2d42';
+const BRASS = '#e5e5e5';
+const LACQUER = '#727272';
+const INK = '#484848';
+const ACCENT = '#ee6018';
 
 export interface Gong {
   group: THREE.Group;
@@ -30,20 +31,19 @@ export function buildGong(): Gong {
   const ink = toon(INK);
   const half = width / 2;
 
-  // The frame: two posts on feet, a beam across the top with its ends turned up, a rail below it.
+  // The frame: two square steel posts on base plates, a beam across the top capped at both ends, and
+  // a rail below it. Merged: none of it moves.
+  const frame = new THREE.Group();
   for (const sx of [-half, half]) {
-    group.add(mesh(new THREE.CylinderGeometry(0.07, 0.08, height, 10), lacquer, sx, height / 2, 0));
-    group.add(mesh(roundedBox(0.2, 0.12, 0.6, 0.04), ink, sx, 0.06, 0));
-    group.add(mesh(new THREE.SphereGeometry(0.09, 10, 8), toon(BRASS), sx, height + 0.08, 0, false));
+    frame.add(mesh(new THREE.BoxGeometry(0.12, height, 0.12), lacquer, sx, height / 2, 0));
+    frame.add(mesh(roundedBox(0.24, 0.05, 0.6, 0.01), ink, sx, 0.025, 0));
+    frame.add(mesh(new THREE.BoxGeometry(0.16, 0.03, 0.16), ink, sx, height + 0.015, 0, false));
   }
-  group.add(mesh(roundedBox(width + 0.5, 0.16, 0.18, 0.05), lacquer, 0, height - 0.08, 0));
-  for (const sx of [-1, 1]) {
-    const tip = mesh(roundedBox(0.3, 0.1, 0.18, 0.04), lacquer, sx * (half + 0.33), height + 0.02, 0, false);
-    tip.rotation.z = sx * 0.45;
-    group.add(tip);
-  }
-  group.add(mesh(new THREE.BoxGeometry(width, 0.07, 0.08), ink, 0, height - 0.32, 0, false));
-  const plaque = textPlane('🎉 Merge gong', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 48 });
+  frame.add(mesh(new THREE.BoxGeometry(width + 0.4, 0.16, 0.16), lacquer, 0, height - 0.08, 0));
+  for (const sx of [-1, 1]) frame.add(mesh(new THREE.BoxGeometry(0.02, 0.18, 0.18), ink, sx * (half + 0.21), height - 0.08, 0, false));
+  frame.add(mesh(new THREE.BoxGeometry(width, 0.07, 0.08), ink, 0, height - 0.32, 0, false));
+  group.add(mergeByMaterial(frame));
+  const plaque = textPlane('MERGE GONG', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 48 });
   plaque.scale.multiplyScalar(0.5);
   plaque.position.set(0, height - 0.08, 0.1);
   group.add(plaque);
@@ -55,14 +55,14 @@ export function buildGong(): Gong {
   const R = 0.62;
   const drop = 1.02;
   const brass = toonUnique(BRASS);
-  brass.emissive = new THREE.Color('#ffb703');
+  brass.emissive = new THREE.Color(ACCENT);
   brass.emissiveIntensity = 0;
   const disc = new THREE.Group();
   disc.position.y = -drop;
   pivot.add(disc);
-  disc.add(mesh(new THREE.CylinderGeometry(R, R, 0.05, 40).rotateX(Math.PI / 2), brass, 0, 0, 0));
-  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 8, 40), brass, 0, 0, 0, false));
-  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 6, 32), toon('#c9952c'), 0, 0, 0.03, false));
+  disc.add(mesh(new THREE.CylinderGeometry(R, R, 0.05, 32).rotateX(Math.PI / 2), brass, 0, 0, 0));
+  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 6, 32), brass, 0, 0, 0, false));
+  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 4, 32), toon('#c0c0c0'), 0, 0, 0.03, false));
   const boss = mesh(new THREE.SphereGeometry(0.16, 16, 12), brass, 0, 0, 0.02, false);
   boss.scale.z = 0.45;
   disc.add(boss);
@@ -74,14 +74,15 @@ export function buildGong(): Gong {
 
   // The mallet leans against the right post.
   const mallet = new THREE.Group();
-  mallet.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 6), toon('#8a5a3b'), 0, 0.45, 0, false));
-  mallet.add(mesh(new THREE.SphereGeometry(0.1, 12, 10), toon('#ef476f'), 0, 0.92, 0, false));
+  mallet.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 6), ink, 0, 0.45, 0, false));
+  mallet.add(mesh(new THREE.SphereGeometry(0.1, 10, 8), toon('#808080'), 0, 0.92, 0, false));
+  mallet.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 6), toon(ACCENT), 0, 0.8, 0, false));
   mallet.position.set(half + 0.18, 0, 0.12);
   mallet.rotation.z = 0.22;
   group.add(mallet);
 
   // A ring of sound spreading out from the disc when it's struck.
-  const waveMat = new THREE.MeshBasicMaterial({ color: '#ffe08a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
+  const waveMat = new THREE.MeshBasicMaterial({ color: '#ef6f2e', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
   const wave = new THREE.Mesh(new THREE.RingGeometry(R * 0.95, R * 1.08, 40), waveMat);
   wave.position.set(0, pivot.position.y - drop, 0.08);
   wave.visible = false;

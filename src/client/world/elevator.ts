@@ -1,14 +1,20 @@
 import * as THREE from 'three';
 import { ELEVATOR, ELEVATOR_CAR, ELEVATOR_FRONT, FLOOR, WALL_HEIGHT } from '../../shared/layout';
-import { mesh, roundedBox, textPlane, toon } from './toon';
+import { mesh, plainLabel, roundedBox, textPlane, toon } from './toon';
 import type { Collider, Interactable } from './office';
 
 // The elevator: a steel shaft against the north wall, doors facing into the room. Every floor has
 // it in the same place; riding it swaps the floor around you while the doors are shut.
 
-const STEEL = '#5b6068';
-const STEEL_DARK = '#3f444c';
-const BRASS = '#e9b949';
+// Graphite and steel like the rest of the factory floor, with Factory orange only where something is lit.
+const STEEL = '#2a2a2a';
+const STEEL_DARK = '#161616';
+const TRIM = '#3a3a3a';
+const DOOR = '#8c8c8c';
+const KEY = '#1c1c1c';
+const KEY_HERE = '#ee6018';
+/** The floor indicator over the doors: its dark display. */
+const INDICATOR = '#020202';
 export interface Elevator {
   group: THREE.Group;
   /** What stops you walking out through shut doors. Part of the office's colliders. */
@@ -36,7 +42,7 @@ export function buildElevator(): Elevator {
   const midZ = (back + front) / 2;
   const steel = toon(STEEL);
   const steelDark = toon(STEEL_DARK);
-  const brass = toon(BRASS);
+  const trim = toon(TRIM);
 
   // Side walls, the whole height of the room.
   for (const sx of [minX + wall / 2, maxX - wall / 2]) {
@@ -54,30 +60,30 @@ export function buildElevator(): Elevator {
   }
   const header = WALL_HEIGHT - doorHeight;
   group.add(mesh(new THREE.BoxGeometry(doorWidth, header, wall), steel, x, doorHeight + header / 2, front - wall / 2));
-  // A brass frame round the doorway, and a kick plate along the bottom of the shaft.
+  // A steel frame round the doorway, and a kick plate along the bottom of the shaft.
   const frameT = 0.08;
-  group.add(mesh(new THREE.BoxGeometry(doorWidth + frameT * 2, frameT, 0.05), brass, x, doorHeight + frameT / 2, front + 0.02, false));
-  for (const sx of [-1, 1]) group.add(mesh(new THREE.BoxGeometry(frameT, doorHeight, 0.05), brass, x + sx * (doorWidth / 2 + frameT / 2), doorHeight / 2, front + 0.02, false));
+  group.add(mesh(new THREE.BoxGeometry(doorWidth + frameT * 2, frameT, 0.05), trim, x, doorHeight + frameT / 2, front + 0.02, false));
+  for (const sx of [-1, 1]) group.add(mesh(new THREE.BoxGeometry(frameT, doorHeight, 0.05), trim, x + sx * (doorWidth / 2 + frameT / 2), doorHeight / 2, front + 0.02, false));
   group.add(mesh(new THREE.BoxGeometry(width + 0.02, 0.25, wall + 0.04), steelDark, x, 0.125, front - wall / 2, false));
 
   // Inside: a dark floor, a mirror on the back wall, handrails, a strip light over the doors.
   const inW = ELEVATOR_CAR.maxX - ELEVATOR_CAR.minX;
   const inD = ELEVATOR_CAR.maxZ - ELEVATOR_CAR.minZ;
-  const carFloor = mesh(new THREE.BoxGeometry(inW, 0.02, inD), toon('#3d405b'), x, 0.012, (ELEVATOR_CAR.minZ + ELEVATOR_CAR.maxZ) / 2, false);
+  const carFloor = mesh(new THREE.BoxGeometry(inW, 0.02, inD), toon('#101010'), x, 0.012, (ELEVATOR_CAR.minZ + ELEVATOR_CAR.maxZ) / 2, false);
   group.add(carFloor);
-  for (let i = 1; i < 4; i++) group.add(mesh(new THREE.BoxGeometry(inW, 0.024, 0.03), toon('#565a75'), x, 0.013, ELEVATOR_CAR.minZ + (i * inD) / 4, false));
-  const mirror = mesh(new THREE.PlaneGeometry(inW - 0.3, 1.5), new THREE.MeshBasicMaterial({ color: '#cfe8f5' }), x, 1.55, back + 0.02, false);
+  for (let i = 1; i < 4; i++) group.add(mesh(new THREE.BoxGeometry(inW, 0.024, 0.03), toon('#2a2a2a'), x, 0.013, ELEVATOR_CAR.minZ + (i * inD) / 4, false));
+  const mirror = mesh(new THREE.PlaneGeometry(inW - 0.3, 1.5), new THREE.MeshBasicMaterial({ color: '#5d6266' }), x, 1.55, back + 0.02, false);
   group.add(mirror);
   for (const [gx, gw] of [
     [-0.4, 0.14],
     [-0.15, 0.06],
   ]) {
-    const glint = mesh(new THREE.PlaneGeometry(gw, 1.1), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5 }), x + gx, 1.6, back + 0.03, false);
+    const glint = mesh(new THREE.PlaneGeometry(gw, 1.1), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.18 }), x + gx, 1.6, back + 0.03, false);
     glint.rotation.z = -0.45;
     group.add(glint);
   }
   const rail = (len: number, px: number, pz: number, alongX: boolean) => {
-    const r = mesh(new THREE.CylinderGeometry(0.025, 0.025, len, 8), brass, px, 0.95, pz, false);
+    const r = mesh(new THREE.CylinderGeometry(0.025, 0.025, len, 8), toon(DOOR), px, 0.95, pz, false);
     r.rotation.z = alongX ? Math.PI / 2 : 0;
     r.rotation.x = alongX ? 0 : Math.PI / 2;
     group.add(r);
@@ -85,14 +91,14 @@ export function buildElevator(): Elevator {
   rail(inW - 0.2, x, back + 0.08, true);
   rail(inD - 0.5, ELEVATOR_CAR.minX + 0.06, midZ - 0.1, false);
   rail(inD - 0.5, ELEVATOR_CAR.maxX - 0.06, midZ - 0.1, false);
-  group.add(mesh(new THREE.BoxGeometry(inW - 0.2, 0.06, 0.16), toon('#fff7d6', { emissive: '#ffe08a' }), x, doorHeight + 0.35, front - wall - 0.1, false));
+  group.add(mesh(new THREE.BoxGeometry(inW - 0.2, 0.06, 0.16), toon('#eeeeee', { emissive: '#d8d4cc' }), x, doorHeight + 0.35, front - wall - 0.1, false));
 
   // The button panel inside, by the doors on the right as you face out (the west wall).
   const panelIn = new THREE.Group();
   panelIn.add(mesh(roundedBox(0.04, 0.7, 0.32, 0.02), steelDark, 0, 0, 0, false));
   for (let row = 0; row < 4; row++) {
     for (const col of [-1, 1]) {
-      const b = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 12), toon('#fff7d6', { emissive: row === 0 && col === 1 ? '#ffb400' : '#6c7288' }), -0.03, 0.22 - row * 0.15, col * 0.07, false);
+      const b = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 12), toon(KEY, { emissive: row === 0 && col === 1 ? KEY_HERE : '#2a2a2a' }), -0.03, 0.22 - row * 0.15, col * 0.07, false);
       b.rotation.z = Math.PI / 2;
       panelIn.add(b);
     }
@@ -103,9 +109,9 @@ export function buildElevator(): Elevator {
 
   // The call button outside, on the right-hand pillar.
   const call = new THREE.Group();
-  call.add(mesh(roundedBox(0.2, 0.36, 0.04, 0.02), brass, 0, 0, 0, false));
+  call.add(mesh(roundedBox(0.2, 0.36, 0.04, 0.01), trim, 0, 0, 0, false));
   const arrow = (up: boolean) => {
-    const a = mesh(new THREE.ConeGeometry(0.045, 0.06, 3), toon('#fff7d6', { emissive: up ? '#7cf29a' : '#6c7288' }), 0, up ? 0.07 : -0.07, 0.03, false);
+    const a = mesh(new THREE.ConeGeometry(0.045, 0.06, 3), toon(up ? KEY_HERE : '#3a3a3a', { emissive: up ? KEY_HERE : '#1c1c1c' }), 0, up ? 0.07 : -0.07, 0.03, false);
     if (!up) a.rotation.z = Math.PI;
     call.add(a);
   };
@@ -117,7 +123,7 @@ export function buildElevator(): Elevator {
   // The doors: two steel panels that slide apart behind the pillars.
   const half = doorWidth / 2 + 0.02;
   const doorZ = front - wall - 0.03;
-  const doorMat = toon('#d9dee4');
+  const doorMat = toon(DOOR);
   const doors = [-1, 1].map((side) => {
     const d = new THREE.Group();
     d.add(mesh(new THREE.BoxGeometry(half, doorHeight - 0.02, 0.05), doorMat, 0, 0, 0));
@@ -140,7 +146,11 @@ export function buildElevator(): Elevator {
       sign.material.dispose();
       sign.geometry.dispose();
     }
-    sign = textPlane(text, { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
+    // A floor readout: an orange arrow, then the floor's name in tracked mono.
+    const name = plainLabel(text);
+    // "FLOOR" names a project's floor; the lobby, the roof and "Pick a floor" say what they are.
+    const kicker = /floor|lobby|roof/i.test(name) ? undefined : 'FLOOR';
+    sign = textPlane(name, { bg: INDICATOR, color: '#eeeeee', size: 64, border: '#2e2e2e', index: '\u25B2', kicker });
     const { width: sw } = sign.geometry.parameters;
     // As big as fits over the doors.
     sign.scale.multiplyScalar(Math.min(1.6, (width + 0.6) / sw));

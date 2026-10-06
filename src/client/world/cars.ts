@@ -80,18 +80,18 @@ function extrude(shape: THREE.Shape, width: number, bevel: number): THREE.Buffer
 }
 
 /**
- * A cartoon supercar, nose toward +z, wheels on y = 0. A Lambo is a lime, orange or yellow wedge
- * with a wing; a Ferrari is curvy, round taillights and a yellow badge.
+ * A cartoon supercar, nose toward +z, wheels on y = 0. A Lambo is a wedge with a wing and dark
+ * rims; a Ferrari is curvy, with round taillights, steel rims and an orange badge.
  */
 export function supercar(kind: CarKind, color: string): THREE.Group {
   const g = new THREE.Group();
   const paint = toon(color);
-  const glass = toon('#233347');
-  const tire = toon('#1f1f26');
-  const rim = toon(kind === 'lambo' ? '#e9b949' : '#d9dbe3');
-  const lamp = toon('#fff6c9', { emissive: '#b8a960' });
+  const glass = toon('#101215');
+  const tire = toon('#111111');
+  const rim = toon(kind === 'lambo' ? '#5a5a5a' : '#a6a6a6');
+  const lamp = toon('#f4efe4', { emissive: '#b8b0a0' });
   const tail = toon('#ff2d3f', { emissive: '#a3001a' });
-  const dark = toon('#2b2d42');
+  const dark = toon('#141414');
   const { body, cabin, axle } = profiles(kind);
   g.add(mesh(extrude(body, WIDTH, 0.05), paint));
   g.add(mesh(extrude(cabin, 1.42, 0.03), glass));
@@ -124,9 +124,9 @@ export function supercar(kind: CarKind, color: string): THREE.Group {
       g.add(head);
       for (const off of [0.28, 0.62]) g.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.05, 12).rotateX(Math.PI / 2), tail, sx * off, 0.62, -L + 0.18));
       // The badge on each flank.
-      g.add(mesh(new THREE.BoxGeometry(0.02, 0.12, 0.09), toon('#ffd400'), sx * (WIDTH / 2 + 0.03), 0.6, 0.9));
+      g.add(mesh(new THREE.BoxGeometry(0.02, 0.12, 0.09), toon('#ee6018'), sx * (WIDTH / 2 + 0.03), 0.6, 0.9));
     }
-    g.add(mesh(new THREE.BoxGeometry(0.1, 0.12, 0.03), toon('#ffd400'), 0, 0.46, L - 0.04));
+    g.add(mesh(new THREE.BoxGeometry(0.1, 0.12, 0.03), toon('#ee6018'), 0, 0.46, L - 0.04));
     g.add(mesh(new THREE.BoxGeometry(0.9, 0.1, 0.05), dark, 0, 0.3, L - 0.06));
   }
   return mergeByMaterial(g);

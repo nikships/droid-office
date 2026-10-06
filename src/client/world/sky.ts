@@ -275,19 +275,20 @@ const ease = (x: number, to: number, dt: number, secs: number) => x + (to - x) *
 /** Cyberpunk night: a violet-black sky, a magenta haze over the town, and hardly any light in the building. */
 const C = {
   dusk: new THREE.Color('#ffb48c'),
-  night: new THREE.Color('#0a0720'),
-  greyNight: new THREE.Color('#110a1f'),
+  // Midnight over the factory: near-black with the least cool cast, not purple.
+  night: new THREE.Color('#07080b'),
+  greyNight: new THREE.Color('#0f1013'),
   // Lit from below by the town, so it still reads as fog at night.
-  fogNight: new THREE.Color('#2c1345'),
+  fogNight: new THREE.Color('#1d1e22'),
   flash: new THREE.Color('#e4e9ff'),
-  moon: new THREE.Color('#8f9cff'),
-  hemiSkyNight: new THREE.Color('#2b2a6b'),
-  hemiGroundNight: new THREE.Color('#1a0d2c'),
-  ambientNight: new THREE.Color('#5a4a9c'),
+  moon: new THREE.Color('#9aa4c4'),
+  hemiSkyNight: new THREE.Color('#33353f'),
+  hemiGroundNight: new THREE.Color('#161616'),
+  ambientNight: new THREE.Color('#56586a'),
   white: new THREE.Color('#ffffff'),
-  // The faint neon fill in the office, and in the garage.
-  officeNight: new THREE.Color('#3b2a8c'),
-  garage: new THREE.Color('#1f3a5c'),
+  // The faint fill in the office, and in the garage: graphite, so the room keeps its own colors.
+  officeNight: new THREE.Color('#383a46'),
+  garage: new THREE.Color('#3a3c42'),
   cloudGrey: new THREE.Color('#a3abb6'),
   /** What a laptop screen throws on the desk around it. */
   screen: new THREE.Color('#6fdcff'),

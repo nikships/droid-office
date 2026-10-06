@@ -6,37 +6,92 @@ import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../sha
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
+import { paintGlyph, track } from './toon';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
 const BOARD_W = 1200;
 const BOARD_H = 600;
 
-// The Factory-style world surfaces: near-black panels, light text, orange accents (see ui/boards'
-// constants in style.css). The board's cards all read as one family; the marker squares vary.
-export const NOTE_COLORS = ['#161616', '#15181c', '#17151a', '#141618', '#16161a'];
-export const PINS = ['#ee6018', '#5aa9e6', '#3ccf91', '#f2b84b'];
+// Factory product UI on the wall: a near-black screen, raised panels with hairline edges and square
+// corners, mono uppercase labels, orange only for indexes and what's live, green and red only for status.
+const BG = '#050505';
+const PANEL = '#101010';
+const PANEL_HOT = '#181818';
+const HAIR = 'rgba(255, 255, 255, .1)';
+const HAIR_STRONG = 'rgba(255, 255, 255, .18)';
+const INK = '#eeeeee';
+const MUTED = '#8c8c8c';
+const FAINT = 'rgba(255, 255, 255, .32)';
+const ORANGE = '#ee6018';
+const GREEN = '#3ccf91';
+const RED = '#ef4444';
 
-const HEAD_H = 110;
+/** A card's face on the boards and in a hand: one near-black family, a shade apart. */
+export const NOTE_COLORS = ['#111111', '#121212', '#101010', '#131313', '#121212'];
+/** The pin heads holding cards up: brushed steel, every fourth one Factory orange. */
+export const PINS = ['#ee6018', '#8c8c8c', '#8c8c8c', '#8c8c8c'];
 
-/** A board's heading across the top of its screen: its name in orange over a rule, and how it stands (`summary`) on the right. */
-function drawHeading(g: CanvasRenderingContext2D, title: string, summary: string) {
+/** A screen's backdrop: near-black with a faint grid of hairlines, like Factory's product shots. */
+function backdrop(g: CanvasRenderingContext2D) {
+  g.fillStyle = BG;
+  g.fillRect(0, 0, BOARD_W, BOARD_H);
+  g.fillStyle = 'rgba(255, 255, 255, .025)';
+  for (let x = 0; x < BOARD_W; x += 60) g.fillRect(x, 0, 1, BOARD_H);
+  for (let y = 0; y < BOARD_H; y += 60) g.fillRect(0, y, BOARD_W, 1);
+}
+
+/** Sets a mono font with tracking (a fraction of its size). */
+function mono(g: CanvasRenderingContext2D, weight: number, px: number, tracking = 0.04) {
+  g.font = `${weight} ${px}px ${MONO}`;
+  track(g, px * tracking);
+}
+
+function sans(g: CanvasRenderingContext2D, weight: number, px: number) {
+  g.font = `${weight} ${px}px ${SANS}`;
+  track(g, 0);
+}
+
+/** A squared mono status badge with `text` in `color` on a faint tint of it; returns its width. `align` right puts its right edge at `x`. */
+function badge(g: CanvasRenderingContext2D, label: string, x: number, y: number, h: number, color: string, align: 'left' | 'right' = 'left', maxW = Infinity): number {
+  const px = Math.round(h * 0.5);
+  mono(g, 600, px, 0.08);
+  const text = maxW === Infinity ? label : clip(g, label, maxW - h * 0.7);
+  const w = g.measureText(text).width + h * 0.7;
+  const x0 = align === 'right' ? x - w : x;
+  g.save();
+  g.globalAlpha = 0.12;
+  g.fillStyle = color;
+  g.fillRect(x0, y, w, h);
+  g.restore();
+  g.strokeStyle = color;
+  g.lineWidth = 1.5;
+  g.strokeRect(x0 + 0.75, y + 0.75, w - 1.5, h - 1.5);
+  g.fillStyle = color;
+  g.textBaseline = 'middle';
+  g.textAlign = 'center';
+  g.fillText(text, x0 + w / 2 + px * 0.04, y + h / 2 + 1);
+  g.textAlign = 'left';
   g.textBaseline = 'alphabetic';
-  g.textAlign = 'left';
-  g.fillStyle = '#ee6018';
-  g.font = `700 46px ${MONO}`;
-  g.fillText(title, 40, 76);
-  // A straight rule under the heading.
-  g.strokeStyle = '#ee6018';
-  g.lineWidth = 4;
+  track(g, 0);
+  return w;
+}
+
+/** A pin head through a card's top edge: a dark collar, the head in its color, and a glint. */
+function pin(g: CanvasRenderingContext2D, x: number, y: number, r: number, color: string) {
   g.beginPath();
-  g.moveTo(42, 92);
-  g.lineTo(Math.max(400, 44 + g.measureText(title).width), 92);
-  g.stroke();
-  g.textAlign = 'right';
-  g.fillStyle = '#8c8c8c';
-  g.font = `500 24px ${MONO}`;
-  g.fillText(summary, BOARD_W - 40, 72);
-  g.textAlign = 'left';
+  g.arc(x + r * 0.25, y + r * 0.35, r * 1.05, 0, Math.PI * 2);
+  g.fillStyle = 'rgba(0, 0, 0, .55)';
+  g.fill();
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fillStyle = '#2a2a2a';
+  g.fill();
+  g.beginPath();
+  g.arc(x, y, r * 0.68, 0, Math.PI * 2);
+  g.fillStyle = color;
+  g.fill();
+  g.fillStyle = 'rgba(255, 255, 255, .45)';
+  g.fillRect(x - r * 0.35, y - r * 0.4, r * 0.3, r * 0.3);
 }
 
 export function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
@@ -66,16 +121,26 @@ interface DrawnNote {
   tilt: number;
 }
 
-const CATEGORY_COLOR: Record<JiraCategory, string> = { new: '#8c8c8c', indeterminate: '#5aa9e6', done: '#3ccf91' };
+const CATEGORY_COLOR: Record<JiraCategory, string> = { new: MUTED, indeterminate: ORANGE, done: GREEN };
 
 function spotKey(spot: BoardSpot | null): string {
   return !spot ? '' : spot.kind === 'tab' ? `tab:${spot.tab}` : `ticket:${spot.key}`;
 }
 
+/** A pull request's checks and review, as the code review board's badges say them: a word and its status color. */
+function checksBadge(p: GhPull): [string, string] {
+  return p.checks === 'pass' ? ['PASS', GREEN] : p.checks === 'fail' ? ['FAIL', RED] : p.checks === 'pending' ? ['RUNNING', MUTED] : ['NO CHECKS', FAINT];
+}
+
+function reviewBadge(p: GhPull): [string, string] {
+  if (p.isDraft) return ['DRAFT', FAINT];
+  return p.reviewDecision === 'APPROVED' ? ['APPROVED', GREEN] : p.reviewDecision === 'CHANGES_REQUESTED' ? ['CHANGES', RED] : ['REVIEW', MUTED];
+}
+
 /**
- * Renders a wall display of square task cards onto a canvas texture. The issues board of a floor
- * with a Jira epic also draws a tab strip across its top, and on its Jira tab the epic's tickets
- * in To Do, In Progress and Done.
+ * Renders a wall display onto a canvas texture: the issues as pinned cards, or the pull requests as a
+ * code review table. The issues board of a floor with a Jira epic also draws a tab strip across its
+ * top, and on its Jira tab the epic's tickets in To Do, In Progress and Done.
  */
 export class BoardTexture {
   readonly texture: THREE.CanvasTexture;
@@ -84,7 +149,7 @@ export class BoardTexture {
   private notes: DrawnNote[] = [];
   /** The tabs and Jira cards as they were last drawn, for pointing at. */
   private spots: { spot: BoardSpot; rect: Rect }[] = [];
-  /** The note being reached for, drawn lifted off the cork (see lift). */
+  /** The note being reached for, drawn lifted off the board (see lift). */
   private lifted: number | null = null;
   /** The tab or Jira card being pointed at, drawn outlined (see hover). */
   private hovered = '';
@@ -107,7 +172,7 @@ export class BoardTexture {
     return this.notes.length > 0;
   }
 
-  /** The note at a point on the board's face (its uv), or undefined over bare cork. */
+  /** The note at a point on the board's face (its uv), or undefined over the bare board. */
   noteAt(uv: THREE.Vector2): number | undefined {
     const px = uv.x * BOARD_W;
     const py = (1 - uv.y) * BOARD_H;
@@ -124,7 +189,7 @@ export class BoardTexture {
     return undefined;
   }
 
-  /** Draws one note lifted off the cork, the one you're about to take (null for none). */
+  /** Draws one note lifted off the board, the one you're about to take (null for none). */
   lift(number: number | null) {
     if (number === this.lifted) return;
     this.lifted = number;
@@ -162,19 +227,13 @@ export class BoardTexture {
     if (!jira) this.shown = 'issues';
   }
 
-  /** `workers` lets PR notes name the desk they came from. */
+  /** `workers` lets PR rows name the desk they came from. */
   render(state: GhState<GhIssue> | GhState<GhPull>, workers?: Map<string, WorkerInfo>) {
     this.last = [state, workers];
     this.notes = [];
     this.spots = [];
     const g = this.ctx;
-    const W = BOARD_W;
-    const H = BOARD_H;
-    g.fillStyle = '#0a0a0a';
-    g.fillRect(0, 0, W, H);
-    // A faint dot grid, like the board window's background.
-    g.fillStyle = 'rgba(255, 255, 255, .045)';
-    for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
+    backdrop(g);
     const open = (state.items as (GhIssue | GhPull)[]).filter((i) => i.state === 'OPEN');
     const jira = this.kind === 'issues' ? this.jira : null;
     const top = jira ? TAB_H : 0;
@@ -185,18 +244,28 @@ export class BoardTexture {
       return;
     }
     if (!open.length) {
-      this.centerNote(state.error ? `⚠️ ${state.error}` : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues 🎉' : 'No open PRs', top);
+      const note = state.error ? state.error : state.loading && !state.fetchedAt ? 'Loading…' : this.kind === 'issues' ? 'No open issues' : 'No open PRs';
+      this.centerNote(note, top, state.error ? 'NOTICE' : state.loading && !state.fetchedAt ? 'SYNCING' : 'ALL CLEAR', state.error ? ORANGE : MUTED);
       this.texture.needsUpdate = true;
       return;
     }
-    // Fewer notes -> bigger notes, so a quiet board is still readable from across the room.
+    if (this.kind === 'pulls') this.drawPulls(open as GhPull[], top, workers);
+    else this.drawCards(open as GhIssue[], top);
+    this.texture.needsUpdate = true;
+  }
+
+  /** The issues: Factory cards pinned up in a grid, fewer cards drawn bigger so a quiet board reads from across the room. */
+  private drawCards(open: GhIssue[], top: number) {
+    const g = this.ctx;
+    const W = BOARD_W;
+    const H = BOARD_H;
     const AH = H - top;
     const n = Math.min(open.length, 15);
     const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 6 ? 3 : n <= 8 ? 4 : 5;
     const rows = Math.min(3, Math.ceil(n / cols));
     const scale = Math.min(2, Math.max(1, 3 / Math.max(cols, rows * 1.3)));
-    const nw = Math.min(208 * scale, (W - 40) / cols - 30);
-    const nh = Math.min(164 * scale, (AH - 40) / rows - 30);
+    const nw = Math.min(300 * scale, (W - 40) / cols - 30);
+    const nh = Math.min(210 * scale, (AH - 40) / rows - 30);
     const gx = (W - cols * nw) / (cols + 1);
     const gy = (AH - rows * nh) / (rows + 1);
     open.slice(0, cols * rows).forEach((it, i) => {
@@ -204,82 +273,188 @@ export class BoardTexture {
       const r = Math.floor(i / cols);
       const x = gx + c * (nw + gx);
       const y = top + gy + r * (nh + gy);
-      const tilt = (((it.number * 37) % 7) - 3) * 0.012;
-      this.notes.push({ number: it.number, x: x + nw / 2, y: y + nh / 2, w: nw, h: nh, tilt });
+      this.notes.push({ number: it.number, x: x + nw / 2, y: y + nh / 2, w: nw, h: nh, tilt: 0 });
       const lifted = it.number === this.lifted;
       g.save();
       g.translate(x + nw / 2, y + nh / 2);
-      g.rotate(tilt);
       // Lifted: a little bigger and its shadow further off, as if it's coming away from the board.
       if (lifted) g.scale(1.06, 1.06);
-      g.fillStyle = lifted ? 'rgba(0, 0, 0, .5)' : 'rgba(0, 0, 0, .4)';
-      g.fillRect(-nw / 2 + (lifted ? 10 : 4), -nh / 2 + (lifted ? 12 : 6), nw, nh);
-      const draft = this.kind === 'pulls' && (it as GhPull).isDraft;
-      g.fillStyle = draft ? '#101013' : NOTE_COLORS[it.number % NOTE_COLORS.length];
+      g.fillStyle = lifted ? 'rgba(0, 0, 0, .6)' : 'rgba(0, 0, 0, .45)';
+      g.fillRect(-nw / 2 + (lifted ? 10 : 4), -nh / 2 + (lifted ? 12 : 5), nw, nh);
+      g.fillStyle = lifted ? PANEL_HOT : NOTE_COLORS[it.number % NOTE_COLORS.length];
       g.fillRect(-nw / 2, -nh / 2, nw, nh);
-      // A hairline border; the one being lifted lights up orange.
-      g.lineWidth = lifted ? 6 : 3;
-      g.strokeStyle = lifted ? '#ee6018' : 'rgba(255, 255, 255, .18)';
-      g.strokeRect(-nw / 2, -nh / 2, nw, nh);
-      // The index in orange, the title in light text.
-      const fs = Math.round(22 * Math.min(scale, nh / 164));
-      const w = this.kind === 'pulls' && workers ? workerForPull(workers.values(), it as GhPull) : undefined;
-      const footer = w ? fs * 1.3 : 0;
-      g.fillStyle = '#ee6018';
-      g.font = `700 ${Math.round(fs * 1.2)}px ${MONO}`;
-      g.fillText(`#${it.number}`, -nw / 2 + 14, -nh / 2 + fs * 2);
-      g.fillStyle = '#eeeeee';
-      g.font = `600 ${fs}px ${SANS}`;
-      wrap(g, it.title, nw - 28, Math.max(2, Math.floor((nh - fs * 3 - footer) / (fs * 1.1)))).forEach((line, li) => g.fillText(line, -nw / 2 + 14, -nh / 2 + fs * 3.4 + li * fs * 1.1));
-      if (w) {
-        // A dot in the worker's color and its desk, so you can tell whose PR it is from across the room.
-        const r = fs * 0.3;
-        const y = nh / 2 - fs * 0.75;
-        g.beginPath();
-        g.arc(-nw / 2 + 14 + r, y, r, 0, Math.PI * 2);
-        g.fillStyle = w.color;
-        g.fill();
-        g.lineWidth = 2;
-        g.strokeStyle = 'rgba(255, 255, 255, .35)';
-        g.stroke();
-        g.fillStyle = '#8c8c8c';
-        g.font = `500 ${Math.round(fs * 0.72)}px ${MONO}`;
-        g.fillText(clip(g, `${w.name} · ${DESK_BY_ID.get(w.deskId)?.label ?? 'desk'}`, nw - 28 - r * 2 - 8), -nw / 2 + 14 + r * 2 + 8, y + fs * 0.28);
+      g.lineWidth = lifted ? 4 : 2;
+      g.strokeStyle = lifted ? ORANGE : HAIR_STRONG;
+      g.strokeRect(-nw / 2 + g.lineWidth / 2, -nh / 2 + g.lineWidth / 2, nw - g.lineWidth, nh - g.lineWidth);
+      const fs = Math.round(22 * Math.min(nw / 220, nh / 164));
+      const pad = Math.round(fs * 0.7);
+      const left = -nw / 2 + pad;
+      // The number in orange and a hairline under the card's head, the title in light sans, and its labels and author along the foot.
+      mono(g, 700, Math.round(fs * 1.05), 0.04);
+      g.fillStyle = ORANGE;
+      g.fillText(`#${it.number}`, left, -nh / 2 + fs * 1.75);
+      const labels = (it.labels ?? []).slice(0, 2).map((l) => l.name.toUpperCase());
+      const footH = Math.round(fs * 1.15);
+      const foot = nh / 2 - pad * 0.7 - footH;
+      g.fillStyle = HAIR;
+      g.fillRect(-nw / 2, -nh / 2 + fs * 2.4, nw, 1.5);
+      sans(g, 600, fs);
+      g.fillStyle = INK;
+      const titleTop = -nh / 2 + fs * 3.5;
+      const lines = Math.max(1, Math.floor((foot - titleTop + fs * 0.4) / (fs * 1.18)));
+      wrap(g, it.title, nw - 2 * pad, Math.min(4, lines)).forEach((line, li) => g.fillText(line, left, titleTop + li * fs * 1.18));
+      let bx = left;
+      for (const l of labels) {
+        const room = nw / 2 - pad - bx;
+        if (room < footH * 2) break;
+        bx += badge(g, l, bx, foot, footH, MUTED, 'left', room - footH) + 8;
       }
+      if (it.author && bx < nw / 2 - pad - fs * 4) {
+        g.textAlign = 'right';
+        mono(g, 500, Math.round(fs * 0.68), 0.02);
+        g.fillStyle = MUTED;
+        g.fillText(clip(g, `@${it.author}`, nw / 2 - pad - bx - 8), nw / 2 - pad, foot + footH * 0.72);
+        g.textAlign = 'left';
+      }
+      pin(g, 0, -nh / 2, Math.max(5, fs * 0.36), PINS[it.number % PINS.length]);
       g.restore();
     });
-    if (open.length > cols * rows) {
-      g.fillStyle = '#8c8c8c';
-      g.font = `500 22px ${MONO}`;
-      g.textAlign = 'right';
-      g.fillText(`+${open.length - cols * rows} more`, W - 20, H - 16);
-      g.textAlign = 'left';
-    }
-    this.texture.needsUpdate = true;
+    if (open.length > cols * rows) this.more(open.length - cols * rows, W - 20, H - 16);
   }
 
-  /** A message in a box in the middle of the space below `top`. */
-  private centerNote(note: string, top: number) {
+  /** The pull requests: a code review table, a row each, with checks and review as status badges. */
+  private drawPulls(open: GhPull[], top: number, workers?: Map<string, WorkerInfo>) {
+    const g = this.ctx;
+    const W = BOARD_W;
+    const H = BOARD_H;
+    const x0 = 24;
+    const x1 = W - 24;
+    const headY = top + 20;
+    const headH = 40;
+    const bodyTop = headY + headH;
+    const bottom = H - 34;
+    const fit = Math.max(1, Math.floor((bottom - bodyTop) / 64));
+    const shown = open.slice(0, open.length > fit ? fit - 1 : fit);
+    const rowH = Math.min(120, (bottom - bodyTop) / Math.max(shown.length, 3));
+    const fs = Math.round(Math.min(30, rowH * 0.34));
+    // Columns, from the right: lines changed, review, checks; the number and title take the rest.
+    const colDiff = x1 - 16;
+    const colReview = x1 - 150;
+    const colChecks = x1 - 330;
+    const colTitle = x0 + 24 + fs * 3.4;
+    g.fillStyle = PANEL;
+    g.fillRect(x0, headY, x1 - x0, bodyTop - headY + shown.length * rowH);
+    g.strokeStyle = HAIR;
+    g.lineWidth = 2;
+    g.strokeRect(x0 + 1, headY + 1, x1 - x0 - 2, bodyTop - headY + shown.length * rowH - 2);
+    mono(g, 600, 16, 0.14);
+    g.fillStyle = MUTED;
+    g.textBaseline = 'middle';
+    g.fillText('PR', x0 + 24, headY + headH / 2);
+    g.fillText('TITLE', colTitle, headY + headH / 2);
+    g.fillText('CHECKS', colChecks - 140, headY + headH / 2);
+    g.fillText('REVIEW', colReview - 150, headY + headH / 2);
+    g.textAlign = 'right';
+    g.fillText('+/-', colDiff, headY + headH / 2);
+    g.textAlign = 'left';
+    g.textBaseline = 'alphabetic';
+    shown.forEach((p, i) => {
+      const y = bodyTop + i * rowH;
+      const lifted = p.number === this.lifted;
+      this.notes.push({ number: p.number, x: (x0 + x1) / 2, y: y + rowH / 2, w: x1 - x0, h: rowH, tilt: 0 });
+      g.fillStyle = HAIR;
+      g.fillRect(x0, y, x1 - x0, 1.5);
+      if (lifted) {
+        g.fillStyle = PANEL_HOT;
+        g.fillRect(x0 + 2, y + 2, x1 - x0 - 4, rowH - 3);
+        g.fillStyle = ORANGE;
+        g.fillRect(x0, y, 4, rowH);
+      }
+      const w = workers ? workerForPull(workers.values(), p) : undefined;
+      const sub = [w ? `${w.name} · ${DESK_BY_ID.get(w.deskId)?.label ?? 'desk'}` : '', p.headRefName ? `${p.headRefName} → ${p.baseRefName || 'main'}` : ''].filter(Boolean).join('  ·  ');
+      const mid = y + rowH / 2;
+      const titleY = sub ? mid - fs * 0.12 : mid + fs * 0.36;
+      mono(g, 700, fs, 0.02);
+      g.fillStyle = ORANGE;
+      g.fillText(`#${p.number}`, x0 + 24, titleY);
+      sans(g, 600, fs);
+      g.fillStyle = p.isDraft ? MUTED : INK;
+      g.fillText(clip(g, p.title, colChecks - 160 - colTitle), colTitle, titleY);
+      if (sub) {
+        const subPx = Math.round(fs * 0.6);
+        let sx = colTitle;
+        if (w) {
+          // A dot in the worker's color, so you can tell whose PR it is from across the room.
+          g.beginPath();
+          g.arc(sx + subPx * 0.35, mid + fs * 0.62 - subPx * 0.32, subPx * 0.35, 0, Math.PI * 2);
+          g.fillStyle = w.color;
+          g.fill();
+          sx += subPx;
+        }
+        mono(g, 500, subPx, 0.02);
+        g.fillStyle = MUTED;
+        g.fillText(clip(g, sub, colChecks - 160 - sx), sx, mid + fs * 0.62);
+      }
+      const bh = Math.round(Math.min(34, rowH * 0.36));
+      const [check, checkColor] = checksBadge(p);
+      badge(g, check, colChecks - 140, mid - bh / 2, bh, checkColor);
+      const [review, reviewColor] = reviewBadge(p);
+      badge(g, review, colReview - 150, mid - bh / 2, bh, reviewColor);
+      mono(g, 600, Math.round(fs * 0.72), 0.02);
+      g.textAlign = 'right';
+      const del = `-${p.deletions ?? 0}`;
+      g.fillStyle = RED;
+      g.fillText(del, colDiff, mid + fs * 0.26);
+      const delW = g.measureText(del).width;
+      g.fillStyle = GREEN;
+      g.fillText(`+${p.additions ?? 0}`, colDiff - delW - 10, mid + fs * 0.26);
+      g.textAlign = 'left';
+    });
+    track(g, 0);
+    if (open.length > shown.length) this.more(open.length - shown.length, W - 24, H - 10);
+  }
+
+  /** "+N more" in the corner, for what didn't fit. */
+  private more(n: number, x: number, y: number) {
+    const g = this.ctx;
+    mono(g, 500, 20, 0.1);
+    g.fillStyle = MUTED;
+    g.textAlign = 'right';
+    g.fillText(`+${n} MORE`, x, y);
+    g.textAlign = 'left';
+    track(g, 0);
+  }
+
+  /** A message in a panel in the middle of the space below `top`, under an eyebrow: an orange square and `label`. */
+  private centerNote(note: string, top: number, label = 'NOTICE', mark = ORANGE) {
     const g = this.ctx;
     const W = BOARD_W;
     const cy = (top + BOARD_H) / 2;
-    g.font = `700 34px ${MONO}`;
-    const lines = wrap(g, note.replace(/`/g, ''), 820, 4);
-    const boxH = 64 + lines.length * 46;
-    g.fillStyle = '#161616';
-    g.fillRect(W / 2 - 440, cy - boxH / 2, 880, boxH);
-    g.strokeStyle = 'rgba(255, 255, 255, .18)';
-    g.lineWidth = 3;
-    g.strokeRect(W / 2 - 440, cy - boxH / 2, 880, boxH);
-    g.fillStyle = '#eeeeee';
-    g.textAlign = 'center';
+    mono(g, 500, 30, 0);
+    const lines = wrap(g, note.replace(/`/g, ''), 780, 4);
+    const boxW = 860;
+    const boxH = 104 + lines.length * 42;
+    const bx = W / 2 - boxW / 2;
+    const by = cy - boxH / 2;
+    g.fillStyle = PANEL;
+    g.fillRect(bx, by, boxW, boxH);
+    g.strokeStyle = HAIR_STRONG;
+    g.lineWidth = 2;
+    g.strokeRect(bx + 1, by + 1, boxW - 2, boxH - 2);
+    g.fillStyle = mark;
+    g.fillRect(bx + 40, by + 34, 12, 12);
+    mono(g, 600, 18, 0.16);
+    g.fillStyle = MUTED;
     g.textBaseline = 'middle';
-    lines.forEach((line, i) => g.fillText(line, W / 2, cy - ((lines.length - 1) * 46) / 2 + i * 46));
-    g.textAlign = 'left';
+    g.fillText(label, bx + 64, by + 41);
+    mono(g, 500, 30, 0);
+    g.fillStyle = INK;
+    lines.forEach((line, i) => g.fillText(line, bx + 40, by + 86 + i * 42));
     g.textBaseline = 'alphabetic';
+    track(g, 0);
   }
 
-  /** The tab strip: the forge's issues and the Jira epic, the one showing lit orange. */
+  /** The tab strip: the forge's issues and the Jira epic, the one showing underlined in orange. */
   private drawTabs(jira: JiraBoardState, openIssues: number) {
     const g = this.ctx;
     const rects = tabRects();
@@ -289,30 +464,35 @@ export class BoardTexture {
       const on = this.shown === tab;
       const hot = this.hovered === `tab:${tab}`;
       this.spots.push({ spot: { kind: 'tab', tab }, rect: r });
-      g.fillStyle = on ? '#ee6018' : hot ? '#262626' : '#161616';
+      g.fillStyle = on ? '#1c1c1c' : hot ? PANEL_HOT : PANEL;
       g.fillRect(r.x, r.y, r.w, r.h);
-      g.lineWidth = hot ? 4 : 2;
-      g.strokeStyle = hot ? '#ee6018' : on ? '#ee6018' : 'rgba(255, 255, 255, .18)';
-      g.strokeRect(r.x, r.y, r.w, r.h);
-      g.fillStyle = on ? '#0a0a0a' : '#eeeeee';
-      g.font = `700 24px ${MONO}`;
+      g.lineWidth = 2;
+      g.strokeStyle = hot ? ORANGE : on ? HAIR_STRONG : HAIR;
+      g.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      if (on) {
+        g.fillStyle = ORANGE;
+        g.fillRect(r.x, r.y + r.h - 4, r.w, 4);
+      }
+      g.fillStyle = on ? INK : MUTED;
+      mono(g, 600, 22, 0.06);
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(clip(g, labels[tab], r.w - 24), r.x + r.w / 2, r.y + r.h / 2 + 1);
+      g.fillText(clip(g, labels[tab].toUpperCase(), r.w - 24), r.x + r.w / 2, r.y + r.h / 2 + 1);
     }
     g.textAlign = 'right';
     g.textBaseline = 'middle';
-    g.fillStyle = '#8c8c8c';
-    g.font = `500 20px ${MONO}`;
+    g.fillStyle = MUTED;
+    mono(g, 500, 18, 0.06);
     g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
+    track(g, 0);
   }
 
   /** The Jira tab: the epic's tickets in To Do, In Progress and Done, like the board window's. */
   private drawJira(jira: JiraBoardState, top: number) {
-    if (jira.error && !jira.items.length) return this.centerNote(`⚠️ Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
-    if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top);
+    if (jira.error && !jira.items.length) return this.centerNote(`Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
+    if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top, 'SYNCING', MUTED);
     const g = this.ctx;
     const cols = ticketColumns(jira.items);
     const layout = jiraLayout(
@@ -323,56 +503,54 @@ export class BoardTexture {
     );
     cols.forEach((col, i) => {
       const { rect, cards, hidden } = layout.columns[i];
-      g.fillStyle = 'rgba(255, 255, 255, .03)';
+      g.fillStyle = 'rgba(255, 255, 255, .025)';
       g.fillRect(rect.x, rect.y, rect.w, rect.h);
-      g.strokeStyle = 'rgba(255, 255, 255, .12)';
+      g.strokeStyle = HAIR;
       g.lineWidth = 2;
       g.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      g.fillStyle = '#eeeeee';
-      g.font = `700 26px ${MONO}`;
-      g.fillText(col.name.toUpperCase(), rect.x + 14, rect.y + 34);
-      g.fillStyle = '#8c8c8c';
+      mono(g, 600, 22, 0.12);
+      g.fillStyle = ORANGE;
+      g.fillText(`0${i + 1}`, rect.x + 14, rect.y + 34);
+      const idxW = g.measureText(`0${i + 1}`).width;
+      g.fillStyle = INK;
+      g.fillText(col.name.toUpperCase(), rect.x + 14 + idxW + 10, rect.y + 34);
+      g.fillStyle = MUTED;
       g.textAlign = 'right';
       g.fillText(String(col.items.length), rect.x + rect.w - 14, rect.y + 34);
       g.textAlign = 'left';
       if (!col.items.length) {
-        g.fillStyle = '#5c5c5c';
-        g.font = `500 22px ${SANS}`;
-        g.fillText('Nothing here', rect.x + 14, rect.y + 84);
+        g.fillStyle = FAINT;
+        mono(g, 500, 18, 0.1);
+        g.fillText('NOTHING HERE', rect.x + 14, rect.y + 84);
       }
       cards.forEach((r, j) => {
         const t = col.items[j];
         const hot = this.hovered === `ticket:${t.key}`;
         this.spots.push({ spot: { kind: 'ticket', key: t.key }, rect: r });
-        g.fillStyle = hot ? '#1f1f1f' : NOTE_COLORS[j % NOTE_COLORS.length];
+        g.fillStyle = hot ? PANEL_HOT : NOTE_COLORS[j % NOTE_COLORS.length];
         g.fillRect(r.x, r.y, r.w, r.h);
-        g.lineWidth = hot ? 5 : 2;
-        g.strokeStyle = hot ? '#ee6018' : 'rgba(255, 255, 255, .18)';
-        g.strokeRect(r.x, r.y, r.w, r.h);
+        g.lineWidth = hot ? 4 : 2;
+        g.strokeStyle = hot ? ORANGE : HAIR_STRONG;
+        g.strokeRect(r.x + g.lineWidth / 2, r.y + g.lineWidth / 2, r.w - g.lineWidth, r.h - g.lineWidth);
         g.fillStyle = CATEGORY_COLOR[t.category];
-        g.fillRect(r.x, r.y, 6, r.h);
-        g.fillStyle = '#ee6018';
-        g.font = `700 20px ${MONO}`;
+        g.fillRect(r.x, r.y, 4, r.h);
+        g.fillStyle = ORANGE;
+        mono(g, 700, 20, 0.02);
         g.fillText(t.key, r.x + 16, r.y + 26);
         const keyW = g.measureText(t.key).width;
-        const side = [t.type, t.assignee ?? 'unassigned'].filter(Boolean).join(' · ');
-        g.fillStyle = '#8c8c8c';
-        g.font = `500 16px ${MONO}`;
+        const side = [t.type, t.assignee ?? 'unassigned'].filter(Boolean).join(' · ').toUpperCase();
+        g.fillStyle = MUTED;
+        mono(g, 500, 15, 0.06);
         g.textAlign = 'right';
         g.fillText(clip(g, side, r.w - keyW - 44), r.x + r.w - 12, r.y + 26);
         g.textAlign = 'left';
-        g.fillStyle = '#eeeeee';
-        g.font = `600 20px ${SANS}`;
+        g.fillStyle = INK;
+        sans(g, 600, 20);
         wrap(g, t.summary, r.w - 30, 2).forEach((line, li) => g.fillText(line, r.x + 16, r.y + 54 + li * 24));
       });
-      if (hidden > 0) {
-        g.fillStyle = '#8c8c8c';
-        g.font = `500 20px ${MONO}`;
-        g.textAlign = 'right';
-        g.fillText(`+${hidden} more`, rect.x + rect.w - 14, rect.y + rect.h - 12);
-        g.textAlign = 'left';
-      }
+      if (hidden > 0) this.more(hidden, rect.x + rect.w - 14, rect.y + rect.h - 12);
     });
+    track(g, 0);
   }
 }
 
@@ -405,20 +583,17 @@ export class ServicesBoardTexture {
     const g = this.ctx;
     const W = BOARD_W;
     const H = BOARD_H;
-    g.fillStyle = '#0a0a0a';
-    g.fillRect(0, 0, W, H);
-    // A faint dot grid, like the issues and PRs boards.
-    g.fillStyle = 'rgba(255, 255, 255, .045)';
-    for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
+    backdrop(g);
     if (!rows.length) {
       g.textAlign = 'center';
-      g.fillStyle = '#eeeeee';
-      g.font = `700 44px ${MONO}`;
+      g.fillStyle = INK;
+      mono(g, 600, 40, 0.04);
       g.fillText('No web servers running', W / 2, H / 2 - 20);
-      g.fillStyle = 'rgba(140, 140, 140, .9)';
-      g.font = `500 28px ${SANS}`;
+      g.fillStyle = MUTED;
+      mono(g, 500, 24, 0.02);
       g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
       g.textAlign = 'left';
+      track(g, 0);
       this.texture.needsUpdate = true;
       return;
     }
@@ -427,43 +602,49 @@ export class ServicesBoardTexture {
     const fs = Math.round(rowH * 0.36);
     shown.forEach((r, i) => {
       const y = 20 + i * rowH;
-      g.fillStyle = 'rgba(255, 255, 255, .04)';
+      g.fillStyle = PANEL;
       g.fillRect(24, y + 6, W - 48, rowH - 12);
-      g.strokeStyle = 'rgba(255, 255, 255, .12)';
+      g.strokeStyle = HAIR_STRONG;
       g.lineWidth = 2;
-      g.strokeRect(24, y + 6, W - 48, rowH - 12);
-      g.beginPath();
-      g.arc(70, y + rowH / 2, fs * 0.42, 0, Math.PI * 2);
+      g.strokeRect(25, y + 7, W - 50, rowH - 14);
+      // A live light, and the worker's color down the row's edge.
       g.fillStyle = r.color;
-      g.fill();
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(255, 255, 255, .35)';
-      g.stroke();
-      g.fillStyle = '#ee6018';
-      g.font = `700 ${fs}px ${MONO}`;
+      g.fillRect(24, y + 6, 6, rowH - 12);
+      g.fillStyle = GREEN;
+      g.fillRect(62, y + rowH / 2 - fs * 0.18, fs * 0.36, fs * 0.36);
+      g.fillStyle = ORANGE;
+      mono(g, 700, fs, 0.02);
       g.textAlign = 'right';
       g.fillText(`:${r.port}`, W - 50, y + rowH / 2 + fs * 0.35);
       g.textAlign = 'left';
       const textW = W - 120 - 50 - g.measureText(`:${r.port}`).width - 30;
-      g.fillStyle = '#eeeeee';
-      g.font = `600 ${fs}px ${SANS}`;
+      g.fillStyle = INK;
+      sans(g, 600, fs);
       g.fillText(clip(g, r.title, textW), 110, y + rowH / 2 - fs * 0.08);
-      g.fillStyle = 'rgba(140, 140, 140, .9)';
-      g.font = `500 ${Math.round(fs * 0.6)}px ${MONO}`;
+      g.fillStyle = MUTED;
+      mono(g, 500, Math.round(fs * 0.58), 0.02);
       g.fillText(clip(g, r.who, textW), 110, y + rowH / 2 + fs * 0.72);
     });
+    track(g, 0);
     if (rows.length > shown.length) {
-      g.fillStyle = '#8c8c8c';
-      g.font = `500 22px ${MONO}`;
+      g.fillStyle = MUTED;
+      mono(g, 500, 20, 0.1);
       g.textAlign = 'right';
-      g.fillText(`+${rows.length - shown.length} more`, W - 24, H - 10);
+      g.fillText(`+${rows.length - shown.length} MORE`, W - 24, H - 10);
       g.textAlign = 'left';
+      track(g, 0);
     }
     this.texture.needsUpdate = true;
   }
 }
 
-/** The task queue: a wall display with what's waiting, who is on what, and the PRs that came out of it. */
+type QueueRow = { kind: 'running' | 'queued' | 'done' | 'failed'; issue?: number; text: string; side: string };
+
+/**
+ * The task queue: a wall display drawn like Factory's Mission Control terminal: a title row with the
+ * pinwheel, a RUNNING bar of how many workers it keeps busy against how many it may, and a row per
+ * task: what's being worked on, what's waiting, and the PRs that came out of it.
+ */
 export class QueueBoardTexture {
   readonly texture: THREE.CanvasTexture;
   private canvas = document.createElement('canvas');
@@ -481,84 +662,156 @@ export class QueueBoardTexture {
   }
 
   render(state: QueueState, workers: Map<string, WorkerInfo>) {
-    const name = (t: QueueTask) => (t.issue !== undefined ? `#${t.issue}  ${t.title.replace(new RegExp(`^#${t.issue}\\s*`), '')}` : t.title);
+    const title = (t: QueueTask) => (t.issue !== undefined ? t.title.replace(new RegExp(`^#${t.issue}\\s*`), '') : t.title);
     const running = state.tasks.filter((t) => t.status === 'running');
     const queued = state.tasks.filter((t) => t.status === 'queued');
     const done = state.tasks
       .filter((t) => t.status === 'done')
       .slice(-3)
       .reverse();
-    const rows = [
-      ...running.map((t) => {
+    const rows: QueueRow[] = [
+      ...running.map((t): QueueRow => {
         const w = t.workerId ? workers.get(t.workerId) : undefined;
-        const st = { starting: 'starting', idle: 'ready', working: 'working', needs_input: 'needs input ✋', done: 'done', exited: 'stopped', offline: 'asleep' }[w?.status ?? 'working'];
-        return { icon: '🤖', text: name(t), side: `${t.workerName ?? 'a worker'} · ${st}`, color: '#1e8f4e' };
+        const st = { starting: 'starting', idle: 'ready', working: 'working', needs_input: 'needs input', done: 'done', exited: 'stopped', offline: 'asleep' }[w?.status ?? 'working'];
+        return { kind: 'running', issue: t.issue, text: title(t), side: `${t.workerName ?? 'a worker'} · ${st}` };
       }),
-      ...queued.map((t, i) => ({ icon: '⏳', text: name(t), side: i === 0 ? 'up next' : `${i + 1}${['th', 'st', 'nd', 'rd'][i + 1 <= 3 ? i + 1 : 0]} in line`, color: '#2b2d42' })),
-      ...done.map((t) => ({
-        icon: t.outcome === 'done' ? '✅' : '⚠️',
-        text: name(t),
-        side: t.pr ? `PR #${t.pr.number}${t.pr.state === 'MERGED' ? ' · merged' : ''}` : t.outcome === 'done' ? 'done' : t.outcome === 'failed' ? "didn't start" : t.outcome === 'killed' ? 'sent home' : 'stopped',
-        color: '#8a8f98',
-      })),
+      ...queued.map((t, i): QueueRow => ({ kind: 'queued', issue: t.issue, text: title(t), side: i === 0 ? 'up next' : `${i + 1}${['th', 'st', 'nd', 'rd'][i + 1 <= 3 ? i + 1 : 0]} in line` })),
+      ...done.map(
+        (t): QueueRow => ({
+          kind: t.outcome === 'done' ? 'done' : 'failed',
+          issue: t.issue,
+          text: title(t),
+          side: t.pr ? `PR #${t.pr.number}${t.pr.state === 'MERGED' ? ' · merged' : ''}` : t.outcome === 'done' ? 'done' : t.outcome === 'failed' ? "didn't start" : t.outcome === 'killed' ? 'sent home' : 'stopped',
+        }),
+      ),
     ];
-    const summary = state.maxWorkers === 0 ? 'paused' : `${running.length} working · ${queued.length} waiting · up to ${state.maxWorkers} at once`;
+    const paused = state.maxWorkers === 0;
+    const summary = paused ? 'paused' : `${running.length} working · ${queued.length} waiting · up to ${state.maxWorkers} at once`;
     const key = JSON.stringify([rows, summary]);
     if (key === this.drawn) return;
     this.drawn = key;
     const g = this.ctx;
     const W = BOARD_W;
     const H = BOARD_H;
-    g.fillStyle = '#0a0a0a';
-    g.fillRect(0, 0, W, H);
-    // A faint dot grid, like the other boards.
-    g.fillStyle = 'rgba(255, 255, 255, .045)';
-    for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x, y, 2, 2);
-    drawHeading(g, 'TASK QUEUE', summary);
+    backdrop(g);
+
+    // The terminal's window bar: three dots and its title, centered.
+    g.fillStyle = '#0c0c0c';
+    g.fillRect(0, 0, W, 40);
+    g.fillStyle = HAIR;
+    g.fillRect(0, 40, W, 1.5);
+    for (let i = 0; i < 3; i++) {
+      g.beginPath();
+      g.arc(30 + i * 22, 20, 6, 0, Math.PI * 2);
+      g.fillStyle = '#2a2a2a';
+      g.fill();
+    }
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    mono(g, 500, 16, 0.06);
+    g.fillStyle = FAINT;
+    g.fillText('droid -- mission control -- 02 ticket to code', W / 2, 21);
+
+    // The title row: the pinwheel and the board's name in orange, how it stands on the right.
+    g.textAlign = 'left';
+    g.fillStyle = ORANGE;
+    paintGlyph(g, 52, 78, 30);
+    mono(g, 600, 30, 0.08);
+    g.fillText('TASK QUEUE', 80, 79);
+    g.textAlign = 'right';
+    mono(g, 500, 20, 0.02);
+    g.fillStyle = MUTED;
+    g.fillText(summary, W - 36, 79);
+
+    // The RUNNING bar: how many it keeps busy of the most it may.
+    const barY = 120;
+    const live = running.length > 0;
+    const word = paused ? '|| PAUSED' : live ? '\u25CF RUNNING' : '\u25CB IDLE';
+    g.textAlign = 'left';
+    mono(g, 600, 20, 0.1);
+    g.fillStyle = live && !paused ? ORANGE : MUTED;
+    g.fillText(word, 36, barY);
+    const bx = 36 + 170;
+    const bw = W - 36 - bx;
+    g.fillStyle = '#1a1a1a';
+    g.fillRect(bx, barY - 9, bw, 18);
+    const f = paused ? 0 : Math.min(1, running.length / Math.max(1, state.maxWorkers));
+    if (f > 0) {
+      g.fillStyle = ORANGE;
+      g.fillRect(bx, barY - 9, bw * f, 18);
+    }
+    // A tick per worker it may keep busy.
+    g.fillStyle = BG;
+    for (let i = 1; i < Math.min(state.maxWorkers, 24); i++) g.fillRect(bx + (bw * i) / state.maxWorkers - 1.5, barY - 9, 3, 18);
+    g.fillStyle = HAIR;
+    g.fillRect(0, 150, W, 1.5);
+    g.textBaseline = 'alphabetic';
+
     if (!rows.length) {
       g.textAlign = 'center';
-      g.fillStyle = '#eeeeee';
-      g.font = `700 46px ${MONO}`;
-      g.fillText('Nothing queued', W / 2, H / 2 - 10);
-      g.fillStyle = '#8c8c8c';
-      g.font = `500 28px ${SANS}`;
-      g.fillText('Add issues from the 📌 Issues board, or press E here', W / 2, H / 2 + 44);
+      g.fillStyle = INK;
+      mono(g, 600, 40, 0.06);
+      g.fillText('Nothing queued', W / 2, (150 + H) / 2 - 6);
+      g.fillStyle = MUTED;
+      mono(g, 500, 22, 0.02);
+      g.fillText('Add issues from 01 TRIAGE, or press E here', W / 2, (150 + H) / 2 + 40);
       g.textAlign = 'left';
+      track(g, 0);
       this.texture.needsUpdate = true;
       return;
     }
+    // A section eyebrow, then the rows, as the terminal lists them.
+    mono(g, 600, 16, 0.14);
+    g.fillStyle = MUTED;
+    g.fillText('TASKS', 36, 182);
+    const listTop = 196;
     const shown = rows.slice(0, 7);
-    const rowH = Math.min(62, (H - 150) / shown.length);
-    const fs = Math.round(rowH * 0.5);
+    const rowH = Math.min(56, (H - listTop - 30) / shown.length);
+    const fs = Math.round(rowH * 0.48);
+    const MARK: Record<QueueRow['kind'], [string, string]> = { running: ['\u25B8', ORANGE], queued: ['\u00B7', MUTED], done: ['\u2713', GREEN], failed: ['\u2717', RED] };
     shown.forEach((r, i) => {
-      const y = HEAD_H + 18 + i * rowH + fs;
-      g.fillStyle = r.color;
-      g.font = `600 ${fs}px ${SANS}`;
-      g.fillText(r.icon, 44, y);
+      const y = listTop + i * rowH + rowH * 0.66;
+      if (r.kind === 'running') {
+        g.fillStyle = 'rgba(238, 96, 24, .07)';
+        g.fillRect(24, listTop + i * rowH + 3, W - 48, rowH - 6);
+      }
+      const [mark, markColor] = MARK[r.kind];
+      mono(g, 700, fs, 0);
+      g.fillStyle = markColor;
+      g.fillText(mark, 40, y);
+      const sideFont = Math.round(fs * 0.74);
+      mono(g, 500, sideFont, 0.02);
       g.textAlign = 'right';
-      g.font = `500 ${Math.round(fs * 0.72)}px ${MONO}`;
       const sideW = g.measureText(r.side).width;
-      g.fillStyle = '#8c8c8c';
-      g.fillText(r.side, W - 44, y);
+      g.fillStyle = r.kind === 'running' ? INK : MUTED;
+      g.fillText(r.side, W - 40, y);
       g.textAlign = 'left';
-      g.fillStyle = '#eeeeee';
-      g.font = `600 ${fs}px ${SANS}`;
-      g.fillText(clip(g, r.text, W - 44 - sideW - 30 - 110), 110, y);
-      if (r.color === '#8a8f98') {
-        g.strokeStyle = 'rgba(140, 140, 140, .7)';
-        g.lineWidth = 3;
-        g.beginPath();
-        g.moveTo(110, y - fs * 0.32);
-        g.lineTo(110 + Math.min(g.measureText(clip(g, r.text, W - 44 - sideW - 30 - 110)).width, W - 44 - sideW - 30 - 110), y - fs * 0.36);
-        g.stroke();
+      let x = 80;
+      mono(g, 600, fs, 0);
+      if (r.issue !== undefined) {
+        const num = `#${r.issue}`;
+        g.fillStyle = r.kind === 'done' || r.kind === 'failed' ? MUTED : ORANGE;
+        g.fillText(num, x, y);
+        x += g.measureText(num).width + fs * 0.6;
+      }
+      mono(g, 500, fs, 0);
+      g.fillStyle = r.kind === 'done' || r.kind === 'failed' ? MUTED : INK;
+      const room = W - 40 - sideW - 30 - x;
+      const text = clip(g, r.text, room);
+      g.fillText(text, x, y);
+      if (r.kind === 'done' || r.kind === 'failed') {
+        g.fillStyle = 'rgba(140, 140, 140, .6)';
+        g.fillRect(x, y - fs * 0.32, Math.min(g.measureText(text).width, room), 2);
       }
     });
+    track(g, 0);
     if (rows.length > shown.length) {
-      g.fillStyle = '#8c8c8c';
-      g.font = `500 22px ${MONO}`;
+      g.fillStyle = MUTED;
+      mono(g, 500, 18, 0.1);
       g.textAlign = 'right';
-      g.fillText(`+${rows.length - shown.length} more`, W - 44, H - 34);
+      g.fillText(`+${rows.length - shown.length} MORE`, W - 40, H - 14);
       g.textAlign = 'left';
+      track(g, 0);
     }
     this.texture.needsUpdate = true;
   }

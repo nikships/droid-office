@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { SANS } from '../fonts';
-import { fillGlyphText, measureGlyphText as measure, withGlyph } from './glyph';
+import { MONO, SANS } from '../fonts';
+import { FACTORY_GLYPH_PATH, FACTORY_GLYPH_VIEWBOX, fillGlyphText, measureGlyphText as measure, withGlyph } from './glyph';
 import { ANISOTROPY, LABEL_SCALE } from './texture-quality';
 
 let gradient: THREE.DataTexture | null = null;
@@ -73,8 +73,40 @@ export type TextOpts = {
   bg?: string;
   size?: number;
   border?: string;
+  /**
+   * A numbered eyebrow before a sign's words, in Factory orange ("01" in "01 TRIAGE"). A sign whose
+   * text starts with a two-digit index from 01 to 09 and a space gets one without asking.
+   */
+  index?: string;
+  /** A word between the index and the words, in secondary gray ("FLOOR" in "▲ FLOOR PROJECT"). */
+  kicker?: string;
+  /** Keep the words' own case: a sign on a plate is otherwise set in uppercase. */
+  keepCase?: boolean;
 };
 const TEXT_SCALE = 0.0055;
+
+/** Factory's signal orange and secondary gray, as signs and labels print them. */
+export const SIGNAL = '#ee6018';
+export const SECONDARY = '#8c8c8c';
+/** A plate's hairline, when the caller doesn't name one. */
+const HAIRLINE = 'rgba(255, 255, 255, .18)';
+/** How a sign's mono type is set, as fractions of its `size`: smaller than the old bold sans, with wide tracking. */
+const SIGN_TYPE = 0.74;
+const SIGN_TRACK = 0.14;
+const SIGN_INDEX_GAP = 0.6;
+
+/**
+ * A label's words without emoji, as a plate or card chip prints them: "💬 READY" reads "READY",
+ * and "🪜 ⬆ floor-beta" reads "↑ floor-beta", its arrow kept as a plain one.
+ */
+export function plainLabel(label: string): string {
+  return label
+    .replace(/\u2B06\uFE0F?/gu, '\u2191')
+    .replace(/\u2B07\uFE0F?/gu, '\u2193')
+    .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /** Every text label drawn so far, so they can be repainted once the bundled fonts finish loading. */
 const textLabels = new Set<() => void>();
@@ -84,14 +116,51 @@ export function redrawText(): void {
   for (const redraw of textLabels) redraw();
 }
 
-/** A rounded text label drawn to a texture; `w`/`h` are its size in pixels. */
-function textTexture(text: string, opts: TextOpts) {
+/** A sign's leading two-digit index ("01 TRIAGE"), split from its words. */
+function splitIndex(text: string): [string, string] | null {
+  const m = /^(0[1-9])\s+(\S.*)$/su.exec(text);
+  return m ? [m[1], m[2]] : null;
+}
+
+/**
+ * Sets `ctx`'s letter tracking where the canvas supports it. Tracking adds its space after the
+ * last letter too; `measureTracked` takes that back off.
+ */
+export function track(ctx: CanvasRenderingContext2D, px: number) {
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${px}px`;
+}
+
+function measureTracked(ctx: CanvasRenderingContext2D, text: string, trackPx: number): number {
+  return text ? Math.max(0, ctx.measureText(text).width - ('letterSpacing' in ctx ? trackPx : 0)) : 0;
+}
+
+/**
+ * A text label drawn to a texture; `w`/`h` are its size in pixels. A `sign` with a background is a
+ * Factory plate: a flat face with a hairline edge and square corners, its words in tracked
+ * uppercase mono after an orange index and a gray kicker when it has them. A label that floats (a
+ * sprite) is the same plate in its words' own case.
+ */
+function textTexture(text: string, opts: TextOpts, sign = false) {
   const size = opts.size ?? 48;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
-  const font = `700 ${size}px ${SANS}`;
+  const plate = !!opts.bg;
+  const split = plate && sign && opts.index === undefined ? splitIndex(text) : null;
+  const index = plate && sign ? (opts.index ?? split?.[0] ?? '') : '';
+  const kicker = plate && sign ? (opts.kicker ?? '') : '';
+  let words = split ? split[1] : text;
+  if (plate && sign && !opts.keepCase) words = words.toUpperCase();
+  const typePx = plate ? Math.round(size * (sign ? SIGN_TYPE : 0.86)) : size;
+  const trackPx = plate ? typePx * (sign ? SIGN_TRACK : 0.02) : 0;
+  const font = plate ? `${sign ? 500 : 600} ${typePx}px ${MONO}` : `700 ${size}px ${SANS}`;
+  const gap = typePx * SIGN_INDEX_GAP;
   ctx.font = font;
-  const w = Math.ceil(ctx.measureText(text).width) + size;
+  track(ctx, trackPx);
+  const indexW = measureTracked(ctx, index, trackPx);
+  const kickerW = measureTracked(ctx, kicker, trackPx);
+  const wordsW = plate ? measureTracked(ctx, words, trackPx) : ctx.measureText(words).width;
+  const lead = (index ? indexW + gap : 0) + (kicker ? kickerW + gap : 0);
+  const w = Math.ceil(lead + wordsW) + (plate && sign ? Math.round(size * 1.1) : size);
   const h = Math.ceil(size * 1.6);
   canvas.width = w * LABEL_SCALE;
   canvas.height = h * LABEL_SCALE;
@@ -102,19 +171,43 @@ function textTexture(text: string, opts: TextOpts) {
     ctx.setTransform(LABEL_SCALE, 0, 0, LABEL_SCALE, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.font = font;
+    track(ctx, trackPx);
     if (opts.bg) {
+      // Square corners, drawn as paths like the rounded labels were (canvas stubs in tests draw paths only).
       ctx.fillStyle = opts.bg;
       ctx.beginPath();
-      ctx.roundRect(3, 3, w - 6, h - 6, 8);
+      ctx.roundRect(0, 0, w, h, 0);
       ctx.fill();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = opts.border ?? '#0a0a0a';
+      const line = Math.max(1.5, size / 32);
+      ctx.lineWidth = line;
+      ctx.strokeStyle = opts.border ?? HAIRLINE;
+      ctx.beginPath();
+      ctx.roundRect(line / 2, line / 2, w - line, h - line, 0);
       ctx.stroke();
     }
-    ctx.fillStyle = opts.color ?? '#2b2d42';
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, w / 2, h / 2 + size * 0.05);
+    const y = h / 2 + size * (plate ? 0.03 : 0.05);
+    if (index || kicker) {
+      ctx.textAlign = 'left';
+      let x = (w - lead - wordsW) / 2;
+      if (index) {
+        ctx.fillStyle = SIGNAL;
+        ctx.fillText(index, x, y);
+        x += indexW + gap;
+      }
+      if (kicker) {
+        ctx.fillStyle = SECONDARY;
+        ctx.fillText(kicker, x, y);
+        x += kickerW + gap;
+      }
+      ctx.fillStyle = opts.color ?? '#2b2d42';
+      ctx.fillText(words, x, y);
+    } else {
+      ctx.fillStyle = opts.color ?? '#2b2d42';
+      ctx.textAlign = 'center';
+      // Tracking pads the right of the line: shift by half of it to keep the words centered.
+      ctx.fillText(words, w / 2 + ('letterSpacing' in ctx ? trackPx / 2 : 0), y);
+    }
     tex.needsUpdate = true;
   };
   draw();
@@ -135,7 +228,7 @@ export function textSprite(text: string, opts: TextOpts = {}): THREE.Sprite {
 
 /** A flat text sign facing +Z, for mounting on a wall. */
 export function textPlane(text: string, opts: TextOpts = {}): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
-  const { tex, w, h } = textTexture(text, opts);
+  const { tex, w, h } = textTexture(text, opts, true);
   return new THREE.Mesh(new THREE.PlaneGeometry(w * TEXT_SCALE, h * TEXT_SCALE), new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 }));
 }
 
@@ -168,15 +261,15 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const R = CARD_RES;
   const maxW = (o.maxWidth ?? 400) * R;
   const pad = 16 * R;
-  const lw = 5 * R;
-  const tail = 14 * R;
-  const chipFont = `800 ${19 * R}px ${FONT}`;
+  const lw = 3 * R;
+  const tail = 12 * R;
+  const chipFont = `600 ${18 * R}px ${MONO}`;
   const chipH = 30 * R;
   const titlePx = 30 * R;
-  const titleFont = `800 ${titlePx}px ${FONT}`;
+  const titleFont = `700 ${titlePx}px ${FONT}`;
   const titleLH = 36 * R;
   const bodyPx = 23 * R;
-  const bodyFont = `700 ${bodyPx}px ${FONT}`;
+  const bodyFont = `500 ${bodyPx}px ${FONT}`;
   const bodyLH = 29 * R;
 
   const ctx = document.createElement('canvas').getContext('2d')!;
@@ -203,7 +296,7 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const x0 = lw / 2;
   const x1 = w - lw / 2;
   const cx = w / 2;
-  const r = 18 * R;
+  const r = 3 * R;
   ctx.beginPath();
   ctx.moveTo(x0 + r, top);
   ctx.arcTo(x1, top, x1, bottom, r);
@@ -217,7 +310,7 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   ctx.fillStyle = o.bg;
   ctx.fill();
   ctx.lineWidth = lw;
-  ctx.lineJoin = 'round';
+  ctx.lineJoin = 'miter';
   ctx.strokeStyle = o.border ?? INK;
   ctx.stroke();
 
@@ -225,10 +318,10 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   ctx.textBaseline = 'middle';
   if (o.chip) {
     ctx.beginPath();
-    ctx.roundRect(cx - chipW / 2, lw / 2, chipW, chipH, chipH / 2);
+    ctx.roundRect(cx - chipW / 2, lw / 2, chipW, chipH, 2 * R);
     ctx.fillStyle = o.chip.bg;
     ctx.fill();
-    ctx.lineWidth = 4 * R;
+    ctx.lineWidth = 2 * R;
     ctx.stroke();
     ctx.font = chipFont;
     ctx.fillStyle = o.chip.color;
@@ -280,6 +373,22 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
   while (last && !fits(`${last}…`)) last = last.slice(0, -1).trimEnd();
   kept[maxLines - 1] = `${last.replace(/[\s,.;:—-]+$/, '')}…`;
   return kept;
+}
+
+let pinwheel: Path2D | null = null;
+
+/** The Factory pinwheel on a canvas, `size` px across, centered on (`cx`, `cy`), in the current fill. Draws nothing where there is no Path2D (Node). */
+export function paintGlyph(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
+  if (typeof Path2D === 'undefined') return;
+  pinwheel ??= new Path2D(FACTORY_GLYPH_PATH);
+  const [vx, vy, vw, vh] = FACTORY_GLYPH_VIEWBOX;
+  const k = size / Math.max(vw, vh);
+  ctx.save();
+  ctx.translate(cx - (vw * k) / 2, cy - (vh * k) / 2);
+  ctx.scale(k, k);
+  ctx.translate(-vx, -vy);
+  ctx.fill(pinwheel, 'evenodd');
+  ctx.restore();
 }
 
 export function disposeSprite(s: THREE.Sprite) {

@@ -125,7 +125,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-const effect = new OutlineEffect(renderer, { defaultThickness: 0.0032, defaultColor: [0.17, 0.18, 0.26] });
+const effect = new OutlineEffect(renderer, { defaultThickness: 0.0032, defaultColor: [0.2, 0.2, 0.2] });
 const scene = new THREE.Scene();
 // It is always night; the sky's color and the fog change with the weather (world/sky.ts).
 scene.background = new THREE.Color('#0a0720');

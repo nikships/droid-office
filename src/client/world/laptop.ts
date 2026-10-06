@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../../shared/protocol';
-import { mesh, roundedBox, toon } from './toon';
+import { mesh, roundedBox, toon, toonUnique } from './toon';
 import { propReady, useProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
+import { glyphFlat } from './glyph3d';
 
 /**
  * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
@@ -176,6 +177,50 @@ const SCREEN_Z = 0.02;
 /** Radians the open lid leans back past upright; negative tips the screen toward whoever sits at it. */
 const LID_LEAN = 0.08;
 
+/** The Factory-issue laptop's finish: a space-black shell with a graphite trackpad. */
+const SPACE_BLACK = '#1c1c1e';
+/**
+ * The MacBook GLBs' own materials, by name, in Factory tones. Its mirrored badge on the lid goes
+ * the shell's color, so the pinwheel decal (see pinwheelDecal) is the only mark on the back.
+ */
+const RETONE: Record<string, string> = { MacbookBody: SPACE_BLACK, Chrome: SPACE_BLACK, MacbookPad: '#2a2a2a' };
+const retoned = new Map<THREE.Material, THREE.Material>();
+
+/** Swaps a freshly installed GLB's materials for their Factory-toned copies (made once, shared by every laptop). */
+function retone(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const swap = (src: THREE.Material): THREE.Material => {
+      const color = RETONE[src.name];
+      if (!color) return src;
+      let out = retoned.get(src);
+      if (!out) {
+        out = src.clone();
+        (out as THREE.MeshStandardMaterial).color?.set(color);
+        retoned.set(src, out);
+      }
+      return out;
+    };
+    m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+  });
+}
+
+let decal: { geo: THREE.BufferGeometry; mat: THREE.MeshToonMaterial } | null = null;
+/** The orange Factory pinwheel on the back of the lid, where the badge is, facing out the back (-z). */
+function pinwheelDecal(): THREE.Mesh {
+  if (!decal) {
+    const mat = toonUnique('#ee6018');
+    mat.emissive.set('#3a1404');
+    // A cartoon outline would swallow its thin blades.
+    mat.userData.outlineParameters = { visible: false };
+    decal = { geo: glyphFlat(0.11, 3).rotateY(Math.PI), mat };
+  }
+  const m = mesh(decal.geo, decal.mat, 0, 0.26, -0.0135, false);
+  m.name = 'pinwheel-decal';
+  return m;
+}
+
 export class Laptop {
   readonly root = new THREE.Group();
   private canvas = document.createElement('canvas');
@@ -206,13 +251,13 @@ export class Laptop {
     // The procedural laptop below is the stand-in: it shows until the MacBook GLBs land
     // (see maybeSwap), the way every prop keeps a procedural version. The GLBs are
     // authored in this same space, so the swap changes nothing but the meshes.
-    const shell = toon('#c9ced6');
-    const dark = toon('#2b2d42');
+    const shell = toon(SPACE_BLACK);
+    const dark = toon('#0a0a0a');
     // Base with keyboard
     this.root.add(this.baseModel);
     this.baseModel.add(mesh(roundedBox(0.78, 0.035, 0.52, 0.04), shell, 0, 0.018, 0.02));
     this.baseModel.add(mesh(new THREE.BoxGeometry(0.66, 0.006, 0.24), dark, 0, 0.037, 0.0, false));
-    this.baseModel.add(mesh(new THREE.BoxGeometry(0.2, 0.004, 0.11), toon('#aab1bb'), 0, 0.037, 0.19, false));
+    this.baseModel.add(mesh(new THREE.BoxGeometry(0.2, 0.004, 0.11), toon('#2a2a2a'), 0, 0.037, 0.19, false));
     // Lid, hinged along the back edge
     this.lid.position.set(0, 0.035, -0.24);
     this.root.add(this.lid);
@@ -223,10 +268,7 @@ export class Laptop {
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), this.screenMat);
     screen.position.set(0, 0.25, 0.014);
     this.lidModel.add(screen);
-    // Sticker on the back of the lid
-    const sticker = mesh(new THREE.CircleGeometry(0.07, 20), toon('#ee6018'), 0, 0.27, -0.014, false);
-    sticker.rotation.y = Math.PI;
-    this.lidModel.add(sticker);
+    this.lidModel.add(pinwheelDecal());
     this.lid.rotation.x = Math.PI / 2; // closed; animates open
     paintScreen(this.ctx, this.canvas.width, this.canvas.height, undefined, this.placeholder);
     this.texture.needsUpdate = true;
@@ -280,10 +322,13 @@ export class Laptop {
   private maybeSwap() {
     if (!this.baseSwapped && propReady('macbook-base')) {
       this.baseSwapped = useProp(this.baseModel, 'macbook-base');
+      if (this.baseSwapped) retone(this.baseModel);
     }
     if (this.lidSwapped || !propReady('macbook-lid')) return;
     if (useProp(this.lidModel, 'macbook-lid')) {
       this.lidSwapped = true;
+      retone(this.lidModel);
+      this.lidModel.add(pinwheelDecal());
       this.wireDisplay();
     }
   }
