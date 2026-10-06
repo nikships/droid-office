@@ -1,25 +1,12 @@
-import { execFile } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { app, dialog } from 'electron';
 import updater from 'electron-updater';
 
 const { autoUpdater } = updater;
 
-/** Where releases are published (.github/workflows/release.yml). */
-export const RELEASES = { owner: 'nikships', repo: 'droid-office' } as const;
-
 const CHECK_EVERY_MS = 30 * 60_000;
 
-/** The GitHub CLI's token, which lets the updater read the releases of a private repository. */
-function ghToken(PATH: string): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    execFile('gh', ['auth', 'token'], { env: { ...process.env, PATH }, timeout: 10_000, encoding: 'utf8' }, (err, stdout) => resolve(err ? undefined : stdout.trim() || undefined));
-  });
-}
-
 export interface UpdatesOptions {
-  /** The PATH to find `gh` on. */
-  path: () => string;
   log: string;
   /** Runs before the app quits to install an update: stops the office, keeping its workers. */
   beforeInstall: () => Promise<void>;
@@ -71,16 +58,10 @@ export class Updates {
       return;
     }
     this.manual = manual;
-    // Read each time: `gh auth login` may have happened since the last check.
-    const token = await ghToken(this.o.path());
-    autoUpdater.setFeedURL({ provider: 'github', ...RELEASES, ...(token ? { private: true, token } : {}) });
     try {
       await autoUpdater.checkForUpdates();
     } catch (err) {
-      if (manual) {
-        const hint = token ? '' : '\n\nThe releases are in a private repository: sign the GitHub CLI in (`gh auth login`) so the app can read them.';
-        this.tell(`Couldn't check for updates: ${(err as Error).message}${hint}`, 'warning');
-      }
+      if (manual) this.tell(`Couldn't check for updates: ${(err as Error).message}`, 'warning');
     } finally {
       this.manual = false;
     }
