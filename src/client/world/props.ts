@@ -66,7 +66,9 @@ export function propManifest(): PropManifest {
 /** Loads the manifest. Safe to call more than once; callers await the same promise. */
 export async function loadPropManifest(): Promise<PropManifest> {
   if (manifest) return manifest;
-  const res = await fetch('/props/manifest.json');
+  // Releases before the server revalidated /props/ marked this immutable for a year; `no-cache`
+  // makes a browser holding one of those copies ask again instead of missing every newer prop.
+  const res = await fetch('/props/manifest.json', { cache: 'no-cache' });
   if (!res.ok) throw new Error(`props manifest: ${res.status} ${res.statusText}`);
   manifest = (await res.json()) as PropManifest;
   return manifest;

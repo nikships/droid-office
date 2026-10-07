@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -551,15 +551,28 @@ export async function startServer(cfg: Config) {
   );
 
   // --- HTTP ------------------------------------------------------------------------------------
-  const serveFile = (res: http.ServerResponse, file: string, cache: boolean) => {
+  /**
+   * `immutable` is only for content-hashed names. `revalidate` is for files whose name stays put while
+   * their bytes change between releases: the browser keeps them but asks each load, and gets a 304.
+   */
+  const serveFile = (res: http.ServerResponse, file: string, cache: boolean | 'revalidate', req?: http.IncomingMessage) => {
     const ext = path.extname(file);
-    res.writeHead(200, {
+    const headers: http.OutgoingHttpHeaders = {
       'content-type': MIME[ext] ?? 'application/octet-stream',
-      'cache-control': cache ? 'public, max-age=31536000, immutable' : 'no-store',
+      'cache-control': cache === 'revalidate' ? 'no-cache' : cache ? 'public, max-age=31536000, immutable' : 'no-store',
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
       'referrer-policy': 'no-referrer',
-    });
+    };
+    if (cache === 'revalidate') {
+      const st = statSync(file);
+      headers.etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+      if (req?.headers['if-none-match'] === headers.etag) {
+        res.writeHead(304, headers).end();
+        return;
+      }
+    }
+    res.writeHead(200, headers);
     createReadStream(file)
       .on('error', (err) => res.destroy(err))
       .pipe(res);
@@ -626,10 +639,11 @@ export async function startServer(cfg: Config) {
         res.writeHead(404).end();
         return;
       }
-      // In a source checkout props can change under the same name; releases keep immutable caching.
+      // Props keep their names when a release or a regenerate changes them (manifest.json gains rows),
+      // so a cached copy is checked every load; an immutable one would hide new props after an update.
       if (p.startsWith('/props/')) {
         const file = publicFile(p);
-        if (file) return serveFile(res, file, !hotReload.state().available);
+        if (file) return serveFile(res, file, 'revalidate', req);
         res.writeHead(404).end();
         return;
       }
