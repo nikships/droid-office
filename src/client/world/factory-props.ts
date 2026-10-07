@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FLOOR, MACHINE_MONITOR } from '../../shared/layout';
+import { COMPUTE_WALL, FLOOR } from '../../shared/layout';
 import { MONO } from '../fonts';
 import type { Dressing, DressingKit } from './factory-floor';
 import { glyphFlat } from './glyph3d';
@@ -11,13 +11,35 @@ import { mergeByMaterial, mesh, roundedBox, toon } from './toon';
 // each piece here drops in the first frame its GLB is cached, so building the office (and the
 // Node tests, which never load one) touches no fetch, DOM or WebGL.
 
-/** The Droid Computer rack: a low plinth against the west wall under the machine monitor. */
-export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: MACHINE_MONITOR.z - 1.15, maxZ: MACHINE_MONITOR.z + 1.15, top: 0.62 } as const;
+/** Where along the west wall the compute wall's Droid Computers screen is centered (its right-hand part, seen from the room). */
+const FLEET_Z = COMPUTE_WALL.z - (COMPUTE_WALL.width - (COMPUTE_WALL.width - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap)) / 2;
+/** The Droid Computer rack: a low plinth against the west wall, under the compute wall's Droid Computers screen. */
+export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: FLEET_Z - 1.15, maxZ: FLEET_Z + 1.15, top: 0.62 } as const;
+
+/** What one of the rack's cubes shows for a real Droid Computer: its readout lines and how its LED goes. */
+export interface RackCube {
+  cpu?: number;
+  mem?: string;
+  dsk?: string;
+  /** on: active; busy: provisioning or waking (it blinks); dim: asleep; error: red; off: no computer for this cube. */
+  led: 'on' | 'busy' | 'dim' | 'error' | 'off';
+}
+
+/** The cubes as the Droid Computers are, or null to show the rack's idle demo (Factory isn't connected). */
+let rackFeed: RackCube[] | null = null;
+let rackFed = 0;
+/** Hands the rack its cubes: the first three managed Droid Computers. */
+export function setRackCubes(cubes: RackCube[] | null) {
+  if (JSON.stringify(cubes) === JSON.stringify(rackFeed)) return;
+  rackFeed = cubes;
+  rackFed++;
+}
 /** The robot cell: an arm between two conveyors, out on the open floor between the desks and the elevator. */
 export const ROBOT_CELL = { x: 5, z: -6, width: 3, depth: 2.5, top: 1.6 } as const;
 
 const ORANGE = '#ee6018';
 const GREEN = '#3ccf91';
+const RED = '#ef4444';
 
 /** Must match ARM and CONVEYOR in tools/props/generate.py. */
 const ARM = { pedestal: 0.44, shoulder: 0.26, upper: 0.62, fore: 0.55, wrist: 0.12, tool: 0.1125 };
@@ -206,7 +228,7 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   kit.fixture('west', cz, BOARD_TOP / 2, length + 0.1, BOARD_TOP + 0.05);
 
   const cubeX = minX + 0.38;
-  const leds: { mat: THREE.MeshBasicMaterial; blink: boolean; phase: number }[] = [];
+  const leds: { mat: THREE.MeshBasicMaterial; blink: boolean; phase: number; shown?: string }[] = [];
   const readouts: { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; data: (typeof COMPUTERS)[number]; cpu: number }[] = [];
 
   COMPUTERS.forEach((c, i) => {
@@ -245,14 +267,35 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   });
 
   let nextPaint = 0;
+  let painted = -1;
   updates.push((t) => {
-    for (const l of leds) {
+    for (let i = 0; i < leds.length; i++) {
+      const l = leds[i];
+      const live = rackFeed?.[i];
+      const led = live?.led ?? (rackFeed ? 'off' : l.blink ? 'busy' : 'on');
       // An idle machine holds steady green; a busy one flickers twice, quickly, every few seconds.
-      const k = l.blink ? (t + l.phase) % 2.6 : 1;
-      const on = !l.blink || !((k > 0.1 && k < 0.18) || (k > 0.3 && k < 0.38));
-      l.mat.color.set(on ? GREEN : '#0f3a28');
+      const k = led === 'busy' ? (t + l.phase) % 2.6 : 1;
+      const flick = (k > 0.1 && k < 0.18) || (k > 0.3 && k < 0.38);
+      const color = led === 'error' ? RED : led === 'dim' ? '#0f3a28' : led === 'off' ? '#111111' : led === 'busy' && live ? (flick ? '#3a1608' : ORANGE) : flick ? '#0f3a28' : GREEN;
+      if (l.shown !== color) {
+        l.shown = color;
+        l.mat.color.set(color);
+      }
     }
-    if (t < nextPaint || !readouts.length) return;
+    if (!readouts.length) return;
+    if (rackFeed) {
+      // Real computers: painted when what they say changes.
+      if (painted === rackFed) return;
+      painted = rackFed;
+      readouts.forEach((r, i) => {
+        const c = rackFeed?.[i];
+        paintReadout(r.ctx, c?.cpu, c?.mem ?? '—', c?.dsk ?? '—');
+        r.tex.needsUpdate = true;
+      });
+      return;
+    }
+    if (t < nextPaint && painted === -1) return;
+    painted = -1;
     nextPaint = t + 3;
     for (const r of readouts) {
       const swing = r.data.blink ? 9 : 1.2;
@@ -264,14 +307,14 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   return root;
 }
 
-function paintReadout(ctx: CanvasRenderingContext2D, cpu: number, mem: string, dsk: string) {
+function paintReadout(ctx: CanvasRenderingContext2D, cpu: number | undefined, mem: string, dsk: string) {
   const { width: w, height: h } = ctx.canvas;
   ctx.clearRect(0, 0, w, h);
   ctx.font = `500 30px ${MONO}`;
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#e6e6e6';
   const rows: [string, string][] = [
-    ['CPU', `${cpu.toFixed(1)}%`],
+    ['CPU', cpu === undefined ? '—' : `${cpu.toFixed(1)}%`],
     ['MEM', mem],
     ['DSK', dsk],
   ];

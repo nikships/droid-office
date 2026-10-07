@@ -5,6 +5,7 @@ import { randomLook } from '../shared/avatar';
 import {
   BALCONY,
   BEANBAGS,
+  COMPUTE_WALL,
   DESK_BY_ID,
   DESKS,
   ELEVATOR,
@@ -86,7 +87,7 @@ import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
-import { bindFactory } from './factory';
+import { bindFactory, watchFactory } from './factory';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
 import { openServices, serviceUrl } from './ui/services';
@@ -102,9 +103,12 @@ import { openPhone } from './ui/phone';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
-import { MachineTexture, officeFull, pressureNote } from './world/machine';
+import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
 import { openCiWindow } from './ui/factory-ci';
+import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
+import { setRackCubes } from './world/factory-props';
+import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf } from './ui/bookshelf';
@@ -236,10 +240,28 @@ mountBoard(office.boardMeshes.services, servicesTex.texture, renderServicesBoard
 const queueTex = new QueueBoardTexture();
 const renderQueueBoard = () => queueTex.render(store.queue, store.workers);
 mountBoard(office.boardMeshes.queue, queueTex.texture, renderQueueBoard, ['queue', 'workers']);
-// The machine monitor on the west wall.
-const machineTex = new MachineTexture();
-const renderMachineBoard = () => machineTex.render(store.machine);
-mountBoard(office.machineScreen, machineTex.texture, renderMachineBoard, ['machine']);
+// The compute wall on the west wall: this machine, and the Factory Droid Computers (world/factory-computers.ts).
+const computeWall = new ComputeWallTextures();
+const renderMachineBoard = () => {
+  computeWall.render(store.machine, store.factory);
+  setRackCubes(rackCubesOf(store.factory));
+};
+mountBoard(office.fleetScreen, computeWall.fleet, () => {}, []);
+mountBoard(office.machineScreen, computeWall.machine, renderMachineBoard, ['machine', 'factory']);
+/** The Computers window, on one computer when `id` is given. */
+const showComputers = (id?: string) => openComputers({ settings: () => showSettings('factory'), id });
+// Ages and asleep-ness move on by themselves; the wall paints only when what it says changed.
+setInterval(renderMachineBoard, 30_000);
+// Someone near the wall is watching it: Factory's computers are read more often meanwhile.
+let stopWatchingWall: (() => void) | undefined;
+setInterval(() => {
+  const near = !upTop && !!store.floor && Math.hypot(player.pos.x - COMPUTE_WALL.x, player.pos.z - COMPUTE_WALL.z) < 12;
+  if (near && !stopWatchingWall) stopWatchingWall = watchFactory('computers');
+  else if (!near && stopWatchingWall) {
+    stopWatchingWall();
+    stopWatchingWall = undefined;
+  }
+}, 1000);
 // The meeting room: its output as it's written on the back wall, and how it's going on the door.
 const meetingBoardTex = new MeetingBoardTexture();
 const renderMeetingBoard = () => meetingBoardTex.render(store.meeting);
@@ -305,6 +327,7 @@ void loadFonts().then(() => {
   renderPullsBoard();
   renderServicesBoard();
   renderQueueBoard();
+  computeWall.repaint();
   renderMachineBoard();
   renderMeetingBoard();
   renderMeetingSign();
@@ -1864,6 +1887,17 @@ function paletteEntries(): PaletteEntry[] {
       open: () => showCi(true),
     }),
   );
+  out.push(
+    atSpot('computers', 'the compute wall', {
+      icon: '🖥️',
+      kind: 'Board',
+      title: 'Computers',
+      detail: 'This machine and your Factory Droid Computers',
+      keywords: ['droid computers', 'factory', 'cloud', 'machine', 'cpu'],
+      open: () => showComputers(),
+    }),
+  );
+  for (const c of store.factory.computers.items) out.push(atSpot('computers', 'the compute wall', { icon: '🖥️', kind: 'Droid Computer', title: c.name, detail: c.managed ? c.providerType : 'BYOM', open: () => showComputers(c.id) }));
   out.push(atSpot('meeting', 'the meeting room', { icon: '🤝', kind: 'Board', title: 'Meeting room', keywords: ['call a meeting'], open: () => showMeeting() }));
 
   for (const pr of store.pulls.items) {
@@ -2037,6 +2071,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'issues') openBoard('issues', net, boardActions(), issuesTex.tab);
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
   else if (target.kind === 'services') openServices();
+  else if (target.kind === 'computers') showComputers();
   else if (target.kind === 'queue') showQueue();
   else if (target.kind === 'ci') showCi();
   else if (target.kind === 'jukebox') showJukebox();
@@ -2514,6 +2549,10 @@ function hintFor(it: Interactable): Hint {
       const n = ci.workflows.length;
       const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
       return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
+    }
+    case 'computers': {
+      const about = computeWall.view ? wallSummary(computeWall.view) : '';
+      return { k: about, parts: [title('🖥️ Compute wall'), aside(about), key('E', 'Open the Computers')] };
     }
     case 'queue': {
       const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
@@ -3022,6 +3061,7 @@ const REACH: Record<InteractKind, number> = {
   services: 9,
   queue: 9,
   ci: 9,
+  computers: 9,
   tv: 10,
   decor: 9,
   smoke: 3,
@@ -3149,6 +3189,7 @@ const hudActions: HudAction[] = [
   { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
   { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
   { id: 'ci', icon: '🏭', label: 'CI automations', section: 'Open', count: () => store.factory.ci.workflows.length, title: () => 'Droid in GitHub Actions, from Factory', run: () => showCi() },
+  { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
   // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
   {
     id: 'meeting',
