@@ -8,6 +8,7 @@ import { onJiraSetup } from './jira';
 import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
+import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 
@@ -604,6 +605,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
   paintJira();
   const sourceReload = hotReloadSettings();
+  const factoryKey = factoryKeySettings(net);
   const panes: Record<SettingsPane, Node[]> = {
     you: [card('Your character', character), card('Camera view', seg, note)],
     sound: [
@@ -632,6 +634,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       card('Workspace folder', dirRow, dirActions, dirNote),
       card('Source hot reload', sourceReload.element),
     ],
+    factory: [card('Factory API key', ...factoryKey.nodes)],
     workers: [card('Default worker', agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
     subagents: [
       card('Subagents', subOn.row, subWho.row, subNote, h('div.seg', { style: 'margin-top:8px' }, subPrompts)),
@@ -706,6 +709,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       offJira.forEach((off) => off());
       offPrompts.forEach((off) => off());
       sourceReload.dispose();
+      factoryKey.dispose();
     },
   });
   show(first ?? lastPane);
