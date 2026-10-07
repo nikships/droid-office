@@ -44,6 +44,18 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsACloudWorker() {
+        val m = Protocol.decode(
+            """{"t":"worker.update","worker":{"id":"w3","kind":"cloud","status":"working","sessionId":"s1",
+               "cloud":{"computerId":"c1","computerName":"orb","provider":"e2b","autonomy":"high"}}}""",
+        ) as ServerMsg.WorkerUpdate
+        assertTrue(m.worker.isCloud)
+        assertFalse(m.worker.isShell)
+        assertEquals("orb", m.worker.cloud?.computerName)
+        assertEquals(WorkerStatus.Working, m.worker.state)
+    }
+
+    @Test
     fun anUnknownStatusIsUnknownNotACrash() {
         val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w9","status":"daydreaming"}}""") as ServerMsg.WorkerUpdate
         assertEquals(WorkerStatus.Unknown, m.worker.state)

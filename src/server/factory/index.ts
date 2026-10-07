@@ -2,6 +2,7 @@ import type { FactoryState } from '../../shared/factory.js';
 import { isFactoryFeature } from '../../shared/factory.js';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol.js';
 import { CiFeature } from './ci.js';
+import { mountCloud, type CloudOptions } from './cloud.js';
 import { ComputersFeature } from './computers.js';
 import { FactoryOffice } from './office.js';
 import { FactoryRegistry } from './registry.js';
@@ -16,6 +17,8 @@ export interface MountOptions {
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
   fetchImpl?: typeof fetch;
   base?: string;
+  /** The floors' cloud workers (cloud.ts), when the office has floors to seat them on. */
+  cloud?: Omit<CloudOptions, 'computers'>;
 }
 
 /**
@@ -31,6 +34,7 @@ export function mountFactory(opts: MountOptions) {
   registry.register((host) => new SessionsFeature(host));
   registry.register((host) => new CiFeature(host));
   registry.register((host) => new WikiFeature(host));
+  const cloud = opts.cloud && mountCloud(registry, opts.cloud);
   registry.start();
   // A saved key is checked again at every start: it may have been deleted, or its plan changed.
   void office.check();
@@ -71,6 +75,7 @@ export function mountFactory(opts: MountOptions) {
   return {
     office,
     registry,
+    cloud,
     state: () => registry.state(),
     message,
     drop: (client: string) => registry.drop(client),

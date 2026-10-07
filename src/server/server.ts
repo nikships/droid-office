@@ -401,7 +401,18 @@ export async function startServer(cfg: Config) {
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
   // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Factory, docs/factory.md).
-  const factory = mountFactory({ dataDir: cfg.dataDir, broadcast: (state) => broadcast({ t: 'factory', state }), toast: (text, level) => toastAll(text, level) });
+  const factory = mountFactory({
+    dataDir: cfg.dataDir,
+    broadcast: (state) => broadcast({ t: 'factory', state }),
+    toast: (text, level) => toastAll(text, level),
+    // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
+    cloud: {
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
+      agentArgs: cfg.agentArgs,
+      toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
+    },
+  });
+  const cloud = factory.cloud!;
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
@@ -1090,6 +1101,7 @@ export async function startServer(cfg: Config) {
       for (const f of floors.values()) {
         f.workers.detachAll(id);
         f.guests.detachAll(id);
+        f.cloud.detachAll(id);
         f.changes.unwatchAll(id);
       }
       factory.drop(id);
@@ -1165,6 +1177,7 @@ export async function startServer(cfg: Config) {
     if (was) {
       was.workers.detachAll(c.id);
       was.guests.detachAll(c.id);
+      was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
     c.attached.clear();
@@ -1224,6 +1237,13 @@ export async function startServer(cfg: Config) {
     const asked = (msg as { workerId?: unknown }).workerId;
     const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
     if (guest?.guest) return warn(c, guestRefusal(guest, msg.t));
+    // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
+    const cloudie = typeof asked === 'string' && /^(worker|term|changes|guest)\./.test(msg.t) ? cloud.find(asked) : undefined;
+    if (cloudie) {
+      const floor = floors.get(cloudie.floor.id);
+      cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), takeIssue: (n) => floor && takeIssue(c, floor, n) });
+      return;
+    }
     switch (msg.t) {
       case 'profile': {
         // Display provenance only (see Client.peer).

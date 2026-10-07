@@ -8,6 +8,7 @@ import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
 import { Guests, attribute, stopGuest, type AgentProcess } from './guests.js';
+import { CloudWorkers } from './cloud-workers.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
 import type { Board } from './forge.js';
@@ -119,6 +120,8 @@ export class Floor {
   readonly team: Team;
   /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
   readonly guests: Guests;
+  /** Workers whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
+  readonly cloud: CloudWorkers;
   /** Settles once the workers whose terminals outlived the last office are picked back up, and the rest woken. */
   readonly ready: Promise<void>;
   private timer: NodeJS.Timeout;
@@ -201,9 +204,10 @@ export class Floor {
 
     // Someone's own droid (or claude, codex…) in this checkout: watched at a desk, never run by the office.
     const own = this.workers;
+    const ownNames = () => own.list().map((w) => w.name.replace(/ 🐚$/, ''));
     this.guests = new Guests(
       dataDir,
-      { deskTaken: (id) => own.ownDesk(id), names: () => own.list().map((w) => w.name.replace(/ 🐚$/, '')), pool: { names: NAMES, colors: COLORS }, checkout: def.dir },
+      { deskTaken: (id) => own.ownDesk(id) || this.cloud.deskTaken(id), names: () => [...ownNames(), ...this.cloud.names()], pool: { names: NAMES, colors: COLORS }, checkout: def.dir },
       {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
@@ -216,7 +220,21 @@ export class Floor {
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
       },
     );
-    this.workers.holds = { desk: (id) => this.guests.deskTaken(id), names: () => this.guests.names() };
+    this.cloud = new CloudWorkers(
+      dataDir,
+      { deskTaken: (id) => own.ownDesk(id) || this.guests.deskTaken(id), names: () => [...ownNames(), ...this.guests.names()], pool: { names: NAMES, colors: COLORS } },
+      {
+        update: (worker) => {
+          ctx.emit(this, { t: 'worker.update', worker });
+          ctx.workerChanged(this, worker);
+        },
+        remove: (workerId) => {
+          ctx.emit(this, { t: 'worker.remove', workerId });
+          ctx.workerChanged(this, workerId);
+        },
+      },
+    );
+    this.workers.holds = { desk: (id) => this.guests.deskTaken(id) || this.cloud.deskTaken(id), names: () => [...this.guests.names(), ...this.cloud.names()] };
 
     // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
     const queued = this.workers;
@@ -425,9 +443,9 @@ export class Floor {
     return this.workers.takeIn(info, session, by);
   }
 
-  /** Everyone at a desk here, the office's workers and the guests. */
+  /** Everyone at a desk here: the office's workers, its cloud workers and the guests. */
   everyone(): WorkerInfo[] {
-    return [...this.workers.list(), ...this.guests.list()];
+    return [...this.workers.list(), ...this.cloud.list(), ...this.guests.list()];
   }
 
   /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
@@ -453,7 +471,7 @@ export class Floor {
       addedAt: this.def.addedAt,
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,
       busy: ws.filter((w) => w.status === 'working').length,
-      waiting: ws.filter((w) => w.kind === 'agent' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
+      waiting: ws.filter((w) => w.kind !== 'shell' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
     };
   }
 

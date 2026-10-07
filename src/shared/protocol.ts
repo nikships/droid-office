@@ -5,6 +5,7 @@ import type { Forge } from './floors.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { FactoryFeatureId, FactoryState } from './factory.js';
+import type { CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
@@ -18,7 +19,7 @@ export type WorkerStatus =
   | 'exited' // process ended (can be resumed if it had a session)
   | 'offline'; // restored from disk after a server restart; resumable
 
-export type WorkerKind = 'agent' | 'shell';
+export type WorkerKind = 'agent' | 'shell' | 'cloud';
 
 /**
  * What a working agent's latest tool call looks like from across the room (see shared/actions.ts):
@@ -65,7 +66,7 @@ export const WORKER_REVIVE_MS = 30_000;
 
 export interface WorkerInfo {
   id: string;
-  /** 'agent' runs Droid; 'shell' is a plain shared login shell. */
+  /** 'agent' runs Droid; 'shell' is a plain shared login shell; 'cloud' runs its Droid session on a Factory computer (see `cloud`). */
   kind: WorkerKind;
   /** Droid model requested for this worker, instead of Droid's own default. */
   model?: string;
@@ -149,6 +150,12 @@ export interface WorkerInfo {
    * server/guests.ts): they're this worker's, rather than guests of their own.
    */
   outside?: OutsideProcess[];
+  /**
+   * Set for a cloud worker (kind 'cloud'): its Droid session (`sessionId`) runs on one of the
+   * account's Factory computers, driven through Factory's Sessions API (see server/factory/cloud.ts).
+   * It has no terminal, worktree or hooks on this machine.
+   */
+  cloud?: CloudWorker;
 }
 
 /** The agent CLIs whose processes the office recognises as guests. */
@@ -883,7 +890,8 @@ export type ClientMsg =
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
-  | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
+  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left in the Sessions window. */
+  | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string }
   /** Revives a nearby shot worker before its deadline, without restarting its session. */

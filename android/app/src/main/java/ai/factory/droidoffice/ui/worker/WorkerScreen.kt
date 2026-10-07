@@ -182,7 +182,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
                 phone = phone, onPhoneSize = { phoneSize = it },
             )
-            if (worker.state.asleep) Asleep(worker)
+            if (worker.isCloud) Cloud(worker) else if (worker.state.asleep) Asleep(worker)
         }
         if (live) {
             val lift = LocalSnackbarLift.current
@@ -190,9 +190,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             DisposableEffect(lift) { onDispose { lift.value = null } }
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
-                QuickKeys(workerId, zoom, phone) {
-                    phone = !phone
-                    zoom.zoom = 1f
+                if (!worker.isCloud) {
+                    QuickKeys(workerId, zoom, phone) {
+                        phone = !phone
+                        zoom.zoom = 1f
+                    }
                 }
                 Composer(worker)
             }
@@ -220,6 +222,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
                 add(deskLabel(w.deskId))
+                w.cloud?.computerName?.takeIf { it.isNotBlank() }?.let { add("☁ $it") }
                 if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it)) }
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
@@ -373,6 +376,24 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** A cloud worker has no terminal here: what it's doing, and that its session is in the office and on Factory. */
+@Composable
+private fun Cloud(w: WorkerInfo) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Worker.CLOUD).background(Palette.Bg, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+            Text("☁ ${w.name} works on ${w.cloud?.computerName?.ifBlank { null } ?: "a Factory computer"}", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                w.cloud?.error?.let { "It can't work right now: $it." } ?: (w.activity?.ifBlank { null } ?: "This worker runs on Factory: open it in the office to read its session. You can still message it below."),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (w.cloud?.error != null) Palette.Danger else Palette.TextSecondary,
+                modifier = Modifier.widthIn(max = 300.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
         }
     }
 }
