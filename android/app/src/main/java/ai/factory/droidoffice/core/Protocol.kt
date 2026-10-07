@@ -322,6 +322,12 @@ object ClientMsg {
         put("data", data)
     }
 
+    fun termResize(workerId: String, cols: Int, rows: Int) = obj("term.resize") {
+        put("workerId", workerId)
+        put("cols", cols)
+        put("rows", rows)
+    }
+
     fun attach(workerId: String) = obj("worker.attach") { put("workerId", workerId) }
     fun detach(workerId: String) = obj("worker.detach") { put("workerId", workerId) }
     fun resume(workerId: String) = obj("worker.resume") { put("workerId", workerId) }

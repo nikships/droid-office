@@ -123,6 +123,7 @@ object Tags {
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"
         const val ZOOM = "key.zoom"
+        const val PHONE = "key.phone"
         const val INPUT = "composer.input"
         const val ATTACH = "composer.attach"
         const val SEND = "composer.send"

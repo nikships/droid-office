@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,10 +48,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +76,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,8 +85,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
+import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -102,7 +110,13 @@ import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
+    save = { listOf(it.original?.cols ?: 0, it.original?.rows ?: 0) + it.sentSizes.flatMap { size -> listOf(size.cols, size.rows) } },
+    restore = { PhoneSizing(if (it[0] > 0) TermSize(it[0], it[1]) else null, it.drop(2).chunked(2).map { size -> TermSize(size[0], size[1]) }) },
+)
 
 @Composable
 fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false) {
@@ -140,8 +154,34 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         val screen = screens[workerId]
         NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         val zoom = rememberTerminalZoom(workerId)
+        var phone by rememberSaveable(workerId) { mutableStateOf(false) }
+        var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
+        val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
+        val currentSize = TermSize(worker.cols, worker.rows)
+        val canResize = live && link.phase == Phase.Connected && screen != null
+        LaunchedEffect(phone, phoneSize, canResize, currentSize) {
+            if (!canResize) {
+                sizing.disconnected()
+                return@LaunchedEffect
+            }
+            if (phone) {
+                val target = phoneSize ?: return@LaunchedEffect
+                // Wait for keyboard and panel animations to settle before resizing the shared PTY.
+                delay(150)
+                sizing.request(currentSize, target)?.let { size ->
+                    if (connection.send(ClientMsg.termResize(workerId, size.cols, size.rows))) sizing.sent(size)
+                }
+            } else {
+                val restore = sizing.restore(currentSize)
+                if (restore == null || connection.send(ClientMsg.termResize(workerId, restore.cols, restore.rows))) sizing.release()
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
-            Terminal(screen, live && link.phase == Phase.Connected, zoom, Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)))
+            Terminal(
+                screen, live && link.phase == Phase.Connected, zoom,
+                Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
+                phone = phone, onPhoneSize = { phoneSize = it },
+            )
             if (worker.state.asleep) Asleep(worker)
         }
         if (live) {
@@ -150,7 +190,10 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             DisposableEffect(lift) { onDispose { lift.value = null } }
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
-                QuickKeys(workerId, zoom)
+                QuickKeys(workerId, zoom, phone) {
+                    phone = !phone
+                    zoom.zoom = 1f
+                }
                 Composer(worker)
             }
         }
@@ -379,7 +422,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
 
 /** The keys a TUI waits for that a phone keyboard doesn't have: menus, permission prompts, interrupts. */
 @Composable
-private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
+private fun QuickKeys(workerId: String, zoom: TerminalZoom, phone: Boolean, onPhone: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
     // Label, what TalkBack says, bytes.
@@ -393,11 +436,15 @@ private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (zoom.zoomable) {
+        if (!phone && zoom.zoomable) {
             QuickKey(if (zoom.zoomed) "Fit" else "Aa", if (zoom.zoomed) "Fit the terminal to the screen" else "Zoom the terminal in", Tags.Worker.ZOOM, selected = zoom.zoomed) {
                 haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
                 zoom.toggle()
             }
+        }
+        QuickKey("Phone", "Resize the terminal for this phone", Tags.Worker.PHONE, selected = phone, checked = phone) {
+            haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+            onPhone()
         }
         keys.forEach { (label, spoken, bytes) ->
             QuickKey(label, spoken, Tags.Worker.key(spoken), accent = label == "⏎") {
@@ -409,17 +456,19 @@ private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
 }
 
 @Composable
-private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
+private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, checked: Boolean? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(7.dp)
+    val interaction = if (checked == null) Modifier.clickable(onClick = onClick) else Modifier.toggleable(checked, role = Role.Switch) { onClick() }
     Box(
         Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
             .background(if (accent) Palette.AccentMuted else if (selected) Palette.SurfaceHigh else Palette.SurfaceRaised)
             .border(1.dp, if (accent) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, shape)
-            .clickable(onClick = onClick)
+            .then(interaction)
             .clearAndSetSemantics {
                 contentDescription = spoken
-                role = Role.Button
+                role = if (checked == null) Role.Button else Role.Switch
                 this.selected = selected
+                if (checked != null) toggleableState = ToggleableState(checked)
                 testTagsAsResourceId = true
                 testTag = tag
             }

@@ -75,6 +75,7 @@ import ai.factory.droidoffice.core.Span
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermLayout
 import ai.factory.droidoffice.core.TermPalette
+import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -143,16 +144,23 @@ private class Paints(faces: TerminalFaces) {
 
 /**
  * A worker's terminal as the office draws it on the laptop: the PTY's grid at its own size, fit to
- * the phone's width to start with. Pinch zooms (and the grid scrolls both ways once it's bigger than
- * the view), a double tap flips between fit and readable, and the view follows what the program
- * last drew, where TUIs keep their input, until the owner scrolls away.
+ * the phone's width to start with. Pinch zooms and a double tap flips between fit and readable.
+ * Phone mode keeps readable text and measures a grid for the real PTY to adopt instead.
+ * The view follows what the program last drew until the owner scrolls away.
  *
  * Cells are drawn straight onto a canvas, column by column: a wide or fallback glyph is fitted to
  * its cells so the rest of the row stays in line, and box drawing and block elements are shapes
  * that meet across rows.
  */
 @Composable
-fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: Modifier = Modifier) {
+fun Terminal(
+    screen: ScreenState?,
+    live: Boolean,
+    zoom: TerminalZoom,
+    modifier: Modifier = Modifier,
+    phone: Boolean = false,
+    onPhoneSize: (TermSize?) -> Unit = {},
+) {
     val faces = LocalOfficeType.current.terminal
     val density = LocalDensity.current
     val paints = remember(faces) { Paints(faces) }
@@ -173,6 +181,13 @@ fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: 
                 if (screen != null) text = AnnotatedString(screen.text())
             },
     ) {
+        val pad = with(density) { 8.dp.toPx() }
+        val viewW = constraints.maxWidth - pad * 2
+        val viewH = constraints.maxHeight.toFloat()
+        val readablePx = with(density) { READABLE_SP.sp.toPx() }
+        val nativeLineH = (readablePx * LINE).roundToInt().toFloat().coerceAtLeast(1f)
+        val phoneSize = TermSize.fit(viewW, viewH - pad * 2, paints.advance * readablePx, nativeLineH)
+        SideEffect { onPhoneSize(phoneSize) }
         if (screen == null) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spinner(Modifier.size(22.dp))
@@ -181,19 +196,16 @@ fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: 
             }
             return@BoxWithConstraints
         }
-        val pad = with(density) { 8.dp.toPx() }
-        val viewW = constraints.maxWidth - pad * 2
-        val viewH = constraints.maxHeight.toFloat()
         val maxPx = with(density) { MAX_SP.sp.toPx() }
         // Half a cell spare, so rounding never pushes the last column out of view.
         val fitPx = (viewW / (screen.cols + 0.5f) / paints.advance).coerceIn(3f, maxPx)
         val maxZoom = (maxPx / fitPx).coerceAtLeast(1f)
-        val readable = (with(density) { READABLE_SP.sp.toPx() } / fitPx).coerceIn(1f, maxZoom)
+        val readable = (readablePx / fitPx).coerceIn(1f, maxZoom)
         SideEffect {
             zoom.max = maxZoom
             zoom.readable = readable
         }
-        val textPx = fitPx * zoom.zoom.coerceIn(1f, maxZoom)
+        val textPx = if (phone) readablePx else fitPx * zoom.zoom.coerceIn(1f, maxZoom)
         val cellW = paints.advance * textPx
         val lineH = (textPx * LINE).roundToInt().toFloat().coerceAtLeast(1f)
         val gridW = cellW * (screen.cols + 0.5f)
@@ -218,8 +230,8 @@ fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: 
 
         Box(
             Modifier.fillMaxSize()
-                .transformable(transform, canPan = { false })
-                .pointerInput(zoom) { detectTapGestures(onDoubleTap = { zoom.toggle() }) }
+                .transformable(transform, canPan = { false }, enabled = !phone)
+                .pointerInput(zoom, phone) { if (!phone) detectTapGestures(onDoubleTap = { zoom.toggle() }) }
                 .verticalScroll(vScroll)
                 .horizontalScroll(hScroll)
                 .padding(8.dp),
