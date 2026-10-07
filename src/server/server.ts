@@ -153,6 +153,10 @@ const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max
 /** Which of a worker's repositories a Changes message is about: another floor's (see WorkerInfo.repos), or none for its own. */
 const repoOf = (v: unknown) => str(v, 64) || undefined;
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+/** What an office tab answered a relayed automation command with (see automationRequest). */
+type AutomationAnswer = { ok: boolean; value?: unknown; error?: string; timedOut?: boolean };
+/** How long a relayed automation command waits on the tab by default: longer than a walk across the floor. */
+const AUTOMATION_TIMEOUT = 90_000;
 /** Where someone going to another floor says they arrive (see `floor.go`): on the grounds, or nowhere (the elevator). */
 function arrivalSpot(at: unknown): { x: number; y: number; z: number; rotY: number } | undefined {
   if (!at || typeof at !== 'object') return undefined;
@@ -657,6 +661,51 @@ export async function startServer(cfg: Config) {
     );
   };
 
+  /** Automation commands relayed to an office tab (POST /api/automation), each waiting on that tab's answer. */
+  const automationWaits = new Map<string, { client: string; done: (answer: AutomationAnswer) => void }>();
+  /**
+   * POST /api/automation {"cmd": "goTo", "args": ["desk-3"]}: runs a `window.office` command in the
+   * office tab opened last (not a phone) and answers with what it resolved to. For a command line,
+   * so it takes no Origin but the office's own, and JSON only, which a web page elsewhere can't send
+   * without a preflight the office never answers.
+   */
+  const automationRequest = async (req: http.IncomingMessage, res: http.ServerResponse, own: boolean) => {
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST a JSON command' }, { allow: 'POST' });
+    if (req.headers.origin && !own) return send(res, 403, { error: 'Forbidden' });
+    if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Send JSON (content-type: application/json)' });
+    let body: { cmd?: unknown; args?: unknown; timeout?: unknown } | null;
+    try {
+      body = JSON.parse(await readBody(req, 64 * 1024));
+    } catch {
+      body = null;
+    }
+    const cmd = body && typeof body === 'object' ? str(body.cmd, 32) : '';
+    if (!body || !cmd) return send(res, 400, { error: 'Send JSON: {"cmd": "goTo", "args": ["desk-3"]}' });
+    const args = Array.isArray(body.args) ? body.args : body.args === undefined ? [] : [body.args];
+    const timeout = Math.min(Math.max(num(body.timeout) || AUTOMATION_TIMEOUT, 1000), 5 * 60_000);
+    let tab: Client | undefined;
+    for (const c of clients.values()) if (!c.device && c.ws.readyState === WebSocket.OPEN) tab = c;
+    if (!tab) return send(res, 409, { ok: false, error: 'No office tab is open: open the office in a browser first' });
+    const id = randomBytes(6).toString('hex');
+    const answer = await new Promise<AutomationAnswer>((resolve) => {
+      const timer = setTimeout(() => {
+        automationWaits.delete(id);
+        resolve({ ok: false, error: `The office tab didn't answer within ${Math.round(timeout / 1000)}s`, timedOut: true });
+      }, timeout);
+      automationWaits.set(id, {
+        client: tab.id,
+        done: (a) => {
+          clearTimeout(timer);
+          automationWaits.delete(id);
+          resolve(a);
+        },
+      });
+      sendTo(tab, { t: 'automation.run', id, cmd, args });
+    });
+    const { timedOut, ...out } = answer;
+    return send(res, answer.ok ? 200 : timedOut ? 504 : 422, out);
+  };
+
   /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
   const search = (q: string, floor: Floor | undefined): SearchResults => {
     q = q.slice(0, SEARCH_MAX);
@@ -735,6 +784,7 @@ export async function startServer(cfg: Config) {
       const ownRequest = () => sameOrigin(req, cfg) || (!!gate.device && !!gate.header);
 
       if (p === '/api/health') return send(res, 200, { ok: true });
+      if (p === '/api/automation') return automationRequest(req, res, ownRequest());
       if (p === '/api/mobile/hello' && req.method === 'GET') return send(res, 200, { ok: true, office: officeCard(), ...(gate.device ? { deviceId: gate.device.id } : {}) });
       if (p === '/api/mobile/pair' && req.method === 'DELETE') {
         // The phone's own "Unpair": only with its device token.
@@ -1027,6 +1077,7 @@ export async function startServer(cfg: Config) {
     });
     ws.on('close', () => {
       clients.delete(id);
+      for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
       stopPlaying(client);
       for (const f of floors.values()) {
         f.workers.detachAll(id);
@@ -1816,6 +1867,12 @@ export async function startServer(cfg: Config) {
         if (!floor?.jukebox.stop(who)) break;
         jukeboxChanged(floor);
         toastFloor(floor, `🔇 ${who} turned the jukebox off`);
+        break;
+      }
+      case 'automation.result': {
+        const wait = automationWaits.get(str(msg.id, 16));
+        if (!wait || wait.client !== c.id) break;
+        wait.done(msg.ok === true ? { ok: true, value: msg.value } : { ok: false, error: str(msg.error, 2000) || 'The command failed' });
         break;
       }
       case 'ping':

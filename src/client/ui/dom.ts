@@ -61,6 +61,14 @@ export function doingNow(): string | undefined {
   return undefined;
 }
 
+/** The open windows, bottom to top: each one's aria-label (else its heading) and what it says you're doing. */
+export function openModalList(): { label: string; doing?: string }[] {
+  return stack.map((m) => {
+    const label = m.el.getAttribute('aria-label') || m.el.querySelector('h2')?.textContent || m.el.className;
+    return m.doing ? { label, doing: m.doing } : { label };
+  });
+}
+
 /** Whether a window you're reading in is open (see Modal.reading). */
 export function readingNow(): boolean {
   return stack.some((m) => m.reading);

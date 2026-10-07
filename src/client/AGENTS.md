@@ -6,4 +6,5 @@
 - `ui/` and `world/` have their own `AGENTS.md`. This file is the Vite app and what those two share.
 - WebSocket messages are `ClientMsg` and `ServerMsg`, sent through `net.ts`. A new message is a `src/shared` change: update the server handlers and every client reader in the same change.
 - Keep modules that `tests/` imports (for example `world/office.ts`, `world/gun.ts` and `player.ts`) loadable in Node: no DOM or WebGL access at import time.
+- To check a change in the running office, drive it with `window.office` (`automation.ts`; commands in [docs/guide.md](../../docs/guide.md#automation-api-windowoffice)) instead of steering with keys. A new ☰ menu entry or interactable kind shows up there by itself; a new way to move you around goes through `AutomationHost` in `main.ts`.
 - Source hot reload (Settings → Building, or Vite on :5173) replaces the page. It does not swap a live three.js module in place, and it does not reload the server. See [docs/guide.md](../../docs/guide.md#source-hot-reload-with-the-normal-local-launch).

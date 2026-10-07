@@ -79,7 +79,8 @@ import { disposeSprite, redrawText, textSprite } from './world/toon';
 import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
-import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
+import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
@@ -103,7 +104,7 @@ import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elev
 import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
-import { mountHud } from './ui/menu';
+import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf } from './ui/bookshelf';
 import { Arcade } from './ui/arcade';
@@ -828,6 +829,14 @@ net.onMessage((msg) => {
       sound.horn();
       if (msg.by !== store.profile.name) toast(`📯 ${msg.by} blew the air horn!`);
       break;
+    case 'automation.run': {
+      const { id } = msg;
+      runCommand(automation, msg.cmd, msg.args).then(
+        (value) => net.send({ t: 'automation.result', id, ok: true, value }),
+        (err: unknown) => net.send({ t: 'automation.result', id, ok: false, error: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    }
   }
 });
 
@@ -1132,11 +1141,14 @@ function noticeWaiting() {
 
 // ---- Walking over to a spot -----------------------------------------------------------------------
 /** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
-let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void } | null = null;
+let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void; end?: (why: WalkEnd) => void } | null = null;
+type WalkEnd = 'arrived' | 'cancelled' | 'stuck';
 
 function stopWalking() {
+  const e = errand;
   errand = null;
   player.stopWalking();
+  e?.end?.('cancelled');
 }
 
 /** There: stop, and turn to it. */
@@ -1154,10 +1166,14 @@ player.onPathEnd = (why) => {
 /**
  * Walks you over to `at` on this floor and does `then` when you get there. Where there's no walking
  * to be done (up on the roof, riding the elevator, on the ladder) it just does it.
- * A key of yours takes over, and then it doesn't happen.
+ * A key of yours takes over, and then it doesn't happen. `end` hears how the walk ended.
  */
-function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }) {
-  if (upTop || trip || climber.active) return then();
+function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }, end?: (why: WalkEnd) => void) {
+  const now = () => {
+    then();
+    end?.('arrived');
+  };
+  if (upTop || trip || climber.active) return now();
   closeAllModals();
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
@@ -1165,20 +1181,21 @@ function walkThen(at: { x: number; y?: number; z: number }, what: string, then: 
   if (errand) stopWalking();
   const to = { x: at.x, y: at.y ?? 0, z: at.z };
   const path = wayTo(player.pos, to);
-  if (!path.length) return then();
-  errand = { at, what, face, then };
+  if (!path.length) return now();
+  errand = { at, what, face, then, end };
   toast(`🚶 Walking over to ${what}`);
   player.walkPath(path);
 }
 
-function errandEnd(why: 'arrived' | 'cancelled' | 'stuck') {
+function errandEnd(why: WalkEnd) {
   const e = errand!;
   errand = null;
-  if (why === 'cancelled') return;
+  if (why === 'cancelled') return e.end?.(why);
   if (why === 'stuck') toast(`🚧 Couldn't find a way over to ${e.what}, so here it is from where you are`, 'warn');
   else if (e.face) arrivedAt(e.face);
   else stopWalking();
   e.then();
+  e.end?.(why);
 }
 
 // ---- Workers ------------------------------------------------------------------------------------
@@ -3311,71 +3328,68 @@ $('project').addEventListener('click', () => {
 
 // ---- The HUD: a few buttons on the top bar, everything else in the ☰ menu ----------------------------
 const waitingNow = () => waitingInOrder(store.workers.values());
-const hud = mountHud(
-  [
-    { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
-    { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
-    { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
-    { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
-    // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
-    {
-      id: 'meeting',
-      icon: '🤝',
-      label: 'Meeting room',
-      section: 'Open',
-      status: () => store.meeting.current?.status === 'running',
-      chip: () => 'In a meeting',
-      title: () => 'Call a meeting: workers work through a question or a task together',
-      run: () => showMeeting(),
-    },
-    { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
-    { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
-    { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
-    {
-      id: 'decor',
-      icon: '🖼️',
-      label: () => (hanger.active ? 'Stop hanging the picture' : 'Hang a picture'),
-      section: 'Together',
-      key: 'F',
-      on: () => hanger.active,
-      status: () => hanger.active,
-      run: () => (hanger.active ? hanger.cancel() : startHanging()),
-    },
-    { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
-    { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
-    { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
-    {
-      id: 'upgrade',
-      icon: '⬆️',
-      label: () => (store.upgrade.phase === 'building' ? 'Upgrading…' : store.upgrade.latest ? 'Update the office' : 'Upgrade the office'),
-      section: 'Office',
-      shown: () => store.upgrade.available,
-      // A new version, or one being built, gets a place on the top bar until it's in.
-      status: () => !!store.upgrade.latest || store.upgrade.phase === 'building',
-      chip: () => (store.upgrade.phase === 'building' ? 'Upgrading…' : 'Update'),
-      tone: () => (store.upgrade.latest && store.upgrade.phase !== 'building' ? 'primary' : undefined),
-      title: () => (store.upgrade.latest ? `New version: ${store.upgrade.latest.subject}` : 'Upgrade the office'),
-      run: () => openUpgrade(net),
-    },
-    // Up on the top bar while workers wait on someone (N does the same), next to the Workers button.
-    {
-      id: 'waiting',
-      icon: () => (waitingNow().some((w) => w.status === 'needs_input') ? '🙋' : '✅'),
-      label: 'Next worker that needs you',
-      section: 'Open',
-      key: 'N',
-      shown: () => waitingNow().length > 0,
-      status: () => waitingNow().length > 0,
-      chip: () => waitingLabel(waitingNow()).replace(/^(🙋|✅) /, ''),
-      on: () => waitingNow().every((w) => w.status === 'done'),
-      tone: () => (waitingNow().some((w) => w.status === 'needs_input') ? 'danger' : undefined),
-      title: () => 'Go to the worker that has waited longest on someone (N)',
-      run: goToNextWaiting,
-    },
-  ],
-  settings,
-  () => saveSettings(settings),
-);
+const hudActions: HudAction[] = [
+  { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
+  { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
+  { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
+  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
+  // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
+  {
+    id: 'meeting',
+    icon: '🤝',
+    label: 'Meeting room',
+    section: 'Open',
+    status: () => store.meeting.current?.status === 'running',
+    chip: () => 'In a meeting',
+    title: () => 'Call a meeting: workers work through a question or a task together',
+    run: () => showMeeting(),
+  },
+  { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
+  { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
+  { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
+  {
+    id: 'decor',
+    icon: '🖼️',
+    label: () => (hanger.active ? 'Stop hanging the picture' : 'Hang a picture'),
+    section: 'Together',
+    key: 'F',
+    on: () => hanger.active,
+    status: () => hanger.active,
+    run: () => (hanger.active ? hanger.cancel() : startHanging()),
+  },
+  { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
+  { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
+  { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
+  {
+    id: 'upgrade',
+    icon: '⬆️',
+    label: () => (store.upgrade.phase === 'building' ? 'Upgrading…' : store.upgrade.latest ? 'Update the office' : 'Upgrade the office'),
+    section: 'Office',
+    shown: () => store.upgrade.available,
+    // A new version, or one being built, gets a place on the top bar until it's in.
+    status: () => !!store.upgrade.latest || store.upgrade.phase === 'building',
+    chip: () => (store.upgrade.phase === 'building' ? 'Upgrading…' : 'Update'),
+    tone: () => (store.upgrade.latest && store.upgrade.phase !== 'building' ? 'primary' : undefined),
+    title: () => (store.upgrade.latest ? `New version: ${store.upgrade.latest.subject}` : 'Upgrade the office'),
+    run: () => openUpgrade(net),
+  },
+  // Up on the top bar while workers wait on someone (N does the same), next to the Workers button.
+  {
+    id: 'waiting',
+    icon: () => (waitingNow().some((w) => w.status === 'needs_input') ? '🙋' : '✅'),
+    label: 'Next worker that needs you',
+    section: 'Open',
+    key: 'N',
+    shown: () => waitingNow().length > 0,
+    status: () => waitingNow().length > 0,
+    chip: () => waitingLabel(waitingNow()).replace(/^(🙋|✅) /, ''),
+    on: () => waitingNow().every((w) => w.status === 'done'),
+    tone: () => (waitingNow().some((w) => w.status === 'needs_input') ? 'danger' : undefined),
+    title: () => 'Go to the worker that has waited longest on someone (N)',
+    run: goToNextWaiting,
+  },
+];
+const hud = mountHud(hudActions, settings, () => saveSettings(settings));
 /** F: hang a picture on a wall of this floor. There are no walls for them up on the roof. */
 function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
@@ -3430,8 +3444,11 @@ let drunkVisionOn = false;
 const fpsEl = $('fps');
 let fpsFrames = 0;
 let fpsSince = performance.now();
+/** Frames drawn since the page loaded, so automation commands can wait for the scene to catch up. */
+let framesDrawn = 0;
 
 function frame(ts?: number) {
+  framesDrawn++;
   fpsFrames++;
   const fpsNow = performance.now();
   if (fpsNow - fpsSince >= 500) {
@@ -3628,6 +3645,94 @@ loading.until([]);
     });
   }
 }
+
+// ---- window.office: the automation API agents and browser tests drive (see automation.ts) ----------
+/** The middle of the scene object an interactable belongs to (a board, the coffee machine), to look at. */
+function centerOf(spot: Interactable): { x: number; y: number; z: number } | null {
+  const root = upTop && roof ? roof.group : office.group;
+  let found: THREE.Object3D | null = null;
+  root.traverse((o) => {
+    if (!found && o.userData.interact === spot) found = o;
+  });
+  if (!found) return null;
+  const c = new THREE.Box3().setFromObject(found).getCenter(new THREE.Vector3());
+  return { x: c.x, y: c.y, z: c.z };
+}
+
+/** Faces and looks at `face` from where you stand, in either view. */
+function aimAt(face: { x: number; y: number; z: number }) {
+  player.facing = facingToward(player.pos, face);
+  player.camYaw = player.facing - Math.PI;
+  player.lookPitch = pitchToward({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z }, face);
+  player.updateCamera(true);
+}
+
+function setCamera(pose: CameraPose) {
+  player.setView(pose.view);
+  player.camYaw = pose.camYaw;
+  if (pose.lookPitch !== undefined) player.lookPitch = pose.lookPitch;
+  if (pose.camPitch !== undefined) player.camPitch = pose.camPitch;
+  if (pose.camDist !== undefined) player.camDist = pose.camDist;
+  if (pose.view === 'first') player.facing = pose.camYaw + Math.PI;
+  player.updateCamera(true);
+}
+
+const automation = createAutomation({
+  context: () => ({ workers: [...store.workers.values()], spots: usable().flat(), floors: store.floors, floor: store.floor }),
+  raw: () => ({
+    floor: store.floor,
+    floors: store.floors,
+    riding: !!trip,
+    player: {
+      x: player.pos.x,
+      y: player.pos.y,
+      z: player.pos.z,
+      facing: player.facing,
+      lookPitch: player.lookPitch,
+      view: player.view,
+      seat: player.seat?.seatId ?? null,
+      enabled: player.enabled,
+      walking: !!errand,
+      climbing: climber.active,
+    },
+    camera: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    using: null,
+    modals: openModalList(),
+    terminal: openTerminalFor(),
+    workers: [...store.workers.values()],
+    carrying: carrying?.issue ?? null,
+    hanging: hanger.active,
+    golfing: golf.active,
+    gun: gunOut,
+  }),
+  busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder or a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
+  blocked: (x, z, y) => player.blockedAt(x, z, y),
+  centerOf,
+  place: (at, face) => {
+    closeAllModals();
+    if (player.seat) standUp();
+    if (hanger.active) hanger.cancel();
+    if (climber.active) climber.abort();
+    if (golf.active) golf.stop();
+    if (errand) stopWalking();
+    player.pos.set(at.x, at.y, at.z);
+    player.vy = 0;
+    aimAt(face);
+  },
+  aim: aimAt,
+  walk: (at, label, done) => walkThen(at, label, () => {}, undefined, done),
+  near: () => mySeat() ?? pickTarget(),
+  // No note or tab on the issues board: whatever the crosshair happens to be over, E opens the board.
+  use: (spot, key) => use(spot, key, null, null),
+  commands: () => hudActions.map((a) => ({ id: a.id, label: actionLabel(a), shown: actionOffered(a), blocked: a.blocked?.() })),
+  run: (id) => hudActions.find((a) => a.id === id)?.run(),
+  closeAll: closeAllModals,
+  ride,
+  setCamera,
+  frames: () => framesDrawn,
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+});
+(window as unknown as { office: typeof automation }).office = automation;
 
 // Debug handle for quick checks from the console / headless screenshots.
 (window as any).__office = {

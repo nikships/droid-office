@@ -425,6 +425,7 @@ Anyone who reaches the office can drive Droid in that directory, and through it 
 - Device tokens are 256 random bits, shown to the phone once and kept only as SHA-256 hashes in `devices.json` (mode 0600), checked in constant time. Forget a phone in ⚙️ Settings → **Phone** and its token is refused at once. The pairing code and the list of phones are served only to the office's own page on its own machine.
 - Service tunnels are relayed only to web servers a worker started, and only when the request passes the LAN gate. A server you started yourself outside the office is never listed or relayed.
 - Workers don't inherit the LAN token or any parent agent-session variables.
+- The automation relay (`/api/automation`) sits behind the same LAN gate. It takes JSON only and refuses any `Origin` but the office's own, so a web page open in your browser can't drive your office tab over loopback.
 - The Jira API token is written to the office's `.droid-office/jira.json` with mode 0600 and is used only by the office's own read requests to Jira. It never goes to a browser, a log or a worker's environment, and Jira's error messages are scrubbed of it. A read-only token is enough, and is the safer choice: the office never writes to Jira, so it doesn't need a token that can.
 - The picture fetcher (`/api/image`) sits behind the same LAN gate. It fetches any http(s) link it's given, from the office's machine. That gives nobody new reach: anyone at the office can already run `curl` from a shell worker. Pictures are served with a sandboxing `Content-Security-Policy`, so an SVG can't run script on the office's origin.
 
@@ -462,6 +463,44 @@ The office checks for changes every second and waits briefly for saves to settle
 A failed typecheck or build leaves the last successfully built office running and shows the error. Fixing the source retries automatically; **Build & reload** retries manually. A small recovery script is served independently of the game bundle and kept unchanged for the server’s lifetime, so even a game startup error can show **Retry build** and **Disable hot reload** and recover on the next successful build without a reload loop. Earlier hashed chunks stay available for tabs still running an older build. Temporary builds are removed on graceful shutdown; a force-killed server may leave its own `hot-reload-*` staging folder behind.
 
 **Boundary:** this reloads browser game logic, visuals and UI, not running server modules or terminal lifecycles. Server changes, shared/server-side logic, protocol changes and dependency changes show a **server restart required** warning; run the normal build/start workflow to apply those consistently. A compilable client change can still contain a runtime bug or be incompatible with the old server—reload cannot guarantee arbitrary code is correct. Newly added dependencies must be installed normally. Source hot reload is unavailable in packaged installs without source or development dependencies. Vite’s :5173 dev page continues using Vite’s own reload instead.
+
+### Automation API (`window.office`)
+
+Every office tab has `window.office`, so an agent or a browser test can check a client change without steering by hand: no WASD, no lining up with a desk, no pressing E. Each command returns a promise. It resolves with a `state()` snapshot once the action has finished (you've arrived, the window is open, the ride is over). It rejects with an `Error` that says why: no such desk, stuck on the way, riding the elevator.
+
+| Command | What it does |
+| --- | --- |
+| `office.list()` | Everything `goTo` takes from here, each with `id`, `kind` (`desk`, `kiosk`, `board`, `place`, `floor`), `label` and, for a desk, its `worker` |
+| `office.goTo(target, { walk?, timeout? })` | Puts you at a desk (behind the worker), a kiosk, a board or a place, facing it. `target` is a `list()` id (`desk-3`, `station-issues`, `issues`, `coffee`, `elevator`), a worker's id or name, a desk's label, a board agent's name, a floor's id or name, or `roof`. `{ walk: true }` walks there along the office's paths instead |
+| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at what you went to, or else at the nearest thing in reach, as if you faced it. E at a worker opens its terminal; at a board, it opens the board |
+| `office.open(id)` | Runs a ☰ menu command: `issues`, `pulls`, `queue`, `services`, `meeting`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting` |
+| `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
+| `office.closeAll()` | Closes every open window |
+| `office.ride(floor)` | Takes the elevator to a floor (id or name) or `roof`, and resolves once the doors open there |
+| `office.camera(preset)` | A fixed camera so screenshots compare between runs: `first`, `third`, `close` or `wide` (the last three are third person, behind you) |
+| `office.state()` | JSON for assertions: floor, position, facing and view, seat, what E would use (`using`), open windows (`modals`, by their labels), the open terminal, workers with desk and status, and floors |
+
+With [agent-browser](https://github.com/vercel-labs/agent-browser) (`agent-browser eval --stdin`) or Playwright (`page.evaluate`):
+
+```js
+const o = window.office;
+await o.goTo('Ada');                       // a worker's name, or 'desk-3'
+await o.interact();                        // E: its terminal opens
+await o.goTo('issues');
+const s = await o.interact();              // E: the Issues board opens
+s.modals;                                  // [{ label: 'Issues board', doing: '📋 at the issues board' }]
+```
+
+Wait for `window.office && office.state().floor` before the first command; a new browser profile shows the character picker first. If headless Chromium drops the page after a while (software WebGL), run the browser headed.
+
+Without a browser driver, the server runs the same commands in the office tab opened last (not a phone), and answers with what the command resolved to or why it failed:
+
+```bash
+curl -s localhost:4600/api/automation -H 'content-type: application/json' -d '{"cmd": "goTo", "args": ["desk-3"]}'
+# {"ok": true, "value": {…the state…}}  · 422 {"ok": false, "error": "…"} · 409 no tab open · 504 no answer in time
+```
+
+`args` is the command's arguments as a JSON array, and `timeout` (milliseconds, default 90 000) is how long to wait for the tab.
 
 Rules for changing the code are in [`AGENTS.md`](AGENTS.md). A directory with its own rules has an `AGENTS.md` beside the code; the root file lists them.
 
