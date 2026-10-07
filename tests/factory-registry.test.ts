@@ -228,7 +228,7 @@ test('slice changes go out as one broadcast, with the connection', async () => {
   await settle();
   assert.equal(sent.length, 1);
   assert.equal(sent[0].connection.connected, false);
-  assert.deepEqual(Object.keys(sent[0]).sort(), ['ci', 'computers', 'connection', 'sessions', 'wiki']);
+  assert.deepEqual(Object.keys(sent[0]).sort(), ['ci', 'cloud', 'computers', 'connection', 'sessions', 'wiki']);
   assert.equal(host.api(), undefined);
   host.toast('hello');
   assert.deepEqual(toasts, ['hello']);
