@@ -291,7 +291,7 @@ const C = {
   garage: new THREE.Color('#3a3c42'),
   cloudGrey: new THREE.Color('#a3abb6'),
   /** What a laptop screen throws on the desk around it. */
-  screen: new THREE.Color('#6fdcff'),
+  screen: new THREE.Color('#ee6018'),
 };
 
 /** How dim the night is: the moon's, the sky's and the room fill's light, against a clear day's (FULL_DAY). */
