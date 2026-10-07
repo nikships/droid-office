@@ -2048,7 +2048,9 @@ export class Worker {
   /** Eases toward `act`'s stance, out of whatever it was doing before. */
   private pose(act: Act, dt: number, t: number): Stance {
     const k = Math.min(1, dt * 8);
-    if (!this.acts.has(act)) this.acts.set(act, 0);
+    // With nothing to ease out of, a first frame of zero length would leave the weights summing to 0
+    // and the division below NaN; turnY keeps that NaN, so the body would never draw again.
+    if (!this.acts.has(act)) this.acts.set(act, this.acts.size ? 0 : 1);
     const out = this.blend;
     for (const key of STANCE_KEYS) out[key] = 0;
     let total = 0;
