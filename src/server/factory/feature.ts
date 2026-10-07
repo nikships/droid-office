@@ -21,6 +21,8 @@ export interface FeatureHost {
 export interface FactoryRoute {
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   path: string;
+  /** The biggest request body it reads, in bytes (256 KB unless it says; a message with pictures needs more). */
+  bodyMax?: number;
   /** Resolves to the JSON to answer with (200). Throw an HttpError (badRequest…) or let a FactoryError through for anything else. */
   handle(req: FactoryRequest): unknown;
 }

@@ -6,6 +6,7 @@ import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
 import { teamSummary, workersByTeam } from '../../shared/team';
 import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
+import { creditsNote } from '../../shared/factory-sessions';
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
@@ -23,6 +24,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
       w.worktree && `🌿 ${w.worktree.branch}`,
       w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
       w.pr && `🔀 PR #${w.pr.number}`,
+      creditsNote(store.factory.sessions, w.sessionId),
       w.guest && `🚪 outside the office · pid ${w.guest.pid}`,
       w.activity || w.title || w.prompt,
     ]

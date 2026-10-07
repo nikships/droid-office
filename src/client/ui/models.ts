@@ -97,6 +97,11 @@ function fetchCatalogue(): Promise<Catalogue> {
   return request;
 }
 
+/** Droid's own models (Factory's, not the owner's BYOK ones), for a session on a Factory computer. */
+export function factoryModels(): Promise<DroidModelOption[]> {
+  return fetchCatalogue().then((c) => c.models.filter((m) => !m.custom && !m.legacy));
+}
+
 /**
  * A Droid model id as the office shows it: its display name when the catalogue has loaded, else the id
  * tidied up ("custom:droidproxy:opus-5-5" is "DroidProxy: Opus 5.5"). The "DroidProxy" stays in so

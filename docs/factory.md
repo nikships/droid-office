@@ -45,7 +45,11 @@ How the API behaves, and what the office does about it:
 | `src/server/factory/feature.ts` | The contract: `FactoryFeature`, `FeatureHost`, `FactoryRoute`, `FactoryRequest`, the `SliceFeature` base class and the route helpers. |
 | `src/server/factory/registry.ts` | `FactoryRegistry`: runs the pollers, keeps the watches, broadcasts, dispatches routes. |
 | `src/server/factory/index.ts` | `mountFactory`: makes the connection and the registry, registers every feature, handles the `factory.*` messages. server.ts calls only this. |
+<<<<<<< HEAD
 | `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts`, `ci.ts`, `wiki.ts`, `cloud.ts`. |
+=======
+| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts`. |
+>>>>>>> 1e714c1 (feat: Droid sessions and credits on the lounge TV and in a Sessions window)
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
 | `src/client/factory.ts` | `factoryFetch`, `watchFactory`, `refreshFactory`, `onFactorySetup`. `store.factory` (topic `'factory'`) in `src/client/state.ts` holds the state. |
@@ -102,7 +106,7 @@ A Factory feature is one slice of `FactoryState`, a poller that fills it, and HT
    - `reset()` forgets everything (disconnect, another key). `SliceFeature` puts the empty slice back.
    - `host.pollSoon()` polls again now, past the interval and any backoff, after an action changes something. `host.toast(text)` tells everyone, and `host.api()` is the API outside a poll.
 3. **Register it** in `mountFactory` (`src/server/factory/index.ts`): `registry.register((host) => new ComputersFeature(host))`.
-4. **Its routes** are served at `/api/factory/<feature><path>`, behind the office's access gate like every `/api/*` route. `path` may have `:name` segments, which arrive in `params`. `handle` resolves to the JSON to answer with (200), and gets `api`, `params`, `query`, `json()` (the body, a 400 when it isn't JSON, at most 256 KB) and `by` (the page's player name). Throw `badRequest(…)`, `notFound(…)` or an `HttpError` for anything else; a `FactoryError` passes through as the right status with its message (a 401 from Factory answers 502 and marks the key rejected). A route runs only while the office is connected (409 otherwise). Anything but a GET needs the office's own page or a paired phone, so a web page can't drive Factory through the owner's loopback (403).
+4. **Its routes** are served at `/api/factory/<feature><path>`, behind the office's access gate like every `/api/*` route. `path` may have `:name` segments, which arrive in `params`. `handle` resolves to the JSON to answer with (200), and gets `api`, `params`, `query`, `json()` (the body, a 400 when it isn't JSON, at most 256 KB unless the route sets a bigger `bodyMax` in bytes) and `by` (the page's player name). Throw `badRequest(…)`, `notFound(…)` or an `HttpError` for anything else; a `FactoryError` passes through as the right status with its message (a 401 from Factory answers 502 and marks the key rejected). A route runs only while the office is connected (409 otherwise). Anything but a GET needs the office's own page or a paired phone, so a web page can't drive Factory through the owner's loopback (403).
 5. **Its client code**: read `store.factory.<feature>` and listen for `'factory'`. Call `watchFactory('<feature>')` when its board or window opens and the function it returns when it closes, so the feature polls fast meanwhile. Call actions with `factoryFetch('<feature>', '/path', { method: 'POST', body })`, which throws an `Error` with the server's message. `factoryCan(store.factory.connection, '<group>')` says whether to offer the feature at all.
 
 The registry polls a feature only while the office is connected and the key isn't rejected. Features start 1.5 seconds apart after connecting. A feature never has two polls running. After a failure it waits one interval, then twice that, doubling up to 15 minutes; after a 429 at least the `Retry-After` and a minute, doubling. A poll that was in flight when the connection changed is thrown away.
@@ -112,7 +116,7 @@ The four first versions, for their owners to grow:
 | Feature | Polls | Slice | Routes |
 | --- | --- | --- | --- |
 | `computers` | 60 s, 15 s fast; busy while one is provisioning or waking | The list with provisioning steps and cloned repositories (no relay URLs or keys), the providers (every 30 minutes), the computer secrets' names (every 5 minutes; `secretsError` when that read fails, which doesn't fail the poll), which computer is this machine (`here`), the ones waking, and for each managed computer the latest sample and six hours of history (read every 3 minutes from just after the last sample, every minute while it wakes) | `POST ''`, `POST /bulk`, `GET /repositories`, `GET`/`PATCH /secrets`, `GET /:id`, `GET /:id/metrics?hours=` (1 to 96), `PATCH /:id`, `DELETE /:id` (`confirm` = its name), `POST /:id/restart` (`resume` or `reboot`), `/:id/refresh`, `/:id/install-deps`, `/:id/activity` |
-| `sessions` | 90 s, 20 s fast; busy while a session on a Factory computer runs | The newest 50 sessions, titles cut to 200 characters, `hasMore` | `GET /:id`: the session and its `credits` |
+| `sessions` | 90 s, 20 s fast; busy while a session on a Factory computer runs | The last ~100 sessions with their credits, the office's own workers' sessions, the credits ledger's week (see [Droid sessions](#droid-sessions)) | Create, read, message, interrupt, change, delete; messages and children (see [Droid sessions](#droid-sessions)) |
 | `ci` | 5 min, 60 s fast; busy for 3 minutes after an edit | Whether GitHub is connected, the GitHub owners, the scan's workflows (read again only once its `cacheTtlMs` runs out) and its time, the newest 50 runs, the workflow PRs; a read that fails keeps its part of the last data | `GET /repositories?owner=&fresh=1` (kept 10 minutes), `POST /rescan`, `POST /edit` |
 | `wiki` | 5 min, 60 s fast | The latest wiki runs | `GET /upload-access?repoUrl=` |
 | `cloud` | each working cloud worker's session every 4 s, each resting one's every minute; busy while one works | When its last read was, and why it failed; the workers themselves are each floor's (`cloud-workers.json`) and go out as `worker.update` | `POST /hire`, `POST /:workerId/message`, `POST /:workerId/interrupt` |
@@ -149,6 +153,43 @@ The board on the north wall past the gong (`world/factory-ci.ts`, `BOARDS.ci` in
 Built. The west-wall board (`COMPUTE_WALL` in `src/shared/layout.ts`, drawn by `src/client/world/factory-computers.ts`) is two canvases in one bezel: this machine on its south end (the old machine monitor, still fed by `/api/machine`) and the fleet on the rest. Each is redrawn only when what it shows changes (its data as a JSON key, ages rounded to the minute), so the machine's frequent updates never re-upload the fleet's bigger texture. The fleet screen's states: not connected (how to connect), no access, reading, and the computers, with the last good list and its age when Factory is down or the key is rejected. One to six computers get big tiles (status, provider, the provisioning step, CPU/MEM/DISK bars and six-hour sparklines); seven to twelve go to compact rows, and past twelve the last row says how many more. The Droid rack under it (`factory-props.ts`) gets a cube per computer, lit by its phase. The wall polls fast while you're within 12 m of it.
 
 The Computers window (`src/client/ui/factory-computers.ts`) is E at the wall, ☰ → Computers or the palette. Phases (`computerPhase` in `src/shared/factory-computers.ts`): *provisioning* (with `currentStep`), *error*, *waking* (a restart that resumed it, until its first sample), *asleep* (managed, no sample for 20 minutes) and *active*. Deleting a computer takes its name typed out, and the route checks it too. Factory's computer file upload and download endpoints are left out: the office has nothing to send a computer that a session can't fetch itself.
+
+### Droid sessions
+
+`src/server/factory/sessions.ts`, `src/server/factory/credits.ts` and `src/shared/factory-sessions.ts`; drawn by the lounge TV (`src/client/world/factory-tv.ts`), the 🛰️ Sessions window (`src/client/ui/factory-sessions.ts`) and the transcript (`src/client/ui/factory-transcript.ts`).
+
+**Polling.** `GET /sessions?limit=50` every poll, and the page after it (`cursor`) every 10 minutes, so the slice has the last ~100. The list's `status` lags (a session that runs can read `idle` there), and it has no credits: both come from `GET /sessions/{id}`, read at most 24 times a poll, three at once. A session is read when the office hasn't yet, when the list's `updatedAt` passed the one it read, every 15 seconds while it runs or is pending, and every minute while its office worker works; running ones first, then the office's workers' (even ones past the list), then the newest. A failed read waits 2 minutes (a 404, 15) and doesn't fail the poll; a 401 does. Every per-read time is called `fetchedAt`, so a poll that read nothing new doesn't broadcast.
+
+**The slice** (`FactorySessionsState`): `items` (the list, each with what its own read said: `credits`, settings, a fresher `status` and its `fetchedAt`), `hasMore`, `fetchedAt`, `error`, `office` (every floor's workers — desk and cloud — and guests with a session, by session id: `workerId`, `name`, `floor`, `color`, `credits`; cloud workers come from `floor.everyone()`, since they aren't in the `WorkerManager`) and `credits` (the ledger's last 7 days, `today`, `week`, `since` and the 5 sessions that spent the most). `sessionCredits(slice, sessionId)` and `creditsNote(…)` ("⚡ 841k credits", or '') are what a worker's hint, row and terminal show.
+
+**The credits ledger** is the office's `.droid-office/factory-credits.json` (written whole, temp file and rename): each session's total as last read, and per day what each total grew by. A session's first read puts all its credits on the day it was last active (`updatedAt`), and that part of the day is `guessed` (some of it may have been spent earlier); a day with a guessed part, or before `since` (when the office started counting), is `estimated`. The TV hatches the guessed part of each bar and puts ≈ on a total that has one. Kept 31 days; deleted when the office disconnects or takes another account's key.
+
+**Routes**, under `/api/factory/sessions`. Bodies are JSON; anything but a GET needs the office's own page or a paired phone.
+
+| Route | Body or query | Answers |
+| --- | --- | --- |
+| `GET ''` | `?limit=` (1-100), `?cursor=` | `{sessions, hasMore, nextCursor?}`: older sessions than the slice keeps |
+| `POST ''` | `{computerId, computerName?, cwd?, model?, reasoningEffort?, interactionMode?, autonomyLevel?, prompt?, images?}` | `{session, messageId?, status?, error?}`. Creates the session on that Factory computer (`POST /sessions`), then sends `prompt` (and `images`) as its first message. `error` says the session started but the message didn't go. Toasts "started a Droid session on …". |
+| `GET /:id` | | `{session, credits?}`, read fresh (and counted in the ledger) |
+| `PATCH /:id` | `{model?, reasoningEffort?, interactionMode?, autonomyLevel?}` | `{session}` |
+| `DELETE /:id` | | `{ok: true}`; it leaves the slice at once. Toasts. |
+| `GET /:id/messages` | `?limit=` (1-100, 30), `?cursor=`, `?role=user\|assistant\|tool` | `{messages, hasMore, nextCursor?}`: one page, **oldest first**; the first page is the newest, `nextCursor` goes back. System and hidden messages are left out. |
+| `POST /:id/messages` | `{text, images?: [{data, mediaType}]}` (base64, PNG/JPEG/GIF/WebP, at most 6, 16 MB in all) | `{messageId, status, queued?}`: `queued` when it was busy and the message waits for its turn to end. The session reads `running` until the next read says otherwise. |
+| `POST /:id/interrupt` | | `{status}` |
+| `GET /:id/children` | | `{sessions}`: its Task subagents |
+
+Settings take the API's values (`SESSION_EFFORTS`, `SESSION_MODES`, `SESSION_AUTONOMY`); anything else is a 400. A message is `FactoryMessage {id, role, createdAt, seq?, blocks, isError?, model?}`, its `blocks` cut down by `messageOf`: `text`, `thinking`, `tool_use {id, name, input}`, `tool_result {toolUseId, text, isError, images?}`, `image {mediaType, data?}` (no `data` past 1.5 MB of base64) and `document {name}`; long text and outputs are cut, with a note. `sessionWebUrl(id)` is the session in the Factory web app (`https://app.factory.ai/sessions/<id>`, the pattern droid's own share command prints).
+
+**The transcript component** (`src/client/ui/factory-transcript.ts`), for any window that shows a session:
+
+```ts
+const t = mountTranscript({ sessionId, live: () => isLive(session), pageSize: 30 });
+pane.append(t.element); // a scrolling flex column: give it room to grow
+await t.refresh();      // read the newest now and follow the bottom, after sending a message say
+t.dispose();            // when the window closes
+```
+
+It reads the newest page at once, pages back with **Load earlier messages**, and while `live()` says the session runs (and once more when it stops) reads the newest every 3 seconds, following the bottom unless you scrolled up. Text is markdown through `markdown.ts`; thinking and tool results are folded; a tool call is one line (`toolLine`: "Execute: npm test") that opens onto its input and result, marked ✓, ✖ or … while it waits; pictures are thumbnails that enlarge on a click. Only messages that changed are drawn again, so what you opened stays open.
 
 ## The pieces
 
