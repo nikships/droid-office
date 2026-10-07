@@ -1,6 +1,6 @@
 import { emptyFactoryState, type FactoryConnection, type FactoryFeatureId, type FactoryState } from '../../shared/factory.js';
 import { FactoryError, type FactoryApi } from './api.js';
-import { HttpError, badRequest, httpErrorOf, keyRejected, matchPath, notConnected, type FactoryFeature, type FactoryRoute, type FeatureHost } from './feature.js';
+import { FactoryDownload, HttpError, badRequest, httpErrorOf, keyRejected, matchPath, notConnected, type FactoryFeature, type FactoryRoute, type FeatureHost } from './feature.js';
 
 /** How often the registry looks for a feature that's due. */
 const TICK_MS = 1000;
@@ -56,10 +56,11 @@ interface Run {
   forced: boolean;
 }
 
-/** What a route answered: a status and a JSON body. */
+/** What a route answered: a status and a JSON body, or a file to download. */
 export interface FactoryHttpReply {
   status: number;
   body: unknown;
+  download?: FactoryDownload;
 }
 
 /**
@@ -331,6 +332,7 @@ export class FactoryRegistry {
           return parsed as T;
         },
       });
+      if (answer instanceof FactoryDownload) return { status: 200, body: {}, download: answer };
       return { status: 200, body: answer ?? {} };
     } catch (err) {
       if (err instanceof FactoryError && err.status === 401) this.opts.link.rejected(err);

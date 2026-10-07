@@ -15,7 +15,7 @@ This is the plan for that work and the contract every Factory feature follows. S
 ## Factory's public API
 
 - Base URL `https://api.factory.ai`, every path under `/api/v0`, header `Authorization: Bearer <key>`. Docs: <https://docs.factory.com/api-reference>. The live OpenAPI spec also has endpoints the docs pages don't show: `GET/PATCH /organization/computer-secrets`, `GET /sessions/{id}/children` and `GET /wiki/upload-access?repoUrl=`.
-- Several response schemas in the spec are empty (`{}`): CI jobs, runs and scan, and every wiki answer. The shapes in `src/shared/factory-*.ts` come from real answers instead. Where the account had no data yet (CI runs, wiki runs), a parsed item keeps the fields it most likely has and `raw`, the item as the API sent it.
+- Several response schemas in the spec are empty (`{}`): CI jobs, runs and scan, and every wiki answer. The shapes in `src/shared/factory-*.ts` come from real answers instead, and for the wiki from the `droid` CLI's own schemas for the same endpoints. Where the account had no data yet (CI runs), a parsed item keeps the fields it most likely has and `raw`, the item as the API sent it.
 - Tests use an injected fake `fetch` and fake keys like `fk-test-…`. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
 
 What a key reaches, from the owner's account:
@@ -25,7 +25,7 @@ What a key reaches, from the owner's account:
 | Computers | ✓ | A managed computer (`providerType` `e2b`) and a BYOM one (`byom`). `GET /computers/{id}/metrics` is an array of 5-minute samples `{timestamp, cpuUsedPct, cpuCount, memUsed, memTotal, diskUsed, diskTotal}` going back about four days; a BYOM computer answers 400 "Metrics are not supported for BYOM computers", and a managed one that's asleep answers `[]` for a recent `?start=`. Providers: `["e2b"]`. |
 | Sessions | ✓ | List items: `sessionId`, `title`, `status` (`idle`, `pending`, `running`), `messageCount`, `createdAt`, `updatedAt`, `computerId?`, `artifacts[]` (pull requests and so on). `factoryCredits` is only on `GET /sessions/{id}`. The office's own workers' sessions are in this list (`WorkerInfo.sessionId` matches `sessionId`), so credits per worker work. |
 | CI automations | ✓ | The scan finds the Droid workflows across the account's repositories (`templateId` like `code-review`, triggers, model, cron, `droidActionInputs`) and says how long it caches (`cacheTtlMs`, 30 minutes; `?forceRefresh=true` skips it); `repositories` lists about a hundred (`?owner=` narrows it). `jobs` lists the workflow PRs opened through `POST /automations/ci/edit`, whose body is not documented (see [CI automations](#ci-automations)). `runs` was empty for this account. |
-| Wiki | ✓ | The request body of `POST /wiki` is not documented. |
+| Wiki | ✓ | `POST /wiki` is the *upload* of a finished wiki (`repoUrl`, `commitHash`, `branch`, `hasLocalChanges`, `hasNonRemoteCommits`, `pages`, `pageTree`), not a request to write one: the pages are written by a Droid session running `/wiki` in a checkout, which uploads them as its last step. `GET /wiki/upload-access` says `allowed: true` for any URL, even one that isn't a repository. See [AutoWiki](#autowiki). |
 | Organization | ✓, thin | Users, no credit limits, no enterprise history; computer secrets by name only. |
 | Service accounts | ✗ | 402, Teams plan. Out of scope. |
 
@@ -45,7 +45,7 @@ How the API behaves, and what the office does about it:
 | `src/server/factory/feature.ts` | The contract: `FactoryFeature`, `FeatureHost`, `FactoryRoute`, `FactoryRequest`, the `SliceFeature` base class and the route helpers. |
 | `src/server/factory/registry.ts` | `FactoryRegistry`: runs the pollers, keeps the watches, broadcasts, dispatches routes. |
 | `src/server/factory/index.ts` | `mountFactory`: makes the connection and the registry, registers every feature, handles the `factory.*` messages. server.ts calls only this. |
-| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts`, `cloud.ts`. |
+| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts` (with `wiki-run.ts`, its /wiki runs), `cloud.ts`. |
 | `src/server/factory/new-session.ts` | `whileNew`: a write to a session made in the last 30 seconds tries again after a 404 (see [Droid sessions](#droid-sessions)). |
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
@@ -53,7 +53,7 @@ How the API behaves, and what the office does about it:
 | `src/client/ui/factory-settings.ts` | ⚙️ Settings → Factory → *Factory API key*. |
 | `src/client/ui/factory-*.ts`, `src/client/world/factory-*.ts` | A feature's windows, and its wall textures and meshes. |
 
-The key is the building's, like the Jira connection: browsers never get it. They get `FactoryConnection`: whether it's connected, the fingerprint (`fk-…` and the last four), whose key it is (name and email), the organization's member count, who connected it and when, what it can reach, when it was last checked, and whether Factory has rejected it since. The key never goes into a worker's environment or a log, and error messages are scrubbed of it.
+The key is the building's, like the Jira connection: browsers never get it. They get `FactoryConnection`: whether it's connected, the fingerprint (`fk-…` and the last four), whose key it is (name and email), the organization's member count, who connected it and when, what it can reach, when it was last checked, and whether Factory has rejected it since. The key never goes into a worker's environment or a log, and error messages are scrubbed of it. The one process that gets it is an AutoWiki run the office starts (`droid exec "/wiki"`, as `FACTORY_API_KEY` in that child's environment only), so the wiki lands in the connected account; its output is scrubbed of the key before anyone sees a line.
 
 ### The connection
 
@@ -115,8 +115,25 @@ The four first versions, for their owners to grow:
 | `computers` | 60 s, 15 s fast; busy while one is provisioning or waking | The list with provisioning steps and cloned repositories (no relay URLs or keys), the providers (every 30 minutes), the computer secrets' names (every 5 minutes; `secretsError` when that read fails, which doesn't fail the poll), which computer is this machine (`here`), the ones waking, and for each managed computer the latest sample and six hours of history (read every 3 minutes from just after the last sample, every minute while it wakes) | `POST ''`, `POST /bulk`, `GET /repositories`, `GET`/`PATCH /secrets`, `GET /:id`, `GET /:id/metrics?hours=` (1 to 96), `PATCH /:id`, `DELETE /:id` (`confirm` = its name), `POST /:id/restart` (`resume` or `reboot`), `/:id/refresh`, `/:id/install-deps`, `/:id/activity` |
 | `sessions` | 90 s, 20 s fast; busy while a session on a Factory computer runs | The last ~100 sessions with their credits, the office's own workers' sessions, the credits ledger's week (see [Droid sessions](#droid-sessions)) | Create, read, message, interrupt, change, delete; messages and children (see [Droid sessions](#droid-sessions)) |
 | `ci` | 5 min, 60 s fast; busy for 3 minutes after an edit | Whether GitHub is connected, the GitHub owners, the scan's workflows (read again only once its `cacheTtlMs` runs out) and its time, the newest 50 runs, the workflow PRs; a read that fails keeps its part of the last data | `GET /repositories?owner=&fresh=1` (kept 10 minutes), `POST /rescan`, `POST /edit` |
-| `wiki` | 5 min, 60 s fast | The latest wiki runs | `GET /upload-access?repoUrl=` |
+| `wiki` | 5 min, 60 s fast; busy while a /wiki run goes | The newest run of each repository, and per floor its run history and the office's own /wiki run | See [AutoWiki](#autowiki) |
 | `cloud` | each working cloud worker's session every 4 s, each resting one's every minute; busy while one works | When its last read was, and why it failed; the workers themselves are each floor's (`cloud-workers.json`) and go out as `worker.update` | `POST /hire`, `POST /:workerId/message`, `POST /:workerId/interrupt` |
+
+### AutoWiki
+
+What the API sends (the schemas are empty; these come from the `droid` CLI's schemas and real answers):
+
+- `GET /wiki` → `{wikiRuns: [run]}`, the newest run of each repository. `GET /wiki/history/{repoUrl}` → `{wikiRuns: [run]}`, one repository's runs. `repoUrl` there is the full `https://github.com/owner/repo` URL, `encodeURIComponent`ed; `owner/repo` answers 403 "You do not have access to this repository". So does the full URL of a repository Factory's integration doesn't cover (someone else's, or a renamed repository by its old name), while one it covers with no runs yet answers `{wikiRuns: []}`. The floor keeps that 403 as `noAccess`, and the tab warns that an upload may be refused.
+- A run: `wikiRunId`, `createdAt` (ms), `repoUrl`, `commitHash`, `branch`, `hasLocalChanges`, `hasNonRemoteCommits`, `pageCount`, `pageTree`, and optionally `sourceSessionId`, `ownerUserId`, `modelUsed {id, reasoningEffort}`, `droidVersion`, `privacyLevel` (`private` or `organization`), `canUpdatePrivacy`, `isRepoCoveredByOrgIntegration`. `GET /wiki/{id}` is the same with `videoOverview?`. A tree node is `{pageId, title, path, order, children}`, at most five levels deep.
+- `GET /wiki/{id}/pages/{pageId}` → `{pageId, path, title, content, order}`; `content` is Markdown whose links to other pages are relative `.md` paths (`../systems/terminals.md`).
+- `GET /wiki/{id}/search?q=&limit=` (`limit` 1 to 100) → `{results: [{pageId, title, path, snippet, matchCount}]}`.
+- `GET /wiki/{id}/export`: the pages as a .zip. The office handles the .zip itself, a redirect to it, or `{url}` (a signed link, fetched without the key).
+- `POST /wiki/{id}/privacy {privacyLevel}` (anything else is a 422), `DELETE /wiki/{id}` → `{deleted: true}`. An unknown run is a 404.
+
+What the office does with it (`src/server/factory/wiki.ts`, `wiki-run.ts`, `src/shared/factory-wiki.ts`, `src/client/ui/factory-wiki.ts`):
+
+- The slice has `runs` (from `GET /wiki`) and `floors`, by floor id: the floor's `repoUrl` (from its `origin` remote, `https://…`), or `why` it can't have a wiki (no remote, or not GitHub or GitLab); its `latest` run; its `history` (up to 20, read on each poll for floors that have a run, at most 12 floors, and on `GET /floor`); and its `job`, the office's own /wiki run. Page trees and pages aren't in the slice: the routes read them on demand and cache them, since a run never changes once uploaded.
+- Routes, under `/api/factory/wiki`: `GET /upload-access?repoUrl=`, `GET /floor?floor=` (the floor's slice, its history read again), `GET /runs/:id` (with its page tree), `GET /runs/:id/pages/:page`, `GET /runs/:id/search?q=` (at most 30 results), `GET /runs/:id/export` (the .zip, piped through as a download), `POST /runs/:id/privacy {privacyLevel}`, `DELETE /runs/:id`, `POST /generate {floor}` and `POST /cancel {floor}`.
+- **Generate** runs what Factory's own CI template runs: `droid exec --auto high --output-format stream-json "/wiki"`, with the office's Droid command (`--agent`, found as `resolveCommand` finds it, `.cmd` shims through the shell on Windows), in a detached worktree of `origin`'s default branch (fetched first) at the floor's `.droid-office/wiki-run/`. Its environment is the office's (`childEnv()`) plus `FACTORY_API_KEY`, the office's key. One run per floor at a time (a second is a 409). A note in the floor's `.droid-office/wiki-run.json` says one is running. Its last 6 lines (tool calls, what it says, the key scrubbed out) reach browsers at most once a second; its state changes go out at once. **Stop** sends SIGTERM to its process group (`taskkill /T /F` on Windows), then SIGKILL after 10 seconds. Exit 0 means the upload landed: the feature polls now and again 20 seconds later. Any other exit fails with its last 20 lines. The worktree goes when it ends. An office that stops mid-run ends it; the next one finds the note, kills what's left of it, removes the worktree and shows the run as *lost*.
 
 ### Cloud workers
 

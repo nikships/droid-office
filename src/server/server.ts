@@ -12,7 +12,7 @@ import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleI
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
-import { MAX_REPOS, resolveCommand, type RepoSource } from './workers.js';
+import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
@@ -21,7 +21,7 @@ import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
-import { mountFactory } from './factory/index.js';
+import { mountFactory, sendDownload } from './factory/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
@@ -401,6 +401,7 @@ export async function startServer(cfg: Config) {
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
   // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Factory, docs/factory.md).
+  // AutoWiki's /wiki runs on a floor's default branch with the office's Droid command (factory/wiki-run.ts).
   const factory = mountFactory({
     dataDir: cfg.dataDir,
     broadcast: (state) => broadcast({ t: 'factory', state }),
@@ -417,6 +418,10 @@ export async function startServer(cfg: Config) {
       [...floors.values()].flatMap((f) =>
         f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working', createdAt: w.createdAt }] : [])),
       ),
+    wiki: {
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, repo: f.def.repo, name: f.def.name })),
+      runner: { command: () => resolveCommand(cfg.agentCmd), env: childEnv },
+    },
   });
   const cloud = factory.cloud!;
 
@@ -928,6 +933,7 @@ export async function startServer(cfg: Config) {
       if (p.startsWith('/api/factory/')) {
         // A Factory feature's actions and on-demand reads (see factory/registry.ts); anything but a GET only from the office's own page.
         const r = await factory.registry.http(req.method ?? 'GET', p.slice('/api/factory'.length), url.searchParams, (limit) => readBody(req, limit), { trusted: ownRequest(), by: str(req.headers['x-droid-office-name'], 24) });
+        if (r.download) return sendDownload(res, r.download);
         return send(res, r.status, r.body);
       }
       if (p === '/api/jira/ticket' && req.method === 'GET') {

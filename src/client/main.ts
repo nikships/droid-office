@@ -38,6 +38,7 @@ import {
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
 import { MEETING_PATTERNS } from '../shared/meetings';
+import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
 import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } from '../shared/guests';
@@ -116,7 +117,7 @@ import { setRackCubes } from './world/factory-props';
 import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
-import { openBookshelf } from './ui/bookshelf';
+import { openBookshelf, type ShelfTab } from './ui/bookshelf';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
 import { trackTitle } from '../shared/jukebox';
@@ -1934,6 +1935,10 @@ function paletteEntries(): PaletteEntry[] {
   );
   for (const c of store.factory.computers.items) out.push(atSpot('computers', 'the compute wall', { icon: '🖥️', kind: 'Droid Computer', title: c.name, detail: c.managed ? c.providerType : 'BYOM', open: () => showComputers(c.id) }));
   out.push(atSpot('meeting', 'the meeting room', { icon: '🤝', kind: 'Board', title: 'Meeting room', keywords: ['call a meeting'], open: () => showMeeting() }));
+  out.push(atSpot('bookshelf', 'the bookshelf', { icon: '📚', kind: 'Board', title: 'Bookshelf', detail: "The project's docs", keywords: ['docs', 'readme', 'markdown'], open: () => showBookshelf() }));
+  out.push(
+    atSpot('bookshelf', 'the bookshelf', { icon: '🏭', kind: 'Board', title: 'AutoWiki', detail: "Factory's wiki of this repository, on the bookshelf", keywords: ['wiki', 'factory', 'documentation'], open: () => showBookshelf('wiki') }),
+  );
 
   for (const pr of store.pulls.items) {
     out.push(
@@ -2009,10 +2014,24 @@ function blobBase(): { url: string; site: string } | undefined {
   return { url: `${repoWebUrl(repo)}${forge === 'gitlab' ? '/-' : ''}/blob/HEAD`, site: forgeWords(forge).site };
 }
 
-function showBookshelf() {
+function showBookshelf(tab?: ShelfTab) {
   if (!store.floor) return toast('Take the elevator to a floor first');
-  openBookshelf({ floor: store.floor, project: store.project?.name, blob: blobBase(), onTurn: turnPage });
+  openBookshelf({ floor: store.floor, project: store.project?.name, blob: blobBase(), onTurn: turnPage, tab, openFactorySettings: () => showSettings('factory') });
 }
+
+// The bookshelf's AutoWiki volumes: there once Factory has a wiki of this floor's repository, a
+// "writing" label while /wiki runs. Set only when that changes, not on every Factory broadcast.
+let shelfWiki = '';
+const paintShelfWiki = () => {
+  const f = store.floor ? store.factory.wiki.floors[store.floor] : undefined;
+  const job = f?.job?.state;
+  const next = job === 'starting' || job === 'running' ? 'writing' : f?.latest ? 'wiki' : 'none';
+  if (next === shelfWiki) return;
+  shelfWiki = next;
+  office.setShelfWiki(next);
+};
+store.on('factory', paintShelfWiki);
+store.on('floor', paintShelfWiki);
 
 /** When a page last rustled, so a quick scroll through a doc isn't one long rustle. */
 let rustledAt = 0;
@@ -2627,7 +2646,8 @@ function hintFor(it: Interactable): Hint {
       return { k: `${left}|${best?.name}|${best?.score}`, parts: [title(`🕹️ ${GAME}`), aside(about), key('E', left !== null ? 'Carry on' : 'Play')] };
     }
     case 'bookshelf': {
-      return { k: '', parts: [title('📚 Bookshelf'), aside("the project's docs"), key('E', 'Read the docs')] };
+      const wiki = store.factory.connection.connected && store.floor ? wikiShelfLine(store.factory.wiki.floors[store.floor]) : '';
+      return { k: wiki, parts: [title('📚 Bookshelf'), aside(wiki ? `the project's docs · ${wiki}` : "the project's docs"), key('E', 'Read the docs')] };
     }
     case 'meeting': {
       const m = store.meeting.current;
@@ -3285,6 +3305,7 @@ const hudActions: HudAction[] = [
     title: () => 'Every Droid session on the Factory account: what each is doing and what it costs (the lounge TV)',
     run: () => showSessions(),
   },
+  { id: 'autowiki', icon: '🏭', label: 'AutoWiki', section: 'Open', title: () => "Factory's wiki of this repository, on the bookshelf", run: () => showBookshelf('wiki') },
   { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
   { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
   {

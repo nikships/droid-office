@@ -7,7 +7,9 @@ import { ComputersFeature } from './computers.js';
 import { FactoryOffice } from './office.js';
 import { FactoryRegistry } from './registry.js';
 import { SessionsFeature, type OfficeSessionRef } from './sessions.js';
-import { WikiFeature } from './wiki.js';
+import { WikiFeature, type WikiOptions } from './wiki.js';
+
+export { sendDownload } from './feature.js';
 
 export type FactoryMsg = Extract<ClientMsg, { t: `factory.${string}` }>;
 
@@ -21,6 +23,8 @@ export interface MountOptions {
   cloud?: Omit<CloudOptions, 'computers'>;
   /** The office's own workers with a Droid session, on every floor, for their credits. */
   officeSessions?: () => OfficeSessionRef[];
+  /** The floors and the Droid command AutoWiki's /wiki runs need (wiki.ts). */
+  wiki?: Pick<WikiOptions, 'floors' | 'runner'>;
 }
 
 /**
@@ -35,7 +39,7 @@ export function mountFactory(opts: MountOptions) {
   registry.register((host) => new ComputersFeature(host));
   registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
   registry.register((host) => new CiFeature(host));
-  registry.register((host) => new WikiFeature(host));
+  const wiki = registry.register((host) => new WikiFeature(host, { ...opts.wiki, key: () => office.key(), fetchImpl: opts.fetchImpl, base: opts.base })) as WikiFeature;
   const cloud = opts.cloud && mountCloud(registry, opts.cloud);
   registry.start();
   // A saved key is checked again at every start: it may have been deleted, or its plan changed.
@@ -81,6 +85,9 @@ export function mountFactory(opts: MountOptions) {
     state: () => registry.state(),
     message,
     drop: (client: string) => registry.drop(client),
-    stop: () => registry.stop(),
+    stop: () => {
+      wiki.stop();
+      registry.stop();
+    },
   };
 }
