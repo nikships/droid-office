@@ -10,6 +10,7 @@ import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom'
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary } from '../../shared/team';
+import { creditsNote } from '../../shared/factory-sessions';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
@@ -180,6 +181,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       outsideNote(w),
       w.title,
       w.worktree && `🌿 ${w.worktree.branch}`,
+      creditsNote(store.factory.sessions, w.sessionId),
       w.repos?.length && `🗂️ ${[w.worktree?.path.split(/[\\/]/).pop(), ...w.repos.map((r) => r.name)].join(' + ')}`,
     ]
       .filter(Boolean)
@@ -246,6 +248,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
   listeners.add(onMsg);
   const unsub = store.on('workers', refresh);
+  const unsubCredits = store.on('factory', refresh);
   const ro = new ResizeObserver(() => sendSize());
 
   const modal = openModal(el, {
@@ -264,6 +267,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     onClose: () => {
       listeners.delete(onMsg);
       unsub();
+      unsubCredits();
       offFont();
       ro.disconnect();
       net.send({ t: 'worker.detach', workerId });

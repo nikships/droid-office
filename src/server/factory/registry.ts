@@ -298,6 +298,7 @@ export class FactoryRegistry {
     }
     if (!route || !params) return pathMatched ? { status: 405, body: { error: 'Method not allowed' } } : { status: 404, body: { error: 'Not found' } };
     if (method !== 'GET' && !opts.trusted) return { status: 403, body: { error: 'Use Factory from the office itself' } };
+    const bodyMax = route.bodyMax ?? BODY_MAX;
     try {
       const conn = this.opts.link.connection();
       const api = this.opts.link.client();
@@ -317,7 +318,7 @@ export class FactoryRegistry {
             read = true;
             let text: string;
             try {
-              text = await body(BODY_MAX);
+              text = await body(bodyMax);
             } catch {
               throw new HttpError(413, 'That request is too big');
             }

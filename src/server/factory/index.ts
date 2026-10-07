@@ -6,7 +6,7 @@ import { mountCloud, type CloudOptions } from './cloud.js';
 import { ComputersFeature } from './computers.js';
 import { FactoryOffice } from './office.js';
 import { FactoryRegistry } from './registry.js';
-import { SessionsFeature } from './sessions.js';
+import { SessionsFeature, type OfficeSessionRef } from './sessions.js';
 import { WikiFeature } from './wiki.js';
 
 export type FactoryMsg = Extract<ClientMsg, { t: `factory.${string}` }>;
@@ -19,6 +19,8 @@ export interface MountOptions {
   base?: string;
   /** The floors' cloud workers (cloud.ts), when the office has floors to seat them on. */
   cloud?: Omit<CloudOptions, 'computers'>;
+  /** The office's own workers with a Droid session, on every floor, for their credits. */
+  officeSessions?: () => OfficeSessionRef[];
 }
 
 /**
@@ -31,7 +33,7 @@ export function mountFactory(opts: MountOptions) {
   const registry = new FactoryRegistry({ link: office, broadcast: opts.broadcast, toast: opts.toast });
   office.onChange = () => registry.connectionChanged();
   registry.register((host) => new ComputersFeature(host));
-  registry.register((host) => new SessionsFeature(host));
+  registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
   registry.register((host) => new CiFeature(host));
   registry.register((host) => new WikiFeature(host));
   const cloud = opts.cloud && mountCloud(registry, opts.cloud);

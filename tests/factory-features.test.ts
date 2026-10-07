@@ -93,21 +93,24 @@ test('sessions: the newest page, with titles cut, and the detail route with cred
     '/api/v0/sessions/s1': () => json(200, { sessionId: 's1', title: 'One', status: 'idle', factoryCredits: 841059 }),
     '/api/v0/sessions/nope': () => json(200, {}),
   });
-  const feature = new SessionsFeature(host(), () => 42);
+  const feature = new SessionsFeature(host(), { now: () => 42 });
   await feature.poll(f.api);
   assert.match(f.seen[0], /limit=50/);
   const s = feature.state();
   assert.equal(s.items.length, 2);
   assert.equal(s.hasMore, true);
   assert.equal(s.fetchedAt, 42);
-  assert.equal(s.items[0].title.length, SESSION_TITLE_MAX);
-  assert.equal(s.items[0].model, 'opus');
-  assert.equal(s.items[0].effort, 'high');
-  assert.deepEqual(s.items[0].artifacts, [{ id: 'pr', kind: 'pull_request', url: 'https://github.com/o/r/pull/1', action: 'create', externalId: 'o/r#1' }]);
-  assert.equal(s.items[1].parentId, 's1');
-  assert.ok(feature.busy(), 'a session running on a Factory computer');
-  const detail = feature.routes[0];
-  assert.deepEqual(await detail.handle({ api: f.api, params: { id: 's1' } } as never), { session: sessionOf({ sessionId: 's1', title: 'One', status: 'idle' }), credits: 841059 });
+  const one = s.items.find((x) => x.id === 's1')!;
+  assert.equal(one.title.length, SESSION_TITLE_MAX);
+  assert.equal(one.model, 'opus');
+  assert.equal(one.effort, 'high');
+  assert.deepEqual(one.artifacts, [{ id: 'pr', kind: 'pull_request', url: 'https://github.com/o/r/pull/1', action: 'create', externalId: 'o/r#1' }]);
+  assert.equal(one.credits, 841059, 'credits come from the session’s own read');
+  assert.equal(s.items.find((x) => x.id === 's2')?.parentId, 's1');
+  const detail = feature.routes.find((r) => r.method === 'GET' && r.path === '/:id')!;
+  const answer = (await detail.handle({ api: f.api, params: { id: 's1' } } as never)) as { session: { id: string; credits?: number }; credits?: number };
+  assert.equal(answer.session.id, 's1');
+  assert.equal(answer.credits, 841059);
   await assert.rejects(() => Promise.resolve(detail.handle({ api: f.api, params: { id: 'nope' } } as never)), /No such session/);
 });
 

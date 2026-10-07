@@ -411,6 +411,9 @@ export async function startServer(cfg: Config) {
       agentArgs: cfg.agentArgs,
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
     },
+    // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
+    // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
+    officeSessions: () => [...floors.values()].flatMap((f) => f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working' }] : []))),
   });
   const cloud = factory.cloud!;
 

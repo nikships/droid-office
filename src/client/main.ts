@@ -65,7 +65,7 @@ import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
 import { Laptop } from './world/laptop';
 import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world/boards';
 import type { BoardSpot } from './world/board-layout';
-import { loadFonts, MONO } from './fonts';
+import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
 import { Arrivals, Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
@@ -88,6 +88,9 @@ import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWor
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { bindFactory, watchFactory } from './factory';
+import { openFactorySessions } from './ui/factory-sessions';
+import { FactoryTvTexture } from './world/factory-tv';
+import { creditsNote } from '../shared/factory-sessions';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
 import { openServices, serviceUrl } from './ui/services';
@@ -293,35 +296,35 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
-// TV: geometry and its idle screen only (screen sharing is gone).
-const tvIdle = (() => {
-  const c = document.createElement('canvas');
-  c.width = 1280;
-  c.height = 720;
-  const g = c.getContext('2d')!;
-  // A flat dark standby screen with a mono wordmark, the way the HUD's panels look.
-  const draw = () => {
-    g.fillStyle = '#0a0a0a';
-    g.fillRect(0, 0, 1280, 720);
-    g.fillStyle = 'rgba(255, 255, 255, .045)';
-    for (let y = 16; y < 720; y += 32) for (let x = 16; x < 1280; x += 32) g.fillRect(x, y, 2, 2);
-    g.fillStyle = '#ee6018';
-    g.fillRect(80, 316, 10, 80);
-    g.fillStyle = '#eeeeee';
-    g.textAlign = 'left';
-    g.font = `700 72px ${MONO}`;
-    g.fillText('OFFICE TV', 116, 376);
-    t.needsUpdate = true;
-  };
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  draw();
-  return { tex: t, redraw: draw };
-})();
+// The lounge TV: the Factory sessions dashboard while the office is connected to Factory, else its
+// standby screen (world/factory-tv.ts). E there opens 🛰️ Sessions. The same slice puts each
+// worker's credits in the Workers panel, its desk hint and its terminal's header.
+const tvTex = new FactoryTvTexture();
+const renderTv = (force = false) => tvTex.render(store.factory, Date.now(), force);
 const tvMat = office.tvScreen.material as THREE.MeshBasicMaterial;
 tvMat.color.set('#ffffff');
-tvMat.map = tvIdle.tex;
+tvMat.map = tvTex.texture;
 tvMat.toneMapped = false;
+renderTv(true);
+// Running sessions' ages tick by the minute; the texture skips a redraw that would look the same.
+setInterval(() => renderTv(), 30_000);
+let workerCredits = '';
+store.on('factory', () => {
+  renderTv();
+  const k = JSON.stringify(store.factory.sessions.office);
+  if (k === workerCredits) return;
+  workerCredits = k;
+  renderWorkers((id) => openWorkerTerminal(id));
+  hintKey = '';
+});
+function showSessions(sessionId?: string) {
+  openFactorySessions({ openSettings: () => showSettings('factory'), openWorker: (id) => openWorkerTerminal(id) }, sessionId);
+}
+/** E at the TV: the sessions, or connecting Factory first. */
+function useTv() {
+  if (store.factory.connection.connected) showSessions();
+  else showSettings('factory');
+}
 // The world's canvases drew at boot, before the bundled fonts were necessarily in: repaint them
 // once Geist and Geist Mono are loaded, so nothing is left in a fallback typeface.
 void loadFonts().then(() => {
@@ -334,7 +337,7 @@ void loadFonts().then(() => {
   renderMeetingBoard();
   renderMeetingSign();
   renderCiBoard(true);
-  tvIdle.redraw();
+  renderTv(true);
   redrawText();
 });
 // The boss's monitor upstairs: Minesweeper, from the boss's chair.
@@ -1876,6 +1879,22 @@ function paletteEntries(): PaletteEntry[] {
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
+  if (store.factory.connection.connected) {
+    out.push(
+      atSpot('tv', 'the lounge TV', { icon: '🛰️', kind: 'Board', title: 'Droid sessions', detail: 'Factory sessions, transcripts and credits', keywords: ['factory', 'credits', 'cloud', 'transcript', 'tv'], open: () => showSessions() }),
+    );
+    for (const x of store.factory.sessions.items.slice(0, 30)) {
+      out.push(
+        atSpot('tv', 'the lounge TV', {
+          icon: '🛰️',
+          kind: 'Session',
+          title: x.title.replace(/\s+/g, ' ').trim().slice(0, 90) || `Session ${x.id.slice(0, 8)}`,
+          detail: [x.status, store.factory.sessions.office[x.id]?.name].filter(Boolean).join(' · '),
+          open: () => showSessions(x.id),
+        }),
+      );
+    }
+  }
 
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
@@ -2090,6 +2109,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'ci') showCi();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
+  else if (target.kind === 'tv') useTv();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'coffee') drinkCoffee();
@@ -2572,8 +2592,13 @@ function hintFor(it: Interactable): Hint {
       const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
       return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
     }
-    case 'tv':
-      return { k: '', parts: [title('📺 Office TV'), aside('standby')] };
+    case 'tv': {
+      const f = store.factory;
+      const on = f.connection.connected && !f.connection.rejected;
+      const running = f.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length;
+      const about = !on ? 'standby · connect Factory in ⚙️ Settings' : running ? `${running} session${running === 1 ? '' : 's'} running` : 'Droid sessions & credits';
+      return { k: about, parts: [title('📺 Droid sessions TV'), aside(about), key('E', on ? 'Open Sessions' : 'Connect Factory')] };
+    }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
       return { k: String(buzzed), parts: [title('☕ Coffee machine'), key('E', buzzed ? 'Another cup' : 'Grab a cup')] };
@@ -2726,10 +2751,12 @@ function deskHint(deskId: string): Hint {
   const doing = w.activity ? clip(w.activity, 48) : '';
   const shell = w.kind === 'shell';
   const team = [teamNote(w), outsideNote(w)].filter(Boolean).join(' · ');
+  const credits = creditsNote(store.factory.sessions, w.sessionId);
   return {
-    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team,
+    k: w.status + w.id + (w.pr?.number ?? '') + (w.repos?.map((r) => r.pr?.number ?? '-').join() ?? '') + (w.prOpening ? '!' : '') + doing + team + credits,
     parts: [
       h('span.title', {}, `${w.name} · ${STATUS_LABEL[w.status]}`),
+      credits ? h('span.cost', { title: 'Factory credits its Droid session (and its subagents) used' }, credits) : '',
       team ? aside(team) : '',
       doing ? aside(doing) : '',
       key('E', 'Open terminal'),
@@ -3228,6 +3255,16 @@ const hudActions: HudAction[] = [
     run: () => showMeeting(),
   },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
+  {
+    id: 'sessions',
+    icon: '🛰️',
+    label: 'Droid sessions',
+    section: 'Open',
+    shown: () => store.factory.connection.connected,
+    count: () => store.factory.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length,
+    title: () => 'Every Droid session on the Factory account: what each is doing and what it costs (the lounge TV)',
+    run: () => showSessions(),
+  },
   { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
   { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
   {
