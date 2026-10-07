@@ -58,13 +58,13 @@ The key is the building's, like the Jira connection: browsers never get it. They
 
 `connect(key, by)` checks the key with one cheap GET per group, all at once: computers (`/computers/providers`), sessions (`/sessions?limit=1`), CI (`/automations/ci/repository-owners`, which also says whether Factory's GitHub integration is connected), wiki (`/wiki`), organization (`/organization/users`) and service accounts (`/service-accounts`, expected to be a 402). Alongside, `/computers` says whose key it is: the human `ownerId` of its computers, matched against the organization's users, else the only user there is. The answer (`factory.setup`) goes out once everything but sessions is back; the sessions group reads *checking* until its slow call lands. A key every answering group turns down with a 401 is refused; so is a key nobody answered for.
 
-Each group comes out `ok` (with what it found, like "GitHub connected"), `denied` (with why: "Needs a Teams plan", "Key rejected"), `checking` or `error` (a timeout or a 5xx). The office checks the saved key again at every start and on **Check again**. A 401 on any later call marks the key *rejected*: Settings says so, `client()` returns nothing, and every feature stops polling until the key is checked again or replaced. Disconnecting deletes `factory.json` and resets every feature's slice. Replacing the key with another one resets them too.
+Each group comes out `ok` (with what it found, like "GitHub connected"), `denied` (with why: "Needs a Teams plan", "Key rejected"), `checking` or `error` (a timeout or a 5xx). The office checks the saved key again at every start and on **Check again**; while it does, every group reads *checking* until its own probe answers, and `connection.checking` stays set until the last one (usually sessions) has. A 401 on any later call marks the key *rejected*: Settings says so, `client()` returns nothing, and every feature stops polling until the key is checked again or replaced. Disconnecting deletes `factory.json` and resets every feature's slice. Replacing the key with another one resets them too.
 
 ### Messages
 
 | Message | What it does |
 | --- | --- |
-| `welcome.factory`, `{ t: 'factory', state }` | Every connection gets the whole `FactoryState`, at arrival and on every change (coalesced: at most a few broadcasts a second). |
+| `welcome.factory`, `{ t: 'factory', state }` | Every connection gets the whole `FactoryState`, at arrival and on every change (coalesced: at most a few broadcasts a second). A poll that read the same data doesn't go out: broadcasts compare the state with every `fetchedAt` reduced to read-or-not, and a state that differs only there goes out once `HEARTBEAT_MS` (a minute) after the last one, so ages stay right. |
 | `factory.connect {key}` | Checks and saves a key; answered to the sender with `factory.setup {ok, error?}`. |
 | `factory.disconnect` | Forgets the key and every feature's data. |
 | `factory.refresh {feature?}` | Polls one feature now; without one, checks the key again and polls every feature. |
@@ -74,7 +74,7 @@ Each group comes out `ok` (with what it found, like "GitHub connected"), `denied
 
 A Factory feature is one slice of `FactoryState`, a poller that fills it, and HTTP routes for its actions and on-demand reads. It touches only its own modules plus a line in `mountFactory`, and its client code. To add one, or grow one of the four that are there:
 
-1. **Its slice type** in `src/shared/factory-<feature>.ts`: `fetchedAt` (ms, 0 before the first read), `error?` (why the last read failed, shown beside the last good data), and the data. Put the parsers from the API's raw answers there too, so the server and the client share them. Add the slice to `FactoryState` and `emptyFactoryState` in `src/shared/factory.ts` (and its id to `FactoryFeatureId` and `FACTORY_FEATURES`, for a new feature).
+1. **Its slice type** in `src/shared/factory-<feature>.ts`: `fetchedAt` (ms, 0 before the first read; name any other time a poll stamps `fetchedAt` too, so a poll that read nothing new doesn't make a broadcast), `error?` (why the last read failed, shown beside the last good data), and the data. Put the parsers from the API's raw answers there too, so the server and the client share them. Add the slice to `FactoryState` and `emptyFactoryState` in `src/shared/factory.ts` (and its id to `FactoryFeatureId` and `FACTORY_FEATURES`, for a new feature).
 2. **Its server module** in `src/server/factory/<feature>.ts`, implementing `FactoryFeature` (`feature.ts`), usually by extending `SliceFeature`:
 
    ```ts

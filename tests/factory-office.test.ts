@@ -186,6 +186,99 @@ test('the saved key comes back at the next start, and a later 401 reads as rejec
   assert.equal(office.client(), undefined);
 });
 
+const tick = () => new Promise((r) => setTimeout(r, 5));
+const statuses = (office: FactoryOffice) => Object.fromEntries(office.connection().capabilities.map((c) => [c.group, c.status]));
+
+/** Factory with the wiki and sessions probes held until the test lets them answer. */
+function heldFactory(rejectKey?: string) {
+  const held: { wiki?: ReturnType<typeof deferred<Response>>; sessions?: ReturnType<typeof deferred<Response>> } = {};
+  const plain = factory({
+    '/api/v0/wiki': () => held.wiki?.promise ?? json(200, { wikiRuns: [] }),
+    '/api/v0/sessions': () => held.sessions?.promise ?? json(200, { sessions: [], pagination: { hasMore: false } }),
+  });
+  const fn = (async (input: string | URL | Request, init: RequestInit = {}) => (rejectKey && (init.headers as Record<string, string>).authorization === `Bearer ${rejectKey}` ? reject401() : plain.fn(input, init))) as typeof fetch;
+  return { held, fn };
+}
+
+test('Check again shows each group as checking until its own probe answers', async (t) => {
+  const dir = tmp(t);
+  const { held, fn } = heldFactory();
+  let changes = 0;
+  const office = new FactoryOffice(dir, { fetchImpl: fn, onChange: () => changes++ });
+  await office.connect(KEY, 'Olive');
+  await tick();
+  assert.ok(Object.values(statuses(office)).every((s) => s !== 'checking'));
+  assert.equal(office.connection().checking, undefined);
+
+  held.wiki = deferred();
+  held.sessions = deferred();
+  const run = office.check();
+  assert.ok(
+    Object.values(statuses(office)).every((s) => s === 'checking'),
+    'every group is asked again',
+  );
+  assert.equal(office.connection().checking, true);
+  const file = path.join(dir, 'factory.json');
+  const saved = () => JSON.parse(readFileSync(file, 'utf8')).capabilities.map((c: { status: string }) => c.status);
+  assert.ok(!saved().includes('checking'), 'factory.json keeps the last answers');
+
+  const before = changes;
+  await tick();
+  assert.deepEqual(statuses(office), { computers: 'ok', sessions: 'checking', ci: 'ok', wiki: 'checking', organization: 'ok', serviceAccounts: 'denied' });
+  assert.ok(changes - before >= 4, 'each answer goes out as it lands');
+  assert.equal(office.connection().checking, true);
+
+  held.wiki.resolve(json(200, { wikiRuns: [] }));
+  await tick();
+  assert.equal(statuses(office).wiki, 'ok');
+  assert.equal(statuses(office).sessions, 'checking', 'the slow sessions probe still reads as checking');
+  assert.equal(office.connection().checking, true);
+
+  held.sessions.resolve(json(500, { detail: 'boom' }));
+  await run;
+  assert.equal(statuses(office).sessions, 'error');
+  assert.equal(office.connection().checking, undefined);
+  assert.ok(!saved().includes('checking'));
+});
+
+test('a key turned down while Check again runs doesn’t leave the check stuck', async (t) => {
+  const BAD = 'fk-test-bad-key-0000';
+  const { held, fn } = heldFactory(BAD);
+  const office = new FactoryOffice(tmp(t), { fetchImpl: fn });
+  await office.connect(KEY, 'Olive');
+  await tick();
+  held.wiki = deferred();
+  const run = office.check();
+  assert.match((await office.connect(BAD, 'Olive')) ?? '', /didn’t accept that key/);
+  assert.equal(office.connection().fingerprint, 'fk-…9z8y', 'the old key stays');
+  held.wiki.resolve(json(200, { wikiRuns: [] }));
+  await run;
+  assert.ok(Object.values(statuses(office)).every((s) => s !== 'checking'));
+  assert.equal(office.connection().checking, undefined);
+});
+
+test('a key taken while Check again runs drops the old check’s answers', async (t) => {
+  const { held, fn } = heldFactory();
+  const office = new FactoryOffice(tmp(t), { fetchImpl: fn });
+  await office.connect(KEY, 'Olive');
+  await tick();
+  const oldWiki = deferred<Response>();
+  held.wiki = oldWiki;
+  const run = office.check();
+  held.wiki = undefined;
+  held.sessions = deferred();
+  assert.equal(await office.connect('fk-test-other-key-1234', 'Otto'), undefined);
+  assert.equal(statuses(office).sessions, 'checking');
+  held.sessions.resolve(json(200, { sessions: [], pagination: { hasMore: false } }));
+  await tick();
+  assert.equal(office.connection().by, 'Otto');
+  assert.equal(office.connection().checking, undefined);
+  oldWiki.resolve(json(500, { detail: 'old' }));
+  await run;
+  assert.equal(statuses(office).wiki, 'ok', 'the old key’s late answer doesn’t land');
+  assert.ok(Object.values(statuses(office)).every((s) => s !== 'checking'));
+});
+
 test('disconnecting forgets the key and its file', async (t) => {
   const dir = tmp(t);
   const office = new FactoryOffice(dir, { fetchImpl: factory().fn });
