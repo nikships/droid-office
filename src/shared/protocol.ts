@@ -4,7 +4,6 @@ import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
-import type { BallState } from './hoop.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
@@ -672,8 +671,6 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-  /** The basketball by the hoop: who has it, or how it was last thrown. */
-  ball: BallState;
 }
 
 /** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
@@ -1008,10 +1005,6 @@ export type ClientMsg =
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
-  /** Pick up the floor's basketball (or catch it): yours if it isn't held. */
-  | { t: 'ball.take' }
-  /** Throw the basketball in your hands from (x, y, z) at (vx, vy, vz) m/s, or drop it; every window flies it the same way. */
-  | { t: 'ball.throw'; x: number; y: number; z: number; vx: number; vy: number; vz: number }
   /** Rewrite one of the office's prompts; null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
@@ -1097,8 +1090,6 @@ export type ServerMsg =
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
-  /** The basketball on your floor was picked up, thrown, or put back under the hoop. */
-  | { t: 'ball'; ball: BallState }
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }

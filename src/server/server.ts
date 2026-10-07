@@ -541,7 +541,6 @@ export async function startServer(cfg: Config) {
     queue: floor?.queue.state() ?? { tasks: [], maxWorkers: 0 },
     decor: floor?.decor.list() ?? [],
     services: servicesState(floor),
-    ball: floor?.court.state() ?? {},
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     meeting: floor?.meetings.state() ?? { current: null, past: [] },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
@@ -1083,7 +1082,6 @@ export async function startServer(cfg: Config) {
         f.workers.detachAll(id);
         f.guests.detachAll(id);
         f.changes.unwatchAll(id);
-        if (f.court.left(id)) ballChanged(f);
       }
       floorsChanged();
     });
@@ -1091,7 +1089,6 @@ export async function startServer(cfg: Config) {
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
-  const ballChanged = (floor: Floor) => toFloor(floor, { t: 'ball', ball: floor.court.state() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
 
   /**
@@ -1105,7 +1102,6 @@ export async function startServer(cfg: Config) {
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor, c) });
     screensOf(c, floor);
-    arrived(left);
     floor.arrived();
     floor.workers.wakeAll();
     floorsChanged();
@@ -1118,16 +1114,14 @@ export async function startServer(cfg: Config) {
     c.floor = ROOF;
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView(c) });
-    arrived(left);
     floorsChanged();
   };
 
   /** Out to the lobby, where the elevator has nowhere to go: the building's last floor was taken off. */
   const toLobby = (c: Client) => {
-    const left = leave(c);
+    leave(c);
     c.floor = null;
     sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined, c) });
-    arrived(left);
   };
 
   /**
@@ -1163,18 +1157,11 @@ export async function startServer(cfg: Config) {
       was.guests.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
-    // The ball stays on its floor, back under the hoop. That floor hears so once they're off it (see
-    // arrived), or their own page would put it down before it knew they'd gone.
-    const ballLeft = !!was?.court.left(c.id);
     c.attached.clear();
     c.stale.clear();
     stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
-    return { was, ballLeft, spot };
-  };
-
-  const arrived = (left: ReturnType<typeof leave>) => {
-    if (left.ballLeft && left.was) ballChanged(left.was);
+    return { spot };
   };
 
   /**
@@ -1283,16 +1270,6 @@ export async function startServer(cfg: Config) {
         const state = building.projectsDirState();
         broadcast({ t: 'projectsDir', state });
         toastAll(state.custom ? `📁 ${who} moved the workspace folder to ${state.dir}` : `📁 ${who} put the workspace folder back to ${state.dir}`);
-        break;
-      }
-      case 'ball.take':
-      case 'ball.throw': {
-        const floor = floorOf(c);
-        if (!floor) break;
-        const changed = msg.t === 'ball.take' ? floor.court.take(c.id) : floor.court.throw(c.id, { x: num(msg.x), y: num(msg.y), z: num(msg.z), vx: num(msg.vx), vy: num(msg.vy), vz: num(msg.vz) });
-        // Whoever didn't get it (someone else caught it first) is told where it really is.
-        if (changed) ballChanged(floor);
-        else sendTo(c, { t: 'ball', ball: floor.court.state() });
         break;
       }
       case 'worker.spawn': {
