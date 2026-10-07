@@ -568,6 +568,13 @@ export interface GhIssueDetail {
   viewer: string;
 }
 
+/**
+ * The `deskId` of a `worker.spawn` that leaves the seat to the office: the first free desk on the
+ * sender's floor in DESKS order, else the first free bean bag (nextFreeSeat in layout). With none
+ * free, the sender gets a warn toast. Droid Office for Android hires this way.
+ */
+export const AUTO_DESK = 'auto';
+
 /** GitHub turns away comments longer than this. */
 export const GH_COMMENT_MAX = 65536;
 /** As long as any label name can be: GitHub stops at 50 characters, GitLab at 255. */
@@ -869,6 +876,7 @@ export type ClientMsg =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
+   * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }

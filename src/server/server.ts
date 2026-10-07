@@ -7,7 +7,11 @@ import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
-import { lanAllowed, mintLanToken } from './lan.js';
+import type { AddressInfo } from 'node:net';
+import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
+import { DevicesStore, machineName, pairingAddresses } from './devices.js';
+import { TailscaleWatch } from './tailscale.js';
+import { pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
 import { MAX_REPOS, resolveCommand, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
@@ -28,8 +32,8 @@ import { HotReload, sourceAppDir } from './hot-reload.js';
 import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
 import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
-import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
-import { DESK_BY_ID, elevatorSpot, streetBelow } from '../shared/layout.js';
+import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
+import { DESK_BY_ID, elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
@@ -86,6 +90,8 @@ interface Client {
   frame?: CabinetFrame;
   /** Cleared at each heartbeat ping and set again by the pong; still clear at the next one means gone. */
   isAlive: boolean;
+  /** The paired phone this connection came in with (its device token), if it did. */
+  device?: string;
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
@@ -177,6 +183,10 @@ export async function startServer(cfg: Config) {
   const reloadScript = reloadScriptFile ? readFileSync(reloadScriptFile, 'utf8') : '';
   // This start's LAN token (see lan.ts): in memory only, a new one next start.
   const lanToken = mintLanToken();
+  // Paired phones (see devices.ts): a device token opens the office like the LAN token, across restarts.
+  const devices = new DevicesStore(cfg.dataDir);
+  const tailscale = new TailscaleWatch();
+  void tailscale.get();
   const clients = new Map<string, Client>();
   // The arcade's high scores: one table for the whole building, on every floor's cabinet. The office
   // follows every game and puts the scores up itself (see Arcade).
@@ -592,8 +602,53 @@ export async function startServer(cfg: Config) {
     res.end(html);
   };
 
+  /**
+   * Who may reach the office: loopback, this start's LAN token (`?t=`), or a paired phone's device
+   * token (`Authorization: Bearer`, or `?d=`). A device token that isn't paired (any more) is refused
+   * outright, even on loopback, so a forgotten phone always hears that it was forgotten.
+   */
+  const access = (req: http.IncomingMessage, url: URL): { ok: boolean; device?: PairedDevice; header?: boolean; unpaired?: boolean } => {
+    const header = bearerToken(req);
+    const token = header ?? url.searchParams.get('d');
+    if (token) {
+      const device = devices.verify(token);
+      return device ? { ok: true, device, header: header !== undefined } : { ok: false, unpaired: true };
+    }
+    return { ok: lanAllowed(req, url, lanToken) };
+  };
+  /**
+   * The office's own page on its own machine: loopback, and a same-origin request (the Origin header,
+   * or for a GET, which carries none, the browser's Sec-Fetch-Site). What the Phone window reads and
+   * changes (the pairing link, the paired phones) answers nothing else: no phone, no LAN browser.
+   */
+  const ownPage = (req: http.IncomingMessage) => isLoopback(req.socket.remoteAddress) && !bearerToken(req) && (sameOrigin(req, cfg) || (!req.headers.origin && req.headers['sec-fetch-site'] === 'same-origin'));
+  const officeCard = () => ({ name: machineName(), version: upgrader.version });
+  /** The Phone window's view: the pairing link with the addresses it carries, and the paired phones. */
+  const pairingState = async (): Promise<PairingState> => {
+    const port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
+    const addresses = pairingAddresses({ scheme: cfg.tls ? 'https' : 'http', host: cfg.host, port, lan: lanIPv4s(), tailscale: await tailscale.get(), tailscaleIps: tailscaleIPv4s() });
+    const office = officeCard();
+    const reason = addresses.length
+      ? undefined
+      : cfg.host === '0.0.0.0' || cfg.host === '::'
+        ? 'This machine has no Wi-Fi or Tailscale address a phone could reach it at. Join a network and reopen this window.'
+        : 'The office only listens on this machine (--host 127.0.0.1), so no phone can reach it. Start it without --host to pair one.';
+    const urls = addresses.map((a) => a.url);
+    const link = urls.length ? pairingLink(office.name, lanToken, urls) : undefined;
+    return { office, ...(link ? { link } : {}), addresses, ...(reason ? { reason } : {}), devices: devices.list() };
+  };
+  /** Unpairs a phone: its token stops working, and its open connections are closed. */
+  const forgetDevice = (id: string): boolean => {
+    const name = devices.list().find((d) => d.id === id)?.name;
+    if (!devices.forget(id)) return false;
+    for (const c of clients.values()) if (c.device === id) c.ws.close(4401, 'This phone was unpaired');
+    console.log(`  📱 ${name} is no longer paired with the office`);
+    return true;
+  };
+
   /** Off the machine without this start's token: APIs get JSON, pages get a pointer to the join link. */
-  const refuseHttp = (res: http.ServerResponse, api: boolean) => {
+  const refuseHttp = (res: http.ServerResponse, api: boolean, unpaired = false) => {
+    if (unpaired) return send(res, 401, { error: 'This phone is not paired with the office any more. Pair it again from ⚙️ Settings → Phone.' });
     const hint = 'Open the join link from the office’s terminal (it prints a QR code on startup).';
     if (api) return send(res, 401, { error: `This office needs its join link (?t=). ${hint}` });
     res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
@@ -653,10 +708,48 @@ export async function startServer(cfg: Config) {
         res.writeHead(404).end();
         return;
       }
-      // Everything else needs this start's token from off the machine (loopback connects freely).
-      if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, p.startsWith('/api/'));
+      // A phone pairing: it scanned this start's QR code, so it has the LAN token (or it's on this
+      // machine). A device token doesn't pair another device. A web page's cross-origin POST is refused.
+      if (p === '/api/mobile/pair' && req.method === 'POST') {
+        if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, true);
+        if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
+        let body: { device?: unknown } | null;
+        try {
+          const text = await readBody(req, 4096);
+          body = text.trim() ? JSON.parse(text) : {};
+        } catch {
+          return send(res, 400, { error: 'Send JSON: {"device": "Pixel 10 Pro XL"}' });
+        }
+        const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined);
+        if (!paired) return send(res, 409, { error: 'Too many phones are paired with this office. Forget one in ⚙️ Settings → Phone first.' });
+        console.log(`  📱 ${paired.device.name} paired with the office`);
+        toastAll(`📱 ${paired.device.name} paired with the office`);
+        return send(res, 200, { deviceId: paired.device.id, token: paired.token, office: officeCard() });
+      }
+      // Everything else needs this start's token or a paired phone's from off the machine (loopback connects freely).
+      const gate = access(req, url);
+      if (!gate.ok) return refuseHttp(res, p.startsWith('/api/'), gate.unpaired);
+      if (gate.device) devices.seen(gate.device.id);
+      // A paired phone's bearer header can't come from a web page (it would need a CORS preflight the
+      // office never answers), so it counts as the office's own request where the Origin is checked.
+      const ownRequest = () => sameOrigin(req, cfg) || (!!gate.device && !!gate.header);
 
       if (p === '/api/health') return send(res, 200, { ok: true });
+      if (p === '/api/mobile/hello' && req.method === 'GET') return send(res, 200, { ok: true, office: officeCard(), ...(gate.device ? { deviceId: gate.device.id } : {}) });
+      if (p === '/api/mobile/pair' && req.method === 'DELETE') {
+        // The phone's own "Unpair": only with its device token.
+        if (!gate.device) return send(res, 400, { error: 'Send the device token to unpair (Authorization: Bearer <token>)' });
+        forgetDevice(gate.device.id);
+        return send(res, 200, { ok: true });
+      }
+      if (p === '/api/mobile/pairing' || p.startsWith('/api/mobile/devices/')) {
+        if (!ownPage(req)) return send(res, 403, { error: 'Pair phones from the office itself, on its own machine' });
+        if (p === '/api/mobile/pairing' && req.method === 'GET') return send(res, 200, await pairingState());
+        if (p.startsWith('/api/mobile/devices/') && req.method === 'DELETE') {
+          return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
+        }
+        return send(res, 405, { error: 'Method not allowed' });
+      }
       if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
         return res.end(reloadScript);
@@ -705,7 +798,7 @@ export async function startServer(cfg: Config) {
       if (p === '/api/term/drop') {
         // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
         if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
-        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
+        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
         if (!floor) return send(res, 404, { error: 'No such floor' });
         const workerId = str(url.searchParams.get('worker'), 32);
         if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
@@ -723,7 +816,7 @@ export async function startServer(cfg: Config) {
       if (p === '/api/prompt/image') {
         // A picture pasted into a prompt that isn't sent yet, kept on this machine until it is (POST), or taken out again (DELETE).
         if (req.method !== 'POST' && req.method !== 'DELETE') return send(res, 405, { error: 'Method not allowed' });
-        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
+        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
         if (!floor) return send(res, 404, { error: 'No such floor' });
         if (req.method === 'DELETE') {
           floor.workers.unstage(imageIds([url.searchParams.get('id')]));
@@ -851,13 +944,18 @@ export async function startServer(cfg: Config) {
       if (svc !== 'gone' && lanAllowed(req, url, lanToken)) return relayUpgrade(req, socket, head, svc);
       return refuseUpgrade(socket);
     }
-    // The socket is the office page's own: this start's token (or loopback) plus a matching
-    // Origin (see sameOrigin). One check per connection; nothing per message.
-    if (url.pathname !== '/ws' || !sameOrigin(req, cfg) || !lanAllowed(req, url, lanToken)) return refuseUpgrade(socket);
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url));
+    // The socket is the office page's own: this start's token (or loopback) plus a matching Origin
+    // (see sameOrigin), or a paired phone. A phone's device token in the Authorization header skips
+    // the Origin check: a browser can't set that header on a WebSocket, so no web page can send it.
+    // `?d=` can come from a page, so it doesn't. One check per connection; nothing per message.
+    if (url.pathname !== '/ws') return refuseUpgrade(socket);
+    const gate = access(req, url);
+    if (!gate.ok || (!(gate.device && gate.header) && !sameOrigin(req, cfg))) return refuseUpgrade(socket);
+    if (gate.device) devices.seen(gate.device.id);
+    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, gate.device?.id));
   });
 
-  const onConnection = (ws: WebSocket, url: URL) => {
+  const onConnection = (ws: WebSocket, url: URL, device?: string) => {
     const id = randomBytes(5).toString('hex');
     // Back on the floor they were on before a reload, a restart or closing the tab, else the first floor.
     const wanted = url.searchParams.get('floor');
@@ -888,6 +986,7 @@ export async function startServer(cfg: Config) {
       playing: false,
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
+      ...(device ? { device } : {}),
     };
     clients.set(id, client);
     ws.on('pong', () => (client.isAlive = true));
@@ -1163,7 +1262,14 @@ export async function startServer(cfg: Config) {
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
         const hire = () => {
-          const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos, undefined, images);
+          // AUTO_DESK is picked here, after any fetch, so two quick hires never get the same desk.
+          const wanted = str(msg.deskId, 32);
+          const deskId = wanted === AUTO_DESK ? nextFreeSeat((id) => floor.workers.deskOccupied(id))?.id : wanted;
+          if (!deskId) {
+            floor.workers.unstage(images);
+            return warn(c, 'Every desk and bean bag on this floor is taken');
+          }
+          const r = floor.workers.spawn(deskId, who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos, undefined, images);
           floor.workers.unstage(images);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
@@ -1728,6 +1834,8 @@ export async function startServer(cfg: Config) {
       }
       c.isAlive = false;
       c.ws.ping();
+      // A phone that stays connected is still being seen (written down once a minute at most).
+      if (c.device) devices.seen(c.device);
     }
   }, 20_000);
 
@@ -1763,5 +1871,5 @@ export async function startServer(cfg: Config) {
     hookServer.close();
   };
 
-  return { server, shutdown, lanToken, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
+  return { server, shutdown, lanToken, pairing: pairingState, devices, publicDir, hookPort, floors: () => [...floors.values()], projectsDir: () => building.projectsDir, resolvedAgent: resolveCommand(cfg.agentCmd) };
 }

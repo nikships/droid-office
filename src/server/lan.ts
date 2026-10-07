@@ -35,12 +35,37 @@ export function lanAllowed(req: IncomingMessage, url: URL, token: string): boole
   return lanTokenOk(url.searchParams.get('t'), token);
 }
 
-/** This machine's LAN IPv4 addresses, Wi-Fi first, for the join URL and its QR code. */
-export function lanIPv4s(): string[] {
+/** The token in `Authorization: Bearer <token>`, if the request carries one. */
+export function bearerToken(req: IncomingMessage): string | undefined {
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(req.headers.authorization ?? '');
+  return m?.[1];
+}
+
+/** Tailscale's CGNAT range, 100.64.0.0/10: a tailnet address, not the Wi-Fi. */
+export function isTailscaleIPv4(ip: string): boolean {
+  const m = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip);
+  return !!m && Number(m[1]) >= 64 && Number(m[1]) <= 127;
+}
+
+function externalIPv4s(): { name: string; address: string }[] {
   const out: { name: string; address: string }[] = [];
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const ni of list ?? []) if (ni.family === 'IPv4' && !ni.internal) out.push({ name, address: ni.address });
   }
+  return out;
+}
 
-  return out.sort((a, b) => Number(b.name === 'en0') - Number(a.name === 'en0')).map((i) => i.address);
+/** This machine's LAN IPv4 addresses, Wi-Fi first, for the join URL and its QR code. Tailscale's are left out (see tailscaleIPv4s). */
+export function lanIPv4s(): string[] {
+  return externalIPv4s()
+    .filter((i) => !isTailscaleIPv4(i.address))
+    .sort((a, b) => Number(b.name === 'en0') - Number(a.name === 'en0'))
+    .map((i) => i.address);
+}
+
+/** This machine's tailnet IPv4 addresses, as its network interfaces show them. */
+export function tailscaleIPv4s(): string[] {
+  return externalIPv4s()
+    .filter((i) => isTailscaleIPv4(i.address))
+    .map((i) => i.address);
 }
