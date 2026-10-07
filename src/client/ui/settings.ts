@@ -8,6 +8,8 @@ import { onJiraSetup } from './jira';
 import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
+import { openPhone, pairedPhones } from './phone';
+import type { PairedDevice } from '../../shared/devices';
 
 const VIEWS: [ViewMode, string, string][] = [
   ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
@@ -582,6 +584,22 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   };
   paintSubagents();
 
+  // Droid Office for Android: the pairing QR code is its own window, over this one.
+  const phoneOpen = h('button.btn.primary', { type: 'button' }, '📱 Pair a phone…');
+  const phoneNote = h(
+    'p.setting-note',
+    {},
+    'Shows the QR code to scan with the app, the Wi-Fi and Tailscale addresses it carries, and the phones you paired, where you can forget one. A paired phone keeps working after the office restarts.',
+  );
+  const phoneStatus = h('p.setting-note', {}, 'Checking for paired phones…');
+  const paintPhones = (list: PairedDevice[] | string) => {
+    if (typeof list === 'string') phoneStatus.textContent = list;
+    else if (!list.length) phoneStatus.textContent = 'No phones paired yet.';
+    else phoneStatus.textContent = `${list.length} paired: ${list.map((d) => `${d.name} (seen ${timeAgo(d.lastSeenAt)})`).join(', ')}.`;
+  };
+  void pairedPhones().then(paintPhones);
+  phoneOpen.addEventListener('click', () => openPhone(paintPhones));
+
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", epicRow, epicActions, epicNote);
   paintJira();
@@ -623,6 +641,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       card('Waking the lead', subWake.row, subWakeNote),
       card('Droid skill', subSkill.row, subSkillNote),
     ],
+    phone: [card('Droid Office for Android', h('div.seg', {}, phoneOpen), phoneNote, phoneStatus)],
   };
 
   // The categories down the side, the one picked on the right. On a phone the row is across the top.

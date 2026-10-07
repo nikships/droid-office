@@ -1,5 +1,5 @@
 /** The categories down the side of Settings. */
-export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'workers' | 'subagents';
+export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'workers' | 'subagents' | 'phone';
 
 /** Who a setting is for. */
 export type SettingsScope = 'you' | 'floor' | 'office';
@@ -17,6 +17,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     blurb:
       'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk.',
   },
+  { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android: hire workers, watch their terminals and prompt them from your phone, on your Wi-Fi or over Tailscale.' },
 ];
 
 /** The badge by a setting's name, and what it means. */
@@ -49,6 +50,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Where subagents work', scope: 'office' },
   { pane: 'subagents', title: 'Waking the lead', scope: 'office' },
   { pane: 'subagents', title: 'Droid skill', scope: 'office' },
+  { pane: 'phone', title: 'Droid Office for Android', scope: 'office' },
 ] as const satisfies readonly { pane: SettingsPane; title: string; scope: SettingsScope | null }[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];
