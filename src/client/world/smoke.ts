@@ -116,9 +116,10 @@ export class Smoke {
   private geo = new THREE.PlaneGeometry(1, 1);
   private tex = puffTexture();
 
-  /** A thin wisp curling up off a cigarette's lit end. */
-  wisp(at: THREE.Vector3) {
+  /** A thin wisp curling up off a cigarette's lit end (or a muzzle), blown along `push` if it's given. */
+  wisp(at: THREE.Vector3, push?: THREE.Vector3) {
     tmp.set((Math.random() - 0.5) * 0.06, 0.3 + Math.random() * 0.1, (Math.random() - 0.5) * 0.06);
+    if (push) tmp.add(push);
     this.emit(at, tmp, 0.06, 0.4, 2.4, 0.5);
   }
 

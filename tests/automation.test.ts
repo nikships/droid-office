@@ -213,6 +213,7 @@ function raw(over: Partial<RawState> = {}): RawState {
     hanging: false,
     golfing: false,
     gun: false,
+    gunMove: null,
     ...over,
   };
 }

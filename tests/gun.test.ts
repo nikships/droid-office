@@ -5,7 +5,8 @@ import { BloodSpray, GUN_LEN, MUZZLE_AT, Muzzle, Puff, disposeGun, magnum } from
 
 test('a magnum points down +z with its grip around the origin', () => {
   const gun = magnum();
-  assert.equal(gun.children.length, 4, 'the barrel, frame, grip and details share four material batches');
+  assert.equal(gun.children.length, 5, 'the barrel, frame, grip and details share four material batches, with the cylinder on its crane');
+  assert.ok(gun.getObjectByName('gun-crane') && gun.getObjectByName('gun-drum'));
   assert.ok(Math.abs(MUZZLE_AT.z - 0.26) < 1e-9);
   assert.ok(GUN_LEN > MUZZLE_AT.z);
   const box = new THREE.Box3().setFromObject(gun);

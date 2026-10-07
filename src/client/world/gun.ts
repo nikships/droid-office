@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  * A stylized .44 revolver in meters: the fist closes around the grip at the origin, the bore
  * points along +Z and +Y is up. Holders rotate the whole prop to their aiming axis; the model
  * adds no wrist tilt. Solid side profiles keep the frame, guard and grip in the gun's YZ plane.
- * Static parts are grouped into four opaque toon batches.
+ * Static parts are grouped into four opaque toon batches; the cylinder rides apart from them on
+ * its crane (setCylinder), so it can swing out and spin.
  * No DOM or WebGL at import time, so tests can load it in Node.
  */
 
@@ -13,6 +14,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export const GUN_LEN = 0.34;
 /** How high the barrel sits above the origin. */
 const BORE_Y = 0.086;
+/** The middle of the cylinder, shut, and how long it is along the bore. */
+const DRUM_AT = new THREE.Vector3(0, BORE_Y - 0.026, 0.03);
+const DRUM_LEN = 0.076;
+/** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
+const CRANE_AT = new THREE.Vector2(0.012, 0.028);
 
 /** The closest rendered solid struck by a bullet; only registered workers can be targets. */
 export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
@@ -58,6 +64,7 @@ export function magnum(): THREE.Group {
   const frame = new THREE.MeshToonMaterial({ color: '#85919f' });
   const wood = new THREE.MeshToonMaterial({ color: '#794830' });
   const dark = new THREE.MeshToonMaterial({ color: '#29313b' });
+  const brass = new THREE.MeshToonMaterial({ color: '#d9ab4a' });
   const batches = new Map<THREE.Material, THREE.BufferGeometry[]>([
     [steel, []],
     [frame, []],
@@ -103,9 +110,15 @@ export function magnum(): THREE.Group {
   );
   for (const side of [-1, 1]) box(0.004, 0.007, 0.012, dark, side * 0.0055, 0.1125, -0.028);
 
-  // The cylinder rotates around +Z, with its top chamber on the bore axis. Flutes are shallow
-  // changes to its own outline rather than six intersecting cylinders protruding through it.
-  const cylinder = new THREE.CylinderGeometry(0.03, 0.03, 0.076, 30);
+  // The cylinder rotates around +Z, with a chamber at the top. Flutes are shallow changes to its own
+  // outline rather than six intersecting cylinders protruding through it. It rides on its own
+  // crane (see setCylinder), so it is built round its own middle and added after the batches.
+  const drumParts = new Map<THREE.Material, THREE.BufferGeometry[]>([
+    [steel, []],
+    [brass, []],
+    [dark, []],
+  ]);
+  const cylinder = new THREE.CylinderGeometry(0.03, 0.03, DRUM_LEN, 30);
   const pos = cylinder.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
@@ -114,7 +127,17 @@ export function magnum(): THREE.Group {
     pos.setXYZ(i, x * flute, pos.getY(i), z * flute);
   }
   cylinder.computeVertexNormals();
-  add(cylinder.rotateX(Math.PI / 2), steel, 0, BORE_Y - 0.026, 0.03);
+  drumParts.get(steel)!.push(cylinder.rotateX(Math.PI / 2));
+  // Six loaded chambers between the flutes: dark mouths in front, brass case heads with their
+  // primers behind, which only show once it swings out.
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 2 + (i * Math.PI) / 3;
+    const cx = Math.cos(a) * 0.017;
+    const cy = Math.sin(a) * 0.017;
+    drumParts.get(dark)!.push(new THREE.CircleGeometry(0.0058, 8).translate(cx, cy, DRUM_LEN / 2 + 0.0003));
+    drumParts.get(brass)!.push(new THREE.CircleGeometry(0.0068, 10).rotateY(Math.PI).translate(cx, cy, -DRUM_LEN / 2 - 0.0004));
+    drumParts.get(dark)!.push(new THREE.CircleGeometry(0.0022, 6).rotateY(Math.PI).translate(cx, cy, -DRUM_LEN / 2 - 0.0008));
+  }
   // Both shoulders of the frame leave a real opening around the cylinder.
   add(
     profile(
@@ -211,31 +234,81 @@ export function magnum(): THREE.Group {
   }
 
   // Bake the static parts into one draw per material. Each returned gun owns its GPU resources.
-  for (const [material, parts] of batches) {
+  const bake = (parts: THREE.BufferGeometry[]) => {
     const surfaces = parts.map((geometry) => (geometry.index ? geometry.toNonIndexed() : geometry));
     const merged = mergeGeometries(surfaces)!;
     for (let i = 0; i < parts.length; i++) {
       parts[i].dispose();
       if (surfaces[i] !== parts[i]) surfaces[i].dispose();
     }
-    const mesh = new THREE.Mesh(merged, material);
+    return merged;
+  };
+  for (const [material, parts] of batches) {
+    const mesh = new THREE.Mesh(bake(parts), material);
     mesh.name = material === steel ? 'gun-steel' : material === frame ? 'gun-frame' : material === wood ? 'gun-walnut' : 'gun-details';
     gun.add(mesh);
   }
+
+  // The crane: hinged along +Z under the cylinder, with the arm out to the cylinder's front face.
+  const crane = new THREE.Group();
+  crane.name = 'gun-crane';
+  crane.position.set(CRANE_AT.x, CRANE_AT.y, 0);
+  const reach = new THREE.Vector2(DRUM_AT.x - CRANE_AT.x, DRUM_AT.y - CRANE_AT.y);
+  const arm = new THREE.Mesh(
+    new THREE.BoxGeometry(0.007, reach.length(), 0.005)
+      .toNonIndexed()
+      .rotateZ(-Math.atan2(reach.x, reach.y))
+      .translate(reach.x / 2, reach.y / 2, DRUM_AT.z + DRUM_LEN / 2 + 0.0028),
+    steel,
+  );
+  arm.name = 'gun-crane-arm';
+  crane.add(arm);
+  const drum = new THREE.Group();
+  drum.name = 'gun-drum';
+  drum.position.set(reach.x, reach.y, DRUM_AT.z);
+  for (const [material, parts] of drumParts) {
+    const mesh = new THREE.Mesh(bake(parts), material);
+    mesh.name = material === steel ? 'gun-cylinder' : material === brass ? 'gun-brass' : 'gun-chambers';
+    drum.add(mesh);
+  }
+  crane.add(drum);
+  gun.add(crane);
+  gun.userData.cylinder = { crane, drum } satisfies GunCylinder;
   return gun;
 }
 
 /** Where the muzzle is: the flash and the shot's smoke start here. */
 export const MUZZLE_AT = new THREE.Vector3(0, BORE_Y, 0.26);
 
+/** Where the trigger finger goes through the guard: a gun spun on it turns round this point. */
+export const SPIN_AT = new THREE.Vector3(0, -0.004, 0.052);
+
+/** How far round the crane swings the cylinder out to the gun's left (+X), in radians about +Z. */
+export const CRANE_SWING = -1.75;
+
+interface GunCylinder {
+  crane: THREE.Object3D;
+  drum: THREE.Object3D;
+}
+
+/** Swings a magnum()'s cylinder out on its crane (0 shut … 1 all the way out) and turns it `turn` radians on its axis. */
+export function setCylinder(gun: THREE.Object3D, open: number, turn: number) {
+  const c = gun.userData.cylinder as GunCylinder | undefined;
+  if (!c) return;
+  c.crane.rotation.z = CRANE_SWING * open;
+  c.drum.rotation.z = turn;
+}
+
 /** Takes a gun from magnum() out of the hand holding it, and frees what it was made of. */
 export function disposeGun(prop: THREE.Group) {
   prop.removeFromParent();
+  const freed = new Set<{ dispose(): void }>();
   prop.traverse((o) => {
     const m = o as THREE.Mesh;
-    m.geometry?.dispose();
-    (m.material as THREE.Material | undefined)?.dispose();
+    if (m.geometry) freed.add(m.geometry);
+    if (m.material) freed.add(m.material as THREE.Material);
   });
+  for (const r of freed) r.dispose();
 }
 
 /** How a muzzle flash lights its surroundings, at the flash's peak. */
