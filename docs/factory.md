@@ -24,7 +24,7 @@ What a key reaches, from the owner's account:
 | --- | --- | --- |
 | Computers | ✓ | A managed computer (`providerType` `e2b`) and a BYOM one (`byom`). `GET /computers/{id}/metrics` is an array of 5-minute samples `{timestamp, cpuUsedPct, cpuCount, memUsed, memTotal, diskUsed, diskTotal}` going back about four days; a BYOM computer answers 400 "Metrics are not supported for BYOM computers", and a managed one that's asleep answers `[]` for a recent `?start=`. Providers: `["e2b"]`. |
 | Sessions | ✓ | List items: `sessionId`, `title`, `status` (`idle`, `pending`, `running`), `messageCount`, `createdAt`, `updatedAt`, `computerId?`, `artifacts[]` (pull requests and so on). `factoryCredits` is only on `GET /sessions/{id}`. The office's own workers' sessions are in this list (`WorkerInfo.sessionId` matches `sessionId`), so credits per worker work. |
-| CI automations | ✓ | The scan finds the Droid workflows across the account's repositories (`templateId` like `code-review`, triggers, model, cron); `repositories` lists about a hundred. The request body of `POST /automations/ci/edit` is not documented. |
+| CI automations | ✓ | The scan finds the Droid workflows across the account's repositories (`templateId` like `code-review`, triggers, model, cron, `droidActionInputs`) and says how long it caches (`cacheTtlMs`, 30 minutes; `?forceRefresh=true` skips it); `repositories` lists about a hundred (`?owner=` narrows it). `jobs` lists the workflow PRs opened through `POST /automations/ci/edit`, whose body is not documented (see [CI automations](#ci-automations)). `runs` was empty for this account. |
 | Wiki | ✓ | The request body of `POST /wiki` is not documented. |
 | Organization | ✓, thin | Users, no credit limits, no enterprise history; computer secrets by name only. |
 | Service accounts | ✗ | 402, Teams plan. Out of scope. |
@@ -113,8 +113,31 @@ The four first versions, for their owners to grow:
 | --- | --- | --- | --- |
 | `computers` | 60 s, 15 s fast; busy while one is provisioning | The list (no relay URLs or keys), the providers (every 30 minutes) and, for each managed computer, the latest sample and two hours of history (read every 3 minutes) | `GET /:id/metrics?hours=` (1 to 96) |
 | `sessions` | 90 s, 20 s fast; busy while a session on a Factory computer runs | The newest 50 sessions, titles cut to 200 characters, `hasMore` | `GET /:id`: the session and its `credits` |
-| `ci` | 5 min, 60 s fast | Whether GitHub is connected, the GitHub owners, the scan's workflows and its time, the recent runs; a read that fails keeps its part of the last data | `GET /repositories` |
+| `ci` | 5 min, 60 s fast; busy for 3 minutes after an edit | Whether GitHub is connected, the GitHub owners, the scan's workflows (read again only once its `cacheTtlMs` runs out) and its time, the newest 50 runs, the workflow PRs; a read that fails keeps its part of the last data | `GET /repositories?owner=&fresh=1` (kept 10 minutes), `POST /rescan`, `POST /edit` |
 | `wiki` | 5 min, 60 s fast | The latest wiki runs | `GET /upload-access?repoUrl=` |
+
+### CI automations
+
+The board on the north wall past the gong (`world/factory-ci.ts`, `BOARDS.ci` in `layout.ts`) and the CI automations window (`ui/factory-ci.ts`) read the `ci` slice; the grouping by repository, this floor first (matched without case), and each workflow's latest run are `groupCi` in `src/shared/factory-ci.ts`. A run belongs to a workflow by repository and file, or by name when it has no file.
+
+`POST /automations/ci/edit` adds, changes or removes a Droid workflow by opening a pull request in the repository. Its body, found from its validation errors and the Factory web app:
+
+```json
+{
+  "action": "create",
+  "automationName": "Droid Code Review",
+  "factoryAutomationId": "<a new UUID>",
+  "modeId": "code-review",
+  "repos": [{ "repoFullName": "owner/repo", "filePath": ".github/workflows/droid-review.yml" }],
+  "changes": { "name": "Droid Code Review", "yamlParams": "automatic_review: true\n", "customPrompt": "", "schedule": "", "githubEvents": ["pull-request"] }
+}
+```
+
+- `action` is `create`, `edit` or `delete`; a delete needs only `repos`. Without `action` and a repository the answer is 400 "Provide action ("edit"|"delete"|"create") and at least one repo."; an edit without `changes` answers "Edit action requires a `changes` payload."
+- `yamlParams` are the droid-action's inputs, as YAML lines (`automatic_review`, `review_depth: deep|shallow`, `automatic_security_review`, `review_model`, `reasoning_effort`). A Droid job of your own has `customPrompt`, and its model and effort as `customCIModel` and `customCIReasoningEffort`. `schedule` is a 5-field cron or `''`; `githubEvents` are `pull-request`, `pr-opened`, `comment-added`, `push`, `label-change` and `checks-completed`.
+- Factory's file names: `droid-review.yml` for code review, `factory-<name in kebab case>.yml` for a job of your own (`droid-wiki-refresh.yml` and `deep-security-review.yml` for its wiki and security templates, which the office doesn't add).
+- The answer has one `sessions` entry per repository: `{repoFullName, sessionId, prUrl}` once it opened a PR, `message` when there was nothing to do (deleting a file that isn't there: "Automation deleted"), or `error` ("Invalid repo target" for a delete without `filePath`). It still answers 200 then; the office answers 422 with the error. Factory's YAML has `workflow_dispatch` always on and uses `Factory-AI/droid-action@main`.
+- The office checks every field before it goes (`ciEditProblem`): a GitHub `owner/repo`, a file under `.github/workflows/`, known events, a cron, and a model and effort that are one id each, since they go into the YAML as written. Factory changes only the files its own templates write, so the window offers Change for `droid-review.yml` and `factory-*.yml`, and Remove for any workflow.
 
 ## The pieces
 

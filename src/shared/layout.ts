@@ -208,6 +208,10 @@ export const BOARDS = {
   pulls: { x: 3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '03 CODE REVIEW' },
   // East wall, north of the lounge TV.
   services: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'SERVICES' },
+  // North wall, between the gong and the north-east corner, under the Factory mural: Factory's CI
+  // automations (world/factory-ci.ts). Low enough to clear the mural, so its title is on the board
+  // itself rather than a sign over it.
+  ci: { x: 15.75, y: 1.8, z: FLOOR.minZ + 0.08, rotY: 0, width: 4.1, height: 2.2, label: '' },
 } as const;
 
 /** The big TV on the east wall, showing its idle screen. */
@@ -235,13 +239,11 @@ export const SPAWN = { x: 8, z: 7 } as const;
 /** The gong: on the north wall just past the elevator from the PR board, facing into the room. It rings when a PR merges. */
 export const GONG = { x: 11.8, z: FLOOR.minZ + 0.75, width: 1.9, height: 2.45 } as const;
 
-/** Potted plants around the room: where each stands, and how big it is. */
+/** Potted plants around the room: where each stands, and how big it is. None stands in front of a board. */
 export const PLANTS: readonly (readonly [x: number, z: number, scale: number])[] = [
   [-17.2, -12.2, 1.4],
-  [17.2, -12.2, 1.5],
   [17.2, 12.2, 1.3],
   [-17.2, 8.5, 1.2],
-  [14.2, -12.2, 1.1],
   [-6, 0, 1],
   [3.5, 0, 0.9],
   [8.5, 5, 1.1],

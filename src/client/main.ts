@@ -103,6 +103,8 @@ import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elev
 import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { MachineTexture, officeFull, pressureNote } from './world/machine';
+import { CiBoardTexture } from './world/factory-ci';
+import { openCiWindow } from './ui/factory-ci';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf } from './ui/bookshelf';
@@ -245,6 +247,18 @@ mountBoard(office.meetingBoard, meetingBoardTex.texture, renderMeetingBoard, ['m
 const meetingSignTex = new MeetingSignTexture();
 const renderMeetingSign = () => meetingSignTex.render(store.meeting);
 mountBoard(office.meetingSign, meetingSignTex.texture, renderMeetingSign, ['meeting']);
+// Factory's CI automations on the north wall past the gong.
+/** This floor's GitHub repository (owner/repo), if its checkout has one. */
+const floorGithubRepo = () => {
+  const repo = normalizeRepo(store.project?.remote);
+  return repo && repo.split('/').length === 2 ? repo : undefined;
+};
+const ciTex = new CiBoardTexture();
+const renderCiBoard = (force = false) => ciTex.render({ connection: store.factory.connection, ci: store.factory.ci, floorRepo: floorGithubRepo(), now: Date.now() }, force);
+mountBoard(office.boardMeshes.ci, ciTex.texture, () => renderCiBoard(), ['factory', 'project']);
+// Its "5M" ages: redrawn only when one of them ticks over.
+setInterval(() => renderCiBoard(), 60_000);
+const showCi = (add = false) => openCiWindow({ floorRepo: floorGithubRepo(), add });
 
 // Pictures people hung on the walls
 const gallery = new Gallery();
@@ -294,6 +308,7 @@ void loadFonts().then(() => {
   renderMachineBoard();
   renderMeetingBoard();
   renderMeetingSign();
+  renderCiBoard(true);
   tvIdle.redraw();
   redrawText();
 });
@@ -1829,6 +1844,26 @@ function paletteEntries(): PaletteEntry[] {
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
   out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
+  out.push(
+    atSpot('ci', 'the CI automations board', {
+      icon: '🏭',
+      kind: 'Board',
+      title: 'CI automations',
+      detail: 'Droid in GitHub Actions, from Factory',
+      keywords: ['factory', 'github actions', 'workflows', 'code review'],
+      open: () => showCi(),
+    }),
+  );
+  out.push(
+    atSpot('ci', 'the CI automations board', {
+      icon: '🤖',
+      kind: 'Action',
+      title: 'Add Droid code review to a repository',
+      detail: 'Factory opens a pull request with the workflow',
+      keywords: ['factory', 'ci', 'github actions', 'workflow'],
+      open: () => showCi(true),
+    }),
+  );
   out.push(atSpot('meeting', 'the meeting room', { icon: '🤝', kind: 'Board', title: 'Meeting room', keywords: ['call a meeting'], open: () => showMeeting() }));
 
   for (const pr of store.pulls.items) {
@@ -2003,6 +2038,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
   else if (target.kind === 'services') openServices();
   else if (target.kind === 'queue') showQueue();
+  else if (target.kind === 'ci') showCi();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
@@ -2473,6 +2509,12 @@ function hintFor(it: Interactable): Hint {
       return board('🔀 Pull request board');
     case 'services':
       return board('🌐 Services board');
+    case 'ci': {
+      const ci = store.factory.ci;
+      const n = ci.workflows.length;
+      const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
+      return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
+    }
     case 'queue': {
       const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
       return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
@@ -2979,6 +3021,7 @@ const REACH: Record<InteractKind, number> = {
   pulls: 9,
   services: 9,
   queue: 9,
+  ci: 9,
   tv: 10,
   decor: 9,
   smoke: 3,
@@ -3105,6 +3148,7 @@ const hudActions: HudAction[] = [
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
   { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
   { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
+  { id: 'ci', icon: '🏭', label: 'CI automations', section: 'Open', count: () => store.factory.ci.workflows.length, title: () => 'Droid in GitHub Actions, from Factory', run: () => showCi() },
   // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
   {
     id: 'meeting',

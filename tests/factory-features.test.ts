@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FactoryApi } from '../src/server/factory/api.js';
-import { CiFeature } from '../src/server/factory/ci.js';
 import { ComputersFeature } from '../src/server/factory/computers.js';
 import type { FeatureHost } from '../src/server/factory/feature.js';
 import { mountFactory } from '../src/server/factory/index.js';
@@ -173,75 +172,7 @@ test('sessions: the newest page, with titles cut, and the detail route with cred
   await assert.rejects(() => Promise.resolve(detail.handle({ api: f.api, params: { id: 'nope' } } as never)), /No such session/);
 });
 
-test('CI: owners, workflows and runs together; one failing read keeps the rest', async () => {
-  let scanFails = false;
-  const f = factory({
-    '/api/v0/automations/ci/repository-owners': () => json(200, { owners: [{ login: 'nik', type: 'user' }, { login: 'org' }, {}], integration: { connected: true } }),
-    '/api/v0/automations/ci/scan': () =>
-      scanFails
-        ? json(500, { detail: 'scan broke' })
-        : json(200, {
-            workflows: [
-              {
-                repoFullName: 'o/r',
-                filePath: '.github/workflows/droid-review.yml',
-                workflowName: 'Droid Auto Review',
-                triggerEvents: ['pull_request', 3],
-                droidActionInputs: { model: 'gpt-5.2' },
-                githubUrl: 'https://github.com/o/r',
-                fileSha: 'abc',
-                templateId: 'code-review',
-                authoredBy: { login: 'nik' },
-              },
-              { repoFullName: 'o/r' },
-            ],
-            scannedAt: 1791398528603,
-            integration: { connected: true },
-          }),
-    '/api/v0/automations/ci/runs': () => json(200, { runs: [{ id: 7, repoFullName: 'o/r', status: 'completed', conclusion: 'success', html_url: 'https://github.com/o/r/actions/runs/7', created_at: '2026-10-07T00:00:00Z' }, {}] }),
-    '/api/v0/automations/ci/repositories': () => json(200, { repositories: [{ fullName: 'o/r' }] }),
-  });
-  const feature = new CiFeature(host(), () => 9);
-  await feature.poll(f.api);
-  const s = feature.state();
-  assert.equal(s.github, true);
-  assert.deepEqual(s.owners, [
-    { login: 'nik', type: 'user' },
-    { login: 'org', type: 'user' },
-  ]);
-  assert.equal(s.workflows.length, 1);
-  assert.deepEqual(s.workflows[0], {
-    repo: 'o/r',
-    path: '.github/workflows/droid-review.yml',
-    name: 'Droid Auto Review',
-    triggers: ['pull_request'],
-    templateId: 'code-review',
-    model: 'gpt-5.2',
-    url: 'https://github.com/o/r',
-    sha: 'abc',
-    author: 'nik',
-  });
-  assert.equal(s.scannedAt, 1791398528603);
-  assert.equal(s.runs.length, 1);
-  assert.equal(s.runs[0].id, '7');
-  assert.equal(s.runs[0].url, 'https://github.com/o/r/actions/runs/7');
-  assert.equal(s.runs[0].createdAt, Date.parse('2026-10-07T00:00:00Z'));
-  assert.equal(s.error, undefined);
-
-  scanFails = true;
-  await feature.poll(f.api);
-  assert.equal(feature.state().workflows.length, 1, 'the last scan stays');
-  assert.match(feature.state().error ?? '', /scan broke/);
-  assert.deepEqual(await feature.routes[0].handle({ api: f.api } as never), { repositories: [{ fullName: 'o/r' }] });
-
-  const down = factory({});
-  await assert.rejects(() => feature.poll(down.api), /no \/api\/v0\/automations/);
-  const rejected = factory({ '/api/v0/automations/ci/scan': () => json(401, { detail: 'gone' }) });
-  await assert.rejects(
-    () => feature.poll(rejected.api),
-    (e: { status?: number }) => e.status === 401,
-  );
-});
+// CI automations have their own file: tests/factory-ci.test.ts.
 
 test('wiki: the runs, and whether a repository may get one', async () => {
   const f = factory({
@@ -296,6 +227,7 @@ test('mounted: connecting answers its sender, the state carries every slice, and
     '/api/v0/automations/ci/repository-owners': () => json(200, { owners: [], integration: { connected: true } }),
     '/api/v0/automations/ci/scan': () => json(200, { workflows: [] }),
     '/api/v0/automations/ci/runs': () => json(200, { runs: [] }),
+    '/api/v0/automations/ci/jobs': () => json(200, { jobs: [] }),
     '/api/v0/wiki': () => json(200, { wikiRuns: [] }),
     '/api/v0/organization/users': () => json(200, { users: [{ id: 'user_1', email: 'o@example.com', firstName: 'Olive' }], pagination: { hasMore: false } }),
     '/api/v0/service-accounts': () => json(402, { detail: 'Requires a Teams plan' }),
