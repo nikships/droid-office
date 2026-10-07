@@ -8,6 +8,8 @@ const TICK_MS = 1000;
 const STAGGER_MS = 1500;
 /** Slice changes within this long go out as one broadcast. */
 const BROADCAST_MS = 250;
+/** A state that differs only in its poll times still goes out this often, so the ages browsers show stay right. */
+export const HEARTBEAT_MS = 60_000;
 /** The longest a failing feature waits before trying again. */
 export const MAX_BACKOFF_MS = 15 * 60_000;
 /** After a 429 without a Retry-After, at least this long (doubling with each one in a row). */
@@ -30,6 +32,14 @@ export interface RegistryOptions {
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
   now?: () => number;
   broadcastMs?: number;
+}
+
+/**
+ * FactoryState as broadcasts compare it: every `fetchedAt` (a slice's, a computer's metrics') only
+ * says whether it has been read, since a poll that read the same data still moves it.
+ */
+export function sameness(state: FactoryState): string {
+  return JSON.stringify(state, (key, value) => (key === 'fetchedAt' ? !!value : value));
 }
 
 interface Run {
@@ -66,6 +76,11 @@ export class FactoryRegistry {
   private generation = 0;
   private wasActive = false;
   private wasConnected = false;
+  /** sameness() of the last broadcast, and when it went out. */
+  private sent?: string;
+  private sentAt = 0;
+  /** A flush was skipped as the same: the next heartbeat sends it. */
+  private stale = false;
   private now: () => number;
 
   constructor(private opts: RegistryOptions) {
@@ -108,11 +123,24 @@ export class FactoryRegistry {
     this.flushTimer.unref?.();
   }
 
-  /** Broadcasts now. */
+  /**
+   * Broadcasts now, unless the state is what browsers last got but for its poll times and the last
+   * broadcast is under HEARTBEAT_MS old: boards redraw on every one.
+   */
   flush() {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
-    this.opts.broadcast(this.state());
+    const state = this.state();
+    const same = sameness(state);
+    const now = this.now();
+    if (same === this.sent && now - this.sentAt < HEARTBEAT_MS) {
+      this.stale = true;
+      return;
+    }
+    this.sent = same;
+    this.sentAt = now;
+    this.stale = false;
+    this.opts.broadcast(state);
   }
 
   start() {
@@ -190,9 +218,10 @@ export class FactoryRegistry {
 
   /** Starts every poll that's due; resolves once they've all ended. */
   async tick(): Promise<void> {
+    const now = this.now();
+    if (this.stale && !this.flushTimer && now - this.sentAt >= HEARTBEAT_MS) this.flush();
     const api = this.opts.link.client();
     if (!api) return;
-    const now = this.now();
     const started: Promise<void>[] = [];
     for (const run of this.runs.values()) {
       if (run.running) continue;

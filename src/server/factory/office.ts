@@ -99,6 +99,9 @@ function writePrivate(file: string, data: unknown) {
 
 const checking = (group: FactoryGroup): FactoryCapability => ({ group, status: 'checking' });
 
+/** `caps` with `cap` in place of its group's last answer. */
+const withCapability = (caps: FactoryCapability[], cap: FactoryCapability) => [...caps.filter((c) => c.group !== cap.group), cap];
+
 export interface FactoryOfficeOptions {
   fetchImpl?: Fetch;
   base?: string;
@@ -117,8 +120,15 @@ export class FactoryOffice {
   private saved?: Saved;
   private api?: FactoryApi;
   private checkRun?: Promise<void>;
-  /** Which connect or check is the latest, so an older one's late answers don't land. */
+  /**
+   * The groups whose probe hasn't answered yet: browsers see them as checking. Kept out of `saved`
+   * so factory.json only ever holds answers.
+   */
+  private pending = new Set<FactoryGroup>();
+  /** Which taken key or check is the latest, so an older one's late answers don't land. */
   private generation = 0;
+  /** Which connect attempt is the latest (a disconnect ends them all). */
+  private attempts = 0;
   private now: () => number;
 
   constructor(
@@ -146,9 +156,9 @@ export class FactoryOffice {
       ...(s.membersMore ? { membersMore: true } : {}),
       by: s.by,
       at: s.at,
-      capabilities: FACTORY_GROUPS.map((g) => s.capabilities.find((c) => c.group === g.id) ?? checking(g.id)),
+      capabilities: FACTORY_GROUPS.map((g) => (this.pending.has(g.id) ? undefined : s.capabilities.find((c) => c.group === g.id)) ?? checking(g.id)),
       ...(s.checkedAt ? { checkedAt: s.checkedAt } : {}),
-      ...(this.checkRun ? { checking: true } : {}),
+      ...(this.pending.size ? { checking: true } : {}),
       ...(s.rejected ? { rejected: s.rejected } : {}),
     };
   }
@@ -170,10 +180,10 @@ export class FactoryOffice {
     const key = raw.trim();
     if (key.length < 8 || key.length > 500 || /\s/.test(key)) return `That doesn’t look like a Factory API key. Make one at ${FACTORY_KEYS_URL}`;
     const api = this.makeApi(key);
-    const gen = ++this.generation;
+    const attempt = ++this.attempts;
     const { fast, sessions } = this.probe(api);
     const found = await fast;
-    if (gen !== this.generation) return 'Another key was connected meanwhile.';
+    if (attempt !== this.attempts) return 'Another key was connected meanwhile.';
     const caps = found.capabilities;
     const answered = caps.filter((c) => (c.httpStatus ?? 200) !== 0);
     if (!answered.length) return redact(`Couldn’t reach Factory: ${caps[0]?.reason ?? 'no answer'}`, [key]);
@@ -181,7 +191,10 @@ export class FactoryOffice {
       const detail = answered.find((c) => c.detail)?.detail;
       return `Factory didn’t accept that key (401)${detail ? `: ${detail}` : ''}. Check that it’s whole and hasn’t been deleted, or make a new one at ${FACTORY_KEYS_URL}`;
     }
-    this.saved = { key, by, at: this.now(), ...found.who, capabilities: [...caps, checking('sessions')], checkedAt: this.now() };
+    // Only a key that's taken ends a check of the one before it.
+    const gen = ++this.generation;
+    this.saved = { key, by, at: this.now(), ...found.who, capabilities: caps, checkedAt: this.now() };
+    this.pending = new Set(['sessions']);
     this.api = api;
     this.persist();
     this.changed();
@@ -189,29 +202,38 @@ export class FactoryOffice {
     return undefined;
   }
 
-  /** Probes the saved key again ("Check again", and every start): what it reaches, whose it is, and whether it still works. */
+  /**
+   * Probes the saved key again ("Check again", and every start): what it reaches, whose it is, and
+   * whether it still works. Every group reads as checking until its own probe answers.
+   */
   check(): Promise<void> {
     if (!this.saved || !this.api) return Promise.resolve();
     if (this.checkRun) return this.checkRun;
     const gen = ++this.generation;
     const api = this.api;
+    this.pending = new Set(FACTORY_GROUPS.map((g) => g.id));
+    const land = (cap: FactoryCapability) => {
+      if (gen !== this.generation || !this.saved || cap.group === 'sessions') return;
+      this.saved = { ...this.saved, capabilities: withCapability(this.saved.capabilities, cap) };
+      this.pending.delete(cap.group);
+      this.changed();
+    };
     const run = (async () => {
-      const { fast, sessions } = this.probe(api);
+      const { fast, sessions } = this.probe(api, land);
       const found = await fast;
       if (gen !== this.generation || !this.saved) return;
       const caps = found.capabilities;
       const answered = caps.filter((c) => (c.httpStatus ?? 200) !== 0);
       const rejected = answered.length > 0 && answered.every((c) => c.httpStatus === 401);
-      const was = this.saved.capabilities.find((c) => c.group === 'sessions');
       this.saved = {
         ...this.saved,
         ...found.who,
-        capabilities: [...caps, was ? { ...was, status: 'checking' } : checking('sessions')],
+        capabilities: caps.reduce(withCapability, this.saved.capabilities),
         checkedAt: this.now(),
         rejected: rejected ? (answered.find((c) => c.detail)?.detail ?? 'it answered 401') : undefined,
       };
+      for (const c of caps) this.pending.delete(c.group);
       this.persist();
-      this.checkRun = undefined;
       this.changed();
       await this.landSessions(gen, sessions);
     })().finally(() => {
@@ -233,9 +255,11 @@ export class FactoryOffice {
 
   disconnect() {
     this.generation++;
+    this.attempts++;
     this.saved = undefined;
     this.api = undefined;
     this.checkRun = undefined;
+    this.pending.clear();
     try {
       rmSync(this.file, { force: true });
     } catch {
@@ -245,14 +269,17 @@ export class FactoryOffice {
   }
 
   /** Runs every probe in parallel: `fast` is everything but sessions (plus whose key it is), `sessions` lands on its own. */
-  private probe(api: FactoryApi): { fast: Promise<{ capabilities: FactoryCapability[]; who: Partial<Saved> }>; sessions: Promise<FactoryCapability> } {
+  private probe(api: FactoryApi, answered?: (cap: FactoryCapability) => void): { fast: Promise<{ capabilities: FactoryCapability[]; who: Partial<Saved> }>; sessions: Promise<FactoryCapability> } {
     const one = async (group: FactoryGroup): Promise<{ cap: FactoryCapability; found?: Found }> => {
+      let out: { cap: FactoryCapability; found?: Found };
       try {
         const found = await PROBES[group](api);
-        return { cap: { group, status: 'ok', httpStatus: 200, checkedAt: this.now(), ...(found.reason ? { reason: found.reason } : {}) }, found };
+        out = { cap: { group, status: 'ok', httpStatus: 200, checkedAt: this.now(), ...(found.reason ? { reason: found.reason } : {}) }, found };
       } catch (err) {
-        return { cap: capabilityFromError(group, err, this.now()) };
+        out = { cap: capabilityFromError(group, err, this.now()) };
       }
+      answered?.(out.cap);
+      return out;
     };
     const computers = api.computers().catch(() => undefined);
     const quick = FACTORY_GROUPS.filter((g) => g.id !== 'sessions').map((g) => one(g.id));
@@ -273,7 +300,8 @@ export class FactoryOffice {
   private async landSessions(gen: number, sessions: Promise<FactoryCapability>) {
     const cap = await sessions;
     if (gen !== this.generation || !this.saved) return;
-    this.saved = { ...this.saved, capabilities: [...this.saved.capabilities.filter((c) => c.group !== 'sessions'), cap] };
+    this.saved = { ...this.saved, capabilities: withCapability(this.saved.capabilities, cap) };
+    this.pending.delete('sessions');
     this.persist();
     this.changed();
   }

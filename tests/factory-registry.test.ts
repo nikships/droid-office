@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FactoryApi, FactoryError } from '../src/server/factory/api.js';
 import { HttpError, SliceFeature, badRequest, httpErrorOf, matchPath, notFound, str, type FactoryRoute, type FeatureHost } from '../src/server/factory/feature.js';
-import { FactoryRegistry, MAX_BACKOFF_MS, type FactoryLink } from '../src/server/factory/registry.js';
-import { emptyWiki } from '../src/shared/factory-wiki.js';
-import type { FactoryConnection, FactoryState } from '../src/shared/factory.js';
+import { FactoryRegistry, HEARTBEAT_MS, MAX_BACKOFF_MS, sameness, type FactoryLink } from '../src/server/factory/registry.js';
+import { emptyWiki, type FactoryWikiState } from '../src/shared/factory-wiki.js';
+import { emptyFactoryState, type FactoryConnection, type FactoryState } from '../src/shared/factory.js';
 
 const API = new FactoryApi('fk-test-registry-0000', (async () => new Response('{}')) as typeof fetch);
 
@@ -48,6 +48,9 @@ class Probe extends SliceFeature<'wiki'> {
   }
   hostOf() {
     return this.host;
+  }
+  change(patch: Partial<FactoryWikiState>) {
+    this.set(patch);
   }
 }
 
@@ -231,6 +234,55 @@ test('slice changes go out as one broadcast, with the connection', async () => {
   assert.deepEqual(toasts, ['hello']);
   assert.equal(reg.feature('wiki'), probe);
   assert.throws(() => reg.register((h) => new Probe(h)), /registered twice/);
+});
+
+test('a poll that read the same data doesn’t go out, but one does at least every minute', async () => {
+  const { reg, probe, sent, connect, advance } = setup();
+  connect();
+  await settle();
+  assert.equal(probe.polls, 1);
+  assert.equal(sent.at(-1)?.wiki.fetchedAt, 1, 'the first read goes out: the slice went from never read to read');
+  const count = sent.length;
+
+  advance(30_000);
+  probe.hostOf().pollSoon();
+  await settle();
+  assert.equal(probe.polls, 2);
+  assert.equal(sent.length, count, 'only fetchedAt moved');
+
+  advance(HEARTBEAT_MS - 30_000 - 1);
+  await reg.tick();
+  await settle();
+  assert.equal(sent.length, count, 'not yet a minute');
+  advance(1);
+  await reg.tick();
+  assert.equal(sent.length, count + 1, 'a minute on, the newer fetchedAt goes out');
+  assert.equal(sent.at(-1)?.wiki.fetchedAt, 2);
+  await reg.tick();
+  assert.equal(sent.length, count + 1, 'once');
+
+  probe.next = async () => {
+    probe.change({ runs: [{ id: 'r1', repoUrl: 'https://github.com/o/r', status: 'running', raw: {} }] });
+  };
+  probe.hostOf().pollSoon();
+  await settle();
+  assert.equal(sent.length, count + 2, 'new data goes out at once');
+  assert.equal(sent.at(-1)?.wiki.runs.length, 1);
+  reg.stop();
+});
+
+test('a broadcast compares fetchedAt only as read or not', () => {
+  const a = emptyFactoryState();
+  const b = emptyFactoryState();
+  b.wiki.fetchedAt = 5;
+  b.computers.metrics = { c1: { history: [], fetchedAt: 9 } };
+  const c = structuredClone(b);
+  c.wiki.fetchedAt = 6;
+  c.computers.metrics.c1.fetchedAt = 10;
+  assert.notEqual(sameness(a), sameness(b));
+  assert.equal(sameness(b), sameness(c));
+  c.wiki.error = 'boom';
+  assert.notEqual(sameness(b), sameness(c));
 });
 
 test('disconnecting resets every feature, even one that was polling', async () => {
