@@ -57,10 +57,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerRow
 import ai.factory.droidoffice.core.WorkerStatus
@@ -82,6 +86,7 @@ import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -117,7 +122,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
     // The catalogue names the models on the cards.
     LaunchedEffect(link.phase, link.officeId) { if (link.phase == Phase.Connected) connection.models() }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
+    BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.HOME).background(Palette.Bg)) {
         val wide = maxWidth >= 840.dp
         val open: (String) -> Unit = { id -> if (wide) selected = id else onOpenWorker(id) }
 
@@ -150,7 +155,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                     containerColor = Palette.Accent,
                     contentColor = Palette.Bg,
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp).tagged(Tags.Home.HIRE),
                 )
             }
             if (wide) {
@@ -160,7 +165,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                     if (id != null && data.workers.containsKey(id)) {
                         WorkerScreen(workerId = id, onBack = { selected = null }, embedded = true)
                     } else {
-                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Column(Modifier.fillMaxSize().tagged(Tags.Home.PICK_WORKER), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             GlyphMark(size = 48.dp, glow = false)
                             Text("Pick a worker to see its terminal", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
                         }
@@ -219,12 +224,12 @@ private fun WorkerList(
             if (data.synced && rows.isEmpty() && stations.isEmpty()) {
                 EmptyFloor(onHire)
             } else if (!data.synced) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().tagged(Tags.Home.LOADING).semantics { contentDescription = "Loading the office" }, contentAlignment = Alignment.Center) {
                     if (link.phase == Phase.Connecting || link.phase == Phase.Idle) Spinner(Modifier.size(26.dp))
                 }
             } else {
                 LazyColumn(
-                    Modifier.fillMaxSize(),
+                    Modifier.fillMaxSize().tagged(Tags.Home.LIST),
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 110.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -251,7 +256,7 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
-            Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClick = onOffices).padding(vertical = 4.dp),
+            Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "Switch office", onClick = onOffices).tagged(Tags.Home.OFFICES).padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f, fill = false)) {
@@ -266,8 +271,8 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
                 }
             }
         }
-        RouteBadge(link.kind, link.phase == Phase.Connected, unpaired = link.phase == Phase.Unauthorized)
-        IconButton(onClick = onOffices) { Icon(OfficeIcons.Building, "Offices and settings", tint = Palette.TextSecondary) }
+        RouteBadge(link.kind, link.phase == Phase.Connected, unpaired = link.phase == Phase.Unauthorized, tag = Tags.Home.ROUTE)
+        IconButton(onClick = onOffices, modifier = Modifier.tagged(Tags.Home.SETTINGS)) { Icon(OfficeIcons.Building, "Offices and settings", tint = Palette.TextSecondary) }
     }
 }
 
@@ -283,7 +288,7 @@ private fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRet
             else -> Palette.Warning to "Reconnecting"
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
+            Modifier.fillMaxWidth().tagged(Tags.Home.CONNECTION).padding(horizontal = 14.dp, vertical = 4.dp)
                 .panel(RoundedCornerShape(10.dp), color.copy(alpha = 0.08f), color.copy(alpha = 0.35f))
                 .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
                 .animateContentSize(),
@@ -299,9 +304,9 @@ private fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRet
                 if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (link.phase == Phase.Unauthorized) {
-                TextButton(onClick = onScan) { Text("Pair again", color = Palette.Accent) }
+                TextButton(onClick = onScan, modifier = Modifier.tagged(Tags.Home.PAIR_AGAIN)) { Text("Pair again", color = Palette.Accent) }
             } else if (link.phase == Phase.Reconnecting || link.phase == Phase.Offline) {
-                TextButton(onClick = onRetry) { Text("Retry", color = Palette.Accent) }
+                TextButton(onClick = onRetry, modifier = Modifier.tagged(Tags.Home.RETRY)) { Text("Retry", color = Palette.Accent) }
             }
         }
     }
@@ -320,6 +325,7 @@ private fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
                 onClick = { if (f.id != data.floorId) onFloor(f.id) },
                 icon = OfficeIcons.Layers,
                 badge = if (f.id == data.floorId) 0 else f.waiting,
+                modifier = Modifier.tagged(Tags.Home.floor(f.id)),
             )
         }
     }
@@ -331,9 +337,9 @@ private fun Summary(workers: Collection<WorkerInfo>) {
     val working = workers.count { it.state == WorkerStatus.Working || it.state == WorkerStatus.Starting }
     val done = workers.count { it.state == WorkerStatus.Done && !it.acked }
     Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Stat("Needs you", needs, Palette.Danger, Modifier.weight(1f))
-        Stat("Working", working, Palette.Warning, Modifier.weight(1f))
-        Stat("Done", done, Palette.Success, Modifier.weight(1f))
+        Stat("Needs you", needs, Palette.Danger, Modifier.weight(1f).tagged(Tags.Home.STAT_NEEDS_YOU))
+        Stat("Working", working, Palette.Warning, Modifier.weight(1f).tagged(Tags.Home.STAT_WORKING))
+        Stat("Done", done, Palette.Success, Modifier.weight(1f).tagged(Tags.Home.STAT_DONE))
     }
 }
 
@@ -342,6 +348,7 @@ private fun Stat(label: String, value: Int, color: Color, modifier: Modifier) {
     val on = value > 0
     Column(
         modifier.panel(RoundedCornerShape(10.dp), if (on) color.copy(alpha = 0.07f) else Palette.Surface, if (on) color.copy(alpha = 0.3f) else Palette.Border)
+            .clearAndSetSemantics { contentDescription = "$label: $value" }
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text("$value", style = MaterialTheme.typography.headlineMedium, color = if (on) color else Palette.TextTertiary)
@@ -373,27 +380,28 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
         Column(
             Modifier.weight(1f)
                 .panel(RoundedCornerShape(12.dp), if (loud) Palette.Danger.copy(alpha = 0.05f) else Palette.Surface, border)
-                .clickable { onOpen(w.id) }
+                .clickable(onClickLabel = "Open ${w.name.ifBlank { w.id }}") { onOpen(w.id) }
+                .tagged(Tags.Home.worker(w.id))
                 .padding(start = 8.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkerDot(color, state, 10.dp)
                 Column(Modifier.weight(1f).padding(start = 2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).tagged(Tags.Home.CARD_NAME))
                         if (w.isShell) Tag("SHELL")
                         if (w.isGuest) Tag("GUEST")
                         if (row.subagents > 0) Tag("+${row.subagents}")
                     }
-                    Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_META))
                 }
-                StatusPill(state, acked = w.acked)
+                StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS)
             }
             val title = Workers.title(w)
             val detail = Workers.detail(w)
             if (title != null || detail != null) {
                 Column(Modifier.padding(start = 26.dp, top = 6.dp)) {
-                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_TITLE))
                     if (detail != null && detail != title) {
                         Text(
                             detail,
@@ -401,6 +409,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                             color = if (loud) Palette.Text.copy(alpha = 0.85f) else Palette.TextSecondary,
                             maxLines = if (loud) 3 else 2,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.tagged(Tags.Home.CARD_DETAIL),
                         )
                     }
                 }
@@ -460,7 +469,7 @@ private fun MiniTag(icon: androidx.compose.ui.graphics.vector.ImageVector, text:
 @Composable
 private fun EmptyFloor(onHire: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp),
+        Modifier.fillMaxSize().tagged(Tags.Home.EMPTY).windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -475,7 +484,7 @@ private fun EmptyFloor(onHire: () -> Unit) {
             modifier = Modifier.widthIn(max = 380.dp),
         )
         Spacer(Modifier.height(18.dp))
-        PrimaryButton("Hire a worker", onHire, icon = Icons.Default.Add)
+        PrimaryButton("Hire a worker", onHire, Modifier.tagged(Tags.Home.HIRE_FIRST), icon = Icons.Default.Add)
     }
 }
 
@@ -504,8 +513,8 @@ private fun Repair(officeName: String, legacy: Boolean, onScan: () -> Unit) {
             modifier = Modifier.widthIn(max = 380.dp),
         )
         Spacer(Modifier.height(20.dp))
-        PrimaryButton("Scan the office's code", onScan, Modifier.widthIn(min = 260.dp), icon = OfficeIcons.Scan)
-        TextButton(onClick = { graph.store.snapshot.value.active?.let { o -> scope.launch { graph.store.remove(o.id) } } }, modifier = Modifier.padding(top = 6.dp)) {
+        PrimaryButton("Scan the office's code", onScan, Modifier.widthIn(min = 260.dp).tagged(Tags.Home.REPAIR_SCAN), icon = OfficeIcons.Scan)
+        TextButton(onClick = { graph.store.snapshot.value.active?.let { o -> scope.launch { graph.store.remove(o.id) } } }, modifier = Modifier.padding(top = 6.dp).tagged(Tags.Home.REPAIR_FORGET)) {
             Text("Forget this office", color = Palette.TextSecondary)
         }
     }

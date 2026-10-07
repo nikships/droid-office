@@ -52,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.Routes
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.session.PairOutcome
 import ai.factory.droidoffice.session.PairStep
 import ai.factory.droidoffice.session.Pairer
@@ -65,6 +66,7 @@ import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.dotGrid
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.rememberNotifyPermission
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 
@@ -98,7 +100,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
         haptics.performHapticFeedback(if (ui is PairUi.Paired) HapticFeedbackType.Confirm else HapticFeedbackType.Reject)
     }
 
-    Box(Modifier.fillMaxSize().background(Palette.Bg).dotGrid()) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Screen.PAIR).background(Palette.Bg).dotGrid()) {
         Column(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -119,6 +121,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                         is PairUi.Failed -> Palette.Danger
                         is PairUi.Running -> Palette.Accent
                     },
+                    modifier = Modifier.tagged(Tags.Pair.STATUS),
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(invite.name, style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -141,7 +144,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                 when (val s = ui) {
                     is PairUi.Running -> Steps(s.step, s.detail)
                     is PairUi.Paired -> {
-                        Text("Ready", style = MaterialTheme.typography.headlineSmall, color = Palette.Success)
+                        Text("Ready", style = MaterialTheme.typography.headlineSmall, color = Palette.Success, modifier = Modifier.tagged(Tags.Pair.OUTCOME))
                         Spacer(Modifier.height(4.dp))
                         Text(
                             if (s.outcome.office.auth == ai.factory.droidoffice.data.AuthMode.Device) {
@@ -156,7 +159,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                         RouteBadge(s.outcome.kind, connected = true)
                     }
                     is PairUi.Failed -> {
-                        Text(s.outcome.title, style = MaterialTheme.typography.headlineSmall, color = Palette.Danger)
+                        Text(s.outcome.title, style = MaterialTheme.typography.headlineSmall, color = Palette.Danger, modifier = Modifier.tagged(Tags.Pair.OUTCOME))
                         Spacer(Modifier.height(4.dp))
                         Text(s.outcome.message, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
                     }
@@ -165,12 +168,12 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
             Spacer(Modifier.weight(1f).height(28.dp))
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when (ui) {
-                    is PairUi.Paired -> PrimaryButton("Open the office", onDone, Modifier.fillMaxWidth())
+                    is PairUi.Paired -> PrimaryButton("Open the office", onDone, Modifier.fillMaxWidth().tagged(Tags.Pair.OPEN))
                     is PairUi.Failed -> {
-                        PrimaryButton("Try again", { attempt++ }, Modifier.fillMaxWidth())
-                        SecondaryButton("Scan another code", onRescan, Modifier.fillMaxWidth())
+                        PrimaryButton("Try again", { attempt++ }, Modifier.fillMaxWidth().tagged(Tags.Pair.RETRY))
+                        SecondaryButton("Scan another code", onRescan, Modifier.fillMaxWidth().tagged(Tags.Pair.RESCAN))
                     }
-                    is PairUi.Running -> TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                    is PairUi.Running -> TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().height(48.dp).tagged(Tags.Pair.CANCEL)) {
                         Text("Cancel", color = Palette.TextSecondary)
                     }
                 }

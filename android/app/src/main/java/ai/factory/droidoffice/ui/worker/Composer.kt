@@ -63,10 +63,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Spinner
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -151,7 +153,7 @@ fun Composer(w: WorkerInfo) {
                             Modifier.align(Alignment.TopEnd).padding(3.dp).size(18.dp).clip(CircleShape).background(Color(0xCC000000)).clickable {
                                 images -= a
                                 a.id?.let(graph.connection::unstageImage)
-                            },
+                            }.tagged(Tags.Worker.removeImage(i + 1)),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Close, "Remove image ${i + 1}", Modifier.size(12.dp), tint = Color.White) }
                     }
@@ -165,7 +167,7 @@ fun Composer(w: WorkerInfo) {
         ) {
             if (!w.isShell) {
                 Box(
-                    Modifier.size(38.dp).clip(CircleShape).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    Modifier.size(38.dp).clip(CircleShape).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
@@ -186,12 +188,12 @@ fun Composer(w: WorkerInfo) {
                         KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                     },
                     keyboardActions = KeyboardActions(onSend = { send() }),
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint.removeSuffix("…") },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint.removeSuffix("…") }.tagged(Tags.Worker.INPUT),
                 )
             }
             val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading
             Box(
-                Modifier.size(38.dp).clip(CircleShape).background(if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready && !sending) { send() },
+                Modifier.size(38.dp).clip(CircleShape).background(if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready && !sending) { send() }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
                 if (sending) Spinner(Modifier.size(16.dp), Palette.Bg)

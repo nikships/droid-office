@@ -61,6 +61,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,9 +72,11 @@ import ai.factory.droidoffice.core.BoxGlyph
 import ai.factory.droidoffice.core.Run
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Span
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermLayout
 import ai.factory.droidoffice.core.TermPalette
 import ai.factory.droidoffice.ui.components.Spinner
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 import ai.factory.droidoffice.ui.theme.TerminalFaces
@@ -161,7 +165,13 @@ fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: 
 
     BoxWithConstraints(
         modifier.clip(RoundedCornerShape(12.dp)).background(TermBg)
-            .semantics { contentDescription = "Terminal: " + (screen?.lastLine() ?: "nothing on it yet") },
+            .tagged(Tags.Worker.TERMINAL)
+            .semantics {
+                // TalkBack speaks the description; the whole screen is the node's text, so a
+                // `uiautomator dump` reads the terminal without a screenshot.
+                contentDescription = "Terminal: " + (screen?.lastLine() ?: "nothing on it yet")
+                if (screen != null) text = AnnotatedString(screen.text())
+            },
     ) {
         if (screen == null) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -233,7 +243,7 @@ fun Terminal(screen: ScreenState?, live: Boolean, zoom: TerminalZoom, modifier: 
                 Modifier.clip(RoundedCornerShape(50)).background(Palette.SurfaceHigh).clickable {
                     follow = true
                     scope.launch { vScroll.animateScrollTo(followTarget.roundToInt()) }
-                }.padding(horizontal = 12.dp, vertical = 6.dp),
+                }.tagged(Tags.Worker.LATEST).padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Palette.Text)

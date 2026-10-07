@@ -36,9 +36,11 @@ import androidx.compose.ui.unit.dp
 import ai.factory.droidoffice.core.InviteParse
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.SecondaryButton
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -64,7 +66,7 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = Palette.Surface, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).navigationBarsPadding().imePadding().padding(bottom = 16.dp)) {
+        Column(Modifier.fillMaxWidth().tagged(Tags.Paste.SHEET).padding(horizontal = 22.dp).navigationBarsPadding().imePadding().padding(bottom = 16.dp)) {
             Eyebrow("Pair by link")
             Spacer(Modifier.height(6.dp))
             Text("Paste the join link", style = MaterialTheme.typography.headlineSmall)
@@ -80,7 +82,7 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
                     text = it
                     error = null
                 },
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).tagged(Tags.Paste.INPUT),
                 placeholder = { Text("http://…/?t=…", style = LocalOfficeType.current.monoBody, color = Palette.TextTertiary) },
                 textStyle = LocalOfficeType.current.monoBody,
                 isError = error != null,
@@ -103,8 +105,8 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
                             submit()
                         } else error = "The clipboard is empty"
                     }
-                }, Modifier.weight(1f), icon = OfficeIcons.Paste)
-                PrimaryButton("Pair", ::submit, Modifier.weight(1f), enabled = text.isNotBlank(), icon = OfficeIcons.Link)
+                }, Modifier.weight(1f).tagged(Tags.Paste.CLIPBOARD), icon = OfficeIcons.Paste)
+                PrimaryButton("Pair", ::submit, Modifier.weight(1f).tagged(Tags.Paste.SUBMIT), enabled = text.isNotBlank(), icon = OfficeIcons.Link)
             }
         }
     }

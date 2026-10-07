@@ -51,11 +51,13 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import ai.factory.droidoffice.core.PairingInvite
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.dotGrid
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -68,7 +70,7 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
     LaunchedEffect(Unit) { rise.animateTo(1f, tween(900)) }
 
     Box(
-        Modifier.fillMaxSize().background(Palette.Bg).dotGrid().drawBehind {
+        Modifier.fillMaxSize().tagged(Tags.Screen.WELCOME).background(Palette.Bg).dotGrid().drawBehind {
             drawRect(Brush.radialGradient(listOf(Palette.Accent.copy(alpha = 0.16f), Color.Transparent), center = Offset(size.width / 2, size.height * 0.2f), radius = size.width * 0.9f))
             drawRect(Brush.verticalGradient(listOf(Color.Transparent, Palette.Bg), startY = size.height * 0.45f, endY = size.height))
         },
@@ -105,9 +107,9 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
             }
             Spacer(Modifier.weight(1f).height(32.dp))
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(bottom = 16.dp)) {
-                PrimaryButton("Scan the office's QR code", onScan, Modifier.fillMaxWidth(), icon = OfficeIcons.Scan)
+                PrimaryButton("Scan the office's QR code", onScan, Modifier.fillMaxWidth().tagged(Tags.Welcome.SCAN), icon = OfficeIcons.Scan)
                 Spacer(Modifier.height(6.dp))
-                TextButton(onClick = { showPaste = true }, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                TextButton(onClick = { showPaste = true }, modifier = Modifier.fillMaxWidth().height(48.dp).tagged(Tags.Welcome.PASTE)) {
                     Icon(OfficeIcons.Paste, null, Modifier.size(16.dp), tint = Palette.TextSecondary)
                     Spacer(Modifier.size(8.dp))
                     Text("Paste a join link instead", color = Palette.TextSecondary, style = MaterialTheme.typography.labelLarge)
