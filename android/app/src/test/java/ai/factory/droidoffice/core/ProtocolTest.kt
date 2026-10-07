@@ -104,6 +104,11 @@ class ProtocolTest {
     }
 
     @Test
+    fun aResizeCarriesTheWorkersActualGridDimensions() {
+        assertEquals(json("""{"t":"term.resize","workerId":"w1","cols":47,"rows":42}"""), json(ClientMsg.termResize("w1", 47, 42)))
+    }
+
+    @Test
     fun killSendsTheCleanupOnlyWhenChosen() {
         assertFalse("cleanup" in json(ClientMsg.kill("w1", null)))
         assertEquals("all", json(ClientMsg.kill("w1", "all"))["cleanup"]!!.jsonPrimitive.content)
