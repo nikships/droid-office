@@ -21,6 +21,7 @@ import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
+import { mountFactory } from './factory/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
@@ -399,6 +400,8 @@ export async function startServer(cfg: Config) {
 
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
+  // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Factory, docs/factory.md).
+  const factory = mountFactory({ dataDir: cfg.dataDir, broadcast: (state) => broadcast({ t: 'factory', state }), toast: (text, level) => toastAll(text, level) });
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
@@ -905,6 +908,11 @@ export async function startServer(cfg: Config) {
         res.end(r.body);
         return;
       }
+      if (p.startsWith('/api/factory/')) {
+        // A Factory feature's actions and on-demand reads (see factory/registry.ts); anything but a GET only from the office's own page.
+        const r = await factory.registry.http(req.method ?? 'GET', p.slice('/api/factory'.length), url.searchParams, (limit) => readBody(req, limit), { trusted: ownRequest(), by: str(req.headers['x-droid-office-name'], 24) });
+        return send(res, r.status, r.body);
+      }
       if (p === '/api/jira/ticket' && req.method === 'GET') {
         // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
         if (!floor) return send(res, 404, { error: 'No such floor' });
@@ -1054,6 +1062,7 @@ export async function startServer(cfg: Config) {
       leaveOnMerge: leaveOnMerge.state(),
       subagents: subagents.state(),
       prompts: prompts.state(),
+      factory: factory.state(),
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
@@ -1083,6 +1092,7 @@ export async function startServer(cfg: Config) {
         f.guests.detachAll(id);
         f.changes.unwatchAll(id);
       }
+      factory.drop(id);
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
@@ -1719,6 +1729,12 @@ export async function startServer(cfg: Config) {
       case 'jira.refresh':
         void floorOf(c)?.jira.refresh(true);
         break;
+      case 'factory.connect':
+      case 'factory.disconnect':
+      case 'factory.refresh':
+      case 'factory.watch':
+        factory.message(c.id, who, msg, (reply) => sendTo(c, reply));
+        break;
       case 'changes.watch': {
         const w = worker(msg.workerId);
         if (w) w.floor.changes.watch(w.wid, c.id, repoOf(msg.repo));
@@ -1909,6 +1925,7 @@ export async function startServer(cfg: Config) {
     webhook.stop();
     machine.stop();
     sky.stop();
+    factory.stop();
     for (const f of floors.values()) f.shutdown(keep);
     for (const c of clients.values()) c.ws.close();
     server.close();

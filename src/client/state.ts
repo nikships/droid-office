@@ -30,6 +30,7 @@ import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
+import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
 
 export type Topic =
@@ -57,7 +58,8 @@ export type Topic =
   | 'meeting'
   | 'prompts'
   | 'jira'
-  | 'jiraBoard';
+  | 'jiraBoard'
+  | 'factory';
 
 export interface Profile {
   name: string;
@@ -255,6 +257,8 @@ class Store {
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
+  /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
+  factory: FactoryState = emptyFactoryState();
   private subs = new Map<Topic, Set<() => void>>();
 
   on(topic: Topic, fn: () => void) {
@@ -335,8 +339,9 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.prompts = msg.prompts ?? { custom: {} };
+        this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -454,6 +459,10 @@ class Store {
       case 'prompts':
         this.prompts = msg.state;
         this.emit('prompts');
+        break;
+      case 'factory':
+        this.factory = msg.state;
+        this.emit('factory');
         break;
     }
   }

@@ -1239,3 +1239,14 @@ a.when:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   #loading, .loading-fill { transition: none; }
 }
+
+/* ⚙️ Settings → Factory: what the office's key reaches. */
+.factory-caps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
+.factory-caps li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.factory-caps .mark { flex: none; width: 1.2em; text-align: center; font: 700 13px/1.3 var(--font-mono); color: var(--text-tertiary); }
+.factory-caps .ok .mark { color: var(--success); }
+.factory-caps .denied .mark { color: var(--danger); }
+.factory-caps .error .mark { color: var(--warning); }
+.factory-caps .what { flex: none; font-weight: 600; }
+.factory-caps .why { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.factory-intro a { color: var(--accent); }

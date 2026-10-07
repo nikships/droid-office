@@ -4,6 +4,7 @@ import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
+import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
@@ -952,6 +953,14 @@ export type ClientMsg =
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
+  /** Connect the office to Factory with an API key (replacing the one it has); answered with `factory.setup`. */
+  | { t: 'factory.connect'; key: string }
+  /** Forget the office's Factory key, and everything read with it. */
+  | { t: 'factory.disconnect' }
+  /** Read one Factory feature again now; without one, check the key again ("Check again") and read them all. */
+  | { t: 'factory.refresh'; feature?: FactoryFeatureId }
+  /** A board or window of `feature` opened (`on`) or closed in this tab: it polls fast while one is open. */
+  | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
   /**
    * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
    * floor's repository of a worker across repositories; none follows its own.
@@ -1049,6 +1058,8 @@ export type ServerMsg =
       subagents: SubagentsState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
+      /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
+      factory: FactoryState;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
@@ -1101,6 +1112,10 @@ export type ServerMsg =
   | { t: 'jira.board'; state: JiraBoardState | null }
   /** To whoever is setting Jira up: done, or why not. */
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
+  /** The Factory connection or a Factory feature's slice changed: all of it, to everyone. */
+  | { t: 'factory'; state: FactoryState }
+  /** To whoever sent `factory.connect`: connected, or why not. */
+  | { t: 'factory.setup'; ok: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
