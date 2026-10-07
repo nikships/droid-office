@@ -52,7 +52,7 @@ class AppGraph(val app: Application) {
     val network = NetworkMonitor(app)
     val deviceName: String = deviceName(app)
     val connection = OfficeConnection(scope, api, store, network, deviceName)
-    val pairer = Pairer(api, store, deviceName)
+    val pairer = Pairer(api, store, deviceName, scope)
     val visibility = AppVisibility()
     val alerts = Alerts(app, scope, connection, store, visibility)
 
@@ -82,7 +82,7 @@ class AppGraph(val app: Application) {
                 if (m.startsWith(maker, ignoreCase = true) || maker.equals("Google", ignoreCase = true)) m else "$maker $m"
             }
             val name = named?.takeIf { it.isNotBlank() } ?: model.ifBlank { "Android" }
-            return "📱 ${name.trim()}".take(24).trim()
+            return name.trim().take(24).trim()
         }
     }
 }

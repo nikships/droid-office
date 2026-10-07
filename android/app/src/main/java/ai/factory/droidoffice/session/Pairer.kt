@@ -7,10 +7,16 @@ import ai.factory.droidoffice.core.RouteRacer
 import ai.factory.droidoffice.data.AuthMode
 import ai.factory.droidoffice.data.OfficeStore
 import ai.factory.droidoffice.data.PairedOffice
+import ai.factory.droidoffice.data.sameOfficeAs
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.net.OfficeAuth
 import ai.factory.droidoffice.net.PairResult
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class PairStep { Reaching, Pairing, Saving, Done }
 
@@ -28,8 +34,32 @@ class Pairer(
     private val api: OfficeApi,
     private val store: OfficeStore,
     private val deviceName: String,
+    private val scope: CoroutineScope,
     private val racer: RouteRacer = RouteRacer(timeoutMs = 5_000),
 ) {
+    sealed interface State {
+        data class Running(val step: PairStep, val detail: String?) : State
+        data class Finished(val outcome: PairOutcome) : State
+    }
+
+    private val runs = HashMap<Pair<PairingInvite, Int>, StateFlow<State>>()
+
+    /**
+     * Pairs with [invite] once per [attempt], in the app's scope: the screen showing it can rotate or
+     * be recreated without starting over, which would mint the phone a second key.
+     */
+    fun run(invite: PairingInvite, attempt: Int): StateFlow<State> = synchronized(runs) {
+        runs.getOrPut(invite to attempt) {
+            val state = MutableStateFlow<State>(State.Running(PairStep.Reaching, null))
+            scope.launch {
+                val outcome = runCatching { pair(invite) { step, detail -> state.value = State.Running(step, detail) } }
+                    .getOrElse { e -> PairOutcome.Failed("Pairing didn't finish", e.message ?: "Something went wrong") }
+                state.value = State.Finished(outcome)
+            }
+            state.asStateFlow()
+        }
+    }
+
     suspend fun pair(invite: PairingInvite, onStep: (PairStep, String?) -> Unit): PairOutcome {
         onStep(PairStep.Reaching, null)
         val lan = OfficeAuth.Lan(invite.lanToken)
@@ -80,6 +110,14 @@ class Pairer(
             is PairResult.Failed -> return PairOutcome.Failed("Pairing didn't finish", r.message)
         }
         onStep(PairStep.Saving, null)
+        // Pairing an office this phone is already paired with replaces it: give the office back the
+        // old key too, so it doesn't list the phone twice.
+        if (office.auth == AuthMode.Device) {
+            for (old in store.snapshot.value.offices.filter { it.id != office.id && it.auth == AuthMode.Device && it.sameOfficeAs(office) }) {
+                val oldToken = store.token(old.id) ?: continue
+                runCatching { api.unpair(winner.base, OfficeAuth.Device(oldToken)) }
+            }
+        }
         store.save(office, token)
         onStep(PairStep.Done, null)
         return PairOutcome.Paired(office, winner.kind, winner.base)

@@ -16,6 +16,15 @@ object Routes {
         if (hostPort.startsWith("[")) hostPort.substringBefore(']').removePrefix("[") else hostPort.substringBefore(':')
     }
 
+    /**
+     * The routes worth trying while connected on [current]: the ones of a better kind (Wi-Fi while
+     * on Tailscale), so the phone moves back to the local network once it answers again.
+     */
+    fun better(bases: List<String>, current: String): List<String> {
+        val rank = kindOf(current).rank
+        return bases.distinct().filter { it != current && kindOf(it).rank < rank }
+    }
+
     fun kindOf(base: String): RouteKind {
         val host = host(base).lowercase()
         if (isTailscaleHost(host)) return RouteKind.Tailscale

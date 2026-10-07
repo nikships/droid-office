@@ -51,6 +51,8 @@ class Alerts(
     private val last = HashMap<String, WorkerStatus>()
     private val acked = HashMap<String, Boolean>()
     private val floorWaiting = HashMap<String, Int>()
+    /** What each worker's notification says, so it can be brought up to date without buzzing again. */
+    private val shown = HashMap<String, String>()
 
     init {
         createChannels()
@@ -83,6 +85,9 @@ class Alerts(
             } else if (w.acked && wasAcked == false) {
                 // Someone opened its terminal (here or at the laptop): the alert is answered.
                 cancel(w.id)
+            } else if (w.id in shown && shown[w.id] != text(w)) {
+                // The office fills in what it's asking after the state flips: say it, quietly.
+                alert(w, d, update = true)
             }
         }
         for (id in last.keys - d.workers.keys) {
@@ -96,9 +101,15 @@ class Alerts(
         }
     }
 
-    private fun alert(w: WorkerInfo, d: OfficeData) {
+    private fun text(w: WorkerInfo) = Workers.detail(w) ?: if (w.state == WorkerStatus.NeedsInput) "Waiting on an answer" else "Finished its turn"
+
+    private fun alert(w: WorkerInfo, d: OfficeData, update: Boolean = false) {
         val needs = w.state == WorkerStatus.NeedsInput
-        if (visibility.foreground.value) {
+        if (update && !showing(notificationId(w.id))) {
+            shown.remove(w.id)
+            return
+        }
+        if (visibility.foreground.value && !update) {
             if (visibility.viewing.value != w.id) _banners.tryEmit(Banner(w.id, w.name, w.color, needs, Workers.detail(w)))
             return
         }
@@ -106,7 +117,7 @@ class Alerts(
         val officeId = d.officeId ?: return
         val officeName = store.snapshot.value.offices.firstOrNull { it.id == officeId }?.name
         val title = if (needs) "${w.name} needs you" else "${w.name} is done"
-        val detail = Workers.detail(w) ?: if (needs) "Waiting on an answer" else "Finished its turn"
+        val detail = text(w)
         val builder = NotificationCompat.Builder(context, if (needs) CHANNEL_INPUT else CHANNEL_DONE)
             .setSmallIcon(R.drawable.ic_glyph)
             .setColor(ACCENT)
@@ -117,13 +128,14 @@ class Alerts(
             .setCategory(if (needs) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
             .setPriority(if (needs) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(false)
+            .setOnlyAlertOnce(update)
             .setGroup("office-$officeId")
             // The system's guesses ("Open link" for a file name in a prompt) only get in the way of a reply.
             .setAllowSystemGeneratedContextualActions(false)
             .setContentIntent(openWorker(officeId, w.id))
         if (!w.isGuest) builder.addAction(replyAction(officeId, w))
         post(notificationId(w.id), builder.build())
+        shown[w.id] = detail
     }
 
     private fun floorAlert(floorId: String, floorName: String, waiting: Int) {
@@ -175,6 +187,7 @@ class Alerts(
 
     /** Shown after a direct reply went out, then cleared. */
     fun replied(workerId: String, name: String, text: String, ok: Boolean) {
+        shown.remove(workerId)
         if (!canNotify()) return
         val n = NotificationCompat.Builder(context, CHANNEL_INPUT)
             .setSmallIcon(R.drawable.ic_glyph)
@@ -188,7 +201,12 @@ class Alerts(
         post(notificationId(workerId), n)
     }
 
-    fun cancel(workerId: String) = manager.cancel(notificationId(workerId))
+    fun cancel(workerId: String) {
+        shown.remove(workerId)
+        manager.cancel(notificationId(workerId))
+    }
+
+    private fun showing(id: Int) = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
 
     /** The owner can turn notifications off (or take the permission back) at any moment, so a post may still be refused. */
     private fun post(id: Int, n: Notification) {

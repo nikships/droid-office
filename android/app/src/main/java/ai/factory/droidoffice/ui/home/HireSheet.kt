@@ -6,7 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,8 +28,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,16 +49,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Effort
-import ai.factory.droidoffice.core.Workers
+import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.net.ModelOption
+import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
@@ -97,8 +101,12 @@ fun HireSheet(onDismiss: () -> Unit) {
         catalogue = connection.models()
         loadingModels = false
         val c = catalogue ?: return@LaunchedEffect
-        if (modelId == null) modelId = c.defaultModel ?: c.models.firstOrNull { !it.legacy }?.id
-        if (effort == null) effort = c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort
+        // Start on what the last Droid was hired with, when this office still offers it.
+        val last = graph.store.snapshot.value.settings
+        val remembered = last.hireModel?.takeIf { id -> c.models.any { it.id == id } }
+        if (modelId == null) modelId = remembered ?: c.defaultModel ?: c.models.firstOrNull { !it.legacy }?.id
+        if (effort == null) effort = last.hireEffort.takeIf { remembered != null && modelId == remembered }
+            ?: c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort
     }
     val model = catalogue?.models?.firstOrNull { it.id == modelId }
     val efforts = model?.supportedReasoningEfforts?.mapNotNull(Effort::of).orEmpty()
@@ -114,6 +122,7 @@ fun HireSheet(onDismiss: () -> Unit) {
         else connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree)
         if (ok) {
             if (queue) scope.launch { snackbar.showSnackbar("Added to the queue") }
+            if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             close()
         } else {
             scope.launch { snackbar.showSnackbar("Not connected to the office yet") }
@@ -216,46 +225,79 @@ private fun KindCard(icon: ImageVector, title: String, sub: String, selected: Bo
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: String?, onPick: (ModelOption) -> Unit) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     val current = catalogue?.models?.firstOrNull { it.id == selected }
-    Box {
-        Row(
-            Modifier.fillMaxWidth().panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.BorderStrong)
-                .clickable(enabled = catalogue != null) { open = true }.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (loading) {
-                Spinner(Modifier.size(14.dp))
-                Spacer(Modifier.width(10.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    current?.displayName?.ifBlank { null } ?: current?.id?.let(Workers::shortModel) ?: if (loading) "Loading models…" else "The office's default",
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (current != null) Text(current.id, style = LocalOfficeType.current.eyebrow, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
+    Row(
+        Modifier.fillMaxWidth().panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.BorderStrong)
+            .clickable(enabled = catalogue != null, onClickLabel = "Choose a model") { open = true }.padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (loading) {
+            Spinner(Modifier.size(14.dp))
+            Spacer(Modifier.width(10.dp))
         }
-        DropdownMenu(open, onDismissRequest = { open = false }, containerColor = Palette.SurfaceHover, modifier = Modifier.heightIn(max = 380.dp)) {
-            catalogue?.models.orEmpty().filterNot { it.legacy && it.id != selected }.forEach { m ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(m.displayName.ifBlank { Workers.shortModel(m.id) }, style = MaterialTheme.typography.bodyMedium)
-                            Text(if (m.custom) "custom · ${m.id}" else m.id, style = LocalOfficeType.current.eyebrow, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f)) {
+            Text(
+                current?.let { catalogue.nameOf(it.id) } ?: if (loading) "Loading models…" else "The office's default",
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (current != null) Text(if (current.custom) "Your model" else if (current.legacy) "Legacy" else "Factory", style = LocalOfficeType.current.eyebrow, maxLines = 1)
+        }
+        Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
+    }
+    if (open && catalogue != null) {
+        // A full sheet, grouped like the office's own picker: a long list doesn't fit a dropdown on a phone.
+        ModalBottomSheet(
+            onDismissRequest = { open = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Palette.Surface,
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        ) {
+            val groups = remember(catalogue) { Models.groups(catalogue.models, { it.custom }, { it.legacy }) }
+            // Open on the chosen model: the title, then each group's header and rows, in order.
+            val at = remember(groups, selected) {
+                var i = 1
+                for (g in groups) {
+                    val j = g.models.indexOfFirst { it.id == selected }
+                    if (j >= 0) return@remember (i + 1 + j - 2).coerceAtLeast(0)
+                    i += 1 + g.models.size
+                }
+                0
+            }
+            LazyColumn(
+                Modifier.fillMaxWidth().navigationBarsPadding(),
+                state = rememberLazyListState(initialFirstVisibleItemIndex = at),
+                contentPadding = PaddingValues(bottom = 16.dp),
+            ) {
+                item {
+                    Text("Model", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+                }
+                groups.forEach { group ->
+                    item(key = "h:" + group.label) {
+                        Eyebrow("${group.label} · ${group.models.size}", modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 6.dp))
+                    }
+                    items(group.models, key = { it.id }) { m ->
+                        val on = m.id == selected
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                open = false
+                                onPick(m)
+                            }.background(if (on) Palette.AccentMuted else Color.Transparent).padding(horizontal = 20.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(catalogue.nameOf(m.id), style = MaterialTheme.typography.bodyLarge, color = if (on) Palette.Accent else Palette.Text)
+                                Text(m.id, style = LocalOfficeType.current.eyebrow.copy(letterSpacing = 0.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (on) Icon(Icons.Default.Check, "Selected", tint = Palette.Accent)
                         }
-                    },
-                    trailingIcon = { if (m.id == selected) Icon(Icons.Default.Check, null, tint = Palette.Accent) },
-                    onClick = {
-                        open = false
-                        onPick(m)
-                    },
-                )
+                    }
+                }
             }
         }
     }

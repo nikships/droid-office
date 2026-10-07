@@ -1,11 +1,5 @@
 package ai.factory.droidoffice.ui.offices
 
-import android.Manifest
-import android.content.Intent
-import android.os.Build
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,7 +43,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,6 +57,7 @@ import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.rememberNotifyPermission
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -74,23 +68,19 @@ import kotlinx.coroutines.launch
 @Composable
 fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> Unit) {
     val graph = LocalGraph.current
-    val context = LocalContext.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val link by graph.connection.link.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var forgetting by remember { mutableStateOf<PairedOffice?>(null) }
-    var canNotify by remember { mutableStateOf(graph.alerts.canNotify()) }
-    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { canNotify = graph.alerts.canNotify() }
+    val notify = rememberNotifyPermission()
+    val canNotify = notify.granted
     val now = rememberNow(30_000)
 
     fun settings(change: (AppSettings) -> AppSettings) {
         scope.launch { graph.store.settings(change) }
     }
 
-    fun askToNotify() {
-        if (Build.VERSION.SDK_INT >= 33) notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-    }
+    fun askToNotify() = notify.ask()
 
     Column(Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -224,9 +214,13 @@ private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kin
                 }
             }
             val routes = o.bases.map { Routes.kindOf(it).label }.distinct().joinToString(" + ")
-            val seen = if (o.lastSeenAt > 0) "seen ${Workers.ago(o.lastSeenAt, now)}" else null
+            val seen = when {
+                connected == true -> null
+                o.lastSeenAt > 0 -> "seen ${Workers.ago(o.lastSeenAt, now)}"
+                else -> null
+            }
             Text(
-                listOfNotNull(routes, if (o.auth == AuthMode.Lan) "code until restart" else null, seen).joinToString(" · ").uppercase(),
+                listOfNotNull(o.project, routes, if (o.auth == AuthMode.Lan) "code until restart" else null, seen).joinToString(" · ").uppercase(),
                 style = LocalOfficeType.current.eyebrow,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

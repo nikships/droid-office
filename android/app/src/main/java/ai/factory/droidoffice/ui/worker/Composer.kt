@@ -57,6 +57,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.ClientMsg
@@ -166,8 +169,9 @@ fun Composer(w: WorkerInfo) {
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
+            val hint = if (w.isShell) "Run a command…" else "Reply to ${w.name}…"
             Box(Modifier.weight(1f).heightIn(min = 38.dp).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
-                if (text.isEmpty()) Text(if (w.isShell) "Run a command…" else "Reply to ${w.name}…", style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary, modifier = Modifier.clearAndSetSemantics {})
                 BasicTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -182,7 +186,7 @@ fun Composer(w: WorkerInfo) {
                         KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                     },
                     keyboardActions = KeyboardActions(onSend = { send() }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint.removeSuffix("…") },
                 )
             }
             val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading

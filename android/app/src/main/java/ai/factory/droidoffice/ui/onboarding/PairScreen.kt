@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,11 +48,13 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.session.PairOutcome
 import ai.factory.droidoffice.session.PairStep
+import ai.factory.droidoffice.session.Pairer
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
@@ -61,6 +64,7 @@ import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.dotGrid
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.rememberNotifyPermission
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
 
@@ -74,16 +78,24 @@ private sealed interface PairUi {
 fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, onCancel: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
-    var attempt by remember { mutableIntStateOf(0) }
-    var ui by remember { mutableStateOf<PairUi>(PairUi.Running(PairStep.Reaching, null)) }
-
-    LaunchedEffect(invite, attempt) {
-        ui = PairUi.Running(PairStep.Reaching, null)
-        val outcome = graph.pairer.pair(invite) { step, detail -> ui = PairUi.Running(step, detail) }
-        ui = when (outcome) {
-            is PairOutcome.Paired -> PairUi.Paired(outcome).also { haptics.performHapticFeedback(HapticFeedbackType.Confirm) }
-            is PairOutcome.Failed -> PairUi.Failed(outcome).also { haptics.performHapticFeedback(HapticFeedbackType.Reject) }
+    var attempt by rememberSaveable { mutableIntStateOf(0) }
+    // The pairing runs in the app's scope, so rotating the phone mid-way picks the same run back up.
+    val run by remember(invite, attempt) { graph.pairer.run(invite, attempt) }.collectAsStateWithLifecycle()
+    val ui = when (val r = run) {
+        is Pairer.State.Running -> PairUi.Running(r.step, r.detail)
+        is Pairer.State.Finished -> when (val o = r.outcome) {
+            is PairOutcome.Paired -> PairUi.Paired(o)
+            is PairOutcome.Failed -> PairUi.Failed(o)
         }
+    }
+    val notify = rememberNotifyPermission()
+    // Right after pairing is when alerts make sense to ask for; only the first time, though.
+    LaunchedEffect(ui is PairUi.Paired) { if (ui is PairUi.Paired && !notify.granted && !notify.asked) notify.ask() }
+    var felt by rememberSaveable(attempt) { mutableStateOf(false) }
+    LaunchedEffect(ui is PairUi.Running) {
+        if (ui is PairUi.Running || felt) return@LaunchedEffect
+        felt = true
+        haptics.performHapticFeedback(if (ui is PairUi.Paired) HapticFeedbackType.Confirm else HapticFeedbackType.Reject)
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Bg).dotGrid()) {
@@ -96,12 +108,29 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                 if (paired) SuccessMark() else GlyphMark(size = 64.dp, glow = ui !is PairUi.Failed)
             }
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
-                Eyebrow("Pairing", color = Palette.Accent)
+                Eyebrow(
+                    when (ui) {
+                        is PairUi.Paired -> "Paired"
+                        is PairUi.Failed -> "Not paired"
+                        is PairUi.Running -> "Pairing"
+                    },
+                    color = when (ui) {
+                        is PairUi.Paired -> Palette.Success
+                        is PairUi.Failed -> Palette.Danger
+                        is PairUi.Running -> Palette.Accent
+                    },
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(invite.name, style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(4.dp))
+                val kinds = invite.bases.map(Routes::kindOf).toSet()
                 Text(
-                    "${invite.bases.size} address${if (invite.bases.size == 1) "" else "es"} to try. Wi-Fi wins when it answers; Tailscale is the way in from anywhere else.",
+                    when {
+                        invite.bases.size == 1 -> "One address to try."
+                        RouteKind.Lan in kinds && RouteKind.Tailscale in kinds ->
+                            "${invite.bases.size} addresses to try. Wi-Fi wins when it answers; Tailscale is the way in from anywhere else."
+                        else -> "${invite.bases.size} addresses to try, in this order."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(16.dp))
@@ -112,7 +141,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
                 when (val s = ui) {
                     is PairUi.Running -> Steps(s.step, s.detail)
                     is PairUi.Paired -> {
-                        Text("Paired", style = MaterialTheme.typography.headlineSmall, color = Palette.Success)
+                        Text("Ready", style = MaterialTheme.typography.headlineSmall, color = Palette.Success)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             if (s.outcome.office.auth == ai.factory.droidoffice.data.AuthMode.Device) {
@@ -154,7 +183,8 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
 private fun AddressRow(base: String) {
     val kind = Routes.kindOf(base)
     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(base.substringAfter("://"), style = LocalOfficeType.current.monoBody, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // A MagicDNS name is long; wrap it rather than cut off the port.
+        Text(base.substringAfter("://"), style = LocalOfficeType.current.monoBody, modifier = Modifier.weight(1f).padding(end = 10.dp), maxLines = 3, overflow = TextOverflow.Ellipsis)
         Text(
             when (kind) {
                 RouteKind.Lan -> "WI-FI"

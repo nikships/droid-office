@@ -66,6 +66,7 @@ import ai.factory.droidoffice.core.WorkerRow
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
+import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.Link
 import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
@@ -112,6 +113,9 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
     val office = store.active
     var hiring by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // The catalogue names the models on the cards.
+    LaunchedEffect(link.phase, link.officeId) { if (link.phase == Phase.Connected) connection.models() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
         val wide = maxWidth >= 840.dp
@@ -262,7 +266,7 @@ private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: 
                 }
             }
         }
-        RouteBadge(link.kind, link.phase == Phase.Connected)
+        RouteBadge(link.kind, link.phase == Phase.Connected, unpaired = link.phase == Phase.Unauthorized)
         IconButton(onClick = onOffices) { Icon(OfficeIcons.Building, "Offices and settings", tint = Palette.TextSecondary) }
     }
 }
@@ -348,6 +352,9 @@ private fun Stat(label: String, value: Int, color: Color, modifier: Modifier) {
 @Composable
 private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Boolean, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
     val w = row.worker
+    val graph = LocalGraph.current
+    val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
+    val model = Workers.modelId(w)?.let(catalogue::nameOf)
     val color = parseColor(w.color)
     val state = w.state
     val loud = state == WorkerStatus.NeedsInput
@@ -378,7 +385,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                         if (w.isGuest) Tag("GUEST")
                         if (row.subagents > 0) Tag("+${row.subagents}")
                     }
-                    Text(meta(w, now), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 StatusPill(state, acked = w.acked)
             }
@@ -418,15 +425,14 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
     }
 }
 
-private fun meta(w: WorkerInfo, now: Long): String {
+/** The card's metadata line. A shell's tag already says it's a shell; what this phone hired doesn't say who. */
+private fun meta(w: WorkerInfo, now: Long, model: String?, me: String): String {
     val parts = mutableListOf<String>()
-    if (w.isShell) parts += "shell" else Workers.modelId(w)?.let { m ->
-        parts += Workers.shortModel(m) + (Workers.effort(w)?.let { " · ${it.label.lowercase()}" } ?: "")
-    }
+    if (!w.isShell && model != null) parts += model + (Workers.effort(w)?.let { " · ${it.label.lowercase()}" } ?: "")
     val worked = Workers.workedMs(w, now)
     if (worked >= 1_000) parts += Workers.duration(worked)
     if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) parts += Workers.ago(w.waitingSince, now)
-    if (w.createdBy.isNotBlank()) parts += "by ${w.createdBy}"
+    if (w.createdBy.isNotBlank() && w.createdBy != me) parts += "by ${w.createdBy}"
     return parts.joinToString(" · ").uppercase()
 }
 
