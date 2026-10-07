@@ -64,6 +64,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.withClip
+import androidx.core.graphics.withScale
 import ai.factory.droidoffice.core.BoxGlyph
 import ai.factory.droidoffice.core.Run
 import ai.factory.droidoffice.core.ScreenState
@@ -268,10 +270,7 @@ private fun drawRow(c: android.graphics.Canvas, p: Paints, faces: TerminalFaces,
             c.drawText(s.text, x, y, text)
         } else if (measured > w || s.simple) {
             // Squeeze it into its columns rather than let it push the rest of the row out of line.
-            c.save()
-            c.scale(w / measured, 1f, x, y)
-            c.drawText(s.text, x, y, text)
-            c.restore()
+            c.withScale(w / measured, 1f, x, y) { c.drawText(s.text, x, y, text) }
         } else {
             c.drawText(s.text, x + (w - measured) / 2f, y, text)
         }
@@ -351,11 +350,10 @@ private fun drawBox(c: android.graphics.Canvas, p: Paints, g: BoxGlyph, x: Float
         }
         is BoxGlyph.Diagonal -> {
             p.stroke.strokeWidth = light
-            c.save()
-            c.clipRect(x0, y0, x1, y1)
-            if (g.rising) c.drawLine(x0, y1, x1, y0, p.stroke)
-            if (g.falling) c.drawLine(x0, y0, x1, y1, p.stroke)
-            c.restore()
+            c.withClip(x0, y0, x1, y1) {
+                if (g.rising) c.drawLine(x0, y1, x1, y0, p.stroke)
+                if (g.falling) c.drawLine(x0, y0, x1, y1, p.stroke)
+            }
         }
         is BoxGlyph.Blocks -> {
             if (g.alpha < 1f) p.fill.alpha = (p.fill.alpha * g.alpha).roundToInt()
