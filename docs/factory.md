@@ -45,7 +45,7 @@ How the API behaves, and what the office does about it:
 | `src/server/factory/feature.ts` | The contract: `FactoryFeature`, `FeatureHost`, `FactoryRoute`, `FactoryRequest`, the `SliceFeature` base class and the route helpers. |
 | `src/server/factory/registry.ts` | `FactoryRegistry`: runs the pollers, keeps the watches, broadcasts, dispatches routes. |
 | `src/server/factory/index.ts` | `mountFactory`: makes the connection and the registry, registers every feature, handles the `factory.*` messages. server.ts calls only this. |
-| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts`, `ci.ts`, `wiki.ts`. |
+| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts`, `ci.ts`, `wiki.ts`, `cloud.ts`. |
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
 | `src/client/factory.ts` | `factoryFetch`, `watchFactory`, `refreshFactory`, `onFactorySetup`. `store.factory` (topic `'factory'`) in `src/client/state.ts` holds the state. |
@@ -115,6 +115,11 @@ The four first versions, for their owners to grow:
 | `sessions` | 90 s, 20 s fast; busy while a session on a Factory computer runs | The newest 50 sessions, titles cut to 200 characters, `hasMore` | `GET /:id`: the session and its `credits` |
 | `ci` | 5 min, 60 s fast; busy for 3 minutes after an edit | Whether GitHub is connected, the GitHub owners, the scan's workflows (read again only once its `cacheTtlMs` runs out) and its time, the newest 50 runs, the workflow PRs; a read that fails keeps its part of the last data | `GET /repositories?owner=&fresh=1` (kept 10 minutes), `POST /rescan`, `POST /edit` |
 | `wiki` | 5 min, 60 s fast | The latest wiki runs | `GET /upload-access?repoUrl=` |
+| `cloud` | each working cloud worker's session every 4 s, each resting one's every minute; busy while one works | When its last read was, and why it failed; the workers themselves are each floor's (`cloud-workers.json`) and go out as `worker.update` | `POST /hire`, `POST /:workerId/message`, `POST /:workerId/interrupt` |
+
+### Cloud workers
+
+What the live tests on `orb` showed: a managed computer's home folder is `/home/<remoteUser>` (`/home/factory-user`), which is the session's folder when `cwd` is left out; no repositories are cloned there by Factory. `POST /sessions` took about 16 seconds and the first `POST /sessions/{id}/messages` about 23. Right after a message, `GET /sessions/{id}` can still say `idle` with the old `messageCount`. `GET /sessions/{id}` doesn't return `sessionSettings`. `DELETE /sessions/{id}` answers 204, but the session still reads 200 and stays in the list afterwards, so a deleted session can't be told from a live one by a 404.
 
 ### CI automations
 

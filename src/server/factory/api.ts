@@ -45,12 +45,13 @@ export function fingerprint(key: string): string {
   return `${head}…${k.slice(-4)}`;
 }
 
-/** Why Factory said no, from its `{detail, title}` error body. */
+/** Why Factory said no, from its error body: `{detail, title}`; a validation 400's reason is its first `errors[].message`. */
 function factorySays(body: unknown): { title: string; detail: string } {
   if (!body || typeof body !== 'object') return { title: '', detail: '' };
-  const b = body as { title?: unknown; detail?: unknown; message?: unknown; error?: unknown };
+  const b = body as { title?: unknown; detail?: unknown; message?: unknown; error?: unknown; errors?: unknown };
   const text = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 400) : '');
-  return { title: text(b.title), detail: text(b.detail) || text(b.message) || text(b.error) };
+  const first = Array.isArray(b.errors) ? text((b.errors[0] as { message?: unknown })?.message) : '';
+  return { title: text(b.title), detail: text(b.detail) || first || text(b.message) || text(b.error) };
 }
 
 /** Whether a path is one of the slow sessions calls. */

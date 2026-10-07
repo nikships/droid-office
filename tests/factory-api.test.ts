@@ -86,6 +86,18 @@ test('errors carry the API’s status, title and detail, and never the key', asy
   }
 });
 
+test("a validation 400's first errors[].message is the reason when there's no detail", async () => {
+  const { fn } = fakeFetch(() => json(400, { status: 400, title: 'Invalid request body', errors: [{ message: 'model: unknown id' }, { message: 'also this' }] }));
+  const err = await new FactoryApi(KEY, fn).post('/sessions', {}).catch((e) => e);
+  assert.ok(err instanceof FactoryError);
+  assert.equal(err.detail, 'model: unknown id');
+  assert.match(err.message, /model: unknown id \(400\)/);
+  // A real detail still wins over errors[].
+  const { fn: fn2 } = fakeFetch(() => json(400, { detail: 'the real reason', errors: [{ message: 'secondary' }] }));
+  const err2 = await new FactoryApi(KEY, fn2).post('/sessions', {}).catch((e) => e);
+  assert.equal(err2.detail, 'the real reason');
+});
+
 test('a non-JSON error still says what status it was', async () => {
   const { fn } = fakeFetch(() => new Response('<html>bad gateway</html>', { status: 502 }));
   const err = await new FactoryApi(KEY, fn).get('/wiki').catch((e) => e);

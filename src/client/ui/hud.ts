@@ -2,6 +2,7 @@ import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
+import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
 import { teamSummary, workersByTeam } from '../../shared/team';
 import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
@@ -17,6 +18,8 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const sub = [
       teamSummary(team),
       w.kind === 'agent' && `⚙️ ${w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid'}${badge ? ` · ${badge}` : ''}`,
+      w.cloud && cloudLine(w),
+      w.cloud?.error && `⚠️ ${w.cloud.error}`,
       w.worktree && `🌿 ${w.worktree.branch}`,
       w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
       w.pr && `🔀 PR #${w.pr.number}`,
@@ -30,7 +33,13 @@ export function renderWorkers(onOpen: (id: string) => void) {
         'li',
         {
           onclick: () => onOpen(w.id),
-          title: w.guest ? `${w.name} runs outside the office (${processLabel(w.guest)}): see what the office knows of it` : lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`,
+          title: w.cloud
+            ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}`
+            : w.guest
+              ? `${w.name} runs outside the office (${processLabel(w.guest)}): see what the office knows of it`
+              : lead
+                ? `Open ${w.name}'s terminal (a subagent of ${lead.name})`
+                : `Open ${w.name}'s terminal`,
           class: lead ? 'subagent' : team.length ? 'lead' : undefined,
           style: lead ? `--lead:${lead.color}` : undefined,
         },

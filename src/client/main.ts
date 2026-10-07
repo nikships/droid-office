@@ -96,6 +96,8 @@ import { loadingScreen } from './ui/loading';
 import { openQueue } from './ui/queue';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
+import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
+import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
@@ -710,15 +712,15 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
     sound.impact(hit.point);
     return;
   }
-  // A guest isn't the office's to shoot: the round goes into its chair like a miss.
-  const guest = store.workers.get(workerId)?.guest;
-  if (guest) {
+  // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
+  const target = store.workers.get(workerId);
+  if (target?.guest || target?.cloud) {
     const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
     const puff = new Puff(hit.point, normal);
     scene.add(puff.group);
     puffs.push(puff);
     sound.impact(hit.point);
-    hintToast(`${store.workers.get(workerId)?.name} is a guest from outside the office: the office leaves it alone`, 'info');
+    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk to shoot` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
     return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
@@ -1274,14 +1276,16 @@ function syncWorkers() {
     v.model.setAction(w.action);
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
-    const engineBadge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
+    const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
-    v.model.setTask(meetingCard(w) ?? (w.task && w.kind === 'agent' ? { ...w.task, name: engineBadge ? `${engineBadge} · ${w.task.name}` : w.task.name } : w.task));
+    // A cloud worker's card says where it runs even before it has a task.
+    const task = w.task ?? (w.cloud ? { name: 'Ready', summary: w.cloud.error ?? 'Waiting for a prompt' } : undefined);
+    v.model.setTask(meetingCard(w) ?? (task && w.kind !== 'shell' ? { ...task, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task));
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
     const lost = `🌿 ${w.name}'s worktree was deleted — press E to fix it`;
-    const outside = w.guest && `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}`;
+    const outside = w.guest ? `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}` : w.cloud && (w.cloud.error ? `☁ ${w.cloud.error}` : `☁ Running on ${w.cloud.computerName} · E to open`);
     v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
       arrivals.forget(v.model);
@@ -1452,8 +1456,12 @@ function promptAtDesk(deskId: string) {
       imagesOption: true,
       deskId,
       repoOptions: repoChoices(),
+      runsOn: runsOnPicker(),
+      onCloud: (text, o) => hireCloud(deskId, text, o),
       onSubmit: (text, o) => hire(deskId, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
     });
+  } else if (w.cloud) {
+    openCloudWindow(net, w.id);
   } else if (w.lost) {
     fixLostWorktree(w);
   } else if (isAsleep(w.status)) {
@@ -1490,6 +1498,8 @@ function hireAtDesk(deskId: string) {
     imagesOption: true,
     deskId,
     repoOptions: repoChoices(),
+    runsOn: runsOnPicker(),
+    onCloud: (text, o) => hireCloud(deskId, text, o),
     onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
   });
 }
@@ -1501,6 +1511,7 @@ function killWorker(id: string) {
     const revive = `Walk up to ${w.name} and press E to revive — otherwise`;
     return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
   }
+  if (w.cloud) return sendCloudHome(net, w);
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
   const session = w.kind === 'shell' ? 'shared shell' : 'Droid session';
   if (w.meeting) {
@@ -1623,6 +1634,7 @@ function prReady(w: WorkerInfo) {
 
 /** O at a desk: see the worker's pull request, or push its branch and open one. */
 function pullRequestFor(w: WorkerInfo) {
+  if (w.cloud) return toast(cloudKeyNote(w), 'warn');
   if (w.repos?.length) return pullRequestsFor(w);
   if (w.pr) {
     const it = store.pulls.items.find((p) => p.number === w.pr!.number);
@@ -1763,6 +1775,7 @@ function openWorkerTerminal(id: string, find?: TerminalFind) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.guest) return openTerminal(net, id, undefined, find);
+  if (w.cloud) return openCloudWindow(net, id);
   if (w.lost) return fixLostWorktree(w);
   if (isAsleep(w.status)) resumeWorker(w);
   openTerminal(net, id, () => openWorkerChanges(id), find);
@@ -1783,6 +1796,7 @@ function openWorkerChanges(id: string, repo?: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.guest) return toast(guestKeyNote(w, 'C'), 'warn');
+  if (w.cloud) return toast(cloudKeyNote(w), 'warn');
   if (w.lost) return fixLostWorktree(w);
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
@@ -1835,10 +1849,10 @@ function paletteEntries(): PaletteEntry[] {
     const spot = desk && deskSpot(desk);
     const open = () => openWorkerTerminal(w.id);
     out.push({
-      icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : '🧑‍💻',
+      icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
       kind: 'Worker',
       title: w.name,
-      detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office'].filter(Boolean).join(' · '),
+      detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office', w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
       open,
       walk: desk && spot ? () => walkThen(spot, `${w.name} at ${desk.label}`, open, desk) : undefined,
@@ -1993,7 +2007,7 @@ function turnPage() {
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
 function sendToWorker(title: string, text: { context?: string; initial?: string }) {
   const desk = freeDesk();
-  const awake = [...store.workers.values()].filter((w) => w.kind === 'agent' && !w.guest && !isAsleep(w.status));
+  const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !w.guest && !isAsleep(w.status));
   if (!desk && !awake.length) {
     toast('Every desk and bean bag is taken — send a worker home first', 'warn');
     return;
@@ -2695,6 +2709,13 @@ function deskHint(deskId: string): Hint {
       parts: [h('span.title', {}, `${w.name} · 🌿 worktree deleted`), aside('deleted outside droid-office'), key('E', 'Fix it'), key('X', 'Send home')],
     };
   }
+  if (w.cloud) {
+    const doing = w.cloud.error ? `⚠️ ${clip(w.cloud.error, 48)}` : w.activity ? clip(w.activity, 48) : '';
+    return {
+      k: `cloud|${w.id}|${w.status}|${doing}|${cloudLine(w)}`,
+      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(cloudLine(w)), doing ? aside(doing) : '', key('E', 'Open'), key('P', 'Prompt'), key('X', 'Send home')],
+    };
+  }
   if (w.guest) {
     const doing = w.activity ? clip(w.activity, 48) : '';
     return {
@@ -2718,6 +2739,11 @@ function deskHint(deskId: string): Hint {
       key('X', 'Send home'),
     ],
   };
+}
+
+/** Why the office doesn't do something of a local worker's to a cloud one: its session isn't on this machine. */
+function cloudKeyNote(w: WorkerInfo): string {
+  return `${w.name} works on ${w.cloud ? cloudBadge(w.cloud) : 'a Factory computer'}, not in a checkout here: ask it to commit and open the pull request itself`;
 }
 
 /** The hint's word on a worker's team: whose subagent it is, or how its own subagents are doing. */

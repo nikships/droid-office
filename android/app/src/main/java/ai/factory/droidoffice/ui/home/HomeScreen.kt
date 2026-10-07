@@ -391,6 +391,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                         Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).tagged(Tags.Home.CARD_NAME))
                         if (w.isShell) Tag("SHELL")
                         if (w.isGuest) Tag("GUEST")
+                        if (w.isCloud) Tag("CLOUD")
                         if (row.subagents > 0) Tag("+${row.subagents}")
                     }
                     Text(meta(w, now, model, graph.connection.officeName), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_META))

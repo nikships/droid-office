@@ -407,7 +407,7 @@ export class WorkerManager {
     by: string,
     prompt?: string,
     worktree = false,
-    kind: WorkerKind = 'agent',
+    kind: Exclude<WorkerKind, 'cloud'> = 'agent',
     model?: string,
     effort?: AgentEffort,
     meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
