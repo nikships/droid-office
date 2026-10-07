@@ -1016,6 +1016,8 @@ export type ClientMsg =
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
+  /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
+  | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   | { t: 'ping'; at: number };
 
 /**
@@ -1116,5 +1118,10 @@ export type ServerMsg =
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
   | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }
+  /**
+   * Run a `window.office` command in this tab (POST /api/automation) and answer with
+   * `automation.result` under the same id.
+   */
+  | { t: 'automation.run'; id: string; cmd: string; args: unknown[] }
   /** `now` is the office's clock as it answered, which the jukebox keeps time by. */
   | { t: 'pong'; at: number; now: number };
