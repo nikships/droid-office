@@ -68,6 +68,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,6 +80,7 @@ import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
 import ai.factory.droidoffice.core.ScreenState
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -91,6 +96,7 @@ import ai.factory.droidoffice.ui.components.StatusPill
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -119,7 +125,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
 
     val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End) else WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     Column(
-        Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(insets)
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(insets)
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         if (worker == null) {
@@ -165,25 +171,26 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
     var menu by remember { mutableStateOf(false) }
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         WorkerDot(parseColor(w.color), w.state, 10.dp)
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
-            Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))
             val parts = buildList {
                 add(deskLabel(w.deskId))
                 if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it)) }
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
-            Text(parts.joinToString(" · ").uppercase(), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(parts.joinToString(" · ").uppercase(), style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
         }
-        StatusPill(w.state, acked = w.acked)
+        StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS)
         Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
+            IconButton(onClick = { menu = true }, modifier = Modifier.tagged(Tags.Worker.MENU)) { Icon(Icons.Default.MoreVert, "More") }
             DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = Palette.SurfaceHover) {
                 DropdownMenuItem(
                     text = { Text("Copy what's on screen") },
                     leadingIcon = { Icon(OfficeIcons.Copy, null, Modifier.size(18.dp)) },
+                    modifier = Modifier.tagged(Tags.Worker.MENU_COPY),
                     onClick = {
                         menu = false
                         val text = graph.connection.screens.value[w.id]?.text().orEmpty()
@@ -196,6 +203,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
                 DropdownMenuItem(
                     text = { Text("Send home…", color = Palette.Danger) },
                     leadingIcon = { Icon(OfficeIcons.Door, null, Modifier.size(18.dp), tint = Palette.Danger) },
+                    modifier = Modifier.tagged(Tags.Worker.MENU_SEND_HOME),
                     onClick = {
                         menu = false
                         onSendHome()
@@ -218,25 +226,26 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (w.state.asleep) ActionChip(OfficeIcons.Bolt, "Resume", Palette.Accent) { graph.connection.send(ClientMsg.resume(w.id)) }
+        if (w.state.asleep) ActionChip(OfficeIcons.Bolt, "Resume", Palette.Accent, Tags.Worker.RESUME) { graph.connection.send(ClientMsg.resume(w.id)) }
         when (pr?.first) {
-            Workers.PrState.Open -> ActionChip(OfficeIcons.PullRequest, "PR #${pr.second.number}", Palette.Success) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
-            Workers.PrState.Merged -> ActionChip(OfficeIcons.PullRequest, "#${pr.second.number} merged", Color(0xFFB689EF)) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
-            Workers.PrState.Opening -> ActionChip(OfficeIcons.PullRequest, "Opening PR…", Palette.Warning, loading = true) {}
-            null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text) { graph.connection.send(ClientMsg.pr(w.id)) }
+            Workers.PrState.Open -> ActionChip(OfficeIcons.PullRequest, "PR #${pr.second.number}", Palette.Success, Tags.Worker.PR) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
+            Workers.PrState.Merged -> ActionChip(OfficeIcons.PullRequest, "#${pr.second.number} merged", Color(0xFFB689EF), Tags.Worker.PR) { if (pr.second.url.isNotBlank()) uri.openUri(pr.second.url) }
+            Workers.PrState.Opening -> ActionChip(OfficeIcons.PullRequest, "Opening PR…", Palette.Warning, Tags.Worker.PR, loading = true) {}
+            null -> if (branch != null && !w.isShell) ActionChip(OfficeIcons.PullRequest, "Open PR", Palette.Text, Tags.Worker.PR) { graph.connection.send(ClientMsg.pr(w.id)) }
         }
-        if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, onClick = null)
-        ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, onClick = onSendHome)
+        if (branch != null) ActionChip(OfficeIcons.Branch, branch, Palette.TextSecondary, Tags.Worker.BRANCH, onClick = null)
+        ActionChip(OfficeIcons.Door, "Send home", Palette.Danger, Tags.Worker.SEND_HOME, onClick = onSendHome)
     }
 }
 
 @Composable
-private fun ActionChip(icon: ImageVector, text: String, color: Color, loading: Boolean = false, onClick: (() -> Unit)?) {
+private fun ActionChip(icon: ImageVector, text: String, color: Color, tag: String, loading: Boolean = false, onClick: (() -> Unit)?) {
     val haptics = LocalHapticFeedback.current
     val shape = RoundedCornerShape(8.dp)
     Row(
         Modifier.clip(shape).background(Palette.Surface).border(1.dp, if (onClick != null) color.copy(alpha = 0.35f) else Palette.Border, shape)
             .then(if (onClick != null) Modifier.clickable { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onClick() } else Modifier)
+            .tagged(tag)
             .padding(horizontal = 10.dp, vertical = 7.dp)
             .widthIn(max = 240.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -251,7 +260,7 @@ private fun ActionChip(icon: ImageVector, text: String, color: Color, loading: B
 @Composable
 private fun Offline(phase: Phase) {
     AnimatedVisibility(phase != Phase.Connected, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().tagged(Tags.Worker.OFFLINE).padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (phase == Phase.Connecting || phase == Phase.Reconnecting) Spinner(Modifier.size(12.dp), Palette.Warning)
             else Box(Modifier.size(7.dp).background(Palette.TextSecondary, RoundedCornerShape(1.dp)))
             Spacer(Modifier.width(8.dp))
@@ -283,7 +292,7 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
     val text = menu?.question ?: if (asking) Workers.detail(w) ?: "Waiting on an answer" else null
     AnimatedVisibility(asking || menu != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+            Modifier.fillMaxWidth().tagged(Tags.Worker.NEEDS_YOU).padding(horizontal = 10.dp, vertical = 4.dp)
                 .panel(RoundedCornerShape(10.dp), Palette.Danger.copy(alpha = 0.08f), Palette.Danger.copy(alpha = 0.4f))
                 .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
@@ -292,7 +301,7 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Eyebrow("Needs you", color = Palette.Danger)
-                    if (text != null) Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    if (text != null) Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.QUESTION))
                 }
             }
             if (menu != null && canAnswer) {
@@ -308,6 +317,8 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
                                     haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                                     graph.connection.send(ClientMsg.termInput(w.id, Choices.keys(menu, choice)))
                                 }
+                                .semantics { selected = marked }
+                                .tagged(Tags.Worker.choice(choice.number))
                                 .heightIn(min = 40.dp)
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -326,7 +337,7 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
 @Composable
 private fun Asleep(w: WorkerInfo) {
     val graph = LocalGraph.current
-    Box(Modifier.fillMaxSize().background(Color(0xB3000000), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Worker.ASLEEP).background(Color(0xB3000000), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
             Icon(OfficeIcons.Moon, null, Modifier.size(28.dp), tint = Palette.TextSecondary)
             Spacer(Modifier.height(8.dp))
@@ -338,16 +349,16 @@ private fun Asleep(w: WorkerInfo) {
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(Modifier.height(14.dp))
-            SecondaryButton("Resume", { graph.connection.send(ClientMsg.resume(w.id)) }, icon = OfficeIcons.Bolt, color = Palette.Accent)
+            SecondaryButton("Resume", { graph.connection.send(ClientMsg.resume(w.id)) }, Modifier.tagged(Tags.Worker.ASLEEP_RESUME), icon = OfficeIcons.Bolt, color = Palette.Accent)
         }
     }
 }
 
 @Composable
 private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().tagged(Tags.Worker.GONE)) {
         Row(Modifier.padding(4.dp)) {
-            IconButton(onClick = onBack) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         }
         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             if (!synced) {
@@ -360,7 +371,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
                 Text("This worker went home", style = MaterialTheme.typography.titleLarge)
                 Text("Its desk is free again, or it's on another floor.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(16.dp))
-                SecondaryButton("Back to the office", onBack)
+                SecondaryButton("Back to the office", onBack, Modifier.tagged(Tags.Worker.GONE_BACK))
             }
         }
     }
@@ -379,17 +390,17 @@ private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
         Triple("1", "1", "1"), Triple("2", "2", "2"), Triple("3", "3", "3"), Triple("y", "y", "y"), Triple("n", "n", "n"),
     )
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (zoom.zoomable) {
-            QuickKey(if (zoom.zoomed) "Fit" else "Aa", if (zoom.zoomed) "Fit the terminal to the screen" else "Zoom the terminal in", selected = zoom.zoomed) {
+            QuickKey(if (zoom.zoomed) "Fit" else "Aa", if (zoom.zoomed) "Fit the terminal to the screen" else "Zoom the terminal in", Tags.Worker.ZOOM, selected = zoom.zoomed) {
                 haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
                 zoom.toggle()
             }
         }
         keys.forEach { (label, spoken, bytes) ->
-            QuickKey(label, spoken, accent = label == "⏎") {
+            QuickKey(label, spoken, Tags.Worker.key(spoken), accent = label == "⏎") {
                 haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
                 graph.connection.send(ClientMsg.termInput(workerId, bytes))
             }
@@ -398,7 +409,7 @@ private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
 }
 
 @Composable
-private fun QuickKey(label: String, spoken: String, accent: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
+private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(7.dp)
     Box(
         Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
@@ -408,6 +419,9 @@ private fun QuickKey(label: String, spoken: String, accent: Boolean = false, sel
             .clearAndSetSemantics {
                 contentDescription = spoken
                 role = Role.Button
+                this.selected = selected
+                testTagsAsResourceId = true
+                testTag = tag
             }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,

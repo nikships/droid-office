@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Effort
 import ai.factory.droidoffice.core.Models
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.net.ModelOption
 import ai.factory.droidoffice.net.nameOf
@@ -71,6 +75,7 @@ import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -131,15 +136,15 @@ fun HireSheet(onDismiss: () -> Unit) {
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Palette.Surface, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding().imePadding().padding(bottom = 14.dp),
+            Modifier.fillMaxWidth().tagged(Tags.Hire.SHEET).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding().imePadding().padding(bottom = 14.dp),
         ) {
             Eyebrow("Hire", color = Palette.Accent)
             Spacer(Modifier.height(4.dp))
             Text("Who's starting?", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                KindCard(OfficeIcons.Agent, "Droid", "An agent with a task", !shell, Modifier.weight(1f)) { shell = false }
-                KindCard(OfficeIcons.Shell, "Shell", "A plain terminal", shell, Modifier.weight(1f)) { shell = true }
+                KindCard(OfficeIcons.Agent, "Droid", "An agent with a task", !shell, Modifier.weight(1f).tagged(Tags.Hire.DROID)) { shell = false }
+                KindCard(OfficeIcons.Shell, "Shell", "A plain terminal", shell, Modifier.weight(1f).tagged(Tags.Hire.SHELL)) { shell = true }
             }
             AnimatedVisibility(!shell) {
                 Column {
@@ -147,7 +152,7 @@ fun HireSheet(onDismiss: () -> Unit) {
                     OutlinedTextField(
                         value = prompt,
                         onValueChange = { prompt = it },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp).tagged(Tags.Hire.PROMPT),
                         placeholder = { Text("What should it work on? Leave it empty to brief it later.", color = Palette.TextTertiary) },
                         textStyle = MaterialTheme.typography.bodyLarge,
                         shape = RoundedCornerShape(12.dp),
@@ -166,14 +171,14 @@ fun HireSheet(onDismiss: () -> Unit) {
                         Eyebrow("Reasoning")
                         Spacer(Modifier.height(6.dp))
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            efforts.forEach { e -> Chip(e.label, effort == e.wire, { effort = e.wire }) }
+                            efforts.forEach { e -> Chip(e.label, effort == e.wire, { effort = e.wire }, Modifier.tagged(Tags.Hire.effort(e.wire))) }
                         }
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
             Row(
-                Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised).clickable { worktree = !worktree }.padding(horizontal = 14.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp), Palette.SurfaceRaised).toggleable(worktree, role = Role.Switch) { worktree = it }.tagged(Tags.Hire.WORKTREE).padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(OfficeIcons.Branch, null, Modifier.size(18.dp), tint = Palette.TextSecondary)
@@ -184,7 +189,7 @@ fun HireSheet(onDismiss: () -> Unit) {
                 }
                 Switch(
                     checked = worktree,
-                    onCheckedChange = { worktree = it },
+                    onCheckedChange = null,
                     colors = SwitchDefaults.colors(checkedTrackColor = Palette.Accent, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
                 )
             }
@@ -192,12 +197,12 @@ fun HireSheet(onDismiss: () -> Unit) {
             PrimaryButton(
                 if (shell) "Open a shell" else "Hire",
                 { hire(queue = false) },
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().tagged(Tags.Hire.SUBMIT),
                 enabled = link.phase == Phase.Connected,
                 icon = if (shell) OfficeIcons.Shell else OfficeIcons.Sparkle,
             )
             AnimatedVisibility(!shell && prompt.isNotBlank()) {
-                SecondaryButton("Add to the queue instead", { hire(queue = true) }, Modifier.fillMaxWidth().padding(top = 10.dp), enabled = link.phase == Phase.Connected, icon = OfficeIcons.Queue)
+                SecondaryButton("Add to the queue instead", { hire(queue = true) }, Modifier.fillMaxWidth().padding(top = 10.dp).tagged(Tags.Hire.QUEUE), enabled = link.phase == Phase.Connected, icon = OfficeIcons.Queue)
             }
             if (link.phase != Phase.Connected) {
                 Text("Waiting for the office…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp).align(Alignment.CenterHorizontally))
@@ -212,7 +217,7 @@ private fun KindCard(icon: ImageVector, title: String, sub: String, selected: Bo
     Column(
         modifier.clip(shape).background(if (selected) Palette.AccentMuted else Palette.SurfaceRaised)
             .border(1.dp, if (selected) Palette.Accent else Palette.Border, shape)
-            .clickable(onClick = onClick).padding(14.dp),
+            .selectable(selected, role = Role.RadioButton, onClick = onClick).padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(22.dp), tint = if (selected) Palette.Accent else Palette.TextSecondary)
@@ -232,7 +237,7 @@ private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: 
     val current = catalogue?.models?.firstOrNull { it.id == selected }
     Row(
         Modifier.fillMaxWidth().panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.BorderStrong)
-            .clickable(enabled = catalogue != null, onClickLabel = "Choose a model") { open = true }.padding(horizontal = 14.dp, vertical = 12.dp),
+            .clickable(enabled = catalogue != null, onClickLabel = "Choose a model") { open = true }.tagged(Tags.Hire.MODEL).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (loading) {
@@ -270,7 +275,7 @@ private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: 
                 0
             }
             LazyColumn(
-                Modifier.fillMaxWidth().navigationBarsPadding(),
+                Modifier.fillMaxWidth().tagged(Tags.Hire.MODEL_SHEET).navigationBarsPadding(),
                 state = rememberLazyListState(initialFirstVisibleItemIndex = at),
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
@@ -284,10 +289,10 @@ private fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected: 
                     items(group.models, key = { it.id }) { m ->
                         val on = m.id == selected
                         Row(
-                            Modifier.fillMaxWidth().clickable {
+                            Modifier.fillMaxWidth().selectable(on) {
                                 open = false
                                 onPick(m)
-                            }.background(if (on) Palette.AccentMuted else Color.Transparent).padding(horizontal = 20.dp, vertical = 11.dp),
+                            }.tagged(Tags.Hire.model(m.id)).background(if (on) Palette.AccentMuted else Color.Transparent).padding(horizontal = 20.dp, vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {

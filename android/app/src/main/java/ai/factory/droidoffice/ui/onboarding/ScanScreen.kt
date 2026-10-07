@@ -82,11 +82,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import ai.factory.droidoffice.core.InviteParse
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.dotGrid
 import ai.factory.droidoffice.ui.components.panel
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
@@ -110,7 +112,7 @@ fun ScanScreen(onBack: () -> Unit, onInvite: (PairingInvite) -> Unit) {
     }
     LaunchedEffect(Unit) { if (!granted) launcher.launch(Manifest.permission.CAMERA) }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Screen.SCAN).background(Color.Black)) {
         if (granted) {
             Scanner(onInvite)
         } else {
@@ -128,12 +130,12 @@ fun ScanScreen(onBack: () -> Unit, onInvite: (PairingInvite) -> Unit) {
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack, colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0x66000000), contentColor = Color.White)) {
+            IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Scan.BACK), colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0x66000000), contentColor = Color.White)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
             Spacer(Modifier.weight(1f))
             if (granted) {
-                IconButton(onClick = { showPaste = true }, colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0x66000000), contentColor = Color.White)) {
+                IconButton(onClick = { showPaste = true }, modifier = Modifier.tagged(Tags.Scan.PASTE), colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0x66000000), contentColor = Color.White)) {
                     Icon(OfficeIcons.Paste, "Paste a join link")
                 }
             }
@@ -220,7 +222,7 @@ private fun Scanner(onInvite: (PairingInvite) -> Unit) {
                 )
             }
             Column(
-                Modifier.widthIn(max = 480.dp).fillMaxWidth().panel(RoundedCornerShape(14.dp), Color(0xE60A0A0A)).padding(16.dp),
+                Modifier.widthIn(max = 480.dp).fillMaxWidth().tagged(Tags.Scan.STATUS).panel(RoundedCornerShape(14.dp), Color(0xE60A0A0A)).padding(16.dp),
             ) {
                 Eyebrow(if (found != null) "Found it" else "Pair with an office", color = if (found != null) Palette.Success else Palette.Accent)
                 Spacer(Modifier.height(4.dp))
@@ -241,7 +243,7 @@ private fun Scanner(onInvite: (PairingInvite) -> Unit) {
                             torch = !torch
                             camera?.cameraControl?.enableTorch(torch)
                         },
-                        Modifier.fillMaxWidth().height(44.dp),
+                        Modifier.fillMaxWidth().height(44.dp).tagged(Tags.Scan.TORCH),
                         icon = OfficeIcons.Bolt,
                     )
                 }
@@ -310,8 +312,8 @@ private fun NoCamera(denied: Boolean, onAsk: () -> Unit, onSettings: () -> Unit,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(10.dp))
-            PrimaryButton(if (denied) "Open Settings" else "Allow camera", if (denied) onSettings else onAsk, Modifier.fillMaxWidth(), icon = OfficeIcons.Scan)
-            SecondaryButton("Paste a join link", onPaste, Modifier.fillMaxWidth(), icon = OfficeIcons.Paste)
+            PrimaryButton(if (denied) "Open Settings" else "Allow camera", if (denied) onSettings else onAsk, Modifier.fillMaxWidth().tagged(Tags.Scan.CAMERA), icon = OfficeIcons.Scan)
+            SecondaryButton("Paste a join link", onPaste, Modifier.fillMaxWidth().tagged(Tags.Scan.PASTE_LINK), icon = OfficeIcons.Paste)
         }
     }
 }

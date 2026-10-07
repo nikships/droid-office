@@ -73,6 +73,37 @@ To try it against a local office from an emulator, start the office (`node bin/d
 adb shell "am start -a android.intent.action.VIEW -d 'droidoffice://pair?v=1&name=My%20Mac&t=<token>&u=http://10.0.2.2:4600'"
 ```
 
+## Drive it with adb
+
+Every screen and control has a stable name from [`core/Tags.kt`](app/src/main/java/ai/factory/droidoffice/core/Tags.kt), which `uiautomator dump` prints as the node's `resource-id`. An agent can see where the app is and tap a control by name instead of by its text or position:
+
+```bash
+# What's on screen: each tagged node with its text and bounds.
+adb exec-out uiautomator dump /dev/tty | sed 's/<node /\n<node /g' | grep 'resource-id="[^"]'
+
+# Tap a control: take the centre of its bounds="[l,t][r,b]".
+adb shell input tap 672 2577
+```
+
+- **Where you are.** The screen's root is one of `screen.welcome`, `screen.scan`, `screen.pair`, `screen.home`, `screen.worker` or `screen.offices`. A sheet or dialog adds its own root: `hire.sheet`, `hire.model_sheet`, `paste.sheet`, `send_home.dialog` or `forget.dialog`.
+- **Dynamic names.** A name with an id in it has the id after a `/`: `home.worker/<workerId>`, `home.floor/<floorId>`, `hire.model/<modelId>`, `hire.effort/<effort>`, `worker.choice/<number>`, `send_home.option/all|worktree|keep`, `offices.office/<officeId>`, `offices.forget/<officeId>` and `composer.remove_image/<n>`.
+- **Home.** Each worker card is `home.worker/<id>`. Inside it are `home.worker.name`, `home.worker.status` (its content-desc is the status: "Needs you", "Working", "Ready", "Done", "Asleep"), `home.worker.meta`, `home.worker.title` and `home.worker.detail`. The other names on this screen are `home.hire`, `home.hire_first` (on an empty floor), `home.list` (swipe it to scroll), `home.loading`, `home.route` (content-desc "Connected over Wi-Fi" and so on), `home.connection`, `home.retry`, `home.pair_again`, `home.settings`, `home.offices`, and `home.stat.needs_you`, `home.stat.working` and `home.stat.done` (content-desc "Needs you: 2").
+- **A worker.** `worker.terminal` has the whole terminal screen as its `text` attribute, so a dump reads it without a screenshot. `worker.status`, `worker.name` and `worker.meta` describe the worker. `worker.needs_you` and `worker.question` show what it is waiting on, and `worker.choice/<n>` buttons answer a numbered menu. Type with `composer.input` (tap it, then `adb shell input text`) and send with `composer.send`. The quick keys are `key.` plus what TalkBack says, with spaces turned into underscores: `key.escape`, `key.up`, `key.down`, `key.enter`, `key.tab`, `key.shift_tab`, `key.left`, `key.right`, `key.control_c`, `key.backspace`, `key.1`, `key.2`, `key.3`, `key.y`, `key.n` and `key.zoom`. Also here: `worker.back`, `worker.menu` (`worker.menu.copy`, `worker.menu.send_home`), `worker.resume`, `worker.pr`, `worker.branch`, `worker.send_home`, `worker.latest`, `worker.asleep`, `worker.asleep.resume`, `worker.offline`, `worker.gone` and `composer.attach`.
+- **Hiring.** `hire.droid` and `hire.shell`, the `hire.effort/<effort>` chips and the `hire.model/<id>` rows in the model sheet are `checked` when chosen, and so are `home.floor/<id>` chips and `send_home.option/<cleanup>`. `hire.worktree` is `checked` when on. The rest are `hire.prompt`, `hire.model`, `hire.submit` and `hire.queue`.
+- **Settings.** `settings.stay_connected`, `settings.notify_needs_input`, `settings.notify_done` and `settings.haptics` are rows reported as `checked` when on; tap one to flip it. The other names here are `offices.back`, `offices.pair_new` and `offices.allow_notifications`, plus `forget.confirm` and `forget.cancel` in the forget dialog.
+- **Pairing.** `welcome.scan`, `welcome.paste`, `scan.paste`, `scan.camera`, `paste.input`, `paste.submit`, `pair.status` ("PAIRING", "PAIRED", "NOT PAIRED"), `pair.outcome`, `pair.open`, `pair.retry` and `pair.cancel`.
+- **Anywhere.** `app.banner` (tap to open the worker), `app.banner.dismiss` and `app.snackbar`.
+
+Skip the taps where an intent does the job. The activity takes a pairing link, and it opens a worker or a floor by id (the ids are in the names above):
+
+```bash
+adb shell "am start -a android.intent.action.VIEW -d 'droidoffice://pair?v=1&name=My%20Mac&t=<token>&u=http://192.168.1.20:4600'"
+adb shell am start -n ai.factory.droidoffice/.MainActivity -a ai.factory.droidoffice.OPEN_WORKER --es office <officeId> --es worker <workerId>
+adb shell am start -n ai.factory.droidoffice/.MainActivity -a ai.factory.droidoffice.OPEN_FLOOR --es office <officeId> --es floor <floorId>
+```
+
+The debug build's package is `ai.factory.droidoffice.debug`, and its activity is still `ai.factory.droidoffice.MainActivity`. While a worker's terminal is changing, Android may not find the screen idle long enough for a dump. Retry once the terminal settles, or dump from the home screen.
+
 ## In CI
 
 The `android` job in [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs the unit tests and lint, builds the release APK with the office's release version, and uploads it as the `android` artifact. On `main`, the publish job attaches it to the GitHub release next to the Mac app.

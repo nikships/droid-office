@@ -1,6 +1,6 @@
 package ai.factory.droidoffice.ui.worker
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,12 +25,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorktreeState
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Spinner
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.CoroutineStart
@@ -83,6 +86,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
     val labels = mapOf("keep" to "Send home", "worktree" to "Send home, delete worktree", "all" to "Send home, delete both")
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.tagged(Tags.SendHome.DIALOG),
         containerColor = Palette.SurfaceRaised,
         shape = RoundedCornerShape(16.dp),
         title = { Text("Send ${w.name} home?", style = MaterialTheme.typography.headlineSmall) },
@@ -101,10 +105,10 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                         Triple("keep", "Keep both", "Leaves everything as it is; droid-office prune tidies up later."),
                     ).forEach { (value, title, sub) ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { cleanup = value; touched = true }.padding(vertical = 4.dp),
+                            Modifier.fillMaxWidth().selectable(cleanup == value, role = Role.RadioButton) { cleanup = value; touched = true }.tagged(Tags.SendHome.option(value)).padding(vertical = 4.dp),
                             verticalAlignment = Alignment.Top,
                         ) {
-                            RadioButton(cleanup == value, { cleanup = value; touched = true }, colors = RadioButtonDefaults.colors(selectedColor = Palette.Accent))
+                            RadioButton(cleanup == value, null, colors = RadioButtonDefaults.colors(selectedColor = Palette.Accent))
                             Column(Modifier.padding(top = 10.dp)) {
                                 Text(title, style = MaterialTheme.typography.titleSmall)
                                 Text(sub, style = MaterialTheme.typography.bodySmall)
@@ -129,8 +133,8 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
             TextButton(onClick = {
                 graph.connection.send(ClientMsg.kill(w.id, if (wt != null) cleanup else null))
                 onSent()
-            }) { Text(labels.getValue(if (wt != null) cleanup else "keep"), color = Palette.Danger) }
+            }, modifier = Modifier.tagged(Tags.SendHome.CONFIRM)) { Text(labels.getValue(if (wt != null) cleanup else "keep"), color = Palette.Danger) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Never mind", color = Palette.TextSecondary) } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.SendHome.CANCEL)) { Text("Never mind", color = Palette.TextSecondary) } },
     )
 }
