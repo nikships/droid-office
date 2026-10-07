@@ -78,6 +78,7 @@ export type InteractKind =
   | 'pulls'
   | 'services'
   | 'queue'
+  | 'ci'
   | 'tv'
   | 'coffee'
   | 'decor'
@@ -1405,12 +1406,14 @@ export function buildOffice(): Office {
     bg.rotation.y = b.rotY;
     group.add(bg);
     boardMeshes[key] = face;
-    // Its title on a sign over it, half as far out from the wall.
-    const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
-    label.scale.multiplyScalar(1.3);
-    label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
-    label.rotation.y = b.rotY;
-    group.add(label);
+    // Its title on a sign over it, half as far out from the wall (a board without one has it painted on).
+    if (b.label) {
+      const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
+      label.scale.multiplyScalar(1.3);
+      label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
+      label.rotation.y = b.rotY;
+      group.add(label);
+    }
     const it: Interactable = { kind: key, x: b.x + nx * 1.6, z: b.z + nz * 1.6, radius: 2.4 };
     interactables.push(it);
     bg.userData.interact = it;
