@@ -3,6 +3,7 @@ package ai.factory.droidoffice.ui.offices
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,11 +44,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.BuildConfig
 import ai.factory.droidoffice.core.Routes
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.data.AppSettings
 import ai.factory.droidoffice.data.AuthMode
 import ai.factory.droidoffice.data.PairedOffice
@@ -58,6 +61,7 @@ import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.rememberNotifyPermission
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -82,9 +86,9 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
 
     fun askToNotify() = notify.ask()
 
-    Column(Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    Column(Modifier.fillMaxSize().tagged(Tags.Screen.OFFICES).background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Offices.BACK)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text("Offices", style = MaterialTheme.typography.headlineSmall)
         }
         Column(
@@ -110,13 +114,13 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                SecondaryButton("Pair another office", onPairNew, Modifier.fillMaxWidth(), icon = OfficeIcons.Scan)
+                SecondaryButton("Pair another office", onPairNew, Modifier.fillMaxWidth().tagged(Tags.Offices.PAIR_NEW), icon = OfficeIcons.Scan)
 
                 Eyebrow("Notifications", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {
                     if (!canNotify) {
                         Row(
-                            Modifier.fillMaxWidth().background(Palette.Warning.copy(alpha = 0.07f)).clickable { askToNotify() }.padding(14.dp),
+                            Modifier.fillMaxWidth().background(Palette.Warning.copy(alpha = 0.07f)).clickable { askToNotify() }.tagged(Tags.Offices.ALLOW_NOTIFICATIONS).padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(OfficeIcons.Bell, null, Modifier.size(18.dp), tint = Palette.Warning)
@@ -133,23 +137,24 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                         OfficeIcons.Bolt, "Stay connected",
                         "Keep the connection open in the background, so alerts come even with the app closed. Shows a quiet ongoing notification.",
                         store.settings.stayConnected,
+                        Tags.Offices.STAY_CONNECTED,
                     ) { on ->
                         settings { it.copy(stayConnected = on) }
                         if (on && !canNotify) askToNotify()
                     }
                     HorizontalDivider(color = Palette.Border)
-                    Toggle(OfficeIcons.Bell, "When a worker needs you", "A question or a permission prompt, with a reply right in the notification.", store.settings.notifyNeedsInput) { on ->
+                    Toggle(OfficeIcons.Bell, "When a worker needs you", "A question or a permission prompt, with a reply right in the notification.", store.settings.notifyNeedsInput, Tags.Offices.NOTIFY_NEEDS_INPUT) { on ->
                         settings { it.copy(notifyNeedsInput = on) }
                     }
                     HorizontalDivider(color = Palette.Border)
-                    Toggle(OfficeIcons.Sparkle, "When a worker finishes", "Its turn is done and the result is waiting.", store.settings.notifyDone) { on ->
+                    Toggle(OfficeIcons.Sparkle, "When a worker finishes", "Its turn is done and the result is waiting.", store.settings.notifyDone, Tags.Offices.NOTIFY_DONE) { on ->
                         settings { it.copy(notifyDone = on) }
                     }
                 }
 
                 Eyebrow("Feel", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {
-                    Toggle(OfficeIcons.Keyboard, "Haptics", "A light tap on keys, sends and alerts.", store.settings.haptics) { on ->
+                    Toggle(OfficeIcons.Keyboard, "Haptics", "A light tap on keys, sends and alerts.", store.settings.haptics, Tags.Offices.HAPTICS) { on ->
                         settings { it.copy(haptics = on) }
                     }
                 }
@@ -173,6 +178,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
     forgetting?.let { o ->
         AlertDialog(
             onDismissRequest = { forgetting = null },
+            modifier = Modifier.tagged(Tags.Offices.FORGET_DIALOG),
             containerColor = Palette.SurfaceRaised,
             shape = RoundedCornerShape(16.dp),
             title = { Text("Forget ${o.name}?") },
@@ -187,16 +193,16 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                 TextButton(onClick = {
                     forgetting = null
                     scope.launch { graph.connection.forget(o) }
-                }) { Text("Forget", color = Palette.Danger) }
+                }, modifier = Modifier.tagged(Tags.Offices.FORGET_CONFIRM)) { Text("Forget", color = Palette.Danger) }
             },
-            dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Keep", color = Palette.TextSecondary) } },
+            dismissButton = { TextButton(onClick = { forgetting = null }, modifier = Modifier.tagged(Tags.Offices.FORGET_CANCEL)) { Text("Keep", color = Palette.TextSecondary) } },
         )
     }
 }
 
 @Composable
 private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kind: ai.factory.droidoffice.core.RouteKind?, now: Long, onPick: () -> Unit, onForget: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onPick).padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Switch to ${o.name}", onClick = onPick).tagged(Tags.Offices.office(o.id)).padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(38.dp).clip(RoundedCornerShape(9.dp)).background(if (active) Palette.AccentMuted else Palette.SurfaceRaised)
                 .border(1.dp, if (active) Palette.Accent.copy(alpha = 0.5f) else Palette.Border, RoundedCornerShape(9.dp)),
@@ -227,13 +233,13 @@ private fun OfficeRow(o: PairedOffice, active: Boolean, connected: Boolean?, kin
             )
         }
         if (connected != null) RouteBadge(kind, connected)
-        TextButton(onClick = onForget) { Text("Forget", color = Palette.TextSecondary) }
+        TextButton(onClick = onForget, modifier = Modifier.tagged(Tags.Offices.forget(o.id))) { Text("Forget", color = Palette.TextSecondary) }
     }
 }
 
 @Composable
-private fun Toggle(icon: ImageVector, title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun Toggle(icon: ImageVector, title: String, sub: String, checked: Boolean, tag: String, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange).tagged(tag).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, Modifier.size(18.dp), tint = Palette.TextSecondary)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -243,7 +249,7 @@ private fun Toggle(icon: ImageVector, title: String, sub: String, checked: Boole
         Spacer(Modifier.width(10.dp))
         Switch(
             checked = checked,
-            onCheckedChange = onChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(checkedTrackColor = Palette.Accent, checkedThumbColor = Palette.Bg, uncheckedTrackColor = Palette.SurfaceHigh, uncheckedBorderColor = Palette.BorderStrong),
         )
     }

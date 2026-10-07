@@ -12,7 +12,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -38,15 +38,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -77,9 +82,19 @@ fun parseColor(hex: String, fallback: Color = Palette.TextSecondary): Color = ru
     if (h.length != 6) fallback else Color(0xFF000000 or h.toLong(16))
 }.getOrDefault(fallback)
 
+/**
+ * Names this node with one of [ai.factory.droidoffice.core.Tags]. The name is its resource-id in
+ * the accessibility tree, which is what `uiautomator dump` prints. Set on the node itself rather
+ * than once at the root, because sheets, dialogs and menus are windows of their own.
+ */
+fun Modifier.tagged(name: String) = this.semantics {
+    testTagsAsResourceId = true
+    testTag = name
+}
+
 /** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. */
 @Composable
-fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true) {
+fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null) {
     val look = statusLook(status, acked)
     val blink = if (look.loud) {
         val t = rememberInfiniteTransition(label = "blink")
@@ -87,6 +102,14 @@ fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
     } else 1f
     Row(
         modifier
+            // Read as "Needs you" rather than spelled out from the upper-case label.
+            .clearAndSetSemantics {
+                contentDescription = look.label
+                if (tag != null) {
+                    testTagsAsResourceId = true
+                    testTag = tag
+                }
+            }
             .clip(RoundedCornerShape(3.dp))
             .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
             .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
@@ -140,7 +163,7 @@ fun WorkerDot(color: Color, status: WorkerStatus, size: Dp = 12.dp) {
 }
 
 @Composable
-fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifier, unpaired: Boolean = false) {
+fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifier, unpaired: Boolean = false, tag: String? = null) {
     val (icon, label) = when {
         unpaired -> OfficeIcons.Unplug to "Unpaired"
         kind == RouteKind.Lan -> OfficeIcons.Wifi to "Wi-Fi"
@@ -149,8 +172,21 @@ fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifi
         else -> OfficeIcons.Unplug to "Offline"
     }
     val color = if (connected) Palette.Success else Palette.TextSecondary
+    val spoken = when {
+        unpaired || kind == null -> label
+        connected -> "Connected over $label"
+        else -> "Not connected, last over $label"
+    }
     Row(
-        modifier.clip(RoundedCornerShape(50)).background(Palette.SurfaceRaised).border(1.dp, Palette.Border, RoundedCornerShape(50))
+        modifier
+            .clearAndSetSemantics {
+                contentDescription = spoken
+                if (tag != null) {
+                    testTagsAsResourceId = true
+                    testTag = tag
+                }
+            }
+            .clip(RoundedCornerShape(50)).background(Palette.SurfaceRaised).border(1.dp, Palette.Border, RoundedCornerShape(50))
             .padding(start = 8.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -245,12 +281,15 @@ fun GlyphMark(modifier: Modifier = Modifier, size: Dp = 96.dp, spin: Boolean = t
                 },
             )
         }
-        val rotation = if (spin) angle else 0f
         Icon(
             painterResource(R.drawable.ic_glyph),
             contentDescription = null,
             tint = Palette.Text,
-            modifier = Modifier.size(size).graphicsLayer { rotationZ = rotation },
+            // Turned while drawing, not with a layer: a rotating layer moves the node's bounds every
+            // frame, and the accessibility events that follow keep `uiautomator dump` from ever idling.
+            modifier = Modifier.size(size).drawWithContent {
+                if (spin) rotate(angle) { this@drawWithContent.drawContent() } else drawContent()
+            },
         )
     }
 }
@@ -263,7 +302,7 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
         modifier.clip(shape)
             .background(if (selected) Palette.Text else Palette.Surface)
             .border(1.dp, if (selected) Palette.Text else Palette.Border, shape)
-            .clickable {
+            .selectable(selected) {
                 haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
                 onClick()
             }

@@ -29,6 +29,8 @@ CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest li
 - Plain HTTP and `ws://` are allowed only to private addresses, enforced by `net/CleartextGuard.kt` on the address actually connected. Every OkHttp client gets it as a network interceptor.
 - Colours, type and shapes come from `ui/theme/` (the office's dark palette and Factory orange, Geist and Geist Mono). Icons are vector paths in `ui/theme/OfficeIcons.kt`; add one there instead of pulling in a larger icon library.
 - Strings a user sees are plain sentences in the office's voice, matching the web client.
+- Agents drive the app over adb by the names in `core/Tags.kt` (README "Drive it with adb"). Give every new screen root, control and readable state a name there and set it with `Modifier.tagged(...)`; never rename or reuse one, and add it to the README. A toggle row is `toggleable` with its `Switch` given `onCheckedChange = null`, and a choice is `selectable`, so a dump reports it as `checked`.
+- Never move a node's bounds every frame (a rotating `graphicsLayer`, an animated offset or size) on something that loops forever: the accessibility events it sends keep `uiautomator dump` from idling. Animate in the draw phase instead.
 - Fix what lint reports. Don't add `@SuppressLint` or widen `lint { disable }` to pass; the ones disabled there only flag that newer library versions exist.
 - Bump a library in `gradle/libs.versions.toml`. Updating Gradle itself also updates `distributionSha256Sum` in `gradle/wrapper/gradle-wrapper.properties`.
 

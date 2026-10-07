@@ -69,8 +69,10 @@ import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.notify.Banner
 import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.Phase
+import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.parseColor
+import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.HomeScreen
 import ai.factory.droidoffice.ui.offices.OfficesScreen
 import ai.factory.droidoffice.ui.onboarding.PairScreen
@@ -271,7 +273,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                     contentColor = Palette.Text,
                     actionColor = Palette.Accent,
                     dismissActionContentColor = Palette.TextSecondary,
-                    modifier = Modifier.widthIn(max = 560.dp),
+                    modifier = Modifier.widthIn(max = 560.dp).tagged(Tags.App.SNACKBAR),
                 )
             }
         }
@@ -303,7 +305,8 @@ private fun AlertBanner(banner: Banner?, onOpen: (Banner) -> Unit, onDismiss: ()
             Modifier.widthIn(max = 560.dp).fillMaxWidth()
                 .background(Palette.SurfaceHover, RoundedCornerShape(14.dp))
                 .background(color.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
-                .clickable { onOpen(b) }
+                .clickable(onClickLabel = "Open ${b.name}") { onOpen(b) }
+                .tagged(Tags.App.BANNER)
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -314,7 +317,7 @@ private fun AlertBanner(banner: Banner?, onOpen: (Banner) -> Unit, onDismiss: ()
                 b.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
             Text("OPEN", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
-            Icon(Icons.Default.Close, "Dismiss", Modifier.size(18.dp).clickable { onDismiss() }, tint = Palette.TextSecondary)
+            Icon(Icons.Default.Close, "Dismiss", Modifier.size(18.dp).clickable { onDismiss() }.tagged(Tags.App.BANNER_DISMISS), tint = Palette.TextSecondary)
         }
     }
 }
