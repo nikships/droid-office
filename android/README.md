@@ -65,7 +65,7 @@ Run from `android/`:
 | Install the debug APK on a connected phone or emulator | `./gradlew installDebug` |
 | Release APK, minified with R8 | `./gradlew assembleRelease` |
 
-The release APK is signed with the keystore in `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` when they are set, and with the debug key otherwise. A debug-signed APK installs, but not as an update over one signed with the real key. `-PofficeVersion=0.1.123 -PofficeVersionCode=123` sets its version.
+The release APK is signed with the keystore in `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` when they are set, and otherwise with the machine's debug key (`~/.android/debug.keystore`, which the Android build creates the first time it needs one). A debug-signed APK installs, but Android only updates an app with an APK signed by the same key. `-PofficeVersion=0.1.123 -PofficeVersionCode=123` sets its version.
 
 To try it against a local office from an emulator, start the office (`node bin/droid-office.js <project>`), open ⚙️ Settings → **Phone**, and pass the link to the emulator; `10.0.2.2` is the host machine:
 
@@ -75,7 +75,7 @@ adb shell "am start -a android.intent.action.VIEW -d 'droidoffice://pair?v=1&nam
 
 ## In CI
 
-The `android` job in [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs the unit tests and lint, builds the release APK with the office's release version, and uploads it as the `android` artifact. On `main`, the publish job attaches it to the GitHub release next to the Mac app. It signs with the repository secrets `ANDROID_KEYSTORE_BASE64` (the keystore file, base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` when they exist. Make one keystore and keep it: every release has to be signed with the same key to install over the last.
+The `android` job in [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs the unit tests and lint, builds the release APK with the office's release version, and uploads it as the `android` artifact. On `main`, the publish job attaches it to the GitHub release next to the Mac app. It signs with the repository secrets `ANDROID_KEYSTORE_BASE64` (the keystore file, base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` when they exist. Without them, every run signs with a debug key the runner just created, a different one each time, so no release can be installed over the one before it: the phone refuses with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and only uninstalling first (which forgets the paired offices) gets the new one on. Make one keystore and keep it: every release has to be signed with the same key to install over the last.
 
 ```bash
 keytool -genkeypair -v -keystore release.jks -alias droid-office -keyalg RSA -keysize 4096 -validity 10000

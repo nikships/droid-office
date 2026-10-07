@@ -265,8 +265,9 @@ jobs:
       - name: Unit tests and lint
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug
 
-      # Signed with the release keystore when the repository has one; without it the APK is signed
-      # with a throwaway debug key, which installs fine but not as an update over a properly signed one.
+      # Signed with the release keystore when the repository has one. Without it the APK is signed
+      # with a debug key this runner just made, new each run: it installs, but never as an update
+      # over an earlier release.
       - name: Build the release APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

@@ -21,8 +21,9 @@ android {
     }
 
     // A release APK is signed with the keystore CI is given (ANDROID_KEYSTORE_FILE and friends), so
-    // each new one installs over the last. Without one it falls back to the debug key: still
-    // installable, but not as an update to an APK signed with the real key.
+    // each new one installs over the last. Without one it falls back to this machine's debug key:
+    // still installable, but Android only accepts an update signed by the same key, and a CI runner
+    // makes a new debug key every run.
     val keystore = providers.environmentVariable("ANDROID_KEYSTORE_FILE").orNull
     signingConfigs {
         if (keystore != null) {
