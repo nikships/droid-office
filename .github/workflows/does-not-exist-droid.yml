@@ -1,0 +1,19 @@
+name: Factory Automation
+"on":
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run Factory droid-action
+        uses: Factory-AI/droid-action@main
+        with:
+          factory_api_key: ${{ secrets.FACTORY_API_KEY }}
