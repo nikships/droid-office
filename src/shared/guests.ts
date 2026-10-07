@@ -20,8 +20,9 @@ export function statusWord(w: WorkerInfo, labels: Record<string, string>): strin
 export function guestKeyNote(w: WorkerInfo, key: string): string {
   const where = w.guest ? processLabel(w.guest) : 'outside the office';
   if (key === 'X') return `${w.name} runs outside the office (${where}). The office never stops it: quit it in its own terminal and it goes home by itself`;
-  if (key === 'P') return `${w.name} runs outside the office (${where}). Type to it in its own terminal`;
-  return `${w.name} runs outside the office (${where}). The office only watches it: E shows what it knows`;
+  const comeIn = w.guest && !w.guest.cantBringIn ? ', or R brings it into the office' : '';
+  if (key === 'P') return `${w.name} runs outside the office (${where}). Type to it in its own terminal${comeIn}`;
+  return `${w.name} runs outside the office (${where}). The office only watches it: E shows what it knows${comeIn}`;
 }
 
 /** A line for a worker that someone also runs an agent by hand in its worktree, outside the office. */

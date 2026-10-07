@@ -7,7 +7,7 @@ import { DESK_BY_ID } from '../shared/layout.js';
 import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
-import { Guests, attribute, type AgentProcess } from './guests.js';
+import { Guests, attribute, stopGuest, type AgentProcess } from './guests.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
 import type { Board } from './forge.js';
@@ -206,7 +206,7 @@ export class Floor {
     const own = this.workers;
     this.guests = new Guests(
       dataDir,
-      { deskTaken: (id) => own.ownDesk(id), names: () => own.list().map((w) => w.name.replace(/ 🐚$/, '')), pool: { names: NAMES, colors: COLORS } },
+      { deskTaken: (id) => own.ownDesk(id), names: () => own.list().map((w) => w.name.replace(/ 🐚$/, '')), pool: { names: NAMES, colors: COLORS }, checkout: def.dir },
       {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
@@ -405,6 +405,27 @@ export class Floor {
     const { guests, outside } = attribute(procs, this.workers.folders());
     this.workers.setOutside(outside);
     await this.guests.sync(guests, this.workers.sessionIds());
+  }
+
+  /**
+   * Makes a droid guest one of the office's own workers: its process outside is asked to quit, and
+   * once it has, a worker at the same desk resumes the same session in a terminal of the office's.
+   * Two droids in one session would write over each other, so the worker only starts after the guest's
+   * droid is gone. Resolves to the new worker, or why the guest stays a guest.
+   */
+  async bringIn(guestId: string, by: string): Promise<WorkerInfo | string> {
+    const full = this.workers.full();
+    if (full) return full;
+    const out = await this.guests.takeOut(guestId);
+    if (typeof out === 'string') return out;
+    const { info, session } = out;
+    const why = await stopGuest(info.guest!.pid, guestId);
+    if (why) {
+      this.guests.stay(guestId);
+      return `${info.name}'s droid (pid ${info.guest!.pid} on ${info.guest!.tty}) ${why}`;
+    }
+    this.guests.handOver(guestId);
+    return this.workers.takeIn(info, session, by);
   }
 
   /** Everyone at a desk here, the office's workers and the guests. */

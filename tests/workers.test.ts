@@ -245,6 +245,65 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.deepEqual(third.args.slice(-2), ['--resume', 'droid-1']);
 });
 
+test('a guest brought in sits at its desk with its name and resumes its own session, on the session’s model', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const guest: WorkerInfo = {
+    id: 'guest-89430-abc',
+    kind: 'agent',
+    deskId: 'desk-4',
+    name: 'Pixel',
+    color: '#ff8800',
+    status: 'done',
+    acked: true,
+    createdBy: 'outside the office',
+    createdAt: 0,
+    prompt: 'Fix the login redirect',
+    task: { name: 'Login redirect', summary: 'outside the office · Droid · pid 89430' },
+    activeModel: 'claude-opus-5-5',
+    activeEffort: 'high',
+    cols: 100,
+    rows: 30,
+    open: false,
+    guest: { pid: 89430, tty: '/dev/ttys000', provider: 'droid', cwd: f.root, startedAt: 0, seen: 'transcript' },
+  };
+  const info = workers.takeIn(guest, 'outside-session', 'Nik');
+  assert.equal(typeof info, 'object');
+  if (typeof info === 'string') return;
+  assert.notEqual(info.id, guest.id);
+  assert.equal(info.guest, undefined, 'one of the office’s own workers now');
+  assert.deepEqual([info.deskId, info.name, info.color, info.sessionId], ['desk-4', 'Pixel', '#ff8800', 'outside-session']);
+  assert.equal(info.model, undefined, 'its model stays the session’s own');
+  assert.equal(info.activeModel, 'claude-opus-5-5');
+  assert.equal(info.task?.name, 'Login redirect');
+  assert.equal(info.task?.summary, 'Fix the login redirect');
+  assert.equal(info.worktree, undefined, 'it works in the checkout, where it was');
+  const run = (
+    await waitFor(
+      () => f.read(),
+      (records) => records.some((r) => r.kind === 'droid' && r.args.includes('--settings')),
+    )
+  ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
+  assert.deepEqual(run.args, ['--settings', path.join(f.data, 'droid-hooks.json'), '--from-test', '--resume', 'outside-session']);
+  assert.equal(run.env.workerId, info.id);
+
+  assert.match(String(workers.takeIn({ ...guest, id: 'guest-2' }, 's-2', 'Nik')), /taken/, 'never onto a desk someone has');
+  assert.match(String(workers.takeIn({ ...guest, deskId: 'station-issues' }, 's-3', 'Nik')), /desk or a bean bag/);
+  const second = workers.takeIn({ ...guest, id: 'guest-3', deskId: 'desk-5' }, 's-4', 'Nik');
+  assert.equal(typeof second, 'object');
+  assert.notEqual(typeof second === 'object' && second.name, 'Pixel', 'a name already taken here is not reused');
+  assert.equal(workers.full(), undefined);
+});
+
 test('Droid workers pin their model and effort in a per-worker settings overlay, kept across a restart', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];

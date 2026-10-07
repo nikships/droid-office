@@ -1182,6 +1182,16 @@ export async function startServer(cfg: Config) {
         warn(c, w ? w.floor.workers.resume(w.wid) : 'No such worker');
         break;
       }
+      case 'guest.bringIn': {
+        const wid = str(msg.workerId, 64);
+        const floor = guestFloor(wid);
+        if (!floor) return warn(c, workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
+        void floor.bringIn(wid, who).then((r) => {
+          if (typeof r === 'string') warn(c, r);
+          else toastFloor(floor, `🚪 ${who} brought ${r.name} into the office: its session carries on at its desk`);
+        });
+        break;
+      }
       case 'worker.shoot':
       case 'worker.revive': {
         const w = worker(msg.workerId);

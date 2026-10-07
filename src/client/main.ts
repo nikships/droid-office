@@ -80,7 +80,7 @@ import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, readingNow, toast, STATUS_LABEL } from './ui/dom';
-import { onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -1518,6 +1518,29 @@ function askStation(deskId: string) {
   });
 }
 
+/**
+ * Makes a droid guest one of the office's workers (see 'guest.bringIn'): once it has sat back down
+ * as one, its terminal opens, unless another window took the screen meanwhile.
+ */
+function bringInGuest(w: WorkerInfo) {
+  const g = w.guest;
+  if (!g) return;
+  if (g.cantBringIn) return toast(`${w.name} can't be brought in: ${g.cantBringIn}`, 'warn');
+  const body = `Its droid on ${g.tty} quits, and that terminal goes back to the shell. ${w.name} then carries on the same session at this desk, as one of the office's workers: you type to it here.`;
+  confirmDialog(`Bring ${w.name} into the office?`, body, 'Bring it in', () => {
+    net.send({ t: 'guest.bringIn', workerId: w.id });
+    const { deskId } = w;
+    const off = store.on('workers', () => {
+      const now = store.workerAtDesk(deskId);
+      if (!now || now.guest) return;
+      off();
+      const open = openTerminalFor();
+      if (!open || open === w.id) openWorkerTerminal(now.id);
+    });
+    setTimeout(off, 15_000);
+  });
+}
+
 function resumeWorker(w: WorkerInfo) {
   if (w.lost) return fixLostWorktree(w);
   if (!w.sessionId && w.kind !== 'shell') toast(`${w.name} has no saved Droid session — starting a fresh one`, 'warn');
@@ -1699,6 +1722,10 @@ function openWorkerTerminal(id: string, find?: TerminalFind) {
   openTerminal(net, id, () => openWorkerChanges(id), find);
 }
 onOpenTeammate((id) => openWorkerTerminal(id));
+onBringIn((id) => {
+  const w = store.workers.get(id);
+  if (w) bringInGuest(w);
+});
 
 /** 🔎 every terminal; a terminal line opens that terminal right at it. */
 function showSearch() {
@@ -1940,7 +1967,8 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     // Nobody is hired at the meeting table: a meeting seats its own workers there.
     if (!w && DESK_BY_ID.get(target.deskId)?.room) return key === 'E' ? showMeeting() : undefined;
     if (key === 'B' && !w) return openShell(target.deskId);
-    // A guest runs outside the office: there's only what the office knows of it to look at.
+    // A guest runs outside the office: there's only what the office knows of it to look at, or bringing it in.
+    if (w?.guest && key === 'R') return bringInGuest(w);
     if (w?.guest && key !== 'E') return toast(guestKeyNote(w, key), 'warn');
     if (key === 'P') return promptAtDesk(target.deskId);
     if (key === 'E') return w ? openWorkerTerminal(w.id) : hireAtDesk(target.deskId);
@@ -2777,8 +2805,8 @@ function deskHint(deskId: string): Hint {
   if (w.guest) {
     const doing = w.activity ? clip(w.activity, 48) : '';
     return {
-      k: `guest|${w.id}|${w.status}|${w.guest.seen}|${doing}`,
-      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(`🚪 outside the office · ${processLabel(w.guest)}`), doing ? aside(doing) : '', key('E', 'Look')],
+      k: `guest|${w.id}|${w.status}|${w.guest.seen}|${doing}|${w.guest.cantBringIn ?? ''}`,
+      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(`🚪 outside the office · ${processLabel(w.guest)}`), doing ? aside(doing) : '', key('E', 'Look'), w.guest.cantBringIn ? '' : key('R', 'Bring it in')],
     };
   }
   const doing = w.activity ? clip(w.activity, 48) : '';

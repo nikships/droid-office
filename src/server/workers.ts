@@ -493,6 +493,54 @@ export class WorkerManager {
     return info;
   }
 
+  /** Why nobody can be hired anywhere in the office right now (its worker limit), if so. */
+  full(): string | undefined {
+    return this.capacity?.full();
+  }
+
+  /**
+   * One of the office's own workers in place of a guest whose droid just quit (see Floor.bringIn): at
+   * its desk, with its name and color, in the floor's checkout, resuming its session `sessionId`.
+   * Its model and effort stay the session's own.
+   */
+  takeIn(guest: WorkerInfo, sessionId: string, by: string): WorkerInfo | string {
+    const seat = DESK_BY_ID.get(guest.deskId);
+    if (!seat || seat.station || seat.room) return 'A guest is brought in at a desk or a bean bag';
+    if (this.deskOccupied(guest.deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
+    const full = this.capacity?.full();
+    if (full) return full;
+    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
+    const name = !used.has(guest.name) ? guest.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const id = randomBytes(6).toString('hex');
+    const prompt = guest.prompt?.trim() || undefined;
+    const info: WorkerInfo = {
+      id,
+      kind: 'agent',
+      deskId: guest.deskId,
+      name,
+      color: guest.color,
+      status: 'starting',
+      acked: true,
+      createdBy: by,
+      createdAt: Date.now(),
+      prompt,
+      sessionId,
+      activeModel: guest.activeModel,
+      activeEffort: guest.activeEffort,
+      cols: 100,
+      rows: 30,
+      open: false,
+      activity: prompt ? truncate(prompt, 80) : undefined,
+      task: guest.task?.name ? { name: guest.task.name, summary: prompt ? truncate(prompt, 140) : 'Brought in from outside the office' } : undefined,
+    };
+    const w = newWorker(info);
+    if (prompt) w.prompts = [prompt.replace(/\s+/g, ' ')];
+    this.workers.set(id, w);
+    this.launch(w, undefined, sessionId);
+    this.persist();
+    return info;
+  }
+
   /**
    * A first prompt with what the agent is told ahead of it, for a session starting from nothing: a
    * board agent what it's there for, a subagent who hired it and how to report back. What shows on

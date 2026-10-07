@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,6 +11,7 @@ import {
   agentCandidates,
   assignSessions,
   attribute,
+  bringInRefusal,
   floorFor,
   guestBanner,
   guestId,
@@ -21,6 +22,7 @@ import {
   parsePs,
   providerOf,
   resumedSession,
+  stopGuest,
   transcriptState,
   type AgentProcess,
   type GuestEvents,
@@ -248,7 +250,8 @@ function recorder() {
 }
 
 function guestFixture(t: { after(fn: () => void): void }) {
-  const root = mkdtempSync(path.join(tmpdir(), 'office-guests-'));
+  // Resolved, as a real process's working directory is (macOS's tmpdir is behind a symlink).
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'office-guests-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const data = path.join(root, 'data');
   const sessions = path.join(root, 'sessions');
@@ -431,6 +434,112 @@ test('the guest’s window and every refusal say it runs outside the office, and
   assert.match(guestKeyNote(info, 'P'), /own terminal/);
   assert.equal(outsideNote(info), undefined);
   assert.match(outsideNote({ ...info, outside: [{ pid: 9, tty: '/dev/ttys009', provider: 'droid' }] }) ?? '', /pid 9 on \/dev\/ttys009/);
+});
+
+test('only a droid session the office has tied to a guest, in the checkout itself and between turns, can be brought in', () => {
+  const droid = { provider: 'droid' as const, cwd: '/p' };
+  assert.equal(bringInRefusal(droid, 's-1', 'done', '/p'), undefined);
+  assert.equal(bringInRefusal(droid, 's-1', 'idle', '/p'), undefined);
+  assert.match(bringInRefusal({ ...droid, provider: 'claude' }, 's-1', 'done', '/p') ?? '', /run Droid, and this is Claude Code/);
+  assert.match(bringInRefusal({ ...droid, cwd: '/p/src' }, 's-1', 'done', '/p') ?? '', /works in \/p\/src/);
+  assert.match(bringInRefusal(droid, 's-1', 'done', undefined) ?? '', /checkout itself/);
+  assert.match(bringInRefusal(droid, undefined, 'done', '/p') ?? '', /can't tell which Droid session/);
+  assert.match(bringInRefusal(droid, 's-1', 'working', '/p') ?? '', /mid-turn/);
+});
+
+test('stopping a guest asks only that same process to quit, and says when it won’t', async () => {
+  const id = guestId(42, 'Mon Oct 5 21:30:05 2026');
+  const signals: string[] = [];
+  let alive = 2;
+  const sleep = async () => {};
+  const quits = { start: async () => (alive-- > 0 ? 'Mon Oct 5 21:30:05 2026' : undefined), signal: (_: number, s: string) => void signals.push(s), sleep, timeoutMs: 1000 };
+  assert.equal(await stopGuest(42, id, quits), undefined);
+  assert.deepEqual(signals, ['SIGTERM']);
+
+  // Already gone, or the pid belongs to a later process now: nothing is signalled.
+  signals.length = 0;
+  assert.equal(await stopGuest(42, id, { ...quits, start: async () => undefined }), undefined);
+  assert.equal(await stopGuest(42, id, { ...quits, start: async () => 'Tue Oct 6 09:00:00 2026' }), undefined);
+  assert.deepEqual(signals, []);
+
+  const stubborn = { ...quits, start: async () => 'Mon Oct 5 21:30:05 2026' };
+  assert.match((await stopGuest(42, id, stubborn)) ?? '', /didn't quit within 1 s/);
+  const gone = Object.assign(new Error('no such process'), { code: 'ESRCH' });
+  assert.equal(
+    await stopGuest(42, id, {
+      ...stubborn,
+      signal: () => {
+        throw gone;
+      },
+    }),
+    undefined,
+  );
+  assert.match(
+    (await stopGuest(42, id, {
+      ...stubborn,
+      signal: () => {
+        throw Object.assign(new Error('not permitted'), { code: 'EPERM' });
+      },
+    })) ?? '',
+    /couldn't be asked to quit: not permitted/,
+  );
+});
+
+test('a guest on its way in keeps its desk until its process quits, and isn’t seated again once handed over', async (t) => {
+  const f = guestFixture(t);
+  const ev = recorder();
+  const guests = new Guests(f.data, { ...office(), checkout: f.project }, ev, f.sessions);
+  t.after(() => guests.stop());
+  const started = Date.now() - 60_000;
+  const p = proc(601, f.project, { id: 'guest-601-a', startedAt: started });
+  const other = proc(602, path.join(f.project, 'src'), { id: 'guest-602-b', startedAt: started, provider: 'claude' });
+  f.transcript('s-6', [start, ask, toolUse], started + 5_000);
+  await guests.sync([p, other], new Set());
+  const g = guests.get(p.id)!;
+  assert.equal(g.status, 'working');
+  assert.match(g.guest?.cantBringIn ?? '', /mid-turn/);
+  assert.match(guests.get(other.id)?.guest?.cantBringIn ?? '', /Claude Code/);
+  assert.match(String(await guests.takeOut(p.id)), /can't be brought in: it's mid-turn/);
+  assert.match(String(await guests.takeOut('nobody')), /gone home/);
+
+  // Its turn ends: now it can come in.
+  f.transcript('s-6', [start, ask, toolUse, reply, outcome], started + 10_000);
+  await guests.sync([p, other], new Set());
+  assert.equal(guests.get(p.id)?.guest?.cantBringIn, undefined);
+  assert.match(guestBanner(guests.get(p.id)!), /Bring it in/);
+
+  // A turn that started since the last scan is caught before anything is stopped.
+  f.transcript('s-6', [start, ask, toolUse, reply, outcome, ask], started + 15_000);
+  assert.match(String(await guests.takeOut(p.id)), /mid-turn/);
+  f.transcript('s-6', [start, ask, toolUse, reply, outcome, ask, reply, outcome], started + 20_000);
+
+  const out = await guests.takeOut(p.id);
+  assert.equal(typeof out, 'object');
+  if (typeof out === 'string') return;
+  assert.equal(out.session, 's-6');
+  assert.equal(out.info.deskId, g.deskId);
+  assert.match(String(await guests.takeOut(p.id)), /already on its way in/);
+  // Scans that miss it while it quits don't send it home: its desk stays held.
+  await guests.sync([other], new Set());
+  await guests.sync([other], new Set());
+  assert.ok(guests.get(p.id));
+  assert.equal(guests.deskTaken(g.deskId), true);
+
+  // It didn't quit: it's a guest like before.
+  guests.stay(p.id);
+  const again = await guests.takeOut(p.id);
+  assert.equal(typeof again, 'object');
+
+  guests.handOver(p.id);
+  assert.equal(guests.get(p.id), undefined);
+  assert.deepEqual(ev.removed, [p.id]);
+  assert.equal(guests.deskTaken(g.deskId), false);
+  // A scan taken before it quit still lists it: it isn't seated again.
+  await guests.sync([p, other], new Set(['s-6']));
+  assert.equal(guests.get(p.id), undefined);
+  assert.equal(guests.list().length, 1);
+  guests.handOver(p.id);
+  assert.deepEqual(ev.removed, [p.id], 'handing over twice changes nothing');
 });
 
 test('one scan hands each floor the processes in its checkout', async () => {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { open, readdir, readlink, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ClientMsg, GuestInfo, GuestProvider, OutsideProcess, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
@@ -11,7 +11,9 @@ import { DROID_SESSIONS_DIR, DroidSessionReader } from './droid-session.js';
 // their own, in one of the floors' checkouts. The office didn't start them and doesn't own their
 // terminals, so it only watches: every few seconds it lists this user's processes, reads each
 // agent's working directory, and seats the ones working in a floor's checkout at a desk there.
-// Nothing here writes to, signals or otherwise touches those processes.
+// Nothing here writes to, signals or otherwise touches those processes, except stopGuest: when the
+// owner brings a droid guest into the office (Floor.bringIn), its process is asked to quit so an
+// office worker can resume the same session.
 
 const SCAN_MS = 4000;
 /** The session transcript's tail that is read for how a droid guest is doing. */
@@ -188,6 +190,52 @@ export async function scanAgents(officePids: Iterable<number> = []): Promise<Age
     });
   }
   return out;
+}
+
+/** A process's start time as ps writes it (see ProcRow.lstart), or undefined once it's gone. */
+async function processStart(pid: number): Promise<string | undefined> {
+  const out = (await run('ps', ['-o', 'lstart=', '-p', String(pid)])).trim().replace(/\s+/g, ' ');
+  return out || undefined;
+}
+
+export interface StopDeps {
+  start(pid: number): Promise<string | undefined>;
+  signal(pid: number, signal: NodeJS.Signals): void;
+  sleep(ms: number): Promise<void>;
+  timeoutMs: number;
+}
+
+const STOP_DEPS: StopDeps = {
+  start: processStart,
+  signal: (pid, signal) => process.kill(pid, signal),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  timeoutMs: 5000,
+};
+
+/**
+ * Asks a guest's process to quit with SIGTERM, which droid takes as closing its terminal: it saves
+ * its session and gives the terminal back to the shell. Only while ps still says it's the same
+ * process (`id`, see guestId), never a later one given its pid. Resolves to why it didn't quit, or
+ * undefined once it's gone (or was already).
+ */
+export async function stopGuest(pid: number, id: string, deps: Partial<StopDeps> = {}): Promise<string | undefined> {
+  const d = { ...STOP_DEPS, ...deps };
+  const same = async () => {
+    const start = await d.start(pid);
+    return !!start && guestId(pid, start) === id;
+  };
+  if (!(await same())) return undefined;
+  try {
+    d.signal(pid, 'SIGTERM');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return undefined;
+    return `couldn't be asked to quit: ${(err as Error).message}`;
+  }
+  for (let waited = 0; waited < d.timeoutMs; waited += 200) {
+    await d.sleep(200);
+    if (!(await same())) return undefined;
+  }
+  return `didn't quit within ${Math.round(d.timeoutMs / 1000)} s: quit it in its own terminal, or try again`;
 }
 
 /** Where each process works: /proc on Linux, lsof elsewhere (macOS has no /proc). */
@@ -430,8 +478,25 @@ export function guestBanner(info: WorkerInfo, now = Date.now()): string {
     '',
     dim('The office only watches this process: nothing from its terminal is shown here, and nothing'),
     dim('typed here reaches it. To work with it, switch to that terminal. It goes home when it exits.'),
+    '',
+    g.cantBringIn ? dim(`It can't be brought into the office right now: ${g.cantBringIn}.`) : bold('Bring it in (R at its desk) to work with it here: its droid outside quits and this desk resumes the same session.'),
   ];
   return `${lines.join('\r\n')}\r\n`;
+}
+
+/**
+ * Why a guest can't be brought in as one of the office's own workers now, or undefined when it can.
+ * An office worker runs droid in the floor's checkout (or a worktree of its own), so the guest must be
+ * a droid session the office has tied to it, working in that checkout. And it must be between turns:
+ * stopping it mid-turn, or while it asks for permission (which looks the same from here), would cut
+ * that turn off.
+ */
+export function bringInRefusal(g: { provider: GuestProvider; cwd: string }, session: string | undefined, status: WorkerStatus, checkout: string | undefined): string | undefined {
+  if (g.provider !== 'droid') return `the office's workers run Droid, and this is ${PROVIDER_LABEL[g.provider]}`;
+  if (!checkout || g.cwd !== checkout) return `it works in ${g.cwd}, and the office's workers work in the checkout itself (${checkout ?? 'unknown'})`;
+  if (!session) return "the office can't tell which Droid session it's in (another droid works in the same folder), so there's nothing to resume";
+  if (status === 'working') return "it's mid-turn (or asking for permission, which looks the same from here): bring it in once its turn ends";
+  return undefined;
 }
 
 const label = (p: GuestProvider) => PROVIDER_LABEL[p];
@@ -467,6 +532,8 @@ interface Guest {
   proc: AgentProcess;
   /** The transcript as last read, so an unchanged one isn't read again. */
   read?: { file: string; mtime: number; state: TranscriptState };
+  /** The droid session the office has tied to it, as of the last scan. */
+  session?: string;
   /** What was last sent, to tell whether anything changed. */
   sent: string;
   /** Scans in a row that didn't find its process. */
@@ -497,6 +564,14 @@ export interface GuestSeating {
   names(): Iterable<string>;
   /** Names and colors to pick from. */
   pool: { names: readonly string[]; colors: readonly string[] };
+  /** The floor's checkout, where a guest has to work to be brought in (see bringInRefusal). */
+  checkout?: string;
+}
+
+/** A guest on its way into the office (see Guests.takeOut): what its worker starts from. */
+export interface LeavingGuest {
+  info: WorkerInfo;
+  session: string;
 }
 
 /**
@@ -512,6 +587,11 @@ export class Guests {
   private file: string;
   private reader: DroidSessionReader;
   private stopped = false;
+  private checkout?: string;
+  /** Guests being brought in: they keep their desks while their process quits, whatever a scan says. */
+  private leaving = new Set<string>();
+  /** Processes handed over to an office worker: a scan from before they quit doesn't seat them again. */
+  private handed = new Set<string>();
 
   constructor(
     dataDir: string,
@@ -521,6 +601,13 @@ export class Guests {
   ) {
     this.file = path.join(dataDir, 'guests.json');
     this.reader = new DroidSessionReader(sessionsRoot);
+    if (seating.checkout) {
+      try {
+        this.checkout = realpathSync(seating.checkout);
+      } catch {
+        this.checkout = seating.checkout;
+      }
+    }
     try {
       if (existsSync(this.file)) {
         const raw = JSON.parse(readFileSync(this.file, 'utf8'));
@@ -559,6 +646,7 @@ export class Guests {
     if (this.stopped) return;
     const now = new Map(procs.map((p) => [p.id, p]));
     for (const [id, g] of this.guests) {
+      if (this.leaving.has(id)) continue;
       const p = now.get(id);
       if (p && p.cwd === g.proc.cwd) {
         g.proc = p;
@@ -573,7 +661,7 @@ export class Guests {
     }
     const fresh = new Set<string>();
     for (const p of procs) {
-      if (this.guests.has(p.id)) continue;
+      if (this.guests.has(p.id) || this.handed.has(p.id)) continue;
       const g = this.seat(p);
       if (!g) continue;
       this.guests.set(p.id, g);
@@ -652,9 +740,20 @@ export class Guests {
         }
       }
     }
-    const guest: GuestInfo = { pid: proc.pid, tty: proc.tty, provider: proc.provider, cwd: proc.cwd, startedAt: proc.startedAt, seen: state ? 'transcript' : 'process', ...(state && file ? { writtenAt: Math.round(file.mtime) } : {}) };
-    info.guest = guest;
+    g.session = state ? file?.id : undefined;
     const status: WorkerStatus = state?.status ?? 'idle';
+    const cantBringIn = bringInRefusal(proc, g.session, status, this.checkout);
+    const guest: GuestInfo = {
+      pid: proc.pid,
+      tty: proc.tty,
+      provider: proc.provider,
+      cwd: proc.cwd,
+      startedAt: proc.startedAt,
+      seen: state ? 'transcript' : 'process',
+      ...(state && file ? { writtenAt: Math.round(file.mtime) } : {}),
+      ...(cantBringIn ? { cantBringIn } : {}),
+    };
+    info.guest = guest;
     if (status === 'done') {
       const since = Math.round(file!.mtime);
       // Finished before the office saw it (or before a restart, when it was looked at then): nobody is left to tell.
@@ -719,6 +818,49 @@ export class Guests {
 
   detachAll(clientId: string) {
     for (const id of [...this.subscribers.keys()]) this.detach(id, clientId);
+  }
+
+  /**
+   * Starts bringing a guest in (see Floor.bringIn): it keeps its desk while its process quits, and
+   * then either goes (handOver) or stays a guest (stay). Returns what its worker starts from, or why it can't come in.
+   */
+  async takeOut(id: string): Promise<LeavingGuest | string> {
+    const g = this.guests.get(id);
+    if (!g) return 'That guest has gone home';
+    if (this.leaving.has(id)) return `${g.info.name} is already on its way in`;
+    this.leaving.add(id);
+    // The last scan can be seconds old: a turn started since then must not be cut off.
+    let status = g.info.status;
+    if (g.read) {
+      try {
+        const s = await stat(g.read.file);
+        const ends = await readEnds(g.read.file, s.size);
+        status = transcriptState(ends.head, ends.tail, ends.partial).status;
+      } catch {
+        // gone or unreadable: the last scan's word stands
+      }
+    }
+    const why = bringInRefusal(g.proc, g.session, status, this.checkout);
+    if (why || !g.session || this.guests.get(id) !== g) {
+      this.leaving.delete(id);
+      return `${g.info.name} can't be brought in: ${why ?? 'it went home'}`;
+    }
+    return { info: { ...g.info }, session: g.session };
+  }
+
+  /** Bringing it in fell through: it's a guest like before. */
+  stay(id: string) {
+    this.leaving.delete(id);
+  }
+
+  /** Its process quit: it leaves its desk to the office worker that carries on its session. */
+  handOver(id: string) {
+    this.leaving.delete(id);
+    this.handed.add(id);
+    if (!this.guests.delete(id)) return;
+    this.subscribers.delete(id);
+    this.events.remove(id);
+    this.persist();
   }
 
   private persist() {

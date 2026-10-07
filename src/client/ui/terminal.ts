@@ -42,6 +42,12 @@ let openTeammate: (workerId: string) => void = () => {};
 export function onOpenTeammate(fn: (workerId: string) => void) {
   openTeammate = fn;
 }
+/** Brings a guest in from its window (main wires it up, with its confirmation). */
+let bringIn: (workerId: string) => void = () => {};
+
+export function onBringIn(fn: (workerId: string) => void) {
+  bringIn = fn;
+}
 /** Whether we've said, this page load, that Esc now goes to the terminal and how to leave instead. */
 let escHinted = false;
 const listeners = new Set<(msg: ServerMsg) => void>();
@@ -75,12 +81,13 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
+  const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', guest ? {} : { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, closeBtn), team, host);
+  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null, closeBtn), team, host);
   const paintTeam = (w: WorkerInfo) => {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const mates = lead ? store.teamOf(lead.id).filter((s) => s.id !== w.id) : store.teamOf(w.id);
@@ -179,6 +186,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       .join(' · ');
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
+    if (w.guest) {
+      const why = w.guest.cantBringIn;
+      bringInBtn.toggleAttribute('disabled', !!why);
+      bringInBtn.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's workers (R at its desk)";
+    }
     paintTeam(w);
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view
     // renders correctly. Typing here fits the terminal back to this window and reclaims the size.
@@ -286,6 +298,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   smaller.addEventListener('click', () => zoomBy(-1));
   bigger.addEventListener('click', () => zoomBy(1));
   closeBtn.addEventListener('click', () => modal.close());
+  bringInBtn.addEventListener('click', () => bringIn(workerId));
   changesBtn.addEventListener('click', () => {
     onChanges?.();
     modal.close();

@@ -175,6 +175,11 @@ export interface GuestInfo extends OutsideProcess {
   seen: 'transcript' | 'process';
   /** When its transcript was last written (ms), when it has one. */
   writtenAt?: number;
+  /**
+   * Why it can't be brought in as one of the office's own workers right now (see 'guest.bringIn'),
+   * or unset when it can: a droid session the office has tied to it, in the floor's checkout, between turns.
+   */
+  cantBringIn?: string;
 }
 
 /** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
@@ -883,6 +888,11 @@ export type ClientMsg =
   | { t: 'worker.rebuild'; workerId: string; all?: boolean }
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
+  /**
+   * Makes a guest one of the office's own workers (see GuestInfo.cantBringIn): its process outside
+   * the office is asked to quit, and a worker at the same desk, with the same name, resumes its session.
+   */
+  | { t: 'guest.bringIn'; workerId: string }
   /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */
   | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[] }
   /**
