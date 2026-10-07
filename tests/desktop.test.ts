@@ -9,7 +9,7 @@ import { linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
-import { fencedPath, knownDirs, loginShellPath, mergePath } from '../src/desktop/shell-path.ts';
+import { desktopEnv, fencedEnv, knownDirs, loginShellEnv, mergeEnv, mergePath } from '../src/desktop/shell-path.ts';
 import { runAsNode } from '../src/server/workers.ts';
 
 function tmp(t: { after: (fn: () => void) => void }): string {
@@ -32,12 +32,16 @@ async function freePort(): Promise<number> {
   return s.port;
 }
 
-test('the login shell PATH is read from between the markers, whatever the rc files print', () => {
-  assert.equal(fencedPath('Last login: today\nwelcome!\n__DROID_OFFICE_PATH_BEGIN__/a:/b__DROID_OFFICE_PATH_END__\n'), '/a:/b');
-  assert.equal(fencedPath('__DROID_OFFICE_PATH_BEGIN__/old__DROID_OFFICE_PATH_END__ __DROID_OFFICE_PATH_BEGIN__/new__DROID_OFFICE_PATH_END__'), '/new');
-  assert.equal(fencedPath('no markers'), undefined);
-  assert.equal(fencedPath('__DROID_OFFICE_PATH_BEGIN__/a:/b'), undefined);
-  assert.equal(fencedPath('__DROID_OFFICE_PATH_BEGIN____DROID_OFFICE_PATH_END__'), undefined);
+test('the login shell environment is read from between the markers, whatever the rc files print', () => {
+  const B = '__DROID_OFFICE_ENV_BEGIN__';
+  const E = '__DROID_OFFICE_ENV_END__';
+  assert.deepEqual(fencedEnv(`Last login: today\nwelcome!\n${B}PATH=/a:/b\0NOTE=two\nlines\0EQ=a=b\0${E}\n`), { PATH: '/a:/b', NOTE: 'two\nlines', EQ: 'a=b' });
+  assert.deepEqual(fencedEnv(`${B}OLD=1\0${E} ${B}NEW=2\0${E}`), { NEW: '2' });
+  // Not a variable a shell could have exported: dropped.
+  assert.deepEqual(fencedEnv(`${B}=x\0no-equals\0BAD-NAME=1\0OK=\0${E}`), { OK: '' });
+  assert.equal(fencedEnv('no markers'), undefined);
+  assert.equal(fencedEnv(`${B}PATH=/a:/b`), undefined);
+  assert.equal(fencedEnv(`${B}${E}`), undefined);
 });
 
 test('PATHs merge in order, each folder once', () => {
@@ -46,10 +50,29 @@ test('PATHs merge in order, each folder once', () => {
   assert.ok(knownDirs('/home/me').includes('/home/me/.local/bin'));
 });
 
-test('a login shell answers with its PATH, and a missing shell with nothing', async () => {
-  const got = await loginShellPath('/bin/sh');
-  assert.ok(got?.split(':').includes('/bin'), `got ${got}`);
-  assert.equal(await loginShellPath('/no/such/shell'), undefined);
+test("the office gets the login shell's environment over the app's, with PATH merged and a UTF-8 locale", () => {
+  const app = { PATH: '/usr/bin:/bin', HOME: '/home/me', XPC_SERVICE_NAME: 'app', EDITOR: 'nano' };
+  const login = { PATH: '/opt/homebrew/bin:/usr/bin', HOME: '/home/me', JAVA_HOME: '/jdk', EDITOR: 'vim', PWD: '/tmp', OLDPWD: '/', SHLVL: '2', _: '/usr/bin/env' };
+  const env = mergeEnv(app, login, '/home/me');
+  assert.equal(env.JAVA_HOME, '/jdk');
+  assert.equal(env.EDITOR, 'vim');
+  assert.equal(env.XPC_SERVICE_NAME, 'app');
+  for (const k of ['PWD', 'OLDPWD', 'SHLVL', '_']) assert.equal(env[k], undefined, k);
+  assert.ok(env.PATH?.startsWith('/opt/homebrew/bin:/usr/bin:/bin:/home/me/.local/bin:'), env.PATH);
+  assert.equal(env.LANG, 'en_US.UTF-8');
+  assert.equal(mergeEnv({ ...app, LC_ALL: 'de_DE.UTF-8' }, undefined, '/home/me').LANG, undefined);
+  assert.equal(mergeEnv(app, { LANG: 'fr_FR.UTF-8' }, '/home/me').LANG, 'fr_FR.UTF-8');
+  // No login shell to ask: the app's own, still with the usual folders.
+  assert.ok(mergeEnv(app, undefined, '/home/me').PATH?.split(':').includes('/opt/homebrew/bin'));
+});
+
+test('a login shell answers with its environment, and a missing shell with nothing', async () => {
+  const got = await loginShellEnv('/bin/sh');
+  assert.ok(got?.PATH?.split(':').includes('/bin'), `got ${got?.PATH}`);
+  assert.equal(await loginShellEnv('/no/such/shell'), undefined);
+  const env = await desktopEnv({ SHELL: '/bin/sh', PATH: '/usr/bin:/bin', DROID_OFFICE_TEST_MARK: 'kept' });
+  assert.equal(env.DROID_OFFICE_TEST_MARK, 'kept');
+  assert.ok(env.PATH?.split(':').includes('/bin'));
 });
 
 test("the office's own pages stay in the app; other links open in the browser or nowhere", () => {

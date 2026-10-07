@@ -192,10 +192,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --mac --arm64 --publish never -c.mac.identity=null
 
+      # On the Helper binary, as src/desktop/runtime.ts runs it, so this is the signed binary the app uses.
       - name: Start the office on the app's own Electron
         run: |
           app="release/mac-arm64/Droid Office.app"
-          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Droid Office" "$app/Contents/Resources/app/bin/droid-office.js" \
+          ELECTRON_RUN_AS_NODE=1 "$app/Contents/Frameworks/Droid Office Helper.app/Contents/MacOS/Droid Office Helper" "$app/Contents/Resources/app/bin/droid-office.js" \
             --home "$RUNNER_TEMP/office" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
           office=$!
           for _ in $(seq 60); do
