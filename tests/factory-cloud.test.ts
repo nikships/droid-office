@@ -10,7 +10,7 @@ import { HttpError, type FeatureHost } from '../src/server/factory/feature.js';
 import type { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputersState } from '../src/shared/factory-computers.js';
-import { SEND_SETTLE_MS, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
+import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
 import { DESKS } from '../src/shared/layout.js';
 import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -122,8 +122,8 @@ test('shared: a session’s status, and the turn that tells done from not starte
   // Just sent: Factory still says idle with the old count, so it's still working.
   const sent = { sentAt: now - 1000, countAtSend: 2 };
   assert.deepEqual(cloudStatus({ status: 'idle', messageCount: 2 }, sent, now), { status: 'working', turn: sent });
-  // Then the count moved, or it was seen running, or long enough went by: done.
-  assert.deepEqual(cloudStatus({ status: 'idle', messageCount: 4 }, sent, now), { status: 'done', turn: {} });
+  // The count moving is not enough (the sent message itself appends to it): seen running, or long enough, is done.
+  assert.deepEqual(cloudStatus({ status: 'idle', messageCount: 4 }, sent, now), { status: 'working', turn: sent });
   assert.deepEqual(cloudStatus({ status: 'idle', messageCount: 2 }, { ...sent, seenBusy: true }, now).status, 'done');
   assert.equal(cloudStatus({ status: 'idle', messageCount: 2 }, sent, now + SEND_SETTLE_MS).status, 'done');
   // Someone typed to it in Factory's web app: seen running, then idle, is done too.
@@ -161,6 +161,15 @@ test('shared: what it is doing, from the newest messages', () => {
     'Hi there !',
   );
   assert.equal(latestReply(messages), undefined);
+  assert.equal(
+    answeredByAssistant([
+      { role: 'assistant', content: [] },
+      { role: 'user', content: [] },
+    ]),
+    true,
+  );
+  assert.equal(answeredByAssistant([{ role: 'user', content: [] }]), false);
+  assert.equal(answeredByAssistant([]), false);
 });
 
 test('hire: makes the session on the computer, seats the worker and sends its first prompt with its pictures', async (t) => {
@@ -258,7 +267,8 @@ test('poll: working with its latest tool call acted out, then done with its repl
   assert.equal(now.title, 'Say hi');
   assert.ok(r.feature.state().fetchedAt > 0);
 
-  s = () => session('idle', 5);
+  // The count needn't move between the last working read and the idle one: the reply is read anyway.
+  s = () => session('idle', 3);
   tail = [{ role: 'assistant', content: [{ type: 'text', text: 'Hi there! All done.' }] }];
   r.clock(5000);
   await r.feature.poll(f.api);
@@ -297,6 +307,15 @@ test('poll: a deleted session or computer is a clear error at the desk, and a fa
   let computers = computersState();
   const r = rig(t, f, { computers: () => computers });
   const w = await r.feature.hire(f.api, hireBody({ prompt: '' }), 'Nik');
+
+  // Factory 404s a session for a moment right after it was made: not broken yet, just a failed read.
+  gone = true;
+  r.feature.recheck(w.id);
+  await assert.rejects(r.feature.poll(f.api), /not found/i);
+  assert.equal(r.cloud.get(w.id)!.status, 'idle');
+  assert.equal(r.cloud.get(w.id)!.cloud?.error, undefined);
+  gone = false;
+
   await r.feature.poll(f.api);
   assert.equal(r.cloud.get(w.id)!.status, 'idle');
 
@@ -321,6 +340,7 @@ test('poll: a deleted session or computer is a clear error at the desk, and a fa
   now = r.cloud.get(w.id)!;
   assert.equal(now.status, 'idle');
   assert.equal(now.cloud?.error, undefined);
+  assert.equal(now.activity?.startsWith('☁ '), false, 'the error line on its card goes with the error');
 
   computers = computersState([MAC]);
   r.feature.recheck(w.id);

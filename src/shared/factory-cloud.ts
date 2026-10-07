@@ -119,12 +119,19 @@ export const SEND_SETTLE_MS = 90_000;
 export function cloudStatus(session: { status: string; messageCount?: number }, turn: CloudTurn, now: number): { status?: WorkerStatus; turn: CloudTurn } {
   if (session.status === 'running' || session.status === 'pending') return { status: 'working', turn: { ...turn, seenBusy: true } };
   if (turn.sentAt !== undefined) {
-    const moved = (session.messageCount ?? 0) > (turn.countAtSend ?? 0);
-    if (turn.seenBusy || moved || now - turn.sentAt >= SEND_SETTLE_MS) return { status: 'done', turn: {} };
+    // The count moving is not enough: the sent message itself appends to it. Done comes from the
+    // session being seen busy, a reply in the transcript (the caller checks), or the settle time.
+    if (turn.seenBusy || now - turn.sentAt >= SEND_SETTLE_MS) return { status: 'done', turn: {} };
     return { status: 'working', turn };
   }
   if (turn.seenBusy) return { status: 'done', turn: {} };
   return { turn };
+}
+
+/** The newest message is an assistant's (its reply landed): the turn it answers is over, even if the session was never seen running. */
+export function answeredByAssistant(messages: readonly unknown[]): boolean {
+  const m = messages.find((x) => x && typeof x === 'object') as { role?: unknown } | undefined;
+  return m?.role === 'assistant';
 }
 
 /** A content block of a message as GET /sessions/{id}/messages has it. */

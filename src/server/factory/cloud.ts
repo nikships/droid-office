@@ -1,4 +1,4 @@
-import { canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn } from '../../shared/factory-cloud.js';
+import { answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn } from '../../shared/factory-cloud.js';
 import type { FactoryComputersState } from '../../shared/factory-computers.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
 import { isAgentEffort } from '../../shared/protocol.js';
@@ -22,6 +22,8 @@ const TAIL = 8;
 const MAX_IMAGES = 10;
 const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
+/** Factory 404s a session it just made for a moment: this long before one counts as really gone. */
+const NEW_SESSION_GRACE_MS = 3 * 60_000;
 
 const clip = (s: string, n: number) => {
   const one = s.replace(/\s+/g, ' ').trim();
@@ -298,17 +300,22 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     try {
       s = await api.get<Session>(`/sessions/${sid}`);
     } catch (err) {
-      if (err instanceof FactoryError && err.status === 404) return this.broken(floor, id, 'its session is gone from Factory', now);
+      // Factory 404s a session for a little while right after it was made: only one the office has
+      // read before (or has waited out) counts as gone.
+      if (err instanceof FactoryError && err.status === 404 && (floor.cloud.seen(id) || now - info.createdAt > NEW_SESSION_GRACE_MS)) return this.broken(floor, id, 'its session is gone from Factory', now);
       throw err;
     }
     const turn: CloudTurn = floor.cloud.turn(id) ?? {};
-    const mapped = cloudStatus({ status: String(s?.status ?? ''), messageCount: Number(s?.messageCount) || 0 }, turn, now);
+    let mapped = cloudStatus({ status: String(s?.status ?? ''), messageCount: Number(s?.messageCount) || 0 }, turn, now);
     const count = Number(s?.messageCount) || 0;
     const updatedAt = Number(s?.updatedAt) || 0;
     const seen = floor.cloud.seen(id);
     const moved = !seen || seen.count !== count || seen.updatedAt !== updatedAt;
     let messages: unknown[] | undefined;
-    if (moved && count > 0) {
+    // The tail is read when the session moved, when a fresh `done` needs its reply, or while a turn
+    // the office sent is open and idle: its answer may have landed between two reads of a fast turn.
+    const watching = mapped.status === 'working' && turn.sentAt !== undefined && s?.status === 'idle';
+    if (count > 0 && (moved || watching || (mapped.status === 'done' && info.status !== 'done'))) {
       try {
         const r = await api.get<{ messages?: unknown[] }>(`/sessions/${sid}/messages`, { limit: TAIL });
         messages = Array.isArray(r?.messages) ? r.messages : undefined;
@@ -316,9 +323,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         // The status is enough to go on: what it's doing shows at the next read.
       }
     }
+    if (watching && messages && answeredByAssistant(messages)) mapped = { status: 'done', turn: {} };
     const next: WorkerStatus | undefined = mapped.status ?? (info.status === 'exited' || info.status === 'offline' ? 'idle' : undefined);
     floor.cloud.update(id, (i) => {
-      if (i.cloud?.error) i.cloud = { ...i.cloud, error: undefined };
+      if (i.cloud?.error) {
+        i.cloud = { ...i.cloud, error: undefined };
+        if (i.activity?.startsWith('☁ ')) i.activity = i.task?.summary ?? 'Waiting for a prompt';
+      }
       if (computer && i.cloud && computer.name !== i.cloud.computerName) i.cloud = { ...i.cloud, computerName: computer.name };
       const model = s?.sessionSettings?.model;
       const effort = s?.sessionSettings?.reasoningEffort;
