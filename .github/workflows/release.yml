@@ -6,8 +6,10 @@ name: Release
 # version, package.json's major.minor plus the number of commits on main (v0.1.68, v0.1.69, ...),
 # so the app always sees it as newer; bump package.json for a new minor.
 #
-# Pull requests get the same build, tests, a real install of the packed release through install.sh
-# and an unsigned build of the Mac app, but publish nothing.
+# The Android app (android/) is built and tested alongside, and its APK is attached to the release.
+#
+# Pull requests get the same build, tests, a real install of the packed release through install.sh,
+# an unsigned build of the Mac app and the Android APK, but publish nothing.
 
 on:
   push:
@@ -28,6 +30,7 @@ on:
       - '.gitignore'
       - 'electron-builder.yml'
       - 'build/**'
+      - 'android/**'
       - '.github/workflows/release.yml'
   pull_request:
     paths:
@@ -46,6 +49,7 @@ on:
       - '.gitignore'
       - 'electron-builder.yml'
       - 'build/**'
+      - 'android/**'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -232,8 +236,73 @@ jobs:
             release/*.blockmap
             release/latest-mac.yml
 
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the version counts the commits on main
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Set the release version
+        id: version
+        working-directory: .
+        run: |
+          count="$(git rev-list --count HEAD)"
+          version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$count"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests and lint
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+
+      # Signed with the repository's release keystore (the ANDROID_KEYSTORE_* and ANDROID_KEY_*
+      # secrets), so each release installs over the last. A pull request from a fork gets no secrets:
+      # its APK is signed with a debug key this runner just made, new each run, which installs but
+      # never as an update over a release.
+      - name: Build the release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          fi
+          ./gradlew --no-daemon assembleRelease \
+            -PofficeVersion=${{ steps.version.outputs.version }} -PofficeVersionCode=${{ steps.version.outputs.code }}
+          mkdir -p out
+          apk="out/Droid-Office-${{ steps.version.outputs.version }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$apk"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
+          certs="$("$apksigner" verify --print-certs "$apk")"
+          echo "$certs" | grep -E 'certificate (DN|SHA-256)'
+          # With the release keystore given, a debug-signed APK would be a release that can't update.
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && echo "$certs" | grep -q 'CN=Android Debug'; then
+            echo "::error::The APK is debug-signed even though the release keystore was given"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: android/out/*.apk
+          if-no-files-found: error
+
   publish:
-    needs: [release, mac]
+    needs: [release, mac, android]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

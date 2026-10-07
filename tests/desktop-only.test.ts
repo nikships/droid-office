@@ -5,13 +5,14 @@ import { join } from 'node:path';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 
-test('the release builds only the browser client, the server and the Mac app', () => {
+test('the release builds the browser client, the server, the Mac app and the Android app in android/', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.build, 'npm run build:client && npm run build:server && npm run build:desktop');
   assert.deepEqual(pkg.files, ['bin', 'dist']);
   assert.doesNotMatch(JSON.stringify(pkg), /@iwsdk|bonjour|three-mesh-bvh|dev:runtime|build:android|test:vr|tools\/vr/);
   const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.doesNotMatch(workflow, /setup-java|setup-android|OFFICE_XR|\.apk|native\//);
+  assert.doesNotMatch(workflow, /setup-android|OFFICE_XR|native\//);
+  assert.match(workflow, /working-directory: android\n/);
 });
 
 test('removed clients, discovery, and emulator entry points cannot ship', () => {

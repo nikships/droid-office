@@ -79,11 +79,22 @@ irm https://raw.githubusercontent.com/nikships/droid-office/main/install.ps1 | i
 
 That installs the latest release and starts the office. It asks which folder your projects are in and lets you pick your first one. It uses your existing checkouts where they are and never clones anything. There is no login: your browser on the same machine opens straight in, and the terminal prints a link and QR code for another browser on your Wi-Fi. Run the same line again any time to update.
 
+## Your office in your pocket
+
+**Droid Office for Android** keeps you at your desks when you're away from them. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
+
+<p>
+  <img src="android/docs/home.jpg" alt="The Android app listing the office's workers by floor" width="32%">
+  <img src="android/docs/worker.jpg" alt="A worker's live terminal on the phone, with a composer and quick keys" width="32%">
+  <img src="android/docs/notification.jpg" alt="Phone notifications that a worker is done and another needs you, with a reply box" width="32%">
+</p>
+
 ## Take it further
 
 | Guide | What's in it |
 | --- | --- |
 | [The full guide](docs/guide.md) | Every feature, controls, running it on AWS in one command or on your own server, and how it all works |
+| [Droid Office for Android](android/README.md) | Installing and pairing the phone app, how it connects over Wi-Fi and Tailscale, and building it |
 
 ## Credits and license
 

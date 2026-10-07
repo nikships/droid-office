@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  An office runs on the owner's own laptop and serves plain HTTP on whatever address it has on the
+  Wi-Fi (192.168.x.y, 10.x.y.z) or on the tailnet (100.x.y.z, my-mac.tail1234.ts.net). Those
+  addresses aren't known when the app is built, and a network security config can only name
+  domains, not address ranges, so cleartext has to be permitted here.
+
+  The app narrows it in code instead: net/CleartextGuard.kt checks the address every plain-HTTP and
+  ws:// connection actually reached and refuses it unless it is loopback, link-local, RFC 1918,
+  Tailscale's 100.64.0.0/10 or an IPv6 unique-local address. Anything on the public internet must be
+  HTTPS. Only the system's certificate authorities are trusted; user-installed ones are not.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
