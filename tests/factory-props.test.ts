@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { BEANBAGS, DESK_SIZE, DESKS, FLOOR, MACHINE_MONITOR, STATIONS } from '../src/shared/layout';
+import { BEANBAGS, COMPUTE_WALL, DESK_SIZE, DESKS, EXIT_DOOR, FLOOR, STATIONS, WALL_HEIGHT, WINDOWS } from '../src/shared/layout';
 import type { DressingKit } from '../src/client/world/factory-floor';
 import { DROID_RACK, placeFactoryProps, ROBOT_CELL } from '../src/client/world/factory-props';
 import type { Collider } from '../src/client/world/office';
@@ -33,10 +33,34 @@ test('the props build without their GLBs, the DOM or WebGL, and wait for the mod
   assert.equal(k.colliders.length, 2);
 });
 
-test('the rack stands against the west wall under the machine monitor', () => {
+test('the rack stands against the west wall under the fleet half of the compute wall', () => {
+  const CW = COMPUTE_WALL;
+  // Facing +x, the machine's screen is the wall's south (+z) end; the fleet's is the rest.
+  const fleet = { minZ: CW.z - CW.width / 2, maxZ: CW.z + CW.width / 2 - CW.machineWidth - CW.gap };
   assert.equal(DROID_RACK.minX, FLOOR.minX);
-  assert.ok(DROID_RACK.minZ < MACHINE_MONITOR.z && MACHINE_MONITOR.z < DROID_RACK.maxZ);
-  assert.ok(DROID_RACK.top < MACHINE_MONITOR.y - MACHINE_MONITOR.height / 2, 'the cubes stay under the monitor');
+  assert.ok(DROID_RACK.minZ >= fleet.minZ && DROID_RACK.maxZ <= fleet.maxZ, 'the rack sits under the fleet screen');
+  assert.ok(DROID_RACK.top < CW.y - CW.height / 2, 'the cubes stay under the screen');
+  // The kitchen counter and fridge start at z 11.7.
+  assert.ok(DROID_RACK.maxZ < 11.7);
+});
+
+test('the compute wall is on the west wall, clear of its windows, the exit door, the ceiling and the kitchen', () => {
+  const CW = COMPUTE_WALL;
+  const minZ = CW.z - CW.width / 2 - 0.08;
+  const maxZ = CW.z + CW.width / 2 + 0.08;
+  const bottom = CW.y - CW.height / 2 - 0.08;
+  const top = CW.y + CW.height / 2 + 0.08;
+  assert.equal(CW.x, FLOOR.minX);
+  for (const w of WINDOWS.filter((o) => o.wall === 'west')) {
+    assert.ok(maxZ <= w.u - w.width / 2 || minZ >= w.u + w.width / 2, `clear of the window at ${w.u}`);
+  }
+  // The door and the EXIT sign over it, which reaches about 3.1 m.
+  assert.ok(minZ > EXIT_DOOR.u + EXIT_DOOR.width / 2 + 0.3, 'clear of the exit door and its sign');
+  assert.ok(top < WALL_HEIGHT - 1, 'well under the ceiling');
+  assert.ok(maxZ < FLOOR.maxZ, 'inside the south wall');
+  // The counter top is 1.03 m high and starts at x -17, so the wall's screen is above and behind it.
+  assert.ok(bottom > 1.03);
+  assert.ok(CW.machineWidth + CW.gap < CW.width / 2, 'the fleet gets the bigger screen');
 });
 
 test('neither the rack nor the robot cell sits on a desk, a bean bag or a kiosk', () => {

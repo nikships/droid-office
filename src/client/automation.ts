@@ -23,7 +23,7 @@ export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'rid
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
-const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'services', 'queue', 'ci']);
+const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'services', 'queue', 'ci', 'computers']);
 /** Interactables that aren't a place to go to by name: there are many of them, or they move. */
 const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'station', 'seat', 'decor', 'pole']);
 
@@ -33,6 +33,7 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   services: 'Services board',
   queue: 'Task queue board',
   ci: 'CI automations board',
+  computers: 'Compute wall',
   tv: 'Office TV',
   coffee: 'Coffee machine',
   smoke: 'Ashtray on the balcony',

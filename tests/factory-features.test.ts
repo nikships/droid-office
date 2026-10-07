@@ -4,12 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FactoryApi } from '../src/server/factory/api.js';
-import { ComputersFeature } from '../src/server/factory/computers.js';
 import type { FeatureHost } from '../src/server/factory/feature.js';
 import { mountFactory } from '../src/server/factory/index.js';
 import { SessionsFeature } from '../src/server/factory/sessions.js';
 import { WikiFeature } from '../src/server/factory/wiki.js';
-import { computerOf, metricOf, metricsOf, METRICS_HISTORY } from '../src/shared/factory-computers.js';
+import { computerOf, metricOf } from '../src/shared/factory-computers.js';
 import { ciRunOf, workflowOf } from '../src/shared/factory-ci.js';
 import { SESSION_TITLE_MAX, sessionOf } from '../src/shared/factory-sessions.js';
 import { wikiRunOf } from '../src/shared/factory-wiki.js';
@@ -67,67 +66,7 @@ const COMPUTERS = {
   ],
 };
 
-test('computers: the list, providers and each managed computer’s metrics, read again only once they’re stale', async () => {
-  let now = Date.parse('2026-10-07T12:00:00Z');
-  let metricsFail = false;
-  const f = factory({
-    '/api/v0/computers': () => json(200, COMPUTERS),
-    '/api/v0/computers/providers': () => json(200, { providers: ['e2b', 7] }),
-    '/api/v0/computers/orb-id/metrics': () => (metricsFail ? json(503, { detail: 'metrics down' }) : json(200, [sample('2026-10-07T11:55:00Z', 20), sample('2026-10-07T11:50:00Z', 10)])),
-    '/api/v0/computers/mac-id/metrics': () => json(400, { detail: 'Metrics are not supported for BYOM computers' }),
-  });
-  const h = host();
-  const feature = new ComputersFeature(h, () => now);
-  assert.equal(feature.key, 'computers');
-  await feature.poll(f.api);
-  const s = feature.state();
-  assert.deepEqual(
-    s.items.map((c) => [c.name, c.managed]),
-    [
-      ['orb', true],
-      ['macbook', false],
-    ],
-  );
-  assert.ok(!JSON.stringify(s).includes('relay.example'), 'no relay URLs or keys in the slice');
-  assert.deepEqual(s.items[0].provisioningSteps, [{ id: 'create-computer', name: 'Creating computer', status: 'completed', startedAt: 1, completedAt: 2 }]);
-  assert.deepEqual(s.providers, ['e2b']);
-  assert.deepEqual(Object.keys(s.metrics), ['orb-id'], 'only managed computers have metrics');
-  assert.equal(s.metrics['orb-id'].latest?.cpuPct, 20);
-  assert.deepEqual(
-    s.metrics['orb-id'].history.map((m) => m.cpuPct),
-    [10, 20],
-  );
-  assert.equal(s.fetchedAt, now);
-  assert.ok(!f.seen.some((p) => p.includes('mac-id')), 'BYOM metrics are never asked for');
-  assert.match(f.seen.find((p) => p.includes('orb-id')) ?? '', /start=2026-10-07T10%3A00%3A00/);
-  assert.ok(h.changes() >= 1);
-  assert.ok(!feature.busy());
-
-  const asked = f.seen.length;
-  now += 60_000;
-  await feature.poll(f.api);
-  assert.deepEqual(f.seen.slice(asked), ['/api/v0/computers'], 'metrics and providers are still fresh');
-
-  now += 3 * 60_000;
-  metricsFail = true;
-  await feature.poll(f.api);
-  const m = feature.state().metrics['orb-id'];
-  assert.equal(m.latest?.cpuPct, 20, 'a failed read keeps the last samples');
-  assert.match(m.error ?? '', /metrics down/);
-
-  const route = feature.routes.find((r) => r.path === '/:id/metrics')!;
-  metricsFail = false;
-  const answer = (await route.handle({ api: f.api, params: { id: 'orb-id' }, query: new URLSearchParams('hours=48') } as never)) as { samples: unknown[] };
-  assert.equal(answer.samples.length, 2);
-  await assert.rejects(() => Promise.resolve(route.handle({ api: f.api, params: { id: 'orb-id' }, query: new URLSearchParams('hours=500') } as never)), /hours is 1 to 96/);
-
-  const provisioning = factory({ '/api/v0/computers': () => json(200, { computers: [{ id: 'n', name: 'new', providerType: 'e2b', status: 'provisioning', createdAt: 1 }] }), '/api/v0/computers/n/metrics': () => json(200, []) });
-  await feature.poll(provisioning.api);
-  assert.ok(feature.busy(), 'a computer provisioning polls fast');
-  assert.equal(feature.state().metrics.n.latest, undefined, 'an asleep computer has no latest sample');
-  feature.reset();
-  assert.deepEqual(feature.state().items, []);
-});
+// The computers feature has its own tests: tests/factory-computers.test.ts.
 
 test('sessions: the newest page, with titles cut, and the detail route with credits', async () => {
   const long = 'x'.repeat(500);
@@ -198,11 +137,6 @@ test('the shared shapes skip what isn’t there', () => {
   assert.deepEqual(computerOf({ id: 'a' }), { id: 'a', name: 'a', providerType: '', managed: true, status: 'active', createdAt: 0 });
   assert.equal(metricOf({ timestamp: 'nope' }), undefined);
   assert.equal(metricOf(5), undefined);
-  const many = Array.from({ length: 40 }, (_, i) => sample(new Date(Date.UTC(2026, 9, 7, 0, i * 5)).toISOString(), i));
-  assert.equal(metricsOf(many, 1).history.length, METRICS_HISTORY);
-  assert.equal(metricsOf(many, 1).latest?.cpuPct, 39);
-  assert.deepEqual(metricsOf('nope', 1), { history: [], fetchedAt: 1 });
-  assert.deepEqual(metricsOf(many, 1, 0).history, []);
   assert.equal(sessionOf(null), undefined);
   assert.equal(sessionOf({ sessionId: 'x' })?.status, 'idle');
   assert.equal(workflowOf('x'), undefined);

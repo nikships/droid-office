@@ -217,11 +217,12 @@ export const BOARDS = {
 /** The big TV on the east wall, showing its idle screen. */
 export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 } as const;
 /**
- * The monitor on the west wall, between the first two windows from the north (the ladder has the
- * span between the middle two) and facing the desks: how busy the office's machine is, and how many
- * workers it runs of the most it takes.
+ * The compute wall: a big screen on the west wall between the exit door and the kitchen corner,
+ * facing into the room. The office's own machine is on its left `machineWidth` (how busy it is, and
+ * how many workers it runs of the most it takes), then a `gap` of bezel, then every Factory Droid
+ * Computer. Its bottom clears the Droid Computer rack under it; its north edge clears the door's EXIT sign.
  */
-export const MACHINE_MONITOR = { x: FLOOR.minX, y: 2.2, z: -6, width: 2.3, height: 1.3 } as const;
+export const COMPUTE_WALL = { x: FLOOR.minX, y: 2.45, z: 10.15, width: 4.8, height: 2.6, machineWidth: 1.7, gap: 0.1 } as const;
 /** The lounge jukebox, against the east wall south of the TV, facing into the room. `y` is its speaker. */
 export const JUKEBOX = { x: FLOOR.maxX - 0.42, y: 0.75, z: 5.4, width: 1.3, depth: 0.72, height: 1.85 } as const;
 /** The arcade cabinet, against the east wall between the jukebox and the loft, facing into the room. `width` runs along the wall. */
@@ -243,7 +244,6 @@ export const GONG = { x: 11.8, z: FLOOR.minZ + 0.75, width: 1.9, height: 2.45 } 
 export const PLANTS: readonly (readonly [x: number, z: number, scale: number])[] = [
   [-17.2, -12.2, 1.4],
   [17.2, 12.2, 1.3],
-  [-17.2, 8.5, 1.2],
   [-6, 0, 1],
   [3.5, 0, 0.9],
   [8.5, 5, 1.1],
