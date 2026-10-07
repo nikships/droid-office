@@ -149,7 +149,7 @@ private fun Feature(icon: ImageVector, title: String, body: String, index: Int) 
 /** A terminal line typing itself out: what pairing gets you, in the office's own voice. */
 @Composable
 private fun TypedLine() {
-    val full = "\$ office-workers hire --prompt \"fix the flaky login test\""
+    val full = "\$ office-workers hire --title \"Fix the flaky login test\""
     var n by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         delay(600)
