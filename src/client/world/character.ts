@@ -8,7 +8,8 @@ import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
-import { Muzzle, disposeGun, magnum } from './gun';
+import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
+import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 
@@ -338,6 +339,9 @@ export function boxOfStuff(): THREE.Group {
 
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
+const q1 = new THREE.Quaternion();
+/** Where a person's fist holds the gun's grip, at the end of the arm. */
+const PERSON_GUN_MOUNT = new THREE.Vector3(0, -0.38, 0);
 
 // ---- Factory crew kit ---------------------------------------------------------------------------
 // Everyone in the building is Factory crew: an orange lanyard and an ID card, a pinwheel patch on
@@ -598,10 +602,10 @@ export class Person {
    */
   private golf: { swing: THREE.Group; back: number; want: number; top: number; swingT: number; autoT: number; power: number } | null = null;
   /**
-   * A .44 Magnum in the right fist (see setGun): the prop, its muzzle flash, how far into the draw
-   * (0–1), and seconds into the shot's recoil, or -1.
+   * A .44 Magnum in the right fist (see setGunPose): where the fist holds it, the pivot it spins
+   * round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
-  private gun: { prop: THREE.Group; muzzle: Muzzle; draw: number; fireT: number } | null = null;
+  private gun: { mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
   private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
   constructor(name: string, color: string, look: Look) {
@@ -1191,33 +1195,46 @@ export class Person {
     this.head.rotation.set(0.15 * pose.crouch, 0, 0);
   }
 
-  /** A .44 Magnum in the right fist, or back in its holster. The arm swings up to aim as it draws. */
-  setGun(on: boolean) {
-    if (on === !!this.gun) return;
-    if (!on) {
-      const { prop } = this.gun!;
-      disposeGun(prop);
+  /**
+   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered, mid-trick), or away in
+   * its holster (null). The arm swings up to aim as it draws.
+   */
+  setGunPose(pose: Readonly<GunPose> | null) {
+    if (!pose) {
+      if (!this.gun) return;
+      disposeGun(this.gun.prop);
+      this.gun.mount.removeFromParent();
       this.gun = null;
       this.armL.rotation.set(0, 0, 0);
+      this.finger.visible = this.emoting?.emote.id === 'point';
       return;
     }
-    const prop = magnum();
-    prop.position.set(0, -0.38, 0);
+    if (this.gun) {
+      this.gun.pose = pose;
+      return;
+    }
+    const mount = new THREE.Group();
+    mount.position.copy(PERSON_GUN_MOUNT);
     // The muzzle down the arm, out of the fist: aiming the arm aims the gun.
-    prop.rotation.x = Math.PI / 2;
-    prop.scale.setScalar(0.01);
+    mount.rotation.x = Math.PI / 2;
+    // The wrist turns the gun round the grip; the pivot spins it on the trigger finger.
+    const wrist = new THREE.Group();
+    const pivot = new THREE.Group();
+    pivot.position.copy(SPIN_AT);
+    const prop = magnum();
+    prop.position.copy(SPIN_AT).negate();
     const muzzle = new Muzzle();
     prop.add(muzzle.group);
-    this.armL.add(prop);
-    this.gun = { prop, muzzle, draw: 0, fireT: -1 };
+    pivot.add(prop);
+    wrist.add(pivot);
+    mount.add(wrist);
+    this.armL.add(mount);
+    this.gun = { mount, wrist, pivot, prop, muzzle, pose };
   }
 
-  /** Fires it: a flash at the muzzle and one shell of recoil up the arm. */
+  /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
   fire() {
-    const g = this.gun;
-    if (!g) return;
-    g.muzzle.fire();
-    g.fireT = 0;
+    this.gun?.muzzle.fire();
   }
 
   /** Where the gun's muzzle is, or null with the gun holstered. */
@@ -1226,20 +1243,38 @@ export class Person {
     return this.gun.muzzle.group.localToWorld(out.set(0, 0, 0.12));
   }
 
-  /** The draw, the aim and the recoil, over whatever the right arm was doing. */
+  /**
+   * The gun's pose over whatever the right arm was doing: the hand's place swings the arm (up,
+   * and across the body), its turn is the wrist's, and the gun spins, turns and flies off the
+   * fist as in first person. Holstered, the arm hangs and the gun slips into the hip.
+   */
   private gunStep(dt: number) {
     const g = this.gun!;
-    g.draw = Math.min(1, g.draw + dt / 0.18);
-    const e = 1 - (1 - g.draw) ** 3;
-    g.prop.scale.setScalar(Math.max(0.01, e));
-    let kick = 0;
-    if (g.fireT >= 0) {
-      g.fireT += dt;
-      kick = Math.max(0, 1 - g.fireT / 0.22);
-      if (g.fireT >= 0.22) g.fireT = -1;
+    const p = g.pose;
+    const out = p.out;
+    const lerp = THREE.MathUtils.lerp;
+    // Forward is +z, so the character's right arm is the one on -x (armL), as in reach.
+    const arm = this.armL;
+    arm.rotation.x = lerp(arm.rotation.x, -1.55 - p.y * 2.6 - p.z * 1.6 - p.kick * 0.55, out);
+    arm.rotation.z = lerp(arm.rotation.z, 0.12 - p.x * 2.4 + p.z * 1.8, out);
+    arm.rotation.y = 0;
+    g.prop.scale.setScalar(THREE.MathUtils.smoothstep(out, 0.02, 0.3) || 0.001);
+    g.wrist.rotation.set(-p.pitch, p.yaw, -p.roll);
+    g.mount.position.copy(PERSON_GUN_MOUNT);
+    g.mount.position.y -= 0.035 * p.finger;
+    if (p.lift) g.mount.position.add(v1.set(0, p.lift * 1.7, 0).applyQuaternion(q1.copy(arm.quaternion).invert()));
+    g.pivot.rotation.set(p.spin, p.turn, p.tilt);
+    setCylinder(g.prop, p.crane, p.cylinder);
+    this.finger.visible = p.finger > 0.5;
+    // The other hand comes over to spin the cylinder.
+    if (p.left > 0) {
+      this.armR.rotation.x = lerp(this.armR.rotation.x, -1.45 - p.palm * 0.12, p.left);
+      this.armR.rotation.z = lerp(this.armR.rotation.z, -0.6, p.left);
     }
-    this.armL.rotation.x = THREE.MathUtils.lerp(this.armL.rotation.x, -1.55 - kick * 0.55, e);
-    this.armL.rotation.z = THREE.MathUtils.lerp(this.armL.rotation.z, 0.12, e);
+    // Looking down at it while it's brought in close.
+    const look = THREE.MathUtils.clamp(p.z / 0.1, 0, 1.6);
+    this.head.rotation.x += 0.22 * look;
+    this.head.rotation.y -= 0.3 * look;
     g.muzzle.update(dt);
   }
 

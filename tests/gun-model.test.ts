@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { disposeGun, GUN_LEN, magnum, MUZZLE_AT } from '../src/client/world/gun';
+import { disposeGun, GUN_LEN, magnum, MUZZLE_AT, setCylinder } from '../src/client/world/gun';
 
 function hits(gun: THREE.Group, origin: THREE.Vector3, direction: THREE.Vector3) {
   gun.updateMatrixWorld(true);
@@ -52,13 +52,15 @@ test('up is +Y and back is -Z: sights on top, hammer behind the grip, grip below
   disposeGun(gun);
 });
 
-test('the complete gun is a finite, compact model with four opaque material batches', () => {
+test('the complete gun is a finite, compact model: four static batches and a loaded cylinder on its crane', () => {
   const gun = magnum();
   let triangles = 0;
   let meshes = 0;
+  const materials = new Set<THREE.Material>();
   gun.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     meshes++;
+    materials.add(object.material);
     assert.ok(object.material instanceof THREE.MeshToonMaterial);
     assert.equal(object.material.transparent, false);
     assert.equal(object.material.map, null, 'the gun introduces no texture uploads');
@@ -71,11 +73,35 @@ test('the complete gun is a finite, compact model with four opaque material batc
       assert.ok(length > 0.99 && length < 1.01, 'every surface has a valid unit normal');
     }
   });
-  assert.equal(meshes, 4);
-  assert.ok(triangles <= 1200, 'the shared close-up model remains inexpensive to render');
+  assert.equal(meshes, 8, 'four static batches, the crane arm, and the cylinder, its brass and its chambers');
+  assert.equal(materials.size, 5, 'steel, frame, walnut, dark details and brass');
+  assert.ok(triangles <= 1400, 'the shared close-up model remains inexpensive to render');
   const size = new THREE.Box3().setFromObject(gun).getSize(new THREE.Vector3());
   assert.ok(size.x < 0.07 && size.y < 0.21 && size.z < 0.35, 'the model is in meters without a hidden scale or rotation');
 
+  disposeGun(gun);
+});
+
+test('the cylinder swings out to the gun’s left on its crane, clear of the frame, and turns on its own axis', () => {
+  const gun = magnum();
+  const drum = gun.getObjectByName('gun-drum')!;
+  const at = () => {
+    gun.updateMatrixWorld(true);
+    return drum.getWorldPosition(new THREE.Vector3());
+  };
+  const shut = at();
+  assert.ok(Math.abs(shut.x) < 1e-6 && Math.abs(shut.y - (MUZZLE_AT.y - 0.026)) < 1e-6, 'shut, it sits in the frame’s window under the top strap');
+  setCylinder(gun, 1, 0);
+  const open = at();
+  assert.ok(open.x > 0.042, 'out to the left (+X), past the frame’s side');
+  assert.ok(open.y < shut.y, 'and down, the way it falls out when canted');
+  assert.ok(Math.abs(open.z - shut.z) < 1e-9, 'the crane hinges along the bore, so it does not slide');
+  setCylinder(gun, 1, Math.PI / 3);
+  assert.ok(at().distanceTo(open) < 1e-9, 'turning it leaves its axis where it is');
+  const box = new THREE.Box3().setFromObject(gun.getObjectByName('gun-brass')!);
+  assert.ok(box.max.z < shut.z - 0.03, 'the brass case heads are on its back face');
+  setCylinder(gun, 0, 0);
+  assert.ok(at().distanceTo(shut) < 1e-9, 'and it closes back exactly where it was');
   disposeGun(gun);
 });
 
@@ -87,20 +113,29 @@ test('disposing one gun frees its resources without disposing another holder gun
   let firstGeometryDisposals = 0;
   let firstMaterialDisposals = 0;
   let otherDisposals = 0;
-  for (const child of first.children) {
-    const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>;
+  const meshesOf = (gun: THREE.Group) => {
+    const out: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = [];
+    gun.traverse((o) => {
+      if (o instanceof THREE.Mesh) out.push(o as THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>);
+    });
+    return out;
+  };
+  const firstMaterials = new Set<THREE.Material>();
+  for (const mesh of meshesOf(first)) {
     mesh.geometry.addEventListener('dispose', () => firstGeometryDisposals++);
-    mesh.material.addEventListener('dispose', () => firstMaterialDisposals++);
+    if (!firstMaterials.has(mesh.material)) mesh.material.addEventListener('dispose', () => firstMaterialDisposals++);
+    firstMaterials.add(mesh.material);
   }
-  for (const child of other.children) {
-    const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>;
+  const otherMaterials = new Set<THREE.Material>();
+  for (const mesh of meshesOf(other)) {
     mesh.geometry.addEventListener('dispose', () => otherDisposals++);
-    mesh.material.addEventListener('dispose', () => otherDisposals++);
+    if (!otherMaterials.has(mesh.material)) mesh.material.addEventListener('dispose', () => otherDisposals++);
+    otherMaterials.add(mesh.material);
   }
   disposeGun(first);
   assert.equal(first.parent, null);
-  assert.equal(firstGeometryDisposals, 4);
-  assert.equal(firstMaterialDisposals, 4);
+  assert.equal(firstGeometryDisposals, 8, 'every mesh frees its own geometry');
+  assert.equal(firstMaterialDisposals, 5, 'each shared material is freed exactly once');
   assert.equal(otherDisposals, 0);
   assert.equal(other.parent, scene);
   disposeGun(other);

@@ -230,6 +230,8 @@ export interface RawState {
   hanging: boolean;
   golfing: boolean;
   gun: boolean;
+  /** What the gun is doing: drawing, holstering, a trick (world/gun-motion.ts), or null at the ready or away. */
+  gunMove: string | null;
 }
 
 export interface Snapshot {
@@ -251,6 +253,7 @@ export interface Snapshot {
     hanging: boolean;
     golfing: boolean;
     gun: boolean;
+    gunMove: string | null;
   };
   camera: { x: number; y: number; z: number };
   /** What E would use where you stand: the target id goTo takes, or the kind of thing it is. */
@@ -292,6 +295,7 @@ export function buildSnapshot(raw: RawState): Snapshot {
       hanging: raw.hanging,
       golfing: raw.golfing,
       gun: raw.gun,
+      gunMove: raw.gunMove,
     },
     camera: { x: r2(raw.camera.x), y: r2(raw.camera.y), z: r2(raw.camera.z) },
     using: u ? { kind: u.kind, id: usingId, label: (u.deskId && DESK_BY_ID.get(u.deskId)?.label) || PLACE_LABEL[u.kind] || u.kind } : null,
