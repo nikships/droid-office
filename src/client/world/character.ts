@@ -565,9 +565,6 @@ export class Person {
   /** A book off the bookshelf, open in both hands while they read (see read). */
   private book: OpenBook | null = null;
   private bookHolder = new THREE.Group();
-  /** The basketball in both hands (the ball itself is the floor's, see world/hoop.ts), and seconds into a shot, or -1. */
-  private ball = false;
-  private shootT = -1;
   pose: Pose = 'stand';
   private cig: THREE.Group;
   private ember: THREE.MeshToonMaterial;
@@ -804,7 +801,7 @@ export class Person {
   holdMug(on: boolean) {
     this.wantsMug = on;
     this.cup.visible = !this.glass;
-    this.mug.visible = (on || !!this.glass) && !this.card.held && !this.book && !this.ball;
+    this.mug.visible = (on || !!this.glass) && !this.card.held && !this.book;
   }
 
   /** A drink from the rooftop bar in the left hand (in place of a mug), or none (null). */
@@ -847,18 +844,6 @@ export class Person {
   /** Turns a page of the book they're reading now. */
   turnPage() {
     this.book?.turn();
-  }
-
-  /** Holds the basketball out in front in both hands, or not. */
-  holdBall(on: boolean) {
-    if (on === this.ball) return;
-    this.ball = on;
-    this.holdMug(this.wantsMug);
-  }
-
-  /** Shoots: both arms up over the head and after the ball. */
-  shoot() {
-    this.shootT = 0;
   }
 
   /** Waves, gives a thumbs up, claps…: the gesture, with its emoji popping up over their head. */
@@ -1275,22 +1260,10 @@ export class Person {
       this.armL.rotation.set(-1.5, 0, 0.32);
       this.armR.rotation.set(-1.5, 0, -0.32);
       this.book.update(dt);
-    } else if (this.card.held || this.ball) {
-      // Both arms out in front, hands on the card's edges (or either side of the ball): they don't swing while they walk.
+    } else if (this.card.held) {
+      // Both arms out in front, hands on the card's edges: they don't swing while they walk.
       this.armL.rotation.set(-1.25, 0, 0.3);
       this.armR.rotation.set(-1.25, 0, -0.3);
-    }
-    if (this.shootT >= 0) {
-      this.shootT += dt;
-      const k = reachCurve(this.shootT / 0.5);
-      for (const [arm, side] of [
-        [this.armL, 1],
-        [this.armR, -1],
-      ] as const) {
-        arm.rotation.x = THREE.MathUtils.lerp(arm.rotation.x, -2.75, k);
-        arm.rotation.z = THREE.MathUtils.lerp(arm.rotation.z, side * 0.12, k);
-      }
-      if (this.shootT >= 0.5) this.shootT = -1;
     }
     let reach = 0;
     if (this.reachT >= 0) {

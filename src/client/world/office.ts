@@ -55,11 +55,9 @@ import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { buildCoffeeMachine } from './coffee';
-import { buildHoop, type HoopView } from './hoop';
 import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
-import { HOOP } from '../../shared/hoop';
 
 export interface Collider {
   minX: number;
@@ -95,8 +93,7 @@ export type InteractKind =
   | 'bar'
   | 'dj'
   | 'bookshelf'
-  | 'golf'
-  | 'ball';
+  | 'golf';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -163,8 +160,6 @@ export interface Office {
   /** The golf tee on the balcony, and the hole across the street it's hit at. */
   tee: Tee;
   green: Green;
-  /** The basketball hoop on the west wall (the ball is main.ts's: see world/hoop.ts). */
-  hoop: HoopView;
   /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
   stack: Stack;
   /** The sign over the elevator doors: which floor you're on. */
@@ -1590,12 +1585,6 @@ export function buildOffice(): Office {
   interactables.push(gong.interactable);
   fixture('north', GONG.x, (GONG.height + 0.3) / 2, GONG.width + 1.2, GONG.height + 0.3);
 
-  // The basketball hoop, on the west wall between the exit door and the kitchen.
-  const hoop = buildHoop();
-  group.add(hoop.group);
-  colliders.push(...hoop.colliders);
-  fixture('west', HOOP.z, (HOOP.board.bottom - 0.6 + HOOP.board.top + 0.1) / 2, HOOP.board.width + 0.2, HOOP.board.top - HOOP.board.bottom + 0.7);
-
   // Pictures stay clear of the stairs (step by step, so they can hang above them) and of what's on
   // the loft's walls upstairs, as buildLoft places it: the couch and the sign.
   const run = (STAIRS.toX - STAIRS.fromX) / STAIRS.steps;
@@ -1655,7 +1644,6 @@ export function buildOffice(): Office {
     elevator.update(dt);
     gong.update(dt);
     green.update(t);
-    hoop.update(dt);
     for (const d of dressing) d.update(t, dt);
   };
 
@@ -1678,7 +1666,6 @@ export function buildOffice(): Office {
     cabinet,
     tee,
     green,
-    hoop,
     stack,
     setProjectName,
     setLook,
