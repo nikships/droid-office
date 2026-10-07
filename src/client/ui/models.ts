@@ -177,15 +177,19 @@ export interface AgentFields {
  * changing another's.
  */
 export function agentPicker(id: string, key = id): AgentFields {
-  return buildFields(id, key, rememberedModel(key), rememberedEffort(key));
+  return buildFields(id, key, rememberedModel(key), rememberedEffort(key), officeChoice);
 }
 
 /** The same fields, started on `initial` and remembering nothing: the office's default worker in Settings. */
 export function agentFields(id: string, initial: AgentChoice): AgentFields {
-  return buildFields(id, undefined, initial.model, initial.effort);
+  return buildFields(id, undefined, initial.model, initial.effort, () => ({}));
 }
 
-function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined): AgentFields {
+/**
+ * `fallback` is what "Default" runs besides Droid's own settings. A hire with no model picked gets
+ * the office's default worker from the server, so its picker has to name that one, not Droid's.
+ */
+function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
   const modelSelect = h('select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
   const effortSelect = h('select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
   const hint = h('small.model-hint', {}, 'Loading Droid models…');
@@ -202,8 +206,10 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   let wantedModel = initialModel;
   let wantedEffort = initialEffort;
 
+  /** The model "Default" runs: the office's default worker, else Droid's own default. */
+  const defaultModel = () => fallback().model ?? catalogue?.defaultModel;
   /** The model picked, or the one droid runs on "Default". */
-  const pickedModel = () => catalogue?.models.find((x) => x.id === (modelSelect.value || catalogue?.defaultModel));
+  const pickedModel = () => catalogue?.models.find((x) => x.id === (modelSelect.value || defaultModel()));
   /** The efforts to offer: the model's own list, else its default plus the fixed ladder. */
   const effortOptions = (): AgentEffort[] => {
     const m = pickedModel();
@@ -214,8 +220,8 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   /** Only the efforts the picked model takes, its own default named on "Default". */
   const applyEfforts = () => {
     const options = effortOptions();
-    const fallback = (!modelSelect.value && catalogue?.defaultReasoningEffort) || pickedModel()?.defaultReasoningEffort;
-    effortSelect.replaceChildren(h('option', { value: '' }, fallback ? `Default (${EFFORT_LABEL[fallback]})` : 'Default'), ...options.map((e) => h('option', { value: e }, EFFORT_LABEL[e])));
+    const runs = (!modelSelect.value && (fallback().effort ?? catalogue?.defaultReasoningEffort)) || pickedModel()?.defaultReasoningEffort;
+    effortSelect.replaceChildren(h('option', { value: '' }, runs ? `Default (${EFFORT_LABEL[runs]})` : 'Default'), ...options.map((e) => h('option', { value: e }, EFFORT_LABEL[e])));
     effortSelect.value = wantedEffort && options.includes(wantedEffort) ? wantedEffort : '';
     effortSelect.disabled = !options.length;
   };
@@ -224,9 +230,10 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
     const selected = wantedModel;
     hint.textContent = catalogue ? 'Overrides the office default for this worker; pinned in its Droid settings overlay.' : 'Loading Droid models…';
     void fetchCatalogue()
-      .then(({ models, defaultModel }) => {
+      .then(({ models }) => {
+        const runs = defaultModel();
         modelSelect.replaceChildren(
-          h('option', { value: '' }, defaultModel ? `Default (${withoutGlyph(droidDisplayName(defaultModel))})` : 'Default (Droid settings)'),
+          h('option', { value: '' }, runs ? `Default (${withoutGlyph(droidDisplayName(runs))})` : 'Default (Droid settings)'),
           ...droidModelGroups(models).map((g) => h('optgroup', { label: `${g.label} (${g.models.length})` }, ...g.models.map((m) => h('option', { value: m.id }, withoutGlyph(m.displayName))))),
         );
         // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
