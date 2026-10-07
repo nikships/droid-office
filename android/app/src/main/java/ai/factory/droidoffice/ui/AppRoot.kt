@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavBackStack
@@ -100,6 +102,9 @@ sealed interface Incoming {
 val LocalGraph = staticCompositionLocalOf<AppGraph> { error("no graph") }
 val LocalSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("no snackbar") }
 
+/** How far above the bottom a screen with controls there wants snackbars; null is the default. */
+val LocalSnackbarLift = staticCompositionLocalOf<MutableState<Dp?>> { error("no snackbar") }
+
 /** Navigation for the whole app; the back stack is saved across configuration changes and process death. */
 class Nav(private val stack: NavBackStack<NavKey>) {
     val top: NavKey? get() = stack.lastOrNull()
@@ -130,6 +135,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
     val stack = rememberNavBackStack(if (snapshot.offices.isEmpty()) WelcomeKey else HomeKey)
     val nav = remember(stack) { Nav(stack) }
     val snackbar = remember { SnackbarHostState() }
+    val snackbarLift = remember { mutableStateOf<Dp?>(null) }
     val context = LocalContext.current
 
     // Links from the system camera, a share, or a notification tap.
@@ -202,7 +208,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
         }
     }
 
-    CompositionLocalProvider(LocalGraph provides graph, LocalSnackbar provides snackbar, LocalHapticFeedback provides haptics) {
+    CompositionLocalProvider(LocalGraph provides graph, LocalSnackbar provides snackbar, LocalSnackbarLift provides snackbarLift, LocalHapticFeedback provides haptics) {
         Box(Modifier.fillMaxSize().background(Palette.Bg)) {
             NavDisplay(
                 backStack = stack,
@@ -256,7 +262,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
 
             SnackbarHost(
                 snackbar,
-                Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)).padding(bottom = 84.dp),
+                Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)).padding(bottom = snackbarLift.value ?: 84.dp),
             ) { data ->
                 Snackbar(
                     data,

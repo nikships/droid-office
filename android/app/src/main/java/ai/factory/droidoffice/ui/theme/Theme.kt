@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.Typeface
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -54,7 +53,7 @@ object Palette {
 @Immutable
 data class OfficeType(
     val mono: FontFamily,
-    val terminal: FontFamily,
+    val terminal: TerminalFaces,
     /** Small upper-case mono labels: the office's metadata voice ("WORKING · 12M"). */
     val eyebrow: TextStyle,
     val monoBody: TextStyle,
@@ -130,28 +129,37 @@ private val Scheme = darkColorScheme(
     scrim = Color(0xCC000000),
 )
 
+/** The terminal's typefaces, for drawing cells straight onto a canvas. */
+@Immutable
+data class TerminalFaces(val regular: AndroidTypeface, val bold: AndroidTypeface)
+
 /**
- * Geist Mono with the office's Nerd Font symbols (bundled as terminal_symbols) behind it, so agent
- * TUIs that draw icons from the private-use area render the glyphs instead of tofu. Fallback chains
- * need API 29; on 28 it's plain Geist Mono.
+ * Geist Mono at its regular and bold weights, with the office's Nerd Font symbols (bundled as
+ * terminal_symbols) behind it, so agent TUIs that draw icons from the private-use area render the
+ * glyphs instead of tofu. Fallback chains need API 29; on 28 it's plain Geist Mono.
  */
 @Composable
-private fun rememberTerminalFamily(): FontFamily {
+private fun rememberTerminalFaces(): TerminalFaces {
     val res = LocalResources.current
     return remember(res) {
-        if (Build.VERSION.SDK_INT < 29) return@remember GeistMono
+        val plain = res.getFont(R.font.geist_mono)
+        val fallback = TerminalFaces(plain, AndroidTypeface.create(plain, 700, false))
+        if (Build.VERSION.SDK_INT < 29) return@remember fallback
         runCatching {
-            val mono = AndroidFontFamily.Builder(AndroidFont.Builder(res, R.font.geist_mono).setFontVariationSettings("'wght' 400").build()).build()
             val symbols = AndroidFontFamily.Builder(AndroidFont.Builder(res, R.font.terminal_symbols).build()).build()
-            val tf = AndroidTypeface.CustomFallbackBuilder(mono).addCustomFallback(symbols).setSystemFallback("monospace").build()
-            FontFamily(Typeface(tf))
-        }.getOrDefault(GeistMono)
+            fun face(weight: Int): AndroidTypeface {
+                val mono = AndroidFont.Builder(res, R.font.geist_mono).setFontVariationSettings("'wght' $weight").setWeight(weight).build()
+                return AndroidTypeface.CustomFallbackBuilder(AndroidFontFamily.Builder(mono).build())
+                    .addCustomFallback(symbols).setSystemFallback("monospace").setStyle(mono.style).build()
+            }
+            TerminalFaces(face(400), face(700))
+        }.getOrDefault(fallback)
     }
 }
 
 @Composable
 fun DroidOfficeTheme(content: @Composable () -> Unit) {
-    val terminal = rememberTerminalFamily()
+    val terminal = rememberTerminalFaces()
     val type = remember(terminal) {
         OfficeType(
             mono = GeistMono,

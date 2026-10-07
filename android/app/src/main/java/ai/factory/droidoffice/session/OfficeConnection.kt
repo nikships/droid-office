@@ -12,6 +12,7 @@ import ai.factory.droidoffice.core.QueueState
 import ai.factory.droidoffice.core.RaceResult
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.RouteRacer
+import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.ServerMsg
 import ai.factory.droidoffice.core.WorkerInfo
@@ -86,9 +87,11 @@ private sealed interface SocketEvent {
     data class Text(val text: String) : SocketEvent
     data class Closed(val reason: String, val code: Int) : SocketEvent
     data class Failed(val reason: String, val code: Int?) : SocketEvent
+    /** A better route than the one in use answered. */
+    data object Upgrade : SocketEvent
 }
 
-private data class SessionEnd(val welcomed: Boolean, val reason: String, val unpaired: Boolean = false)
+private data class SessionEnd(val welcomed: Boolean, val reason: String, val unpaired: Boolean = false, val upgrade: Boolean = false)
 
 /**
  * The phone's one live connection, to the active office. It runs while something holds it (the UI
@@ -132,8 +135,11 @@ class OfficeConnection(
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
 
-    /** The name the office knows this phone by (`?name=`, at most 24 characters), and so `createdBy` of what it hires. */
-    val officeName: String = deviceName.take(24).trim()
+    /**
+     * The name the office knows this phone by (`?name=`, at most 24 characters), and so `createdBy`
+     * of what it hires; the 📱 tells the office's own page that a phone did it.
+     */
+    val officeName: String = "📱 $deviceName".take(24).trim()
 
     init {
         scope.launch {
@@ -200,10 +206,18 @@ class OfficeConnection(
         return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort))
     }
 
+    private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)
+
+    /** The last model catalogue the office sent, for model names on cards; null until [models] has loaded one. */
+    val catalogue: StateFlow<ModelCatalogue?> = _catalogue.asStateFlow()
+
     suspend fun models(): ModelCatalogue? {
         val (base, auth) = current ?: return null
         models?.let { (b, at, m) -> if (b == base && System.currentTimeMillis() - at < 60_000) return m }
-        return api.models(base, auth)?.also { models = Triple(base, System.currentTimeMillis(), it) }
+        return api.models(base, auth)?.also {
+            models = Triple(base, System.currentTimeMillis(), it)
+            _catalogue.value = it
+        }
     }
 
     suspend fun stageImage(name: String, type: String, bytes: ByteArray): Result<String> {
@@ -250,7 +264,7 @@ class OfficeConnection(
             return
         }
         if (!d.online) {
-            _link.value = Link(Phase.Offline, office.id, detail = "No network")
+            _link.value = Link(Phase.Offline, office.id, detail = "The phone is offline. Workers keep going at the office.")
             return
         }
         val token = store.token(office.id)
@@ -286,6 +300,10 @@ class OfficeConnection(
                         _data.update { it.copy(synced = false) }
                         awaitCancellation()
                     }
+                    if (end.upgrade) {
+                        backoff.reset()
+                        continue
+                    }
                     if (end.welcomed) backoff.reset()
                     val wait = backoff.next()
                     _link.value = Link(Phase.Reconnecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = end.reason)
@@ -318,6 +336,18 @@ class OfficeConnection(
         })
         socket = ws
         var welcomed = false
+        // On Tailscale after a Wi-Fi blip, nothing about the phone's network changes when Wi-Fi to the
+        // office comes back, so check the better routes now and then and move over when one answers.
+        val better = Routes.better(office.bases, base)
+        val upgrade = if (better.isEmpty()) null else scope.launch {
+            while (isActive) {
+                delay(UPGRADE_CHECK_MS)
+                if (racer.race(better) { api.hello(it, auth) } is RaceResult.Winner) {
+                    events.trySend(SocketEvent.Upgrade)
+                    break
+                }
+            }
+        }
         try {
             for (e in events) {
                 when (e) {
@@ -332,10 +362,12 @@ class OfficeConnection(
                     }
                     is SocketEvent.Closed -> return SessionEnd(welcomed, e.reason, unpaired = e.code == CLOSE_UNPAIRED)
                     is SocketEvent.Failed -> return SessionEnd(welcomed, if (e.code == 401) "The office refused the connection" else e.reason, unpaired = e.code == 401 && auth is OfficeAuth.Device)
+                    SocketEvent.Upgrade -> return SessionEnd(welcomed, "Moving to a better route", upgrade = true)
                 }
             }
             return SessionEnd(welcomed, "Connection closed")
         } finally {
+            upgrade?.cancel()
             socket = null
             ws.cancel()
         }
@@ -345,10 +377,11 @@ class OfficeConnection(
         when (msg) {
             is ServerMsg.Welcome -> {
                 enter(officeId, msg.view, msg.floors, msg.version)
+                msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
             is ServerMsg.FloorEnter -> {
                 enter(officeId, msg.view, null, null)
-                msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f) } } }
+                msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
             is ServerMsg.Floors -> _data.update { it.copy(floors = msg.floors) }
             is ServerMsg.WorkerUpdate -> {
@@ -395,6 +428,7 @@ class OfficeConnection(
         /** How long the connection stays up after the last holder lets go (a quick app switch keeps it). */
         const val IDLE_GRACE_MS = 20_000L
         const val HIRE_WINDOW_MS = 30_000L
+        const val UPGRADE_CHECK_MS = 30_000L
         /** The close code an office sends a phone's sockets when that phone is unpaired. */
         const val CLOSE_UNPAIRED = 4401
     }

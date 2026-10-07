@@ -2,6 +2,8 @@ package ai.factory.droidoffice.ui.worker
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -85,7 +87,8 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
         shape = RoundedCornerShape(16.dp),
         title = { Text("Send ${w.name} home?", style = MaterialTheme.typography.headlineSmall) },
         text = {
-            Column {
+            // Scrolls so the choices stay reachable at a large font size or in landscape.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     "This stops the session at ${deskLabel(w.deskId)} for everyone and frees the desk." + if (wt != null) " ${w.name} worked in its own worktree on 🌿 ${wt.branch}:" else "",
                     style = MaterialTheme.typography.bodyMedium,

@@ -26,6 +26,18 @@ class RoutesTest {
     }
 
     @Test
+    fun onlyBetterKindsAreWorthMovingTo() {
+        val lan = "http://192.168.0.148:4600"
+        val magic = "http://niks-mac.tail1234.ts.net:4600"
+        val ts = "http://100.96.217.59:4600"
+        val bases = listOf(lan, magic, ts)
+        assertEquals(listOf(lan), Routes.better(bases, ts))
+        assertEquals(listOf(lan), Routes.better(bases, magic))
+        assertEquals(emptyList<String>(), Routes.better(bases, lan))
+        assertEquals(bases, Routes.better(bases + lan, "https://office.example.com"))
+    }
+
+    @Test
     fun cleartextOnlyToPrivateAddresses() {
         assertTrue(Routes.isPrivate(InetAddress.getByName("127.0.0.1")))
         assertTrue(Routes.isPrivate(InetAddress.getByName("192.168.1.2")))

@@ -140,12 +140,13 @@ fun WorkerDot(color: Color, status: WorkerStatus, size: Dp = 12.dp) {
 }
 
 @Composable
-fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifier) {
-    val (icon, label) = when (kind) {
-        RouteKind.Lan -> OfficeIcons.Wifi to "Wi-Fi"
-        RouteKind.Tailscale -> OfficeIcons.Tailscale to "Tailscale"
-        RouteKind.Remote -> OfficeIcons.Globe to "Internet"
-        null -> OfficeIcons.Unplug to "Offline"
+fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifier, unpaired: Boolean = false) {
+    val (icon, label) = when {
+        unpaired -> OfficeIcons.Unplug to "Unpaired"
+        kind == RouteKind.Lan -> OfficeIcons.Wifi to "Wi-Fi"
+        kind == RouteKind.Tailscale -> OfficeIcons.Tailscale to "Tailscale"
+        kind == RouteKind.Remote -> OfficeIcons.Globe to "Internet"
+        else -> OfficeIcons.Unplug to "Offline"
     }
     val color = if (connected) Palette.Success else Palette.TextSecondary
     Row(

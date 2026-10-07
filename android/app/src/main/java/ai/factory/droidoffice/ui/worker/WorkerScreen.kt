@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
@@ -55,23 +57,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
+import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
+import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
+import ai.factory.droidoffice.ui.LocalSnackbarLift
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
@@ -118,15 +130,23 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         Header(worker, embedded, onBack, onSendHome = { sendingHome = true })
         Actions(worker, onSendHome = { sendingHome = true })
         Offline(link.phase)
-        NeedsYou(worker)
         val live = !worker.state.asleep
+        val screen = screens[workerId]
+        NeedsYou(worker, screen, live && link.phase == Phase.Connected)
+        val zoom = rememberTerminalZoom(workerId)
         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
-            Terminal(screens[workerId], live && link.phase == Phase.Connected, Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)))
+            Terminal(screen, live && link.phase == Phase.Connected, zoom, Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)))
             if (worker.state.asleep) Asleep(worker)
         }
         if (live) {
-            QuickKeys(workerId)
-            Composer(worker)
+            val lift = LocalSnackbarLift.current
+            val density = LocalDensity.current
+            DisposableEffect(lift) { onDispose { lift.value = null } }
+            // Snackbars rise above the quick keys and the composer instead of covering them.
+            Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
+                QuickKeys(workerId, zoom)
+                Composer(worker)
+            }
         }
         if (sendingHome) SendHomeDialog(worker, onDismiss = { sendingHome = false }, onSent = {
             sendingHome = false
@@ -143,6 +163,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         WorkerDot(parseColor(w.color), w.state, 10.dp)
@@ -150,7 +171,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, onBack: () -> Unit, onSendH
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val parts = buildList {
                 add(deskLabel(w.deskId))
-                if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(Workers.shortModel(it)) }
+                if (w.isShell) add("shell") else Workers.modelId(w)?.let { add(catalogue.nameOf(it)) }
                 Workers.effort(w)?.let { if (!w.isShell) add(it.label.lowercase()) }
                 Workers.workedMs(w, now).takeIf { it >= 1000 }?.let { add(Workers.duration(it)) }
             }
@@ -247,22 +268,56 @@ private fun Offline(phase: Phase) {
     }
 }
 
-/** What it's waiting on, above the terminal, so the question is readable without zooming in. */
+/**
+ * What it's waiting on, above the terminal, so the question is readable without zooming in. When
+ * the terminal shows a numbered menu (AskUser, a trust or permission prompt), its choices are
+ * buttons here, and tapping one sends the keys that pick it.
+ */
 @Composable
-private fun NeedsYou(w: WorkerInfo) {
-    val text = if (w.state == WorkerStatus.NeedsInput) Workers.detail(w) ?: "Waiting on an answer" else null
-    AnimatedVisibility(text != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-        Row(
+private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
+    val graph = LocalGraph.current
+    val haptics = LocalHapticFeedback.current
+    val read = remember(screen) { screen?.let(Choices::read) }
+    val asking = w.state == WorkerStatus.NeedsInput
+    val menu = read?.takeIf { !w.isShell && (asking || it.pointer != null) }
+    val text = menu?.question ?: if (asking) Workers.detail(w) ?: "Waiting on an answer" else null
+    AnimatedVisibility(asking || menu != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        Column(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
                 .panel(RoundedCornerShape(10.dp), Palette.Danger.copy(alpha = 0.08f), Palette.Danger.copy(alpha = 0.4f))
                 .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(7.dp).background(Palette.Danger, RoundedCornerShape(1.dp)))
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Eyebrow("Needs you", color = Palette.Danger)
-                Text(text.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).background(Palette.Danger, RoundedCornerShape(1.dp)))
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Eyebrow("Needs you", color = Palette.Danger)
+                    if (text != null) Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (menu != null && canAnswer) {
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    menu.choices.forEachIndexed { i, choice ->
+                        val marked = menu.pointer == i
+                        Row(
+                            Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(8.dp))
+                                .background(if (marked) Palette.AccentMuted else Palette.SurfaceRaised)
+                                .border(1.dp, if (marked) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, RoundedCornerShape(8.dp))
+                                .clickable(onClickLabel = "Answer ${choice.label}") {
+                                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                                    graph.connection.send(ClientMsg.termInput(w.id, Choices.keys(menu, choice)))
+                                }
+                                .heightIn(min = 40.dp)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${choice.number}", style = LocalOfficeType.current.monoBody.copy(fontSize = 12.sp, color = if (marked) Palette.Accent else Palette.TextSecondary))
+                            Spacer(Modifier.width(8.dp))
+                            Text(choice.label, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
             }
         }
     }
@@ -313,32 +368,50 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
 
 /** The keys a TUI waits for that a phone keyboard doesn't have: menus, permission prompts, interrupts. */
 @Composable
-private fun QuickKeys(workerId: String) {
+private fun QuickKeys(workerId: String, zoom: TerminalZoom) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
+    // Label, what TalkBack says, bytes.
     val keys = listOf(
-        "Esc" to Keys.ESC, "↑" to Keys.UP, "↓" to Keys.DOWN, "⏎" to Keys.ENTER, "Tab" to Keys.TAB, "⇧Tab" to Keys.SHIFT_TAB,
-        "←" to Keys.LEFT, "→" to Keys.RIGHT, "^C" to Keys.CTRL_C, "⌫" to Keys.BACKSPACE, "1" to "1", "2" to "2", "3" to "3", "y" to "y", "n" to "n",
+        Triple("Esc", "Escape", Keys.ESC), Triple("↑", "Up", Keys.UP), Triple("↓", "Down", Keys.DOWN), Triple("⏎", "Enter", Keys.ENTER),
+        Triple("Tab", "Tab", Keys.TAB), Triple("⇧Tab", "Shift Tab", Keys.SHIFT_TAB), Triple("←", "Left", Keys.LEFT), Triple("→", "Right", Keys.RIGHT),
+        Triple("^C", "Control C", Keys.CTRL_C), Triple("⌫", "Backspace", Keys.BACKSPACE),
+        Triple("1", "1", "1"), Triple("2", "2", "2"), Triple("3", "3", "3"), Triple("y", "y", "y"), Triple("n", "n", "n"),
     )
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        keys.forEach { (label, bytes) ->
-            val accent = label == "⏎"
-            Box(
-                Modifier.height(34.dp).widthIn(min = 40.dp).clip(RoundedCornerShape(7.dp))
-                    .background(if (accent) Palette.AccentMuted else Palette.SurfaceRaised)
-                    .border(1.dp, if (accent) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, RoundedCornerShape(7.dp))
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                        graph.connection.send(ClientMsg.termInput(workerId, bytes))
-                    }
-                    .padding(horizontal = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
+        if (zoom.zoomable) {
+            QuickKey(if (zoom.zoomed) "Fit" else "Aa", if (zoom.zoomed) "Fit the terminal to the screen" else "Zoom the terminal in", selected = zoom.zoomed) {
+                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                zoom.toggle()
             }
         }
+        keys.forEach { (label, spoken, bytes) ->
+            QuickKey(label, spoken, accent = label == "⏎") {
+                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                graph.connection.send(ClientMsg.termInput(workerId, bytes))
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickKey(label: String, spoken: String, accent: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(
+        Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
+            .background(if (accent) Palette.AccentMuted else if (selected) Palette.SurfaceHigh else Palette.SurfaceRaised)
+            .border(1.dp, if (accent) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, shape)
+            .clickable(onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = spoken
+                role = Role.Button
+            }
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
     }
 }

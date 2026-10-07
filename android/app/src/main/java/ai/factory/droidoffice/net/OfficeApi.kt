@@ -1,5 +1,6 @@
 package ai.factory.droidoffice.net
 
+import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.Probe
 import java.io.IOException
@@ -51,6 +52,9 @@ data class ModelOption(
 
 @Serializable
 data class ModelCatalogue(val models: List<ModelOption> = emptyList(), val defaultModel: String? = null, val defaultReasoningEffort: String? = null)
+
+/** What to call model [id]: the catalogue's name for it, else its id tidied up. */
+fun ModelCatalogue?.nameOf(id: String): String = Models.displayName(id, this?.models?.firstOrNull { it.id == id }?.displayName)
 
 sealed interface PairResult {
     data class Paired(val response: PairResponse) : PairResult
