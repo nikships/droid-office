@@ -8,6 +8,7 @@ import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { mountTranscript } from './factory-transcript';
 import { promptImages } from './images';
+import { groupRow, toggle } from './kit';
 import { modelBadge } from './models';
 import { sendHint } from './prompt';
 
@@ -69,8 +70,10 @@ export function runsOnPicker(): RunsOn | null {
   ) as HTMLSelectElement;
   const folder = h('input.input', { id: 'runs-on-cwd', type: 'text', spellcheck: false, autocomplete: 'off', 'aria-label': 'Folder on that computer' }) as HTMLInputElement;
   const note = h('small');
-  const runsRow = h('div.group-row.runs-on-row', {}, h('span.group-label', {}, h('b', {}, 'Runs on'), h('small', {}, 'This machine, or one of your Factory computers')), select);
-  const cloudRow = h('div.group-row.runs-on-folder.hidden', {}, h('span.group-label', {}, h('b', {}, 'Folder'), note), folder);
+  const runsRow = groupRow('Runs on', 'This machine, or one of your Factory computers', select);
+  runsRow.classList.add('runs-on-row');
+  const cloudRow = groupRow('Folder', note, folder);
+  cloudRow.classList.add('runs-on-folder', 'hidden');
   const listeners: ((cloud: boolean) => void)[] = [];
   const picked = () => computers.find((c) => c.id === select.value);
   const paint = () => {
@@ -122,7 +125,8 @@ export function cloudLine(w: WorkerInfo): string {
 
 /** Sending a cloud worker home: it leaves its desk, and its Factory session is kept unless the box is ticked. */
 export function sendCloudHome(net: Net, w: WorkerInfo) {
-  const box = h('input', { type: 'checkbox', id: 'cloud-delete' }) as HTMLInputElement;
+  const del = toggle({ label: 'Also delete its Factory session', description: 'Its transcript and settings go with it', id: 'cloud-delete' });
+  const box = del.input;
   const yes = h('button.btn.danger', { type: 'button' }, 'Send home');
   const no = h('button.btn.ghost', { type: 'button' }, 'Cancel');
   const where = w.cloud ? w.cloud.computerName : 'Factory';
@@ -131,12 +135,7 @@ export function sendCloudHome(net: Net, w: WorkerInfo) {
     'div.modal.sm.confirm',
     { role: 'alertdialog', 'aria-label': `Send ${w.name} home?` },
     h('header', {}, h('h2', {}, `Send ${w.name} home?`)),
-    h(
-      'div.body.stack',
-      {},
-      h('p.confirm-text', {}, `${w.name} leaves the desk${busy ? `, and its session on ${where} is stopped` : ''}. The session stays in Factory unless you delete it.`),
-      h('label.toggle', { for: 'cloud-delete' }, box, h('span.track'), h('span.toggle-text', {}, 'Also delete its Factory session', h('small', {}, 'Its transcript and settings go with it'))),
-    ),
+    h('div.body.stack', {}, h('p.confirm-text', {}, `${w.name} leaves the desk${busy ? `, and its session on ${where} is stopped` : ''}. The session stays in Factory unless you delete it.`), del),
     h('footer', {}, no, yes),
   );
   const modal = openModal(el);

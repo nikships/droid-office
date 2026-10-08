@@ -2,7 +2,7 @@ import type { AgentEffort, WorkerStatus } from '../../shared/protocol';
 import { h, openModal, STATUS_LABEL } from './dom';
 import { promptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
-import { repoPicker, sendHint, worktreeRow } from './prompt';
+import { pictureHint, repoPicker, sendHint, worktreeRow } from './prompt';
 
 // Send a prompt about an issue or PR to a worker: a new one at a free desk, or one already sitting
 // at a desk (it lands in their input box, queued if they're busy).
@@ -42,13 +42,13 @@ export function openAsk(opts: AskOptions) {
   const ta = h('textarea.input', { id: 'ask-prompt', rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images = promptImages(ta);
-  const wtBox = h('input', { type: 'checkbox', id: 'ask-wt' }) as HTMLInputElement;
+  let remembered = false;
   try {
-    wtBox.checked = localStorage.getItem(WT_KEY) === '1';
+    remembered = localStorage.getItem(WT_KEY) === '1';
   } catch {
     // storage blocked
   }
-  const wtRow = worktreeRow(wtBox);
+  const { row: wtRow, box: wtBox } = worktreeRow('ask-wt', remembered);
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);
   const models: AgentFields | null = opts.modelOption ? agentPicker('ask-models') : null;
   const modelRow = models ? h('div.group-row.model-row', {}, models.element) : null;
@@ -76,7 +76,7 @@ export function openAsk(opts: AskOptions) {
 
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
   const form = h(
-    'form.modal.md.ask',
+    'form.modal.ask',
     { role: 'dialog', 'aria-label': opts.title },
     h('header', {}, h('h2', {}, opts.title)),
     h(
@@ -84,10 +84,10 @@ export function openAsk(opts: AskOptions) {
       {},
       h('div.field', {}, h('label', {}, 'Send to'), choices),
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
-      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, ta, images.element)),
+      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, ta, pictureHint(), images.element)),
       newOpts,
     ),
-    h('footer', {}, sendHint(true), cancel, submit),
+    h('footer', {}, sendHint(false), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
   pick(to);

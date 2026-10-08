@@ -31,7 +31,7 @@ export function openRepoPulls(workerId: string, actions: RepoPullsActions) {
   const list = h('ul.list.boxed.repo-pulls');
   const close = h('button.btn.ghost', { type: 'button' }, 'Close');
   const missing = h('button.btn.primary', { type: 'button' }, 'Open the missing PRs');
-  const el = h('div.modal.md', { role: 'dialog', 'aria-label': 'Pull requests' }, h('header', {}, title), h('div.body.stack', {}, note, list), h('footer', {}, h('span.grow'), close, missing));
+  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Pull requests' }, h('header', {}, title), h('div.body.stack', {}, note, list), h('footer', {}, h('span.grow'), close, missing));
 
   const render = () => {
     const w = store.workers.get(workerId);
