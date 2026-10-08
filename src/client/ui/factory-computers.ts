@@ -19,6 +19,7 @@ import { store } from '../state';
 import { fmtGb, loadColor } from '../world/machine';
 import { PHASE_WORD } from '../world/factory-computers';
 import { h, openModal, timeAgo, toast } from './dom';
+import { emptyState, field, toggle } from './kit';
 
 // The Computers window (E at the compute wall, ☰ → Computers): every Droid Computer with its status,
 // one computer's provisioning steps, metrics and actions, the new-computer form, and the
@@ -176,16 +177,7 @@ export function openComputers(opts: { settings: () => void; id?: string }) {
       section = undefined;
       footActions.replaceChildren();
       const why = !conn.connected ? 'Connect the office to Factory to see your Droid Computers here, make new ones and run them from the office.' : 'This Factory key can’t reach Droid Computers.';
-      body.replaceChildren(
-        h(
-          'div.empty-state',
-          {},
-          h('span.empty-icon', {}, '🖥️'),
-          h('b', {}, !conn.connected ? 'Not connected to Factory' : 'No access to Droid Computers'),
-          h('p', {}, why),
-          h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Factory'),
-        ),
-      );
+      body.replaceChildren(emptyState('🖥️', !conn.connected ? 'Not connected to Factory' : 'No access to Droid Computers', why, h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Factory')));
       return;
     }
     if (body.firstElementChild !== split) body.replaceChildren(split);
@@ -384,8 +376,8 @@ function detail(id: string, go: (v: View) => void): Section {
   const head = h('div.cmp-head', {}, h('div.row.between.cmp-head-row', {}, h('div.cmp-head-title', {}, titleEl, badges), idEl), actions);
 
   // Rename and remote user.
-  const nameIn = h('input.input', { type: 'text', id: 'cmp-edit-name', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false' }) as HTMLInputElement;
-  const userIn = h('input.input', { type: 'text', id: 'cmp-edit-user', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: 'Remote user' }) as HTMLInputElement;
+  const nameIn = h('input.input', { type: 'text', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false' }) as HTMLInputElement;
+  const userIn = h('input.input', { type: 'text', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: 'Remote user' }) as HTMLInputElement;
   const editOut = h('p.cmp-out');
   const saveEdit = actionButton(
     'Save',
@@ -401,13 +393,7 @@ function detail(id: string, go: (v: View) => void): Section {
     },
     editOut,
   );
-  const edit = h(
-    'section.section',
-    {},
-    h('div.eyebrow', {}, 'Name and remote user'),
-    h('div.cmp-fields.cmp-edit', {}, h('div.field', {}, h('label', { for: 'cmp-edit-name' }, 'Name'), nameIn), h('div.field', {}, h('label', { for: 'cmp-edit-user' }, 'Remote user'), userIn), saveEdit),
-    editOut,
-  );
+  const edit = h('section.section', {}, h('div.eyebrow', {}, 'Name and remote user'), h('div.cmp-fields.cmp-edit', {}, field('Name', nameIn), field('Remote user', userIn), saveEdit), editOut);
   let editSeeded = '';
 
   // Deleting takes its name typed out.
@@ -595,7 +581,6 @@ function newForm(go: (v: View) => void): Section {
   let bulk = false;
   const one = h('button.btn', { type: 'button' }, 'One');
   const several = h('button.btn', { type: 'button' }, 'Several');
-  const field = (label: string, control: HTMLElement, ...after: HTMLElement[]) => h('div.field', {}, h('label', {}, label), control, ...after);
   const floorName =
     (store.floors.find((f) => f.id === store.floor)?.name ?? 'office')
       .toLowerCase()
@@ -606,7 +591,8 @@ function newForm(go: (v: View) => void): Section {
   const qtyIn = h('input.input', { type: 'number', 'aria-label': 'How many', min: 1, max: BULK_MAX, value: 2 }) as HTMLInputElement;
   const userIn = h('input.input', { type: 'text', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: DEFAULT_REMOTE_USER }) as HTMLInputElement;
   const provider = h('select.select', { 'aria-label': 'Provider' }) as HTMLSelectElement;
-  const autoDeps = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
+  const autoDepsToggle = toggle({ label: 'Install dependencies when it’s made', description: 'Factory runs each repository’s install step after cloning it.', checked: true });
+  const autoDeps = autoDepsToggle.input;
   const single = h('div.cmp-fields', {}, field('Name', nameIn), field('Remote user', userIn));
   const multi = h(
     'div.cmp-fields',
@@ -700,7 +686,6 @@ function newForm(go: (v: View) => void): Section {
   );
   const modeTabs = h('div.seg', { role: 'group', 'aria-label': 'How many' }, one, several);
   const cancel = h('button.btn.ghost', { type: 'button', onclick: () => go({ kind: 'list' }) }, 'Cancel');
-  const autoDepsToggle = h('label.toggle', {}, autoDeps, h('span.track'), h('span.toggle-text', {}, 'Install dependencies when it’s made', h('small', {}, 'Factory runs each repository’s install step after cloning it.')));
   const setMode = (b: boolean) => {
     bulk = b;
     one.classList.toggle('on', !b);
@@ -731,7 +716,7 @@ function newForm(go: (v: View) => void): Section {
           h('p.cmp-lede', {}, 'A managed Droid Computer: Factory runs it in the cloud, clones the repositories you pick and installs their dependencies. It sleeps when idle and wakes when it’s used.'),
         ),
         h('div.stack', {}, field('How many', modeTabs), single, multi, h('div.cmp-fields', {}, field('Provider', provider)), autoDepsToggle),
-        field('Repositories', filter, repoList, chosen),
+        h('div.field', {}, h('label', {}, 'Repositories'), filter, repoList, chosen),
         out,
       ),
     ],

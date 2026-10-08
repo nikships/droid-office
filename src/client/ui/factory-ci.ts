@@ -23,6 +23,7 @@ import {
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
+import { emptyState, field, toggle } from './kit';
 import { confirmDialog } from './prompt';
 
 // The CI automations window, from the board on the north wall (world/factory-ci.ts): every Droid
@@ -140,9 +141,9 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const ci = store.factory.ci;
     const groups = groupCi(ci, opts.floorRepo);
     const runs = [...ci.runs].sort((a, b) => runTime(b) - runTime(a));
-    tabButtons.workflows.replaceChildren('Workflows', h('span.ci-count', {}, ci.workflows.length));
-    tabButtons.runs.replaceChildren('Runs', h('span.ci-count', {}, runs.length));
-    tabButtons.prs.replaceChildren('Workflow PRs', h('span.ci-count', {}, ci.jobs.length));
+    tabButtons.workflows.replaceChildren('Workflows', h('span.n', {}, ci.workflows.length));
+    tabButtons.runs.replaceChildren('Runs', h('span.n', {}, runs.length));
+    tabButtons.prs.replaceChildren('Workflow PRs', h('span.n', {}, ci.jobs.length));
     for (const [t, b] of Object.entries(tabButtons)) {
       b.classList.toggle('on', !form && t === tab);
       b.setAttribute('aria-selected', String(!form && t === tab));
@@ -166,7 +167,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     else body.replaceChildren(ci.jobs.length ? jobsList(ci.jobs) : empty('⇄', 'No workflow pull requests yet', 'Adding, changing or removing a workflow here opens one.'));
   };
 
-  const empty = (icon: string, title: string, text: string) => h('div.empty-state.ci-empty', {}, h('span.empty-icon', {}, icon), h('b', {}, title), h('p', {}, text));
+  const empty = (icon: string, title: string, text: string) => emptyState(icon, title, text);
 
   const repoSection = (g: CiRepoGroup) =>
     h(
@@ -304,7 +305,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const w = what.workflow;
     let template: 'code-review' | 'custom' = what.template ?? 'code-review';
     const repo = h('select.select', { 'aria-label': 'Repository', disabled: !!w }) as HTMLSelectElement;
-    const repoNote = h('p.field-hint');
+    const repoNote = h('span');
     const pick = (fullName: string) => repo.append(h('option', { value: fullName }, fullName));
     const wanted = w?.repo ?? what.repo ?? opts.floorRepo;
     if (wanted) pick(wanted);
@@ -337,13 +338,16 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const name = h('input.input', { type: 'text', 'aria-label': 'Name', placeholder: 'Droid Code Review', value: w?.name ?? '', maxlength: '80' }) as HTMLInputElement;
     const given = new Set<CiEvent>(w ? w.triggers.map((t) => EVENT_OF_TRIGGER[t]).filter((e): e is CiEvent => !!e) : ['pull-request']);
     const events = CI_EVENTS.map((e) => {
-      const box = h('input', { type: 'checkbox', value: e.id, checked: given.has(e.id) }) as HTMLInputElement;
-      return { id: e.id, box, label: h('label.toggle', { title: e.on }, box, h('span.track'), h('span.toggle-text', {}, e.label, h('small', {}, e.on))) };
+      const label = toggle({ label: e.label, description: e.on, checked: given.has(e.id) });
+      label.input.value = e.id;
+      return { id: e.id, box: label.input, label };
     });
     const cron = h('input.input', { type: 'text', 'aria-label': 'Schedule', placeholder: 'none, or a cron like 0 9 * * 1', value: w?.cron ?? '' }) as HTMLInputElement;
     const depth = h('select.select', { 'aria-label': 'Review depth' }, h('option', { value: 'deep' }, 'Deep'), h('option', { value: 'shallow' }, 'Shallow')) as HTMLSelectElement;
     depth.value = w?.inputs.reviewDepth === 'shallow' ? 'shallow' : 'deep';
-    const security = h('input', { type: 'checkbox', checked: w?.inputs.automaticSecurityReview === true }) as HTMLInputElement;
+    const securityToggle = toggle({ label: 'Security review too', description: 'Factory’s security review runs alongside it', checked: w?.inputs.automaticSecurityReview === true });
+    securityToggle.classList.add('ci-security');
+    const security = securityToggle.input;
     const modelList = h('datalist', { id: 'ci-models' }, ...MODEL_ALIASES.map((m) => h('option', { value: m })));
     const model = h('input.input', { type: 'text', 'aria-label': 'Model', list: 'ci-models', placeholder: 'Factory’s default', value: w?.model ?? '' }) as HTMLInputElement;
     const effort = h('select.select', { 'aria-label': 'Reasoning effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || 'Default'))) as HTMLSelectElement;
@@ -353,12 +357,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const submit = h('button.btn.primary', { type: 'submit', form: 'ci-form' }, w ? 'Open a PR to change it' : 'Open a PR to add it') as HTMLButtonElement;
     const cancel = h('button.btn.ghost', { type: 'button', onclick: close }, 'Cancel');
 
-    const reviewOnly = h(
-      'div.ci-row',
-      {},
-      field('Review depth', depth),
-      h('label.toggle.ci-security', {}, security, h('span.track'), h('span.toggle-text', {}, 'Security review too', h('small', {}, 'Factory’s security review runs alongside it'))),
-    );
+    const reviewOnly = h('div.ci-row', {}, field('Review depth', depth), securityToggle);
     const customOnly = field('What it does each time', prompt);
     const req = (): CiEditRequest => ({
       action: w ? 'edit' : 'create',
@@ -409,8 +408,6 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     });
     return { el, actions: [cancel, submit] };
   }
-
-  const field = (label: string, input: HTMLElement, ...after: HTMLElement[]) => h('div.field', {}, h('label', {}, label), input, ...after);
 
   for (const [t, b] of Object.entries(tabButtons) as [Tab, HTMLButtonElement][]) {
     b.addEventListener('click', () => {

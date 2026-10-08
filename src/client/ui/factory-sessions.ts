@@ -17,6 +17,7 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { clip, h, openModal, timeAgo, toast, type Modal } from './dom';
 import { mountTranscript, type Transcript } from './factory-transcript';
+import { emptyState, field } from './kit';
 import { factoryModels, type DroidModelOption } from './models';
 import { confirmDialog } from './prompt';
 
@@ -272,7 +273,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       }),
     );
     if (!items.length) {
-      if (s.fetchedAt) list.append(h('li.empty-state.fs-empty', {}, h('b', {}, s.items.length ? 'No session matches' : 'No sessions yet'), s.items.length ? h('p', {}, 'Try another search or filter.') : null));
+      if (s.fetchedAt) list.append(h('li.fs-empty', {}, emptyState('🛰️', s.items.length ? 'No session matches' : 'No sessions yet', s.items.length ? 'Try another search or filter.' : undefined)));
       else list.append(...[0, 1, 2, 3, 4].map(() => h('li.skeleton.fs-skeleton', { 'aria-hidden': 'true' })), h('li.fs-loading', {}, 'Reading sessions from Factory… (a first read can take a minute)'));
     }
     const counted = s.credits.since ? '' : ' · credits not counted yet';
@@ -333,7 +334,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const effort = effortSelect();
     const apply = h('button.btn', { type: 'button', disabled: true }, 'Apply');
     let settingsFor = '';
-    const settingsRow = h('div.fs-settings', {}, h('div.field', {}, h('label', {}, 'Model'), model), h('div.field', {}, h('label', {}, 'Effort'), effort), apply);
+    const settingsRow = h('div.fs-settings', {}, field('Model', model), field('Effort', effort), apply);
     const dirty = () => {
       const s = sessionNow(id, fetched);
       apply.toggleAttribute('disabled', (model.value || '') === (s?.model ?? '') && (effort.value || '') === (s?.effort ?? ''));
@@ -517,12 +518,10 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const f = store.factory;
     if (!f.connection.connected || f.connection.rejected) {
       pane.replaceChildren(
-        h(
-          'div.empty-state.fs-blank',
-          {},
-          h('span.empty-icon', {}, '🛰️'),
-          h('b', {}, f.connection.rejected ? 'Factory rejected the key' : 'Not connected to Factory'),
-          h('p', {}, f.connection.rejected ? 'Factory rejected the office’s API key.' : 'The office isn’t connected to Factory.'),
+        emptyState(
+          '🛰️',
+          f.connection.rejected ? 'Factory rejected the key' : 'Not connected to Factory',
+          f.connection.rejected ? 'Factory rejected the office’s API key.' : 'The office isn’t connected to Factory.',
           h('button.btn.primary', { type: 'button', onclick: () => actions.openSettings() }, 'Settings → Factory'),
         ),
       );
@@ -534,9 +533,9 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       h(
         'div.empty-state.fs-blank',
         {},
-        h('span.empty-icon', {}, '🛰️'),
+        h('div.empty-icon', { 'aria-hidden': 'true' }, '🛰️'),
         h('b', {}, 'Pick a session'),
-        h('p', {}, 'Pick a session to see its transcript, settings and what it cost, or start a new one.'),
+        h('p', {}, 'See its transcript, settings and what it cost, or start a new one.'),
         h('div.fs-credits-sum', {}, h('div', {}, h('b', {}, compactCredits(c.today)), h('small', {}, 'credits today')), h('div', {}, h('b', {}, compactCredits(c.week)), h('small', {}, 'last 7 days'))),
         h(
           'p.field-hint.fs-credits-note',
@@ -581,7 +580,6 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const error = h('div.note.bad.fs-error.hidden', { role: 'alert' });
     const form = h('div.fs-new');
     const pics = pictures(prompt, form);
-    const field = (label: string, input: HTMLElement) => h('div.field', {}, h('label', {}, label), input);
     form.append(
       h(
         'div.stack.loose.fs-new-inner',
