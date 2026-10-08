@@ -10,6 +10,7 @@ import type { AgentChoice, AgentEffort, OutsideProcess, Run, TerminalHit, Worker
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
 import { withImages } from '../shared/drops.js';
+import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
@@ -1172,8 +1173,12 @@ export class WorkerManager {
     return true;
   }
 
-  /** Types a prompt into the agent's input box and submits it, with any staged pictures listed after it. */
-  prompt(id: string, text: string, images?: readonly string[]): string | undefined {
+  /**
+   * Types a prompt into the agent's input box and submits it, with any staged pictures listed after
+   * it. With `queue`, an agent gets Ctrl+Enter instead of Enter, as a desktop terminal sends it, so
+   * Droid queues the message behind its current turn.
+   */
+  prompt(id: string, text: string, images?: readonly string[], queue = false): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (!w.pty) return 'Worker is not running';
@@ -1182,7 +1187,8 @@ export class WorkerManager {
     if (!clean) return 'Empty prompt';
     // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
     w.pty.write(`\x1b[200~${clean}\x1b[201~`);
-    setTimeout(() => w.pty?.write('\r'), 120);
+    const submit = queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r';
+    setTimeout(() => w.pty?.write(submit), 120);
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);

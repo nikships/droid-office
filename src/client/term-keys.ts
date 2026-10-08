@@ -11,21 +11,15 @@
  * asked for CSI u would print them as garbage.
  */
 
-import type { WorkerInfo } from '../shared/protocol';
+import { CTRL_ENTER, SHIFT_ENTER } from '../shared/csi-enter';
 
-export const CTRL_ENTER = '\x1b[13;5u';
-export const SHIFT_ENTER = '\x1b[13;2u';
+export { CTRL_ENTER, SHIFT_ENTER, wantsCsiEnter } from '../shared/csi-enter';
 
 export interface KeyMods {
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
   meta?: boolean;
-}
-
-/** Whether a worker's program understands CSI u Enter: every agent runs Droid, which does; a shell doesn't. */
-export function wantsCsiEnter(kind: WorkerInfo['kind'] | undefined): boolean {
-  return kind === 'agent';
 }
 
 /** The bytes Enter with these modifiers should send, or undefined for the terminal's default. */

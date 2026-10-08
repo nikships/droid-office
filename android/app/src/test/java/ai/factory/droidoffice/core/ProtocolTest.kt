@@ -116,6 +116,12 @@ class ProtocolTest {
     }
 
     @Test
+    fun aQueuedPromptSaysSoAndAPlainOneLeavesItOut() {
+        assertFalse("queue" in json(ClientMsg.prompt("w1", "hi")))
+        assertEquals(json("""{"t":"worker.prompt","workerId":"w1","prompt":"later","queue":true}"""), json(ClientMsg.prompt("w1", "later", queue = true)))
+    }
+
+    @Test
     fun aResizeCarriesTheWorkersActualGridDimensions() {
         assertEquals(json("""{"t":"term.resize","workerId":"w1","cols":47,"rows":42}"""), json(ClientMsg.termResize("w1", 47, 42)))
     }
