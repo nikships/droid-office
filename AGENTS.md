@@ -9,7 +9,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | Work | Plan |
 | --- | --- |
 | The single-owner shape (why there is no multiplayer, accounts, voice, chat or presence) | [docs/single-owner.md](docs/single-owner.md) (implemented) |
-| Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (in progress) |
+| Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (implemented) |
 
 ## Repository map
 

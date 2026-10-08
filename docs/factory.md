@@ -2,7 +2,7 @@
 
 The office can be connected to [Factory](https://factory.ai) with a Factory API key. With it, the office shows Factory on its wall boards and acts on Factory: cloud computers (Droid Computers), Droid sessions and their credits, CI automations, AutoWiki, and cloud workers (office workers whose Droid session runs on a Factory computer). It is a real feature, polished and complete, not a demo.
 
-This is the plan for that work and the contract every Factory feature follows. Status: **in progress**. The foundation (the connection, the API client, the feature registry, the Settings pane) is built; the features themselves are being built on it.
+This is the plan for that work and the contract every Factory feature follows. Status: **implemented**. The foundation (the connection, the API client, the feature registry, the Settings pane) and every feature on it are built.
 
 ## The owner's decisions
 
