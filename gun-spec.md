@@ -17,11 +17,11 @@ collect it and its owned worktrees and branches are deleted.
 - The gun lives in the right hand. The left hand keeps its mug, drink,
   or smoke.
 - Blocked with a "hands full" toast while carrying an issue card, book,
-  or basketball, and while golfing, climbing, or hanging a picture.
+  or basketball, and while climbing or hanging a picture.
 - While drawn, the crosshair turns red and the hint bar reads
   `Click: fire · 7: holster`.
 - First person shows the gun in `Hands`; third person shows it in your
-  character's raised right hand (same pattern as the golf club prop).
+  character's raised right hand (same pattern as the mug prop).
 - `1-6` are emotes, so `7` is free.
 
 ### Firing

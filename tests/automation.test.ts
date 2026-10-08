@@ -211,7 +211,6 @@ function raw(over: Partial<RawState> = {}): RawState {
     workers: [worker({ status: 'needs_input', task: { name: 'Fix the jukebox' } }), worker({ id: 'w2', name: 'Grace', deskId: 'station-issues', status: 'done', acked: true })],
     carrying: null,
     hanging: false,
-    golfing: false,
     gun: false,
     gunMove: null,
     ...over,

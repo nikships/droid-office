@@ -32,7 +32,7 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 - **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
 - **A task queue that works while you don't.** Queue tasks and walk away. Each one gets a fresh worker on its own git branch, and the PR shows up on the board when it's ready.
 - **Meetings between agents.** Seat two to five workers at the glass meeting table for a debate, a lead-and-team split, a red-versus-blue attack on your change, or a review panel that posts one merged review on the PR.
-- **A place worth being in.** A rooftop bar, a golf tee, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
+- **A place worth being in.** A rooftop bar, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
 
 <img src="docs/meeting.jpg" alt="Robot workers around a glass meeting table with a whiteboard of diagrams behind them" width="100%">
 
@@ -55,7 +55,7 @@ A dark, industrial look in Factory orange. Install it as an app from Chrome or E
 ### Always improving
 Every new feature that ships in the original project is brought over, adapted to this fork and its Droid and GitLab work. The latest additions: rewrite every prompt the office sends, set a default worker, edit and filter issues by label on the boards, keep workers running through upgrades, send workers home when their PR merges, and browse your project's docs at the office bookshelf.
 
-<img src="docs/rooftop.jpg" alt="The rooftop bar at night with a fire pit, a DJ robot, robots with drinks, and a golf tee looking over the city" width="100%">
+<img src="docs/rooftop.jpg" alt="The rooftop bar at night with a fire pit, a DJ robot, robots with drinks, looking over the city" width="100%">
 
 ## Get started in a minute
 
