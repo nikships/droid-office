@@ -34,8 +34,11 @@ export function $(id: string): HTMLElement {
 
 // ------------------------------------------------------------------------------------------------
 
-/** The window size classes in style.css: 420, 560, 760 and 960px wide, and nearly the whole screen. */
-export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
+/**
+ * The window size classes in style.css: 420, 760 and 960px wide, and nearly the whole screen. A plain
+ * `.modal` is 560px; there is no `md` because `.md` is the Markdown body class.
+ */
+export type ModalSize = 'sm' | 'lg' | 'xl' | 'full';
 
 export interface Modal {
   el: HTMLElement;
