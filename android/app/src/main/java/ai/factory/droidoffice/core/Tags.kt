@@ -128,6 +128,7 @@ object Tags {
         const val INPUT = "composer.input"
         const val ATTACH = "composer.attach"
         const val SEND = "composer.send"
+        const val QUEUE = "composer.queue"
 
         /** A numbered menu choice above the terminal, by the number the menu shows. */
         fun choice(number: Int) = "worker.choice/$number"

@@ -907,8 +907,12 @@ export type ClientMsg =
    * the office is asked to quit, and a worker at the same desk, with the same name, resumes its session.
    */
   | { t: 'guest.bringIn'; workerId: string }
-  /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[] }
+  /**
+   * With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn.
+   * With `queue`, an agent's prompt is submitted with Ctrl+Enter instead of Enter, so Droid queues it
+   * behind what it is doing rather than sending it now (a shell gets Enter either way).
+   */
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.

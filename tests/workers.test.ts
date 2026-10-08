@@ -1550,3 +1550,32 @@ test('a picture-only first prompt hires a worker with the list as its prompt', a
   assert.match(first.args.at(-1)!, /\n\nImage 1: .*[0-9a-f]{8}-shot\.png$/);
   assert.equal(workers.station('station-issues', 'Ada', '', undefined, undefined, []), 'Empty prompt');
 });
+
+test('a queued prompt is submitted to an agent with Ctrl+Enter, a plain one with Enter', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, updates);
+  t.after(() => workers.shutdown());
+  const hired = workers.spawn('desk-2', 'test', 'Start', false, 'agent');
+  assert.equal(typeof hired, 'object');
+  if (typeof hired === 'string') return;
+
+  assert.equal(workers.prompt(hired.id, 'Queue this', [], true), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  // The terminal hands a line over at its newline, which the plain prompt's Enter brings.
+  assert.equal(workers.prompt(hired.id, 'Now this'), undefined);
+  const records = await waitFor(
+    () => f.read(),
+    (r) => typed(r).includes('Now this\x1b[201~'),
+  );
+  assert.ok(typed(records).includes('\x1b[200~Queue this\x1b[201~\x1b[13;5u\x1b[200~Now this'));
+  assert.equal(workers.get(hired.id)?.activity, 'Now this');
+});

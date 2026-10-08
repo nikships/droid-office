@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -121,14 +122,14 @@ fun Composer(w: WorkerInfo) {
         }
     }
 
-    fun send() {
+    fun send(queue: Boolean = false) {
         val prompt = text.trim()
         if ((prompt.isEmpty() && images.isEmpty()) || uploading || sending) return
         sending = true
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         val ids = images.mapNotNull { it.id }
         scope.launch {
-            val ok = graph.connection.sendWhenConnected(ClientMsg.prompt(w.id, prompt, ids))
+            val ok = graph.connection.sendWhenConnected(ClientMsg.prompt(w.id, prompt, ids, queue))
             sending = false
             if (ok) {
                 text = ""
@@ -192,6 +193,24 @@ fun Composer(w: WorkerInfo) {
                 )
             }
             val ready = (text.isNotBlank() || images.isNotEmpty()) && !uploading
+            // Ctrl+Enter in a desktop terminal: Droid takes the message after what it's doing now.
+            if (!w.isShell && !w.isCloud) {
+                Box(
+                    Modifier.padding(end = 6.dp).height(38.dp).clip(CircleShape)
+                        .border(1.dp, if (ready) Palette.Accent.copy(alpha = 0.6f) else Palette.BorderStrong, CircleShape)
+                        .clickable(enabled = ready && !sending) { send(queue = true) }
+                        .semantics { contentDescription = "Queue message" }
+                        .tagged(Tags.Worker.QUEUE)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "Queue",
+                        style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (ready) Palette.Accent else Palette.TextTertiary),
+                        modifier = Modifier.clearAndSetSemantics {},
+                    )
+                }
+            }
             Box(
                 Modifier.size(38.dp).clip(CircleShape).background(if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready && !sending) { send() }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,

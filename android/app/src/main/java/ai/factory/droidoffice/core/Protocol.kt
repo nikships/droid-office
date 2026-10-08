@@ -312,10 +312,12 @@ object ClientMsg {
         if (kind == "agent" && effort != null) put("effort", effort)
     }
 
-    fun prompt(workerId: String, prompt: String, images: List<String> = emptyList()) = obj("worker.prompt") {
+    /** With [queue], an agent gets the prompt with Ctrl+Enter, so Droid queues it behind its current turn. */
+    fun prompt(workerId: String, prompt: String, images: List<String> = emptyList(), queue: Boolean = false) = obj("worker.prompt") {
         put("workerId", workerId)
         put("prompt", prompt)
         if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
+        if (queue) put("queue", true)
     }
 
     fun queueAdd(prompt: String, model: String?, effort: String?) = obj("queue.add") {

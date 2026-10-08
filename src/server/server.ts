@@ -1451,7 +1451,7 @@ export async function startServer(cfg: Config) {
       case 'worker.prompt': {
         const w = worker(msg.workerId);
         const images = imageIds(msg.images);
-        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images) : 'No such worker';
+        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such worker';
         w?.floor.workers.unstage(images);
         warn(c, err);
         const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
