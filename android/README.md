@@ -19,6 +19,7 @@ A companion app for your phone. Pair it with your office once, and from anywhere
 - **Run the floor.** Resume a sleeping worker, ask a worker on a branch to open its pull request (or open the one it has), copy what's on its screen, or send it home (keeping or deleting its worktree and branch).
 - **Notifications with replies.** When a worker needs you or finishes, the phone notifies you, and quietly updates the notification when the office fills in what it's asking. Reply from the notification and the reply goes straight to that worker. The app asks for notification permission once, right after pairing; after that, **Allow** under **Offices** opens the system prompt or, once Android stops showing it, the app's notification settings. Turn on **Stay connected** to keep the connection open while the app is in the background; otherwise notifications only arrive while the app is open or shortly after.
 - **More than one office.** Pair a laptop and a server and switch between them under **Offices**.
+- **Update from the app.** A quiet check when you open it tells you when a newer Android app is available. Under **Offices → About**, tap **Update app**, then **Update now** to download it with progress and open Android's installer. The welcome screen has the same control before pairing. Downloads start only when you ask, can be cancelled, and keep going if you tap **Keep using app**.
 - **Tablets.** On a wide screen the worker list and the terminal sit side by side.
 
 <p>
@@ -37,6 +38,16 @@ You need Android 9 or newer and an office new enough to pair phones (one whose �
 3. Open **Droid Office**, tap **Scan the office's QR code**, and scan the code from ⚙️ Settings → **Phone** on your computer.
 
 Each release's APK carries the same version as the office it shipped with. Installing a newer one over the old keeps your paired offices.
+
+### Update it
+
+The app checks the public [latest GitHub release](https://github.com/nikships/droid-office/releases/latest), independently of the office you're paired with. It checks when it comes to the foreground, at most once an hour in a running app (15 minutes after a failed check). **Check for updates** under **Offices → About**, or on the welcome screen, checks immediately.
+
+When an update is available, tap **Update app → Update now**. It downloads and verifies the APK, then opens Android's installer. The first time, Android asks you to allow installs from **Droid Office**; enable **Allow from this source** and return to the app to continue. Confirm the update in Android and reopen Droid Office. Your offices, keys and settings stay put. This is not an unattended background update.
+
+Cancel the installer and **Install update** tries again without downloading again. A finished download can also be reused after the app restarts, after its size, checksum and package are checked again. A download interrupted by process death restarts on the next **Update now** tap. If the phone is offline, GitHub is rate limited, the APK isn't ready, or in-app installation isn't possible, **Download newest version** opens the latest release in your browser. Debug builds offer that link instead of trying to replace themselves with the differently named release app.
+
+The updater uses only HTTPS, no GitHub login or office token. Before installation it checks GitHub's SHA-256 digest, the package name, version code, Android requirement and the installed app's signing key. The APK is kept in private cache and shared read-only with the installer; no storage permission is needed. See [the update design and research](docs/updates.md) for the alternatives and platform limits.
 
 ## How it connects
 
@@ -91,6 +102,7 @@ adb shell input tap 672 2577
 - **A worker.** `worker.terminal` has the whole terminal screen as its `text` attribute, so a dump reads it without a screenshot. `worker.status`, `worker.name` and `worker.meta` describe the worker. `worker.needs_you` and `worker.question` show what it is waiting on, and `worker.choice/<n>` buttons answer a numbered menu. Type with `composer.input` (tap it, then `adb shell input text`) and send with `composer.send`, or queue it with `composer.queue` (Droid workers only). The quick keys are `key.` plus what TalkBack says, with spaces turned into underscores: `key.escape`, `key.up`, `key.down`, `key.enter`, `key.tab`, `key.shift_tab`, `key.left`, `key.right`, `key.control_c`, `key.backspace`, `key.1`, `key.2`, `key.3`, `key.y` and `key.n`. `key.phone` is `checked` when the Phone view is on and the phone sizes the terminal. Also here: `worker.back`, `worker.menu` (`worker.menu.copy`, `worker.menu.send_home`), `worker.resume`, `worker.pr`, `worker.branch`, `worker.send_home`, `worker.latest`, `worker.asleep`, `worker.asleep.resume`, `worker.cloud` (a cloud worker, which has no terminal here), `worker.offline`, `worker.gone` and `composer.attach`.
 - **Hiring.** `hire.droid` and `hire.shell`, the `hire.effort/<effort>` chips and the `hire.model/<id>` rows in the model sheet are `checked` when chosen, and so are `home.floor/<id>` chips and `send_home.option/<cleanup>`. `hire.worktree` is `checked` when on. The rest are `hire.prompt`, `hire.model`, `hire.submit` and `hire.queue`.
 - **Settings.** `settings.stay_connected`, `settings.notify_needs_input`, `settings.notify_done` and `settings.haptics` are rows reported as `checked` when on; tap one to flip it. The other names here are `offices.back`, `offices.pair_new` and `offices.allow_notifications`, plus `forget.confirm` and `forget.cancel` in the forget dialog.
+- **App updates.** On the welcome screen and under **Offices → About**, `update.row`, `update.status` and `update.open` show the check or available update. The update snackbar adds `update.notice.status`, `update.notice.open` and `update.notice.dismiss`. The dialog is `update.dialog`, with `update.dialog.status`, `update.progress` and `update.error` for readable state. Its controls are `update.install` (**Update now** or **Install update**), `update.check`, `update.cancel`, `update.dismiss`, and `update.browser` or `update.download` (the latest-release fallback). Android's permission screen and installer use their own system names.
 - **Pairing.** `welcome.scan`, `welcome.paste`, `scan.paste`, `scan.camera`, `paste.input`, `paste.submit`, `pair.status` ("PAIRING", "PAIRED", "NOT PAIRED"), `pair.outcome`, `pair.open`, `pair.retry` and `pair.cancel`.
 - **Anywhere.** `app.banner` (tap to open the worker), `app.banner.dismiss` and `app.snackbar`.
 
@@ -126,6 +138,7 @@ The keystore and its passwords are kept outside the repository by the maintainer
 | `data/` | Paired offices and settings (DataStore) and the Keystore token vault |
 | `net/` | The HTTP API (OkHttp), the cleartext guard and the network monitor |
 | `session/` | `OfficeConnection`, the one connection to the current office (route race, WebSocket, reconnects, who holds it open), and `Pairer` |
+| `update/` | Public GitHub release checks, verified private-cache APK downloads and package identity checks |
 | `notify/` | Notifications, direct replies and the Stay connected foreground service |
 | `ui/` | Compose screens: `onboarding/`, `home/`, `worker/`, `offices/`, plus the theme and shared components |
 | `app/src/test/` | JUnit tests for `core/` |

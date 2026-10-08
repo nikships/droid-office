@@ -62,6 +62,7 @@ import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.rememberNotifyPermission
 import ai.factory.droidoffice.ui.components.tagged
+import ai.factory.droidoffice.ui.components.UpdateRow
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
@@ -164,6 +165,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                     About("This phone", graph.deviceName)
                     About("App", "Droid Office ${BuildConfig.VERSION_NAME}")
                     store.active?.version?.let { About("Office", "droid-office $it") }
+                    UpdateRow()
                     Text(
                         "Geist and Geist Mono by Vercel, and the terminal's symbol font, under the SIL Open Font License.",
                         style = MaterialTheme.typography.bodySmall,

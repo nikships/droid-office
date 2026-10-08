@@ -58,6 +58,7 @@ import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.dotGrid
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
+import ai.factory.droidoffice.ui.components.UpdateRow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
@@ -121,6 +122,7 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
+                UpdateRow()
             }
         }
     }
