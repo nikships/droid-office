@@ -315,10 +315,18 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .setting .seg + .seg { margin-top: 8px; }
 .seg.disabled { opacity: .45; }
 /* The Droid model and effort a new worker runs on: one line in a form, its hint under. */
-.model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-width: 190px; }
+.model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); min-width: 190px; }
 .model-choice label { margin: 0; white-space: nowrap; }
-.model-choice select { min-width: 132px; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; }
-.model-hint { display: block; flex: 1 1 160px; min-width: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.25; }
+.model-choice select { min-width: 132px; }
+.model-hint { display: block; flex: 1 1 160px; min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+/* In a prompt box's options group: Model and Effort side by side, each label over its picker, the hint under both. */
+.prompt-opts .model-choice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 180px); gap: var(--space-2) var(--space-3); width: 100%; margin: 0; min-width: 0; }
+.prompt-opts .model-choice > label:nth-of-type(1) { grid-area: 1 / 1; }
+.prompt-opts .model-choice > select:nth-of-type(1) { grid-area: 2 / 1; }
+.prompt-opts .model-choice > label:nth-of-type(2) { grid-area: 1 / 2; }
+.prompt-opts .model-choice > select:nth-of-type(2) { grid-area: 2 / 2; }
+.prompt-opts .model-choice > .model-hint { grid-area: 3 / 1 / 4 / 3; }
+.prompt-opts .model-choice select { width: 100%; min-width: 0; }
 .modal.gh-window.issue footer .model-choice { margin: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
 .modal.gh-window.issue footer .model-choice label { font-size: 10px; }
 .modal.gh-window.issue footer .model-hint { flex: 0 1 auto; max-width: 150px; }
@@ -328,25 +336,35 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .webhook input[type=text] { flex: 1; min-width: 0; }
 .outside-now { margin: 0; font-size: 14px; font-weight: 600; }
 
-.swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-.swatch { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-strong); cursor: pointer; }
+/* Prompt boxes and the hire dialog (ui/prompt.ts): the prompt first, its options in one group under it. */
+.prompt-input { display: flex; flex-direction: column; gap: var(--space-2); }
+.prompt-input textarea { min-height: 96px; }
+.prompt-opts .group-row.model-row { display: block; }
+.prompt-opts .wt-row { cursor: pointer; }
+.prompt-opts .runs-on-row .select { width: 220px; max-width: 50%; }
+.prompt-opts .runs-on-folder .input { width: 260px; max-width: 55%; }
+.send-hint { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
+.send-hint .key { margin: 0; }
+.send-hint-more { white-space: nowrap; }
+.modal.sm.confirm .confirm-text, .send-home-text, .lost-text, .repo-pulls-note { margin: 0; font-size: 13.5px; font-weight: 400; line-height: 1.5; color: var(--text); }
+.wt-branch, .wt-path { font: 500 12.5px/1.4 var(--font-mono); color: var(--text); background: var(--surface-hover); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 0 var(--space-1); overflow-wrap: anywhere; }
+
+.swatches { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.swatch { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border-strong); cursor: pointer; transition: transform var(--duration) var(--ease); }
+.swatch:hover { transform: scale(1.08); }
 .swatch.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+.swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Character select */
-.modal.charsel { width: min(780px, 100%); }
-.charsel .body { display: grid; grid-template-columns: 250px 1fr; gap: 18px; }
+.charsel .body { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: var(--space-6); }
 .charsel-stage {
-  position: relative; min-height: 360px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius);
-  background: #0a0a0a;
+  position: relative; min-height: 380px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: radial-gradient(ellipse at 50% 80%, #16181c 0%, #0a0a0a 70%);
 }
 .charsel-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .charsel-stage canvas:active { cursor: grabbing; }
-.charsel-stage .tip { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font: 400 10px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); pointer-events: none; }
-.charsel-opts label { margin: 14px 0 8px; }
-.charsel-opts label:first-child { margin-top: 0; }
-.charsel .swatches { margin-top: 0; }
-.charsel .seg { gap: 6px; }
-.charsel .seg .btn { padding: 4px 10px; }
+.charsel-stage .tip { position: absolute; left: 0; right: 0; bottom: var(--space-3); text-align: center; font: 500 10.5px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-tertiary); pointer-events: none; }
+.charsel-opts { align-content: start; }
 @media (max-width: 640px) {
   .charsel .body { grid-template-columns: 1fr; }
   .charsel-stage { min-height: 230px; }
@@ -389,12 +407,12 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 /* A cloud worker's window (ui/factory-cloud.ts): the terminal window's frame around its Factory session */
 .modal.term.cloud-win { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); background: var(--surface); }
 .cloud-win header a.btn { text-decoration: none; }
-.cloud-meta { padding: 6px 14px; border-bottom: 1px solid var(--border); font: 500 12px/1.4 var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
-.cloud-error { margin: 0; padding: 8px 14px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.cloud-meta { padding: var(--space-2) var(--space-5); border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.45; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-error { margin: 0; border-radius: 0; overflow-wrap: anywhere; }
 .cloud-win .ft { min-height: 0; border-top: 0; }
-.cloud-prompt { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
+.cloud-prompt { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border); background: var(--surface-raised); }
 .cloud-prompt textarea { width: 100%; resize: vertical; }
-.cloud-actions { display: flex; align-items: center; gap: 8px; }
+.cloud-actions { display: flex; align-items: center; gap: var(--space-2); }
 .cloud-actions .grow { flex: 1; font: 400 11px/1.5 var(--font-mono); color: var(--text-secondary); }
 .term-team-label { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
 .team-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font: 600 12px/1 var(--font-sans); cursor: pointer; }
@@ -537,13 +555,9 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; font-weight: 500; font-size: 13.5px; }
 
 /* Send-home dialog: what becomes of a worker's worktree */
-.choices { display: flex; flex-direction: column; gap: 8px; }
-.modal label.choice { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); cursor: pointer; }
-.modal label.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-muted); }
-.choice input { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
-.choice small { display: block; font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.4; }
-.wt-status { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-.wt-status.warn { color: var(--warning); background: rgba(242, 184, 75, .08); border: 1px solid rgba(242, 184, 75, .4); border-radius: var(--radius); padding: 8px 10px; }
+/* The three choices are long sentences with paths in them: one card per line rather than a grid. */
+.send-home .choices { grid-template-columns: minmax(0, 1fr); }
+.send-home .choice small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 800px) {
   .side { width: min(250px, calc(100vw - 24px)); max-height: calc(100vh - 290px); }
@@ -792,28 +806,20 @@ a.when:hover { text-decoration: underline; }
 .gh-labeler .gh-quiet a { color: var(--info); font-weight: 600; }
 
 /* Send a prompt to a worker (ui/ask.ts) */
-.modal.ask { width: min(660px, 100%); }
-.ask-to { gap: 6px; }
-.ask-to .btn { padding: 5px 10px; }
-.ask-to .btn small { font-size: 10px; opacity: .7; }
-.ask-to .btn .dot { width: 10px; height: 10px; }
-.ask-context { margin-top: 12px; font-size: 13px; }
-.ask-context summary { cursor: pointer; font-weight: 600; color: var(--text-secondary); }
-.ask-context pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); background: var(--surface-hover); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
-/* Hiring across repositories: the other floors' projects to take on too. */
-.repo-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0 26px; font-size: 13px; font-weight: 600; }
-.repo-picks > span { color: var(--text-secondary); margin-right: 2px; }
-.modal label.repo-pick { display: inline-flex; gap: 5px; align-items: center; margin: 0; padding: 2px 10px 2px 6px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-raised); cursor: pointer; font-weight: 600; text-transform: none; letter-spacing: 0; }
-.modal label.repo-pick:has(input:checked) { border-color: var(--accent); background: var(--accent-muted); }
-.repo-pick input { margin: 0; accent-color: var(--accent); }
+.ask-to .btn { gap: var(--space-2); text-transform: none; letter-spacing: 0; font: 500 13px/1 var(--font-sans); }
+.ask-to .btn small { font: 500 10.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
+.ask-to .btn .dot { width: 8px; height: 8px; }
+.ask-context { font-size: 13px; }
+.ask-context summary { cursor: pointer; font-weight: 500; color: var(--text-secondary); }
+.ask-context pre { margin: var(--space-2) 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); background: var(--surface-hover); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
+/* Hiring across repositories: the other floors' projects to take on too, as chips that light up when picked. */
+.repo-picks .chips { justify-content: flex-end; }
+.modal label.repo-pick { position: relative; margin: 0; cursor: pointer; }
+.modal label.repo-pick:has(input:checked) { border-color: var(--accent); background: var(--accent-muted); color: var(--text); }
+.repo-pick:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.repo-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 /* O at the desk of a worker across repositories: a row per repository. */
-.repo-pulls { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.repo-pulls li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); font-weight: 600; }
-.repo-pulls li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repo-pulls li .name small { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); }
-.repo-pulls li .none { color: var(--text-secondary); font-weight: 500; font-size: 13px; }
-.repo-pulls li .btn { padding: 3px 10px; font-size: 12px; }
-.modal label.ask-wt { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.repo-pulls { margin: 0; padding: 0; list-style: none; }
 
 /* Markdown from GitHub (ui/markdown.ts): prose stays sentence case in the body font. */
 .md { padding: 12px 16px; font-size: 14.5px; line-height: 1.6; font-weight: 400; color: var(--text); overflow-wrap: anywhere; }
@@ -1032,13 +1038,13 @@ a.when:hover { text-decoration: underline; }
 .queue-add button[type=submit] { margin-left: auto; }
 
 /* Pictures pasted or dropped into a prompt box (ui/images.ts): small numbered thumbnails, each with a ✕ on hover. */
-.pimgs { display: flex; flex-wrap: wrap; flex: 1 1 100%; gap: 8px; padding-top: 6px; }
+.pimgs { display: flex; flex-wrap: wrap; flex: 1 1 100%; gap: var(--space-2); padding-top: var(--space-1); }
 .pimgs:empty { display: none; }
-.pimg { position: relative; width: 40px; height: 40px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); }
+.pimg { position: relative; width: 48px; height: 48px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); }
 .pimg img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; transition: opacity var(--duration) var(--ease); }
 .pimg.uploading img { opacity: .45; }
-.pimg-n { position: absolute; left: 2px; bottom: 2px; min-width: 14px; padding: 0 3px; font: 600 10px/14px var(--font-mono); text-align: center; color: #fff; background: rgba(0, 0, 0, .7); border-radius: 7px; pointer-events: none; }
-.pimg-x { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; padding: 0; display: grid; place-items: center; font: 700 10px/1 var(--font-sans, inherit); color: #fff; background: var(--danger); border: 0; border-radius: 50%; cursor: pointer; opacity: 0; transition: opacity var(--duration) var(--ease); }
+.pimg-n { position: absolute; left: 2px; bottom: 2px; min-width: 14px; padding: 0 3px; font: 500 10px/14px var(--font-mono); font-variant-numeric: tabular-nums; text-align: center; color: #fff; background: rgba(0, 0, 0, .7); border-radius: var(--radius-xs); pointer-events: none; }
+.pimg-x { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; padding: 0; display: grid; place-items: center; font: 500 10px/1 var(--font-sans, inherit); color: #fff; background: var(--danger); border: 0; border-radius: 50%; cursor: pointer; opacity: 0; transition: opacity var(--duration) var(--ease); }
 .pimg:hover .pimg-x, .pimg-x:focus-visible { opacity: 1; }
 @media (hover: none) { .pimg-x { opacity: 1; } }
 .modal.dropping, .queue-add.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }

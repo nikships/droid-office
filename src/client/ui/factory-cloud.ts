@@ -9,6 +9,7 @@ import { h, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { mountTranscript } from './factory-transcript';
 import { promptImages } from './images';
 import { modelBadge } from './models';
+import { sendHint } from './prompt';
 
 // Cloud workers in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice, the
 // window E opens at one's desk (its session on Factory and a prompt box), and sending one home.
@@ -21,7 +22,8 @@ export interface CloudChoice {
 }
 
 export interface RunsOn {
-  element: HTMLElement;
+  /** Rows for the hire dialog's options group: where it runs, then the folder there (shown for a computer). */
+  rows: HTMLElement[];
   /** The computer picked, or undefined for this machine. */
   choice(): CloudChoice | undefined;
   /** Hears the choice change between this machine (false) and a computer (true). */
@@ -60,20 +62,20 @@ export function runsOnPicker(): RunsOn | null {
   const computers = cloudComputers();
   if (!computers.length) return null;
   const select = h(
-    'select',
+    'select.select',
     { id: 'runs-on', 'aria-label': 'Runs on' },
     h('option', { value: '' }, '💻 This machine'),
     ...computers.map((c) => h('option', { value: c.id }, `${cloudBadge({ computerName: c.name })} · ${c.providerType}`)),
   ) as HTMLSelectElement;
-  const folder = h('input', { id: 'runs-on-cwd', type: 'text', spellcheck: false, autocomplete: 'off', 'aria-label': 'Folder on that computer', style: 'flex:1 1 220px;min-width:160px' }) as HTMLInputElement;
-  const note = h('p.setting-note', { style: 'margin:6px 0 0' });
-  const cloudRow = h('div.model-choice.hidden', {}, h('label', { for: 'runs-on-cwd' }, 'Folder'), folder);
+  const folder = h('input.input', { id: 'runs-on-cwd', type: 'text', spellcheck: false, autocomplete: 'off', 'aria-label': 'Folder on that computer' }) as HTMLInputElement;
+  const note = h('small');
+  const runsRow = h('div.group-row.runs-on-row', {}, h('span.group-label', {}, h('b', {}, 'Runs on'), h('small', {}, 'This machine, or one of your Factory computers')), select);
+  const cloudRow = h('div.group-row.runs-on-folder.hidden', {}, h('span.group-label', {}, h('b', {}, 'Folder'), note), folder);
   const listeners: ((cloud: boolean) => void)[] = [];
   const picked = () => computers.find((c) => c.id === select.value);
   const paint = () => {
     const c = picked();
     cloudRow.classList.toggle('hidden', !c);
-    note.classList.toggle('hidden', !c);
     if (c) {
       const home = computerHome(c);
       folder.value = savedCwds()[c.id] ?? '';
@@ -85,7 +87,7 @@ export function runsOnPicker(): RunsOn | null {
   select.addEventListener('change', paint);
   paint();
   return {
-    element: h('div', {}, h('div.model-choice', {}, h('label', { for: 'runs-on' }, 'Runs on'), select), cloudRow, note),
+    rows: [runsRow, cloudRow],
     choice: () => {
       const c = picked();
       return c && { computerId: c.id, computerName: c.name, cwd: folder.value.trim() };
@@ -122,18 +124,18 @@ export function cloudLine(w: WorkerInfo): string {
 export function sendCloudHome(net: Net, w: WorkerInfo) {
   const box = h('input', { type: 'checkbox', id: 'cloud-delete' }) as HTMLInputElement;
   const yes = h('button.btn.danger', { type: 'button' }, 'Send home');
-  const no = h('button.btn', { type: 'button' }, 'Never mind');
+  const no = h('button.btn.ghost', { type: 'button' }, 'Cancel');
   const where = w.cloud ? w.cloud.computerName : 'Factory';
   const busy = w.status === 'working' || w.status === 'starting';
   const el = h(
-    'div.modal',
+    'div.modal.sm.confirm',
     { role: 'alertdialog', 'aria-label': `Send ${w.name} home?` },
     h('header', {}, h('h2', {}, `Send ${w.name} home?`)),
     h(
-      'div.body',
+      'div.body.stack',
       {},
-      h('p', { style: 'margin:0;font-weight:700' }, `${w.name} leaves the desk${busy ? `, and its session on ${where} is stopped` : ''}. The session stays in Factory unless you delete it.`),
-      h('label', { for: 'cloud-delete', style: 'display:flex;gap:8px;align-items:center;margin:12px 0 0;font-weight:700;cursor:pointer' }, box, '🗑️ Also delete its Factory session'),
+      h('p.confirm-text', {}, `${w.name} leaves the desk${busy ? `, and its session on ${where} is stopped` : ''}. The session stays in Factory unless you delete it.`),
+      h('label.toggle', { for: 'cloud-delete' }, box, h('span.track'), h('span.toggle-text', {}, 'Also delete its Factory session', h('small', {}, 'Its transcript and settings go with it'))),
     ),
     h('footer', {}, no, yes),
   );
@@ -165,13 +167,14 @@ export function openCloudWindow(net: Net, workerId: string) {
   const info = store.workers.get(workerId);
   if (!info?.cloud) return;
 
-  const dot = h('span.dot', { style: `background:${info.color}` });
+  const dot = h('span.dot');
+  dot.style.background = info.color;
   const title = h('h2', {});
   const pill = h('span.pill', {});
-  const link = info.sessionId ? h('a.btn', { href: cloudSessionUrl(info.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Its session in the Factory web app' }, 'Open in Factory ↗') : null;
+  const link = info.sessionId ? h('a.btn.sm', { href: cloudSessionUrl(info.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Its session in the Factory web app' }, 'Open in Factory ↗') : null;
   const closeBtn = h('button.btn.close', { title: 'Close (Esc)', 'aria-label': 'Close' }, '✕');
   const meta = h('div.cloud-meta');
-  const error = h('p.cloud-error.setting-note.bad.hidden', { role: 'alert' });
+  const error = h('p.cloud-error.note.bad.hidden', { role: 'alert' });
   const worker = () => store.workers.get(workerId);
   const busyNow = () => {
     const s = worker()?.status;
@@ -191,15 +194,15 @@ export function openCloudWindow(net: Net, workerId: string) {
         },
       })
     : null;
-  const ta = h('textarea', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;
+  const ta = h('textarea.input', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;
   const images = promptImages(ta);
   const interrupt = h('button.btn', { type: 'button', title: 'Stop what it is doing now' }, '⏹ Interrupt');
   const send = h('button.btn.primary', { type: 'submit' }, 'Send');
-  const form = h('form.cloud-prompt', {}, ta, images.element, h('div.cloud-actions', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line · paste or drop pictures'), interrupt, send)) as HTMLFormElement;
+  const form = h('form.cloud-prompt', {}, ta, images.element, h('div.cloud-actions', {}, sendHint(true), interrupt, send)) as HTMLFormElement;
   const el = h(
     'div.modal.term.cloud-win',
     { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` },
-    h('header', {}, dot, title, pill, link, closeBtn),
+    h('header', {}, dot, title, pill, link ? h('div.actions', {}, link) : null, closeBtn),
     meta,
     error,
     transcript?.element ?? h('div.ft', {}, h('div.ft-status', {}, 'It has no Factory session')),
@@ -213,6 +216,7 @@ export function openCloudWindow(net: Net, workerId: string) {
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
     meta.textContent = [cloudLine(w), `autonomy ${w.cloud.autonomy}`, creditsNote(store.factory.sessions, w.sessionId)].filter(Boolean).join(' · ');
+    meta.title = meta.textContent;
     const busy = busyNow();
     error.textContent = w.cloud.error ? `☁ ${w.name} can't work: ${w.cloud.error}. Send it home and hire another.` : '';
     error.classList.toggle('hidden', !w.cloud.error);

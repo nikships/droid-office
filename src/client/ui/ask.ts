@@ -2,7 +2,7 @@ import type { AgentEffort, WorkerStatus } from '../../shared/protocol';
 import { h, openModal, STATUS_LABEL } from './dom';
 import { promptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
-import { repoPicker } from './prompt';
+import { repoPicker, sendHint, worktreeRow } from './prompt';
 
 // Send a prompt about an issue or PR to a worker: a new one at a free desk, or one already sitting
 // at a desk (it lands in their input box, queued if they're busy).
@@ -39,7 +39,7 @@ const WT_KEY = 'droid-office.worktree';
 
 export function openAsk(opts: AskOptions) {
   let to: string | null = opts.newDesk ? null : (opts.workers[0]?.id ?? null);
-  const ta = h('textarea', { rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
+  const ta = h('textarea.input', { id: 'ask-prompt', rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images = promptImages(ta);
   const wtBox = h('input', { type: 'checkbox', id: 'ask-wt' }) as HTMLInputElement;
@@ -48,47 +48,46 @@ export function openAsk(opts: AskOptions) {
   } catch {
     // storage blocked
   }
-  const wtRow = h('label.ask-wt', { for: 'ask-wt', title: 'Isolate the new worker on its own branch so parallel workers never collide' }, wtBox, '🌿 Work in its own git worktree & branch');
+  const wtRow = worktreeRow(wtBox);
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);
   const models: AgentFields | null = opts.modelOption ? agentPicker('ask-models') : null;
+  const modelRow = models ? h('div.group-row.model-row', {}, models.element) : null;
+  const newOpts = h('div.group.prompt-opts', { role: 'group', 'aria-label': 'New worker options' }, modelRow, wtRow, repos.element);
   const submit = h('button.btn.primary', { type: 'submit' });
 
-  const choices = h('div.seg.ask-to');
+  const choices = h('div.seg.ask-to', { role: 'group', 'aria-label': 'Send to' });
   const pick = (id: string | null) => {
     to = id;
     for (const b of choices.children) b.classList.toggle('on', (b as HTMLElement).dataset.to === (id ?? ''));
     wtRow.classList.toggle('hidden', !!id || !opts.worktreeOption);
     repos.element?.classList.toggle('hidden', !!id);
-    models?.element.classList.toggle('hidden', !!id);
+    modelRow?.classList.toggle('hidden', !!id);
+    newOpts.classList.toggle('hidden', !!id || (!models && !opts.worktreeOption));
     submit.textContent = id ? 'Send' : 'Hire & start';
+    submit.classList.toggle('accent', !id);
+    submit.classList.toggle('primary', !!id);
   };
   if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New worker · ${opts.newDesk}`));
   for (const w of opts.workers) {
-    choices.append(
-      h('button.btn', { type: 'button', 'data-to': w.id, title: `Type it into ${w.name}'s prompt`, onclick: () => pick(w.id) }, h('span.dot', { style: `background:${w.color}` }), w.name, h('small', {}, STATUS_LABEL[w.status] ?? w.status)),
-    );
+    const dot = h('span.dot');
+    dot.style.background = w.color;
+    choices.append(h('button.btn', { type: 'button', 'data-to': w.id, title: `Type it into ${w.name}'s prompt`, onclick: () => pick(w.id) }, dot, w.name, h('small', {}, STATUS_LABEL[w.status] ?? w.status)));
   }
 
-  const cancel = h('button.btn', { type: 'button' }, 'Cancel');
+  const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
   const form = h(
-    'form.modal.ask',
+    'form.modal.md.ask',
     { role: 'dialog', 'aria-label': opts.title },
     h('header', {}, h('h2', {}, opts.title)),
     h(
-      'div.body',
+      'div.body.stack',
       {},
-      h('label', {}, 'Send to'),
-      choices,
+      h('div.field', {}, h('label', {}, 'Send to'), choices),
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
-      h('label', { style: 'margin-top:14px' }, 'Prompt'),
-      ta,
-      images.element,
-      models?.element ?? null,
-      wtRow,
-      repos.element,
+      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, ta, images.element)),
+      newOpts,
     ),
-
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line · paste or drop pictures'), cancel, submit),
+    h('footer', {}, sendHint(true), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
   pick(to);

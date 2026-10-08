@@ -195,8 +195,8 @@ export function agentFields(id: string, initial: AgentChoice): AgentFields {
  * the office's default worker from the server, so its picker has to name that one, not Droid's.
  */
 function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
-  const modelSelect = h('select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
-  const effortSelect = h('select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
+  const modelSelect = h('select.select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
+  const effortSelect = h('select.select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
   const hint = h('small.model-hint', {}, 'Loading Droid models…');
   const remember = (kind: 'model' | 'effort', value: string) => {
     if (key === undefined) return;
