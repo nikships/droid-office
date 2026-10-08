@@ -25,6 +25,25 @@ object Tags {
         const val SNACKBAR = "app.snackbar"
     }
 
+    object Update {
+        const val NOTICE_STATUS = "update.notice.status"
+        const val NOTICE_OPEN = "update.notice.open"
+        const val NOTICE_DISMISS = "update.notice.dismiss"
+        const val ROW = "update.row"
+        const val STATUS = "update.status"
+        const val OPEN = "update.open"
+        const val DIALOG = "update.dialog"
+        const val DIALOG_STATUS = "update.dialog.status"
+        const val PROGRESS = "update.progress"
+        const val ERROR = "update.error"
+        const val INSTALL = "update.install"
+        const val CANCEL = "update.cancel"
+        const val CHECK = "update.check"
+        const val DISMISS = "update.dismiss"
+        const val BROWSER = "update.browser"
+        const val DOWNLOAD = "update.download"
+    }
+
     object Welcome {
         const val SCAN = "welcome.scan"
         const val PASTE = "welcome.paste"

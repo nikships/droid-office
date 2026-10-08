@@ -8,12 +8,14 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import ai.factory.droidoffice.data.OfficeStore
+import ai.factory.droidoffice.core.UpdateController
 import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.notify.Alerts
 import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.OfficeConnection
 import ai.factory.droidoffice.session.Pairer
+import ai.factory.droidoffice.update.GitHubUpdates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,12 +57,14 @@ class AppGraph(val app: Application) {
     val pairer = Pairer(api, store, deviceName, scope)
     val visibility = AppVisibility()
     val alerts = Alerts(app, scope, connection, store, visibility)
+    val updates = UpdateController(scope, GitHubUpdates(app))
 
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 visibility.set(true)
                 connection.hold(UI_HOLD)
+                updates.check()
                 if (store.snapshot.value.settings.stayConnected) StayConnectedService.start(app)
             }
 
