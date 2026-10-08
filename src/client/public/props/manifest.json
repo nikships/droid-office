@@ -49,6 +49,18 @@
     "url": "/props/macbook-lid.glb",
     "width": 0.78
   },
+  "magnum": {
+    "bytes": 165732,
+    "depth": 0.2846,
+    "height": 0.1814,
+    "materials": 6,
+    "tags": [
+      "hand"
+    ],
+    "triangles": 6446,
+    "url": "/props/magnum.glb",
+    "width": 0.0477
+  },
   "pr-crate": {
     "bytes": 5272,
     "depth": 0.26,

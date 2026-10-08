@@ -31,6 +31,7 @@ import os
 import shutil
 import sys
 
+import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
@@ -327,23 +328,26 @@ class Prop:
     single mesh as usual, and each loose (name, object, material) exports as its own
     node, so the client can find it by name. `keep_uvs` keeps the body's UVs for props
     painted from a palette atlas (see `palette_material`); untextured props drop them.
+    `draco` off exports plain buffers, for a prop the tests parse in Node, where three's
+    DRACOLoader has no Web Worker to decode in.
     """
 
-    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
+    def __init__(self, name: str, build, tags: list[str], recenter: bool = True, multipart: bool = False, keep_uvs: bool = False, draco: bool = True):
         self.name = name
         self.build = build
         self.tags = tags
         self.recenter = recenter
         self.multipart = multipart
         self.keep_uvs = keep_uvs
+        self.draco = draco
 
 
 REGISTRY: list[Prop] = []
 
 
-def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False, keep_uvs: bool = False):
+def prop(name: str, *tags: str, recenter: bool = True, multipart: bool = False, keep_uvs: bool = False, draco: bool = True):
     def wrap(fn):
-        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart, keep_uvs=keep_uvs))
+        REGISTRY.append(Prop(name=name, build=fn, tags=list(tags), recenter=recenter, multipart=multipart, keep_uvs=keep_uvs, draco=draco))
         return fn
 
     return wrap
@@ -803,6 +807,377 @@ def build_pr_crate():
     return body, [("Status", loose(status), palette[0])]
 
 
+# The .44 Magnum your first-person glove holds
+# --------------------------------------------------------------------------------------
+
+# Gun space, in millimetres here and metres in the GLB: the bore along +Z, +Y up, +X the gun's
+# left, and the origin up in the fist round the grip. Must match src/client/world/gun.ts.
+MAGNUM = {
+    "bore_y": 62.0,
+    "muzzle_z": 235.0,
+    # The cylinder's middle, shut, and its size. The top chamber lines up with the bore.
+    "drum": (0.0, 47.0, 30.0),
+    "drum_r": 24.0,
+    "drum_len": 64.0,
+    "chamber_at": 15.0,
+    # The crane's hinge, low on the frame's left, and how far round it swings the cylinder out.
+    "crane": (8.0, 12.0),
+    "swing": -1.75,
+}
+
+# The grip is shaped for the glove (src/client/world/glove.ts): 36 mm across, so the palm lies
+# flat on its right panel, and 55 mm front to back where the middle finger crosses it, so the
+# middle, ring and little fingers reach round the front strap onto the left panel. Each row is
+# (y, z): the front strap, then the slanted top edge under the frame.
+GRIP_FRONT = [
+    (-90.8, 0.0), (-86.0, 1.0), (-78.0, 2.8), (-72.0, 4.8), (-67.0, 6.8), (-63.0, 8.6), (-57.0, 10.8),
+    (-50.0, 12.6), (-44.0, 14.0), (-36.0, 15.2), (-26.5, 16.2), (-16.0, 17.0), (-10.0, 17.6), (-4.0, 18.2),
+    (2.0, 18.6), (6.5, 19.0), (7.2, 12.0), (9.5, 4.0), (14.5, -6.0), (23.0, -16.0), (33.0, -26.0), (38.0, -29.0),
+]
+# The backstrap, swelling into a horn under the hammer where the web of the thumb sits.
+GRIP_REAR = [
+    (-90.8, -44.0), (-88.0, -47.0), (-85.0, -49.0), (-81.0, -49.6), (-74.0, -48.4), (-67.0, -46.8), (-60.0, -45.0),
+    (-50.0, -42.6), (-42.0, -41.0), (-33.0, -39.6), (-26.5, -38.6), (-18.0, -37.8), (-8.0, -37.3), (0.0, -37.6),
+    (9.0, -38.6), (18.0, -39.6), (26.0, -39.6), (32.0, -38.4), (36.0, -36.8), (38.0, -36.0),
+]
+GRIP_HALF = [(-90.8, 17.5), (-70.0, 18.0), (18.0, 18.0), (30.0, 16.5), (38.0, 14.5)]
+
+
+def mm(points):
+    return [tuple(c / 1000 for c in p) for p in points]
+
+
+def lerp_table(table, y):
+    """Piecewise-linear lookup in rows of (y, value), sorted by y."""
+    if y <= table[0][0]:
+        return table[0][1]
+    for (y0, v0), (y1, v1) in zip(table, table[1:]):
+        if y <= y1:
+            return v0 + (v1 - v0) * (y - y0) / (y1 - y0)
+    return table[-1][1]
+
+
+def link_bmesh(name, bm):
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def prism_x(name, outline, width, x=0.0):
+    """A side silhouette, [(z, y)] in mm, extruded `width` mm across X about `x`."""
+    bm = bmesh.new()
+    rings = [[bm.verts.new(((x + side * width / 2) / 1000, y / 1000, z / 1000)) for z, y in outline] for side in (-1, 1)]
+    for ring in rings:
+        bm.faces.new(ring)
+    n = len(outline)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((rings[0][i], rings[0][j], rings[1][j], rings[1][i]))
+    return link_bmesh(name, bm)
+
+
+def prism_z(name, outline, z0, z1):
+    """A cross-section, [(x, y)] in mm, extruded along the bore from z0 to z1 mm."""
+    bm = bmesh.new()
+    rings = [[bm.verts.new((x / 1000, y / 1000, z / 1000)) for x, y in outline] for z in (z0, z1)]
+    for ring in rings:
+        bm.faces.new(ring)
+    n = len(outline)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((rings[0][i], rings[0][j], rings[1][j], rings[1][i]))
+    return link_bmesh(name, bm)
+
+
+def swept_disc(centre, radius, z0, z1, steps=28, cap=12):
+    """What a disc on the crane sweeps as the cylinder swings out: the arc its centre takes round
+    the hinge, `radius` mm either side, with a half disc at each end. A cutter for whatever the
+    cylinder, or the ejector rod, would pass through on its way out."""
+    hx, hy = MAGNUM["crane"]
+    cx, cy = centre
+    reach = math.hypot(cx - hx, cy - hy)
+    a0 = math.atan2(cy - hy, cx - hx)
+    sw = MAGNUM["swing"]
+    s = math.copysign(1, sw)
+    a1 = a0 + sw
+    pts = [(hx + (reach + radius) * math.cos(a0 + sw * i / steps), hy + (reach + radius) * math.sin(a0 + sw * i / steps)) for i in range(steps + 1)]
+    ex, ey = hx + reach * math.cos(a1), hy + reach * math.sin(a1)
+    pts += [(ex + radius * math.cos(a1 + s * math.pi * i / cap), ey + radius * math.sin(a1 + s * math.pi * i / cap)) for i in range(1, cap)]
+    pts += [(hx + (reach - radius) * math.cos(a1 - sw * i / steps), hy + (reach - radius) * math.sin(a1 - sw * i / steps)) for i in range(steps + 1)]
+    sx, sy = hx + reach * math.cos(a0), hy + reach * math.sin(a0)
+    pts += [(sx + radius * math.cos(a0 + s * math.pi * (1 + i / cap)), sy + radius * math.sin(a0 + s * math.pi * (1 + i / cap))) for i in range(1, cap)]
+    return prism_z("SweptDisc", pts, z0, z1)
+
+
+def swept_arm(reach, z0, z1, steps=24, margin=0.12):
+    """The pie slice the crane's arm sweeps round its hinge, out to `reach` mm."""
+    hx, hy = MAGNUM["crane"]
+    dx, dy = MAGNUM["drum"][0] - hx, MAGNUM["drum"][1] - hy
+    a0 = math.atan2(dy, dx)
+    a1 = a0 + MAGNUM["swing"]
+    lo, hi = min(a0, a1) - margin, max(a0, a1) + margin
+    pts = [(hx, hy)] + [(hx + reach * math.cos(lo + (hi - lo) * i / steps), hy + reach * math.sin(lo + (hi - lo) * i / steps)) for i in range(steps + 1)]
+    return prism_z("SweptArm", pts, z0, z1)
+
+
+def zcyl(name, r, z0, z1, x=0.0, y=0.0, verts=24):
+    """A cylinder along the bore, in mm."""
+    bpy.ops.mesh.primitive_cylinder_add(radius=r / 1000, depth=(z1 - z0) / 1000, location=(x / 1000, y / 1000, (z0 + z1) / 2000), vertices=verts)
+    obj = bpy.context.active_object
+    obj.name = name
+    return obj
+
+
+def xcyl(name, r, x0, x1, y, z, verts=12):
+    """A cylinder across the gun, in mm: a screw head on the frame's side."""
+    obj = zcyl(name, r, x0, x1, verts=verts)
+    obj.data.transform(Matrix.Rotation(math.radians(90), 4, "Y"))
+    obj.location = ((x0 + x1) / 2000, y / 1000, z / 1000)
+    return obj
+
+
+def zdisc(name, r, x, y, z, back=False, verts=16):
+    """A flat disc facing +Z (or -Z), in mm: a chamber mouth or a primer."""
+    bpy.ops.mesh.primitive_circle_add(vertices=verts, radius=r / 1000, fill_type="NGON", location=(x / 1000, y / 1000, z / 1000))
+    obj = bpy.context.active_object
+    obj.name = name
+    if back:
+        obj.data.transform(Matrix.Rotation(math.pi, 4, "X"))
+    return obj
+
+
+def mmbox(name, size, centre, bevel_w=0.0, segments=2):
+    return raw(box(name, tuple(s / 1000 for s in size), loc=tuple(c / 1000 for c in centre), bevel_w=bevel_w / 1000, bevel_seg=segments))
+
+
+def cut(obj, *cutters):
+    """Subtracts each cutter from `obj`, then deletes it. Any modifier already on `obj` applies first."""
+    obj = raw(obj)
+    for cutter in cutters:
+        cutter = raw(cutter)
+        mod = obj.modifiers.new("Cut", "BOOLEAN")
+        mod.operation = "DIFFERENCE"
+        mod.solver = "EXACT"
+        mod.object = cutter
+        apply_modifiers(obj)
+        bpy.data.objects.remove(cutter, do_unlink=True)
+    return obj
+
+
+def finish(obj, mat, bevel_mm=0.0, segments=2, angle=50.0):
+    obj = raw(obj)
+    if bevel_mm:
+        bevel(obj, bevel_mm / 1000, segments, angle)
+    apply_modifiers(obj)
+    smooth_obj(obj)
+    return attach(obj, mat)
+
+
+def rounded_ring(y, z_rear, z_front, half, r_rear, r_front, k=4):
+    """One horizontal slice of the grip: a rounded rectangle from the backstrap to the front strap,
+    2 * half across, with its own corner radius at the back and at the front."""
+    corners = [
+        (half - r_front, z_front - r_front, r_front, 0.0),
+        (-(half - r_front), z_front - r_front, r_front, 90.0),
+        (-(half - r_rear), z_rear + r_rear, r_rear, 180.0),
+        (half - r_rear, z_rear + r_rear, r_rear, 270.0),
+    ]
+    out = []
+    for cx, cz, r, start in corners:
+        for i in range(k + 1):
+            a = math.radians(start + 90.0 * i / k)
+            out.append((cx + r * math.cos(a), y, cz + r * math.sin(a)))
+    return out
+
+
+def walnut_grip():
+    """The grip, lofted through horizontal slices up the silhouette, its butt rounded over."""
+    bottom, top = GRIP_FRONT[0][0], GRIP_FRONT[-1][0]
+    butt, crown = 7.0, 2.5
+    lo, hi = bottom + butt, top - crown
+    # Every corner of the silhouette gets a slice, with more between them where they are far apart.
+    levels = {y for y, _ in GRIP_FRONT + GRIP_REAR if lo < y < hi}
+    levels |= {lo + 6.0 * i for i in range(int((hi - lo) / 6.0) + 1)}
+    levels = sorted(y for y in levels if lo <= y <= hi)
+    levels = [y for i, y in enumerate(levels) if i == 0 or y - levels[i - 1] > 2.5]
+    levels = sorted([bottom + d for d in (0.0, 0.6, 1.8, 3.6)] + levels + [top - d for d in (1.0, 0.0)])
+    bm = bmesh.new()
+    rings = []
+    for y in levels:
+        # Rounding over the butt and the crown: the slice pulls in as it nears either end.
+        inset = 0.0
+        if y - bottom < butt:
+            inset = butt - math.sqrt(max(0.0, butt * butt - (butt - (y - bottom)) ** 2))
+        elif top - y < crown:
+            inset = crown - math.sqrt(max(0.0, crown * crown - (crown - (top - y)) ** 2))
+        zf = lerp_table(GRIP_FRONT, y) - inset
+        zr = lerp_table(GRIP_REAR, y) + inset
+        half = lerp_table(GRIP_HALF, y) - inset
+        depth = zf - zr
+        # Round at the front strap; sharp along the top edge, where the walnut meets the frame.
+        front = 11.0 if y <= 6.5 else max(1.5, 11.0 - (y - 6.5) * 2.0)
+        r_rear = max(0.5, min(12.0 - inset, depth / 2 - 0.2, half - 0.2))
+        r_front = max(0.5, min(front - inset, depth / 2 - 0.2, half - 0.2))
+        rings.append([bm.verts.new(tuple(c / 1000 for c in p)) for p in rounded_ring(y, zr, zf, half, r_rear, r_front)])
+    for a, b in zip(rings, rings[1:]):
+        n = len(a)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    bm.faces.new(rings[0])
+    bm.faces.new(rings[-1])
+    return link_bmesh("Walnut", bm)
+
+
+@prop("magnum", "hand", recenter=False, multipart=True, draco=False)
+def build_magnum():
+    """A stainless .44 Magnum revolver with a full-lug, vent-ribbed barrel, a fluted six-shot
+    cylinder on a swing-out crane and a walnut grip shaped round the glove.
+
+    The body is one mesh in gun space. `gun-crane-arm` is authored round the crane's hinge, and
+    `gun-drum` (the cylinder, its ejector rod, brass and chamber mouths) round the cylinder's
+    middle, so the client hangs them on groups it turns (gun.ts setCylinder). Nothing on the
+    frame, barrel or lug stands where the cylinder, its rod or the crane pass on the way out:
+    each is cut by what they sweep.
+    """
+    steel = material("GunSteel", "#d3d9e0", roughness=0.25, metallic=0.9)
+    frame = material("GunFrame", "#9ba5b1", roughness=0.35, metallic=0.85)
+    walnut = material("GunWalnut", "#6e3a22", roughness=0.55)
+    dark = material("GunDark", "#23272e", roughness=0.45, metallic=0.5)
+    brass = material("GunBrass", "#d6a646", roughness=0.3, metallic=0.9)
+    orange = material("GunOrange", "#ee6018", roughness=0.5)
+    m = MAGNUM
+    dx, dy, dz = m["drum"]
+    dr, dl = m["drum_r"], m["drum_len"]
+    hx, hy = m["crane"]
+    muzzle = m["muzzle_z"]
+    body = []
+
+    # The frame: a side profile with the cylinder's window notched out of its top, a recoil shield
+    # behind it and the post the barrel screws into in front. Its lower edge runs inside the
+    # walnut, and the guard hangs under its flat bottom (y 6).
+    frame_body = prism_x(
+        "Frame",
+        [
+            (-14, 72), (-3, 72), (-3, 22), (66, 22), (66, 72), (72, 72), (72, 20), (75, 12), (76.5, 6),
+            (20, 6), (18, -2), (-36, -2), (-36, 32), (-34.5, 44), (-32, 54), (-27.5, 63), (-21, 69),
+        ],
+        28,
+    )
+    bevel(frame_body, 0.0012, 2, 50)
+    top_strap = mmbox("TopStrap", (21, 10, 86), (0, 77, 29), bevel_w=2.0, segments=3)
+
+    def swing():
+        return swept_disc((dx, dy), dr + 0.6, dz - dl / 2 - 0.6, dz + dl / 2 + 0.6)
+
+    def hammer_slot():
+        return mmbox("HammerSlot", (9.2, 44, 25), (0, 66, -22.5))
+
+    cut(frame_body, swing(), swept_disc((dx, dy), 4.0, 60, 112), swept_arm(math.hypot(dx - hx, dy - hy) + 7.5, 62.0, 66.0), hammer_slot())
+    cut(top_strap, swing(), hammer_slot())
+    body += [(finish(frame_body, frame), None), (finish(top_strap, frame), None)]
+
+    # The guard: a narrow loop under the frame, open in the barrel's plane for the trigger finger.
+    # Its back curves up under the guard-side of the middle finger, its bottom drops away under
+    # the trigger finger, so a finger hooked through it on SPIN_AT never touches it as it spins.
+    guard = prism_x(
+        "Guard",
+        [(16, 7), (16, -4), (17.5, -8), (20.5, -10.5), (25, -11.6), (30, -11.9), (35, -12.4), (40, -13.3), (42, -15.0), (44, -17.4), (47, -19.2), (52, -19.8), (56, -20.4), (64, -20.4), (71, -17.6), (76.5, -12.5), (80, -5), (81, 2), (81, 7)],
+        9,
+    )
+    bevel(guard, 0.0012, 2, 50)
+    cut(guard, prism_x("GuardOpening", [(27.5, 5), (27.5, -3), (29, -6.6), (32, -8.4), (36, -9.4), (40, -10.8), (42, -12.6), (44, -15.0), (47, -16.8), (52, -17.0), (57, -17.6), (63, -17.0), (69, -14.6), (73.5, -10), (76, -4), (76.8, 1), (76.8, 5)], 12))
+    body.append((finish(guard, frame), None))
+
+    # The barrel: a real tube, its bore recessed into the muzzle, on a full-length underlug that
+    # houses the ejector rod, under a ventilated rib.
+    bore_y = m["bore_y"]
+    barrel = zcyl("Barrel", 11, 66, muzzle, 0, bore_y, verts=32)
+    bevel(barrel, 0.0012, 2, 50)
+    cut(barrel, zcyl("Bore", 5.6, muzzle - 16, muzzle + 1, 0, bore_y, verts=20))
+    body.append((finish(barrel, steel), None))
+    body.append((attach(zdisc("BoreEnd", 5.6, 0, bore_y, muzzle - 15.9, verts=20), dark), None))
+    lug = prism_x("Underlug", [(72, 54), (233, 54), (234.5, 51), (234, 46), (231, 41), (225, 38.5), (100, 38), (72, 38)], 17)
+    bevel(lug, 0.0022, 3, 50)
+    cut(lug, swept_disc((dx, dy), 4.0, 60, 112))
+    body.append((finish(lug, steel), None))
+    rib = mmbox("Rib", (10, 9.5, 162), (0, 76.75, 153), bevel_w=0.8)
+    cut(rib, *[mmbox(f"Vent{i}", (14, 4, 8.5), (0, 76.5, 88 + 17 * i)) for i in range(8)])
+    body.append((finish(rib, steel), None))
+
+    # Sights: a ramped front blade with an orange insert facing you, a notched rear on the strap.
+    body.append((finish(prism_x("FrontSight", [(212, 81.3), (232.5, 81.3), (232.5, 88), (230.8, 90.4), (227.5, 90.6)], 3.4), steel, 0.4, 1), None))
+    body.append((finish(prism_x("SightInsert", [(218.35, 85.46), (226.15, 90.16), (226.81, 89.04), (219.01, 84.34)], 3.6), orange), None))
+    rear = mmbox("RearSight", (15, 4.8, 11), (0, 84.4, -7), bevel_w=0.6)
+    cut(rear, mmbox("Notch", (3.4, 4, 14), (0, 87, -7)))
+    body.append((finish(rear, dark), None))
+
+    # The action: the hammer in its slot with its spur back over the web of the hand, the trigger
+    # at the back of the guard, and the cylinder latch on the frame's left behind the cylinder.
+    hammer = prism_x("Hammer", [(-12, 46), (-11.5, 73), (-13.5, 78.5), (-19, 82), (-26, 81.5), (-28, 76), (-27.5, 62), (-28.5, 46)], 8)
+    body.append((finish(hammer, dark, 0.8, 2), None))
+    # A wide target spur, its top grooved for the thumb that cocks it.
+    spur = prism_x("Spur", [(-17, 81.5), (-30, 85.4), (-40, 87.6), (-46, 87.6), (-48.6, 85.6), (-47.2, 83.0), (-38, 81.4), (-30, 79.4), (-22, 77.4)], 12)
+    bevel(spur, 0.001, 2, 50)
+    spur_top = [(-46, 87.6), (-40, 87.6), (-30, 85.4)]
+    cut(spur, *[mmbox(f"Groove{i}", (16, 1.6, 1.4), (0, lerp_table(spur_top, -31 - 3.6 * i), -31 - 3.6 * i)) for i in range(4)])
+    body.append((finish(spur, dark), None))
+    trigger = prism_x("Trigger", [(33.8, 7), (40.2, 7), (40.6, 1), (40.6, -4.2), (40.0, -6.6), (38.8, -8.3), (37.2, -8.0), (36.9, -6.0), (36.6, -3), (35.6, 2)], 6.8)
+    body.append((finish(trigger, dark, 0.6, 2), None))
+    body.append((finish(mmbox("Latch", (2.8, 7, 9), (15.2, 52.5, -8.5), bevel_w=0.8), dark), None))
+    for i, (z, y) in enumerate(((4, 14), (46, 14), (-18, 36))):
+        body.append((finish(xcyl(f"Screw{i}", 2.7, -14.8, -13.8, y, z), steel), None))
+
+    body.append((finish(walnut_grip(), walnut), None))
+
+    # The cylinder, round its own middle: fluted between six loaded chambers, brass case heads
+    # and primers on its back face, the ejector star, and the ejector rod out in front.
+    half = dl / 2
+    drum = zcyl("Cylinder", dr, -half, half, verts=30)
+    bevel(drum, 0.0015, 2, 50)
+    flutes = []
+    for i in range(6):
+        a = math.radians(60 * i)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1, segments=12, ring_count=8, location=(math.cos(a) * 0.0264, math.sin(a) * 0.0264, 0))
+        flute = bpy.context.active_object
+        flute.scale = (0.0048, 0.0048, 0.021)
+        flutes.append(flute)
+    chambers = [(math.cos(math.radians(30 + 60 * i)) * m["chamber_at"], math.sin(math.radians(30 + 60 * i)) * m["chamber_at"]) for i in range(6)]
+    cut(drum, *flutes, *[zcyl(f"Chamber{i}", 5.7, half - 8, half + 1, x, y, verts=16) for i, (x, y) in enumerate(chambers)])
+    drum_parts = [(finish(drum, steel), None)]
+    for i, (x, y) in enumerate(chambers):
+        drum_parts.append((attach(zdisc(f"Mouth{i}", 5.7, x, y, half - 7.95), dark), None))
+        drum_parts.append((finish(zcyl(f"Case{i}", 6.3, -half - 0.7, -half + 0.5, x, y, verts=14), brass), None))
+        drum_parts.append((attach(zdisc(f"Primer{i}", 2.0, x, y, -half - 0.75, back=True, verts=10), dark), None))
+    drum_parts.append((finish(zcyl("Star", 7.5, -half - 0.5, -half + 0.2, verts=16), steel), None))
+    drum_parts.append((finish(zcyl("EjectorRod", 3.1, half - 1, half + 40, verts=12), steel), None))
+    drum_parts.append((finish(zcyl("EjectorHead", 3.6, half + 38, half + 46, verts=12), steel, 0.6, 1), None))
+
+    # The crane, round its hinge: the arm out to the cylinder's front, the yoke the rod runs
+    # through, and the hinge knuckle down in the frame.
+    reach = math.hypot(dx - hx, dy - hy)
+    angle = math.atan2(dy - hy, dx - hx)
+    arm = mmbox("CraneArm", (reach, 9, 3.2), (0, 0, 64.1), bevel_w=0.6)
+    arm.data.transform(Matrix.Translation((reach / 2000, 0, 0)))
+    arm.rotation_euler = (0, 0, angle)
+    crane_parts = [
+        (finish(arm, steel), None),
+        (finish(zcyl("Yoke", 6.5, 62.5, 65.7, dx - hx, dy - hy, verts=16), steel, 0.5, 1), None),
+        (finish(zcyl("Knuckle", 4.5, 42, 65.7, verts=12), steel), None),
+    ]
+
+    def node(parts):
+        obj = assemble(parts, recenter=False)
+        obj.data.transform(Matrix.Rotation(math.radians(-90), 4, "X"))
+        return obj
+
+    return body, [("gun-crane-arm", node(crane_parts), None), ("gun-drum", node(drum_parts), None)]
+
+
 # build / measure / export
 # --------------------------------------------------------------------------------------
 
@@ -924,7 +1299,7 @@ def material_count(objs) -> int:
     return len({m.name for o in objs for m in o.data.materials})
 
 
-def export(objs, name: str) -> str:
+def export(objs, name: str, draco: bool = True) -> str:
     path = os.path.join(OUT_DIR, f"{name}.glb")
     bpy.ops.object.select_all(action="DESELECT")
     for obj in objs:
@@ -941,7 +1316,7 @@ def export(objs, name: str) -> str:
         # Draco quantises positions and normals, which takes a prop from ~95 KB to ~20 KB
         # with no visible change at office viewing distance. The client decodes it with
         # DRACOLoader; see src/client/world/props.ts.
-        export_draco_mesh_compression_enable=True,
+        export_draco_mesh_compression_enable=draco,
         export_draco_mesh_compression_level=6,
         export_draco_position_quantization=14,
         export_draco_normal_quantization=10,
@@ -976,7 +1351,7 @@ def export_prop(entry: Prop) -> dict:
     """Build one prop, export its GLB, and return its manifest row."""
     objs = build_prop(entry)
     before, after = decimate_prop(objs, TRI_BUDGET)
-    path = export(objs, entry.name)
+    path = export(objs, entry.name, entry.draco)
     size = os.path.getsize(path)
     row = {
         "url": f"/props/{entry.name}.glb",

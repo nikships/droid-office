@@ -1,19 +1,30 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
 import * as THREE from 'three';
-import { BloodSpray, GUN_LEN, MUZZLE_AT, Muzzle, Puff, disposeGun, magnum } from '../src/client/world/gun.js';
+import { BloodSpray, disposeGun, GUN_LEN, MUZZLE_AT, Muzzle, magnum, magnumReady, Puff, parseMagnum } from '../src/client/world/gun.js';
 
-test('a magnum points down +z with its grip around the origin', () => {
-  const gun = magnum();
-  assert.equal(gun.children.length, 5, 'the barrel, frame, grip and details share four material batches, with the cylinder on its crane');
-  assert.ok(gun.getObjectByName('gun-crane') && gun.getObjectByName('gun-drum'));
-  assert.ok(Math.abs(MUZZLE_AT.z - 0.26) < 1e-9);
-  assert.ok(GUN_LEN > MUZZLE_AT.z);
-  const box = new THREE.Box3().setFromObject(gun);
-  assert.ok(box.min.y < -0.06 && box.min.y > -0.08, 'a full-size grip extends below the fist');
-  assert.ok(box.max.z > 0.2, 'the barrel runs out past the fist');
-  disposeGun(gun);
-  assert.equal(gun.parent, null);
+test('a magnum made before magnum.glb loads fills in when it lands, pointing down +z with its grip round the origin', async () => {
+  assert.equal(magnumReady(), false);
+  const early = magnum();
+  assert.equal(early.children.length, 1, 'only the empty crane until the model is in');
+  const dropped = magnum();
+  disposeGun(dropped);
+  const glb = readFileSync(new URL('../src/client/public/props/magnum.glb', import.meta.url));
+  await parseMagnum(glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength));
+  assert.equal(magnumReady(), true);
+  assert.equal(dropped.children.length, 1, 'a gun put away before then stays empty');
+  for (const gun of [early, magnum()]) {
+    assert.equal(gun.children.length, 6, 'the frame, steel, grip, details and sight batches, with the cylinder on its crane');
+    assert.ok(gun.getObjectByName('gun-crane-arm') && gun.getObjectByName('gun-cylinder'));
+    const box = new THREE.Box3().setFromObject(gun);
+    assert.ok(Math.abs(box.max.z - MUZZLE_AT.z) < 1e-5, 'the muzzle is the front of the gun');
+    assert.ok(Math.abs(box.max.z - box.min.z - GUN_LEN) < 1e-3);
+    assert.ok(box.min.y < -0.06, 'a full-size grip extends below the fist');
+    assert.ok(box.max.z > 0.2, 'the barrel runs out past the fist');
+    disposeGun(gun);
+    assert.equal(gun.parent, null);
+  }
 });
 
 test('the muzzle flash pops and fades back to nothing', () => {
