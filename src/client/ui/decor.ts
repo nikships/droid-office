@@ -2,6 +2,7 @@ import { FRAMES, checkImageUrl, type Decoration } from '../../shared/decor';
 import { store } from '../state';
 import { holdPicture, loadPicture, type Picture } from '../world/gallery';
 import { h, openModal, timeAgo } from './dom';
+import { colorDot } from './kit';
 import { confirmDialog } from './prompt';
 
 export interface HangChoice {
@@ -61,9 +62,7 @@ export function openHangDialog(opts: { initial?: Decoration; onDone(choice: Hang
   const paintFrames = () => {
     frames.replaceChildren(
       ...FRAMES.map((f, i) => {
-        const swatch = h('span.hang-swatch');
-        swatch.style.setProperty('--swatch', f.color);
-        return h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(i === frame), class: i === frame ? 'on' : '', onclick: () => ((frame = i), paintFrames()) }, swatch, f.name);
+        return h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(i === frame), class: i === frame ? 'on' : '', onclick: () => ((frame = i), paintFrames()) }, colorDot(f.color), f.name);
       }),
     );
     preview.style.setProperty('--frame', FRAMES[frame].color);

@@ -4,6 +4,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { meetingStage } from '../world/meeting';
 import { h, openModal, timeAgo, toast, STATUS_LABEL, type Modal } from './dom';
+import { colorDot } from './kit';
 import { confirmDialog } from './prompt';
 import { promptImages } from './images';
 import { agentPicker } from './models';
@@ -98,12 +99,10 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
       const w = s.workerId ? store.workers.get(s.workerId) : undefined;
       const t = m.turns.find((x) => x.seat === i);
       const part = running ? (t ? `${PART_LABEL[t.state]}: ${t.doing}` : 'listening') : '';
-      const dot = h('span.meeting-dot');
-      if (w?.color) dot.style.setProperty('--seat', w.color);
       return h(
         'li.list-row',
         {},
-        h('span.list-icon', {}, dot),
+        h('span.list-icon', {}, colorDot(w?.color ?? 'var(--text-tertiary)')),
         h(
           'div.list-main',
           {},

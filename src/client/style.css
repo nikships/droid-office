@@ -908,7 +908,6 @@ button.chip { font-family: var(--font-sans); }
 
 /* Pictures on the walls */
 .hang-frames .btn { gap: var(--space-2); }
-.hang-swatch { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 0 1px rgba(255, 255, 255, .25); }
 .hang-preview { display: flex; justify-content: center; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); }
 .hang-preview[hidden] { display: none; }
 .hang-preview img { display: block; max-width: 100%; max-height: 240px; border: 12px solid var(--frame, #c98b5a); outline: 1px solid var(--border-strong); background: #fff; }
@@ -1457,7 +1456,6 @@ a.when:hover { text-decoration: underline; }
 .meeting-title { margin: 0; font: 500 17px/1.35 var(--font-sans); color: var(--text); overflow-wrap: anywhere; }
 .meeting-line { margin: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
 .meeting-seats .list-row { cursor: default; }
-.meeting-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--seat, var(--text-tertiary)); }
 .meeting-who { margin-left: var(--space-2); font-weight: 400; color: var(--text-secondary); }
 .meeting-crown { margin-left: 6px; font-size: 12px; }
 .meeting-out { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface-raised); }
