@@ -52,6 +52,9 @@ export const WIKI_WORKTREE = 'wiki-run';
 const MARKER = 'wiki-run.json';
 /** The run's `--settings` file, beside its worktree. */
 const SETTINGS = 'wiki-run-settings.json';
+/** Which model wrote each run the office uploaded for the floor: Factory's run doesn't always say. */
+const RUN_MODELS = 'wiki-run-models.json';
+const RUN_MODELS_MAX = 50;
 /** How long the model list from `droid exec --help` is kept. */
 const MODELS_MS = 10 * 60_000;
 const GRACE_MS = 10_000;
@@ -251,6 +254,8 @@ export class WikiRunner {
   private platform: NodeJS.Platform;
   private help: (command: string) => Promise<string>;
   private modelList?: { at: number; models: Promise<DroidModel[]> };
+  /** Each floor's RUN_MODELS, once read. */
+  private runModels = new Map<string, Record<string, { model: string; modelName?: string }>>();
 
   constructor(private opts: WikiRunnerOptions) {
     this.spawn = opts.spawn ?? (nodeSpawn as Spawn);
@@ -283,6 +288,38 @@ export class WikiRunner {
       };
     }
     return this.modelList.models;
+  }
+
+  /** The model that wrote `runId`, when the office ran it on `floor`. */
+  modelOf(floor: WikiFloorDef, runId: string): { model: string; modelName?: string } | undefined {
+    return this.modelsOf(floor)[runId];
+  }
+
+  private modelsOf(floor: WikiFloorDef): Record<string, { model: string; modelName?: string }> {
+    let m = this.runModels.get(floor.id);
+    if (!m) {
+      try {
+        const raw = JSON.parse(readFileSync(path.join(this.dataDir(floor), RUN_MODELS), 'utf8'));
+        m = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+      } catch {
+        m = {};
+      }
+      this.runModels.set(floor.id, m ?? {});
+    }
+    return m ?? {};
+  }
+
+  private rememberModel(live: Live) {
+    const { runId, model, modelName } = live.job;
+    if (!runId || !model) return;
+    const all = { ...this.modelsOf(live.floor), [runId]: { model, ...(modelName ? { modelName } : {}) } };
+    const kept = Object.fromEntries(Object.entries(all).slice(-RUN_MODELS_MAX));
+    this.runModels.set(live.floor.id, kept);
+    try {
+      writeFileSync(path.join(this.dataDir(live.floor), RUN_MODELS), JSON.stringify(kept));
+    } catch {
+      // It's a label: without the file the run just doesn't say which model wrote it after a restart.
+    }
   }
 
   /** A run is starting or running on some floor. */
@@ -478,7 +515,10 @@ export class WikiRunner {
     await this.git(['worktree', 'prune'], floor.dir).catch(() => undefined);
   }
 
-  private lines(live: Live, add: string[]) {
+  private lines(live: Live, more: string[]) {
+    // /wiki's last message and its completion say the same thing.
+    const add = more.filter((l, i) => l !== (i ? more[i - 1] : live.job.lines.at(-1)));
+    if (!add.length) return;
     live.tail = [...live.tail, ...add].slice(-WIKI_JOB_ERROR_LINES);
     live.job = { ...live.job, lines: [...live.job.lines, ...add].slice(-WIKI_JOB_LINES) };
     this.opts.onChange(live.floor.id, 'lines');
@@ -489,6 +529,7 @@ export class WikiRunner {
     const lines = state === 'cancelled' ? [...live.job.lines, 'Stopped.'] : state === 'done' ? [...live.job.lines, 'Done: the wiki is uploaded.'] : live.job.lines;
     live.job = { ...live.job, state, endedAt: this.now(), lines: lines.slice(-WIKI_JOB_LINES), ...(error ? { error } : {}) };
     live.child = undefined;
+    if (state === 'done') this.rememberModel(live);
     rmSync(path.join(this.dataDir(live.floor), MARKER), { force: true });
     rmSync(path.join(this.dataDir(live.floor), SETTINGS), { force: true });
     void this.removeWorktree(live.floor);

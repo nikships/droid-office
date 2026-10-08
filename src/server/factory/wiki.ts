@@ -277,11 +277,16 @@ export class WikiFeature extends SliceFeature<'wiki'> {
     const h = this.histories.get(f.id);
     const history = h && sameRepo(h.repoUrl, where.repoUrl) ? h : undefined;
     const newest = [latest, history?.runs[0]].filter((r): r is FactoryWikiRun => !!r).sort((a, b) => b.createdAt - a.createdAt)[0];
+    // Factory's run may not say which model wrote it; the office knows for the runs it made.
+    const withModel = (r: FactoryWikiRun): FactoryWikiRun => {
+      const m = r.model ? undefined : this.runner?.modelOf(f, r.id);
+      return m ? { ...r, model: m.model } : r;
+    };
     return {
       ...out,
       repoUrl: latest?.repoUrl ?? where.repoUrl,
-      ...(newest ? { latest: newest } : {}),
-      history: history?.runs ?? [],
+      ...(newest ? { latest: withModel(newest) } : {}),
+      history: (history?.runs ?? []).map(withModel),
       fetchedAt: history?.fetchedAt ?? 0,
       ...(history?.noAccess ? { noAccess: history.noAccess } : {}),
     };

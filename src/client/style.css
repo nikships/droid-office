@@ -928,6 +928,7 @@ a.when:hover { text-decoration: underline; }
 .wk-confirm p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); }
 .wk-model-row { align-items: center; gap: 10px; font: 500 11px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); }
 .wk-job { margin: 8px 12px 4px; border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; }
+.wk-job[hidden] { display: none; }
 .wk-job.starting, .wk-job.running { border-color: rgba(238, 96, 24, .55); }
 .wk-job.failed, .wk-job.lost { border-color: rgba(239, 68, 68, .5); }
 .wk-job.big { margin: 0; padding: 16px 18px; }

@@ -778,7 +778,29 @@ test('wiki: Generate runs on the model picked, glm-5.3-flash unless told, and on
   assert.equal(settings.subagentModelSettings.lightModel, 'gpt-6-sol');
   assert.equal(settings.subagentModelSettings.heavyReasoningEffort, 'medium');
   assert.ok(feature.state().floors.main.job?.lines.some((l) => l.endsWith('with GPT-6 Sol…')));
+  r.spawned[0].child.out('{"type":"message","role":"assistant","text":"The wiki is uploaded. Wiki run ID: wr_model1"}\n{"type":"completion","finalText":"The wiki is uploaded. Wiki run ID: wr_model1"}\n');
   r.spawned[0].child.emit('close', 0, null);
+  const lines = feature.state().floors.main.job?.lines ?? [];
+  assert.equal(lines.filter((l) => l.startsWith('The wiki is uploaded.')).length, 1, 'a line said twice in a row shows once');
+
+  // Factory's run doesn't say which model wrote it: the office remembers, for the runs it made.
+  const { modelUsed: _, ...bare } = RUN;
+  const withRun = factory({
+    '/api/v0/wiki': () => json(200, { wikiRuns: [{ ...bare, wikiRunId: 'wr_model1' }] }),
+    '/api/v0/wiki/history/https%3A%2F%2Fgithub.com%2Fo%2Fr': () => json(200, { wikiRuns: [{ ...bare, wikiRunId: 'wr_model1' }, RUN] }),
+  });
+  await feature.poll(withRun.api);
+  const main = feature.state().floors.main;
+  assert.equal(main.latest?.model, 'gpt-6-sol');
+  assert.deepEqual(
+    main.history.map((x) => x.model),
+    ['gpt-6-sol', 'claude-opus'],
+  );
+  const saved = JSON.parse(readFileSync(path.join(r.list[0].dir, '.droid-office', 'wiki-run-models.json'), 'utf8'));
+  assert.deepEqual(saved, { wr_model1: { model: 'gpt-6-sol', modelName: 'GPT-6 Sol' } });
+  const later = new WikiRunner({ ...r.opts, onChange: () => {} });
+  assert.equal(later.modelOf(r.list[0], 'wr_model1')?.modelName, 'GPT-6 Sol', 'and still knows after a restart');
+  assert.equal(later.modelOf(r.list[1], 'wr_model1'), undefined);
 
   await call(feature, f.api, 'POST', '/generate', { body: { floor: 'main' } });
   await until(() => r.spawned.length === 2);

@@ -93,7 +93,7 @@ function highlight(text: string, q: string): (string | HTMLElement)[] {
 
 export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   const { floor } = deps;
-  const search = h('input', { type: 'search', placeholder: 'Search the wiki…', 'aria-label': 'Search the wiki', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const search = h('input', { type: 'text', role: 'searchbox', placeholder: 'Search the wiki…', 'aria-label': 'Search the wiki', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const status = h('div.wk-status');
   const jobCard = h('div.wk-job', { hidden: true, role: 'status' });
   const count = h('div.bs-count');
