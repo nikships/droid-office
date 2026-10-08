@@ -463,7 +463,8 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
       [1.96, 'cock'],
     ],
   },
-  // Flicked up out of the hand end over end, twice round, and caught.
+  // Rolled onto the trigger finger, flicked up off the end of it end over end, twice round, and
+  // caught back on it.
   toss: {
     seconds: 1.9,
     tracks: {
@@ -496,15 +497,16 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
         [0.72, 0.34, 'out'],
         [1.2, 0, 'in'],
       ],
+      // Spinning only once it's off the finger, and done before it slides back on.
       spin: [
-        [0.24, 0],
-        [1.2, -TAU * 2, 'linear'],
+        [0.3, 0],
+        [1.14, -TAU * 2, 'inOut'],
       ],
       finger: [
-        [0.22, 0],
-        [0.26, 1, 'linear'],
-        [1.18, 1],
-        [1.22, 0, 'linear'],
+        [0.02, 0],
+        [0.1, 1, 'linear'],
+        [1.3, 1],
+        [1.36, 0, 'linear'],
       ],
     },
     cues: [

@@ -1,24 +1,23 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { toonUnique } from './toon';
 
 /**
- * A stylized .44 revolver in meters: the fist closes around the grip at the origin, the bore
- * points along +Z and +Y is up. Holders rotate the whole prop to their aiming axis; the model
- * adds no wrist tilt. Solid side profiles keep the frame, guard and grip in the gun's YZ plane.
- * Static parts are grouped into four opaque toon batches; the cylinder rides apart from them on
- * its crane (setCylinder), so it can swing out and spin.
+ * A stainless .44 Magnum revolver in meters: the fist closes around the grip at the origin, the
+ * bore points along +Z and +Y is up. Holders rotate the whole prop to their aiming axis; the model
+ * adds no wrist tilt. The model is `magnum.glb`, built by tools/props/generate.py with its grip
+ * shaped round the glove (glove.ts): the static body in one mesh per material, and the cylinder
+ * apart on its crane (setCylinder), so it can swing out and spin.
  * No DOM or WebGL at import time, so tests can load it in Node.
  */
 
-/** Overall length, including the hammer behind the grip, in meters. */
-export const GUN_LEN = 0.34;
-/** How high the barrel sits above the origin. */
-const BORE_Y = 0.086;
-/** The middle of the cylinder, shut, and how long it is along the bore. */
-const DRUM_AT = new THREE.Vector3(0, BORE_Y - 0.026, 0.03);
-const DRUM_LEN = 0.076;
+// These must match MAGNUM in tools/props/generate.py.
+/** Overall length, including the hammer spur behind the grip, in meters. */
+export const GUN_LEN = 0.2846;
+/** The middle of the cylinder, shut. */
+const DRUM_AT = new THREE.Vector3(0, 0.047, 0.03);
 /** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
-const CRANE_AT = new THREE.Vector2(0.012, 0.028);
+const CRANE_AT = new THREE.Vector2(0.008, 0.012);
 
 /** The closest rendered solid struck by a bullet; only registered workers can be targets. */
 export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
@@ -45,250 +44,127 @@ export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: Re
   return null;
 }
 
-/** A beveled side silhouette: coordinates are [forward Z, up Y], thickness runs along X. */
-function profile(points: readonly (readonly [number, number])[], width: number, bevel = 0.001, holes: readonly (readonly (readonly [number, number])[])[] = []): THREE.BufferGeometry {
-  const shape = new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y)));
-  for (const hole of holes) shape.holes.push(new THREE.Path(hole.map(([z, y]) => new THREE.Vector2(z, y))));
-  return new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: bevel > 0, bevelSegments: 1, steps: 1, bevelSize: bevel, bevelThickness: bevel }).translate(0, 0, -width / 2 + bevel).rotateY(-Math.PI / 2);
-}
-
-/** An ellipse outline in the side plane, as [Z, Y] pairs. */
-function oval(z: number, y: number, rz: number, ry: number, n: number): [number, number][] {
-  return Array.from({ length: n }, (_, i) => [z + Math.cos((i / n) * Math.PI * 2) * rz, y + Math.sin((i / n) * Math.PI * 2) * ry]);
-}
-
-export function magnum(): THREE.Group {
-  const gun = new THREE.Group();
-  gun.name = 'magnum';
-  const steel = new THREE.MeshToonMaterial({ color: '#ced5de' });
-  const frame = new THREE.MeshToonMaterial({ color: '#85919f' });
-  const wood = new THREE.MeshToonMaterial({ color: '#794830' });
-  const dark = new THREE.MeshToonMaterial({ color: '#29313b' });
-  const brass = new THREE.MeshToonMaterial({ color: '#d9ab4a' });
-  const batches = new Map<THREE.Material, THREE.BufferGeometry[]>([
-    [steel, []],
-    [frame, []],
-    [wood, []],
-    [dark, []],
-  ]);
-  const add = (geometry: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0) => batches.get(material)!.push(geometry.translate(x, y, z));
-  const box = (width: number, height: number, length: number, material: THREE.Material, x: number, y: number, z: number) => add(new THREE.BoxGeometry(width, height, length), material, x, y, z);
-
-  // An actual hollow tube, including its front annulus and inner wall. The dark recess is 20 mm
-  // behind the lip, rather than a solid cap sitting on the muzzle like the previous model.
-  const barrel = new THREE.Shape().absarc(0, 0, 0.018, 0, Math.PI * 2, false);
-  barrel.holes.push(new THREE.Path().absarc(0, 0, 0.006, 0, Math.PI * 2, true));
-  add(new THREE.ExtrudeGeometry(barrel, { depth: 0.184, bevelEnabled: false, curveSegments: 8, steps: 1 }), steel, 0, BORE_Y, 0.076);
-  add(new THREE.CircleGeometry(0.006, 16), dark, 0, BORE_Y, 0.24);
-  add(
-    profile(
-      [
-        [0.075, 0.075],
-        [0.25, 0.075],
-        [0.246, 0.059],
-        [0.08, 0.059],
-      ],
-      0.027,
-      0.002,
-    ),
-    frame,
-  );
-  // A continuous top rib, a ramped front sight and a low notched rear sight on the top strap.
-  box(0.011, 0.007, 0.18, steel, 0, 0.106, 0.163);
-  add(
-    profile(
-      [
-        [0.222, 0.108],
-        [0.252, 0.108],
-        [0.25, 0.121],
-        [0.244, 0.122],
-      ],
-      0.004,
-      0,
-    ),
-    dark,
-  );
-  for (const side of [-1, 1]) box(0.004, 0.007, 0.012, dark, side * 0.0055, 0.1125, -0.028);
-
-  // The cylinder rotates around +Z, with a chamber at the top. Flutes are shallow changes to its own
-  // outline rather than six intersecting cylinders protruding through it. It rides on its own
-  // crane (see setCylinder), so it is built round its own middle and added after the batches.
-  const drumParts = new Map<THREE.Material, THREE.BufferGeometry[]>([
-    [steel, []],
-    [brass, []],
-    [dark, []],
-  ]);
-  const cylinder = new THREE.CylinderGeometry(0.03, 0.03, DRUM_LEN, 30);
-  const pos = cylinder.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const flute = 1 - 0.065 * ((1 + Math.cos(Math.atan2(z, x) * 6)) / 2) ** 3;
-    pos.setXYZ(i, x * flute, pos.getY(i), z * flute);
-  }
-  cylinder.computeVertexNormals();
-  drumParts.get(steel)!.push(cylinder.rotateX(Math.PI / 2));
-  // Six loaded chambers between the flutes: dark mouths in front, brass case heads with their
-  // primers behind, which only show once it swings out.
-  for (let i = 0; i < 6; i++) {
-    const a = Math.PI / 2 + (i * Math.PI) / 3;
-    const cx = Math.cos(a) * 0.017;
-    const cy = Math.sin(a) * 0.017;
-    drumParts.get(dark)!.push(new THREE.CircleGeometry(0.0058, 8).translate(cx, cy, DRUM_LEN / 2 + 0.0003));
-    drumParts.get(brass)!.push(new THREE.CircleGeometry(0.0068, 10).rotateY(Math.PI).translate(cx, cy, -DRUM_LEN / 2 - 0.0004));
-    drumParts.get(dark)!.push(new THREE.CircleGeometry(0.0022, 6).rotateY(Math.PI).translate(cx, cy, -DRUM_LEN / 2 - 0.0008));
-  }
-  // Both shoulders of the frame leave a real opening around the cylinder.
-  add(
-    profile(
-      [
-        [-0.047, 0.081],
-        [-0.039, 0.105],
-        [-0.03, 0.11],
-        [0.081, 0.11],
-        [0.096, 0.093],
-        [0.093, 0.029],
-        [0.061, 0.021],
-        [0.019, 0.022],
-        [-0.006, 0.034],
-        [-0.034, 0.015],
-        [-0.051, 0.02],
-      ],
-      0.028,
-      0.0015,
-      [
-        [
-          [-0.012, 0.096],
-          [0.075, 0.096],
-          [0.077, 0.034],
-          [-0.014, 0.034],
-        ],
-      ],
-    ),
-    frame,
-  );
-  // The hammer is the rearmost point, 80 mm behind the attachment.
-  add(
-    profile(
-      [
-        [-0.045, 0.092],
-        [-0.039, 0.1],
-        [-0.054, 0.12],
-        [-0.079, 0.126],
-        [-0.077, 0.119],
-        [-0.059, 0.112],
-      ],
-      0.012,
-    ),
-    dark,
-  );
-  // The guard is a closed side profile, open in its middle and only 10 mm wide across X.
-  const loop = (rz: number, ry: number, top: number): [number, number][] => [
-    [0.048 - rz, top],
-    [0.048 + rz, top],
-    ...oval(0.048, 0.006, rz, ry, 24)
-      .filter(([, y]) => y < 0.006)
-      .reverse(),
-  ];
-  add(profile(loop(0.042, 0.05, 0.02), 0.01, 0.001, [loop(0.033, 0.041, 0.008)]), steel);
-  add(
-    profile(
-      [
-        [0.035, 0.013],
-        [0.043, 0.012],
-        [0.044, -0.006],
-        [0.039, -0.019],
-        [0.029, -0.023],
-        [0.029, -0.017],
-        [0.035, -0.01],
-      ],
-      0.007,
-      0,
-    ),
-    dark,
-  );
-
-  // Sculpted walnut panels on a visible metal backstrap. The origin is inside the upper grip,
-  // where the cartoon fist holds it.
-  const grip: readonly (readonly [number, number])[] = [
-    [-0.032, 0.035],
-    [-0.005, 0.033],
-    [0.016, 0.018],
-    [0.018, -0.004],
-    [0.015, -0.03],
-    [0.012, -0.052],
-    [0.006, -0.064],
-    [-0.008, -0.07],
-    [-0.03, -0.07],
-    [-0.045, -0.064],
-    [-0.052, -0.051],
-    [-0.046, -0.024],
-    [-0.04, 0.0],
-    [-0.036, 0.02],
-  ];
-  add(profile(grip, 0.034, 0.0015), frame);
-  for (const side of [-1, 1]) {
-    add(profile(grip, 0.007, 0.0025), wood, side * 0.0185);
-    add(new THREE.CylinderGeometry(0.005, 0.005, 0.0015, 8).rotateZ(Math.PI / 2), steel, side * 0.0225, -0.019, -0.014);
-    add(new THREE.CylinderGeometry(0.0015, 0.0015, 0.0017, 6).rotateZ(Math.PI / 2), dark, side * 0.023, -0.019, -0.014);
-  }
-
-  // Bake the static parts into one draw per material. Each returned gun owns its GPU resources.
-  const bake = (parts: THREE.BufferGeometry[]) => {
-    const surfaces = parts.map((geometry) => (geometry.index ? geometry.toNonIndexed() : geometry));
-    const merged = mergeGeometries(surfaces)!;
-    for (let i = 0; i < parts.length; i++) {
-      parts[i].dispose();
-      if (surfaces[i] !== parts[i]) surfaces[i].dispose();
-    }
-    return merged;
-  };
-  for (const [material, parts] of batches) {
-    const mesh = new THREE.Mesh(bake(parts), material);
-    mesh.name = material === steel ? 'gun-steel' : material === frame ? 'gun-frame' : material === wood ? 'gun-walnut' : 'gun-details';
-    gun.add(mesh);
-  }
-
-  // The crane: hinged along +Z under the cylinder, with the arm out to the cylinder's front face.
-  const crane = new THREE.Group();
-  crane.name = 'gun-crane';
-  crane.position.set(CRANE_AT.x, CRANE_AT.y, 0);
-  const reach = new THREE.Vector2(DRUM_AT.x - CRANE_AT.x, DRUM_AT.y - CRANE_AT.y);
-  const arm = new THREE.Mesh(
-    new THREE.BoxGeometry(0.007, reach.length(), 0.005)
-      .toNonIndexed()
-      .rotateZ(-Math.atan2(reach.x, reach.y))
-      .translate(reach.x / 2, reach.y / 2, DRUM_AT.z + DRUM_LEN / 2 + 0.0028),
-    steel,
-  );
-  arm.name = 'gun-crane-arm';
-  crane.add(arm);
-  const drum = new THREE.Group();
-  drum.name = 'gun-drum';
-  drum.position.set(reach.x, reach.y, DRUM_AT.z);
-  for (const [material, parts] of drumParts) {
-    const mesh = new THREE.Mesh(bake(parts), material);
-    mesh.name = material === steel ? 'gun-cylinder' : material === brass ? 'gun-brass' : 'gun-chambers';
-    drum.add(mesh);
-  }
-  crane.add(drum);
-  gun.add(crane);
-  gun.userData.cylinder = { crane, drum } satisfies GunCylinder;
-  return gun;
-}
-
 /** Where the muzzle is: the flash and the shot's smoke start here. */
-export const MUZZLE_AT = new THREE.Vector3(0, BORE_Y, 0.26);
+export const MUZZLE_AT = new THREE.Vector3(0, 0.062, 0.235);
 
-/** Where the trigger finger goes through the guard: a gun spun on it turns round this point. */
-export const SPIN_AT = new THREE.Vector3(0, -0.004, 0.052);
+/**
+ * Where the trigger finger goes through the guard: a gun spun on it turns round this point. The
+ * guard's opening clears a glove finger laid across the gun here however far round it turns.
+ */
+export const SPIN_AT = new THREE.Vector3(0, -0.007, 0.05);
 
 /** How far round the crane swings the cylinder out to the gun's left (+X), in radians about +Z. */
 export const CRANE_SWING = -1.75;
 
+/** What each part of magnum.glb is called in a gun, by its material in the generator. */
+const PARTS: Record<string, string> = {
+  GunFrame: 'gun-frame',
+  GunSteel: 'gun-steel',
+  GunWalnut: 'gun-walnut',
+  GunDark: 'gun-details',
+  GunOrange: 'gun-sight',
+};
+const DRUM_PARTS: Record<string, string> = { GunSteel: 'gun-cylinder', GunDark: 'gun-chambers', GunBrass: 'gun-brass' };
+
+/** magnum.glb's meshes, toon-shaded, which every gun shares: the body, the crane's arm and the cylinder. */
+interface Model {
+  body: THREE.Mesh[];
+  arm: THREE.Mesh[];
+  drum: THREE.Mesh[];
+}
+let model: Model | null = null;
+/** What the shared model is made of: disposeGun leaves it for the next gun. */
+const shared = new WeakSet<object>();
+/** Guns made before the model arrived, filled in when it does. */
+const waiting = new Set<THREE.Group>();
+
 interface GunCylinder {
   crane: THREE.Object3D;
   drum: THREE.Object3D;
+}
+
+/**
+ * Takes magnum.glb's scene (as GLTFLoader gives it) as the model every gun is made from, and fills
+ * in any gun made before it arrived. Its materials become toon ones of the same colors.
+ */
+export function setMagnumModel(scene: THREE.Object3D) {
+  const toons = new Map<string, THREE.MeshToonMaterial>();
+  const part = (source: THREE.Mesh, names: Record<string, string>): THREE.Mesh => {
+    const from = source.material as THREE.MeshStandardMaterial;
+    let material = toons.get(from.name);
+    if (!material) {
+      material = toonUnique(from.color);
+      material.name = from.name;
+      toons.set(from.name, material);
+      shared.add(material);
+    }
+    const mesh = new THREE.Mesh(source.geometry, material);
+    mesh.name = names[from.name] ?? from.name;
+    shared.add(source.geometry);
+    return mesh;
+  };
+  const next: Model = { body: [], arm: [], drum: [] };
+  scene.updateMatrixWorld(true);
+  scene.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    if (o.name === 'gun-crane-arm') next.arm.push(part(o, { GunSteel: 'gun-crane-arm' }));
+    else if (o.parent?.name === 'gun-drum') next.drum.push(part(o, DRUM_PARTS));
+    else next.body.push(part(o, PARTS));
+  });
+  model = next;
+  for (const gun of waiting) fill(gun);
+  waiting.clear();
+}
+
+/** Loads magnum.glb from its bytes (tests read it off disk; the office loads it with the props). */
+export function parseMagnum(glb: ArrayBuffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(
+      glb,
+      '',
+      (gltf) => {
+        setMagnumModel(gltf.scene);
+        resolve();
+      },
+      reject,
+    );
+  });
+}
+
+/** True once the model is in, so magnum() comes back whole. */
+export function magnumReady(): boolean {
+  return model !== null;
+}
+
+function fill(gun: THREE.Group) {
+  const m = model!;
+  const c = gun.userData.cylinder as GunCylinder;
+  const copy = (meshes: THREE.Mesh[]) => meshes.map((s) => Object.assign(new THREE.Mesh(s.geometry, s.material), { name: s.name }));
+  gun.add(...copy(m.body));
+  c.crane.add(...copy(m.arm));
+  c.drum.add(...copy(m.drum));
+}
+
+/**
+ * A magnum: the body, and the cylinder on its crane. Before the model has loaded it comes back
+ * empty, and fills in when it lands.
+ */
+export function magnum(): THREE.Group {
+  const gun = new THREE.Group();
+  gun.name = 'magnum';
+  // The crane hinges along +Z under the cylinder; the cylinder turns on its own axis.
+  const crane = new THREE.Group();
+  crane.name = 'gun-crane';
+  crane.position.set(CRANE_AT.x, CRANE_AT.y, 0);
+  const drum = new THREE.Group();
+  drum.name = 'gun-drum';
+  drum.position.set(DRUM_AT.x - CRANE_AT.x, DRUM_AT.y - CRANE_AT.y, DRUM_AT.z);
+  crane.add(drum);
+  gun.add(crane);
+  gun.userData.cylinder = { crane, drum } satisfies GunCylinder;
+  if (model) fill(gun);
+  else waiting.add(gun);
+  return gun;
 }
 
 /** Swings a magnum()'s cylinder out on its crane (0 shut … 1 all the way out) and turns it `turn` radians on its axis. */
@@ -299,14 +175,18 @@ export function setCylinder(gun: THREE.Object3D, open: number, turn: number) {
   c.drum.rotation.z = turn;
 }
 
-/** Takes a gun from magnum() out of the hand holding it, and frees what it was made of. */
+/**
+ * Takes a gun from magnum() out of the hand holding it, and frees what was added to it (its muzzle
+ * flash). The model it shares with every other gun stays.
+ */
 export function disposeGun(prop: THREE.Group) {
   prop.removeFromParent();
+  waiting.delete(prop);
   const freed = new Set<{ dispose(): void }>();
   prop.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.geometry) freed.add(m.geometry);
-    if (m.material) freed.add(m.material as THREE.Material);
+    if (m.geometry && !shared.has(m.geometry)) freed.add(m.geometry);
+    for (const material of [m.material ?? []].flat()) if (!shared.has(material)) freed.add(material);
   });
   for (const r of freed) r.dispose();
 }

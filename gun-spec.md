@@ -75,7 +75,7 @@ collect it and its owned worktrees and branches are deleted.
 
 | File | Change |
 | --- | --- |
-| `src/client/world/gun.ts` (new) | Silver .44 Magnum mesh (three.js primitives), muzzle-flash helper |
+| `src/client/world/gun.ts` (new) | Silver .44 Magnum loaded from `public/props/magnum.glb` (built by `tools/props/generate.py`), muzzle-flash helper |
 | `src/client/world/hands.ts` | `holdGun(on)`, `fireGun()` recoil on the right arm |
 | `src/client/world/character.ts` | `Person.setGun/fire` (third-person arm + prop); `Worker.die/revive` visual states |
 | `src/client/world/casualties.ts` (new) | `Casualties` class mirroring `Departures`: fall, blood pool, medics + stretcher, revive-to-seat |

@@ -22,9 +22,12 @@ export interface HandShape {
   thumbBend: number;
   /** The hand turned at the wrist: 0 palm down, 1 palm in with the thumb up, -1 palm up. */
   roll: number;
+  /** The thumb's root turned just so (about y, x and z, in radians, for the right hand), in place of where thumbIn puts it. */
+  thumbRoot?: readonly [number, number, number];
 }
 
-const shape = (fingers: HandShape['fingers'], spread: number, thumbIn: number, thumbBend: number, roll = 0): HandShape => Object.freeze({ fingers, spread, thumbIn, thumbBend, roll });
+const shape = (fingers: HandShape['fingers'], spread: number, thumbIn: number, thumbBend: number, roll = 0, thumbRoot?: HandShape['thumbRoot']): HandShape =>
+  Object.freeze(thumbRoot ? { fingers, spread, thumbIn, thumbBend, roll, thumbRoot } : { fingers, spread, thumbIn, thumbBend, roll });
 const all = (b: Bend): HandShape['fingers'] => [b, b, b, b];
 
 /** The shapes a hand makes. */
@@ -45,6 +48,8 @@ export const SHAPES = {
   open: shape(all([0.04, 0.05]), 0.75, -0.1, 0.15),
   /** Flat with the fingers together, palm toward what it's pressing on. */
   flat: shape(all([0.02, 0.04]), 0.1, 0.55, 0.05),
+  /** Flat with the thumb held out to the side, so it clears the revolver's cylinder the palm is on. */
+  cylinder: shape(all([0.02, 0.04]), 0.1, -0.3, 0.1),
   /** Reaching to press or take something: the index finger leading, the rest loosely bent. */
   press: shape(
     [
@@ -73,34 +78,41 @@ export const SHAPES = {
   ),
   /** A fist, turned palm in, with the thumb straight up. */
   thumbsUp: shape(all([1.5, 1.75]), 0, -1, 0, 1),
-  /** Palm in round the gun's grip: the index finger crooked on the trigger, the thumb along the far side of the frame. */
+  /**
+   * Palm in round the gun's grip: the index finger through the guard onto the trigger, the other
+   * three round the front strap onto the grip's far side, and the thumb round the backstrap.
+   * Fitted to magnum.glb's grip (tests/gun-grip.test.ts checks every bone clears it, through every trick).
+   */
   grip: shape(
     [
-      [0.32, 1.25],
-      [1.42, 1.55],
-      [1.5, 1.6],
-      [1.6, 1.6],
+      [0, 1.3],
+      [1.19, 1.07],
+      [1.185, 0.97],
+      [1.2, 0.6],
     ],
     0,
-    0.75,
-    0.35,
     1,
+    0.853,
+    1,
+    [1.745, -1.026, 0.412],
   ),
-  /** Palm in, the gun spinning on a hooked index finger through its guard; the rest a fist out of its way. */
+  /**
+   * Palm in, the gun spinning on the index finger stuck straight through its guard, the other
+   * fingers and the thumb held out flat, clear of everything the spinning gun sweeps past.
+   */
   spin: shape(
     [
-      [0.15, 0.55],
-      [1.5, 1.75],
-      [1.5, 1.75],
-      [1.5, 1.75],
+      [1.571, 0],
+      [0.075, 0.291],
+      [0.079, 0.315],
+      [0.113, 0.321],
     ],
     0,
-    0.85,
-    0.8,
+    0.3,
+    0.133,
     1,
+    [0.816, 0.641, 0.481],
   ),
-  /** Open and waiting for the gun to come down out of the air. */
-  catch: shape(all([0.45, 0.5]), 0.35, 0.3, 0.3, 1),
   /** Palm in, two fingers through a mug's handle, the thumb on top of it. */
   mug: shape(
     [
@@ -146,6 +158,128 @@ export const SHAPES = {
   ),
 } as const satisfies Record<string, HandShape>;
 
+/** How a shape turns the thumb's root: [about y, x, z] for the right hand (the left mirrors y and z). */
+function thumbRoot(t: HandShape): [number, number, number] {
+  if (t.thumbRoot) return [...t.thumbRoot];
+  const ti = t.thumbIn;
+  // Out from the side of the hand, forward, then down and in under the palm.
+  return [0.95 - 0.7 * ti, -(0.2 + 0.6 * Math.max(0, ti)) + 0.25 * Math.min(0, ti), 0.55 + 0.7 * Math.max(0, ti)];
+}
+
+/**
+ * Letting go of the grip to spin the gun on the trigger finger (gunHand, gunMount), in even steps
+ * from the fist (SHAPES.grip) to the spin (SHAPES.spin): the hand, and where on the gun (gun.ts)
+ * the middle of the trigger finger's middle bone is. The fingers let go of the grip before the
+ * gun slides out along the trigger finger, and the middle finger swings out under the guard
+ * while the gun rides up on it. Fitted like the grip, so nothing passes through the gun.
+ */
+const LET_GO: readonly { hand: HandShape; trigger: readonly [number, number, number] }[] = [
+  { hand: SHAPES.grip, trigger: [-0.0239, -0.0047, 0.0572] },
+  {
+    hand: shape(
+      [
+        [0.368, 0.687],
+        [0.856, 0.155],
+        [0.868, 0.811],
+        [0.934, 0.476],
+      ],
+      0,
+      1,
+      0.618,
+      1,
+      [1.76, -0.494, 0.458],
+    ),
+    trigger: [-0.0213, -0.0087, 0.0527],
+  },
+  {
+    hand: shape(
+      [
+        [0.851, 0.316],
+        [0.343, -0.265],
+        [0.578, 0.655],
+        [0.667, 0.383],
+      ],
+      0,
+      1,
+      0.415,
+      1,
+      [1.63, -0.026, 0.489],
+    ),
+    trigger: [-0.017, -0.008, 0.0525],
+  },
+  {
+    hand: shape(
+      [
+        [1.239, 0.12],
+        [0.137, -0.141],
+        [0.32, 0.489],
+        [0.389, 0.331],
+      ],
+      0,
+      1,
+      0.262,
+      1,
+      [1.277, 0.337, 0.499],
+    ),
+    trigger: [-0.0093, -0.0069, 0.0527],
+  },
+  { hand: SHAPES.spin, trigger: [SPIN_AT.x, SPIN_AT.y, SPIN_AT.z] },
+];
+/** Where the middle of the trigger finger's middle bone is on the gun (gun.ts) in the fist round its grip. */
+export const GRIP_TRIGGER = new THREE.Vector3(...LET_GO[0].trigger);
+
+/** Which step of LET_GO `onFinger` is in, and how far along it. */
+function letGo(onFinger: number): [number, number] {
+  const at = THREE.MathUtils.clamp(onFinger, 0, 1) * (LET_GO.length - 1);
+  const i = Math.min(LET_GO.length - 2, Math.floor(at));
+  return [i, at - i];
+}
+
+/** A HandShape that blend() can write into. */
+export type WritableShape = HandShape & { fingers: [number, number][]; thumbRoot: [number, number, number] };
+/** A shape to write into, for blend(). */
+export const newShape = (): WritableShape => ({
+  fingers: [
+    [0, 0],
+    [0, 0],
+    [0, 0],
+    [0, 0],
+  ],
+  spread: 0,
+  thumbIn: 0,
+  thumbBend: 0,
+  roll: 0,
+  thumbRoot: [0, 0, 0],
+});
+
+/** The shape `k` of the way from `a` to `b`, written into `out`. */
+export function blend(a: HandShape, b: HandShape, k: number, out: WritableShape = newShape()): HandShape {
+  const mix = (from: number, to: number) => from + (to - from) * k;
+  for (let f = 0; f < 4; f++) {
+    out.fingers[f][0] = mix(a.fingers[f][0], b.fingers[f][0]);
+    out.fingers[f][1] = mix(a.fingers[f][1], b.fingers[f][1]);
+  }
+  const ra = thumbRoot(a);
+  const rb = thumbRoot(b);
+  for (let j = 0; j < 3; j++) out.thumbRoot[j] = mix(ra[j], rb[j]);
+  out.thumbIn = mix(a.thumbIn, b.thumbIn);
+  out.thumbBend = mix(a.thumbBend, b.thumbBend);
+  out.spread = mix(a.spread, b.spread);
+  out.roll = mix(a.roll, b.roll);
+  return out;
+}
+
+const held = newShape();
+
+/**
+ * The right hand on the gun, from the fist round its grip (0) to hanging it on the trigger finger
+ * to spin (1), for gunMount to place the gun in. The shape it returns is reused by the next call.
+ */
+export function gunHand(onFinger: number): HandShape {
+  const [i, k] = letGo(onFinger);
+  return blend(LET_GO[i].hand, LET_GO[i + 1].hand, k, held);
+}
+
 /** Palm: half its width, thickness and length; how high the knuckles sit; and each finger. */
 const PALM = { w: 0.044, h: 0.02, l: 0.05 };
 const KNUCKLE_Y = -0.003;
@@ -161,11 +295,14 @@ const THUMB = { x: 0.03, y: -0.008, z: 0.02, r: 0.0118, bones: [0.03, 0.024, 0.0
 const LAST = 0.65;
 
 /**
- * Where the right glove, closed round the magnum's grip (SHAPES.grip), holds the gun's origin: up
- * in the fist under the web of the thumb, with the palm against the grip's right side.
+ * Where the right glove, closed round the magnum's grip (SHAPES.grip), holds the gun's origin: the
+ * palm flat on the grip's right panel, the knuckles by its front strap and the index finger level
+ * with the trigger.
  */
-export const GRIP_AT = new THREE.Vector3(-0.037, -0.02, -0.016);
+export const GRIP_AT = new THREE.Vector3(-0.037, -0.0385, -0.032);
 const spun = new THREE.Vector3();
+const onGun = new THREE.Vector3();
+const between = new THREE.Vector3();
 
 /** The palm's roundness: across and along it, and through it. */
 const P = 3.2;
@@ -233,7 +370,7 @@ export class Glove {
   private fingers: Finger[] = [];
   private thumb: [THREE.Group, THREE.Group, THREE.Group];
   private target: HandShape = SHAPES.relaxed;
-  private now: { fingers: [number, number][]; spread: number; thumbIn: number; thumbBend: number; roll: number };
+  private now: { fingers: [number, number][]; spread: number; thumb: [number, number, number]; thumbBend: number; roll: number };
 
   constructor(
     readonly side: 1 | -1,
@@ -278,7 +415,7 @@ export class Glove {
     this.thumb = digit('glove-thumb', new THREE.Vector3(-s * THUMB.x, THUMB.y, THUMB.z), THUMB.bones, THUMB.r, 0.07);
 
     const t = this.target;
-    this.now = { fingers: t.fingers.map((b) => [b[0], b[1]]), spread: t.spread, thumbIn: t.thumbIn, thumbBend: t.thumbBend, roll: t.roll };
+    this.now = { fingers: t.fingers.map((b) => [b[0], b[1]]), spread: t.spread, thumb: thumbRoot(t), thumbBend: t.thumbBend, roll: t.roll };
     this.apply();
   }
 
@@ -298,7 +435,8 @@ export class Glove {
       n.fingers[i][1] += (t.fingers[i][1] - n.fingers[i][1]) * k;
     }
     n.spread += (t.spread - n.spread) * k;
-    n.thumbIn += (t.thumbIn - n.thumbIn) * k;
+    const root = thumbRoot(t);
+    for (let i = 0; i < 3; i++) n.thumb[i] += (root[i] - n.thumb[i]) * k;
     n.thumbBend += (t.thumbBend - n.thumbBend) * k;
     n.roll += (t.roll - n.roll) * k;
     this.apply();
@@ -306,7 +444,8 @@ export class Glove {
 
   /**
    * Where a magnum aimed down the arm's -z (turned half round y) puts its origin, in the arm's frame,
-   * to sit in this fist round its grip (`out` 0) or hang by its guard on the trigger finger (1).
+   * to sit in this fist round its grip (`onFinger` 0) or hang by its guard on the trigger finger (1),
+   * with the hand shaped as gunHand(onFinger) has it.
    * The arm's world matrix must be current.
    */
   gunMount(onFinger: number, out: THREE.Vector3): THREE.Vector3 {
@@ -314,12 +453,16 @@ export class Glove {
     this.group.updateMatrixWorld(true);
     out.copy(GRIP_AT).applyMatrix4(this.group.matrix);
     if (onFinger <= 0) return out;
-    // The gun turned half round y puts its spin point at (-x, y, -z) from its origin.
+    // Hung on the trigger finger: the point of the gun on it moves as LET_GO has it.
     arm.worldToLocal(this.trigger.getWorldPosition(spun));
-    spun.x += SPIN_AT.x;
-    spun.y -= SPIN_AT.y;
-    spun.z += SPIN_AT.z;
-    return out.lerp(spun, THREE.MathUtils.smoothstep(onFinger, 0, 1));
+    const [i, k] = letGo(onFinger);
+    onGun.fromArray(LET_GO[i].trigger).lerp(between.fromArray(LET_GO[i + 1].trigger), k);
+    // The gun turned half round y puts its point (x, y, z) at (-x, y, -z) from its origin.
+    spun.x += onGun.x;
+    spun.y -= onGun.y;
+    spun.z += onGun.z;
+    // Over the first step the fist hands the gun to the finger: the two agree in SHAPES.grip.
+    return out.lerp(spun, THREE.MathUtils.smoothstep(onFinger, 0, 1 / (LET_GO.length - 1)));
   }
 
   private apply() {
@@ -337,11 +480,7 @@ export class Glove {
       c.rotation.x = -middle * LAST;
     });
     const [root, mid, tip] = this.thumb;
-    const ti = n.thumbIn;
-    // Out from the side of the hand, forward, then down and in under the palm.
-    root.rotation.y = s * (0.95 - 0.7 * ti);
-    root.rotation.x = -(0.2 + 0.6 * Math.max(0, ti)) + 0.25 * Math.min(0, ti);
-    root.rotation.z = s * (0.55 + 0.7 * Math.max(0, ti));
+    root.rotation.set(n.thumb[1], s * n.thumb[0], s * n.thumb[2]);
     mid.rotation.x = -n.thumbBend * 0.85;
     tip.rotation.x = -n.thumbBend * 1.05;
   }

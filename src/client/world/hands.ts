@@ -7,7 +7,7 @@ import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
-import { Glove, type HandShape, SHAPES } from './glove';
+import { Glove, gunHand, type HandShape, SHAPES } from './glove';
 import { mesh, toonUnique } from './toon';
 
 export interface HandsInput {
@@ -26,11 +26,25 @@ export interface HandsInput {
 const GLOVE = '#1a1a1a';
 const CUFF = '#3a3a3a';
 
+/**
+ * How far a tossed gun slides along its own left off the end of the trigger finger through its
+ * guard, in meters of the pose's `lift`, before it goes up.
+ */
+const TOSS_SLIDE = 0.06;
+
 /** Lifting the mug for a sip and lowering it again, in seconds. */
 const SIP_TIME = 1.1;
 
 const lift = new THREE.Vector3();
 const handTurn = new THREE.Quaternion();
+const away = new THREE.Vector3();
+const along = new THREE.Vector3();
+/** The glove's +z (its wrist) laid back along the gun, toward its hammer. */
+const back = new THREE.Vector3(0, 0, -1);
+const scale = new THREE.Vector3();
+const palmAt = new THREE.Matrix4();
+/** From the cylinder's axis to the middle of the left glove pressed flat on it: its radius and half the palm's thickness. */
+const CYLINDER_PALM = 0.024 + 0.0235;
 
 interface Arm {
   group: THREE.Group;
@@ -279,7 +293,7 @@ export class Hands {
     // The muzzle down the arm's -z. The glove turns palm in round the grip at once: the gun comes up
     // out of the holster below the view, and the fist has to fit it from the first frame.
     mount.rotation.y = Math.PI;
-    this.right.glove.shape(pose.finger > 0.5 ? SHAPES.spin : SHAPES.grip, true);
+    this.right.glove.shape(gunHand(pose.finger), true);
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
     const prop = magnum();
@@ -429,7 +443,7 @@ export class Hands {
   /** What the right hand is doing with its fingers, by what it holds and what it's up to. */
   private rightShape(reach: number): HandShape {
     const g = this.gun;
-    if (g) return g.pose.lift > 0.004 ? SHAPES.catch : g.pose.finger > 0.5 ? SHAPES.spin : SHAPES.grip;
+    if (g) return gunHand(g.onFinger);
     const both = this.bothShape();
     if (both) return both;
     switch (this.emoting?.emote.id) {
@@ -455,7 +469,7 @@ export class Hands {
     const both = this.bothShape();
     if (both) return both;
     const g = this.gun;
-    if (g && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.flat;
+    if (g && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.cylinder;
     const id = this.emoting?.emote.id;
     if (id === 'clap') return SHAPES.flat;
     if (id === 'dance') return SHAPES.fist;
@@ -488,25 +502,35 @@ export class Hands {
     r.updateMatrixWorld(true);
     // In the fist round its grip, or hung by its guard on the trigger finger to spin.
     g.onFinger += (p.finger - g.onFinger) * (1 - Math.exp(-dt * 30));
+    // The hand moves in step with the gun (gunMount), so no finger passes through it on the way.
+    this.right.glove.shape(gunHand(g.onFinger), true);
     this.right.glove.gunMount(g.onFinger, g.mount.position);
-    // Tossed: straight up the screen, whichever way the hand is turned.
-    if (p.lift) g.mount.position.add(lift.set(0, p.lift, 0).applyQuaternion(handTurn.copy(r.quaternion).invert()));
+    // Tossed off the trigger finger: slid off the end of it (the gun's +x, the mount's -x), then
+    // straight up the screen, whichever way the hand is turned.
+    if (p.lift) {
+      g.mount.position.x -= Math.min(p.lift, TOSS_SLIDE);
+      const up = p.lift - TOSS_SLIDE;
+      if (up > 0) g.mount.position.add(lift.set(0, up, 0).applyQuaternion(handTurn.copy(r.quaternion).invert()));
+    }
     g.pivot.rotation.set(p.spin, p.turn, p.tilt);
     setCylinder(g.prop, p.crane, p.cylinder);
     const free = !this.wantsMug && !this.glass;
     if (free) l.position.y -= 0.2 * p.out;
-    // The left hand in at the cylinder, swung out, palm against it, sweeping down it to spin it.
+    // The left hand in at the cylinder as it swings out: in the gun's own frame, the palm flat on
+    // its far side, the fingers along it toward the muzzle and the thumb up, sweeping round it
+    // (`palm`) to spin it.
     if (free && p.left > 0) {
-      r.updateMatrixWorld(true);
-      g.prop.getObjectByName('gun-drum')!.getWorldPosition(lift);
-      lift.x -= 0.075;
-      lift.y += 0.01 + p.palm * 0.035;
-      lift.z += 0.03;
+      const prop = g.prop;
+      prop.updateMatrixWorld(true);
+      const drum = prop.worldToLocal(prop.getObjectByName('gun-drum')!.getWorldPosition(lift));
+      const hinge = prop.worldToLocal(prop.getObjectByName('gun-crane')!.getWorldPosition(away));
+      away.set(drum.x - hinge.x, drum.y - hinge.y, 0).normalize();
+      along.set(-away.y, away.x, 0);
+      drum.addScaledVector(away, CYLINDER_PALM).addScaledVector(along, -p.palm * 0.03);
+      palmAt.makeBasis(along, away, back).setPosition(drum).premultiply(prop.matrixWorld);
+      palmAt.decompose(lift, handTurn, scale);
       l.position.lerp(lift, p.left);
-      l.rotation.z += (1.35 - l.rotation.z) * p.left;
-      l.rotation.y += (0.35 - l.rotation.y) * p.left;
-      // The forearm comes up from below, so its sleeve doesn't cross the gun.
-      l.rotation.x += (0.75 - l.rotation.x) * p.left;
+      l.quaternion.slerp(handTurn, p.left);
     }
     g.muzzle.update(dt);
   }

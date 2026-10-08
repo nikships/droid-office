@@ -137,6 +137,11 @@ export function prop(name: string, place: PropPlace = {}): THREE.Object3D | null
   return obj;
 }
 
+/** The loaded scene of `name` itself, not a copy, for a module that builds its own meshes from it. */
+export function propScene(name: string): THREE.Group | null {
+  return cache.get(name)?.gltf ?? null;
+}
+
 /** The same as `prop` but synchronous; only valid for props already in the cache. */
 export function propOrNull(name: string, place: PropPlace = {}): THREE.Object3D | null {
   return prop(name, place);
