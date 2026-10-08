@@ -35,20 +35,23 @@ export function togglePalette(entries: () => PaletteEntry[]) {
     'aria-controls': 'palette-list',
     'aria-expanded': 'true',
   });
-  const list = h('ul.palette-list', { id: 'palette-list', role: 'listbox' });
-  const empty = h('p.note.palette-empty', {}, 'Nothing here matches that.');
-  const hint = h('footer', {}, h('span.grow', {}, h('span.key', {}, '↵'), 'open ', h('span.key', {}, '⇧↵'), 'walk there first ', h('span.key', {}, '↑↓'), 'choose ', h('span.key', {}, 'Esc'), 'close'));
-  const el = h('div.modal.palette', { role: 'dialog', 'aria-label': 'Command palette' }, h('div.palette-find', {}, input), list, empty, hint);
+  input.classList.add('palette-input');
+  const list = h('ul.list.palette-list', { id: 'palette-list', role: 'listbox' });
+  const empty = h('div.empty-state.palette-empty', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '🔎'), h('b', {}, 'Nothing here matches that'), h('p', {}, 'Try a worker’s name, an issue number or a board.'));
+  const hintKey = (key: string, what: string) => h('span.palette-hint', {}, h('span.key', {}, key), what);
+  const hint = h('footer', {}, h('span.grow.palette-hints', {}, hintKey('↵', 'open'), hintKey('⇧↵', 'walk there first'), hintKey('↑↓', 'choose'), hintKey('Esc', 'close')));
+  const el = h('div.modal.palette', { role: 'dialog', 'aria-label': 'Command palette' }, h('div.palette-find', {}, h('span.palette-glass', { 'aria-hidden': 'true' }, '⌕'), input), list, empty, hint);
 
   let found: PaletteMatch<PaletteEntry>[] = [];
+  /** The result rows, in `found`'s order (the list also holds the group headings). */
+  let rows: HTMLElement[] = [];
   let at = 0;
 
   const select = (i: number) => {
-    const rows = list.children;
     rows[at]?.classList.remove('on');
     rows[at]?.setAttribute('aria-selected', 'false');
     at = found.length ? (i + found.length) % found.length : 0;
-    const row = rows[at] as HTMLElement | undefined;
+    const row = rows[at];
     if (!row) return input.removeAttribute('aria-activedescendant');
     row.classList.add('on');
     row.setAttribute('aria-selected', 'true');
@@ -65,25 +68,28 @@ export function togglePalette(entries: () => PaletteEntry[]) {
   };
 
   const render = () => {
-    found = rankItems(input.value, all);
-    list.replaceChildren(
-      ...found.map((m, i) => {
-        const e = m.item;
-        const row = h(
-          'li.palette-row',
-          { id: `palette-${i}`, role: 'option', 'aria-selected': 'false', title: e.walk ? 'Enter opens it · Shift+Enter walks you there first' : 'Enter opens it' },
-          h('span.palette-icon', {}, e.icon),
-          h('span.palette-text', {}, h('span.palette-title', {}, ...marked(e.title, m.field === 'title' ? m.hits : [])), e.detail ? h('span.palette-detail', {}, ...marked(e.detail, m.field === 'detail' ? m.hits : [])) : null),
-          h('span.palette-kind', {}, e.kind),
-        );
-        row.addEventListener('mousemove', () => at !== i && select(i));
-        // Before the input loses focus to it.
-        row.addEventListener('mousedown', (ev) => ev.preventDefault());
-        row.addEventListener('click', (ev) => go(i, ev.shiftKey));
-        return row;
-      }),
-    );
+    found = groupByKind(rankItems(input.value, all));
+    const items: HTMLElement[] = [];
+    rows = found.map((m, i) => {
+      const e = m.item;
+      if (e.kind !== found[i - 1]?.item.kind) items.push(h('li.palette-group.eyebrow', { role: 'presentation' }, plural(e.kind)));
+      const row = h(
+        'li.list-row.palette-row',
+        { id: `palette-${i}`, role: 'option', 'aria-selected': 'false', title: e.walk ? 'Enter opens it · Shift+Enter walks you there first' : 'Enter opens it' },
+        h('span.list-icon', { 'aria-hidden': 'true' }, e.icon),
+        h('span.list-main', {}, h('span.list-title', {}, ...marked(e.title, m.field === 'title' ? m.hits : [])), e.detail ? h('span.list-meta', {}, ...marked(e.detail, m.field === 'detail' ? m.hits : [])) : null),
+        h('span.list-end', {}, h('span.key.palette-enter', { 'aria-hidden': 'true' }, '↵')),
+      );
+      row.addEventListener('mousemove', () => at !== i && select(i));
+      // Before the input loses focus to it.
+      row.addEventListener('mousedown', (ev) => ev.preventDefault());
+      row.addEventListener('click', (ev) => go(i, ev.shiftKey));
+      items.push(row);
+      return row;
+    });
+    list.replaceChildren(...items);
     empty.classList.toggle('hidden', found.length > 0);
+    list.classList.toggle('hidden', !found.length);
     select(0);
   };
 
@@ -107,6 +113,23 @@ export function togglePalette(entries: () => PaletteEntry[]) {
   render();
   input.focus();
 }
+
+/**
+ * The matches with each kind's together, the kinds in the order their best match ranks. Within a kind
+ * the ranking stands, so the best match of all is still first and Enter opens it.
+ */
+function groupByKind<T extends PaletteEntry>(found: PaletteMatch<T>[]): PaletteMatch<T>[] {
+  const kinds = new Map<string, PaletteMatch<T>[]>();
+  for (const m of found) {
+    const run = kinds.get(m.item.kind);
+    if (run) run.push(m);
+    else kinds.set(m.item.kind, [m]);
+  }
+  return [...kinds.values()].flat();
+}
+
+/** A kind as a group heading: "Worker" heads "Workers". */
+const plural = (kind: string) => (/s$/i.test(kind) ? kind : `${kind}s`);
 
 /** `text` with the characters at `hits` marked. */
 function marked(text: string, hits: number[]): (string | HTMLElement)[] {

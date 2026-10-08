@@ -76,51 +76,76 @@ export function renderCaffeine(caffeine: Caffeine, now: number) {
   $('caffeine-left').textContent = `${Math.ceil(left)}s`;
 }
 
+/** A row of the help sheet: what it does, a line more about it, and its keys ('/' between two that each do it). */
+type HelpRow = [what: string, more: string, keys: string[]];
+
 export function openHelp() {
-  const rows: [string, string][] = [
-    ['W A S D', 'Walk (hold Shift to run)'],
-    ['Space', 'Jump'],
-    ['☕', 'Press E at the coffee machine in the kitchen for a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters'],
-    ['Mouse', 'Look around in first person (click to capture the mouse, Esc to free it)'],
+  const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+  const sections: [string, HelpRow[]][] = [
     [
-      'Click / E',
-      'Use what you look at: hire a worker, open its terminal, read a board, call a meeting in the meeting room, put a song on the jukebox, tee off from the balcony, sit on a couch, a beanbag, a chair or the balcony bench (walk off to get up)',
-    ],
-    ['🛗', 'Every project is a floor: step into the elevator on the north wall and press E (or click the project name, top left) to go to another one or add a project'],
-    ['🤖', 'An agent stands by the issues board, the PR board and the task queue. Press E at one and type what you want: it runs as an agent that knows that board. O there opens its terminal, X sends it home'],
-    [
-      '🕹️',
-      'The arcade cabinet in the lounge plays BLOCKFALL: arrows (or WASD) move and turn, Space drops, C holds, P pauses. Everyone on the floor sees your game on it, and E there watches whoever is playing. One of your workers needing input pauses it',
-    ],
-    ['🎉', 'Whenever a pull request merges, the gong next to the PR board rings, confetti rains down all over the floor and every worker gets up on its desk for a quick dance. Walk up to the gong and press E to bang it yourself'],
-    ['N', "Next worker that needs you: go to whoever has waited longest (needs input, or done and nobody's looked), and again for the next one. Arrows at the edge of the screen point to the ones out of sight"],
-    ['🍸', 'The elevator goes up to the rooftop bar: a DJ playing drum and bass under the lights, and the city all around. Press E at the bar for a drink (it goes to your head for a bit) and at the DJ booth for the air horn'],
-    ['Drag / wheel', 'Orbit and zoom the camera in third person'],
-    ['P', 'Prompt: give a task to a new or existing worker at the desk you face'],
-    ['C', 'Changes: what the worker at the desk you face changed — files and diff, commit, discard, open a PR'],
-    ['B', 'Open a shared shell (dev servers, git, tests) at an empty desk'],
-    ['R', 'Resume a sleeping worker'],
-    ['X', 'Send a worker home (frees the desk)'],
-    ['F', 'Hang a picture from the web on a wall. Look at a picture and press E to move, edit or take it down'],
-    ['Q', 'Put back the issue card in your hands (E at a note on the issues board, or Pick it up in an issue; then E at an empty desk, a worker or the queue board)'],
-    ['O', 'Open a pull request for a worker on its own branch, or see the one it has'],
-    [
-      'G / 1–6',
-      'Emote: hold G, point at one and let go (or tap G and click one), or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks: twirl, inspect, cylinder spin, yy, blow the smoke off, flip',
+      'Move',
+      [
+        ['Walk', 'Hold Shift to run', ['W', 'A', 'S', 'D']],
+        ['Jump', '', ['Space']],
+        ['Look around', 'First person: click to capture the mouse, Esc frees it', ['Mouse']],
+        ['Orbit and zoom', 'Third person. Switch views in ⚙️ Settings, in the ☰ menu', ['Drag', '/', 'Wheel']],
+        ['Next worker that needs you', 'Whoever has waited longest. Arrows at the screen’s edge point to the ones out of sight', ['N']],
+        ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the rooftop bar too', ['E']],
+      ],
     ],
     [
-      '7',
-      'Draw the .44 Magnum (or holster it; mash it and each press cancels the last); click to fire at the worker under the crosshair. One shot drops it — walk up and press E to revive it, or shoot it again to finish it and call the medics now',
+      'Use things',
+      [
+        ['Use what you look at', 'Hire a worker, open its terminal, read a board, call a meeting, play the jukebox, sit down (walk off to get up)', ['Click', '/', 'E']],
+        ['Ask a board agent', 'One stands at the issues board, the PR board and the task queue. E there and type what you want; O opens its terminal, X sends it home', ['E']],
+        ['Put back an issue card', 'Pick one up with E on the issues board or in an issue, then E at an empty desk, a worker or the queue', ['Q']],
+        ['Hang a picture', 'From the web, on a wall. E at a picture moves, edits or takes it down', ['F']],
+      ],
     ],
-    ['/', 'Search every terminal on your floor, back to before the office last restarted'],
-    [typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K', 'Command palette: a few letters find a worker, issue, PR, service, board or action. Enter opens it, Shift+Enter walks you over first'],
-    ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],
-    ['Esc', 'Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt Droid)'],
-    ['Shift + Esc', 'Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal)'],
-    ['⚙️', 'Settings (in the ☰ menu): switch between first and third person'],
+    [
+      'Workers',
+      [
+        ['Prompt', 'Give a task to a new or existing worker at the desk you face', ['P']],
+        ['Changes', 'Files and diff of the worker you face: commit, discard, open a PR', ['C']],
+        ['Shared shell', 'Dev servers, git, tests, at an empty desk', ['B']],
+        ['Resume', 'Wake a sleeping worker', ['R']],
+        ['Send home', 'Frees the desk', ['X']],
+        ['Pull request', 'Open one for a worker on its own branch, or see the one it has', ['O']],
+      ],
+    ],
+    [
+      'Windows',
+      [
+        ['Command palette', 'Find a worker, issue, PR, service, board or action. Shift+Enter walks you there first', mac ? ['⌘', 'K'] : ['Ctrl', 'K']],
+        ['Menu', 'Every window, and what shows on screen. Pin what you use most to the top bar', ['Tab']],
+        ['Search terminals', 'Every terminal on your floor, back to before the office last restarted', ['/']],
+        ['Close a window', 'In a terminal, Esc goes to the program (to back out of a menu or interrupt Droid)', ['Esc']],
+        ['Leave a terminal', 'So does Ctrl + ], the ✕, or Esc after clicking off the terminal', ['Shift', 'Esc']],
+      ],
+    ],
+    [
+      'Fun',
+      [
+        ['Emote', 'Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks', ['G', '/', '1–6']],
+        ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']],
+        ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
+        ['BLOCKFALL', 'The lounge arcade: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
+        ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
+        ['Rooftop bar', 'Up the elevator: a DJ and the city. E at the bar for a drink, at the DJ booth for the air horn', ['E']],
+      ],
+    ],
   ];
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Controls' }, h('header', {}, h('h2', {}, 'Controls'), close), h('div.body', {}, h('div.help-grid', {}, ...rows.flatMap(([k, v]) => [h('span.key', {}, k), h('span', {}, v)]))));
-  const modal = openModal(el);
-  close.addEventListener('click', () => modal.close());
+  const keys = (ks: string[]) => h('span.help-keys', {}, ...ks.map((k) => (k === '/' ? h('span.help-or', {}, 'or') : h('kbd.key', {}, k))));
+  const row = ([what, more, ks]: HelpRow) => h('div.group-row.help-row', {}, h('span.group-label', {}, h('b', {}, what), more ? h('small', {}, more) : null), keys(ks));
+  const el = h(
+    'div.modal.xl.help',
+    { role: 'dialog', 'aria-label': 'Controls' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Controls'), h('p.sub', {}, 'Every key in the office, and what it does'))),
+    h(
+      'div.body',
+      {},
+      h('div.help-sections', {}, ...sections.map(([name, rows], i) => h('section.section.help-section', {}, h('div.eyebrow', {}, h('span.no', {}, String(i + 1).padStart(2, '0')), name), h('div.group', {}, ...rows.map(row))))),
+    ),
+  );
+  openModal(el);
 }

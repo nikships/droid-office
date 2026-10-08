@@ -27,6 +27,19 @@ export function closeFloorMenu() {
   current?.close();
 }
 
+/** A floor's number on a badge in its palette's trim color (a custom property: the color is the floor's data). */
+export function floorNo(text: string, color: string): HTMLElement {
+  const el = h('span.list-icon.floor-no', { 'aria-hidden': 'true' }, text);
+  el.style.setProperty('--floor-trim', color);
+  return el;
+}
+
+/** Who is on a floor: waiting on someone, working, at desks. */
+export function floorStats(f: FloorInfo): HTMLElement {
+  const stat = (cls: string, title: string, icon: string, n: number) => h('span.floor-stat', { class: cls, title }, h('span', { 'aria-hidden': 'true' }, icon), String(n));
+  return h('span.floor-stats', {}, f.waiting ? stat('waiting', 'Workers waiting on someone', '🙋', f.waiting) : null, f.busy ? stat('', 'Working', '👷', f.busy) : null, stat('', 'Workers at desks', '💻', f.workers));
+}
+
 /** Opens the floor list under `anchor`, or closes it if it's open. */
 export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): void {
   if (current) {
@@ -39,17 +52,13 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     const isHere = f.id === store.floor;
     const p = floorPalette(f.palette);
     const n = Math.abs(i - here);
-    const where = isHere ? 'you are here' : here < 0 ? '' : `${i > here ? '⬆' : '⬇'} ${n} floor${n === 1 ? '' : 's'} ${i > here ? 'up' : 'down'}`;
-    const stats: HTMLElement[] = [];
-    if (f.waiting) stats.push(h('span.waiting', { title: 'Workers waiting on someone' }, `🙋 ${f.waiting}`));
-    if (f.busy) stats.push(h('span', { title: 'Working' }, `👷 ${f.busy}`));
-    stats.push(h('span', { title: 'Workers at desks' }, `💻 ${f.workers}`));
+    const where = isHere || here < 0 ? '' : `${i > here ? '⬆' : '⬇'} ${n} floor${n === 1 ? '' : 's'} ${i > here ? 'up' : 'down'}`;
     const btn = h(
-      'button.floor-item',
-      { type: 'button', role: 'menuitem', class: isHere ? 'here' : '', disabled: isHere, title: isHere ? "You're on this floor" : `Go to ${f.name}, right where you're standing` },
-      h('span.floor-no', { style: `background:${p.trim}` }, String(i + 1)),
-      h('span.floor-text', {}, h('span.floor-name', {}, f.name), h('span.floor-sub', {}, where || (f.repo ?? f.dir))),
-      h('span.floor-stats', {}, ...stats),
+      'button.list-row.floor-item',
+      { type: 'button', role: 'menuitem', class: isHere ? 'here on' : '', disabled: isHere, title: isHere ? "You're on this floor" : `Go to ${f.name}, right where you're standing` },
+      floorNo(String(i + 1), p.trim),
+      h('span.list-main', {}, h('span.list-title', { title: f.name }, f.name), h('span.list-meta', { title: f.repo ?? f.dir }, where || (f.repo ?? f.dir))),
+      h('span.list-end', {}, isHere ? h('span.pill.floor-here', {}, 'Here') : floorStats(f)),
     );
     btn.addEventListener('click', () => {
       if (isHere) return;
@@ -63,10 +72,10 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     const floors = store.floors;
     const here = floors.findIndex((f) => f.id === store.floor);
     const add = h(
-      'button.floor-item.add',
+      'button.list-row.floor-item.add',
       { type: 'button', role: 'menuitem', title: 'The elevator: add another project as a floor' },
-      h('span.floor-no', {}, '🛗'),
-      h('span.floor-text', {}, h('span.floor-name', {}, 'Elevator'), h('span.floor-sub', {}, 'Add a project…')),
+      h('span.list-icon.floor-no', { 'aria-hidden': 'true' }, '＋'),
+      h('span.list-main', {}, h('span.list-title', {}, 'Add a project'), h('span.list-meta', {}, 'Opens the elevator')),
     );
     add.addEventListener('click', () => {
       close();
@@ -76,18 +85,22 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     const items = floors.map((f, i) => item(f, i, here)).reverse();
     const onRoof = store.floor === ROOF;
     const roof = h(
-      'button.floor-item',
-      { type: 'button', role: 'menuitem', class: onRoof ? 'here' : '', disabled: onRoof, title: onRoof ? "You're up on the roof" : 'Take the elevator up to the roof' },
-      h('span.floor-no', { style: 'background:#14181f' }, '🍸'),
-      h('span.floor-text', {}, h('span.floor-name', {}, ROOF_NAME), h('span.floor-sub', {}, onRoof ? 'you are here' : 'A DJ, drinks and the city')),
-      h('span.floor-stats', {}, ''),
+      'button.list-row.floor-item',
+      { type: 'button', role: 'menuitem', class: onRoof ? 'here on' : '', disabled: onRoof, title: onRoof ? "You're up on the roof" : 'Take the elevator up to the roof' },
+      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🍸'),
+      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'A DJ, drinks and the city')),
+      h('span.list-end', {}, onRoof ? h('span.pill.floor-here', {}, 'Here') : null),
     );
     roof.addEventListener('click', () => {
       if (onRoof) return;
       close();
       opts.roof();
     });
-    el.replaceChildren(h('div.floor-menu-head', {}, `🏢 ${floors.length} floor${floors.length === 1 ? '' : 's'}`), ...(floors.length ? [roof] : []), ...items, add);
+    el.replaceChildren(
+      h('div.floor-menu-head.eyebrow', {}, h('span.no', {}, String(floors.length)), `floor${floors.length === 1 ? '' : 's'}`),
+      h('div.list.floor-menu-list', {}, ...(floors.length ? [roof] : []), ...items),
+      h('div.floor-menu-foot', {}, add),
+    );
   };
 
   const place = () => {

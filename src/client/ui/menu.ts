@@ -178,7 +178,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
         h('span.mi-icon', {}, iconOf(a)),
         h('span.mi-label', {}, labelOf(a)),
         badge(a.count?.()),
-        a.key ? h('kbd.mi-key', {}, a.key) : null,
+        a.key ? h('kbd.key.mi-key', {}, a.key) : null,
       );
       const pin = h('button.menu-pin', { type: 'button' });
       pin.innerHTML = PIN_SVG;
@@ -205,14 +205,15 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
       return item;
     };
     // Numbered eyebrows, the way the sidebar's panels have them: the index in orange.
-    const section = (no: string, name: string, rows: HTMLElement[]) => (rows.length ? [h('div.menu-sec', {}, h('span.no', {}, no), name), ...rows] : []);
+    const section = (no: string, name: string, rows: HTMLElement[]) =>
+      rows.length ? h('div.menu-group', { role: 'group', 'aria-label': name }, h('div.menu-sec.eyebrow', { 'aria-hidden': 'true' }, h('span.no', {}, no), name), ...rows) : null;
     const rows = (s: HudAction['section']) => actions.filter((a) => a.section === s && offered(a)).map(row);
     const el = h(
       'div.hud-menu',
       { role: 'menu', 'aria-label': 'Menu' },
-      h('div.menu-col', {}, ...section('01', 'Open', rows('Open')), ...section('02', 'Together', rows('Together'))),
-      h('div.menu-col', {}, ...section('03', 'Show on screen', PANELS.map(toggle)), ...section('04', 'Office', rows('Office'))),
-      h('p.menu-foot', {}, 'Pin what you use most to keep it on the top bar. ', h('kbd', {}, 'Tab'), ' opens and closes this menu.'),
+      h('div.menu-col', {}, section('01', 'Open', rows('Open')), section('02', 'Together', rows('Together'))),
+      h('div.menu-col', {}, section('03', 'Show on screen', PANELS.map(toggle)), section('04', 'Office', rows('Office'))),
+      h('div.menu-foot', {}, h('span', {}, 'Pin what you use most to the top bar'), h('span.menu-foot-key', {}, h('span.key', {}, 'Tab'), 'opens and closes')),
     );
     // On the window, so the keys work wherever focus is while the menu is up.
     const onKey = (e: KeyboardEvent) => menuKey(el, e);

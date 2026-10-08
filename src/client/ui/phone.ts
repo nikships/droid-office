@@ -56,14 +56,13 @@ const KIND: Record<PairingAddress['kind'], string> = { wifi: 'Wi-Fi', tailscale:
 
 /** Opens the Phone window. `onChange` hears the paired phones whenever they're read again. */
 export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const tile = h('div.phone-qr', { 'aria-busy': 'true' }, h('div.spinner'));
   const caption = h('p.phone-qr-caption', {}, 'Scan with ', h('b', {}, 'Droid Office for Android'));
-  const addresses = h('ul.phone-addrs', { 'aria-label': 'Addresses in the code' });
-  const addressNote = h('p.setting-note');
-  const devicesList = h('ul.phone-devices', { 'aria-label': 'Paired phones' });
+  const addresses = h('ul.list.boxed.phone-addrs', { 'aria-label': 'Addresses in the code' });
+  const addressNote = h('p.field-hint.phone-addr-note');
+  const devicesList = h('ul.list.boxed.phone-devices', { 'aria-label': 'Paired phones' });
   const devicesCount = h('span.phone-count');
-  const status = h('p.phone-status', { role: 'status', 'aria-live': 'polite' });
+  const status = h('p.note.phone-status', { role: 'status', 'aria-live': 'polite' });
   const steps = h(
     'ol.phone-steps',
     {},
@@ -71,10 +70,16 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     h('li', {}, h('span', {}, 'Start pairing in the app and point the camera at this code.')),
     h('li', {}, h('span', {}, 'Your phone shows up under ', h('b', {}, 'Paired phones'), '. Hire workers, watch their terminals and prompt them from it.')),
   );
-  const pairCard = h('section.phone-pair', {}, h('div.phone-qr-col', {}, tile, caption), h('div.phone-side', {}, steps, h('h4.phone-label', {}, 'In this code'), addresses, addressNote));
-  const paired = h('section.phone-paired', {}, h('div.phone-paired-head', {}, h('h4.phone-label', {}, 'Paired phones'), devicesCount), devicesList);
+  const pairCard = h('section.phone-pair', {}, h('div.phone-qr-col', {}, tile, caption), h('div.phone-side', {}, steps, h('div.section.phone-addr-section', {}, h('div.eyebrow', {}, 'In this code'), addresses, addressNote)));
+  const paired = h('section.section.phone-paired', {}, h('div.eyebrow', {}, 'Paired phones', devicesCount), devicesList);
   const footer = h('footer', {}, h('span.grow', {}, 'The code changes every time the office starts. A paired phone stays paired until you forget it.'));
-  const el = h('div.modal.phone', { role: 'dialog', 'aria-label': 'Phone' }, h('header', {}, h('h2', {}, '📱 Phone'), close), h('div.body', {}, pairCard, status, paired), footer);
+  const el = h(
+    'div.modal.lg.phone',
+    { role: 'dialog', 'aria-label': 'Phone' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, '📱 Phone'), h('p.sub', {}, 'Pair Droid Office for Android'))),
+    h('div.body', {}, h('div.stack.loose', {}, pairCard, status, paired)),
+    footer,
+  );
 
   let link = '';
   let known: Set<string> | undefined;
@@ -99,7 +104,13 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   const paintAddresses = (state: PairingState) => {
     addresses.replaceChildren(
       ...state.addresses.map((a) =>
-        h('li', { class: a.kind }, h('span.phone-kind', { class: a.kind }, KIND[a.kind]), h('code', {}, a.url.replace(/^https?:\/\//, '')), a.kind === 'tailscale' && h('span.phone-hint', {}, a.dns ? 'MagicDNS' : 'tailnet IP')),
+        h(
+          'li.list-row',
+          { class: a.kind },
+          h('span.phone-kind', { class: a.kind }, KIND[a.kind]),
+          h('code.list-main', { title: a.url }, a.url.replace(/^https?:\/\//, '')),
+          a.kind === 'tailscale' && h('span.list-end.phone-hint', {}, a.dns ? 'MagicDNS' : 'tailnet IP'),
+        ),
       ),
     );
     addresses.classList.toggle('hidden', !state.addresses.length);
@@ -113,7 +124,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   };
 
   const forgetButton = (d: PairedDevice) => {
-    const b = h('button.btn', { type: 'button', title: `Unpair ${d.name}: its token stops working right away` }, armed === d.id ? 'Sure? Forget' : 'Forget') as HTMLButtonElement;
+    const b = h('button.btn.sm', { type: 'button', title: `Unpair ${d.name}: its token stops working right away` }, armed === d.id ? 'Sure? Forget' : 'Forget') as HTMLButtonElement;
     if (armed === d.id) b.classList.add('danger');
     b.addEventListener('click', () => {
       if (armed !== d.id) {
@@ -137,22 +148,22 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     const list = state.devices;
     devicesCount.textContent = list.length ? String(list.length) : '';
     if (!list.length) {
-      devicesList.replaceChildren(h('li.phone-empty', {}, h('span', { 'aria-hidden': 'true' }, '📵'), h('div', {}, h('b', {}, 'No phones paired yet'), h('span', {}, 'Scan the code above with the app to pair one.'))));
+      devicesList.replaceChildren(h('li.empty-state.phone-empty', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '📵'), h('b', {}, 'No phones paired yet'), h('p', {}, 'Scan the code above with the app to pair one.')));
       return;
     }
     devicesList.replaceChildren(
       ...list.map((d) =>
         h(
-          'li',
+          'li.list-row',
           { class: fresh.has(d.id) ? 'fresh' : '' },
-          h('span.phone-icon', { 'aria-hidden': 'true' }, '📱'),
+          h('span.list-icon.phone-icon', { 'aria-hidden': 'true' }, '📱'),
           h(
-            'div.phone-main',
+            'div.list-main',
             {},
-            h('div.phone-name', {}, d.name, fresh.has(d.id) && h('span.phone-new', {}, 'Just paired')),
-            h('div.phone-meta', { title: `Paired ${new Date(d.pairedAt).toLocaleString()} · last seen ${new Date(d.lastSeenAt).toLocaleString()}` }, `Paired ${timeAgo(d.pairedAt)} · seen ${timeAgo(d.lastSeenAt)}`),
+            h('div.list-title.phone-name', { title: d.name }, h('span.phone-name-text', {}, d.name), fresh.has(d.id) && h('span.pill.phone-new', {}, 'Just paired')),
+            h('div.list-meta', { title: `Paired ${new Date(d.pairedAt).toLocaleString()} · last seen ${new Date(d.lastSeenAt).toLocaleString()}` }, `Paired ${timeAgo(d.pairedAt)} · seen ${timeAgo(d.lastSeenAt)}`),
           ),
-          forgetButton(d),
+          h('div.list-end', {}, forgetButton(d)),
         ),
       ),
     );
@@ -166,15 +177,15 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     paintAddresses(state);
     paintDevices(state);
     const newest = state.devices.find((d) => fresh.has(d.id));
-    status.textContent = newest ? `✅ ${newest.name} is paired. You can close this window.` : '';
-    status.classList.toggle('ok', !!newest);
+    status.textContent = newest ? `${newest.name} is paired. You can close this window.` : '';
+    status.classList.toggle('good', !!newest);
     onChange?.(state.devices);
   };
 
   const fail = (text: string, final = false) => {
     stopped ||= final;
     status.textContent = text;
-    status.classList.remove('ok');
+    status.classList.remove('good');
     status.classList.add('bad');
     if (final) for (const part of [pairCard, paired, footer]) part.classList.add('hidden');
   };
@@ -197,7 +208,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     }
   };
 
-  const modal = openModal(el, {
+  openModal(el, {
     doing: '📱 pairing a phone',
     onClose: () => {
       disposed = true;
@@ -205,7 +216,6 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
       clearTimeout(armTimer);
     },
   });
-  close.addEventListener('click', () => modal.close());
   void request('GET', '/api/mobile/pairing');
 }
 
