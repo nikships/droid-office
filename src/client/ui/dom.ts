@@ -1,5 +1,5 @@
-type Attrs = Record<string, string | number | boolean | EventListener | undefined | null>;
-type Child = Node | string | number | null | undefined | false;
+export type Attrs = Record<string, string | number | boolean | EventListener | undefined | null>;
+export type Child = Node | string | number | null | undefined | false;
 
 /** Tiny hyperscript helper: h('div.card', { onclick }, 'text', child) */
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K | `${K}.${string}`, attrs: Attrs = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -33,6 +33,9 @@ export function $(id: string): HTMLElement {
 }
 
 // ------------------------------------------------------------------------------------------------
+
+/** The window size classes in style.css: 420, 560, 760 and 960px wide, and nearly the whole screen. */
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 export interface Modal {
   el: HTMLElement;
@@ -84,9 +87,13 @@ export function setDoing(modal: Modal, doing: string | undefined) {
  * function that returns false for that keypress (to let Esc through to what has focus), and so
  * does a ✕ in its top right corner unless `closeButton` is false (it follows `escCloses`). `doing`
  * is what the window says you're doing while it's open, like "reading PR #12", and `reading`
- * puts an open book in your character's hands.
+ * puts an open book in your character's hands. `size` adds the window's size class (`.modal.sm` …).
  */
-export function openModal(content: HTMLElement, opts: { escCloses?: boolean | ((e: KeyboardEvent) => boolean); onClose?: () => void; backdropCloses?: boolean; closeButton?: boolean; doing?: string; reading?: boolean } = {}): Modal {
+export function openModal(
+  content: HTMLElement,
+  opts: { escCloses?: boolean | ((e: KeyboardEvent) => boolean); onClose?: () => void; backdropCloses?: boolean; closeButton?: boolean; doing?: string; reading?: boolean; size?: ModalSize } = {},
+): Modal {
+  if (opts.size) content.classList.add(opts.size);
   const backdrop = h('div.backdrop', {}, content);
   const root = document.getElementById('modal-root')!;
   root.append(backdrop);
