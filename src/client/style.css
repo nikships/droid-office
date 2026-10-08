@@ -1132,7 +1132,7 @@ a.when:hover { text-decoration: underline; }
 .bs-page .md { max-width: calc(72ch + 2 * var(--space-8)); margin: 0 auto; padding: var(--space-8) var(--space-8) 72px; font-size: 15px; line-height: 1.7; }
 .bs-page .md p, .bs-page .md ul, .bs-page .md ol, .bs-page .md blockquote, .bs-page .md pre, .bs-page .md table, .bs-page .md details { margin-bottom: var(--space-4); }
 .bs-page .md :is(h1, h2, h3, h4) { font-weight: 600; letter-spacing: -.01em; }
-.bs-page .md h1 { font-size: 26px; margin: 0 0 var(--space-5); padding-bottom: var(--space-3); }
+.bs-page .md h1 { font-size: 26px; margin: var(--space-8) 0 var(--space-5); padding-bottom: var(--space-3); }
 .bs-page .md h2 { font-size: 20px; margin-top: var(--space-8); padding-bottom: var(--space-2); }
 .bs-page .md h3 { font-size: 16.5px; margin-top: var(--space-6); }
 .bs-page .md h4 { margin-top: var(--space-5); }
@@ -1141,6 +1141,10 @@ a.when:hover { text-decoration: underline; }
 .bs-page .md a { font-weight: 500; }
 .bs-page .md a:not([href]) { color: inherit; }
 .bs-page .md pre code, .bs-page .md code { font-size: 12.5px; }
+/* Pictures: no baseline gap under them, and the line written under one reads as its caption. */
+.bs-page .md p > img { vertical-align: bottom; }
+.bs-page .md :is(img + em, img + br + sub, img + br + em) { display: block; margin-top: var(--space-2); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); font-style: normal; color: var(--text-secondary); vertical-align: baseline; }
+.bs-page .md p:has(> img) { margin: var(--space-6) 0; }
 /* The bookshelf's tabs, and its AutoWiki tab (ui/factory-wiki.ts) */
 .bs-wiki.wk-empty:not([hidden]) { display: flex; overflow: auto; }
 .bs-wiki.split { grid-template-columns: 260px minmax(0, 1fr); overflow: hidden; }
@@ -1448,8 +1452,13 @@ a.when:hover { text-decoration: underline; }
 .meeting-stepper .btn { width: var(--control-h-sm); min-height: var(--control-h-sm); height: var(--control-h-sm); }
 .meeting-count { min-width: 24px; text-align: center; font: 500 var(--text-body)/1 var(--font-mono); color: var(--text); font-variant-numeric: tabular-nums; }
 .meeting-roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-2); }
-.meeting-role { display: flex; align-items: center; gap: var(--space-2); }
-.meeting-seat { flex: none; width: 20px; text-align: center; font: 500 11px/1 var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.meeting-role { position: relative; display: flex; align-items: center; gap: var(--space-2); }
+/* Every seat gets the same numbered badge, the height of the input beside it. */
+.meeting-seat { flex: none; display: grid; place-items: center; width: var(--control-h); height: var(--control-h); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); font: 500 12px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.meeting-role.head .meeting-seat { border-color: rgba(238, 96, 24, .45); color: var(--accent); }
+.meeting-role.head input { padding-right: 56px; }
+.meeting-role .meeting-head-pill { position: absolute; right: var(--space-2); top: 50%; translate: 0 -50%; pointer-events: none; }
+.meeting-head-pill { color: var(--accent); border-color: rgba(238, 96, 24, .4); }
 .meeting-rounds { width: 120px; }
 .meeting-head { display: flex; flex-direction: column; gap: var(--space-2); }
 .meeting-kind { display: inline-flex; align-items: center; gap: 6px; font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-secondary); }
@@ -1457,7 +1466,7 @@ a.when:hover { text-decoration: underline; }
 .meeting-line { margin: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
 .meeting-seats .list-row { cursor: default; }
 .meeting-who { margin-left: var(--space-2); font-weight: 400; color: var(--text-secondary); }
-.meeting-crown { margin-left: 6px; font-size: 12px; }
+.meeting-who + .meeting-head-pill { margin-left: var(--space-2); vertical-align: 1px; }
 .meeting-out { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface-raised); }
 .meeting-out-head { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; min-height: 36px; padding: var(--space-2) var(--space-3); background: var(--surface); border-bottom: 1px solid var(--border); font: 400 12px/1.4 var(--font-mono); color: var(--text-secondary); }
 .meeting-out-head code { color: var(--text); }

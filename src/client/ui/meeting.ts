@@ -106,7 +106,7 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
         h(
           'div.list-main',
           {},
-          h('div.list-title', {}, s.role, h('span.meeting-who', {}, s.workerName ?? '…'), i === 0 ? h('span.meeting-crown', { title: 'Head of the table' }, '👑') : null),
+          h('div.list-title', {}, s.role, h('span.meeting-who', {}, s.workerName ?? '…'), i === 0 ? h('span.pill.meeting-head-pill', { title: 'The head of the table' }, 'Head') : null),
           h('div.list-meta', { title: t?.file ?? '' }, part || (i === 0 ? 'Head of the table' : 'At the table')),
         ),
         h(
@@ -247,7 +247,14 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       ...roles.map((r, i) => {
         const input = h('input.input', { type: 'text', value: r, maxlength: 40, 'aria-label': `Role ${i + 1}` }) as HTMLInputElement;
         input.addEventListener('input', () => (roles[i] = input.value));
-        return h('div.meeting-role', {}, h('span.meeting-seat', { title: i === 0 ? 'Head of the table' : `Seat ${i + 1}` }, i === 0 ? '👑' : `${i + 1}`), input);
+        const head = i === 0;
+        return h(
+          'div.meeting-role',
+          { class: head ? 'head' : '' },
+          h('span.meeting-seat', { title: head ? 'Seat 1, the head of the table' : `Seat ${i + 1}`, 'aria-hidden': 'true' }, String(i + 1)),
+          input,
+          head ? h('span.pill.meeting-head-pill', { title: 'The head of the table' }, 'Head') : null,
+        );
       }),
     );
   };
