@@ -4,6 +4,7 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { h, openModal, timeAgo } from './dom';
 import { markdown } from './markdown';
+import { card } from './boards';
 
 // The Jira tab of a floor's issue board, read only: every direct child of its epic in To Do, In
 // Progress and Done, and the window behind each card with the ticket's description and comments.
@@ -37,13 +38,13 @@ async function ticketDetail(key: string): Promise<JiraTicketDetail> {
 const CATEGORY_CLASS: Record<JiraTicket['category'], string> = { new: 'idle', indeterminate: 'working', done: 'done' };
 
 function ticketCard(t: JiraTicket, onclick: () => void) {
-  const meta: string[] = [t.type, t.priority ? `⚑ ${t.priority}` : '', t.assignee ? `👤 ${t.assignee}` : 'unassigned', t.updated ? timeAgo(t.updated) : ''];
-  return h(
-    'li.card',
-    { tabindex: 0, onclick, onkeydown: ((e: KeyboardEvent) => e.key === 'Enter' && onclick()) as EventListener },
-    h('div.num', {}, h('a', { href: t.url, target: '_blank', rel: 'noopener noreferrer', onclick: ((e: Event) => e.stopPropagation()) as EventListener, title: 'Open in Jira' }, t.key)),
-    h('div.ttl', {}, t.summary),
-    h('div.meta', {}, ...meta.filter(Boolean).map((m) => h('span', {}, m)), h('span.pill', { class: CATEGORY_CLASS[t.category] }, t.status)),
+  return card(
+    h('a', { href: t.url, target: '_blank', rel: 'noopener noreferrer', onclick: ((e: Event) => e.stopPropagation()) as EventListener, title: 'Open in Jira' }, t.key),
+    t.summary,
+    [h('span.pill', { class: CATEGORY_CLASS[t.category] }, t.status), t.type ? h('span.jira-type', {}, t.type) : ''],
+    [t.priority ? `⚑ ${t.priority}` : '', t.assignee ? `👤 ${t.assignee}` : 'unassigned'],
+    t.updated ? timeAgo(t.updated) : '',
+    onclick,
   );
 }
 
@@ -54,18 +55,18 @@ export function renderJiraBoard(body: HTMLElement, actions: JiraActions) {
   body.replaceChildren();
   if (!st) return;
   if (st.error && !st.items.length) {
-    body.append(h('div.board-error', {}, `Couldn't load ${st.epic} from Jira: ${st.error}`));
+    body.append(h('div.empty-state.board-error', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'), h('b', {}, `Couldn't load ${st.epic} from Jira`), h('p', {}, st.error)));
     return;
   }
   if (!st.fetchedAt) {
-    body.append(h('div.board-error', {}, `Loading ${st.epic} from Jira…`));
+    body.append(h('div.empty-state.board-error', {}, h('span.spinner'), h('p', {}, `Loading ${st.epic} from Jira…`)));
     return;
   }
   for (const col of ticketColumns(st.items)) {
     const ul = h('ul');
     for (const t of col.items) ul.append(ticketCard(t, () => openTicket(t, actions)));
-    if (!col.items.length) ul.append(h('li.empty', {}, 'Nothing here'));
-    body.append(h('section.column', {}, h('h4', {}, col.name, h('span', {}, String(col.items.length))), ul));
+    if (!col.items.length) ul.append(h('li.col-empty', {}, 'Nothing here'));
+    body.append(h('section.column', {}, h('h4', {}, h('span.col-title', {}, col.name), h('span.col-count', {}, h('span.col-n', {}, String(col.items.length)))), ul));
   }
   body.querySelectorAll('.column > ul').forEach((ul, i) => (ul.scrollTop = scrolled[i] ?? 0));
 }
@@ -79,24 +80,27 @@ export function openTicket(first: JiraTicket, actions: JiraActions) {
   let it: JiraTicket = first;
   let detail: JiraTicketDetail | null = null;
   let error = '';
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const close = h('button.btn.icon.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
   const pill = h('span.pill');
+  const title = h('h3.gh-title');
   const meta = h('div.gh-meta');
   const thread = h('div.gh-items');
   const handBtn = h('button.btn.primary', { type: 'button' }, 'Hand to a worker') as HTMLButtonElement;
 
   const el = h(
-    'div.modal.gh-window.issue.jira-ticket',
+    'div.modal.xl.gh-window.issue.jira-ticket',
     { role: 'dialog', 'aria-label': `Jira ticket ${it.key}` },
-    h('header', {}, pill, h('h2', { title: it.summary }, `${it.key} ${it.summary}`), close),
-    meta,
-    h('div.gh-body', {}, h('div.gh-conv', {}, h('div.gh-col', {}, thread))),
-    h('footer', {}, h('a.grow', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, 'Open in Jira ↗'), handBtn),
+    h('header', {}, pill, h('div.titles', {}, h('h2', {}, `Jira ticket ${it.key}`)), close),
+    h('div.gh-hero', {}, title, meta),
+    h('div.gh-body', {}, h('div.gh-conv', {}, h('div.gh-detail.single', {}, h('div.gh-col', {}, thread)))),
+    h('footer', {}, h('a.grow.gh-open', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, 'Open in Jira ↗'), h('div.gh-actions', {}, h('div.gh-group', {}, handBtn))),
   );
 
   const renderFrame = () => {
     pill.className = `pill ${CATEGORY_CLASS[it.category]}`;
     pill.textContent = it.status;
+    title.title = it.summary;
+    title.replaceChildren(h('span.gh-ref', {}, it.key), ' ', it.summary);
     meta.replaceChildren(
       h('span.jira-type', {}, it.type || 'Ticket'),
       it.priority ? h('span', {}, `⚑ ${it.priority}`) : '',
@@ -107,7 +111,10 @@ export function openTicket(first: JiraTicket, actions: JiraActions) {
   };
   const render = () => {
     thread.replaceChildren(h('article.gh-card', {}, h('header', {}, h('b', {}, 'Description')), detail ? markdown(detail.description || '_(No description.)_') : h('p.gh-quiet', {}, error ? '' : 'Loading…')));
-    if (error) thread.append(h('div.gh-error', {}, `Couldn't load ${it.key} from Jira: ${error}`, h('button.btn', { type: 'button', onclick: () => load() }, 'Try again')));
+    if (error)
+      thread.append(
+        h('div.empty-state.gh-error', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'), h('b', {}, `Couldn't load ${it.key} from Jira`), h('p', {}, error), h('button.btn', { type: 'button', onclick: () => load() }, 'Try again')),
+      );
     else if (detail && !detail.comments.length) thread.append(h('p.gh-quiet', {}, 'No comments.'));
     else if (detail) thread.append(...detail.comments.map(commentCard));
   };

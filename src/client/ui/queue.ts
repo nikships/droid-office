@@ -13,10 +13,10 @@ export interface QueueActions {
 
 /** The queue task's name, linked to its GitHub or GitLab issue when it has one. */
 function taskTitle(t: QueueTask): HTMLElement {
-  if (t.issue === undefined) return h('div.queue-title', { title: t.prompt }, t.title);
+  if (t.issue === undefined) return h('div.list-title.queue-title', { title: t.prompt }, t.title);
   const issue = store.issues.items.find((i) => i.number === t.issue);
   const text = t.title.startsWith(`#${t.issue}`) ? t.title : `#${t.issue} ${t.title}`;
-  return h('div.queue-title', { title: t.prompt }, issue ? h('a', { href: issue.url, target: '_blank', rel: 'noopener' }, text) : text);
+  return h('div.list-title.queue-title', { title: t.prompt }, issue ? h('a', { href: issue.url, target: '_blank', rel: 'noopener' }, text) : text);
 }
 
 function outcome(t: QueueTask): string {
@@ -35,26 +35,26 @@ function outcome(t: QueueTask): string {
 }
 
 export function openQueue(net: Net, actions: QueueActions) {
-  const body = h('div.body.queue');
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const body = h('div.body.queue.stack.loose');
+  const close = h('button.btn.icon.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
   const limitValue = h('b');
-  const minus = h('button.btn', { type: 'button', title: 'Fewer workers at once', 'aria-label': 'Fewer workers at once' }, '−');
-  const plus = h('button.btn', { type: 'button', title: 'More workers at once', 'aria-label': 'More workers at once' }, '+');
-  const limit = h('div.queue-limit', { title: 'How many workers the queue keeps busy at once. 0 pauses it.' }, 'Workers at once', minus, limitValue, plus);
+  const minus = h('button.btn.icon.sm', { type: 'button', title: 'Fewer workers at once', 'aria-label': 'Fewer workers at once' }, '−');
+  const plus = h('button.btn.icon.sm', { type: 'button', title: 'More workers at once', 'aria-label': 'More workers at once' }, '+');
+  const limit = h('div.queue-limit', { title: 'How many workers the queue keeps busy at once. 0 pauses it.' }, h('span.queue-limit-label', {}, 'Workers at once'), h('div.queue-stepper', {}, minus, limitValue, plus));
   minus.addEventListener('click', () => net.send({ t: 'queue.limit', maxWorkers: store.queue.maxWorkers - 1 }));
   plus.addEventListener('click', () => net.send({ t: 'queue.limit', maxWorkers: store.queue.maxWorkers + 1 }));
   const el = h(
-    'div.modal',
-    { role: 'dialog', 'aria-label': 'Task queue', style: 'width:min(800px,100%)' },
-    h('header', {}, h('h2', {}, 'Task queue'), limit, close),
+    'div.modal.lg.queue-window',
+    { role: 'dialog', 'aria-label': 'Task queue' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Task queue'), h('p.sub', {}, 'Tasks wait here for the next free worker')), h('div.actions', {}, limit), close),
     body,
-    h('footer', {}, h('span.grow', {}, 'The queue keeps going while you are away. Set “workers at once” to 0 to pause it.')),
+    h('footer', {}, h('span.grow', {}, 'The queue keeps going while you are away. Set workers at once to 0 to pause it.')),
   );
 
-  const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free worker… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
+  const ta = h('textarea.input', { rows: 2, placeholder: 'Describe a task for the next free worker… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
   const images = promptImages(ta);
   const models = agentPicker('queue-models', 'queue');
-  const addBtn = h('button.btn.primary', { type: 'submit' }, 'Add to queue');
+  const addBtn = h('button.btn.primary', { type: 'submit', title: 'Add it (Enter; Shift+Enter for a new line)' }, 'Add to queue', h('span.key', {}, '↵'));
   const form = h('form.queue-add', {}, ta, images.element, models.element, addBtn) as HTMLFormElement;
   form.noValidate = true;
   let waiting = false;
@@ -91,7 +91,7 @@ export function openQueue(net: Net, actions: QueueActions) {
 
   const section = (no: string, title: string, tasks: QueueTask[], extra?: HTMLElement) => {
     if (!tasks.length) return null;
-    return h('div', {}, h('h4', {}, h('span.no', {}, no), title, h('span.count', {}, String(tasks.length)), extra ?? null), h('ul.queue-list', {}, ...tasks.map(row)));
+    return h('section.section.queue-sec', {}, h('div.eyebrow', {}, h('span.no', {}, no), title, h('span.count', {}, String(tasks.length)), extra ? h('span.grow') : null, extra ?? null), h('ul.list.boxed.queue-list', {}, ...tasks.map(row)));
   };
 
   const row = (t: QueueTask): HTMLElement => {
@@ -108,10 +108,10 @@ export function openQueue(net: Net, actions: QueueActions) {
       if (t.startedAt) meta.push(`started ${timeAgo(t.startedAt)}`);
       meta.push(`by ${t.addedBy}`);
       if (w) {
-        buttons.push(h('button.btn', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal'));
+        buttons.push(h('button.btn.sm', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal'));
         buttons.push(
           h(
-            'button.btn',
+            'button.btn.sm',
             {
               type: 'button',
               title: 'Send the worker home; the task counts as stopped',
@@ -128,25 +128,31 @@ export function openQueue(net: Net, actions: QueueActions) {
       meta.push(`⚙️ Droid${model}`);
       meta.push(`added by ${t.addedBy} ${timeAgo(t.addedAt)}`);
       if (t.images?.length) meta.push(`📎 ${t.images.length} picture${t.images.length === 1 ? '' : 's'}`);
-      buttons.push(h('button.btn', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: -1 }) }, '↑'));
-      buttons.push(h('button.btn', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === queued.length - 1, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: 1 }) }, '↓'));
-      buttons.push(h('button.btn', { type: 'button', title: 'Remove from the queue', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
+      buttons.push(h('button.btn.icon.sm', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: -1 }) }, '↑'));
+      buttons.push(h('button.btn.icon.sm', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === queued.length - 1, onclick: () => net.send({ t: 'queue.move', taskId: t.id, delta: 1 }) }, '↓'));
+      buttons.push(h('button.btn.icon.sm', { type: 'button', title: 'Remove from the queue', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
     } else {
       meta.push(`⚙️ Droid${model}`);
       meta.push(outcome(t));
       if (t.workerName) meta.push(t.workerName);
       if (t.branch) meta.push(`🌿 ${t.branch}`);
       if (t.finishedAt) meta.push(timeAgo(t.finishedAt));
-      if (t.pr) buttons.push(h('a.btn', { href: t.pr.url, target: '_blank', rel: 'noopener', title: t.pr.title }, `${words().pr} ${words().ref(t.pr.number)}${t.pr.state === 'MERGED' ? ' ✓' : t.pr.state === 'DRAFT' ? ' (draft)' : ''}`));
-      if (w) buttons.push(h('button.btn', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal'));
-      buttons.push(h('button.btn', { type: 'button', title: 'Put it back on the queue', onclick: () => net.send({ t: 'queue.retry', taskId: t.id }) }, 'Requeue'));
-      buttons.push(h('button.btn', { type: 'button', title: 'Forget it', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
+      if (t.pr) buttons.push(h('a.btn.sm', { href: t.pr.url, target: '_blank', rel: 'noopener', title: t.pr.title }, `${words().pr} ${words().ref(t.pr.number)}${t.pr.state === 'MERGED' ? ' ✓' : t.pr.state === 'DRAFT' ? ' (draft)' : ''}`));
+      if (w) buttons.push(h('button.btn.sm', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal'));
+      buttons.push(h('button.btn.sm', { type: 'button', title: 'Put it back on the queue', onclick: () => net.send({ t: 'queue.retry', taskId: t.id }) }, 'Requeue'));
+      buttons.push(h('button.btn.icon.sm', { type: 'button', title: 'Forget it', 'aria-label': 'Remove', onclick: () => net.send({ t: 'queue.remove', taskId: t.id }) }, '✕'));
     }
-    return h('li', { class: t.status }, pos ? h('span.pos', {}, pos) : null, h('div.queue-main', {}, taskTitle(t), h('div.queue-meta', {}, ...glyphText(meta.join(' · ')))), h('div.queue-actions', {}, ...buttons));
+    return h(
+      'li.list-row',
+      { class: t.status },
+      h('span.list-icon.pos', {}, pos ?? (t.status === 'running' ? h('span.spinner') : '')),
+      h('div.list-main', {}, taskTitle(t), h('div.list-meta.queue-meta', {}, ...glyphText(meta.join(' · ')))),
+      h('div.list-end.queue-actions', {}, ...buttons),
+    );
   };
 
   // The form stays put and only the list below it re-renders, so worker updates don't pull focus out of the textarea.
-  const list = h('div');
+  const list = h('div.stack.loose');
   body.append(form, list);
 
   const render = () => {
@@ -162,21 +168,23 @@ export function openQueue(net: Net, actions: QueueActions) {
     const m = store.machine;
     const parts: (HTMLElement | null)[] = [
       h(
-        'p.note',
+        'p.queue-hint',
         {},
-        'Or open the 📌 Issues board and click ',
+        'Or open the Issues board and click ',
         h('b', {}, 'Add to queue'),
         ' on an issue. Whenever a desk is free and fewer than ',
         h('b', {}, q.maxWorkers === 0 ? '0' : String(q.maxWorkers)),
         ` of its tasks are running, the next task gets a fresh worker in its own git worktree (workers you hire yourself don't count). Issues are assigned on ${words().site} when they start, and the ${words().pull} is linked when it shows up.`,
       ),
       queued.length && officeFull(m)
-        ? h('p.note', {}, `⏸ The office is at its limit of ${m.limit} worker${m.limit === 1 ? '' : 's'}, so the next task waits until one goes home. A queue worker that's finished goes home by itself to make room.`)
+        ? h('p.note.warn', {}, `The office is at its limit of ${m.limit} worker${m.limit === 1 ? '' : 's'}, so the next task waits until one goes home. A queue worker that's finished goes home by itself to make room.`)
         : null,
       section('01', 'Working on it', running),
       section('02', 'Up next', queued),
-      section('03', 'Finished', done, h('button.btn', { type: 'button', onclick: () => net.send({ t: 'queue.clear' }) }, 'Clear')),
-      running.length + queued.length + done.length ? null : h('div.queue-empty', {}, 'Nothing on the queue yet.'),
+      section('03', 'Finished', done, h('button.btn.sm.ghost', { type: 'button', onclick: () => net.send({ t: 'queue.clear' }) }, 'Clear')),
+      running.length + queued.length + done.length
+        ? null
+        : h('div.empty-state', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '📋'), h('b', {}, 'Nothing on the queue yet'), h('p', {}, 'Tasks you add show up here until a worker takes them.')),
     ];
     list.replaceChildren(...parts.filter((n): n is HTMLElement => n !== null));
   };
