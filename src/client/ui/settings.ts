@@ -5,6 +5,7 @@ import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type We
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
+import { field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
@@ -55,12 +56,14 @@ let lastPane: SettingsPane = 'you';
 
 /** An on/off switch for one setting; `paint` sets it from `now`. */
 function toggle(label: string, now: () => boolean, pick: (on: boolean) => void) {
-  const input = h('input', { type: 'checkbox', 'aria-label': label }) as HTMLInputElement;
-  input.addEventListener('change', () => {
-    if (input.checked !== now()) pick(input.checked);
+  const el = kitToggle({
+    label,
+    bare: true,
+    onChange: (on) => {
+      if (on !== now()) pick(on);
+    },
   });
-  const el = h('label.toggle', {}, input, h('span.track'));
-  return { el, input, paint: () => (input.checked = now()) };
+  return { el, paint: () => (el.input.checked = now()) };
 }
 
 /** A row of radio buttons for one setting; `paint` redraws it from `now`. */
@@ -217,7 +220,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const hookStatus = desc();
   const hookError = h('p.note.bad', { role: 'alert' });
   const hookInput = h('input.input', { type: 'text', placeholder: 'https://hooks.slack.com/services/…', 'aria-label': 'Slack or Discord webhook URL', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const hookSave = h('button.btn.primary', { type: 'button' }, 'Save');
+  const hookSave = h('button.btn', { type: 'button' }, 'Save');
   const hookTest = h('button.btn.sm', { type: 'button' }, 'Send a test');
   const hookRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
   const hookActions = h('div.row', {}, hookTest, hookRemove);
@@ -380,19 +383,12 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   dirDefault.addEventListener('click', () => net.send({ t: 'floor.projectsDir', dir: '' }));
 
   // Jira: the office's one account (a read-only token is enough), and the epic this floor's issue board shows.
-  const jiraSite = h('input.input', { id: 'jira-site', type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraEmail = h('input.input', { id: 'jira-email', type: 'email', placeholder: 'you@example.com', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const jiraToken = h('input.input', { id: 'jira-token', type: 'password', placeholder: 'Read-only is enough', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
+  const jiraSite = h('input.input', { type: 'text', placeholder: 'https://your-site.atlassian.net', 'aria-label': 'Jira Cloud site', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraEmail = h('input.input', { type: 'email', placeholder: 'you@example.com', 'aria-label': 'Atlassian account email', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const jiraToken = h('input.input', { type: 'password', placeholder: 'Read-only is enough', 'aria-label': 'Atlassian API token', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
   const jiraConnect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
   const jiraCancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
-  const jiraForm = h(
-    'div.stack.tight.jira-form',
-    {},
-    h('div.field', {}, h('label', { for: 'jira-site' }, 'Site'), jiraSite),
-    h('div.field', {}, h('label', { for: 'jira-email' }, 'Account email'), jiraEmail),
-    h('div.field', {}, h('label', { for: 'jira-token' }, 'API token'), jiraToken),
-    h('div.row', {}, jiraConnect, jiraCancel),
-  );
+  const jiraForm = h('div.stack.tight.jira-form', {}, field('Site', jiraSite), field('Account email', jiraEmail), field('API token', jiraToken), h('div.row', {}, jiraConnect, jiraCancel));
   const jiraChange = h('button.btn.sm', { type: 'button' }, 'Change');
   const jiraRemove = h('button.btn.sm.danger', { type: 'button' }, 'Remove');
   const jiraActions = h('div.row', {}, jiraChange, jiraRemove);
