@@ -37,7 +37,7 @@ export function openHangDialog(opts: { initial?: Decoration; onDone(choice: Hang
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
   const close = h('button.btn.icon.close', { type: 'button', 'aria-label': 'Close' }, '✕');
   const form = h(
-    'form.modal.md.hang',
+    'form.modal.hang',
     { role: 'dialog', 'aria-label': init ? 'Edit picture' : 'Hang a picture' },
     h('header', {}, h('div.titles', {}, h('h2', {}, init ? 'Edit picture' : 'Hang a picture'), h('p.sub', {}, init ? 'Change its image, title or frame.' : 'Any image from the web, framed on the office wall.')), close),
     h(

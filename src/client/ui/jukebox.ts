@@ -19,7 +19,7 @@ export function openJukebox(net: Net, openVolume: () => void) {
   const playUrl = h('button.btn', { type: 'button' }, 'Play');
   const volume = h('button.btn', { type: 'button' }, 'Your volume');
   const el = h(
-    'div.modal.md.jukebox',
+    'div.modal.jukebox',
     { role: 'dialog', 'aria-label': 'Jukebox' },
     h('header', {}, h('div.titles', {}, h('h2', {}, 'Jukebox'), h('p.sub', {}, 'Everyone on this floor hears the same song.')), close),
     h(

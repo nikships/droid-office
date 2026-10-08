@@ -51,7 +51,7 @@ export function openBar(opts: BarOptions) {
     }),
   );
   const el = h(
-    'div.modal.md.bar',
+    'div.modal.bar',
     { role: 'dialog', 'aria-label': 'Bar' },
     h('header', {}, h('div.titles', {}, h('h2', {}, 'Sky Bar'), h('p.sub', {}, 'Pick a drink and the bartender pours it. Everything is on the house.')), close),
     h('div.body.stack', {}, opts.cutOff ? h('p.note.warn', { role: 'status' }, "The bartender thinks you've had enough. Water's on the house.") : null, list),
