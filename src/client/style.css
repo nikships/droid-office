@@ -1673,10 +1673,8 @@ a.when:hover { text-decoration: underline; }
 .fs-list > *, .cmp-list > * { flex: none; }
 .list-row.fs-row { align-items: flex-start; cursor: pointer; padding: var(--space-2) var(--space-3); }
 .fs-row .list-icon { height: 20px; }
-.fs-where-icon::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--text-tertiary); }
-.fs-where-icon.office::before { background: var(--who, var(--text)); }
+.fs-where-icon:empty::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--text-tertiary); }
 .fs-where-icon.cloud { color: var(--info); font-size: 13px; }
-.fs-where-icon.cloud::before { content: none; }
 .fs-end { flex-direction: column; align-items: flex-end; gap: var(--space-1); padding-top: 2px; }
 .fs-credits { font: 500 11px var(--font-mono); color: var(--accent); }
 .fs-where.office { color: var(--who, var(--text)); }

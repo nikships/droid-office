@@ -17,7 +17,7 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { clip, h, openModal, timeAgo, toast, type Modal } from './dom';
 import { mountTranscript, type Transcript } from './factory-transcript';
-import { emptyState, field } from './kit';
+import { colorDot, emptyState, field } from './kit';
 import { factoryModels, type DroidModelOption } from './models';
 import { confirmDialog } from './prompt';
 
@@ -60,7 +60,7 @@ const tint = <T extends HTMLElement>(el: T, w: Where): T => {
   return el;
 };
 /** Where a session runs, as a list row's icon: the worker's color, a cloud, or a dot. */
-const whereIcon = (w: Where) => tint(h('span.list-icon.fs-where-icon', { class: w.kind, title: w.label, 'aria-hidden': 'true' }, w.kind === 'cloud' ? '☁' : ''), w);
+const whereIcon = (w: Where) => h('span.list-icon.fs-where-icon', { class: w.kind, title: w.label, 'aria-hidden': 'true' }, w.kind === 'cloud' ? '☁' : w.color ? colorDot(w.color) : '');
 const whereLabel = (w: Where) => tint(h('span.fs-where', { class: w.kind }, w.kind === 'cloud' ? `☁ ${w.label}` : w.label), w);
 
 /** Pictures pasted or dropped into a message box, read in the page as base64 for Factory. */
