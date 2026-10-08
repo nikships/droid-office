@@ -647,7 +647,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
         'Hiring',
         card('Subagents', { desc: subNote, control: subOn.el }),
         setting('Who can hire', null, { desc: desc('The Team lead at its kiosk can always hire. Desk workers can too, when they are allowed.'), control: subWho.row }),
-        setting('Subagent prompts', null, { desc: desc('The brief a subagent gets, and what its lead is told when it reports.'), control: subPrompts }),
+        setting('Subagent prompts', null, { desc: desc('What the office tells the Team lead and its subagents.'), control: subPrompts }),
       ),
       group(
         'How they work',
