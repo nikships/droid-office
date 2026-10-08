@@ -3,8 +3,8 @@ import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h, openModal } from './dom';
-import { emptyState, windowHeader } from './kit';
-import { colorDot, type TerminalFind } from './terminal';
+import { colorDot, emptyState, windowHeader } from './kit';
+import type { TerminalFind } from './terminal';
 
 // The search window: words in every worker's terminal, including what they showed before the office
 // last restarted. A terminal line opens that terminal right at it.

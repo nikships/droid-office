@@ -7,6 +7,7 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
+import { colorDot } from './kit';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary } from '../../shared/team';
@@ -34,13 +35,6 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
   const r = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
   if (!res.ok || !r.path) throw new Error(r.error ?? `${name} could not be dropped into the terminal`);
   return r.path;
-}
-
-/** A worker's colour dot; the colour is the worker's own, so it can't come from a class. */
-export function colorDot(color: string): HTMLElement {
-  const dot = h('span.dot');
-  dot.style.background = color;
-  return dot;
 }
 
 let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;

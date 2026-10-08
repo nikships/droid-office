@@ -3,9 +3,8 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { withToken } from '../token';
 import { h, openModal, type Modal } from './dom';
-import { emptyState } from './kit';
+import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
-import { colorDot } from './terminal';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
 // office was opened on, refreshed while the worker works, with commit / discard / open-a-PR.
