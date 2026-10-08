@@ -671,7 +671,7 @@ button.chip { font-family: var(--font-sans); }
 .changes-tabs { flex: none; padding: 0 var(--space-5); background: var(--surface-raised); }
 .changes-tabs .tab small { margin-left: var(--space-2); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 .changes-body { flex: 1; min-height: 0; display: flex; }
-.changes-files { width: clamp(280px, 30%, 420px); flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--surface-raised); }
+.changes-files { width: clamp(320px, 30%, 420px); flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--surface-raised); }
 .changes-files-head { flex: none; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 .changes-files .list { list-style: none; margin: 0; padding: var(--space-1) 0; flex: 1; min-height: 0; overflow: auto; }
 .changes-files .list-row { min-height: 36px; padding-right: var(--space-4); cursor: pointer; }
