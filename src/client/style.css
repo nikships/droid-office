@@ -564,22 +564,19 @@ button.chip { font-family: var(--font-sans); }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:is(.on, [aria-checked=true], [aria-pressed=true]) { position: relative; z-index: 2; border-color: var(--accent); background: var(--accent-muted); color: var(--text); }
 .setting .seg + .seg { margin-top: 8px; }
 .seg.disabled { opacity: .45; }
-/* The Droid model and effort a new worker runs on: one line in a form, its hint under. */
-.model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); min-width: 190px; }
+/* The Droid model and effort a new worker runs on, wherever it sits: Model and Effort side by side,
+   each label over its picker, the hint under both at full width. */
+.model-choice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 180px); grid-template-areas: "ml el" "ms es" "hint hint"; gap: var(--space-2) var(--space-3); width: 100%; min-width: 0; margin: 0; }
+.model-choice > .model-label { grid-area: ml; }
+.model-choice > .effort-label { grid-area: el; }
+.model-choice > .model-select { grid-area: ms; }
+.model-choice > .effort-select { grid-area: es; }
+.model-choice > .model-hint { grid-area: hint; }
 .model-choice label { margin: 0; white-space: nowrap; }
-.model-choice select { min-width: 132px; }
-.model-hint { display: block; flex: 1 1 160px; min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-/* In a prompt box's options group: Model and Effort side by side, each label over its picker, the hint under both. */
-.prompt-opts .model-choice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 180px); gap: var(--space-2) var(--space-3); width: 100%; margin: 0; min-width: 0; }
-.prompt-opts .model-choice > label:nth-of-type(1) { grid-area: 1 / 1; }
-.prompt-opts .model-choice > select:nth-of-type(1) { grid-area: 2 / 1; }
-.prompt-opts .model-choice > label:nth-of-type(2) { grid-area: 1 / 2; }
-.prompt-opts .model-choice > select:nth-of-type(2) { grid-area: 2 / 2; }
-.prompt-opts .model-choice > .model-hint { grid-area: 3 / 1 / 4 / 3; }
-.prompt-opts .model-choice select { width: 100%; min-width: 0; }
-.modal.gh-window.issue footer .model-choice { margin: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
-.modal.gh-window.issue footer .model-choice label { font-size: 10px; }
-.modal.gh-window.issue footer .model-hint { flex: 0 1 auto; max-width: 150px; }
+.model-choice select { width: 100%; min-width: 0; }
+.model-hint { display: block; min-width: 0; color: var(--text-secondary); font-size: var(--text-small); line-height: var(--leading-small); }
+/* Among the issue window's footer buttons: a fixed, compact column of its own, so it doesn't stretch or squeeze the buttons. */
+.modal.gh-window.issue footer .model-choice { flex: 0 1 320px; grid-template-columns: minmax(0, 1fr) minmax(0, 120px); gap: var(--space-1) var(--space-2); }
 .webhook { display: flex; gap: 8px; }
 .webhook input[type=text] { flex: 1; min-width: 0; }
 .outside-now { margin: 0; font-size: 14px; font-weight: 600; }

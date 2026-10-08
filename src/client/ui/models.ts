@@ -268,7 +268,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   });
   fill();
   return {
-    element: h('div.model-choice', {}, h('label', { for: id }, 'Model'), modelSelect, h('label', { for: `${id}-effort` }, 'Effort'), effortSelect, hint),
+    element: h('div.model-choice', {}, h('label.model-label', { for: id }, 'Model'), modelSelect, h('label.effort-label', { for: `${id}-effort` }, 'Effort'), effortSelect, hint),
     model: () => modelSelect.value || undefined,
     effort: () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined),
     set: (choice) => {
