@@ -15,6 +15,9 @@ import ai.factory.droidoffice.core.RouteRacer
 import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.ServerMsg
+import ai.factory.droidoffice.core.TermEvent
+import ai.factory.droidoffice.core.TermFeed
+import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
@@ -130,6 +133,8 @@ class OfficeConnection(
     private val holders = MutableStateFlow<Set<String>>(emptySet())
     private val nonce = MutableStateFlow(0)
     private val attached = ConcurrentHashMap.newKeySet<String>()
+    /** Each attached terminal's stream, on the main thread like [handle]. */
+    private val feeds = HashMap<String, TermFeed>()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var current: Pair<String, OfficeAuth>? = null
     @Volatile private var hireAskedAt = 0L
@@ -183,12 +188,22 @@ class OfficeConnection(
 
     fun attach(workerId: String) {
         attached += workerId
+        feeds.getOrPut(workerId) { TermFeed() }
         send(ClientMsg.attach(workerId))
     }
 
     fun detach(workerId: String) {
         attached -= workerId
+        feeds.remove(workerId)
         send(ClientMsg.detach(workerId))
+    }
+
+    /** The stream of a terminal this phone attached to; null once it detached. */
+    fun feed(workerId: String): TermFeed? = feeds[workerId]
+
+    /** Asks the office for a fresh snapshot of an attached terminal (attaching again sends one). */
+    fun resnapshot(workerId: String) {
+        if (workerId in attached) send(ClientMsg.attach(workerId))
     }
 
     fun goFloor(floorId: String) {
@@ -257,6 +272,7 @@ class OfficeConnection(
             _data.value = OfficeData(officeId = office.id)
             _screens.value = emptyMap()
             attached.clear()
+            feeds.clear()
             models = null
         }
         if (!d.wanted) {
@@ -392,13 +408,18 @@ class OfficeConnection(
                     _hired.tryEmit(w)
                 }
                 _data.update { it.copy(workers = it.workers + (w.id to w)) }
+                val was = before[w.id]
+                if (was != null && (was.cols != w.cols || was.rows != w.rows)) feeds[w.id]?.push(TermEvent.Resize(TermSize(w.cols, w.rows)))
             }
             is ServerMsg.WorkerRemove -> {
                 _data.update { it.copy(workers = it.workers - msg.workerId) }
                 _screens.update { it - msg.workerId }
                 attached -= msg.workerId
+                feeds.remove(msg.workerId)
             }
             is ServerMsg.Screen -> _screens.update { it + (msg.workerId to ScreenState.apply(it[msg.workerId], msg)) }
+            is ServerMsg.TermSnapshot -> feeds[msg.workerId]?.push(msg.event)
+            is ServerMsg.TermData -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.Toast -> _toasts.tryEmit(msg)
             is ServerMsg.Queue -> _data.update { it.copy(queue = msg.state) }
             is ServerMsg.Pulls -> _data.update { it.copy(pulls = msg.state.items) }

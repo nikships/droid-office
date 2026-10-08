@@ -209,6 +209,10 @@ sealed interface ServerMsg {
     data class WorkerRemove(val workerId: String) : ServerMsg
     data class Worktree(val workerId: String, val state: WorktreeState) : ServerMsg
     data class Screen(val workerId: String, val cols: Int, val rows: Int, val lines: Map<Int, List<Run>>, val full: Boolean, val cursor: Pair<Int, Int>) : ServerMsg
+    /** An attached terminal from the top: its scrollback and screen, serialized, at the PTY's size. */
+    data class TermSnapshot(val workerId: String, val event: TermEvent.Snapshot) : ServerMsg
+    /** What an attached terminal's program printed since. */
+    data class TermData(val workerId: String, val event: TermEvent.Data) : ServerMsg
     data class Toast(val text: String, val level: String, val workerId: String?) : ServerMsg
     data class Queue(val state: QueueState) : ServerMsg
     data class Pulls(val state: GhPulls) : ServerMsg
@@ -249,6 +253,8 @@ object Protocol {
         "worker.remove" -> ServerMsg.WorkerRemove(o.str("workerId").orEmpty())
         "worker.worktree" -> ServerMsg.Worktree(o.str("workerId").orEmpty(), o.obj("state")?.let { OfficeJson.decodeFromJsonElement<WorktreeState>(it) } ?: WorktreeState())
         "screen" -> screen(o)
+        "term.snapshot" -> ServerMsg.TermSnapshot(o.str("workerId").orEmpty(), TermEvent.Snapshot(o.str("data").orEmpty(), o.int("cols") ?: 80, o.int("rows") ?: 24))
+        "term.data" -> ServerMsg.TermData(o.str("workerId").orEmpty(), TermEvent.Data(o.str("data").orEmpty()))
         "toast" -> ServerMsg.Toast(o.str("text").orEmpty(), o.str("level") ?: "info", o.str("workerId"))
         "queue" -> ServerMsg.Queue(o.obj("state")?.let { OfficeJson.decodeFromJsonElement<QueueState>(it) } ?: QueueState())
         "gh.pulls" -> ServerMsg.Pulls(o.obj("state")?.let { OfficeJson.decodeFromJsonElement<GhPulls>(it) } ?: GhPulls())

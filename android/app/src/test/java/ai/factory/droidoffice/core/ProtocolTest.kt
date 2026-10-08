@@ -75,6 +75,15 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsTheTerminalStream() {
+        assertEquals(
+            ServerMsg.TermSnapshot("w1", TermEvent.Snapshot("\u001b[1mhi\u001b[?1006h", 120, 40)),
+            Protocol.decode("""{"t":"term.snapshot","workerId":"w1","data":"\u001b[1mhi\u001b[?1006h","cols":120,"rows":40}"""),
+        )
+        assertEquals(ServerMsg.TermData("w1", TermEvent.Data("more")), Protocol.decode("""{"t":"term.data","workerId":"w1","data":"more"}"""))
+    }
+
+    @Test
     fun skipsWhatItDoesntKnow() {
         assertEquals(ServerMsg.Ignored("meeting.update"), Protocol.decode("""{"t":"meeting.update","x":1}"""))
         assertNull(Protocol.decode("not json"))
