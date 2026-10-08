@@ -195,7 +195,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
       return h('div.menu-row', {}, item, pin);
     };
     const toggle = (p: (typeof PANELS)[number]) => {
-      const item = h('button.menu-item.menu-toggle', { type: 'button', role: 'menuitemcheckbox' }, h('span.mi-icon', {}, p.icon), h('span.mi-label', {}, p.label, h('small', {}, p.what)), h('span.switch', { 'aria-hidden': 'true' }));
+      const item = h('button.menu-item.menu-toggle', { type: 'button', role: 'menuitemcheckbox' }, h('span.mi-icon', {}, p.icon), h('span.mi-label', {}, p.label, h('small', {}, p.what)), h('span.track', { 'aria-hidden': 'true' }));
       const paint = () => item.setAttribute('aria-checked', String(settings.hud[p.id]));
       paint();
       item.addEventListener('click', () => {
