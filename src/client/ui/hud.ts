@@ -130,7 +130,7 @@ export function openHelp() {
         ['Emote', 'Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks', ['G', 'or', '1–6']],
         ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']],
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
-        ['BLOCKFALL', 'The lounge arcade: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
+        ['Arcade cabinet', 'BLOCKFALL, in the lounge: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
         ['Rooftop bar', 'Up the elevator: a DJ and the city. E at the bar for a drink, at the DJ booth for the air horn', ['E']],
       ],

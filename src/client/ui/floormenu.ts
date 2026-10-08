@@ -36,8 +36,15 @@ export function floorNo(text: string, color: string): HTMLElement {
 
 /** Who is on a floor: waiting on someone, working, at desks. */
 export function floorStats(f: FloorInfo): HTMLElement {
-  const stat = (cls: string, title: string, icon: string, n: number) => h('span.floor-stat', { class: cls, title }, h('span', { 'aria-hidden': 'true' }, icon), String(n));
-  return h('span.floor-stats', {}, f.waiting ? stat('waiting', 'Workers waiting on someone', '🙋', f.waiting) : null, f.busy ? stat('', 'Working', '👷', f.busy) : null, stat('', 'Workers at desks', '💻', f.workers));
+  const stat = (cls: string, title: string, icon: string, n: number, label: string) =>
+    h('span.floor-stat', { class: cls, title: `${title}: ${n}` }, h('span.floor-stat-icon', { 'aria-hidden': 'true' }, icon), h('b', {}, String(n)), h('span.floor-stat-label', {}, label));
+  return h(
+    'span.floor-stats',
+    {},
+    f.waiting ? stat('waiting', 'Workers waiting on someone', '🙋', f.waiting, 'waiting') : null,
+    f.busy ? stat('', 'Working', '👷', f.busy, 'working') : null,
+    stat('', 'Workers at desks', '💻', f.workers, 'at desks'),
+  );
 }
 
 /** Opens the floor list under `anchor`, or closes it if it's open. */

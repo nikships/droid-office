@@ -42,7 +42,7 @@ export function togglePalette(entries: () => PaletteEntry[]) {
   empty.classList.add('palette-empty');
   const hintKey = (key: string, what: string) => h('span.palette-hint', {}, h('span.key', {}, key), what);
   const hint = h('footer', {}, h('span.grow.palette-hints', {}, hintKey('↵', 'open'), hintKey('⇧↵', 'walk there first'), hintKey('↑↓', 'choose'), hintKey('Esc', 'close')));
-  const el = h('div.modal.palette', { role: 'dialog', 'aria-label': 'Command palette' }, h('div.palette-find', {}, h('span.palette-glass', { 'aria-hidden': 'true' }, '⌕'), input), list, empty, hint);
+  const el = h('div.modal.palette', { role: 'dialog', 'aria-label': 'Command palette' }, h('div.palette-find', {}, glass(), input), list, empty, hint);
 
   let found: PaletteMatch<PaletteEntry>[] = [];
   /** The result rows, in `found`'s order (the list also holds the group headings). */
@@ -128,6 +128,13 @@ function groupByKind<T extends PaletteEntry>(found: PaletteMatch<T>[]): PaletteM
     else kinds.set(m.item.kind, [m]);
   }
   return [...kinds.values()].flat();
+}
+
+/** The magnifying glass at the start of the search row. */
+function glass(): HTMLElement {
+  const el = h('span.palette-glass', { 'aria-hidden': 'true' });
+  el.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
+  return el;
 }
 
 /** A kind as a group heading: "Worker" heads "Workers". */
