@@ -36,6 +36,13 @@ async function uploadDrop(workerId: string, f: File): Promise<string> {
   return r.path;
 }
 
+/** A worker's colour dot; the colour is the worker's own, so it can't come from a class. */
+export function colorDot(color: string): HTMLElement {
+  const dot = h('span.dot');
+  dot.style.background = color;
+  return dot;
+}
+
 let current: { workerId: string; modal: Modal; find(f: TerminalFind): void } | null = null;
 /** Opens a teammate's terminal from the team strip (main wires it up, to resume or fix it first). */
 let openTeammate: (workerId: string) => void = () => {};
@@ -72,23 +79,29 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const info = store.workers.get(workerId);
   if (!info) return;
 
-  const dot = h('span.dot', { style: `background:${info.color}` });
   const engine = (w: WorkerInfo) => (w.kind !== 'agent' ? null : w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid');
   // A guest has no terminal here: its window shows what the office knows of it, and takes no input.
   const guest = !!info.guest;
   const title = h('h2', {}, [engine(info), info.name].filter(Boolean).join(' · '));
+  const sub = h('p.sub.hidden');
   const pill = h('span.pill', {}, '');
-  const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
-  const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
-  const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
+  const smaller = h('button.btn.sm', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
+  const bigger = h('button.btn.sm', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
+  const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
   const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
-  const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
-  const host = h('div.term-host', guest ? {} : { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
+  const closeBtn = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
+  const host = h('div.term-host', guest ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
-  const team = h('div.term-team.hidden', { role: 'group', 'aria-label': 'Team' });
+  const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
   let teamKey = '';
-  const el = h('div.modal.term', { role: 'dialog', 'aria-label': `${info.name} terminal` }, h('header', {}, dot, title, pill, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null, closeBtn), team, host);
+  const el = h(
+    'div.modal.full.term',
+    { role: 'dialog', 'aria-label': `${info.name} terminal` },
+    h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom, onChanges ? changesBtn : null, guest ? bringInBtn : null), closeBtn),
+    team,
+    host,
+  );
   const paintTeam = (w: WorkerInfo) => {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const mates = lead ? store.teamOf(lead.id).filter((s) => s.id !== w.id) : store.teamOf(w.id);
@@ -97,14 +110,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     teamKey = key;
     const chip = (x: WorkerInfo) =>
       h(
-        'button.team-chip',
+        'button.chip.team-chip',
         { type: 'button', title: `Open ${x.name}'s terminal${x.title ? `: ${x.title}` : ''}`, onclick: () => openTeammate(x.id) },
-        h('span.dot', { style: `background:${x.color}` }),
-        x.name,
+        colorDot(x.color),
+        h('span.team-chip-name', {}, x.name),
         h('span.pill', { class: x.status }, STATUS_LABEL[x.status] ?? x.status),
       );
     team.classList.toggle('hidden', !lead && !mates.length);
-    if (lead) team.replaceChildren(h('span.term-team-label', {}, '🧭 Subagent of'), chip(lead), ...(mates.length ? [h('span.term-team-label', {}, 'with'), ...mates.map(chip)] : []));
+    if (lead) team.replaceChildren(h('span.term-team-label', {}, 'Subagent of'), chip(lead), ...(mates.length ? [h('span.term-team-label', {}, 'with'), ...mates.map(chip)] : []));
     else team.replaceChildren(h('span.term-team-label', {}, teamSummary(mates) ?? ''), ...mates.map(chip));
   };
 
@@ -174,10 +187,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       modal.close();
       return;
     }
-    title.textContent = [
-      engine(w),
-      w.name,
-      w.guest && `🚪 outside the office · pid ${w.guest.pid}`,
+    title.textContent = [engine(w), w.name].filter(Boolean).join(' · ');
+    title.title = title.textContent;
+    sub.textContent = [
+      w.guest && `outside the office · pid ${w.guest.pid}`,
       outsideNote(w),
       w.title,
       w.worktree && `🌿 ${w.worktree.branch}`,
@@ -186,6 +199,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     ]
       .filter(Boolean)
       .join(' · ');
+    sub.title = sub.textContent;
+    sub.classList.toggle('hidden', !sub.textContent);
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
     if (w.guest) {
