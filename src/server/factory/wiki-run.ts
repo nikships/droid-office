@@ -1,7 +1,7 @@
 import { execFile, execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { WIKI_JOB_ERROR_LINES, WIKI_JOB_LINES, type FactoryWikiJob } from '../../shared/factory-wiki.js';
+import { WIKI_DEFAULT_MODEL, WIKI_JOB_ERROR_LINES, WIKI_JOB_LINES, type DroidModel, type FactoryWikiJob } from '../../shared/factory-wiki.js';
 import { redact } from '../jira.js';
 import { HttpError } from './feature.js';
 
@@ -35,6 +35,8 @@ export interface WikiRunnerOptions {
   onEnd?(floorId: string, job: FactoryWikiJob): void;
   spawn?: Spawn;
   git?: Git;
+  /** What `<command> exec --help` prints, for the model list. */
+  help?: (command: string) => Promise<string>;
   /** Signals a process group (Unix) or a process tree (Windows). */
   killTree?: (pid: number, signal: NodeJS.Signals) => void;
   /** Whether `pid` is still a /wiki run (after a crash its number may have gone to something else). */
@@ -48,6 +50,10 @@ export interface WikiRunnerOptions {
 /** The worktree a floor's run works in, and the note that one is running, both in the floor's .droid-office/. */
 export const WIKI_WORKTREE = 'wiki-run';
 const MARKER = 'wiki-run.json';
+/** The run's `--settings` file, beside its worktree. */
+const SETTINGS = 'wiki-run-settings.json';
+/** How long the model list from `droid exec --help` is kept. */
+const MODELS_MS = 10 * 60_000;
 const GRACE_MS = 10_000;
 const FETCH_TIMEOUT_MS = 120_000;
 /** The longest line kept. */
@@ -180,6 +186,58 @@ export function readWikiEvent(line: string): { lines: string[]; sessionId?: stri
   return out;
 }
 
+/**
+ * The models in `droid exec --help`: its "Available Models" and "Custom Models" lists (`id  Name`),
+ * with each one's reasoning efforts from "Model details" (matched by name). Deprecated ones are left out.
+ */
+export function parseDroidModels(help: string): DroidModel[] {
+  const details = new Map<string, { efforts?: string[]; defaultEffort?: string }>();
+  const models: DroidModel[] = [];
+  let section: 'factory' | 'custom' | 'details' | undefined;
+  for (const raw of help.split('\n')) {
+    const line = raw.trimEnd();
+    if (/^\S/.test(line)) {
+      section = /^Available Models:/i.test(line) ? 'factory' : /^Custom Models:/i.test(line) ? 'custom' : /^Model details:/i.test(line) ? 'details' : undefined;
+      continue;
+    }
+    if (!section || !line.trim()) continue;
+    if (section === 'details') {
+      const m = /^\s*-\s*(.+?):\s*supports reasoning:\s*\w+;\s*supported:\s*\[([^\]]*)\];\s*default:\s*([\w-]+)/i.exec(line);
+      if (m)
+        details.set(m[1].trim(), {
+          efforts: m[2]
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          defaultEffort: m[3],
+        });
+      continue;
+    }
+    const m = /^\s+(\S+)\s{2,}(.+)$/.exec(line);
+    if (!m || /\[Deprecated\]/i.test(m[2])) continue;
+    models.push({ id: m[1], name: m[2].replace(/\s*\(default\)\s*$/i, '').trim(), ...(section === 'custom' ? { custom: true } : {}) });
+  }
+  return models.map((m) => {
+    const d = details.get(m.name);
+    return d ? { ...m, ...d } : m;
+  });
+}
+
+/**
+ * The runtime settings (`droid exec --settings`) that put /wiki's subagents on its own model.
+ * Without them a subagent goes by the owner's per-complexity subagent models (subagentModelSettings
+ * in their Droid settings), which override `-m`: a "light" one could run on another, dearer model.
+ * The settings file is merged over theirs key by key, so every tier names a model and an effort.
+ */
+export function wikiRunSettings(model: Pick<DroidModel, 'id' | 'defaultEffort'>) {
+  const s: Record<string, string> = {};
+  for (const tier of ['light', 'medium', 'heavy']) {
+    s[`${tier}Model`] = model.id;
+    if (model.defaultEffort) s[`${tier}ReasoningEffort`] = model.defaultEffort;
+  }
+  return { subagentModelSettings: s };
+}
+
 /** Each floor's /wiki run, at most one at a time per floor. */
 export class WikiRunner {
   private live = new Map<string, Live>();
@@ -191,11 +249,20 @@ export class WikiRunner {
   private isWikiProcess: (pid: number) => boolean;
   private now: () => number;
   private platform: NodeJS.Platform;
+  private help: (command: string) => Promise<string>;
+  private modelList?: { at: number; models: Promise<DroidModel[]> };
 
   constructor(private opts: WikiRunnerOptions) {
     this.spawn = opts.spawn ?? (nodeSpawn as Spawn);
     this.git = opts.git ?? defaultGit;
     this.platform = opts.platform ?? process.platform;
+    this.help =
+      opts.help ??
+      ((command) =>
+        new Promise((resolve, reject) => {
+          const shell = this.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
+          execFile(command, ['exec', '--help'], { env: this.opts.env(), encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, shell }, (err, stdout) => (err && !stdout ? reject(err) : resolve(stdout)));
+        }));
     this.killTree = opts.killTree ?? defaultKillTree(this.platform);
     this.isWikiProcess = opts.isWikiProcess ?? defaultIsWikiProcess;
     this.now = opts.now ?? Date.now;
@@ -203,6 +270,19 @@ export class WikiRunner {
 
   job(floorId: string): FactoryWikiJob | undefined {
     return this.live.get(floorId)?.job;
+  }
+
+  /** The models the office's Droid takes (empty when it can't say), read again every 10 minutes. */
+  models(): Promise<DroidModel[]> {
+    const command = this.opts.command();
+    if (!command) return Promise.resolve([]);
+    if (!this.modelList || this.now() - this.modelList.at > MODELS_MS) {
+      this.modelList = {
+        at: this.now(),
+        models: this.help(command).then(parseDroidModels, () => []),
+      };
+    }
+    return this.modelList.models;
   }
 
   /** A run is starting or running on some floor. */
@@ -224,7 +304,7 @@ export class WikiRunner {
     if (this.adopted.has(floor.id)) return;
     this.adopted.add(floor.id);
     const marker = path.join(this.dataDir(floor), MARKER);
-    let left: { pid?: number; startedAt?: number; by?: string } | undefined;
+    let left: { pid?: number; startedAt?: number; by?: string; model?: string; modelName?: string } | undefined;
     try {
       left = JSON.parse(readFileSync(marker, 'utf8'));
     } catch {
@@ -235,6 +315,7 @@ export class WikiRunner {
     if (left?.pid && this.isWikiProcess(left.pid)) this.killTree(left.pid, 'SIGKILL');
     void this.removeWorktree(floor);
     rmSync(marker, { force: true });
+    rmSync(path.join(this.dataDir(floor), SETTINGS), { force: true });
     if (left && !this.live.has(floor.id)) {
       this.live.set(floor.id, {
         floor,
@@ -246,6 +327,8 @@ export class WikiRunner {
           startedAt: typeof left.startedAt === 'number' ? left.startedAt : 0,
           endedAt: this.now(),
           lines: [],
+          ...(typeof left.model === 'string' ? { model: left.model } : {}),
+          ...(typeof left.modelName === 'string' ? { modelName: left.modelName } : {}),
           error: 'The office stopped while /wiki was running, which ended that run. Generate it again.',
         },
       });
@@ -253,17 +336,20 @@ export class WikiRunner {
     }
   }
 
-  /** Starts /wiki on `floor`'s default branch with `key` as FACTORY_API_KEY. Throws an HttpError when it can't. */
-  start(floor: WikiFloorDef, by: string, key: string): FactoryWikiJob {
+  /**
+   * Starts /wiki on `floor`'s default branch with `key` as FACTORY_API_KEY, on `model` (it and its
+   * subagents). Throws an HttpError when it can't.
+   */
+  start(floor: WikiFloorDef, by: string, key: string, model: DroidModel = { id: WIKI_DEFAULT_MODEL, name: WIKI_DEFAULT_MODEL }): FactoryWikiJob {
     this.adopt(floor);
     const was = this.live.get(floor.id);
     if (was && (was.job.state === 'starting' || was.job.state === 'running')) throw new HttpError(409, `/wiki is already running for ${floor.name}, started by ${was.job.by}.`);
     const command = this.opts.command();
     if (!command) throw new HttpError(409, 'The office can’t find its Droid command, so it can’t run /wiki. Install the Droid CLI, or say where it is with --agent.');
-    const live: Live = { floor, tail: [], partial: '', job: { state: 'starting', by, startedAt: this.now(), lines: ['Fetching the default branch…'] } };
+    const live: Live = { floor, tail: [], partial: '', job: { state: 'starting', by, startedAt: this.now(), lines: ['Fetching the default branch…'], model: model.id, modelName: model.name } };
     this.live.set(floor.id, live);
     this.opts.onChange(floor.id, 'state');
-    void this.run(live, command, key);
+    void this.run(live, command, key, model);
     return live.job;
   }
 
@@ -293,7 +379,7 @@ export class WikiRunner {
     }
   }
 
-  private async run(live: Live, command: string, key: string) {
+  private async run(live: Live, command: string, key: string, model: DroidModel) {
     const { floor } = live;
     const worktree = path.join(this.dataDir(floor), WIKI_WORKTREE);
     let ref: string;
@@ -312,12 +398,15 @@ export class WikiRunner {
       return this.end(live, 'failed', `Couldn’t make a clean checkout of the default branch: ${(err as Error).message}`);
     }
     if (live.cancelled || live.abandoned) return this.end(live, 'cancelled');
-    const args = ['exec', '--auto', 'high', '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki'];
+    const settings = path.join(this.dataDir(floor), SETTINGS);
+    const args = ['exec', '--auto', 'high', '-m', model.id, '--settings', settings, '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki'];
     // A .cmd shim on Windows only runs through the shell.
     const shell = this.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
+    const note = { startedAt: live.job.startedAt, by: live.job.by, model: model.id, modelName: model.name };
     let child: ChildProcess;
     try {
-      writeFileSync(path.join(this.dataDir(floor), MARKER), JSON.stringify({ startedAt: live.job.startedAt, by: live.job.by }));
+      writeFileSync(settings, JSON.stringify(wikiRunSettings(model)));
+      writeFileSync(path.join(this.dataDir(floor), MARKER), JSON.stringify(note));
       child = this.spawn(command, args, {
         cwd: worktree,
         env: { ...this.opts.env(), FACTORY_API_KEY: key },
@@ -331,8 +420,8 @@ export class WikiRunner {
       return this.end(live, 'failed', `Couldn’t start ${path.basename(command)}: ${(err as Error).message}`);
     }
     live.child = child;
-    if (child.pid) writeFileSync(path.join(this.dataDir(floor), MARKER), JSON.stringify({ pid: child.pid, startedAt: live.job.startedAt, by: live.job.by }));
-    live.job = { ...live.job, state: 'running', lines: [...live.job.lines, `Running /wiki on ${ref}${live.job.commit ? ` (${live.job.commit})` : ''}…`].slice(-WIKI_JOB_LINES) };
+    if (child.pid) writeFileSync(path.join(this.dataDir(floor), MARKER), JSON.stringify({ pid: child.pid, ...note }));
+    live.job = { ...live.job, state: 'running', lines: [...live.job.lines, `Running /wiki on ${ref}${live.job.commit ? ` (${live.job.commit})` : ''} with ${model.name}…`].slice(-WIKI_JOB_LINES) };
     this.opts.onChange(floor.id, 'state');
     const read = (chunk: Buffer | string) => {
       const text = redact(live.partial + chunk.toString(), [key]);
@@ -401,6 +490,7 @@ export class WikiRunner {
     live.job = { ...live.job, state, endedAt: this.now(), lines: lines.slice(-WIKI_JOB_LINES), ...(error ? { error } : {}) };
     live.child = undefined;
     rmSync(path.join(this.dataDir(live.floor), MARKER), { force: true });
+    rmSync(path.join(this.dataDir(live.floor), SETTINGS), { force: true });
     void this.removeWorktree(live.floor);
     this.opts.onChange(live.floor.id, 'state');
     this.opts.onEnd?.(live.floor.id, live.job);

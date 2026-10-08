@@ -10,8 +10,8 @@ import { FactoryApi } from '../src/server/factory/api.js';
 import type { FactoryRequest, FeatureHost } from '../src/server/factory/feature.js';
 import { FactoryDownload } from '../src/server/factory/feature.js';
 import { WikiFeature } from '../src/server/factory/wiki.js';
-import { WIKI_WORKTREE, WikiRunner, readWikiEvent, type WikiFloorDef } from '../src/server/factory/wiki-run.js';
-import { flattenWiki, resolveWikiLink, sameRepo, wikiHitOf, wikiNodeOf, wikiPageOf, wikiRepoOf, wikiRunDetailOf, wikiRunOf, wikiShelfLine, type FactoryWikiJob, type FactoryWikiNode } from '../src/shared/factory-wiki.js';
+import { WIKI_WORKTREE, WikiRunner, parseDroidModels, readWikiEvent, wikiRunSettings, type WikiFloorDef } from '../src/server/factory/wiki-run.js';
+import { isModelId, flattenWiki, resolveWikiLink, sameRepo, wikiHitOf, wikiNodeOf, wikiPageOf, wikiRepoOf, wikiRunDetailOf, wikiRunOf, wikiShelfLine, type FactoryWikiJob, type FactoryWikiNode } from '../src/shared/factory-wiki.js';
 
 const KEY = 'fk-test-wiki-5678';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -420,8 +420,29 @@ class FakeChild extends EventEmitter {
   }
 }
 
+/** What `droid exec --help` prints about its models, cut down. */
+const HELP = `Usage: droid exec [options] [prompt]
+
+Options:
+  -m, --model <id>            Model ID to use (default: gpt-6-sol)
+
+Available Models:
+  auto                                           Auto Model
+  gpt-6-sol                                      GPT-6 Sol (default)
+  glm-5.3-flash                                  GLM-5.3-Flash
+  minimax-m2.7                                   MiniMax M2.7 [Deprecated]
+
+Custom Models:
+  custom:proxy:gemini-3.1-pro                    Proxy: Gemini 3.1 Pro (High)
+
+Model details:
+  - Auto Model: supports reasoning: No; supported: [none]; default: none
+  - GPT-6 Sol: supports reasoning: Yes; supported: [none, low, medium, high, xhigh, max]; default: medium
+  - GLM-5.3-Flash: supports reasoning: Yes; supported: [low, high, max]; default: high
+`;
+
 /** A runner's world: git and Droid stubbed, every spawn and signal written down. */
-function rig(t: { after(fn: () => void): void }, over: { platform?: NodeJS.Platform; command?: string | null; gitFails?: string; isWikiProcess?: boolean } = {}) {
+function rig(t: { after(fn: () => void): void }, over: { platform?: NodeJS.Platform; command?: string | null; gitFails?: string; isWikiProcess?: boolean; help?: () => Promise<string> } = {}) {
   const list = floors(t);
   const spawned: { command: string; args: readonly string[]; options: Record<string, unknown>; child: FakeChild }[] = [];
   const kills: [number, string][] = [];
@@ -445,6 +466,7 @@ function rig(t: { after(fn: () => void): void }, over: { platform?: NodeJS.Platf
       if (args[0] === 'worktree' && args[1] === 'add') mkdirSync(args[4], { recursive: true });
       return cwd ? '' : '';
     },
+    help: over.help ?? (async () => HELP),
     killTree: (pid: number, signal: NodeJS.Signals) => kills.push([pid, signal]),
     isWikiProcess: () => over.isWikiProcess ?? true,
     now: () => 1000,
@@ -464,8 +486,11 @@ test('runner: runs /wiki in a fresh worktree with the key only in the child’s 
   await until(() => r.spawned.length === 1, 'the spawn');
   const s = r.spawned[0];
   const worktree = path.join(main.dir, '.droid-office', WIKI_WORKTREE);
+  const settings = path.join(main.dir, '.droid-office', 'wiki-run-settings.json');
   assert.equal(s.command, '/usr/local/bin/droid');
-  assert.deepEqual(s.args, ['exec', '--auto', 'high', '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki']);
+  assert.deepEqual(s.args, ['exec', '--auto', 'high', '-m', 'glm-5.3-flash', '--settings', settings, '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki']);
+  assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), { subagentModelSettings: { lightModel: 'glm-5.3-flash', mediumModel: 'glm-5.3-flash', heavyModel: 'glm-5.3-flash' } });
+  assert.equal(job.model, 'glm-5.3-flash');
   assert.equal(s.options.cwd, worktree);
   assert.deepEqual(s.options.env, { PATH: '/usr/bin', HOME: '/home/o', FACTORY_API_KEY: KEY });
   assert.equal((r.officeEnv as Record<string, string>).FACTORY_API_KEY, undefined, 'the office’s own environment is untouched');
@@ -474,7 +499,7 @@ test('runner: runs /wiki in a fresh worktree with the key only in the child’s 
   assert.deepEqual(r.git[0], ['fetch', '--quiet', 'origin']);
   assert.ok(r.git.some((g) => g.join(' ') === `worktree add --detach --force ${worktree} origin/main`));
   const marker = JSON.parse(readFileSync(path.join(main.dir, '.droid-office', 'wiki-run.json'), 'utf8'));
-  assert.deepEqual(marker, { pid: 4242, startedAt: 1000, by: 'Olive' });
+  assert.deepEqual(marker, { pid: 4242, startedAt: 1000, by: 'Olive', model: 'glm-5.3-flash', modelName: 'glm-5.3-flash' });
   assert.equal(runner.job('main')?.state, 'running');
   assert.equal(runner.job('main')?.commit, 'e05ddc1');
 
@@ -504,6 +529,7 @@ test('runner: runs /wiki in a fresh worktree with the key only in the child’s 
   s.child.emit('close', 0, null);
   assert.equal(r.ends.length, 1, 'a run ends once');
   assert.ok(!existsSync(path.join(main.dir, '.droid-office', 'wiki-run.json')), 'the marker goes when it ends');
+  assert.ok(!existsSync(settings), 'so do its settings');
   await until(() => !existsSync(worktree), 'the worktree to go');
 });
 
@@ -583,7 +609,8 @@ test('runner: a run the last office left behind is lost, killed and cleaned up',
   const r = rig(t);
   const main = r.list[0];
   const data = path.join(main.dir, '.droid-office');
-  writeFileSync(path.join(data, 'wiki-run.json'), JSON.stringify({ pid: 999, startedAt: 50, by: 'Pat' }));
+  writeFileSync(path.join(data, 'wiki-run.json'), JSON.stringify({ pid: 999, startedAt: 50, by: 'Pat', model: 'glm-5.3-flash', modelName: 'GLM-5.3-Flash' }));
+  writeFileSync(path.join(data, 'wiki-run-settings.json'), '{}');
   mkdirSync(path.join(data, WIKI_WORKTREE));
   const changes: string[] = [];
   const runner = new WikiRunner({ ...r.opts, onChange: (f) => changes.push(f) });
@@ -595,8 +622,10 @@ test('runner: a run the last office left behind is lost, killed and cleaned up',
   assert.equal(lost?.state, 'lost');
   assert.equal(lost?.by, 'Pat');
   assert.equal(lost?.startedAt, 50);
+  assert.equal(lost?.modelName, 'GLM-5.3-Flash');
   assert.match(lost?.error ?? '', /office stopped while \/wiki was running/);
   assert.ok(!existsSync(path.join(data, 'wiki-run.json')));
+  assert.ok(!existsSync(path.join(data, 'wiki-run-settings.json')));
   await until(() => !existsSync(path.join(data, WIKI_WORKTREE)), 'the stale worktree to go');
   assert.equal(runner.busy(), false);
 
@@ -696,4 +725,77 @@ test('wiki: generate and cancel through the routes; a finished run polls for its
   const plain = new WikiFeature(host().fh, { floors: () => r.list, key: () => KEY });
   await assert.rejects(() => call(plain, f.api, 'POST', '/generate', { body: { floor: 'main' } }), /can’t run \/wiki/);
   plain.stop();
+});
+
+test('models: droid’s list with each one’s efforts, and the settings that put /wiki’s subagents on it', () => {
+  const models = parseDroidModels(HELP);
+  assert.deepEqual(models, [
+    { id: 'auto', name: 'Auto Model', efforts: ['none'], defaultEffort: 'none' },
+    { id: 'gpt-6-sol', name: 'GPT-6 Sol', efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium' },
+    { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', efforts: ['low', 'high', 'max'], defaultEffort: 'high' },
+    { id: 'custom:proxy:gemini-3.1-pro', name: 'Proxy: Gemini 3.1 Pro (High)', custom: true },
+  ]);
+  assert.deepEqual(parseDroidModels('Usage: droid exec\n'), []);
+  assert.deepEqual(wikiRunSettings(models[2]), {
+    subagentModelSettings: {
+      lightModel: 'glm-5.3-flash',
+      lightReasoningEffort: 'high',
+      mediumModel: 'glm-5.3-flash',
+      mediumReasoningEffort: 'high',
+      heavyModel: 'glm-5.3-flash',
+      heavyReasoningEffort: 'high',
+    },
+  });
+  assert.ok(isModelId('glm-5.3-flash') && isModelId('custom:proxy:gemini-3.1-pro'));
+  for (const bad of ['', 'x y', '--settings', '-m', 3]) assert.equal(isModelId(bad), false, String(bad));
+});
+
+test('wiki: Generate runs on the model picked, glm-5.3-flash unless told, and only one the office’s Droid lists', async (t) => {
+  const r = rig(t);
+  const f = factory({ '/api/v0/wiki': () => json(200, { wikiRuns: [] }) });
+  const h = host();
+  const feature = new WikiFeature(h.fh, { floors: () => r.list, key: () => KEY, runner: { ...r.opts } });
+  t.after(() => feature.stop());
+
+  const listed = (await call(feature, f.api, 'GET', '/models')) as { models: { id: string }[]; default: string };
+  assert.equal(listed.default, 'glm-5.3-flash');
+  assert.deepEqual(
+    listed.models.map((m) => m.id),
+    ['auto', 'gpt-6-sol', 'glm-5.3-flash', 'custom:proxy:gemini-3.1-pro'],
+  );
+  await assert.rejects(() => call(feature, f.api, 'POST', '/generate', { body: { floor: 'main', model: 'no-such-model' } }), /has no model no-such-model/);
+  await assert.rejects(() => call(feature, f.api, 'POST', '/generate', { body: { floor: 'main', model: 'a b' } }), /model is a Droid model id/);
+  await assert.rejects(() => call(feature, f.api, 'POST', '/generate', { body: { floor: 'main', model: '--settings' } }), /model is a Droid model id/);
+
+  const started = (await call(feature, f.api, 'POST', '/generate', { body: { floor: 'main', model: 'gpt-6-sol' } })) as { job: FactoryWikiJob };
+  assert.equal(started.job.model, 'gpt-6-sol');
+  assert.equal(started.job.modelName, 'GPT-6 Sol');
+  assert.match(h.get().toasts.at(-1) ?? '', /with GPT-6 Sol/);
+  await until(() => r.spawned.length === 1);
+  const args = r.spawned[0].args;
+  assert.equal(args[args.indexOf('-m') + 1], 'gpt-6-sol');
+  const settings = JSON.parse(readFileSync(args[args.indexOf('--settings') + 1], 'utf8'));
+  assert.equal(settings.subagentModelSettings.lightModel, 'gpt-6-sol');
+  assert.equal(settings.subagentModelSettings.heavyReasoningEffort, 'medium');
+  assert.ok(feature.state().floors.main.job?.lines.some((l) => l.endsWith('with GPT-6 Sol…')));
+  r.spawned[0].child.emit('close', 0, null);
+
+  await call(feature, f.api, 'POST', '/generate', { body: { floor: 'main' } });
+  await until(() => r.spawned.length === 2);
+  assert.equal(r.spawned[1].args[r.spawned[1].args.indexOf('-m') + 1], 'glm-5.3-flash');
+  r.spawned[1].child.emit('close', 0, null);
+
+  // A Droid that won't say which models it has: any id that looks like one goes to it.
+  const quiet = rig(t, { help: async () => Promise.reject(new Error('no help')) });
+  const f2 = new WikiFeature(host().fh, { floors: () => quiet.list, key: () => KEY, runner: { ...quiet.opts } });
+  t.after(() => f2.stop());
+  assert.deepEqual(await call(f2, f.api, 'GET', '/models'), { models: [], default: 'glm-5.3-flash' });
+  const job = ((await call(f2, f.api, 'POST', '/generate', { body: { floor: 'main', model: 'kimi-k3' } })) as { job: FactoryWikiJob }).job;
+  assert.equal(job.modelName, 'kimi-k3');
+  await until(() => quiet.spawned.length === 1);
+  quiet.spawned[0].child.emit('close', 0, null);
+
+  const none = new WikiFeature(host().fh, { floors: () => r.list, key: () => KEY });
+  assert.deepEqual(await call(none, f.api, 'GET', '/models'), { models: [], default: 'glm-5.3-flash' });
+  none.stop();
 });

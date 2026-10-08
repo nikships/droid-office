@@ -1,8 +1,10 @@
 import { capabilityOf } from '../../shared/factory';
 import {
+  WIKI_DEFAULT_MODEL,
   WIKI_SEARCH_LIMIT,
   flattenWiki,
   resolveWikiLink,
+  type DroidModel,
   type FactoryWikiFloor,
   type FactoryWikiHit,
   type FactoryWikiJob,
@@ -25,7 +27,8 @@ import { markdownFile } from './markdown';
 // /wiki to write or refresh it (server/factory/wiki-run.ts), with privacy, export and delete.
 
 const LAST_KEY = 'droid-office.autowiki';
-const CONFIRM_TEXT = 'Runs /wiki headless with this office’s Factory key. On a large repository it takes about an hour and can spend 5 to 20 million credits on the connected account.';
+const CONFIRM_TEXT =
+  'Runs /wiki headless with this office’s Factory key, on the model you pick for /wiki and every subagent it starts. A small model like GLM-5.3-Flash costs much less. With a frontier model, a large repository takes about an hour and can spend 5 to 20 million credits on the connected account.';
 const CI_HINT = 'To refresh it on every push instead, run /install-wiki in a Droid session in this repository: it adds a CI action that runs /wiki.';
 
 export interface WikiTabDeps {
@@ -117,6 +120,9 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   let searching = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let confirming: 'generate' | 'delete' | null = null;
+  /** The models Generate offers (read when its confirm first opens), and the one picked. */
+  let models: DroidModel[] | undefined;
+  let model = WIKI_DEFAULT_MODEL;
   let busy = false;
   let turnedAt = 0;
   /** What the panel or the status card last drew, so a broadcast that changes nothing redraws nothing. */
@@ -148,9 +154,36 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     confirming = null;
     busy = true;
     paint(true);
-    await call('/generate', { method: 'POST', body: { floor } });
+    await call('/generate', { method: 'POST', body: { floor, model } });
     busy = false;
     paint(true);
+  };
+
+  const loadModels = async () => {
+    if (models) return;
+    models = [];
+    const r = await call<{ models: DroidModel[]; default: string }>('/models');
+    models = r?.models ?? [];
+    if (r?.default && !models.some((m) => m.id === model)) model = r.default;
+    paint(true);
+  };
+
+  const modelName = (id: string | undefined) => (id ? (models?.find((m) => m.id === id)?.name ?? id) : '');
+
+  /** Generate's model picker: Factory's models, then the owner's own. */
+  const modelPicker = () => {
+    const list = models?.length ? models : [{ id: model, name: model }];
+    const opt = (m: DroidModel) => h('option', { value: m.id, selected: m.id === model }, m.name);
+    const own = list.filter((m) => m.custom);
+    const select = h(
+      'select.bs-toc.wk-model',
+      { 'aria-label': 'Model', title: 'The model /wiki and its subagents run on' },
+      ...(own.length ? [h('optgroup', { label: 'Factory' }, ...list.filter((m) => !m.custom).map(opt)), h('optgroup', { label: 'Your own models' }, ...own.map(opt))] : list.map(opt)),
+    ) as HTMLSelectElement;
+    select.addEventListener('change', () => {
+      model = select.value;
+    });
+    return h('label.wk-row.wk-model-row', {}, h('span', {}, 'Model'), select);
   };
 
   const stop = async () => {
@@ -165,6 +198,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       'div.wk-confirm',
       { role: 'alertdialog' },
       h('p', {}, text),
+      danger ? '' : modelPicker(),
       h(
         'div.wk-actions',
         {},
@@ -192,6 +226,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
         onclick: () => {
           confirming = 'generate';
           paint(true);
+          void loadModels();
         },
       },
       busy ? 'Starting…' : label,
@@ -210,7 +245,11 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const head = running
       ? h('div.wk-job-head', {}, h('span.spinner'), h('b', {}, job.state === 'starting' ? 'Getting the default branch…' : 'Writing the wiki…'), h('span.wk-elapsed', {}, elapsed(took)))
       : h('div.wk-job-head', {}, h('b', {}, job.state === 'cancelled' ? `Stopped after ${elapsed(took)}` : job.state === 'lost' ? 'The last run was cut off' : `/wiki failed after ${elapsed(took)}`));
-    const who = h('div.wk-job-who', {}, [`started by ${job.by}`, job.startedAt ? timeAgo(job.startedAt) : '', job.commit ? `at ${job.commit}` : ''].filter(Boolean).join(' · '));
+    const who = h(
+      'div.wk-job-who',
+      {},
+      [`started by ${job.by}`, job.startedAt ? timeAgo(job.startedAt) : '', job.commit ? `at ${job.commit}` : '', job.model ? `on ${job.modelName ?? modelName(job.model)}` : ''].filter(Boolean).join(' · '),
+    );
     const lines = running || !job.error ? h('pre.wk-lines', {}, job.lines.join('\n')) : h('pre.wk-lines.bad', {}, job.error);
     const actions = h('div.wk-actions');
     if (running) actions.append(h('button.btn.danger', { type: 'button', onclick: () => void stop() }, 'Stop'));
@@ -271,6 +310,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
         run.branch && run.branch !== 'HEAD' ? run.branch : '',
         run.commitHash ? run.commitHash.slice(0, 7) : '',
         run.hasLocalChanges ? 'with local changes' : '',
+        run.model ? `by ${modelName(run.model)}` : '',
       ]
         .filter(Boolean)
         .join(' · '),
@@ -555,7 +595,11 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       if (!watching) {
         watching = watchFactory('wiki');
         // The floor's history, read now rather than at the next poll.
-        if (store.factory.connection.connected) void factoryFetch('wiki', '/floor', { query: { floor } }).catch(() => refreshFactory('wiki'));
+        if (store.factory.connection.connected) {
+          void factoryFetch('wiki', '/floor', { query: { floor } }).catch(() => refreshFactory('wiki'));
+          // For the names of the models the runs were written by, and Generate's picker.
+          void loadModels();
+        }
       }
       paint(true);
       deps.setDoing(current ? `🏭 reading the AutoWiki: ${clip(current.title, 40)}` : '🏭 at the AutoWiki');

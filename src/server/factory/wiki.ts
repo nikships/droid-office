@@ -1,9 +1,11 @@
 import { Readable } from 'node:stream';
 import {
+  WIKI_DEFAULT_MODEL,
   WIKI_HISTORY_MAX,
   WIKI_PRIVACY,
   WIKI_SEARCH_LIMIT,
   emptyWiki,
+  isModelId,
   sameRepo,
   wikiHitOf,
   wikiPageOf,
@@ -182,16 +184,31 @@ export class WikiFeature extends SliceFeature<'wiki'> {
       method: 'POST',
       path: '/generate',
       handle: async ({ json, by }) => {
-        const body = await json<{ floor?: unknown }>();
+        const body = await json<{ floor?: unknown; model?: unknown }>();
         const floor = this.floor(str(body.floor, 64));
         const where = wikiRepoOf(floor.repo);
         if ('why' in where) throw new HttpError(409, where.why);
         if (!this.runner) throw new HttpError(409, 'This office can’t run /wiki.');
         const key = this.opts.key?.();
         if (!key) throw new HttpError(409, 'The office’s Factory key isn’t usable now. Check it in ⚙️ Settings → Factory.');
-        const job = this.runner.start(floor, by, key);
-        this.host.toast(`📚 ${by} started writing ${floor.name}’s AutoWiki`);
+        const id = body.model === undefined || body.model === '' ? WIKI_DEFAULT_MODEL : body.model;
+        if (!isModelId(id)) throw badRequest('model is a Droid model id, like glm-5.3-flash');
+        const models = await this.runner.models();
+        // An empty list: this Droid didn't say which it has, so it's left to say no itself.
+        const model = models.length ? models.find((m) => m.id === id) : { id, name: id };
+        if (!model) throw badRequest(`The office’s Droid has no model ${id}`);
+        const job = this.runner.start(floor, by, key, model);
+        this.host.toast(`📚 ${by} started writing ${floor.name}’s AutoWiki with ${model.name}`);
         return { job };
+      },
+    },
+    {
+      // The models Generate can run /wiki on, and the one it picks unless told.
+      method: 'GET',
+      path: '/models',
+      handle: async () => {
+        const models = (await this.runner?.models()) ?? [];
+        return { models, default: models.length && !models.some((m) => m.id === WIKI_DEFAULT_MODEL) ? models[0].id : WIKI_DEFAULT_MODEL };
       },
     },
     {

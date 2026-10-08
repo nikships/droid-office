@@ -89,7 +89,27 @@ export interface FactoryWikiJob {
   runId?: string;
   /** The commit it documents. */
   commit?: string;
+  /** The Droid model it runs /wiki and its subagents on (`droid exec -m`), and that model's name. */
+  model?: string;
+  modelName?: string;
 }
+
+/** A model `droid exec -m` takes, from the list `droid exec --help` prints. */
+export interface DroidModel {
+  id: string;
+  name: string;
+  /** One of the owner's own (BYOK) models from their Droid settings, not one Factory serves. */
+  custom?: boolean;
+  /** The reasoning efforts it takes, and the one it uses unless told. */
+  efforts?: string[];
+  defaultEffort?: string;
+}
+
+/** What Generate runs /wiki on unless someone picks another: a small model, so a run costs little. */
+export const WIKI_DEFAULT_MODEL = 'glm-5.3-flash';
+
+/** A model id as `droid exec -m` takes one: `glm-5.3-flash`, `custom:proxy:gemini-3.1-pro`. Never a flag. */
+export const isModelId = (v: unknown): v is string => typeof v === 'string' && /^\w[\w.:/@-]{0,119}$/.test(v);
 
 /** What a floor's bookshelf shows of its repository's AutoWiki. */
 export interface FactoryWikiFloor {
