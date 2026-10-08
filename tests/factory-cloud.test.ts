@@ -310,6 +310,68 @@ test('poll: working with its latest tool call acted out, then done with its repl
   assert.equal(tails(), t0);
 });
 
+test('poll: a turn that ends before its reply is in the messages looks for the reply a while longer', async (t) => {
+  let s = () => session('running', 3);
+  let tail: unknown[] = [{ role: 'user', content: [{ type: 'text', text: 'say hi' }] }];
+  let posted = 'pending';
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => json(200, { status: posted }),
+    'GET /sessions/s1': () => s(),
+    'GET /sessions/s1/messages': () => json(200, { messages: tail }),
+  });
+  const r = rig(t, f);
+  const w = await r.feature.hire(f.api, hireBody(), 'Nik');
+  await tick();
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)!.status, 'working');
+
+  // Idle, and Factory has no reply yet: done, saying what it was asked, and still watched closely.
+  s = () => session('idle', 3);
+  r.clock(4000);
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)!.status, 'done');
+  assert.equal(r.cloud.get(w.id)!.activity, 'say hi');
+  assert.equal(r.feature.busy(), true, 'polled fast while it looks for the reply');
+
+  // The reply lands without the session moving: the next poll reads it anyway.
+  tail = [{ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }, ...tail];
+  r.clock(4000);
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)!.status, 'done');
+  assert.equal(r.cloud.get(w.id)!.activity, 'hi');
+  assert.equal(r.feature.busy(), false);
+
+  // Factory lists the new prompt and its reply late: the newest listed is still the last turn's reply,
+  // which doesn't end this one.
+  r.clock(60_000);
+  const sent = 1_000_000 + 8000 + 60_000;
+  posted = 'idle';
+  await r.feature.send(w.id, 'say hello', []);
+  s = () => session('idle', 3);
+  tail = [{ role: 'assistant', createdAt: sent - 30_000, content: [{ type: 'text', text: 'hi' }] }];
+  r.clock(4000);
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)!.status, 'working', 'an old reply is not the answer');
+  tail = [{ role: 'assistant', createdAt: sent + 3000, content: [{ type: 'text', text: 'hello' }] }, ...tail];
+  r.clock(4000);
+  await r.feature.poll(f.api);
+  assert.equal(r.cloud.get(w.id)!.status, 'done');
+  assert.equal(r.cloud.get(w.id)!.activity, 'hello');
+
+  // One whose reply never comes stops looking after a while.
+  const tails = () => f.calls.filter((c) => c.path === '/sessions/s1/messages').length;
+  r.cloud.update(w.id, (_, x) => {
+    x.turn = { replyBy: 1 };
+  });
+  const before = tails();
+  r.clock(4000);
+  r.feature.recheck(w.id);
+  await r.feature.poll(f.api);
+  assert.equal(tails(), before, 'past replyBy: the tail is read only when the session moves');
+  assert.equal(r.feature.busy(), false);
+});
+
 test('poll: a deleted session or computer is a clear error at the desk, and a failed read keeps the last status', async (t) => {
   let gone = false;
   let down = false;

@@ -120,7 +120,7 @@ The four first versions, for their owners to grow:
 
 ### Cloud workers
 
-What the live tests on `orb` showed: a managed computer's home folder is `/home/<remoteUser>` (`/home/factory-user`), which is the session's folder when `cwd` is left out; no repositories are cloned there by Factory. `POST /sessions` took about 16 seconds and the first `POST /sessions/{id}/messages` about 23. Right after a message, `GET /sessions/{id}` can still say `idle` with the old `messageCount`. `GET /sessions/{id}` doesn't return `sessionSettings`. `DELETE /sessions/{id}` answers 204, but the session still reads 200 and stays in the list afterwards, so a deleted session can't be told from a live one by a 404.
+What the live tests on `orb` showed: a managed computer's home folder is `/home/<remoteUser>` (`/home/factory-user`), which is the session's folder when `cwd` is left out; no repositories are cloned there by Factory. `POST /sessions` took about 16 seconds and the first `POST /sessions/{id}/messages` about 23. Right after a message, `GET /sessions/{id}` can still say `idle` with the old `messageCount`. `GET /sessions/{id}` doesn't return `sessionSettings`. `DELETE /sessions/{id}` answers 204; in the first tests the session still read 200 and stayed in the list afterwards, and in later ones it was gone from the list and read 404 at once, so the office drops a session it deleted from the slice itself (`SessionsFeature.forget`, also when a cloud worker goes home with its session) rather than wait for the list. Factory lists a new message many seconds late, 20 or more after it was made: a session can read `idle` while its reply isn't listed yet, and the newest message listed can still be the last turn's reply. So a cloud worker's turn counts as answered only by a reply made after the message went (`answeredByAssistant(messages, since)`), a turn that ended before its reply was listed reads the tail for up to 90 seconds more (`replyBy`), and the transcript goes on reading after a session stops until a new reply is in (at most 90 seconds).
 
 ### CI automations
 
@@ -194,7 +194,7 @@ await t.refresh();      // read the newest now and follow the bottom, after send
 t.dispose();            // when the window closes
 ```
 
-It reads the newest page at once, pages back with **Load earlier messages**, and while `live()` says the session runs (and once more when it stops) reads the newest every 3 seconds, following the bottom unless you scrolled up. Text is markdown through `markdown.ts`; thinking and tool results are folded; a tool call is one line (`toolLine`: "Execute: npm test") that opens onto its input and result, marked ✓, ✖ or … while it waits; pictures are thumbnails that enlarge on a click. Only messages that changed are drawn again, so what you opened stays open.
+It reads the newest page at once, pages back with **Load earlier messages**, and while `live()` says the session runs (and after it stops, until a new reply is listed or 90 seconds pass) reads the newest every 3 seconds, following the bottom unless you scrolled up. A `refresh()` asked for while a read is on its way runs again after it. Text is markdown through `markdown.ts`; thinking and tool results are folded; a tool call is one line (`toolLine`: "Execute: npm test") that opens onto its input and result, marked ✓, ✖ or … while it waits; pictures are thumbnails that enlarge on a click. Only messages that changed are drawn again, so what you opened stays open.
 
 ## The pieces
 

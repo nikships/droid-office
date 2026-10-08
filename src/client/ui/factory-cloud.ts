@@ -185,7 +185,10 @@ export function openCloudWindow(net: Net, workerId: string) {
           const w = worker();
           return !!w && (w.status === 'starting' || Date.now() - w.createdAt < NEW_SESSION_GRACE_MS);
         },
-        empty: () => (worker()?.status === 'starting' ? 'Starting… sending its first prompt' : 'Waiting for a prompt'),
+        empty: () => {
+          const s = worker()?.status;
+          return s === 'starting' ? 'Starting… sending its first prompt' : s === 'working' ? 'Working… its messages show here as Factory lists them' : 'Waiting for a prompt';
+        },
       })
     : null;
   const ta = h('textarea', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;

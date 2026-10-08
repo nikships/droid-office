@@ -1,4 +1,4 @@
-import { answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn } from '../../shared/factory-cloud.js';
+import { CLOCK_SKEW_MS, answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn } from '../../shared/factory-cloud.js';
 import type { FactoryComputersState } from '../../shared/factory-computers.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
 import { isAgentEffort } from '../../shared/protocol.js';
@@ -25,6 +25,8 @@ const TAIL = 8;
 const MAX_IMAGES = 10;
 const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
+/** How long after a turn ends the office looks for its reply, when the reply wasn't listed yet. */
+const REPLY_WAIT_MS = 90_000;
 
 const clip = (s: string, n: number) => {
   const one = s.replace(/\s+/g, ' ').trim();
@@ -122,8 +124,15 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   }
 
   busy(): boolean {
-    for (const f of this.opts.floors()) for (const w of f.cloud.list()) if (w.status === 'working' || w.status === 'starting') return true;
+    const now = this.now();
+    for (const f of this.opts.floors()) for (const w of f.cloud.list()) if (w.status === 'working' || w.status === 'starting' || this.awaitingReply(f, w.id, now)) return true;
     return false;
+  }
+
+  /** Its turn ended before its reply could be read, and the office still looks for it. */
+  private awaitingReply(floor: CloudFloor, id: string, now: number): boolean {
+    const by = floor.cloud.turn(id)?.replyBy;
+    return by !== undefined && now < by;
   }
 
   /** `call` on a worker's session, tried again for a while when it 404s because the session was only just made. */
@@ -283,7 +292,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     for (const floor of this.opts.floors()) {
       for (const info of floor.cloud.list()) {
         if (!info.sessionId) continue;
-        const busy = info.status === 'working' || info.status === 'starting';
+        const busy = info.status === 'working' || info.status === 'starting' || this.awaitingReply(floor, info.id, now);
         const wait = busy ? 0 : IDLE_EVERY_MS - this.fastInterval;
         if (!this.due.delete(info.id) && now - floor.cloud.polledAt(info.id) < wait) continue;
         jobs.push(this.pollOne(api, floor, info, now));
@@ -326,10 +335,12 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const seen = floor.cloud.seen(id);
     const moved = !seen || seen.count !== count || seen.updatedAt !== updatedAt;
     let messages: unknown[] | undefined;
-    // The tail is read when the session moved, when a fresh `done` needs its reply, or while a turn
-    // the office sent is open and idle: its answer may have landed between two reads of a fast turn.
+    // The tail is read when the session moved, when a fresh `done` needs its reply, while a turn
+    // the office sent is open and idle (its answer may have landed between two reads of a fast turn),
+    // and while a turn that ended looks for its reply.
     const watching = mapped.status === 'working' && turn.sentAt !== undefined && s?.status === 'idle';
-    if (count > 0 && (moved || watching || (mapped.status === 'done' && info.status !== 'done'))) {
+    const awaiting = mapped.status === undefined && turn.replyBy !== undefined && now < turn.replyBy;
+    if (count > 0 && (moved || watching || awaiting || (mapped.status === 'done' && info.status !== 'done'))) {
       try {
         const r = await api.get<{ messages?: unknown[] }>(`/sessions/${sid}/messages`, { limit: TAIL });
         messages = Array.isArray(r?.messages) ? r.messages : undefined;
@@ -337,8 +348,16 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         // The status is enough to go on: what it's doing shows at the next read.
       }
     }
-    if (watching && messages && answeredByAssistant(messages)) mapped = { status: 'done', turn: {} };
+    // Factory lists a message many seconds after it was made, so the newest one listed can still be
+    // the last turn's reply: only one made after the message went answers this turn.
+    const after = turn.sentAt !== undefined ? turn.sentAt - CLOCK_SKEW_MS : turn.replyAfter;
+    const replied = !!messages && answeredByAssistant(messages, after);
+    if (watching && replied) mapped = { status: 'done', turn: {} };
     const next: WorkerStatus | undefined = mapped.status ?? (info.status === 'exited' || info.status === 'offline' ? 'idle' : undefined);
+    // A turn that ended before its reply was listed reads the tail at every poll for a while, to put
+    // the reply at the desk.
+    if (next === 'done' && !replied) mapped = { ...mapped, turn: { replyBy: now + REPLY_WAIT_MS, ...(after !== undefined ? { replyAfter: after } : {}) } };
+    else if (awaiting && replied) mapped = { ...mapped, turn: {} };
     floor.cloud.update(id, (i) => {
       if (i.cloud?.error) {
         i.cloud = { ...i.cloud, error: undefined };
@@ -357,7 +376,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
           i.activity = tool.activity;
           i.action = tool.action;
         }
-      } else if (next === 'done') {
+      } else if ((next === 'done' || awaiting) && replied) {
         const reply = latestReply(messages);
         if (reply) {
           i.activity = clip(reply, 80);
