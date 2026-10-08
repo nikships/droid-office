@@ -278,6 +278,8 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
   }
 
   async poll(api: FactoryApi): Promise<void> {
+    // A cold list can take a minute: the office's workers show the credits the ledger kept meanwhile.
+    if (!this.slice.fetchedAt) this.publish();
     const r1 = await api.sessions(SESSIONS_LIMIT);
     const now = this.now();
     let items = listOf(r1);
@@ -442,7 +444,11 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
   /** A list item with what its own read said: credits, settings, and its status when that read is as new. */
   merged(s: FactorySession): FactorySession {
     const d = this.details.get(s.id);
-    if (!d) return s;
+    if (!d) {
+      // Not read since the office started: the ledger has the total it last read.
+      const credits = s.credits ?? this.ledger.last(s.id);
+      return credits !== undefined ? { ...s, credits } : s;
+    }
     const fresh = d.session.updatedAt >= s.updatedAt;
     return {
       ...d.session,
@@ -469,7 +475,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
     items.sort((a, b) => b.updatedAt - a.updatedAt);
     const office: Record<string, FactoryOfficeSession> = {};
     for (const o of this.opts.officeSessions?.() ?? []) {
-      const credits = this.details.get(o.sessionId)?.session.credits;
+      const credits = this.details.get(o.sessionId)?.session.credits ?? this.ledger.last(o.sessionId);
       office[o.sessionId] = { workerId: o.workerId, name: o.name, ...(o.floor ? { floor: o.floor } : {}), ...(o.color ? { color: o.color } : {}), ...(credits !== undefined ? { credits } : {}) };
     }
     this.set({ ...patch, items, office, credits: this.ledger.summary((id) => this.titleOf(id)) });

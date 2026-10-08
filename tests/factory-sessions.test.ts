@@ -281,6 +281,34 @@ test('the credits ledger: first sightings on the day last active, increases on t
   assert.equal(mem.summary().week, 0);
 });
 
+test('after a restart, a session shows the credits the ledger kept until its own read lands, even while the list is slow', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'factory-restart-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const listed = { sessionId: 'cw', title: 'Cloud', status: 'idle', computerId: 'orb', createdAt: T0 - 9e6, updatedAt: T0 - 1000, messageCount: 4 };
+  let mode: 'ok' | 'list-down' | 'read-down' = 'ok';
+  const f = factory({
+    '/api/v0/sessions': () => (mode === 'list-down' ? json(500, { detail: 'slow' }) : json(200, { sessions: [listed], pagination: { hasMore: false } })),
+    '/api/v0/sessions/cw': () => (mode === 'ok' ? json(200, { ...listed, factoryCredits: 8400 }) : json(500, { detail: 'oops' })),
+  });
+  const office: OfficeSessionRef[] = [{ sessionId: 'cw', workerId: 'w1', name: 'Pixel' }];
+  const before = new SessionsFeature(host(), { dataDir: dir, officeSessions: () => office, now: () => T0 });
+  await before.poll(f.api);
+  assert.equal(before.state().office.cw.credits, 8400);
+
+  // The office restarts: the list hasn't come back yet.
+  mode = 'list-down';
+  const after = new SessionsFeature(host(), { dataDir: dir, officeSessions: () => office, now: () => T0 + 60_000 });
+  await assert.rejects(() => after.poll(f.api));
+  assert.equal(after.state().office.cw.credits, 8400, 'the cloud window and desk keep their credits through a restart');
+  assert.equal(creditsNote(after.state(), 'cw'), '⚡ 8.4k credits');
+
+  // The list is back but the session's own read fails: the ledger's total still shows.
+  mode = 'read-down';
+  await after.poll(f.api);
+  assert.equal(after.state().items[0].credits, 8400);
+  assert.equal(after.state().office.cw.credits, 8400);
+});
+
 test('routes: list older, create with a first message, detail, settings, delete, messages, send, interrupt and children', async () => {
   let now = T0;
   const created = {

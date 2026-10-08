@@ -101,6 +101,11 @@ export class CreditLedger {
     return spent > 0;
   }
 
+  /** The last total the office read for session `id`, or undefined. */
+  last(id: string): number | undefined {
+    return this.data.seen[id]?.credits;
+  }
+
   /** Drops the days and sessions too old to keep. */
   prune() {
     const now = this.now();
