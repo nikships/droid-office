@@ -33,6 +33,9 @@ const RANGES: [hours: number, label: string][] = [
   [96, '4 days'],
 ];
 
+/** loadColor's colors as the classes that paint a chart's "now" in them. */
+const LOAD_TONE: Record<string, string> = { '#ef4444': 'bad', '#f2b84b': 'warn', '#3ccf91': 'ok' };
+
 const SVG = 'http://www.w3.org/2000/svg';
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, ...children: SVGElement[]): SVGElementTagNameMap[K] {
   const el = document.createElementNS(SVG, tag);
@@ -42,8 +45,7 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string,
 }
 
 const pill = (phase: ComputerPhase) => h('span.pill.cmp-phase', { class: phase }, PHASE_WORD[phase]);
-const providerTag = (c: FactoryComputer) =>
-  h('span.cmp-provider', { class: c.managed ? 'managed' : 'byom', title: c.managed ? 'Factory runs it' : 'Your own machine, connected to Factory' }, c.managed ? c.providerType || 'managed' : 'BYOM');
+const providerTag = (c: FactoryComputer) => h('span.cmp-tag', { class: c.managed ? 'managed' : 'byom', title: c.managed ? 'Factory runs it' : 'Your own machine, connected to Factory' }, c.managed ? c.providerType || 'managed' : 'BYOM');
 
 function duration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -68,12 +70,12 @@ function actionButton(label: string, title: string, run: () => Promise<string | 
     try {
       const said = await run();
       if (said) {
-        out.className = 'cmp-out ok';
+        out.className = 'cmp-out note good';
         out.textContent = said;
       }
     } catch (err) {
-      out.className = 'cmp-out bad';
-      out.textContent = `⚠️ ${(err as Error).message}`;
+      out.className = 'cmp-out note bad';
+      out.textContent = (err as Error).message;
     } finally {
       btn.disabled = false;
       btn.textContent = label;
@@ -91,13 +93,22 @@ function floorRepo(): string | undefined {
 /** Opens the Computers window, on one computer when `id` is given. `settings` opens ⚙️ Settings → Factory. */
 export function openComputers(opts: { settings: () => void; id?: string }) {
   let view: View = opts.id ? { kind: 'detail', id: opts.id } : { kind: 'list' };
-  const title = h('h2', {}, 'Droid Computers');
-  const back = h('button.btn', { type: 'button', title: 'Back to every computer' }, '← All');
-  const add = h('button.btn.primary', { type: 'button', title: 'Make a new Droid Computer' }, '+ New computer');
+  const sub = h('p.sub', {}, 'Factory’s cloud computers and the machines you connected yourself');
+  const add = h('button.btn.primary.sm', { type: 'button', title: 'Make a new Droid Computer' }, '+ New computer');
   const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
-  const body = h('div.body.computers');
+  const rows = h('ul.list.cmp-list', { role: 'listbox', 'aria-label': 'Computers' });
+  const pane = h('section.cmp-pane');
+  const split = h('div.split.cmp-split', {}, h('aside.cmp-side', {}, rows), pane);
+  const body = h('div.body.flush.cmp-body');
   const foot = h('span.grow');
-  const el = h('div.modal.computers', { role: 'dialog', 'aria-label': 'Droid Computers' }, h('header', {}, back, title, add, close), body, h('footer', {}, foot));
+  const footActions = h('div.row.cmp-foot-actions');
+  const el = h(
+    'div.modal.xl.computers',
+    { role: 'dialog', 'aria-label': 'Droid Computers' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Droid Computers'), sub), h('div.actions', {}, add), close),
+    body,
+    h('footer', {}, foot, footActions),
+  );
   let section: Section | undefined;
 
   const go = (next: View) => {
@@ -106,30 +117,85 @@ export function openComputers(opts: { settings: () => void; id?: string }) {
     section = undefined;
     paint();
   };
-  back.addEventListener('click', () => go({ kind: 'list' }));
   add.addEventListener('click', () => go({ kind: 'new' }));
+
+  const paintRows = () => {
+    const s = store.factory.computers;
+    const now = Date.now();
+    const secretsRow = h(
+      'li.list-row.cmp-secrets-row',
+      { role: 'option', tabindex: 0, 'aria-selected': String(view.kind === 'list'), class: view.kind === 'list' ? 'on' : '', title: 'What Droid Computers are, and the organization’s computer secrets' },
+      h('span.list-icon', {}, '🔑'),
+      h('span.list-main', {}, h('span.list-title', {}, 'Overview and secrets'), h('span.list-meta', {}, s.secretsError ? 'secrets unavailable' : `${s.secrets.length} secret${s.secrets.length === 1 ? '' : 's'} set`)),
+    );
+    onPick(secretsRow, () => go({ kind: 'list' }));
+    let items: HTMLElement[];
+    if (!s.fetchedAt && !s.items.length) {
+      items = s.error ? [h('li.note.bad', {}, s.error)] : [0, 1, 2].map(() => h('li.skeleton.cmp-skeleton', { 'aria-hidden': 'true' }));
+    } else if (!s.items.length) {
+      items = [h('li.empty-state.cmp-side-empty', {}, h('b', {}, 'No Droid Computers yet'), h('p', {}, 'Make one with + New computer.'))];
+    } else {
+      items = s.items.map((c) => {
+        const phase = computerPhase(c, s, now);
+        const m = s.metrics[c.id]?.latest;
+        const step = phase === 'provisioning' || phase === 'error' ? currentStep(c) : undefined;
+        const meta = [
+          c.managed ? c.providerType || 'managed' : 'BYOM',
+          c.remoteUser ?? '',
+          c.createdAt ? `made ${timeAgo(c.createdAt)}` : '',
+          c.repos?.length ? (c.repos.length === 1 ? c.repos[0] : `${c.repos.length} repos`) : '',
+          step ? `${step.name}${step.error ? `: ${step.error}` : ''}` : '',
+          phase === 'asleep' && m ? `last seen ${timeAgo(m.at)}` : '',
+          c.managed && m ? `CPU ${Math.round(m.cpuPct)}% · MEM ${memPct(m)}% · DISK ${diskPct(m)}%` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const on = view.kind === 'detail' && view.id === c.id;
+        const li = h(
+          'li.list-row',
+          { role: 'option', tabindex: 0, 'aria-selected': String(on), class: on ? 'on' : '', title: `Open ${c.name}` },
+          h('span.list-icon', { title: c.managed ? 'Factory runs it' : 'Your own machine, connected to Factory' }, c.managed ? '☁️' : '💻'),
+          h('span.list-main', {}, h('span.list-title', {}, c.name, s.here === c.id ? h('span.cmp-tag.here', { title: 'This is the machine the office runs on' }, 'This machine') : null), h('span.list-meta', { title: meta }, meta)),
+          h('span.list-end', {}, pill(phase)),
+        );
+        onPick(li, () => go({ kind: 'detail', id: c.id }));
+        return li;
+      });
+    }
+    rows.replaceChildren(secretsRow, h('li.cmp-list-label', { role: 'presentation' }, 'Computers'), ...items);
+  };
 
   const paint = () => {
     const conn = store.factory.connection;
     const s = store.factory.computers;
-    back.classList.toggle('hidden', view.kind === 'list');
     const can = factoryCan(conn, 'computers');
-    add.classList.toggle('hidden', view.kind !== 'list' || !can);
+    add.classList.toggle('hidden', !can);
     foot.textContent = s.fetchedAt ? `Updated ${timeAgo(s.fetchedAt)}${s.error ? ` · ⚠️ ${s.error}` : ''}${conn.rejected ? ' · ⚠️ Factory rejected the office’s key' : ''}` : '';
     if (!conn.connected || (!can && !conn.rejected)) {
       section?.dispose?.();
       section = undefined;
-      title.textContent = 'Droid Computers';
+      footActions.replaceChildren();
       const why = !conn.connected ? 'Connect the office to Factory to see your Droid Computers here, make new ones and run them from the office.' : 'This Factory key can’t reach Droid Computers.';
-      body.replaceChildren(h('div.cmp-empty', {}, h('p', {}, why), h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, '⚙️ Settings → Factory')));
+      body.replaceChildren(
+        h(
+          'div.empty-state',
+          {},
+          h('span.empty-icon', {}, '🖥️'),
+          h('b', {}, !conn.connected ? 'Not connected to Factory' : 'No access to Droid Computers'),
+          h('p', {}, why),
+          h('button.btn.primary', { type: 'button', onclick: () => opts.settings() }, 'Settings → Factory'),
+        ),
+      );
       return;
     }
+    if (body.firstElementChild !== split) body.replaceChildren(split);
+    paintRows();
     if (!section) {
-      section = view.kind === 'detail' ? detail(view.id, go) : view.kind === 'new' ? newForm(go) : list(go);
-      body.replaceChildren();
-      body.append(...section.nodes);
+      section = view.kind === 'detail' ? detail(view.id, go) : view.kind === 'new' ? newForm(go) : list();
+      pane.replaceChildren(...section.nodes);
+      pane.scrollTop = 0;
+      footActions.replaceChildren(...(section.footer ?? []));
     }
-    title.textContent = view.kind === 'detail' ? (s.items.find((c) => c.id === (view as { id: string }).id)?.name ?? 'Droid Computer') : view.kind === 'new' ? 'New Droid Computer' : 'Droid Computers';
     section.render();
   };
 
@@ -151,67 +217,38 @@ export function openComputers(opts: { settings: () => void; id?: string }) {
   paint();
 }
 
-type Section = { nodes: Node[]; render(): void; dispose?(): void };
+/** What a pane shows; `footer` is its buttons on the right of the window's footer. */
+type Section = { nodes: Node[]; render(): void; dispose?(): void; footer?: Node[] };
 
-// ---- The list ----------------------------------------------------------------------------------
-
-function list(go: (v: View) => void): Section {
-  const intro = h('p.note', {}, 'Factory’s cloud computers (managed) and the machines you connected yourself (BYOM). Click one for its metrics, provisioning and actions.');
-  const rows = h('ul.cmp-list');
-  const secrets = secretsCard();
-  const render = () => {
-    const s = store.factory.computers;
-    const now = Date.now();
-    if (!s.fetchedAt && !s.items.length) {
-      rows.replaceChildren(h('li.cmp-none', {}, s.error ? `⚠️ ${s.error}` : 'Reading your Droid Computers…'));
-    } else if (!s.items.length) {
-      rows.replaceChildren(h('li.cmp-none', {}, 'No Droid Computers yet. Make one with + New computer.'));
-    } else {
-      rows.replaceChildren(
-        ...s.items.map((c) => {
-          const phase = computerPhase(c, s, now);
-          const m = s.metrics[c.id]?.latest;
-          const step = phase === 'provisioning' || phase === 'error' ? currentStep(c) : undefined;
-          const meta = [
-            c.remoteUser ? `👤 ${c.remoteUser}` : '',
-            c.createdAt ? `made ${timeAgo(c.createdAt)}` : '',
-            c.repos?.length ? `📁 ${c.repos.length === 1 ? c.repos[0] : `${c.repos.length} repos`}` : '',
-            step ? `${step.name}${step.error ? `: ${step.error}` : ''}` : '',
-            phase === 'asleep' && m ? `last seen ${timeAgo(m.at)}` : '',
-          ]
-            .filter(Boolean)
-            .join(' · ');
-          const load = c.managed && m ? h('span.cmp-load', {}, ...[`CPU ${Math.round(m.cpuPct)}%`, `MEM ${memPct(m)}%`, `DISK ${diskPct(m)}%`].map((t) => h('span', {}, t))) : null;
-          const li = h(
-            'li',
-            { tabindex: 0, role: 'button', title: `Open ${c.name}` },
-            pill(phase),
-            h('div.cmp-main', {}, h('div.cmp-name', {}, c.name, s.here === c.id ? h('span.cmp-here', { title: 'This is the machine the office runs on' }, 'This machine') : null), h('div.cmp-meta', {}, meta)),
-            load,
-            providerTag(c),
-          );
-          const open = () => go({ kind: 'detail', id: c.id });
-          li.addEventListener('click', open);
-          li.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              open();
-            }
-          });
-          return li;
-        }),
-      );
+/** Click, Enter or Space on a list row. */
+function onPick(row: HTMLElement, pick: () => void) {
+  row.addEventListener('click', pick);
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      pick();
     }
-    secrets.render();
-  };
-  return { nodes: [intro, rows, secrets.node], render };
+  });
+}
+
+// ---- The overview ------------------------------------------------------------------------------
+
+function list(): Section {
+  const intro = h(
+    'div.section',
+    {},
+    h('div.eyebrow', {}, 'Droid Computers'),
+    h('p.cmp-lede', {}, 'Factory’s cloud computers (managed) and the machines you connected yourself (BYOM). Pick one on the left for its metrics, provisioning and actions.'),
+  );
+  const secrets = secretsCard();
+  return { nodes: [h('div.stack.loose.cmp-pane-inner', {}, intro, secrets.node)], render: secrets.render };
 }
 
 /** The organization's computer secrets: their names, a remove for each, and a form to set one. Values are never shown, and never come back. */
 function secretsCard() {
-  const names = h('ul.cmp-secrets');
-  const key = h('input', { type: 'text', placeholder: 'NAME', 'aria-label': 'Secret name', spellcheck: 'false', autocomplete: 'off', maxlength: 128 }) as HTMLInputElement;
-  const value = h('input', { type: 'password', placeholder: 'Value', 'aria-label': 'Secret value', autocomplete: 'new-password', maxlength: 10000 }) as HTMLInputElement;
+  const names = h('ul.list.boxed.cmp-secrets');
+  const key = h('input.input', { type: 'text', placeholder: 'NAME', 'aria-label': 'Secret name', spellcheck: 'false', autocomplete: 'off', maxlength: 128 }) as HTMLInputElement;
+  const value = h('input.input', { type: 'password', placeholder: 'Value', 'aria-label': 'Secret value', autocomplete: 'new-password', maxlength: 10000 }) as HTMLInputElement;
   const out = h('p.cmp-out');
   const save = actionButton(
     'Set',
@@ -233,41 +270,46 @@ function secretsCard() {
     key.setSelectionRange(at, at);
   });
   const node = h(
-    'section.cmp-card',
+    'section.section',
     {},
-    h('h3', {}, 'Computer secrets'),
-    h('p.note', {}, 'Environment variables every computer in the organization gets. Values are write-only: Factory never shows them again, and neither does the office.'),
+    h('div.eyebrow', {}, 'Computer secrets'),
+    h('p.cmp-lede', {}, 'Environment variables every computer in the organization gets. Values are write-only: Factory never shows them again, and neither does the office.'),
     names,
-    h('div.cmp-secret-form', {}, key, value, save),
+    h('div.cmp-inline-form', {}, key, value, save),
     out,
   );
   const render = () => {
     const s = store.factory.computers;
     if (s.secretsError) {
-      names.replaceChildren(h('li.cmp-none', {}, `⚠️ ${s.secretsError}`));
+      names.replaceChildren(h('li.list-row.cmp-muted', {}, h('span.list-main', {}, h('span.list-meta', {}, s.secretsError))));
       return;
     }
     if (!s.secrets.length) {
-      names.replaceChildren(h('li.cmp-none', {}, 'None yet.'));
+      names.replaceChildren(h('li.list-row.cmp-muted', {}, h('span.list-main', {}, h('span.list-meta', {}, 'No secrets yet.'))));
       return;
     }
     names.replaceChildren(
       ...s.secrets.map((name) =>
         h(
-          'li',
+          'li.list-row',
           {},
-          h('code', {}, name),
-          h('span.cmp-secret-val', {}, '••••••••'),
-          actionButton(
-            'Remove',
-            `Remove ${name} from the organization`,
-            async () => {
-              if (!confirm(`Remove the computer secret ${name}? Computers keep it until they’re refreshed.`)) return undefined;
-              await factoryFetch('computers', '/secrets', { method: 'PATCH', body: { upsert: [], delete: [name] } });
-              return `${name} removed.`;
-            },
-            out,
-            'danger',
+          h('span.list-icon', {}, '🔑'),
+          h('span.list-main', {}, h('code.list-title.cmp-secret-name', { title: name }, name)),
+          h(
+            'span.list-end',
+            {},
+            h('span.cmp-secret-val', { 'aria-hidden': 'true' }, '••••••••'),
+            actionButton(
+              'Remove',
+              `Remove ${name} from the organization`,
+              async () => {
+                if (!confirm(`Remove the computer secret ${name}? Computers keep it until they’re refreshed.`)) return undefined;
+                await factoryFetch('computers', '/secrets', { method: 'PATCH', body: { upsert: [], delete: [name] } });
+                return `${name} removed.`;
+              },
+              out,
+              'danger sm',
+            ),
           ),
         ),
       ),
@@ -279,7 +321,9 @@ function secretsCard() {
 // ---- One computer ------------------------------------------------------------------------------
 
 function detail(id: string, go: (v: View) => void): Section {
-  const head = h('div.cmp-head');
+  const titleEl = h('h3.cmp-title');
+  const badges = h('div.row.cmp-badges');
+  const idEl = h('span.cmp-id', { title: 'Its id in Factory' });
   const facts = h('dl.cmp-facts');
   const out = h('p.cmp-out', { role: 'status' });
   const call = (path: string, init: Parameters<typeof factoryFetch>[2] = { method: 'POST' }) => factoryFetch('computers', `/${encodeURIComponent(id)}${path}`, init);
@@ -293,6 +337,7 @@ function detail(id: string, go: (v: View) => void): Section {
       return (r as { wasRestarted?: boolean }).wasRestarted ? 'Waking it up. It shows as active once it sends its first sample.' : 'It was already running.';
     },
     out,
+    'sm',
   );
   const reboot = actionButton(
     'Reboot',
@@ -303,6 +348,7 @@ function detail(id: string, go: (v: View) => void): Section {
       return 'Rebooting.';
     },
     out,
+    'sm',
   );
   const keepAwake = actionButton(
     'Keep awake',
@@ -312,6 +358,7 @@ function detail(id: string, go: (v: View) => void): Section {
       return `Marked as in use ${r.lastActiveAt ? timeAgo(r.lastActiveAt) : 'just now'}.`;
     },
     out,
+    'sm',
   );
   const refresh = actionButton(
     'Refresh credentials',
@@ -321,6 +368,7 @@ function detail(id: string, go: (v: View) => void): Section {
       return `Refreshed: ${r.configured ?? 0} credential${r.configured === 1 ? '' : 's'} and ${r.secretsConfigured ?? 0} secret${r.secretsConfigured === 1 ? '' : 's'} configured.`;
     },
     out,
+    'sm',
   );
   const deps = actionButton(
     'Retry install deps',
@@ -330,12 +378,14 @@ function detail(id: string, go: (v: View) => void): Section {
       return 'Installing dependencies again. Its steps below show how it goes.';
     },
     out,
+    'sm',
   );
-  const actions = h('div.seg.cmp-actions', {}, wake, reboot, keepAwake, refresh, deps);
+  const actions = h('div.row.wrap.cmp-actions', {}, wake, reboot, keepAwake, refresh, deps);
+  const head = h('div.cmp-head', {}, h('div.row.between.cmp-head-row', {}, h('div.cmp-head-title', {}, titleEl, badges), idEl), actions);
 
   // Rename and remote user.
-  const nameIn = h('input', { type: 'text', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false' }) as HTMLInputElement;
-  const userIn = h('input', { type: 'text', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: 'Remote user' }) as HTMLInputElement;
+  const nameIn = h('input.input', { type: 'text', id: 'cmp-edit-name', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false' }) as HTMLInputElement;
+  const userIn = h('input.input', { type: 'text', id: 'cmp-edit-user', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: 'Remote user' }) as HTMLInputElement;
   const editOut = h('p.cmp-out');
   const saveEdit = actionButton(
     'Save',
@@ -351,11 +401,17 @@ function detail(id: string, go: (v: View) => void): Section {
     },
     editOut,
   );
-  const edit = h('section.cmp-card', {}, h('h3', {}, 'Name and remote user'), h('div.cmp-edit', {}, h('label', {}, 'Name', nameIn), h('label', {}, 'Remote user', userIn), saveEdit), editOut);
+  const edit = h(
+    'section.section',
+    {},
+    h('div.eyebrow', {}, 'Name and remote user'),
+    h('div.cmp-fields.cmp-edit', {}, h('div.field', {}, h('label', { for: 'cmp-edit-name' }, 'Name'), nameIn), h('div.field', {}, h('label', { for: 'cmp-edit-user' }, 'Remote user'), userIn), saveEdit),
+    editOut,
+  );
   let editSeeded = '';
 
   // Deleting takes its name typed out.
-  const confirmIn = h('input', { type: 'text', 'aria-label': 'Type the computer’s name to delete it', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const confirmIn = h('input.input', { type: 'text', 'aria-label': 'Type the computer’s name to delete it', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const delOut = h('p.cmp-out');
   const del = actionButton(
     'Delete',
@@ -369,21 +425,21 @@ function detail(id: string, go: (v: View) => void): Section {
     delOut,
     'danger',
   );
-  const danger = h('section.cmp-card.cmp-danger', {}, h('h3', {}, 'Delete'), h('p.note', {}, ''), h('div.cmp-edit', {}, confirmIn, del), delOut);
-  const dangerNote = danger.querySelector('p.note') as HTMLElement;
+  const dangerNote = h('p.cmp-lede');
+  const danger = h('section.section.cmp-danger', {}, h('div.eyebrow', {}, 'Delete'), dangerNote, h('div.cmp-inline-form.two', {}, confirmIn, del), delOut);
   confirmIn.addEventListener('input', () => (del.disabled = confirmIn.value.trim() !== nameOf()));
 
-  const steps = h('ol.cmp-steps');
-  const stepsCard = h('section.cmp-card', {}, h('h3', {}, 'Provisioning'), steps);
+  const steps = h('ol.list.boxed.cmp-steps');
+  const stepsCard = h('section.section', {}, h('div.eyebrow', {}, 'Provisioning'), steps);
 
   // Metrics over a range Factory keeps (about four days).
   let hours = 24;
   let samples: FactoryMetricSample[] | null = null;
   let samplesError = '';
   let loadedFor = '';
-  const rangeTabs = h('div.os-tabs');
+  const rangeTabs = h('div.seg', { role: 'group', 'aria-label': 'Range' });
   const charts = h('div.cmp-charts');
-  const metricsCard = h('section.cmp-card', {}, h('div.cmp-card-head', {}, h('h3', {}, 'Metrics'), rangeTabs), charts);
+  const metricsCard = h('section.section', {}, h('div.row.between.cmp-section-head', {}, h('div.eyebrow', {}, 'Metrics'), rangeTabs), charts);
   const loadMetrics = async () => {
     const key = `${hours}`;
     loadedFor = key;
@@ -405,10 +461,11 @@ function detail(id: string, go: (v: View) => void): Section {
     rangeTabs.replaceChildren(
       ...RANGES.map(([n, label]) =>
         h(
-          'button.btn',
+          'button.btn.sm',
           {
             type: 'button',
             class: n === hours ? 'on' : '',
+            'aria-pressed': String(n === hours),
             onclick: () => {
               hours = n;
               void loadMetrics();
@@ -418,9 +475,9 @@ function detail(id: string, go: (v: View) => void): Section {
         ),
       ),
     );
-    if (samplesError) return charts.replaceChildren(h('p.cmp-out.bad', {}, `⚠️ ${samplesError}`));
-    if (!samples) return charts.replaceChildren(h('p.note', {}, 'Reading its samples…'));
-    if (!samples.length) return charts.replaceChildren(h('p.note', {}, `No samples in the last ${RANGES.find(([n]) => n === hours)?.[1] ?? `${hours} hours`}: it was asleep the whole time.`));
+    if (samplesError) return charts.replaceChildren(h('p.note.bad', {}, samplesError));
+    if (!samples) return charts.replaceChildren(...[0, 1, 2].map(() => h('div.skeleton.cmp-chart-skeleton', { 'aria-label': 'Reading its samples…' })));
+    if (!samples.length) return charts.replaceChildren(h('p.cmp-muted', {}, `No samples in the last ${RANGES.find(([n]) => n === hours)?.[1] ?? `${hours} hours`}: it was asleep the whole time.`));
     const last = samples[samples.length - 1];
     charts.replaceChildren(
       chart('CPU', samples, (s) => s.cpuPct, `${Math.round(last.cpuPct)}% of ${last.cpuCount} CPU`, hours),
@@ -434,15 +491,20 @@ function detail(id: string, go: (v: View) => void): Section {
     const s = store.factory.computers;
     const c = s.items.find((x) => x.id === id);
     if (!c) {
-      head.replaceChildren(h('p.note', {}, s.fetchedAt ? 'That computer isn’t there any more.' : 'Reading it…'));
+      titleEl.textContent = s.fetchedAt ? 'That computer isn’t there any more.' : 'Reading it…';
+      badges.replaceChildren();
+      idEl.textContent = '';
       for (const n of [facts, actions, edit, danger, stepsCard, metricsCard]) n.classList.add('hidden');
       return;
     }
     for (const n of [facts, actions, edit, danger, stepsCard, metricsCard]) n.classList.remove('hidden');
     const phase = computerPhase(c, s, Date.now());
     const latest = s.metrics[c.id]?.latest;
-    head.replaceChildren(pill(phase), providerTag(c), s.here === c.id ? h('span.cmp-here', {}, 'This machine') : '', h('span.cmp-id', { title: 'Its id in Factory' }, c.id));
-    const fact = (k: string, v: string | Node) => [h('dt', {}, k), h('dd', {}, v)];
+    titleEl.textContent = c.name;
+    titleEl.title = c.name;
+    badges.replaceChildren(pill(phase), providerTag(c), s.here === c.id ? h('span.cmp-tag.here', {}, 'This machine') : '');
+    idEl.textContent = c.id;
+    const fact = (k: string, v: string | Node) => [h('div.cmp-fact', {}, h('dt', {}, k), h('dd', {}, v))];
     facts.replaceChildren(
       ...fact('Status', phase === 'asleep' ? `Asleep${latest ? ` · last seen ${timeAgo(latest.at)}` : ''}` : phase === 'waking' ? 'Waking up' : String(c.status)),
       ...fact('Provider', c.managed ? `${c.providerType} (managed by Factory)` : 'BYOM (your own machine)'),
@@ -471,22 +533,21 @@ function detail(id: string, go: (v: View) => void): Section {
             const state = st.error || st.status === 'failed' || st.status === 'error' ? 'bad' : st.status === 'completed' ? 'ok' : st.startedAt ? 'run' : 'wait';
             const took = st.startedAt ? duration((st.completedAt ?? Date.now()) - st.startedAt) : '';
             return h(
-              'li',
+              'li.list-row.cmp-step',
               { class: state },
-              h('span.mark', {}, state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'run' ? '…' : '○'),
-              h('span.what', {}, st.name),
-              h('span.took', {}, took),
-              st.error ? h('span.why', {}, st.error) : null,
+              h('span.list-icon.mark', {}, state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'run' ? '…' : '○'),
+              h('span.list-main', {}, h('span.list-title', {}, st.name), st.error ? h('span.list-meta.why', {}, st.error) : null),
+              h('span.list-end.took', {}, took),
             );
           })
-        : [h('li.cmp-none', {}, c.managed ? 'Factory hasn’t listed its steps.' : 'A BYOM computer is set up on your own machine.')]),
+        : [h('li.list-row.cmp-muted', {}, h('span.list-main', {}, h('span.list-meta', {}, c.managed ? 'Factory hasn’t listed its steps.' : 'A BYOM computer is set up on your own machine.')))]),
     );
     metricsCard.classList.toggle('hidden', !c.managed);
     // Factory answers 400 for the metrics of a computer that isn't up yet.
     if (c.managed && c.status !== 'active') {
       loadedFor = '';
       rangeTabs.replaceChildren();
-      charts.replaceChildren(h('p.note', {}, c.status === 'error' ? 'No metrics: it didn’t finish provisioning.' : 'Its metrics start once it’s provisioned.'));
+      charts.replaceChildren(h('p.cmp-muted', {}, c.status === 'error' ? 'No metrics: it didn’t finish provisioning.' : 'Its metrics start once it’s provisioned.'));
     } else if (c.managed && !loadedFor) void loadMetrics();
     if (!fetched) {
       fetched = true;
@@ -494,7 +555,7 @@ function detail(id: string, go: (v: View) => void): Section {
       void factoryFetch('computers', `/${encodeURIComponent(id)}`).catch(() => undefined);
     }
   };
-  return { nodes: [head, facts, h('div', {}, actions, out), stepsCard, metricsCard, edit, danger], render };
+  return { nodes: [h('div.stack.loose.cmp-pane-inner', {}, h('div.stack.tight', {}, head, out), facts, stepsCard, metricsCard, edit, danger)], render };
 }
 
 /** One metric over the range as a filled line, broken where it was asleep, with its now and peak over it. */
@@ -522,7 +583,7 @@ function chart(name: string, samples: FactoryMetricSample[], value: (s: FactoryM
   return h(
     'div.cmp-chart',
     {},
-    h('div.cmp-chart-head', {}, h('span.cmp-chart-name', {}, name), h('span.cmp-chart-now', { style: `color:${loadColor(last)}` }, now), h('span.cmp-chart-peak', {}, `peak ${peak}%`)),
+    h('div.cmp-chart-head', {}, h('span.cmp-chart-name', {}, name), h('span.cmp-chart-now', { class: LOAD_TONE[loadColor(last)] ?? 'ok' }, now), h('span.cmp-chart-peak', {}, `peak ${peak}%`)),
     svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': `${name} over the last ${hours} hours` }, ...paths) as unknown as HTMLElement,
     h('div.cmp-chart-axis', {}, h('span', {}, shortTime(start, hours)), h('span', {}, 'now')),
   );
@@ -534,24 +595,25 @@ function newForm(go: (v: View) => void): Section {
   let bulk = false;
   const one = h('button.btn', { type: 'button' }, 'One');
   const several = h('button.btn', { type: 'button' }, 'Several');
+  const field = (label: string, control: HTMLElement, ...after: HTMLElement[]) => h('div.field', {}, h('label', {}, label), control, ...after);
   const floorName =
     (store.floors.find((f) => f.id === store.floor)?.name ?? 'office')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'office';
-  const nameIn = h('input', { type: 'text', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false', value: `${floorName}-computer`.slice(0, NAME_MAX) }) as HTMLInputElement;
-  const prefixIn = h('input', { type: 'text', 'aria-label': 'Name prefix', maxlength: 58, spellcheck: 'false', value: floorName.replace(/^[^a-z]+/, '') || 'droid' }) as HTMLInputElement;
-  const qtyIn = h('input', { type: 'number', 'aria-label': 'How many', min: 1, max: BULK_MAX, value: 2, class: 'cmp-qty' }) as HTMLInputElement;
-  const userIn = h('input', { type: 'text', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: DEFAULT_REMOTE_USER }) as HTMLInputElement;
-  const provider = h('select', { 'aria-label': 'Provider' }) as HTMLSelectElement;
+  const nameIn = h('input.input', { type: 'text', 'aria-label': 'Name', maxlength: NAME_MAX, spellcheck: 'false', value: `${floorName}-computer`.slice(0, NAME_MAX) }) as HTMLInputElement;
+  const prefixIn = h('input.input', { type: 'text', 'aria-label': 'Name prefix', maxlength: 58, spellcheck: 'false', value: floorName.replace(/^[^a-z]+/, '') || 'droid' }) as HTMLInputElement;
+  const qtyIn = h('input.input', { type: 'number', 'aria-label': 'How many', min: 1, max: BULK_MAX, value: 2 }) as HTMLInputElement;
+  const userIn = h('input.input', { type: 'text', 'aria-label': 'Remote user', maxlength: NAME_MAX, spellcheck: 'false', placeholder: DEFAULT_REMOTE_USER }) as HTMLInputElement;
+  const provider = h('select.select', { 'aria-label': 'Provider' }) as HTMLSelectElement;
   const autoDeps = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
-  const single = h('div.cmp-grid', {}, h('label', {}, 'Name', nameIn), h('label', {}, 'Remote user', userIn));
+  const single = h('div.cmp-fields', {}, field('Name', nameIn), field('Remote user', userIn));
   const multi = h(
-    'div.cmp-grid',
+    'div.cmp-fields',
     {},
-    h('label', {}, 'How many', qtyIn),
-    h('label', {}, 'Name prefix', prefixIn),
-    h('p.note.cmp-span', {}, `Up to ${BULK_MAX} at once. Factory names them after the prefix. It’s lower-case letters, digits and hyphens, starting with a letter.`),
+    field('How many', qtyIn),
+    field('Name prefix', prefixIn),
+    h('p.field-hint.cmp-span', {}, `Up to ${BULK_MAX} at once. Factory names them after the prefix. It’s lower-case letters, digits and hyphens, starting with a letter.`),
   );
 
   // The repository picker: what Factory's GitHub app sees, this floor's repository picked to start with.
@@ -560,13 +622,14 @@ function newForm(go: (v: View) => void): Section {
   if (here) picked.add(`https://github.com/${here}`);
   let repos: FactoryRepoChoice[] | null = null;
   let reposError = '';
-  const filter = h('input', { type: 'text', placeholder: 'Find a repository…', 'aria-label': 'Find a repository', spellcheck: 'false' }) as HTMLInputElement;
-  const repoList = h('ul.cmp-repos');
-  const chosen = h('p.note');
+  const filter = h('input.input', { type: 'search', placeholder: 'Find a repository…', 'aria-label': 'Find a repository', spellcheck: 'false' }) as HTMLInputElement;
+  const repoList = h('ul.list.boxed.cmp-repos');
+  const chosen = h('p.field-hint');
+  const muted = (text: string, cls = '') => h('li.list-row.cmp-muted', { class: cls }, h('span.list-main', {}, h('span.list-meta', {}, text)));
   const paintRepos = () => {
     chosen.textContent = picked.size ? `Clones ${[...picked].map((u) => u.replace(/^https:\/\/github\.com\//, '')).join(', ')}` : 'No repositories: it starts empty.';
-    if (reposError) return repoList.replaceChildren(h('li.cmp-none', {}, `⚠️ ${reposError}`));
-    if (!repos) return repoList.replaceChildren(h('li.cmp-none', {}, 'Reading the repositories Factory sees…'));
+    if (reposError) return repoList.replaceChildren(muted(reposError, 'bad'));
+    if (!repos) return repoList.replaceChildren(...[0, 1, 2].map(() => h('li.skeleton.cmp-skeleton', { 'aria-label': 'Reading the repositories Factory sees…' })));
     const q = filter.value.trim().toLowerCase();
     const all = [...repos];
     for (const u of picked) if (!all.some((r) => r.url === u)) all.unshift({ fullName: u.replace(/^https:\/\/github\.com\//, ''), url: u });
@@ -579,10 +642,20 @@ function newForm(go: (v: View) => void): Section {
           else picked.delete(r.url);
           paintRepos();
         });
-        return h('li', {}, h('label', {}, box, h('span', {}, r.fullName), r.isPrivate ? h('span.cmp-private', {}, 'private') : '', here && r.url === `https://github.com/${here}` ? h('span.cmp-here', {}, 'this floor') : ''));
+        return h(
+          'li',
+          {},
+          h(
+            'label.list-row.cmp-repo',
+            {},
+            h('span.list-icon', {}, box),
+            h('span.list-main', {}, h('span.list-title', { title: r.fullName }, r.fullName)),
+            h('span.list-end', {}, r.isPrivate ? h('span.cmp-tag', {}, 'private') : '', here && r.url === `https://github.com/${here}` ? h('span.cmp-tag.here', {}, 'this floor') : ''),
+          ),
+        );
       }),
-      ...(shown.length > 60 ? [h('li.cmp-none', {}, `${shown.length - 60} more: type to find one.`)] : []),
-      ...(!shown.length ? [h('li.cmp-none', {}, 'None match.')] : []),
+      ...(shown.length > 60 ? [muted(`${shown.length - 60} more: type to find one.`)] : []),
+      ...(!shown.length ? [muted('None match.')] : []),
     );
   };
   filter.addEventListener('input', paintRepos);
@@ -625,11 +698,15 @@ function newForm(go: (v: View) => void): Section {
     out,
     'primary',
   );
-  const modeTabs = h('div.os-tabs', {}, one, several);
+  const modeTabs = h('div.seg', { role: 'group', 'aria-label': 'How many' }, one, several);
+  const cancel = h('button.btn.ghost', { type: 'button', onclick: () => go({ kind: 'list' }) }, 'Cancel');
+  const autoDepsToggle = h('label.toggle', {}, autoDeps, h('span.track'), h('span.toggle-text', {}, 'Install dependencies when it’s made', h('small', {}, 'Factory runs each repository’s install step after cloning it.')));
   const setMode = (b: boolean) => {
     bulk = b;
     one.classList.toggle('on', !b);
     several.classList.toggle('on', b);
+    one.setAttribute('aria-pressed', String(!b));
+    several.setAttribute('aria-pressed', String(b));
     single.classList.toggle('hidden', b);
     multi.classList.toggle('hidden', !b);
   };
@@ -644,14 +721,21 @@ function newForm(go: (v: View) => void): Section {
   };
   return {
     nodes: [
-      h('p.note', {}, 'A managed Droid Computer: Factory runs it in the cloud, clones the repositories you pick and installs their dependencies. It sleeps when idle and wakes when it’s used.'),
-      h('div.cmp-card-head', {}, h('h3', {}, 'How many'), modeTabs),
-      single,
-      multi,
-      h('div.cmp-grid', {}, h('label', {}, 'Provider', provider), h('label.cmp-check', {}, autoDeps, ' Install dependencies when it’s made')),
-      h('section.cmp-card', {}, h('h3', {}, 'Repositories'), filter, repoList, chosen),
-      h('div.cmp-submit', {}, out, create),
+      h(
+        'div.stack.loose.cmp-pane-inner',
+        {},
+        h(
+          'div.section',
+          {},
+          h('div.eyebrow', {}, 'New Droid Computer'),
+          h('p.cmp-lede', {}, 'A managed Droid Computer: Factory runs it in the cloud, clones the repositories you pick and installs their dependencies. It sleeps when idle and wakes when it’s used.'),
+        ),
+        h('div.stack', {}, field('How many', modeTabs), single, multi, h('div.cmp-fields', {}, field('Provider', provider)), autoDepsToggle),
+        field('Repositories', filter, repoList, chosen),
+        out,
+      ),
     ],
+    footer: [cancel, create],
     render,
   };
 }
