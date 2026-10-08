@@ -118,16 +118,16 @@ test('sessions: the newest page, with titles cut, and the detail route with cred
 
 test('wiki: the runs, and whether a repository may get one', async () => {
   const f = factory({
-    '/api/v0/wiki': () => json(200, { wikiRuns: [{ wikiRunId: 'w1', repoUrl: 'https://github.com/o/r', status: 'completed', createdAt: '2026-10-01T00:00:00Z', completedAt: 5 }, { nope: 1 }] }),
+    '/api/v0/wiki': () => json(200, { wikiRuns: [{ wikiRunId: 'w1', repoUrl: 'https://github.com/o/r', createdAt: '2026-10-01T00:00:00Z', pageCount: 5 }, { nope: 1 }] }),
     '/api/v0/wiki/upload-access': (url) => json(200, { allowed: url.searchParams.get('repoUrl') === 'https://github.com/o/r' }),
   });
-  const feature = new WikiFeature(host(), () => 3);
+  const feature = new WikiFeature(host(), { now: () => 3 });
   await feature.poll(f.api);
   const s = feature.state();
   assert.equal(s.runs.length, 1);
   assert.equal(s.runs[0].id, 'w1');
   assert.equal(s.runs[0].createdAt, Date.parse('2026-10-01T00:00:00Z'));
-  assert.equal(s.runs[0].updatedAt, 5);
+  assert.equal(s.runs[0].pageCount, 5);
   assert.equal(s.fetchedAt, 3);
   const route = feature.routes[0];
   assert.deepEqual(await route.handle({ api: f.api, query: new URLSearchParams('repoUrl=https://github.com/o/r') } as never), { allowed: true });

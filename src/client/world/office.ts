@@ -50,7 +50,7 @@ import { mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from '
 import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
-import { buildBookshelf } from './bookshelf';
+import { buildBookshelf, type ShelfWiki } from './bookshelf';
 import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
@@ -160,6 +160,8 @@ export interface Office {
   jukebox: JukeboxView;
   /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
   cabinet: CabinetModel;
+  /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
+  setShelfWiki(state: ShelfWiki): void;
   /** The golf tee on the balcony, and the hole across the street it's hit at. */
   tee: Tee;
   green: Green;
@@ -1680,6 +1682,7 @@ export function buildOffice(): Office {
     gong,
     jukebox,
     cabinet,
+    setShelfWiki: shelf.setWiki,
     tee,
     green,
     stack,

@@ -1,3 +1,6 @@
+import type { ServerResponse } from 'node:http';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { FactoryFeatureId, FactoryState } from '../../shared/factory.js';
 import { FactoryError, type FactoryApi } from './api.js';
 
@@ -104,6 +107,36 @@ export abstract class SliceFeature<K extends FactoryFeatureId> implements Factor
 }
 
 // ---- HTTP helpers for routes -------------------------------------------------------------------
+
+/**
+ * A route's answer that isn't JSON: a file for the browser to download (an AutoWiki export), piped
+ * through as it arrives rather than held in memory.
+ */
+export class FactoryDownload {
+  constructor(
+    readonly filename: string,
+    readonly type: string,
+    readonly body: AsyncIterable<Uint8Array> | Uint8Array,
+    readonly size?: number,
+  ) {}
+}
+
+/** Answers with a download: its bytes as they come, the request torn down if they stop coming. */
+export async function sendDownload(res: ServerResponse, d: FactoryDownload): Promise<void> {
+  const name = d.filename.replace(/[^\w.-]+/g, '-').slice(0, 120) || 'download';
+  res.writeHead(200, {
+    'content-type': d.type,
+    'content-disposition': `attachment; filename="${name}"`,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    ...(d.size !== undefined ? { 'content-length': String(d.size) } : {}),
+  });
+  if (d.body instanceof Uint8Array) {
+    res.end(d.body);
+    return;
+  }
+  await pipeline(Readable.from(d.body), res).catch(() => res.destroy());
+}
 
 /** An answer other than 200, with the message the browser shows. */
 export class HttpError extends Error {

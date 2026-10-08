@@ -1,6 +1,7 @@
 import { isDocPath, resolveDocLink, type DocFile, type DocList, type DocText } from '../../shared/docs';
 import { withToken } from '../token';
 import { clip, h, openModal, setDoing, timeAgo, toast } from './dom';
+import { mountWikiTab, type WikiTab } from './factory-wiki';
 import { markdownFile } from './markdown';
 
 // The bookshelf: every Markdown file in the floor's project, to read without leaving the office.
@@ -8,6 +9,7 @@ import { markdownFile } from './markdown';
 // together; a few words narrow it further), ↑ ↓ and Enter open one, and it reads beside the list,
 // rendered as GitHub shows it: links to other docs open them here, pictures come from the project,
 // and the contents menu jumps to a heading. While it's open your character reads an open book.
+// Its AutoWiki tab reads the wiki Factory keeps for the floor's repository (ui/factory-wiki.ts).
 
 const LAST_KEY = 'droid-office.bookshelf';
 
@@ -19,7 +21,13 @@ export interface ShelfDeps {
   blob?: { url: string; site: string };
   /** You turned a page (opened a doc, or scrolled a screenful): the book in your hands turns one too. */
   onTurn(): void;
+  /** Which tab it opens on: the project's docs (the default) or its AutoWiki. */
+  tab?: ShelfTab;
+  /** ⚙️ Settings → Factory, for connecting the office from the AutoWiki tab. */
+  openFactorySettings?: () => void;
 }
+
+export type ShelfTab = 'docs' | 'wiki';
 
 /** A doc that passes the filter: how well, and which letters of its title and path matched. */
 interface Hit {
@@ -110,7 +118,7 @@ function marked(text: string, at: Set<number>): (string | HTMLElement)[] {
 }
 
 /** A heading's anchor, as GitHub makes them: lower case, punctuation dropped, spaces to dashes. */
-function slug(text: string): string {
+export function slug(text: string): string {
   return text
     .trim()
     .toLowerCase()
@@ -140,6 +148,38 @@ function rememberRead(floor: string, path: string) {
   }
 }
 
+/** Gives a rendered page's headings their anchors (GitHub's, numbered when repeated) and fills the contents menu with them. */
+export function anchorHeadings(body: HTMLElement, toc: HTMLSelectElement) {
+  const seen = new Map<string, number>();
+  const heads: { level: number; text: string; anchor: string }[] = [];
+  for (const hd of body.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')) {
+    const base = slug(hd.textContent ?? '');
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    const anchor = n ? `${base}-${n}` : base;
+    hd.dataset.anchor = anchor;
+    const level = Number(hd.tagName[1]);
+    if (level <= 3 && hd.textContent?.trim()) heads.push({ level, text: hd.textContent.trim(), anchor });
+  }
+  toc.replaceChildren(h('option', { value: '' }, '☰ Contents'), ...heads.map((x) => h('option', { value: x.anchor }, `${' '.repeat(x.level - 1)}${clip(x.text, 60)}`)));
+  toc.hidden = heads.length < 3;
+}
+
+/** Scrolls `page` to the heading (or named anchor) `hash` names, or to the top for none. */
+export function jumpTo(page: HTMLElement, hash: string) {
+  if (!hash) return page.scrollTo({ top: 0 });
+  let id = hash;
+  try {
+    id = decodeURIComponent(hash);
+  } catch {
+    // Not encoded after all.
+  }
+  id = id.replace(/^user-content-/, '');
+  const esc = CSS.escape(id);
+  const at = page.querySelector(`[data-anchor="${esc}"]`) ?? page.querySelector(`[data-anchor="${CSS.escape(id.toLowerCase())}"]`) ?? page.querySelector(`[id="${esc}"], [name="${esc}"]`);
+  at?.scrollIntoView({ block: 'start' });
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const r = await fetch(withToken(url), { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
@@ -158,11 +198,16 @@ export function openBookshelf(deps: ShelfDeps) {
   const meta = h('div.bs-meta');
   const toc = h('select.bs-toc', { 'aria-label': 'Jump to a heading', title: 'Jump to a heading' }) as HTMLSelectElement;
   const page = h('div.bs-page', { tabindex: -1 });
+  const tabButton = (tab: ShelfTab, label: string) => h('button.bs-tab', { type: 'button', role: 'tab', 'data-tab': tab, 'aria-selected': 'false' }, label) as HTMLButtonElement;
+  const tabs = { docs: tabButton('docs', '📚 Docs'), wiki: tabButton('wiki', '🏭 AutoWiki') };
+  const docsBody = h('div.body', { role: 'tabpanel' }, h('aside.bs-side', {}, h('div.bs-find', {}, filter), count, list), h('article.bs-reader', {}, h('div.bs-bar', {}, crumbs, meta, toc), page));
+  const wikiBody = h('div.body.bs-wiki', { role: 'tabpanel', hidden: true });
   const el = h(
     'div.modal.bookshelf',
     { role: 'dialog', 'aria-label': 'Bookshelf' },
-    h('header', {}, h('h2', {}, 'Bookshelf', deps.project ? h('span.bs-project', {}, ` · ${deps.project}`) : '')),
-    h('div.body', {}, h('aside.bs-side', {}, h('div.bs-find', {}, filter), count, list), h('article.bs-reader', {}, h('div.bs-bar', {}, crumbs, meta, toc), page)),
+    h('header', {}, h('h2', {}, 'Bookshelf', deps.project ? h('span.bs-project', {}, ` · ${deps.project}`) : ''), h('div.bs-tabs', { role: 'tablist', 'aria-label': 'What to read' }, tabs.docs, tabs.wiki)),
+    docsBody,
+    wikiBody,
   );
   toc.hidden = true;
   page.append(h('div.bs-empty', {}, h('span.spinner')));
@@ -177,7 +222,33 @@ export function openBookshelf(deps: ShelfDeps) {
   /** Where the page was last time it turned (see the scroll listener). */
   let turnedAt = 0;
 
-  const modal = openModal(el, { doing: '📚 at the bookshelf', reading: true });
+  let wiki: WikiTab | undefined;
+  let shownTab: ShelfTab = 'docs';
+  /** What the docs tab last said you were doing, to say again when you come back to it. */
+  let docsDoing = '📚 at the bookshelf';
+  const modal = openModal(el, { doing: docsDoing, reading: true, onClose: () => wiki?.dispose() });
+  const showTab = (tab: ShelfTab) => {
+    shownTab = tab;
+    docsBody.hidden = tab !== 'docs';
+    wikiBody.hidden = tab !== 'wiki';
+    for (const [k, b] of Object.entries(tabs)) b.setAttribute('aria-selected', String(k === tab));
+    if (tab === 'wiki') {
+      wiki ??= mountWikiTab(wikiBody, {
+        floor,
+        onTurn: deps.onTurn,
+        openSettings: deps.openFactorySettings,
+        setDoing: (text) => {
+          if (shownTab === 'wiki') setDoing(modal, text);
+        },
+      });
+      wiki.shown();
+    } else setDoing(modal, docsDoing);
+  };
+  tabs.docs.addEventListener('click', () => {
+    showTab('docs');
+    filter.focus();
+  });
+  tabs.wiki.addEventListener('click', () => showTab('wiki'));
 
   const renderList = () => {
     count.textContent = !files.length ? '' : filter.value.trim() ? `${shown.length} of ${files.length} docs` : `${files.length} doc${files.length === 1 ? '' : 's'}`;
@@ -233,34 +304,11 @@ export function openBookshelf(deps: ShelfDeps) {
     }
   });
 
-  /** Scrolls to the heading (or named anchor) `hash` names in the doc open now. */
-  const jump = (hash: string) => {
-    if (!hash) return page.scrollTo({ top: 0 });
-    let id = hash;
-    try {
-      id = decodeURIComponent(hash);
-    } catch {
-      // Not encoded after all.
-    }
-    id = id.replace(/^user-content-/, '');
-    const esc = CSS.escape(id);
-    const at = page.querySelector(`[data-anchor="${esc}"]`) ?? page.querySelector(`[data-anchor="${CSS.escape(id.toLowerCase())}"]`) ?? page.querySelector(`[id="${esc}"], [name="${esc}"]`);
-    at?.scrollIntoView({ block: 'start' });
-  };
+  const jump = (hash: string) => jumpTo(page, hash);
 
   /** Points the doc's links and pictures at the project: other docs open here, the rest on the forge. */
   const wire = (body: HTMLElement, path: string) => {
-    const seen = new Map<string, number>();
-    const heads: { level: number; text: string; anchor: string }[] = [];
-    for (const hd of body.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')) {
-      const base = slug(hd.textContent ?? '');
-      const n = seen.get(base) ?? 0;
-      seen.set(base, n + 1);
-      const anchor = n ? `${base}-${n}` : base;
-      hd.dataset.anchor = anchor;
-      const level = Number(hd.tagName[1]);
-      if (level <= 3 && hd.textContent?.trim()) heads.push({ level, text: hd.textContent.trim(), anchor });
-    }
+    anchorHeadings(body, toc);
     for (const a of body.querySelectorAll<HTMLAnchorElement>('a[href]')) {
       const to = resolveDocLink(path, a.getAttribute('href') ?? '');
       if (!to) continue;
@@ -279,8 +327,6 @@ export function openBookshelf(deps: ShelfDeps) {
       const to = resolveDocLink(path, img.getAttribute('src') ?? '');
       if (to) img.src = withToken(`/api/docs/picture?${q({ path: to.path })}`);
     }
-    toc.replaceChildren(h('option', { value: '' }, '☰ Contents'), ...heads.map((x) => h('option', { value: x.anchor }, `${' '.repeat(x.level - 1)}${clip(x.text, 60)}`)));
-    toc.hidden = heads.length < 3;
   };
 
   const openDoc = async (path: string, hash = '') => {
@@ -313,7 +359,8 @@ export function openBookshelf(deps: ShelfDeps) {
     turnedAt = 0;
     jump(hash);
     renderList();
-    setDoing(modal, `📚 reading ${info?.title ?? nameOf(path)}`);
+    docsDoing = `📚 reading ${info?.title ?? nameOf(path)}`;
+    if (shownTab === 'docs') setDoing(modal, docsDoing);
     deps.onTurn();
   };
 
@@ -335,7 +382,11 @@ export function openBookshelf(deps: ShelfDeps) {
   });
 
   // A moment later, so the E that opened the shelf isn't typed into the box.
-  setTimeout(() => filter.focus(), 30);
+  if (deps.tab === 'wiki') showTab('wiki');
+  else {
+    showTab('docs');
+    setTimeout(() => filter.focus(), 30);
+  }
   getJson<DocList>(`/api/docs?${q({})}`)
     .then((r) => {
       if (!el.isConnected) return;

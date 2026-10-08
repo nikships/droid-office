@@ -168,6 +168,14 @@ export class FactoryOffice {
     return this.saved && !this.saved.rejected ? this.api : undefined;
   }
 
+  /**
+   * The key itself, while connected and not rejected, for the one child that needs it in its
+   * environment: AutoWiki's `droid exec "/wiki"` (wiki-run.ts), so the run lands in this account.
+   */
+  key(): string | undefined {
+    return this.saved && !this.saved.rejected ? this.saved.key : undefined;
+  }
+
   private makeApi(key: string) {
     return new FactoryApi(key, this.opts.fetchImpl ?? fetch, this.opts.base ?? FACTORY_API);
   }
