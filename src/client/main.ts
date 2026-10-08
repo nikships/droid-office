@@ -1950,15 +1950,10 @@ function showBookshelf() {
   openBookshelf({ floor: store.floor, project: store.project?.name, blob: blobBase(), onTurn: turnPage });
 }
 
-/** When a page last rustled, so a quick scroll through a doc isn't one long rustle. */
-let rustledAt = 0;
 /** You turned a page on the bookshelf: so does the book in your hands, for everyone watching it too. */
 function turnPage() {
   me.turnPage();
   hands.turnPage();
-  const now = performance.now();
-  if (now - rustledAt > 400) sound.paper();
-  rustledAt = now;
 }
 
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
