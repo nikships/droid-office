@@ -7,7 +7,7 @@ import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
-import { glyphFlat } from './glyph3d';
+import { Glove, type HandShape, SHAPES } from './glove';
 import { mesh, toonUnique } from './toon';
 
 export interface HandsInput {
@@ -29,8 +29,6 @@ const CUFF = '#3a3a3a';
 /** Lifting the mug for a sip and lowering it again, in seconds. */
 const SIP_TIME = 1.1;
 
-/** Where the fist holds the gun's grip, in the right hand. */
-const GUN_MOUNT = new THREE.Vector3(0, -0.01, -0.06);
 const lift = new THREE.Vector3();
 const handTurn = new THREE.Quaternion();
 
@@ -39,13 +37,8 @@ interface Arm {
   base: THREE.Vector3;
   baseRot: THREE.Euler;
   side: 1 | -1;
-  /** The steel cuff at the wrist. */
-  cuff: THREE.Mesh;
-  /** The gloved hand: palm, thumb, and on the right hand the pointing finger. */
-  mitten: THREE.Mesh[];
-  finger: THREE.Mesh | null;
-  /** The glove's knuckle guard and the pinwheel on its back. */
-  crew: THREE.Mesh[];
+  /** The glove: palm, fingers and thumb, posed each frame. */
+  glove: Glove;
 }
 
 /**
@@ -93,16 +86,15 @@ export class Hands {
   private smokeT = -1;
   /** The emote your character is doing, and how far into it (see Person.emote). */
   private emoting: { emote: Emote; t: number } | null = null;
-  /** Sticks up out of the right fist for a thumbs up. */
-  private thumbUp: THREE.Mesh;
   /** Your shirt and skin. */
   private shirt: string;
   private skinTone: string;
   /**
    * A .44 Magnum in the right fist (see setGunPose): where the fist holds it, the pivot it spins
-   * round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
+   * round on the trigger finger, the prop and its muzzle flash, the pose it's in, and how far it has
+   * gone over from the fist onto the trigger finger (the pose's `finger`, eased).
    */
-  private gun: { mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
+  private gun: { mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose>; onFinger: number } | null = null;
 
   constructor(shirt: string, skin: string) {
     this.shirt = shirt;
@@ -129,19 +121,14 @@ export class Hands {
     this.mug.quaternion.setFromEuler(this.left.baseRot).invert();
     this.mug.visible = false;
     this.left.group.add(this.mug);
-    // Held between the fingers of the right hand, lit end out past the knuckles.
+    // Between the first two fingers of the right hand, filter on the palm side, lit end up past the knuckles.
     const cig = cigarette();
     this.cig = cig.group;
     this.ember = cig.ember;
-    this.cig.scale.setScalar(0.55);
-    this.cig.rotation.set(0.35, Math.PI + 0.5, 0);
-    this.cig.position.set(-0.035, 0.03, -0.075);
+    this.cig.scale.setScalar(0.45);
+    this.cig.rotation.set(-1.1, 0, 0);
     this.cig.visible = false;
-    this.right.group.add(this.cig);
-    this.thumbUp = mesh(new THREE.CapsuleGeometry(0.027, 0.035, 4, 10), this.glove, -0.035, 0.065, -0.005, false);
-    this.thumbUp.rotation.z = 0.3;
-    this.thumbUp.visible = false;
-    this.right.group.add(this.thumbUp);
+    this.right.glove.twoFingers.add(this.cig);
     // Tipped back, so you look down onto its front.
     this.holder.rotation.x = -0.35;
     this.scene.add(this.holder);
@@ -265,7 +252,6 @@ export class Hands {
   emote(id: EmoteId) {
     const emote = EMOTE_BY_ID.get(id);
     this.emoting = emote ? { emote, t: 0 } : null;
-    this.thumbUp.visible = id === 'thumbs';
   }
 
   /** Raise the mug for a sip, once the right hand is back from the coffee machine. */
@@ -283,7 +269,6 @@ export class Hands {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
-      if (this.right.finger) this.right.finger.visible = true;
       return;
     }
     if (this.gun) {
@@ -291,9 +276,10 @@ export class Hands {
       return;
     }
     const mount = new THREE.Group();
-    mount.position.copy(GUN_MOUNT);
-    // The muzzle down the hand's local -z.
+    // The muzzle down the arm's -z. The glove turns palm in round the grip at once: the gun comes up
+    // out of the holster below the view, and the fist has to fit it from the first frame.
     mount.rotation.y = Math.PI;
+    this.right.glove.shape(pose.finger > 0.5 ? SHAPES.spin : SHAPES.grip, true);
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
     const prop = magnum();
@@ -303,7 +289,7 @@ export class Hands {
     pivot.add(prop);
     mount.add(pivot);
     this.right.group.add(mount);
-    this.gun = { mount, pivot, prop, muzzle, pose };
+    this.gun = { mount, pivot, prop, muzzle, pose, onFinger: pose.finger };
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
@@ -315,31 +301,15 @@ export class Hands {
     const group = new THREE.Group();
     // Sleeve runs from the wrist back past the camera, so its far end is always off screen.
     group.add(mesh(new THREE.CapsuleGeometry(0.058, 0.42, 6, 14).rotateX(Math.PI / 2), this.sleeve, 0, 0, 0.34, false));
-    const cuff = mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.045, 18).rotateX(Math.PI / 2), this.cuffMat, 0, 0, 0.075, false);
-    group.add(cuff);
-    // A Factory work glove: a chunky palm, a thumb on the inside, and a pointing finger on the right hand.
-    const palm = mesh(new THREE.SphereGeometry(0.062, 18, 14), this.glove, 0, 0, 0, false);
-    palm.scale.set(1, 0.78, 1.18);
-    group.add(palm);
-    const thumb = mesh(new THREE.CapsuleGeometry(0.02, 0.03, 4, 10).rotateX(Math.PI / 2), this.glove, -side * 0.05, 0.014, -0.02, false);
-    thumb.rotation.y = side * 0.55;
-    group.add(thumb);
-    const finger = side === 1 ? mesh(new THREE.CapsuleGeometry(0.019, 0.05, 4, 10).rotateX(Math.PI / 2), this.glove, -0.016, 0.022, -0.085, false) : null;
-    if (finger) group.add(finger);
-    // A graphite knuckle guard, and the pinwheel on the back of the hand (the palm's top is y 0.048).
-    const guard = mesh(new THREE.CapsuleGeometry(0.012, 0.062, 3, 8).rotateZ(Math.PI / 2), this.cuffMat, 0, 0.03, -0.048, false);
-    guard.rotation.x = -0.55;
-    group.add(guard);
-    const badge = mesh(glyphFlat(0.046, 4).rotateX(-Math.PI / 2), this.pinwheel, 0, 0.0478, 0.016, false);
-    // Laid along the back of the hand where it starts to slope down to the wrist, toward your eye.
-    badge.rotation.x = 0.2;
-    group.add(badge);
+    group.add(mesh(new THREE.CylinderGeometry(0.06, 0.056, 0.05, 18).rotateX(Math.PI / 2), this.cuffMat, 0, 0, 0.078, false));
+    const glove = new Glove(side, { glove: this.glove, steel: this.cuffMat, pinwheel: this.pinwheel });
+    group.add(glove.group);
     const base = new THREE.Vector3(side * 0.25, -0.185, -0.44);
     const baseRot = new THREE.Euler(0.2, side * 0.22, side * -0.25);
     group.position.copy(base);
     group.rotation.copy(baseRot);
     this.scene.add(group);
-    return { group, base, baseRot, side, cuff, mitten: [palm, thumb, ...(finger ? [finger] : [])], finger, crew: [guard, badge] };
+    return { group, base, baseRot, side, glove };
   }
 
   update(dt: number, t: number, s: HandsInput) {
@@ -437,6 +407,10 @@ export class Hands {
     l.position.y += 0.13 * sip;
     l.position.z += 0.14 * sip;
     l.rotation.x += 0.7 * sip;
+    this.right.glove.shape(this.rightShape(k));
+    this.left.glove.shape(this.leftShape());
+    this.right.glove.update(dt);
+    this.left.glove.update(dt);
     if (this.gun) this.gunStep(dt, r, l);
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.
     if (this.smokeT >= 0) {
@@ -452,6 +426,52 @@ export class Hands {
     if (this.emoting) this.emoteStep(dt, l);
   }
 
+  /** What the right hand is doing with its fingers, by what it holds and what it's up to. */
+  private rightShape(reach: number): HandShape {
+    const g = this.gun;
+    if (g) return g.pose.lift > 0.004 ? SHAPES.catch : g.pose.finger > 0.5 ? SHAPES.spin : SHAPES.grip;
+    const both = this.bothShape();
+    if (both) return both;
+    switch (this.emoting?.emote.id) {
+      case 'wave':
+      case 'facepalm':
+        return SHAPES.open;
+      case 'thumbs':
+        return SHAPES.thumbsUp;
+      case 'clap':
+        return SHAPES.flat;
+      case 'dance':
+        return SHAPES.fist;
+      case 'point':
+        return SHAPES.point;
+    }
+    if (reach > 0.05) return SHAPES.press;
+    if (this.smokeT >= 0) return SHAPES.cigarette;
+    return SHAPES.relaxed;
+  }
+
+  /** What the left hand is doing with its fingers. */
+  private leftShape(): HandShape {
+    const both = this.bothShape();
+    if (both) return both;
+    const g = this.gun;
+    if (g && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.flat;
+    const id = this.emoting?.emote.id;
+    if (id === 'clap') return SHAPES.flat;
+    if (id === 'dance') return SHAPES.fist;
+    if (this.glass?.group.visible) return SHAPES.glass;
+    if (this.mug.visible) return SHAPES.mug;
+    return SHAPES.relaxed;
+  }
+
+  /** Both hands on one thing (a rung, a pole, a card or a book), or null. */
+  private bothShape(): HandShape | null {
+    if (this.ladderK > 0.5) return SHAPES.rung;
+    if (this.poleK > 0.5) return SHAPES.pole;
+    if (this.card.held || this.book) return SHAPES.pinch;
+    return null;
+  }
+
   /**
    * The gun's pose on the hands already placed for this frame. At the ready it's a low, right-hand
    * hip-fire pose; holstered (`out` 0) the hand is down off the bottom of the view, muzzle down.
@@ -460,20 +480,19 @@ export class Hands {
     const g = this.gun!;
     const p = g.pose;
     const down = 1 - p.out;
-    r.position.x += 0.07 + p.x + 0.06 * down;
+    r.position.x += 0.05 + p.x + 0.06 * down;
     r.position.y += -0.035 + p.y - 0.4 * down + p.kick * 0.09;
     r.position.z += -0.06 + p.z + 0.12 * down + p.kick * 0.06;
     // Show the barrel's side above the wrist without stretching the sleeve across the view.
     r.rotation.set(0.25 + p.pitch - 1.1 * down + p.kick * 0.18, 0.3 + p.yaw - 0.25 * down, -0.08 + p.roll);
-    // Spinning on the trigger finger, it turns a little ahead of the fist so the grip clears the glove.
-    g.mount.position.copy(GUN_MOUNT);
-    g.mount.position.y -= 0.012 * p.finger;
-    g.mount.position.z -= 0.035 * p.finger;
+    r.updateMatrixWorld(true);
+    // In the fist round its grip, or hung by its guard on the trigger finger to spin.
+    g.onFinger += (p.finger - g.onFinger) * (1 - Math.exp(-dt * 30));
+    this.right.glove.gunMount(g.onFinger, g.mount.position);
     // Tossed: straight up the screen, whichever way the hand is turned.
     if (p.lift) g.mount.position.add(lift.set(0, p.lift, 0).applyQuaternion(handTurn.copy(r.quaternion).invert()));
     g.pivot.rotation.set(p.spin, p.turn, p.tilt);
     setCylinder(g.prop, p.crane, p.cylinder);
-    if (this.right.finger) this.right.finger.visible = p.finger > 0.5;
     const free = !this.wantsMug && !this.glass;
     if (free) l.position.y -= 0.2 * p.out;
     // The left hand in at the cylinder, swung out, palm against it, sweeping down it to spin it.
@@ -486,6 +505,8 @@ export class Hands {
       l.position.lerp(lift, p.left);
       l.rotation.z += (1.35 - l.rotation.z) * p.left;
       l.rotation.y += (0.35 - l.rotation.y) * p.left;
+      // The forearm comes up from below, so its sleeve doesn't cross the gun.
+      l.rotation.x += (0.75 - l.rotation.x) * p.left;
     }
     g.muzzle.update(dt);
   }
@@ -498,7 +519,6 @@ export class Hands {
     const { seconds, id } = e.emote;
     if (u >= seconds) {
       this.emoting = null;
-      this.thumbUp.visible = false;
       return;
     }
     const k = emoteEnvelope(u, seconds);

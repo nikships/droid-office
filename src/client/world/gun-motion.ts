@@ -218,7 +218,8 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
       [1.6, 'cock'],
     ],
   },
-  // Counter-Strike: brought in to show its left side, rolled right over to show the other, and back.
+  // Counter-Strike: brought in to show its left side, the wrist rolled right over to show the other
+  // (and the back of the glove), and back. The fist never lets go, so it's all wrist: no tilt.
   inspect: {
     seconds: 2.8,
     tracks: {
@@ -228,13 +229,14 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
         [2.42, -0.16],
         [2.8, 0, 'inOut'],
       ],
+      // Up higher while it's rolled over, the gun hanging under the fist.
       y: [
         [0, 0],
         [0.38, 0.1, 'inOut'],
         [1.0, 0.115],
-        [1.45, 0.125],
-        [2.0, 0.11],
-        [2.42, 0.1],
+        [1.5, 0.2, 'inOut'],
+        [1.95, 0.19],
+        [2.42, 0.1, 'inOut'],
         [2.8, 0, 'inOut'],
       ],
       z: [
@@ -265,15 +267,10 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
         [0, 0],
         [0.38, -0.2, 'inOut'],
         [1.0, -0.28],
-        [1.45, 0.2],
-        [2.0, 0.1],
+        [1.5, 2.55, 'inOut'],
+        [1.95, 2.4],
+        [2.4, 0.15, 'inOut'],
         [2.8, 0, 'inOut'],
-      ],
-      tilt: [
-        [1.0, 0],
-        [1.45, Math.PI, 'inOut'],
-        [1.95, Math.PI],
-        [2.35, TAU, 'inOut'],
       ],
     },
     cues: [
