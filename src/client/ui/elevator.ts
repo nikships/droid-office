@@ -5,6 +5,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { floorNo, floorStats } from './floormenu';
+import { emptyState, windowHeader } from './kit';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
@@ -151,10 +152,7 @@ export function openElevator(opts: ElevatorOptions): void {
     const floors = store.floors;
     // Top floor first, the way an elevator's buttons stack, with the roof over them and floor 1 at the bottom.
     floorsEl.classList.toggle('boxed', floors.length > 0);
-    floorsEl.replaceChildren(
-      ...(floors.length ? [roofButton()] : []),
-      ...(floors.length ? floors.map(floorRow).reverse() : [h('div.empty-state', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '🛗'), h('b', {}, 'No floors yet'), h('p', {}, 'Add a project below to make the first one.'))]),
-    );
+    floorsEl.replaceChildren(...(floors.length ? [roofButton()] : []), ...(floors.length ? floors.map(floorRow).reverse() : [emptyState('🛗', 'No floors yet', 'Add a project below to make the first one.')]));
   };
 
   const repoRow = (r: RepoChoice) => {
@@ -308,9 +306,9 @@ export function openElevator(opts: ElevatorOptions): void {
     : 'Every project is a floor. Pick one to ride to.';
   const floorsSection = h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Floors'), floorsEl);
   const el = h(
-    'div.modal.md.elevator',
+    'div.modal.elevator',
     { role: 'dialog', 'aria-label': 'Elevator' },
-    h('header', {}, h('div.titles', {}, h('h2', {}, setup ? 'Welcome to Droid Office' : 'Elevator'), h('p.sub', {}, sub))),
+    windowHeader(setup ? 'Welcome to Droid Office' : 'Elevator', sub),
     h('div.body', {}, h('div.stack.loose', {}, floorsSection, addEl)),
     h('footer', {}, h('span.grow', {}, h('span.key', {}, 'Esc'), setup ? 'look around first' : 'stay here'), addBtn),
   );

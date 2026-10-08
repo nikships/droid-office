@@ -2,6 +2,7 @@ import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
+import { windowHeader } from './kit';
 import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
 import { teamSummary, workersByTeam } from '../../shared/team';
@@ -76,7 +77,7 @@ export function renderCaffeine(caffeine: Caffeine, now: number) {
   $('caffeine-left').textContent = `${Math.ceil(left)}s`;
 }
 
-/** A row of the help sheet: what it does, a line more about it, and its keys ('/' between two that each do it). */
+/** A row of the help sheet: what it does, a line more about it, and its keys ('or' between two that each do it). */
 type HelpRow = [what: string, more: string, keys: string[]];
 
 export function openHelp() {
@@ -88,7 +89,7 @@ export function openHelp() {
         ['Walk', 'Hold Shift to run', ['W', 'A', 'S', 'D']],
         ['Jump', '', ['Space']],
         ['Look around', 'First person: click to capture the mouse, Esc frees it', ['Mouse']],
-        ['Orbit and zoom', 'Third person. Switch views in ⚙️ Settings, in the ☰ menu', ['Drag', '/', 'Wheel']],
+        ['Orbit and zoom', 'Third person. Switch views in ⚙️ Settings, in the ☰ menu', ['Drag', 'or', 'Wheel']],
         ['Next worker that needs you', 'Whoever has waited longest. Arrows at the screen’s edge point to the ones out of sight', ['N']],
         ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the rooftop bar too', ['E']],
       ],
@@ -96,7 +97,7 @@ export function openHelp() {
     [
       'Use things',
       [
-        ['Use what you look at', 'Hire a worker, open its terminal, read a board, call a meeting, play the jukebox, sit down (walk off to get up)', ['Click', '/', 'E']],
+        ['Use what you look at', 'Hire a worker, open its terminal, read a board, call a meeting, play the jukebox, sit down (walk off to get up)', ['Click', 'or', 'E']],
         ['Ask a board agent', 'One stands at the issues board, the PR board and the task queue. E there and type what you want; O opens its terminal, X sends it home', ['E']],
         ['Put back an issue card', 'Pick one up with E on the issues board or in an issue, then E at an empty desk, a worker or the queue', ['Q']],
         ['Hang a picture', 'From the web, on a wall. E at a picture moves, edits or takes it down', ['F']],
@@ -126,7 +127,7 @@ export function openHelp() {
     [
       'Fun',
       [
-        ['Emote', 'Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks', ['G', '/', '1–6']],
+        ['Emote', 'Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks', ['G', 'or', '1–6']],
         ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']],
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['BLOCKFALL', 'The lounge arcade: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
@@ -135,12 +136,12 @@ export function openHelp() {
       ],
     ],
   ];
-  const keys = (ks: string[]) => h('span.help-keys', {}, ...ks.map((k) => (k === '/' ? h('span.help-or', {}, 'or') : h('kbd.key', {}, k))));
+  const keys = (ks: string[]) => h('span.help-keys', {}, ...ks.map((k) => (k === 'or' ? h('span.help-or', {}, 'or') : h('kbd.key', {}, k))));
   const row = ([what, more, ks]: HelpRow) => h('div.group-row.help-row', {}, h('span.group-label', {}, h('b', {}, what), more ? h('small', {}, more) : null), keys(ks));
   const el = h(
     'div.modal.xl.help',
     { role: 'dialog', 'aria-label': 'Controls' },
-    h('header', {}, h('div.titles', {}, h('h2', {}, 'Controls'), h('p.sub', {}, 'Every key in the office, and what it does'))),
+    windowHeader('Controls', 'Every key in the office, and what it does'),
     h(
       'div.body',
       {},

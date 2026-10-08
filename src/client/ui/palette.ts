@@ -1,5 +1,6 @@
 import { rankItems, type PaletteItem, type PaletteMatch } from '../../shared/palette';
 import { h, openModal, type Modal } from './dom';
+import { emptyState } from './kit';
 
 // The command palette (Ctrl+K, ⌘K on a Mac): a few letters find a worker, an issue, a pull request,
 // a board or an action, and Enter opens it the way clicking it in the office does.
@@ -37,7 +38,8 @@ export function togglePalette(entries: () => PaletteEntry[]) {
   });
   input.classList.add('palette-input');
   const list = h('ul.list.palette-list', { id: 'palette-list', role: 'listbox' });
-  const empty = h('div.empty-state.palette-empty', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '🔎'), h('b', {}, 'Nothing here matches that'), h('p', {}, 'Try a worker’s name, an issue number or a board.'));
+  const empty = emptyState('🔎', 'Nothing here matches that', 'Try a worker’s name, an issue number or a board.');
+  empty.classList.add('palette-empty');
   const hintKey = (key: string, what: string) => h('span.palette-hint', {}, h('span.key', {}, key), what);
   const hint = h('footer', {}, h('span.grow.palette-hints', {}, hintKey('↵', 'open'), hintKey('⇧↵', 'walk there first'), hintKey('↑↓', 'choose'), hintKey('Esc', 'close')));
   const el = h('div.modal.palette', { role: 'dialog', 'aria-label': 'Command palette' }, h('div.palette-find', {}, h('span.palette-glass', { 'aria-hidden': 'true' }, '⌕'), input), list, empty, hint);
