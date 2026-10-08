@@ -5,6 +5,7 @@ import { withToken } from '../token';
 import { h, openModal, timeAgo } from './dom';
 import { markdown } from './markdown';
 import { card } from './boards';
+import { emptyState } from './kit';
 
 // The Jira tab of a floor's issue board, read only: every direct child of its epic in To Do, In
 // Progress and Done, and the window behind each card with the ticket's description and comments.
@@ -55,11 +56,11 @@ export function renderJiraBoard(body: HTMLElement, actions: JiraActions) {
   body.replaceChildren();
   if (!st) return;
   if (st.error && !st.items.length) {
-    body.append(h('div.empty-state.board-error', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'), h('b', {}, `Couldn't load ${st.epic} from Jira`), h('p', {}, st.error)));
+    body.append(emptyState('⚠️', `Couldn't load ${st.epic} from Jira`, st.error));
     return;
   }
   if (!st.fetchedAt) {
-    body.append(h('div.empty-state.board-error', {}, h('span.spinner'), h('p', {}, `Loading ${st.epic} from Jira…`)));
+    body.append(h('div.empty-state', {}, h('span.spinner'), h('p', {}, `Loading ${st.epic} from Jira…`)));
     return;
   }
   for (const col of ticketColumns(st.items)) {
@@ -111,10 +112,7 @@ export function openTicket(first: JiraTicket, actions: JiraActions) {
   };
   const render = () => {
     thread.replaceChildren(h('article.gh-card', {}, h('header', {}, h('b', {}, 'Description')), detail ? markdown(detail.description || '_(No description.)_') : h('p.gh-quiet', {}, error ? '' : 'Loading…')));
-    if (error)
-      thread.append(
-        h('div.empty-state.gh-error', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'), h('b', {}, `Couldn't load ${it.key} from Jira`), h('p', {}, error), h('button.btn', { type: 'button', onclick: () => load() }, 'Try again')),
-      );
+    if (error) thread.append(emptyState('⚠️', `Couldn't load ${it.key} from Jira`, error, h('button.btn', { type: 'button', onclick: () => load() }, 'Try again')));
     else if (detail && !detail.comments.length) thread.append(h('p.gh-quiet', {}, 'No comments.'));
     else if (detail) thread.append(...detail.comments.map(commentCard));
   };

@@ -1,6 +1,7 @@
 import type { ServiceInfo, ServicesState } from '../../shared/protocol';
 import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
+import { emptyState } from './kit';
 import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './clipboard';
 
 export function serviceUrl(port: number): string {
@@ -52,13 +53,11 @@ export function openServices() {
     body.replaceChildren(h('p.svc-hint', {}, 'Click one to copy a command that opens it on your computer. Run it in a terminal and the page opens by itself.'));
     if (!s.items.length) {
       body.append(
-        h(
-          'div.empty-state',
-          {},
-          h('span.empty-icon', { 'aria-hidden': 'true' }, '🌐'),
-          h('b', {}, 'Nothing running yet'),
+        emptyState(
+          '🌐',
+          'Nothing running yet',
           h(
-            'p',
+            'span',
             {},
             'When a worker starts a web server (',
             h('code', {}, 'npm run dev'),

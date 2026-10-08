@@ -5,6 +5,7 @@ import { glyphText, h, openModal, timeAgo, STATUS_LABEL } from './dom';
 import { confirmDialog } from './prompt';
 import { promptImages } from './images';
 import { agentPicker, modelBadge } from './models';
+import { emptyState } from './kit';
 import { officeFull } from '../world/machine';
 
 export interface QueueActions {
@@ -182,9 +183,7 @@ export function openQueue(net: Net, actions: QueueActions) {
       section('01', 'Working on it', running),
       section('02', 'Up next', queued),
       section('03', 'Finished', done, h('button.btn.sm.ghost', { type: 'button', onclick: () => net.send({ t: 'queue.clear' }) }, 'Clear')),
-      running.length + queued.length + done.length
-        ? null
-        : h('div.empty-state', {}, h('span.empty-icon', { 'aria-hidden': 'true' }, '📋'), h('b', {}, 'Nothing on the queue yet'), h('p', {}, 'Tasks you add show up here until a worker takes them.')),
+      running.length + queued.length + done.length ? null : emptyState('📋', 'Nothing on the queue yet', 'Tasks you add show up here until a worker takes them.'),
     ];
     list.replaceChildren(...parts.filter((n): n is HTMLElement => n !== null));
   };

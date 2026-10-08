@@ -10,6 +10,7 @@ import { h, openModal, timeAgo, type Modal } from './dom';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
 import { agentPicker } from './models';
+import { emptyState, field, toggle } from './kit';
 
 // The windows behind the board cards. A PR opens on its conversation (description, comments,
 // reviews, line comments, checks) with a Files tab for the diff, where you tick files off as
@@ -149,11 +150,6 @@ function depthOf(depth: number, row: HTMLElement): HTMLElement {
   return row;
 }
 
-/** An on/off option in a dialog, as a toggle with a title and an optional line under it. */
-function toggle(input: HTMLInputElement, title: string, desc?: string, tip?: string) {
-  return h('label.toggle', { title: tip }, input, h('span.track'), h('span.toggle-text', {}, title, desc ? h('small', {}, desc) : null));
-}
-
 function when(iso: string, url?: string) {
   const title = iso ? new Date(iso).toLocaleString() : '';
   return url ? h('a.when', { href: url, target: '_blank', rel: 'noopener noreferrer', title }, timeAgo(iso)) : h('span.when', { title }, timeAgo(iso));
@@ -185,14 +181,9 @@ function spinnerRow(text: string) {
 }
 
 function errorBox(text: string, retry?: () => void) {
-  return h(
-    'div.empty-state.gh-error',
-    {},
-    h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'),
-    h('b', {}, `Couldn't load from ${words().site}`),
-    h('p', {}, text),
-    retry ? h('button.btn', { type: 'button', onclick: retry }, 'Try again') : null,
-  );
+  const box = emptyState('⚠️', `Couldn't load from ${words().site}`, text, retry ? h('button.btn', { type: 'button', onclick: retry }, 'Try again') : undefined);
+  box.classList.add('gh-error');
+  return box;
 }
 
 const CHECK_ICON: Record<GhCheck['state'], string> = { pass: '✅', fail: '❌', pending: '🟡', skip: '⚪' };
@@ -412,8 +403,9 @@ function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: () => vo
   const methodPick = h('select.select', { id: 'merge-method' }, ...methods.map((m) => h('option', { value: m }, methodLabel(m)))) as HTMLSelectElement;
   methodPick.value = method;
   const go = h('button.btn.primary', { type: 'button' });
-  const auto = h('input', { type: 'checkbox', id: 'merge-auto' }) as HTMLInputElement;
-  auto.checked = st.auto && st.cls !== 'ok';
+  const autoToggle = toggle({ label: 'Merge automatically once the requirements pass', id: 'merge-auto', checked: st.auto && st.cls !== 'ok', onChange: () => renderMethods() });
+  autoToggle.title = words().cli === 'glab' ? 'GitLab auto-merge: it merges once its pipeline and merge checks pass' : 'gh pr merge --auto (the repo must allow auto-merge)';
+  const auto = autoToggle.input;
   const renderMethods = () => {
     go.textContent = auto.checked ? 'Merge when ready' : methodLabel(method);
   };
@@ -422,12 +414,14 @@ function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: () => vo
     savePref(MERGE_KEY, { method, deleteBranch });
     renderMethods();
   });
-  auto.addEventListener('change', renderMethods);
-  const del = h('input', { type: 'checkbox', id: 'merge-del' }) as HTMLInputElement;
-  del.checked = deleteBranch;
-  del.addEventListener('change', () => {
-    deleteBranch = del.checked;
-    savePref(MERGE_KEY, { method, deleteBranch });
+  const delToggle = toggle({
+    label: `Delete ${it.headRefName} after merging`,
+    id: 'merge-del',
+    checked: deleteBranch,
+    onChange: (on) => {
+      deleteBranch = on;
+      savePref(MERGE_KEY, { method, deleteBranch });
+    },
   });
   const result = h('div.note.hidden');
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
@@ -446,15 +440,8 @@ function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: () => vo
       h('p.gh-branches', {}, h('code', { title: it.headRefName }, it.headRefName), h('span', { 'aria-hidden': 'true' }, '→'), h('code', { title: it.baseRefName }, it.baseRefName)),
       h('div.note', { class: NOTE_TONE[st.cls] }, st.text),
       d.checks.length ? checksList(d.checks) : null,
-      h('div.field', {}, h('label', { for: 'merge-method' }, 'Merge method'), methodPick),
-      h(
-        'div.stack.tight',
-        {},
-        toggle(del, `Delete ${it.headRefName} after merging`),
-        st.auto
-          ? toggle(auto, 'Merge automatically once the requirements pass', undefined, words().cli === 'glab' ? 'GitLab auto-merge: it merges once its pipeline and merge checks pass' : 'gh pr merge --auto (the repo must allow auto-merge)')
-          : null,
-      ),
+      field('Merge method', methodPick),
+      h('div.stack.tight', {}, delToggle, st.auto ? autoToggle : null),
       result,
     ),
     h('footer', {}, h('span.grow', {}, st.can || conflicted(d) ? null : worker), cancel, conflicted(d) ? worker : go),
@@ -510,8 +497,8 @@ function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net, onClo
     );
     go.textContent = pull ? `Close ${words().pull}` : `Close as ${reason}`;
   };
-  const comment = h('textarea.input', { id: 'close-comment', rows: 4, placeholder: 'Why it is being closed, for the record', 'aria-label': 'Closing comment' }) as HTMLTextAreaElement;
-  const del = h('input', { type: 'checkbox', id: 'close-del' }) as HTMLInputElement;
+  const comment = h('textarea.input', { rows: 4, placeholder: 'Why it is being closed, for the record', 'aria-label': 'Closing comment' }) as HTMLTextAreaElement;
+  const delToggle = pull ? toggle({ label: `Delete ${pull.headRefName} too`, id: 'close-del' }) : null;
   const w = pull && workerForPull(store.workers.values(), pull);
   const result = h('div.note.hidden');
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
@@ -529,8 +516,8 @@ function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net, onClo
       {},
       pull ? h('p.gh-branches', {}, h('code', { title: pull.headRefName }, pull.headRefName), h('span', { 'aria-hidden': 'true' }, '→'), h('code', { title: pull.baseRefName }, pull.baseRefName)) : null,
       pull ? h('div.note.info', {}, `It won't be merged, and can be reopened on ${words().site} later.${w ? ` ${w.name} is still at a desk working on its branch.` : ''}`) : null,
-      pull ? toggle(del, `Delete ${pull.headRefName} too`) : askWhy ? h('div.field', {}, h('label', {}, 'Reason'), reasons) : null,
-      h('div.field', {}, h('label', { for: 'close-comment' }, 'Comment (optional)'), comment),
+      delToggle ?? (askWhy ? h('div.field', {}, h('label', {}, 'Reason'), reasons) : null),
+      field('Comment (optional)', comment),
       result,
     ),
     h('footer', {}, h('span.grow'), cancel, go),
@@ -556,7 +543,7 @@ function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net, onClo
       modal.close();
       onClosed();
     });
-    net.send({ t: 'gh.close', kind, number: it.number, comment: comment.value.trim() || undefined, reason: pull ? undefined : reason, deleteBranch: !!pull && del.checked });
+    net.send({ t: 'gh.close', kind, number: it.number, comment: comment.value.trim() || undefined, reason: pull ? undefined : reason, deleteBranch: !!delToggle?.input.checked });
   });
   setTimeout(() => comment.focus(), 30);
 }

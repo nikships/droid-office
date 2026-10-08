@@ -4,6 +4,7 @@ import type { AgentEffort, GhIssue, GhLabel, GhPull, WorkerInfo } from '../../sh
 import type { Net } from '../net';
 import { store, words, workerForPull } from '../state';
 import { h, openModal, timeAgo } from './dom';
+import { emptyState } from './kit';
 import { labelChip, openIssue, openLabels, openPull } from './pull';
 import type { MeetingPreset } from './meeting';
 import { renderJiraBoard } from './jira';
@@ -342,16 +343,10 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     body.replaceChildren();
     if (st.error && !st.items.length) {
       const w = words();
-      body.append(
-        h(
-          'div.empty-state.board-error',
-          {},
-          h('span.empty-icon', { 'aria-hidden': 'true' }, '⚠️'),
-          h('b', {}, `Couldn't load from ${w.site}`),
-          h('p', {}, st.error),
-          h('p', {}, 'The server runs ', h('code', {}, w.cli), ' in the project directory. Make sure it is installed and signed in (', h('code', {}, `${w.cli} auth login`), ').'),
-        ),
-      );
+      const box = emptyState('⚠️', `Couldn't load from ${w.site}`, st.error);
+      box.classList.add('board-error');
+      box.append(h('p', {}, 'The server runs ', h('code', {}, w.cli), ' in the project directory. Make sure it is installed and signed in (', h('code', {}, `${w.cli} auth login`), ').'));
+      body.append(box);
       return;
     }
     const all = boardLabels(st.items);
