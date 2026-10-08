@@ -737,7 +737,7 @@ function resolveGunShot() {
  * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
  * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
  * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. No menu opens anywhere.
+ * session still running. Shooting it again while it's down confirms the kill. No menu opens anywhere.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const hit = result?.hit;
@@ -770,7 +770,8 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk || w.downedUntil !== undefined) return;
+  if (!v || !w || !desk) return;
+  // A second shot at a body on the floor confirms the kill: the server dismisses it now and the medics come.
   net.send({ t: 'worker.shoot', workerId });
 }
 
@@ -1547,7 +1548,7 @@ function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.downedUntil !== undefined) {
-    const revive = `Walk up to ${w.name} and press E to revive — otherwise`;
+    const revive = `Walk up to ${w.name} and press E to revive, or shoot it again to finish it now — otherwise`;
     return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
   }
   if (w.cloud) return sendCloudHome(net, w);
@@ -2758,8 +2759,13 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
 function casualtyHint(w: WorkerInfo, near: boolean): Hint {
   const seconds = Math.max(0, Math.ceil((w.downedUntil! - store.officeNow()) / 1000));
   return {
-    k: `downed|${w.id}|${seconds}|${near}`,
-    parts: [h('span.title', {}, `🩹 ${w.name} is down`), seconds ? (near ? key('E', 'Revive') : aside('Walk up to the body to revive')) : aside('Medics on their way'), aside(`${seconds}s · then worktree + branch deleted`)],
+    k: `downed|${w.id}|${seconds}|${near}|${gunOut}`,
+    parts: [
+      h('span.title', {}, `🩹 ${w.name} is down`),
+      seconds ? (near ? key('E', 'Revive') : aside('Walk up to the body to revive')) : aside('Medics on their way'),
+      ...(seconds && gunOut ? [aside('Shoot again to finish it now')] : []),
+      aside(`${seconds}s · then worktree + branch deleted`),
+    ],
   };
 }
 

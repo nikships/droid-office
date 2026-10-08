@@ -65,6 +65,8 @@ collect it and its owned worktrees and branches are deleted.
 ### Edge cases
 
 - Multiple bodies have independent deadlines; repeated shots do not extend them.
+- Shooting a body that is already down confirms the kill: the server closes its window at
+  once and dismisses it, and the medics come without waiting out the 30 seconds.
 - Floor switches, disconnects, reloads and server restarts do not cancel deadlines.
 - Revival at or after the deadline is refused; collected bodies cannot be revived.
 - Weird positions (meeting table, beanbag, mid-arrival, upstairs floors):

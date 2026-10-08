@@ -50,7 +50,7 @@ function spawn(workers: WorkerManager, desk = 'desk-1', worktree = false) {
   return info;
 }
 
-test('shoot persists an exact 30-second deadline without stopping the session; duplicates do not extend it', (t) => {
+test('shoot persists an exact 30-second deadline without stopping the session, then dismisses at it', (t) => {
   const f = fixture(t);
   const workers = f.manager();
   const w = spawn(workers);
@@ -63,15 +63,41 @@ test('shoot persists an exact 30-second deadline without stopping the session; d
   assert.equal(f.saved()[0].downedUntil, until);
   assert.equal(f.updates.at(-1)?.downedUntil, until);
   t.mock.timers.tick(REVIVE_MS - 1);
-  const count = f.updates.length;
-  assert.equal(workers.shoot(w.id), undefined);
-  assert.equal(w.downedUntil, until);
-  assert.equal(f.updates.length, count);
   assert.ok(workers.get(w.id));
   t.mock.timers.tick(1);
   assert.equal(workers.get(w.id), undefined);
   assert.deepEqual(f.removed, [w.id]);
   assert.deepEqual(f.saved(), []);
+});
+
+test('a second shot confirms the kill: dismissed at once with its worktree and branch, other bodies untouched', async (t) => {
+  const f = fixture(t);
+  const workers = f.manager();
+  const w = spawn(workers, 'desk-1', true);
+  const other = spawn(workers, 'desk-2');
+  const branch = w.worktree!.branch;
+  const cwd = path.join(f.dir, w.worktree!.path);
+  writeFileSync(path.join(cwd, 'dirty.txt'), 'discard me');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  workers.shoot(w.id);
+  workers.shoot(other.id);
+  const otherUntil = other.downedUntil;
+  t.mock.timers.tick(1000);
+  assert.equal(workers.shoot(w.id), undefined);
+  assert.equal(workers.get(w.id), undefined);
+  assert.deepEqual(f.removed, [w.id]);
+  assert.equal(workers.shoot(w.id), 'No such worker');
+  // The dismissal's worktree cleanup runs after the worker is gone, and toasts when it's done.
+  t.mock.timers.reset();
+  for (let i = 0; i < 250 && !f.toasts.length; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(existsSync(cwd), false);
+  assert.equal(git(f.dir, 'branch', '--list', branch), '');
+  assert.equal(other.downedUntil, otherUntil);
+  assert.ok(workers.get(other.id));
+  assert.deepEqual(
+    f.saved().map((x) => x.id),
+    [other.id],
+  );
 });
 
 test('kill before the deadline rejects every cleanup option and preserves the worker and dismissal timer', async (t) => {
