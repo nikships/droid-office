@@ -726,13 +726,20 @@ export class WorkerManager {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
-  /** Down a worker without interrupting its session. Repeated shots never extend the grace period. */
+  /**
+   * Down a worker without interrupting its session. A shot at a worker already down confirms the
+   * kill: its revival window closes now and it is dismissed as if the deadline had passed.
+   */
   shoot(id: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (this.closing) return 'The office is closing';
     if (w.info.downedUntil !== undefined) {
-      if (w.info.downedUntil <= Date.now()) this.dismiss(w);
+      clearTimeout(w.downedTimer);
+      w.downedTimer = undefined;
+      // kill() refuses while the deadline is still ahead; closing it here is what lets it through.
+      w.info.downedUntil = Math.min(w.info.downedUntil, Date.now());
+      this.dismiss(w);
       return undefined;
     }
     w.info.downedUntil = Date.now() + WORKER_REVIVE_MS;

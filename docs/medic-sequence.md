@@ -4,8 +4,9 @@ The casualty presentation runs in the browser scene.
 `src/client/world/casualties.ts` handles visuals and sound callbacks. `worker.shoot` starts a
 server-owned, persisted 30-second revival deadline without stopping the worker or its PTY.
 There is no confirmation dialog: walking within 2.4 metres of the body and pressing E sends
-`worker.revive`, restoring it to its seat with its session untouched. If the deadline expires,
-the server dismisses the worker and deletes its owned worktrees and branches, even with
+`worker.revive`, restoring it to its seat with its session untouched. Another `worker.shoot` at
+a downed worker confirms the kill and closes the window at once. When the deadline expires or
+the kill is confirmed, the server dismisses the worker and deletes its owned worktrees and branches, even with
 uncommitted or unpublished work. Collection starts when that worker's removal arrives.
 Every client on the floor renders the downed state and the medic sequence.
 Each body has its own scene, so several can be down at once. The worker tumbles sideways
