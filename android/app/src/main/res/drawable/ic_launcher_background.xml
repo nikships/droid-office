@@ -21,8 +21,4 @@
             </gradient>
         </aapt:attr>
     </path>
-    <!-- A hairline horizon, like a desk edge catching the light. -->
-    <path
-        android:fillColor="#33EE6018"
-        android:pathData="M18,80.5h72v0.75h-72z" />
 </vector>
