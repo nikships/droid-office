@@ -8,7 +8,7 @@ import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { mountTranscript } from './factory-transcript';
 import { promptImages } from './images';
-import { groupRow, toggle } from './kit';
+import { colorDot, groupRow, toggle } from './kit';
 import { modelBadge } from './models';
 import { sendHint } from './prompt';
 
@@ -166,8 +166,7 @@ export function openCloudWindow(net: Net, workerId: string) {
   const info = store.workers.get(workerId);
   if (!info?.cloud) return;
 
-  const dot = h('span.dot');
-  dot.style.background = info.color;
+  const dot = colorDot(info.color);
   const title = h('h2', {});
   const pill = h('span.pill', {});
   const link = info.sessionId ? h('a.btn.sm', { href: cloudSessionUrl(info.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Its session in the Factory web app' }, 'Open in Factory ↗') : null;

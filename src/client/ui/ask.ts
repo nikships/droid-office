@@ -1,6 +1,7 @@
 import type { AgentEffort, WorkerStatus } from '../../shared/protocol';
 import { h, openModal, STATUS_LABEL } from './dom';
 import { promptImages } from './images';
+import { colorDot } from './kit';
 import { agentPicker, type AgentFields } from './models';
 import { pictureHint, repoPicker, sendHint, worktreeRow } from './prompt';
 
@@ -69,8 +70,7 @@ export function openAsk(opts: AskOptions) {
   };
   if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New worker · ${opts.newDesk}`));
   for (const w of opts.workers) {
-    const dot = h('span.dot');
-    dot.style.background = w.color;
+    const dot = colorDot(w.color);
     choices.append(h('button.btn', { type: 'button', 'data-to': w.id, title: `Type it into ${w.name}'s prompt`, onclick: () => pick(w.id) }, dot, w.name, h('small', {}, STATUS_LABEL[w.status] ?? w.status)));
   }
 
