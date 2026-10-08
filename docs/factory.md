@@ -45,11 +45,8 @@ How the API behaves, and what the office does about it:
 | `src/server/factory/feature.ts` | The contract: `FactoryFeature`, `FeatureHost`, `FactoryRoute`, `FactoryRequest`, the `SliceFeature` base class and the route helpers. |
 | `src/server/factory/registry.ts` | `FactoryRegistry`: runs the pollers, keeps the watches, broadcasts, dispatches routes. |
 | `src/server/factory/index.ts` | `mountFactory`: makes the connection and the registry, registers every feature, handles the `factory.*` messages. server.ts calls only this. |
-<<<<<<< HEAD
-| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts`, `ci.ts`, `wiki.ts`, `cloud.ts`. |
-=======
-| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts`. |
->>>>>>> 1e714c1 (feat: Droid sessions and credits on the lounge TV and in a Sessions window)
+| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts`, `cloud.ts`. |
+| `src/server/factory/new-session.ts` | `whileNew`: a write to a session made in the last 30 seconds tries again after a 404 (see [Droid sessions](#droid-sessions)). |
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
 | `src/client/factory.ts` | `factoryFetch`, `watchFactory`, `refreshFactory`, `onFactorySetup`. `store.factory` (topic `'factory'`) in `src/client/state.ts` holds the state. |
@@ -178,12 +175,20 @@ The Computers window (`src/client/ui/factory-computers.ts`) is E at the wall, �
 | `POST /:id/interrupt` | | `{status}` |
 | `GET /:id/children` | | `{sessions}`: its Task subagents |
 
+**Just-made sessions.** Factory 404s a session it has just made for a few seconds. Polls wait that out (a 404 for a session the office hasn't read yet waits 15 minutes in the Sessions feature, and a cloud worker's counts as gone only once it was read before or is 3 minutes old, `NEW_SESSION_GRACE_MS`). Writes and the routes' own reads go through `whileNew` (`new-session.ts`): for a session made in the last 30 seconds (`NEW_SESSION_MS`; by the office's clock when it made it, else its worker's `createdAt`, else Factory's `createdAt`), a 404 is tried again after 1, 2, 3 and 4 seconds before it counts. That covers changing its settings, its first and later messages, interrupting, `GET /:id` and deleting, in the Sessions routes and for cloud workers (their messages, Interrupt and sending one home). A 404 on deleting an older session means it's gone already, which is what was asked; on a just-made one that never turned up, the Sessions route answers 409 and asks to try again. The transcript shows "Starting…" rather than an error while a just-made session 404s (`starting` in `mountTranscript`), and tries again every few seconds.
+
 Settings take the API's values (`SESSION_EFFORTS`, `SESSION_MODES`, `SESSION_AUTONOMY`); anything else is a 400. A message is `FactoryMessage {id, role, createdAt, seq?, blocks, isError?, model?}`, its `blocks` cut down by `messageOf`: `text`, `thinking`, `tool_use {id, name, input}`, `tool_result {toolUseId, text, isError, images?}`, `image {mediaType, data?}` (no `data` past 1.5 MB of base64) and `document {name}`; long text and outputs are cut, with a note. `sessionWebUrl(id)` is the session in the Factory web app (`https://app.factory.ai/sessions/<id>`, the pattern droid's own share command prints).
 
 **The transcript component** (`src/client/ui/factory-transcript.ts`), for any window that shows a session:
 
 ```ts
-const t = mountTranscript({ sessionId, live: () => isLive(session), pageSize: 30 });
+const t = mountTranscript({
+  sessionId,
+  live: () => isLive(session), // reads the newest every 3 s while it runs
+  starting: () => justMade(session), // a 404 reads "Starting…" and is tried again
+  empty: () => 'Waiting for a prompt', // with no messages (default "No messages yet")
+  pageSize: 30,
+});
 pane.append(t.element); // a scrolling flex column: give it room to grow
 await t.refresh();      // read the newest now and follow the bottom, after sending a message say
 t.dispose();            // when the window closes

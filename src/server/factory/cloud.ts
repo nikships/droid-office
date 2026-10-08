@@ -4,9 +4,12 @@ import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.
 import { isAgentEffort } from '../../shared/protocol.js';
 import type { CloudWorkers } from '../cloud-workers.js';
 import { fallbackTask } from '../tasks.js';
+import { NEW_SESSION_GRACE_MS } from '../../shared/factory-sessions.js';
 import { FactoryError, type FactoryApi } from './api.js';
 import { HttpError, SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
+import { alreadyGone, whileNew, type NewSessionOptions } from './new-session.js';
 import type { FactoryRegistry } from './registry.js';
+import type { SessionsFeature } from './sessions.js';
 
 // Cloud workers (docs/factory.md): office workers whose Droid session runs on one of the account's
 // Factory computers. Hiring makes the session (POST /sessions) and sends the first prompt as its
@@ -22,8 +25,6 @@ const TAIL = 8;
 const MAX_IMAGES = 10;
 const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
-/** Factory 404s a session it just made for a moment: this long before one counts as really gone. */
-const NEW_SESSION_GRACE_MS = 3 * 60_000;
 
 const clip = (s: string, n: number) => {
   const one = s.replace(/\s+/g, ' ').trim();
@@ -48,6 +49,10 @@ export interface CloudOptions {
   /** A toast for everyone on one floor. */
   toast(floorId: string, text: string, level?: 'info' | 'warn' | 'error'): void;
   now?: () => number;
+  /** How a write to a just-made session tries again after a 404 (new-session.ts); for tests. */
+  retry?: Omit<NewSessionOptions, 'now'>;
+  /** A worker's session was deleted as it went home: the Sessions feature drops it (SessionsFeature.forget). */
+  sessionDeleted?(sessionId: string): void;
 }
 
 type Session = { status?: unknown; messageCount?: unknown; updatedAt?: unknown; title?: unknown; sessionSettings?: { model?: unknown; reasoningEffort?: unknown } };
@@ -91,7 +96,8 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       handle: async ({ api, params }) => {
         const found = this.find(params.id);
         if (!found?.info.sessionId) throw notFound('No such cloud worker');
-        await api.post(`/sessions/${encodeURIComponent(found.info.sessionId)}/interrupt`, {});
+        const sid = found.info.sessionId;
+        await this.whileNew(found.info, () => api.post(`/sessions/${encodeURIComponent(sid)}/interrupt`, {}));
         this.recheck(found.info.id);
         return { ok: true };
       },
@@ -118,6 +124,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   busy(): boolean {
     for (const f of this.opts.floors()) for (const w of f.cloud.list()) if (w.status === 'working' || w.status === 'starting') return true;
     return false;
+  }
+
+  /** `call` on a worker's session, tried again for a while when it 404s because the session was only just made. */
+  private whileNew<T>(info: WorkerInfo, call: () => Promise<T>): Promise<T> {
+    return whileNew(info.createdAt, call, { now: this.now, ...this.opts.retry });
   }
 
   /** Reads a worker's session on the next poll, which comes right away. */
@@ -218,7 +229,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     });
     floor.cloud.setStatus(id, 'working');
     try {
-      const r = await api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: message, ...(pictures.length ? { images: pictures } : {}) });
+      const r = await this.whileNew(info, () => api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: message, ...(pictures.length ? { images: pictures } : {}) }));
       if (r?.status === 'running' || r?.status === 'pending')
         floor.cloud.update(id, (_, w) => {
           w.turn = { ...w.turn, seenBusy: true };
@@ -252,12 +263,15 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const api = this.host.api();
     if (!api) return { error: `☁ The office isn't connected to Factory, so ${info.name}'s session ${deleteSession ? 'is still there' : 'keeps going'} on ${info.cloud?.computerName ?? 'Factory'}` };
     const path = `/sessions/${encodeURIComponent(sid)}`;
+    const asked = this.now();
     try {
-      if (busy) await api.post(`${path}/interrupt`, {});
-      if (deleteSession) await api.delete(path);
+      if (busy) await this.whileNew(info, () => api.post(`${path}/interrupt`, {}));
+      if (deleteSession) await this.whileNew(info, () => api.delete(path));
     } catch (err) {
-      if (!(err instanceof FactoryError && err.status === 404)) return { error: `☁ ${info.name}'s session: ${(err as Error).message}` };
+      // A 404 for a session past its first moments: it's gone already, which is what was wanted.
+      if (!alreadyGone(err, info.createdAt, asked)) return { error: `☁ ${info.name}'s session: ${(err as Error).message}` };
     }
+    if (deleteSession) this.opts.sessionDeleted?.(sid);
     if (deleteSession) return { note: `🗑️ ${info.name}'s Factory session was deleted` };
     return { note: `☁ ${info.name}'s session was stopped; it stays in Factory's sessions` };
   }
@@ -390,7 +404,14 @@ export interface CloudMessageContext {
  * calls for a ws message about one. Returns undefined when `workerId` isn't a cloud worker's.
  */
 export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, 'computers'>) {
-  const feature = registry.register((host) => new CloudFeature(host, { ...opts, computers: () => registry.feature('computers')?.state() })) as CloudFeature;
+  const feature = registry.register(
+    (host) =>
+      new CloudFeature(host, {
+        ...opts,
+        computers: () => registry.feature('computers')?.state(),
+        sessionDeleted: (id) => (registry.feature('sessions') as SessionsFeature | undefined)?.forget(id),
+      }),
+  ) as CloudFeature;
 
   /** Handles a message about a cloud worker; false when it isn't one. */
   const message = (msg: WorkerMsg, ctx: CloudMessageContext): boolean => {

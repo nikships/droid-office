@@ -1,10 +1,12 @@
 import { canHost, cloudBadge, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
+import { NEW_SESSION_GRACE_MS, creditsNote } from '../../shared/factory-sessions';
 import { statusWord } from '../../shared/guests';
 import type { AgentEffort, WorkerInfo } from '../../shared/protocol';
 import { factoryFetch, watchFactory } from '../factory';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast, type Modal } from './dom';
+import { mountTranscript } from './factory-transcript';
 import { promptImages } from './images';
 import { modelBadge } from './models';
 
@@ -152,9 +154,10 @@ export function openCloudFor(): string | null {
 }
 
 /**
- * A cloud worker's window: where it runs and what it's doing, its session in Factory's web app, and a
- * prompt box (Enter sends, Shift+Enter is a new line, pictures pasted or dropped) with Interrupt while
- * it works. The office reads its session quickly while this is open.
+ * A cloud worker's window: where it runs, its session's transcript (factory-transcript.ts, read live
+ * while it works), its session in Factory's web app, and a prompt box (Enter sends, Shift+Enter is a
+ * new line, pictures pasted or dropped) with Interrupt while it works. The office reads its session
+ * quickly while this is open.
  */
 export function openCloudWindow(net: Net, workerId: string) {
   if (current?.workerId === workerId) return;
@@ -168,16 +171,37 @@ export function openCloudWindow(net: Net, workerId: string) {
   const link = info.sessionId ? h('a.btn', { href: cloudSessionUrl(info.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Its session in the Factory web app' }, 'Open in Factory ↗') : null;
   const closeBtn = h('button.btn.close', { title: 'Close (Esc)', 'aria-label': 'Close' }, '✕');
   const meta = h('div.cloud-meta');
-  const doing = h('p.cloud-doing');
-  const task = h('p.cloud-task');
-  const error = h('p.setting-note.bad.hidden', { role: 'alert' });
-  const transcript = h('div.cloud-transcript', {}, doing, task, error);
+  const error = h('p.cloud-error.setting-note.bad.hidden', { role: 'alert' });
+  const worker = () => store.workers.get(workerId);
+  const busyNow = () => {
+    const s = worker()?.status;
+    return s === 'working' || s === 'starting';
+  };
+  const transcript = info.sessionId
+    ? mountTranscript({
+        sessionId: info.sessionId,
+        live: busyNow,
+        starting: () => {
+          const w = worker();
+          return !!w && (w.status === 'starting' || Date.now() - w.createdAt < NEW_SESSION_GRACE_MS);
+        },
+        empty: () => (worker()?.status === 'starting' ? 'Starting… sending its first prompt' : 'Waiting for a prompt'),
+      })
+    : null;
   const ta = h('textarea', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;
   const images = promptImages(ta);
   const interrupt = h('button.btn', { type: 'button', title: 'Stop what it is doing now' }, '⏹ Interrupt');
   const send = h('button.btn.primary', { type: 'submit' }, 'Send');
   const form = h('form.cloud-prompt', {}, ta, images.element, h('div.cloud-actions', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line · paste or drop pictures'), interrupt, send)) as HTMLFormElement;
-  const el = h('div.modal.term.cloud-win', { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` }, h('header', {}, dot, title, pill, link, closeBtn), meta, transcript, form);
+  const el = h(
+    'div.modal.term.cloud-win',
+    { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` },
+    h('header', {}, dot, title, pill, link, closeBtn),
+    meta,
+    error,
+    transcript?.element ?? h('div.ft', {}, h('div.ft-status', {}, 'It has no Factory session')),
+    form,
+  );
 
   const refresh = () => {
     const w = store.workers.get(workerId);
@@ -185,10 +209,8 @@ export function openCloudWindow(net: Net, workerId: string) {
     title.textContent = [`☁ ${w.name}`, w.title].filter(Boolean).join(' · ');
     pill.className = `pill ${w.status}`;
     pill.textContent = statusWord(w, STATUS_LABEL);
-    meta.textContent = `${cloudLine(w)} · autonomy ${w.cloud.autonomy}`;
-    const busy = w.status === 'working' || w.status === 'starting';
-    doing.textContent = w.activity ? `${busy ? '⚙️' : '💬'} ${w.activity}` : busy ? '⚙️ Working…' : 'Waiting for a prompt';
-    task.textContent = w.task?.summary && w.task.summary !== w.activity ? w.task.summary : '';
+    meta.textContent = [cloudLine(w), `autonomy ${w.cloud.autonomy}`, creditsNote(store.factory.sessions, w.sessionId)].filter(Boolean).join(' · ');
+    const busy = busyNow();
     error.textContent = w.cloud.error ? `☁ ${w.name} can't work: ${w.cloud.error}. Send it home and hire another.` : '';
     error.classList.toggle('hidden', !w.cloud.error);
     interrupt.toggleAttribute('disabled', !busy);
@@ -202,6 +224,7 @@ export function openCloudWindow(net: Net, workerId: string) {
     const ids = images.take();
     net.send({ t: 'worker.prompt', workerId, prompt: text, images: ids.length ? ids : undefined });
     ta.value = '';
+    void transcript?.refresh();
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -215,14 +238,17 @@ export function openCloudWindow(net: Net, workerId: string) {
   });
   interrupt.addEventListener('click', () => {
     interrupt.toggleAttribute('disabled', true);
-    factoryFetch('cloud', `/${encodeURIComponent(workerId)}/interrupt`, { method: 'POST' }).catch((err: Error) => {
-      toast(`☁ Couldn't interrupt ${info.name}: ${err.message}`, 'warn');
-      refresh();
-    });
+    factoryFetch('cloud', `/${encodeURIComponent(workerId)}/interrupt`, { method: 'POST' })
+      .then(() => transcript?.refresh())
+      .catch((err: Error) => {
+        toast(`☁ Couldn't interrupt ${info.name}: ${err.message}`, 'warn');
+        refresh();
+      });
   });
   closeBtn.addEventListener('click', () => modal.close());
 
   const unsub = store.on('workers', refresh);
+  const unsubCredits = store.on('factory', refresh);
   const unwatch = watchFactory('cloud');
   net.send({ t: 'worker.attach', workerId });
   const modal = openModal(el, {
@@ -230,7 +256,9 @@ export function openCloudWindow(net: Net, workerId: string) {
     doing: `☁ in ${info.name}'s window`,
     onClose: () => {
       unsub();
+      unsubCredits();
       unwatch();
+      transcript?.dispose();
       images.discard();
       net.send({ t: 'worker.detach', workerId });
       if (current?.modal === modal) current = null;

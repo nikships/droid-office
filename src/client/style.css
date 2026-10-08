@@ -398,10 +398,8 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal.term.cloud-win { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); background: var(--surface); }
 .cloud-win header a.btn { text-decoration: none; }
 .cloud-meta { padding: 6px 14px; border-bottom: 1px solid var(--border); font: 500 12px/1.4 var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
-.cloud-transcript { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
-.cloud-doing { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
-.cloud-task { margin: 8px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
-.cloud-task:empty { display: none; }
+.cloud-error { margin: 0; padding: 8px 14px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.cloud-win .ft { min-height: 0; border-top: 0; }
 .cloud-prompt { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
 .cloud-prompt textarea { width: 100%; resize: vertical; }
 .cloud-actions { display: flex; align-items: center; gap: 8px; }

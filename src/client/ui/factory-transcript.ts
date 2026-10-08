@@ -1,5 +1,5 @@
 import { mergeMessages, resultsByCall, toolLine, type FactoryBlock, type FactoryMessage } from '../../shared/factory-sessions';
-import { factoryFetch } from '../factory';
+import { FactoryFetchError, factoryFetch } from '../factory';
 import { h } from './dom';
 import { markdown } from './markdown';
 
@@ -15,6 +15,13 @@ export interface TranscriptOptions {
   live?: () => boolean;
   /** Messages per page (1-100). */
   pageSize?: number;
+  /**
+   * Whether the session was only just made: Factory 404s one for a few seconds, so while this says so
+   * a 404 reads as starting (and is tried again every few seconds) instead of an error.
+   */
+  starting?: () => boolean;
+  /** What to say while it has no messages (default "No messages yet"). Read at every paint. */
+  empty?: () => string;
 }
 
 export interface Transcript {
@@ -143,12 +150,20 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
       at = next;
     }
     older.classList.toggle('hidden', !hasMore);
-    status.textContent = messages.length ? '' : 'No messages yet';
+    status.textContent = messages.length ? '' : (opts.empty?.() ?? 'No messages yet');
     status.classList.remove('error');
     if (stick) element.scrollTop = element.scrollHeight;
   };
 
+  /** The last read was a just-made session's 404: read again at the next tick, live or not. */
+  let unborn = false;
   const fail = (err: unknown) => {
+    unborn = err instanceof FactoryFetchError && err.status === 404 && !messages.length && !!opts.starting?.();
+    if (unborn) {
+      status.textContent = 'Starting… Factory is getting the session ready';
+      status.classList.remove('error');
+      return;
+    }
     status.textContent = `Couldn’t read the transcript: ${(err as Error).message}`;
     status.classList.add('error');
   };
@@ -158,6 +173,7 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
     const stick = !messages.length || atBottom();
     const page = await factoryFetch<Page>('sessions', path, { query: { limit } });
     if (disposed) return;
+    unborn = false;
     const known = new Set(messages.map((m) => m.id));
     if (!messages.length || !page.messages.some((m) => known.has(m.id))) {
       messages = page.messages;
@@ -204,7 +220,7 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
   const tick = () => {
     if (disposed) return;
     const live = opts.live?.() ?? false;
-    if ((live || wasLive) && !document.hidden) void refresh();
+    if ((live || wasLive || unborn) && !document.hidden) void refresh();
     wasLive = live;
     timer = setTimeout(tick, LIVE_MS);
   };

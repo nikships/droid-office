@@ -413,7 +413,10 @@ export async function startServer(cfg: Config) {
     },
     // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
     // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
-    officeSessions: () => [...floors.values()].flatMap((f) => f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working' }] : []))),
+    officeSessions: () =>
+      [...floors.values()].flatMap((f) =>
+        f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working', createdAt: w.createdAt }] : [])),
+      ),
   });
   const cloud = factory.cloud!;
 

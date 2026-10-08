@@ -64,7 +64,18 @@ function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: s
   let now = 1_000_000;
   const host: FeatureHost = { changed: () => {}, pollSoon: () => polls++, api: () => f.api, toast: () => {} };
   const computers = opts.computers ?? (() => computersState());
-  const feature = new CloudFeature(host, { floors: () => [floor], agentArgs: opts.agentArgs ?? [], computers, toast: (_, text) => toasts.push(text), now: () => now });
+  const sleeps: number[] = [];
+  const retry = { sleep: async (ms: number) => void sleeps.push(ms) };
+  const forgotten: string[] = [];
+  const feature = new CloudFeature(host, {
+    floors: () => [floor],
+    agentArgs: opts.agentArgs ?? [],
+    computers,
+    toast: (_, text) => toasts.push(text),
+    now: () => now,
+    retry,
+    sessionDeleted: (id) => forgotten.push(id),
+  });
   return {
     dir,
     cloud,
@@ -73,6 +84,8 @@ function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: s
     updates,
     removed,
     toasts,
+    sleeps,
+    forgotten,
     polls: () => polls,
     clock: (ms: number) => {
       now += ms;
@@ -431,6 +444,7 @@ test('send home: interrupts it when it works, deletes the session only when aske
   const doomed = await r.feature.hire(f.api, hireBody({ prompt: '' }), 'Nik');
   assert.deepEqual(await r.feature.sendHome(doomed.id, true), { note: `🗑️ ${doomed.name}'s Factory session was deleted` });
   assert.equal(f.calls.at(-1)?.method, 'DELETE');
+  assert.deepEqual(r.forgotten, ['s1'], 'the Sessions feature drops it, and only once it was deleted');
   assert.equal(r.cloud.list().length, 0);
   assert.deepEqual(await r.feature.sendHome('nobody', true), {});
 
@@ -438,7 +452,34 @@ test('send home: interrupts it when it works, deletes the session only when aske
   const g = factory({ 'POST /sessions': () => json(201, { sessionId: 's9' }), 'DELETE /sessions/s9': () => json(404, { detail: 'gone' }) });
   const r2 = rig(t, g);
   const w = await r2.feature.hire(g.api, hireBody({ prompt: '' }), 'Nik');
+  r2.cloud.update(w.id, (i) => {
+    i.createdAt = 1;
+  });
   assert.match((await r2.feature.sendHome(w.id, true)).note ?? '', /deleted/);
+  assert.equal(g.calls.filter((c) => c.method === 'DELETE').length, 1, 'an old session that 404s is not asked again');
+  assert.deepEqual(r2.sleeps, []);
+
+  // Just made: Factory can't find it for a few seconds, so the delete is tried again until it can.
+  let misses = 2;
+  const y = factory({ 'POST /sessions': () => json(201, { sessionId: 's7' }), 'DELETE /sessions/s7': () => (misses-- > 0 ? json(404, { detail: 'not yet' }) : new Response(null, { status: 204 })) });
+  const r4 = rig(t, y);
+  const young = await r4.feature.hire(y.api, hireBody({ prompt: '' }), 'Nik');
+  // The rig's clock starts at 1_000_000: the worker was made just now by it.
+  r4.cloud.update(young.id, (i) => {
+    i.createdAt = 1_000_000;
+  });
+  assert.match((await r4.feature.sendHome(young.id, true)).note ?? '', /deleted/);
+  assert.equal(y.calls.filter((c) => c.method === 'DELETE').length, 3);
+  assert.equal(r4.sleeps.length, 2);
+  // One that never turns up isn't called deleted.
+  const never = factory({ 'POST /sessions': () => json(201, { sessionId: 's6' }), 'DELETE /sessions/s6': () => json(404, { detail: 'not yet' }) });
+  const r5 = rig(t, never);
+  const lost = await r5.feature.hire(never.api, hireBody({ prompt: '' }), 'Nik');
+  r5.cloud.update(lost.id, (i) => {
+    i.createdAt = 1_000_000;
+  });
+  assert.match((await r5.feature.sendHome(lost.id, true)).error ?? '', /not yet/);
+  assert.deepEqual(r5.forgotten, [], 'still listed: it may yet turn up');
   const h = factory({ 'POST /sessions': () => json(201, { sessionId: 's8' }), 'DELETE /sessions/s8': () => json(500, { detail: 'boom' }) });
   const r3 = rig(t, h);
   const w3 = await r3.feature.hire(h.api, hireBody({ prompt: '' }), 'Nik');
@@ -450,6 +491,7 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
     'POST /sessions': () => json(201, { sessionId: 's1' }),
     'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
     'POST /sessions/s1/interrupt': () => json(200, { status: 'idle' }),
+    'DELETE /sessions/s1': () => new Response(null, { status: 204 }),
   });
   const dir = mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -462,8 +504,9 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
       feature = make({ changed: () => {}, pollSoon: () => {}, api: () => f.api, toast: () => {} });
       return feature;
     },
-    feature: () => ({ state: () => computersState() }),
+    feature: (key: string) => (key === 'sessions' ? { forget: (id: string) => forgotten.push(id) } : { state: () => computersState() }),
   } as unknown as FactoryRegistry;
+  const forgotten: string[] = [];
   const mounted = mountCloud(registry, { floors: () => [floor], agentArgs: [], toast: (_, text) => toasts.push(text) });
   assert.equal(mounted.feature, feature);
   const w = await mounted.feature.hire(f.api, hireBody({ prompt: '' }), 'Nik');
@@ -515,4 +558,10 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   await tick();
   assert.equal(cloud.get(w.id), undefined);
   assert.ok(toasts.some((x) => x === `Nik sent ${w.name} home`));
+  assert.deepEqual(forgotten, []);
+
+  // Sent home with its session deleted: the Sessions feature stops showing that session.
+  mounted.message({ t: 'worker.kill', workerId: hired.worker.id, deleteSession: true } as Extract<ClientMsg, { workerId: string }>, ctx);
+  await tick();
+  assert.deepEqual(forgotten, [hired.worker.sessionId]);
 });

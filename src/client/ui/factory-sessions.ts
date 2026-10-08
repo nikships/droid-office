@@ -1,5 +1,18 @@
 import { factoryCan } from '../../shared/factory';
-import { MODE_LABEL, SESSION_AUTONOMY, SESSION_EFFORTS, SESSION_IMAGE_TYPES, SESSION_MODES, artifactLabel, compactCredits, isLive, sessionWebUrl, sessionWhere, type FactorySession } from '../../shared/factory-sessions';
+import {
+  MODE_LABEL,
+  NEW_SESSION_GRACE_MS,
+  SESSION_AUTONOMY,
+  SESSION_EFFORTS,
+  SESSION_IMAGE_TYPES,
+  SESSION_MODES,
+  artifactLabel,
+  compactCredits,
+  isLive,
+  sessionWebUrl,
+  sessionWhere,
+  type FactorySession,
+} from '../../shared/factory-sessions';
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { clip, h, openModal, timeAgo, toast, type Modal } from './dom';
@@ -274,7 +287,14 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     closeDetail();
     let fetched: FactorySession | undefined;
     let children: FactorySession[] | undefined;
-    const transcript = mountTranscript({ sessionId: id, live: () => isLive(sessionNow(id, fetched) ?? { status: 'idle' }) });
+    const transcript = mountTranscript({
+      sessionId: id,
+      live: () => isLive(sessionNow(id, fetched) ?? { status: 'idle' }),
+      starting: () => {
+        const s = sessionNow(id, fetched);
+        return !!s && Date.now() - s.createdAt < NEW_SESSION_GRACE_MS;
+      },
+    });
     const head = h('div.fs-head');
     const meta = h('dl.fs-meta');
     const extra = h('div.fs-extra');
@@ -383,7 +403,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
           'div.fs-actions',
           {},
           isLive(s) ? h('button.btn', { type: 'button', onclick: () => void interrupt(), title: 'Stop what it’s doing' }, '⏹ Interrupt') : null,
-          ours ? h('button.btn', { type: 'button', onclick: () => actions.openWorker(ours.workerId) }, `💻 ${ours.name}’s terminal`) : null,
+          ours ? h('button.btn', { type: 'button', onclick: () => actions.openWorker(ours.workerId) }, store.workers.get(ours.workerId)?.cloud ? `☁ ${ours.name}’s window` : `💻 ${ours.name}’s terminal`) : null,
           h('a.btn', { href: sessionWebUrl(id), target: '_blank', rel: 'noopener noreferrer', title: 'Open it in the Factory web app' }, 'Factory ↗'),
           h('button.btn.danger', { type: 'button', onclick: remove }, 'Delete…'),
         ),

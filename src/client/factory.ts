@@ -64,9 +64,19 @@ export interface FactoryFetchInit {
   body?: unknown;
 }
 
+/** What factoryFetch throws: the server's message, and its HTTP status (0 when the office didn't answer). */
+export class FactoryFetchError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 /**
- * A feature's route, `/api/factory/<feature><path>`: JSON in and out. Throws an Error with the
- * server's message when it doesn't answer 2xx.
+ * A feature's route, `/api/factory/<feature><path>`: JSON in and out. Throws a FactoryFetchError with
+ * the server's message when it doesn't answer 2xx.
  */
 export async function factoryFetch<T = unknown>(feature: FactoryFeatureId, path = '', init: FactoryFetchInit = {}): Promise<T> {
   const q = new URLSearchParams();
@@ -83,9 +93,9 @@ export async function factoryFetch<T = unknown>(feature: FactoryFeatureId, path 
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
   } catch {
-    throw new Error('Couldn’t reach the office.');
+    throw new FactoryFetchError('Couldn’t reach the office.', 0);
   }
   const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-  if (!res.ok) throw new Error(typeof body?.error === 'string' && body.error ? body.error : `HTTP ${res.status}`);
+  if (!res.ok) throw new FactoryFetchError(typeof body?.error === 'string' && body.error ? body.error : `HTTP ${res.status}`, res.status);
   return body as T;
 }

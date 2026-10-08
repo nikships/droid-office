@@ -15,7 +15,8 @@ import {
 } from '../../shared/factory-sessions.js';
 import { FactoryError, type FactoryApi } from './api.js';
 import { CreditLedger } from './credits.js';
-import { SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
+import { HttpError, SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
+import { NEW_SESSION_MS, alreadyGone, isMissing, whileNew, type NewSessionOptions } from './new-session.js';
 
 /** One of the office's own workers with a Droid session, on any floor (server.ts lists them). */
 export interface OfficeSessionRef {
@@ -26,6 +27,8 @@ export interface OfficeSessionRef {
   color?: string;
   /** It's working right now, so its credits are worth reading again sooner. */
   working?: boolean;
+  /** When the worker was made (ms): a cloud worker's session was made just before it. */
+  createdAt?: number;
 }
 
 export interface SessionsOptions {
@@ -33,6 +36,8 @@ export interface SessionsOptions {
   dataDir?: string;
   officeSessions?: () => OfficeSessionRef[];
   now?: () => number;
+  /** How a write to a just-made session tries again after a 404 (new-session.ts); for tests. */
+  retry?: Omit<NewSessionOptions, 'now'>;
 }
 
 /** Reads of GET /sessions/{id} at once, at most. */
@@ -52,6 +57,7 @@ const MISSING_MS = 15 * 60_000;
 const MESSAGE_BODY_MAX = 16 * 1024 * 1024;
 const IMAGES_MAX = 6;
 const TEXT_MAX = 100_000;
+const NOT_YET = 'Factory can’t find that session yet: it was only just made. Try again in a few seconds.';
 
 interface Detail {
   session: FactorySession;
@@ -113,6 +119,8 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
   private page2?: { at: number; items: FactorySession[]; hasMore: boolean };
   private listed: FactorySession[] = [];
   private deleted = new Set<string>();
+  /** The sessions the office made itself, and when (by its own clock): Factory's createdAt is when it started making one, which takes a while. */
+  private madeHere = new Map<string, number>();
   readonly ledger: CreditLedger;
 
   readonly routes: readonly FactoryRoute[] = [
@@ -141,12 +149,13 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
         const raw = await api.post<unknown>('/sessions', { computerId, ...(cwd ? { cwd } : {}), ...(Object.keys(settings).length ? { sessionSettings: settings } : {}) });
         const session = sessionOf(raw);
         if (!session) throw new FactoryError('Factory started a session but didn’t say which.', 502);
+        this.made(session.id);
         this.remember(session);
         this.host.toast(`🛰️ ${by} started a Droid session on ${str(body.computerName, 80) || 'a Factory computer'}`);
         let sent: { messageId?: string; status?: string; error?: string } = {};
         if (first) {
           try {
-            const r = await api.post<{ messageId?: string; status?: string }>(`/sessions/${enc(session.id)}/messages`, first);
+            const r = await this.whileNew(session.id, () => api.post<{ messageId?: string; status?: string }>(`/sessions/${enc(session.id)}/messages`, first));
             sent = { messageId: r?.messageId, status: r?.status };
           } catch (err) {
             // The session is there either way: answer with it, and say the prompt didn't go.
@@ -162,13 +171,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
       method: 'GET',
       path: '/:id',
       handle: async ({ api, params }) => {
-        // A just-created session 404s for a few seconds before Factory can read it back.
-        let session = await this.readDetail(api, params.id, true);
-        const known = this.details.get(params.id)?.session;
-        if (!session && known && this.now() - known.createdAt < 60_000) {
-          await new Promise((r) => setTimeout(r, 2_000));
-          session = await this.readDetail(api, params.id, true);
-        }
+        const session = await this.readDetail(api, params.id, true);
         if (!session) throw notFound('No such session');
         this.publish();
         this.ledger.save();
@@ -182,22 +185,26 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
       handle: async ({ api, params, json }) => {
         const settings = settingsOf((await json<Record<string, unknown>>()) ?? {});
         if (!Object.keys(settings).length) throw badRequest('Nothing to change');
-        const session = sessionOf(await api.patch(`/sessions/${enc(params.id)}`, { sessionSettings: settings }));
+        const session = sessionOf(await this.whileNew(params.id, () => api.patch(`/sessions/${enc(params.id)}`, { sessionSettings: settings })));
         if (!session) throw notFound('No such session');
         this.remember(session);
         return { session: this.merged(session) };
       },
     },
     {
-      // Deletes it (Factory keeps it out of every list from then on).
+      // Deletes it (Factory keeps it out of every list from then on). One Factory can't find is gone
+      // already, unless it was only just made: then it may still turn up, and the answer says so.
       method: 'DELETE',
       path: '/:id',
       handle: async ({ api, params, by }) => {
-        await api.delete(`/sessions/${enc(params.id)}`);
+        const asked = this.now();
+        try {
+          await this.whileNew(params.id, () => api.delete(`/sessions/${enc(params.id)}`));
+        } catch (err) {
+          if (!alreadyGone(err, this.madeAt(params.id), asked)) throw isMissing(err) ? new HttpError(409, NOT_YET) : err;
+        }
         const title = this.titleOf(params.id);
-        this.deleted.add(params.id);
-        this.details.delete(params.id);
-        this.publish();
+        this.forget(params.id);
         this.host.toast(`🗑️ ${by} deleted the Droid session ${title ? `“${title.slice(0, 60)}”` : params.id.slice(0, 8)}`);
         return { ok: true };
       },
@@ -225,7 +232,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
       handle: async ({ api, params, json }) => {
         const msg = messageBody((await json<Record<string, unknown>>()) ?? {});
         if (!msg) throw badRequest('Say something (text) or attach a picture');
-        const r = await api.post<{ messageId?: string; status?: string; recipientDroidStatus?: string }>(`/sessions/${enc(params.id)}/messages`, msg);
+        const r = await this.whileNew(params.id, () => api.post<{ messageId?: string; status?: string; recipientDroidStatus?: string }>(`/sessions/${enc(params.id)}/messages`, msg));
         this.markLive(params.id);
         this.host.pollSoon();
         return { messageId: r?.messageId, status: r?.status, ...(r?.recipientDroidStatus ? { queued: r.recipientDroidStatus === 'running' } : {}) };
@@ -236,7 +243,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
       method: 'POST',
       path: '/:id/interrupt',
       handle: async ({ api, params }) => {
-        const r = await api.post<{ status?: string }>(`/sessions/${enc(params.id)}/interrupt`, {});
+        const r = await this.whileNew(params.id, () => api.post<{ status?: string }>(`/sessions/${enc(params.id)}/interrupt`, {}));
         const d = this.details.get(params.id);
         if (d && r?.status) d.session = { ...d.session, status: r.status };
         this.publish();
@@ -304,6 +311,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
     this.page2 = undefined;
     this.listed = [];
     this.deleted.clear();
+    this.madeHere.clear();
     this.ledger.reset();
     super.reset();
   }
@@ -352,10 +360,43 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
     if (rejected) throw rejected;
   }
 
-  /** Reads one session by itself; `strict` lets a failure through (a route) instead of noting it for later. */
+  /**
+   * Session `id` was deleted (here, or as a cloud worker went home): Factory goes on listing a deleted
+   * session for a while, so it's kept out of the slice from now on.
+   */
+  forget(id: string) {
+    this.deleted.add(id);
+    this.details.delete(id);
+    this.madeHere.delete(id);
+    this.publish();
+  }
+
+  /** Notes that the office just made session `id`. */
+  private made(id: string) {
+    const now = this.now();
+    for (const [k, at] of this.madeHere) if (now - at >= NEW_SESSION_MS) this.madeHere.delete(k);
+    this.madeHere.set(id, now);
+  }
+
+  /** When session `id` was made, as best the office knows (ms), or undefined. */
+  madeAt(id: string): number | undefined {
+    const at = this.madeHere.get(id) ?? this.opts.officeSessions?.().find((o) => o.sessionId === id)?.createdAt ?? this.details.get(id)?.session.createdAt ?? this.listed.find((s) => s.id === id)?.createdAt;
+    return at || undefined;
+  }
+
+  /** `call` on session `id`, tried again for a while when it 404s because the session was only just made. */
+  private whileNew<T>(id: string, call: () => Promise<T>): Promise<T> {
+    return whileNew(this.madeAt(id), call, { now: this.now, ...this.opts.retry });
+  }
+
+  /**
+   * Reads one session by itself; `strict` (a route) lets a failure through instead of noting it for
+   * later, and waits out the 404s of one that was only just made.
+   */
   private async readDetail(api: FactoryApi, id: string, strict = false): Promise<FactorySession | undefined> {
     try {
-      const session = sessionOf(await api.get(`/sessions/${enc(id)}`));
+      const read = () => api.get(`/sessions/${enc(id)}`);
+      const session = sessionOf(await (strict ? this.whileNew(id, read) : read()));
       if (!session) {
         this.failedUntil.set(id, this.now() + MISSING_MS);
         return undefined;
