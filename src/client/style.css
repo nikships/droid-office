@@ -330,7 +330,7 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 #hud:has(#project-meta:not(.hud-off)) .caffeine { translate: 0 16px; }
 
 /* ---------- Modals ---------- */
-/* The window: .modal (560px) or .sm 420 · .md 560 · .lg 760 · .xl 960 · .full; header > .titles (h2 + p.sub) + .actions + ✕,
+/* The window: .modal (560px; no .md, that is the Markdown body) or .sm 420 · .lg 760 · .xl 960 · .full; header > .titles (h2 + p.sub) + .actions + ✕,
    .body (.flush has no padding), footer (.grow on the left, the primary button last). The body scrolls, never the window. */
 .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .68); display: grid; place-items: center; padding: var(--space-4); z-index: 50; animation: fade .15s; }
 @keyframes fade { from { opacity: 0; } }
@@ -338,7 +338,6 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .modal { position: relative; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-window); width: min(560px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; animation: modal-in .16s var(--ease); }
 @media (prefers-reduced-motion: reduce) { .modal { animation: fade .16s; } }
 .modal.sm { width: min(420px, 100%); }
-.modal.md { width: min(560px, 100%); }
 .modal.lg { width: min(760px, 100%); }
 .modal.xl { width: min(960px, 100%); }
 .modal.full { width: min(1280px, 100%); height: calc(100vh - 48px); }
@@ -428,17 +427,20 @@ hr.divider { width: 100%; height: 0; margin: 0; border: 0; border-top: 1px solid
 /* ---- Toggle: <label class="toggle"><input type="checkbox"><span class="track"></span><span class="toggle-text">Title<small>…</small></span></label> ---- */
 label.toggle { position: relative; display: inline-flex; align-items: flex-start; gap: var(--space-3); margin: 0; font: 500 var(--text-body)/var(--leading-body) var(--font-sans); text-transform: none; letter-spacing: 0; color: var(--text); cursor: pointer; user-select: none; }
 .toggle > input, .choice > input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.toggle .track { position: relative; flex: none; width: 32px; height: 18px; margin-top: 1px; border-radius: 999px; background: rgba(255, 255, 255, .14); border: 1px solid var(--border-strong); transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease); }
-.toggle .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #cfcfcf; transition: transform var(--duration) var(--ease), background var(--duration) var(--ease); }
-.toggle:hover .track { border-color: rgba(255, 255, 255, .3); }
-.toggle > input:checked + .track { background: var(--accent); border-color: var(--accent); }
-.toggle > input:checked + .track::after { transform: translateX(14px); background: #fff; }
+/* The switch itself works on its own too: a span.track in any element (a menu row's button, say) is on when that element is
+   [aria-checked=true] or [aria-pressed=true], as it is beside label.toggle's checked input. */
+.track { position: relative; display: inline-block; flex: none; width: 32px; height: 18px; border-radius: 999px; background: rgba(255, 255, 255, .14); border: 1px solid var(--border-strong); vertical-align: middle; transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease); }
+.track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #cfcfcf; transition: transform var(--duration) var(--ease), background var(--duration) var(--ease); }
+.toggle .track { margin-top: 1px; }
+:is(.toggle, [aria-checked], [aria-pressed]):hover .track { border-color: rgba(255, 255, 255, .3); }
+:is(.toggle > input:checked + .track, [aria-checked=true] .track, [aria-pressed=true] .track) { background: var(--accent); border-color: var(--accent); }
+:is(.toggle > input:checked + .track, [aria-checked=true] .track, [aria-pressed=true] .track)::after { transform: translateX(14px); background: #fff; }
 .toggle > input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
-.toggle > input:disabled + .track { opacity: .45; }
+:is(.toggle > input:disabled + .track, :disabled .track, [aria-disabled=true] .track) { opacity: .45; }
 .toggle:has(> input:disabled) { cursor: default; color: var(--text-secondary); }
 .toggle-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .toggle-text small { font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
-@media (prefers-reduced-motion: reduce) { .toggle .track, .toggle .track::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .track, .track::after { transition: none; } }
 
 /* ---- Option cards: .choices > label.choice > input + .choice-body (.choice-icon, b, small) ---- */
 .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-2); }
@@ -463,6 +465,9 @@ button.chip { font-family: var(--font-sans); }
 /* ---- Lists: .list > .list-row (.list-icon, .list-main > .list-title + .list-meta, .list-end); .boxed puts them in a bordered box ---- */
 .list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; }
 .list-row { display: flex; align-items: center; gap: var(--space-3); min-height: 40px; width: 100%; padding: var(--space-2) var(--space-3); border: 0; border-left: 2px solid transparent; border-radius: var(--radius); background: none; color: var(--text); font: 500 var(--text-body)/var(--leading-body) var(--font-sans); text-align: left; text-decoration: none; cursor: pointer; }
+/* A button or link row looks exactly like an li row. */
+:is(button, a).list-row { appearance: none; box-sizing: border-box; margin: 0; border-top: 0; border-right: 0; border-bottom: 0; background: none; color: var(--text); font: 500 var(--text-body)/var(--leading-body) var(--font-sans); text-transform: none; letter-spacing: 0; text-align: left; text-decoration: none; width: 100%; }
+:is(button, a).list-row:disabled { opacity: .45; cursor: default; }
 .list-row:hover { background: var(--surface-hover); }
 .list-row:is(.on, [aria-selected=true]) { background: var(--accent-muted); border-left-color: var(--accent); }
 .list-row:focus-visible { outline-offset: -2px; }
