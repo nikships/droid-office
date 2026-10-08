@@ -25,7 +25,7 @@ import { markdownFile } from './markdown';
 // /wiki to write or refresh it (server/factory/wiki-run.ts), with privacy, export and delete.
 
 const LAST_KEY = 'droid-office.autowiki';
-const CONFIRM_TEXT = 'Runs /wiki headless with this office’s Factory key. It spends credits on the connected account. The first run can take a while.';
+const CONFIRM_TEXT = 'Runs /wiki headless with this office’s Factory key. On a large repository it takes about an hour and can spend 5 to 20 million credits on the connected account.';
 const CI_HINT = 'To refresh it on every push instead, run /install-wiki in a Droid session in this repository: it adds a CI action that runs /wiki.';
 
 export interface WikiTabDeps {
