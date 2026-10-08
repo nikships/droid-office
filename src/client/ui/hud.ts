@@ -104,8 +104,11 @@ export function openHelp() {
     ['F', 'Hang a picture from the web on a wall. Look at a picture and press E to move, edit or take it down'],
     ['Q', 'Put back the issue card in your hands (E at a note on the issues board, or Pick it up in an issue; then E at an empty desk, a worker or the queue board)'],
     ['O', 'Open a pull request for a worker on its own branch, or see the one it has'],
-    ['G / 1–6', 'Emote: hold G, point at one and let go (or tap G and click one), or press 1–6: wave, thumbs up, clap, dance, point, facepalm. Everyone on your floor sees it'],
-    ['7', 'Draw the .44 Magnum (or holster it); click to fire at the worker under the crosshair. One shot drops it — confirm the kill or revive it'],
+    [
+      'G / 1–6',
+      'Emote: hold G, point at one and let go (or tap G and click one), or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks: twirl, inspect, cylinder spin, yy, blow the smoke off, flip',
+    ],
+    ['7', 'Draw the .44 Magnum (or holster it; mash it and each press cancels the last); click to fire at the worker under the crosshair. One shot drops it — walk up and press E to revive it'],
     ['/', 'Search every terminal on your floor, back to before the office last restarted'],
     [typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K', 'Command palette: a few letters find a worker, issue, PR, service, board or action. Enter opens it, Shift+Enter walks you over first'],
     ['Tab', 'The ☰ menu, top right: every window, and what shows on screen. Pin what you use most to the top bar'],

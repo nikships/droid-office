@@ -15,6 +15,7 @@ import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
 import { TunePlayer } from './music';
 import { DjPlayer } from './dnb';
+import type { GunCue } from './world/gun-motion';
 
 type Pos = { x: number; y: number; z: number };
 
@@ -782,24 +783,151 @@ export class OfficeSound {
     boom.stop(t0 + 0.75);
   }
 
-  /** Drawing it: the hammer back and the cylinder turning, two clicks. */
-  gunDraw() {
+  /**
+   * The gun's moves (world/gun-motion.ts): out of the leather and into it, spins whirring past,
+   * the slap of a catch, the hammer back, the cylinder swinging out, ratcheting round and slammed
+   * shut, a breath over the muzzle. All yours, so none of it is positional.
+   */
+  gunCue(cue: GunCue) {
     this.unlock();
     const ctx = this.ctx;
     if (!ctx) return;
-    this.count('gunDraw');
+    if (ctx.state === 'suspended') void ctx.resume();
     const t0 = ctx.currentTime + 0.005;
-    this.play(pick(this.buf.steps), { gain: 0.35, rate: 2.2, when: t0 });
-    this.play(pick(this.buf.steps), { gain: 0.45, rate: 1.7, when: t0 + 0.09 });
-    this.blip(this.ambience, t0 + 0.09, 2600, 0.9, 0.05, 0.06, 'square');
+    switch (cue) {
+      case 'draw':
+        // Steel sliding out of leather: a rising swish over a low creak.
+        this.count('gunDraw');
+        this.swish(t0, 0.2, 500, 2600, 0.22, 1.1);
+        this.play(pick(this.buf.steps), { gain: 0.3, rate: 1.6, when: t0 });
+        break;
+      case 'holster':
+        // Back into the leather: a falling swish and a soft, heavy slap.
+        this.count('gunHolster');
+        this.swish(t0 - 0.08, 0.14, 2200, 600, 0.12, 1.1);
+        this.play(pick(this.buf.steps), { gain: 0.5, rate: 0.9, when: t0 });
+        this.click(t0 + 0.03, 1900, 0.05);
+        break;
+      case 'whoosh':
+        this.count('gunWhoosh');
+        this.swish(t0, 0.15, rand(700, 1000), rand(1500, 2100), 0.2, 2.2);
+        break;
+      case 'swap':
+        this.count('gunSwap');
+        this.swish(t0, 0.09, 1800, 700, 0.16, 1.4);
+        this.play(this.buf.rustle, { gain: 0.18, rate: 2.4, when: t0 });
+        break;
+      case 'catch': {
+        // The grip landing in a gloved palm.
+        this.count('gunCatch');
+        this.play(pick(this.buf.steps), { gain: 0.55, rate: 1.9, when: t0 });
+        const slap = this.noise(this.buf.white);
+        const g = ctx.createGain();
+        envelope(g.gain, t0, [
+          [0.003, 0.28],
+          [0.04, 0],
+        ]);
+        slap
+          .connect(biquad(ctx, 'bandpass', 1300, 0.9))
+          .connect(g)
+          .connect(this.ambience);
+        slap.start(t0);
+        slap.stop(t0 + 0.06);
+        break;
+      }
+      case 'cock':
+        // The hammer back, then the cylinder locking on a chamber.
+        this.count('gunCock');
+        this.click(t0, 3300, 0.07);
+        this.click(t0 + 0.075, 2400, 0.12);
+        break;
+      case 'handle':
+        this.count('gunHandle');
+        this.play(this.buf.rustle, { gain: 0.22, rate: rand(1.4, 1.7), when: t0 });
+        break;
+      case 'open':
+        // The crane unlatching and the cylinder falling out against its stop, ringing a little.
+        this.count('gunOpen');
+        this.click(t0, 2800, 0.08);
+        this.click(t0 + 0.06, 2100, 0.1);
+        this.blip(this.ambience, t0 + 0.06, 1750, 0.99, 0.28, 0.025, 'triangle');
+        break;
+      case 'ratchet': {
+        // The pawl ticking past each chamber, slowing as the cylinder runs down.
+        this.count('gunRatchet');
+        let at = t0;
+        let gap = 0.032;
+        for (let i = 0; at < t0 + 1.05 && i < 40; i++) {
+          this.click(at, rand(3600, 4200), 0.05 * Math.max(0.35, 1 - (at - t0) * 0.6));
+          at += gap;
+          gap *= 1.09;
+        }
+        break;
+      }
+      case 'shut':
+        // Flicked shut: a hard steel clack with a ring and a thump through the frame.
+        this.count('gunShut');
+        this.click(t0, 2000, 0.2);
+        this.click(t0 + 0.012, 3100, 0.12);
+        this.blip(this.ambience, t0, 1380, 0.98, 0.35, 0.05, 'triangle');
+        this.play(pick(this.buf.steps), { gain: 0.5, rate: 1.4, when: t0 });
+        break;
+      case 'blow': {
+        // A breath across the muzzle.
+        this.count('gunBlow');
+        const breath = this.noise(this.buf.white);
+        const tone = biquad(ctx, 'bandpass', 650, 0.8);
+        tone.frequency.setValueAtTime(650, t0);
+        tone.frequency.linearRampToValueAtTime(1050, t0 + 0.45);
+        const g = ctx.createGain();
+        envelope(g.gain, t0, [
+          [0.09, 0.32],
+          [0.3, 0.22],
+          [0.55, 0],
+        ]);
+        breath.connect(tone).connect(g).connect(this.ambience);
+        breath.start(t0);
+        breath.stop(t0 + 0.6);
+        break;
+      }
+      case 'puff':
+        break;
+    }
   }
 
-  /** Holstering it: one soft click. */
-  gunHolster() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('gunHolster');
-    this.play(pick(this.buf.steps), { gain: 0.22, rate: 1.1 });
+  /** A short steel click: a tick of bright noise over a pinged tone at `freq`. */
+  private click(when: number, freq: number, gain: number) {
+    const ctx = this.ctx!;
+    const n = this.noise(this.buf.white);
+    const g = ctx.createGain();
+    envelope(g.gain, when, [
+      [0.001, gain],
+      [0.018, 0],
+    ]);
+    n.connect(biquad(ctx, 'highpass', freq * 0.8, 0.7))
+      .connect(g)
+      .connect(this.ambience);
+    n.start(when);
+    n.stop(when + 0.03);
+    this.blip(this.ambience, when, freq, 0.94, 0.035, gain * 0.5, 'square');
+  }
+
+  /** Air moving past fast: noise through a band swept from `from` to `to` Hz over `len` seconds. */
+  private swish(when: number, len: number, from: number, to: number, gain: number, q: number) {
+    const ctx = this.ctx!;
+    const start = Math.max(when, ctx.currentTime);
+    const n = this.noise(this.buf.white);
+    const band = biquad(ctx, 'bandpass', from, q);
+    band.frequency.setValueAtTime(from, start);
+    band.frequency.exponentialRampToValueAtTime(to, start + len);
+    const g = ctx.createGain();
+    envelope(g.gain, start, [
+      [len * 0.45, gain],
+      [len, 0],
+    ]);
+    n.connect(band).connect(g).connect(this.ambience);
+    n.start(start);
+    n.stop(start + len + 0.02);
   }
 
   /** A body landing on the floorboards, from where it fell. */

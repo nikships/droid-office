@@ -6,7 +6,7 @@ import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
-import { desktopPath } from './shell-path.js';
+import { desktopEnv } from './shell-path.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -20,7 +20,8 @@ const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
 let settings: DesktopSettings = loadSettings(settingsFile);
-let PATH = process.env.PATH ?? '';
+/** What the office and its workers run with: the login shell's environment (see desktopEnv). */
+let officeEnv: NodeJS.ProcessEnv = process.env;
 let win: BrowserWindow | undefined;
 /** The office this app started, if it started one (it may be using one that was already running). */
 let office: Office | undefined;
@@ -99,6 +100,30 @@ function createWindow(loadOffice = true) {
   if (loadOffice && officeUrl) void win.loadURL(officeUrl).catch(() => {});
 }
 
+/**
+ * Opened from its disk image or from Downloads, macOS runs the app from a read-only, randomized
+ * copy: it can't update itself, and the terminal host that keeps workers running across restarts
+ * is left pointing at files that go away. Offers the move; true when the app is relaunching moved.
+ */
+async function moveToApplications(): Promise<boolean> {
+  if (!app.isPackaged || process.platform !== 'darwin' || app.isInApplicationsFolder()) return false;
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    message: 'Move Droid Office to your Applications folder?',
+    detail: "It's running from its disk image or from where it was downloaded. From there it can't update itself, and workers' terminals stop working once the disk image is ejected.",
+    buttons: ['Move to Applications', 'Not Now'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response !== 0) return false;
+  try {
+    return app.moveToApplicationsFolder();
+  } catch (err) {
+    await dialog.showMessageBox({ type: 'warning', message: "Droid Office couldn't move itself", detail: `${(err as Error).message}\n\nDrag it into Applications from the Finder instead.`, buttons: ['OK'] });
+    return false;
+  }
+}
+
 async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
   const fallback = defaultOfficeDir();
   if (firstRun) {
@@ -142,7 +167,7 @@ async function openOffice() {
     } else {
       const dir = settings.officeDir ?? defaultOfficeDir();
       mkdirSync(logDir, { recursive: true });
-      office = await startOffice({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), args: officeArgs(dir, port), port, env: { ...process.env, PATH }, log: officeLog });
+      office = await startOffice({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), args: officeArgs(dir, port), port, env: officeEnv, log: officeLog });
       officeUrl = office.url;
       const mine = office;
       void mine.exited.then((code) => {
@@ -265,8 +290,9 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     Menu.setApplicationMenu(menu());
+    if (await moveToApplications()) return;
     show(page('Opening the office…'));
-    PATH = await desktopPath();
+    officeEnv = await desktopEnv();
     if (!settings.officeDir) {
       settings = { ...settings, officeDir: await chooseOfficeDir(true) };
       saveSettings(settingsFile, settings);

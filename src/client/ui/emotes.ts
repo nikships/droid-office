@@ -1,4 +1,3 @@
-import { EMOTES, type EmoteId } from '../../shared/emotes';
 import { h } from './dom';
 
 /** How far (px) the mouse has to go from the middle of the wheel before it points at an emote. */
@@ -7,17 +6,30 @@ const DEAD_ZONE = 26;
 const RADIUS = 104;
 /** Letting go of G sooner than this (ms) leaves the wheel open to click; holding it picks on release. */
 const TAP_MS = 250;
-/** The emotes go round clockwise from the top, a slice each. */
-const SLICE = (Math.PI * 2) / EMOTES.length;
+
+/** One slice of the wheel: an emote, or a trick with the gun out. */
+export interface WheelItem {
+  emoji: string;
+  label: string;
+}
+
+/** What the wheel offers when it opens: its name in the middle, and its slices, numbered 1, 2, 3… */
+export interface WheelMenu {
+  title: string;
+  items: readonly WheelItem[];
+}
 
 /**
  * The emote wheel: hold G, point the mouse at an emote and let go (or click it). A quick tap on G
- * leaves it open until you pick one, press G or Esc, or click outside it.
+ * leaves it open until you pick one, press G or Esc, or click outside it. Each time it opens it
+ * asks `menu` what to offer (the emotes, or the gun's tricks with it drawn).
  */
 export class EmoteWheel {
   readonly el: HTMLElement;
-  private items: HTMLElement[];
+  private ring: HTMLElement;
+  private items: HTMLElement[] = [];
   private caption: HTMLElement;
+  private shown: WheelMenu;
   /** The emote the mouse points at, or -1. */
   private at = -1;
   /** Mouse movement since the wheel opened, while the mouse is captured (there's no cursor then). */
@@ -27,21 +39,17 @@ export class EmoteWheel {
   isOpen = false;
 
   constructor(
-    private onPick: (id: EmoteId) => void,
+    /** Picked slice `i` (0 is the one at the top, number 1). */
+    private onPick: (i: number) => void,
     /** The wheel opened or closed: while it's open, the mouse is for picking, not for looking around. */
     private onToggle: (open: boolean) => void,
+    private menu: () => WheelMenu,
   ) {
-    this.items = EMOTES.map((e, i) => {
-      const a = i * SLICE - Math.PI / 2;
-      return h(
-        'button.emote',
-        { type: 'button', title: `${e.label} (${i + 1})`, 'aria-label': e.label, style: `--x:${Math.cos(a) * RADIUS}px;--y:${Math.sin(a) * RADIUS}px`, onpointermove: () => this.point(i) },
-        e.emoji,
-        h('span.num', {}, i + 1),
-      );
-    });
     this.caption = h('div.middle');
-    this.el = h('div.emote-wheel.hidden', { role: 'menu', 'aria-label': 'Emotes' }, h('div.ring', {}, ...this.items, this.caption));
+    this.ring = h('div.ring', {}, this.caption);
+    this.el = h('div.emote-wheel.hidden', { role: 'menu', 'aria-label': 'Emotes' }, this.ring);
+    this.shown = menu();
+    this.build();
     this.el.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       const i = this.items.findIndex((b) => b.contains(e.target as Node));
@@ -70,6 +78,11 @@ export class EmoteWheel {
   /** G went down. */
   press() {
     if (this.isOpen) return this.close();
+    const menu = this.menu();
+    if (menu.items !== this.shown.items) {
+      this.shown = menu;
+      this.build();
+    }
     this.isOpen = true;
     this.heldAt = performance.now();
     this.aim = { x: 0, y: 0 };
@@ -102,17 +115,35 @@ export class EmoteWheel {
     this.onToggle(false);
   }
 
-  /** Plays emote `i` (-1 picks nothing) and closes the wheel. */
+  /** The slices for the menu shown, clockwise from the top. */
+  private build() {
+    for (const b of this.items) b.remove();
+    const all = this.shown.items;
+    const slice = (Math.PI * 2) / all.length;
+    this.items = all.map((e, i) => {
+      const a = i * slice - Math.PI / 2;
+      return h(
+        'button.emote',
+        { type: 'button', title: `${e.label} (${i + 1})`, 'aria-label': e.label, style: `--x:${Math.cos(a) * RADIUS}px;--y:${Math.sin(a) * RADIUS}px`, onpointermove: () => this.point(i) },
+        e.emoji,
+        h('span.num', {}, i + 1),
+      );
+    });
+    this.ring.prepend(...this.items);
+    this.el.setAttribute('aria-label', `${this.shown.title}s`);
+  }
+
+  /** Plays slice `i` (-1 picks nothing) and closes the wheel. */
   private pick(i: number) {
     this.close();
-    const e = EMOTES[i];
-    if (e) this.onPick(e.id);
+    if (this.shown.items[i]) this.onPick(i);
   }
 
   private aimAt(x: number, y: number) {
     if (Math.hypot(x, y) < DEAD_ZONE) return this.point(-1);
+    const n = this.shown.items.length;
     const a = Math.atan2(y, x) + Math.PI / 2;
-    this.point(((Math.round(a / SLICE) % EMOTES.length) + EMOTES.length) % EMOTES.length);
+    this.point(((Math.round(a / ((Math.PI * 2) / n)) % n) + n) % n);
   }
 
   private point(i: number) {
@@ -123,8 +154,9 @@ export class EmoteWheel {
 
   private render() {
     this.items.forEach((b, i) => b.classList.toggle('on', i === this.at));
-    const e = EMOTES[this.at];
-    const how = !e ? 'Point at one, or 1–6' : this.heldAt ? 'Let go of G' : 'Click';
-    this.caption.replaceChildren(h('b', {}, e?.label ?? 'Emote'), h('small', {}, how));
+    const e = this.shown.items[this.at];
+    const n = this.shown.items.length;
+    const how = !e ? `Point at one, or 1–${n}` : this.heldAt ? 'Let go of G' : 'Click';
+    this.caption.replaceChildren(h('b', {}, e?.label ?? this.shown.title), h('small', {}, how));
   }
 }

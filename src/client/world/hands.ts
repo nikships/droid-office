@@ -5,7 +5,8 @@ import type { Drink } from '../../shared/rooftop';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
-import { Muzzle, disposeGun, magnum } from './gun';
+import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
+import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
 import { mesh, toonUnique } from './toon';
 
@@ -27,6 +28,11 @@ const CUFF = '#3a3a3a';
 
 /** Lifting the mug for a sip and lowering it again, in seconds. */
 const SIP_TIME = 1.1;
+
+/** Where the fist holds the gun's grip, in the right hand. */
+const GUN_MOUNT = new THREE.Vector3(0, -0.01, -0.06);
+const lift = new THREE.Vector3();
+const handTurn = new THREE.Quaternion();
 
 interface Arm {
   group: THREE.Group;
@@ -93,10 +99,10 @@ export class Hands {
   private shirt: string;
   private skinTone: string;
   /**
-   * A .44 Magnum in the right fist (see holdGun): the prop, its muzzle flash, how far into the
-   * draw (0–1), and seconds into the shot's recoil, or -1.
+   * A .44 Magnum in the right fist (see setGunPose): where the fist holds it, the pivot it spins
+   * round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
-  private gun: { prop: THREE.Group; muzzle: Muzzle; draw: number; fireT: number } | null = null;
+  private gun: { mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
 
   constructor(shirt: string, skin: string) {
     this.shirt = shirt;
@@ -267,35 +273,42 @@ export class Hands {
     this.sipT = -REACH_TIME * 0.6;
   }
 
-  /** A .44 Magnum in the right fist, or back in its holster. The left hand keeps what it holds. */
-  holdGun(on: boolean) {
-    if (on === !!this.gun) return;
-    if (!on) {
-      const { prop } = this.gun!;
-      disposeGun(prop);
+  /**
+   * The .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered, mid-trick), or away
+   * in its holster (null). The left hand keeps what it holds.
+   */
+  setGunPose(pose: Readonly<GunPose> | null) {
+    if (!pose) {
+      if (!this.gun) return;
+      disposeGun(this.gun.prop);
+      this.gun.mount.removeFromParent();
       this.gun = null;
       if (this.right.finger) this.right.finger.visible = true;
       return;
     }
-    const prop = magnum();
-    prop.position.set(0, -0.01, -0.06);
+    if (this.gun) {
+      this.gun.pose = pose;
+      return;
+    }
+    const mount = new THREE.Group();
+    mount.position.copy(GUN_MOUNT);
     // The muzzle down the hand's local -z.
-    prop.rotation.y = Math.PI;
-    prop.scale.setScalar(0.01);
+    mount.rotation.y = Math.PI;
+    const pivot = new THREE.Group();
+    pivot.position.copy(SPIN_AT);
+    const prop = magnum();
+    prop.position.copy(SPIN_AT).negate();
     const muzzle = new Muzzle();
     prop.add(muzzle.group);
-    this.right.group.add(prop);
-    // A fist round the grip, not a pointing finger.
-    if (this.right.finger) this.right.finger.visible = false;
-    this.gun = { prop, muzzle, draw: 0, fireT: -1 };
+    pivot.add(prop);
+    mount.add(pivot);
+    this.right.group.add(mount);
+    this.gun = { mount, pivot, prop, muzzle, pose };
   }
 
-  /** Fires it: a flash at the muzzle and one shell of recoil up the arm. */
+  /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
   fireGun() {
-    const g = this.gun;
-    if (!g) return;
-    g.muzzle.fire();
-    g.fireT = 0;
+    this.gun?.muzzle.fire();
   }
 
   private arm(side: 1 | -1): Arm {
@@ -424,26 +437,7 @@ export class Hands {
     l.position.y += 0.13 * sip;
     l.position.z += 0.14 * sip;
     l.rotation.x += 0.7 * sip;
-    // The gun: a low, right-hand hip-fire pose; the shot kicks it up.
-    if (this.gun) {
-      const g = this.gun;
-      g.draw = Math.min(1, g.draw + dt / 0.18);
-      const e = 1 - (1 - g.draw) ** 3;
-      g.prop.scale.setScalar(Math.max(0.01, e));
-      let kick = 0;
-      if (g.fireT >= 0) {
-        g.fireT += dt;
-        kick = Math.max(0, 1 - g.fireT / 0.22);
-        if (g.fireT >= 0.22) g.fireT = -1;
-      }
-      r.position.x += 0.07 * e;
-      r.position.y += (-0.035 + kick * 0.09) * e;
-      r.position.z -= (0.06 - kick * 0.06) * e;
-      // Show the barrel's side above the wrist without stretching the sleeve across the view.
-      r.rotation.set((0.25 + kick * 0.18) * e, 0.3 * e, -0.08 * e);
-      if (!this.wantsMug && !this.glass) l.position.y -= 0.2 * e;
-      g.muzzle.update(dt);
-    }
+    if (this.gun) this.gunStep(dt, r, l);
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.
     if (this.smokeT >= 0) {
       this.smokeT += dt;
@@ -456,6 +450,44 @@ export class Hands {
       this.ember.emissiveIntensity += ((d > 0.9 ? 1.4 : 0.3) - this.ember.emissiveIntensity) * Math.min(1, dt * 6);
     }
     if (this.emoting) this.emoteStep(dt, l);
+  }
+
+  /**
+   * The gun's pose on the hands already placed for this frame. At the ready it's a low, right-hand
+   * hip-fire pose; holstered (`out` 0) the hand is down off the bottom of the view, muzzle down.
+   */
+  private gunStep(dt: number, r: THREE.Group, l: THREE.Group) {
+    const g = this.gun!;
+    const p = g.pose;
+    const down = 1 - p.out;
+    r.position.x += 0.07 + p.x + 0.06 * down;
+    r.position.y += -0.035 + p.y - 0.4 * down + p.kick * 0.09;
+    r.position.z += -0.06 + p.z + 0.12 * down + p.kick * 0.06;
+    // Show the barrel's side above the wrist without stretching the sleeve across the view.
+    r.rotation.set(0.25 + p.pitch - 1.1 * down + p.kick * 0.18, 0.3 + p.yaw - 0.25 * down, -0.08 + p.roll);
+    // Spinning on the trigger finger, it turns a little ahead of the fist so the grip clears the glove.
+    g.mount.position.copy(GUN_MOUNT);
+    g.mount.position.y -= 0.012 * p.finger;
+    g.mount.position.z -= 0.035 * p.finger;
+    // Tossed: straight up the screen, whichever way the hand is turned.
+    if (p.lift) g.mount.position.add(lift.set(0, p.lift, 0).applyQuaternion(handTurn.copy(r.quaternion).invert()));
+    g.pivot.rotation.set(p.spin, p.turn, p.tilt);
+    setCylinder(g.prop, p.crane, p.cylinder);
+    if (this.right.finger) this.right.finger.visible = p.finger > 0.5;
+    const free = !this.wantsMug && !this.glass;
+    if (free) l.position.y -= 0.2 * p.out;
+    // The left hand in at the cylinder, swung out, palm against it, sweeping down it to spin it.
+    if (free && p.left > 0) {
+      r.updateMatrixWorld(true);
+      g.prop.getObjectByName('gun-drum')!.getWorldPosition(lift);
+      lift.x -= 0.075;
+      lift.y += 0.01 + p.palm * 0.035;
+      lift.z += 0.03;
+      l.position.lerp(lift, p.left);
+      l.rotation.z += (1.35 - l.rotation.z) * p.left;
+      l.rotation.y += (0.35 - l.rotation.y) * p.left;
+    }
+    g.muzzle.update(dt);
   }
 
   /** Moves the hands (already placed for this frame) through the emote. */

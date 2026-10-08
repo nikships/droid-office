@@ -73,6 +73,7 @@ import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
 import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff } from './world/gun';
+import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -633,12 +634,14 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
   onLand: (at) => sound.thud(at),
   onSiren: (at) => sound.siren(at),
 });
-/** The gun in your right hand (`7` draws and holsters it). */
+/** The gun in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
 let gunOut = false;
+/** The gun's draw, holster and tricks, played on your hands and your character alike. */
+const gunMotion = new GunMotion();
 /** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
 const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
-/** `7`: the .44 Magnum out of its holster, or back in. */
+/** `7`: the .44 Magnum out of its holster, or back in. Mash it and each press cancels the last, like a yy. */
 function toggleGun() {
   if (gunOut) {
     holsterGun();
@@ -650,33 +653,60 @@ function toggleGun() {
   if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
   gunOut = true;
-  hands.holdGun(true);
-  me.setGun(true);
-  sound.gunDraw();
+  gunMotion.draw();
   hintKey = 'stale';
 }
 
-/** The gun back in its holster. */
+/** The gun back in its holster: with a spin, or `quiet`ly straight away when your hands are needed. */
 function holsterGun(quiet = false) {
+  // Even on its way back in: something else wants your hands now.
+  if (quiet) gunMotion.stow();
   if (!gunOut) return;
   gunOut = false;
-  hands.holdGun(false);
-  me.setGun(false);
-  if (!quiet) sound.gunHolster();
+  if (!quiet) gunMotion.holster();
   hintKey = 'stale';
 }
+
+/** 1–6 with the gun out: a trick in place of an emote. As many as you like, each from the top. */
+function gunTrick(id: GunTrickId) {
+  if (!gunMotion.trick(id)) return;
+  hintKey = 'stale';
+}
+
+/** The gun's muzzle in the world, in whichever view you're in, or null with it away. */
+function muzzleAt(out: THREE.Vector3): THREE.Vector3 | null {
+  if (player.view !== 'first') return me.muzzleTip(out);
+  const tip = hands.muzzleTip(out);
+  return tip && camera.localToWorld(tip);
+}
+
+/** What the gun's move just did: its sounds, and the smoke blown off the muzzle. */
+function gunCues(cues: readonly GunCue[]) {
+  for (const cue of cues) {
+    sound.gunCue(cue);
+    if (cue !== 'puff') continue;
+    const tip = muzzleAt(muzzleWorld);
+    if (!tip) continue;
+    // Blown away from you, and up.
+    const away = camera.getWorldDirection(blowDir).multiplyScalar(0.35);
+    for (let i = 0; i < 2; i++) smoke.wisp(tip, away);
+  }
+  if (cues.length) hintKey = 'stale';
+}
+const muzzleWorld = new THREE.Vector3();
+const blowDir = new THREE.Vector3();
 
 /** A click with the gun out: fire at what's under the crosshair (or the mouse, in third person). */
 function fireGun(ndc: THREE.Vector2) {
+  gunMotion.fire();
   hands.fireGun();
   me.fire();
   sound.gunshot();
   // One shell of kick up the camera.
   if (!reduceMotion.matches) thud = Math.max(thud, 0.4);
   // Smoke curling off the muzzle.
-  const tip = player.view === 'first' ? hands.muzzleTip(new THREE.Vector3()) : me.muzzleTip(new THREE.Vector3());
+  const tip = muzzleAt(new THREE.Vector3());
   if (tip) {
-    if (player.view === 'first') camera.localToWorld(tip);
     for (let i = 0; i < 2; i++) {
       tip.x += (Math.random() - 0.5) * 0.05;
       tip.y += Math.random() * 0.04;
@@ -2033,15 +2063,10 @@ const paintShelfWiki = () => {
 store.on('factory', paintShelfWiki);
 store.on('floor', paintShelfWiki);
 
-/** When a page last rustled, so a quick scroll through a doc isn't one long rustle. */
-let rustledAt = 0;
 /** You turned a page on the bookshelf: so does the book in your hands, for everyone watching it too. */
 function turnPage() {
   me.turnPage();
   hands.turnPage();
-  const now = performance.now();
-  if (now - rustledAt > 400) sound.paper();
-  rustledAt = now;
 }
 
 /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
@@ -2851,10 +2876,11 @@ function stationHint(deskId: string): Hint {
 
 /** The gun out: fire it, or put it back. */
 function renderGunHint(el: HTMLElement) {
-  const k = 'gun';
+  const doing = GUN_TRICKS.find((x) => x.id === gunMotion.doing);
+  const k = `gun|${doing?.id ?? ''}`;
   if (k === hintKey) return;
   hintKey = k;
-  el.replaceChildren(h('span.title', {}, '🔫 .44 Magnum'), key('Click', 'Fire'), key('7', 'Holster'));
+  el.replaceChildren(h('span.title', {}, doing ? `${doing.emoji} ${doing.label}` : '🔫 .44 Magnum'), key('Click', 'Fire'), key('1–6', 'Tricks'), key('7', 'Holster'));
   el.classList.remove('hidden');
 }
 /** At the golf tee: how to aim and swing, or how to get back to it while the ball's out there. */
@@ -2949,7 +2975,16 @@ function emote(id: EmoteId) {
   hands.emote(id);
   if (player.view === 'first') popEmoji(id);
 }
-const emoteWheel = new EmoteWheel(emote, (open) => (player.mouseLook = !open));
+/** Number `i` on the keys (0 for 1) and round the wheel: a trick with the gun out, else an emote. */
+function emoteOrTrick(i: number) {
+  if (gunOut) return gunTrick(GUN_TRICKS[i].id);
+  emote(EMOTES[i].id);
+}
+const emoteWheel = new EmoteWheel(
+  emoteOrTrick,
+  (open) => (player.mouseLook = !open),
+  () => (gunOut ? { title: 'Trick', items: GUN_TRICKS } : { title: 'Emote', items: EMOTES }),
+);
 $('hud').append(emoteWheel.el);
 
 /** In first person you can't see the emoji over your head, so it pops up on the screen instead. */
@@ -2961,7 +2996,10 @@ function popEmoji(id: EmoteId) {
   $('hud').append(el);
 }
 
-/** G opens the emote wheel (hold it and point, or tap it and click); 1–6 play one straight away. */
+/**
+ * G opens the emote wheel (hold it and point, or tap it and click); 1–6 play one straight away.
+ * With the gun out they're its tricks instead.
+ */
 function emoteKey(e: KeyboardEvent): boolean {
   if (e.code === 'KeyG') {
     if (!e.repeat) emoteWheel.press();
@@ -2974,7 +3012,8 @@ function emoteKey(e: KeyboardEvent): boolean {
   const n = /^(?:Digit|Numpad)([1-6])$/.exec(e.code);
   if (!n) return false;
   emoteWheel.close();
-  emote(EMOTES[Number(n[1]) - 1].id);
+  // A held key doesn't machine-gun tricks: each press is one.
+  if (!(gunOut && e.repeat)) emoteOrTrick(Number(n[1]) - 1);
   return true;
 }
 
@@ -3228,12 +3267,12 @@ canvas.addEventListener('pointerleave', () => (pointer = null));
 player.onClick = (ndc) => {
   // At the tee, a click is you steadying the mouse to aim: nothing else is in reach.
   if (modalOpen() || golf.active) return;
+  if (emoteWheel.isOpen) return emoteWheel.click();
   // The gun out: a click fires at what's under the crosshair (or the mouse).
   if (gunOut) {
     fireGun(ndc);
     return;
   }
-  if (emoteWheel.isOpen) return emoteWheel.click();
   if (hanger.active) {
     reach();
     hanger.place(ndc);
@@ -3453,12 +3492,16 @@ function frame(ts?: number) {
   me.root.rotation.y = player.facing;
   const grip = climber.grip;
   me.setGrip(grip);
+  const gunCuesNow = gunMotion.update(dt);
+  me.setGunPose(gunMotion.pose);
+  hands.setGunPose(gunMotion.pose);
   me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip && !golf.active, player.speedBoost);
   const firstPerson = player.view === 'first';
   // In first person you are the camera; in third, hide yourself when it's zoomed in right behind your head.
   // At the tee the camera's behind the ball, and you're the one holding the club.
   me.root.visible = golf.active || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5);
   if (firstPerson && !golf.active) hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
+  gunCues(gunCuesNow);
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
   const fov = 55 + rush * 16;
@@ -3664,6 +3707,7 @@ const automation = createAutomation({
     hanging: hanger.active,
     golfing: golf.active,
     gun: gunOut,
+    gunMove: gunMotion.doing,
   }),
   busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder or a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
@@ -3729,6 +3773,9 @@ const automation = createAutomation({
   carried: () => carrying,
   emoteWheel,
   emote,
+  gunMotion,
+  toggleGun,
+  gunTrick,
 };
 (window as any).__sound = sound;
 (window as any).__notify = notifier;
