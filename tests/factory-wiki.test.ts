@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { ChildProcess } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -10,7 +10,7 @@ import { FactoryApi } from '../src/server/factory/api.js';
 import type { FactoryRequest, FeatureHost } from '../src/server/factory/feature.js';
 import { FactoryDownload } from '../src/server/factory/feature.js';
 import { WikiFeature } from '../src/server/factory/wiki.js';
-import { WIKI_WORKTREE, WikiRunner, parseDroidModels, readWikiEvent, wikiRunSettings, type WikiFloorDef } from '../src/server/factory/wiki-run.js';
+import { WIKI_UPLOAD_RULE, WIKI_WORKTREE, WikiRunner, parseDroidModels, readWikiEvent, wikiGitBlock, wikiRunSettings, type WikiFloorDef } from '../src/server/factory/wiki-run.js';
 import { isModelId, flattenWiki, resolveWikiLink, sameRepo, wikiHitOf, wikiNodeOf, wikiPageOf, wikiRepoOf, wikiRunDetailOf, wikiRunOf, wikiShelfLine, type FactoryWikiJob, type FactoryWikiNode } from '../src/shared/factory-wiki.js';
 
 const KEY = 'fk-test-wiki-5678';
@@ -463,6 +463,7 @@ function rig(t: { after(fn: () => void): void }, over: { platform?: NodeJS.Platf
       if (over.gitFails && args[0] === over.gitFails) throw new Error(`${args[0]} failed`);
       if (args[0] === 'rev-parse' && args.includes('origin/HEAD')) return 'origin/main';
       if (args[0] === 'rev-parse' && args.includes('--short')) return 'e05ddc1';
+      if (args[0] === 'remote' && args[1] === 'get-url') return 'git@github.com:acme/app.git';
       if (args[0] === 'worktree' && args[1] === 'add') mkdirSync(args[4], { recursive: true });
       return cwd ? '' : '';
     },
@@ -488,11 +489,30 @@ test('runner: runs /wiki in a fresh worktree with the key only in the child’s 
   const worktree = path.join(main.dir, '.droid-office', WIKI_WORKTREE);
   const settings = path.join(main.dir, '.droid-office', 'wiki-run-settings.json');
   assert.equal(s.command, '/usr/local/bin/droid');
-  assert.deepEqual(s.args, ['exec', '--auto', 'high', '-m', 'glm-5.3-flash', '--settings', settings, '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki']);
+  assert.deepEqual(s.args, [
+    'exec',
+    '--auto',
+    'high',
+    '-m',
+    'glm-5.3-flash',
+    '--settings',
+    settings,
+    '--append-system-prompt',
+    WIKI_UPLOAD_RULE,
+    '--output-format',
+    'stream-json',
+    '--tag',
+    'droid-office-wiki',
+    '--cwd',
+    worktree,
+    `/wiki ${WIKI_UPLOAD_RULE}`,
+  ]);
+  assert.match(WIKI_UPLOAD_RULE, /--upload-to factory, never with github/);
   assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), { subagentModelSettings: { lightModel: 'glm-5.3-flash', mediumModel: 'glm-5.3-flash', heavyModel: 'glm-5.3-flash' } });
   assert.equal(job.model, 'glm-5.3-flash');
   assert.equal(s.options.cwd, worktree);
-  assert.deepEqual(s.options.env, { PATH: '/usr/bin', HOME: '/home/o', FACTORY_API_KEY: KEY });
+  assert.deepEqual(s.options.env, { PATH: '/usr/bin', HOME: '/home/o', ...wikiGitBlock('git@github.com:acme/app.git'), FACTORY_API_KEY: KEY });
+  assert.equal((s.options.env as Record<string, string>).GIT_CONFIG_VALUE_2, 'git@github.com:acme/app.wiki', 'git can’t reach the GitHub wiki');
   assert.equal((r.officeEnv as Record<string, string>).FACTORY_API_KEY, undefined, 'the office’s own environment is untouched');
   assert.equal(s.options.detached, true);
   assert.equal(s.options.shell, false);
@@ -671,6 +691,43 @@ test('runner: no Droid command, no checkout, and a Windows .cmd shim', async (t)
   await until(() => win.spawned.length === 1);
   assert.equal(win.spawned[0].options.shell, true);
   assert.equal(win.spawned[0].options.detached, false);
+  // cmd.exe gets one command line: the prompt (and a path with a space) must stay one argument each.
+  assert.equal(win.spawned[0].args.at(-1), `"/wiki ${WIKI_UPLOAD_RULE}"`);
+  assert.equal(win.spawned[0].args[0], 'exec');
+});
+
+test('runner: git can’t reach the floor’s GitHub wiki, in every URL form, after the env’s own git config', () => {
+  for (const origin of ['https://github.com/acme/app.git', 'https://github.com/acme/app', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app.git']) {
+    assert.deepEqual(
+      wikiGitBlock(origin),
+      {
+        GIT_CONFIG_COUNT: '4',
+        GIT_CONFIG_KEY_0: 'url.droid-office-no-github-wiki://blocked/.insteadOf',
+        GIT_CONFIG_VALUE_0: 'https://github.com/acme/app.wiki',
+        GIT_CONFIG_KEY_1: 'url.droid-office-no-github-wiki://blocked/.insteadOf',
+        GIT_CONFIG_VALUE_1: 'http://github.com/acme/app.wiki',
+        GIT_CONFIG_KEY_2: 'url.droid-office-no-github-wiki://blocked/.insteadOf',
+        GIT_CONFIG_VALUE_2: 'git@github.com:acme/app.wiki',
+        GIT_CONFIG_KEY_3: 'url.droid-office-no-github-wiki://blocked/.insteadOf',
+        GIT_CONFIG_VALUE_3: 'ssh://git@github.com/acme/app.wiki',
+      },
+      origin,
+    );
+  }
+  const after = wikiGitBlock('https://github.com/acme/app.git', { GIT_CONFIG_COUNT: '2' });
+  assert.equal(after.GIT_CONFIG_COUNT, '6');
+  assert.equal(after.GIT_CONFIG_VALUE_2, 'https://github.com/acme/app.wiki');
+  assert.equal(after.GIT_CONFIG_KEY_0, undefined, 'the env’s own entries are left as they are');
+  assert.deepEqual(wikiGitBlock('https://gitlab.com/acme/app.git'), {});
+  assert.deepEqual(wikiGitBlock(''), {});
+
+  // Real git, which fails on the rewritten URL before it reaches the network.
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', ...wikiGitBlock('git@github.com:acme/app.git', process.env) };
+  for (const url of ['https://github.com/acme/app.wiki.git', 'git@github.com:acme/app.wiki.git']) {
+    const r = spawnSync('git', ['ls-remote', url], { env, encoding: 'utf8', timeout: 10_000 });
+    assert.notEqual(r.status, 0, url);
+    assert.match(r.stderr, /droid-office-no-github-wiki/, url);
+  }
 });
 
 test('wiki: generate and cancel through the routes; a finished run polls for its upload', async (t) => {

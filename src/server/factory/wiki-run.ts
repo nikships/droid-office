@@ -7,7 +7,7 @@ import { HttpError } from './feature.js';
 
 // The office's own AutoWiki runs: `droid exec --auto high "/wiki"`, the command Factory's own CI
 // template runs, in a clean detached worktree of a floor's default branch. /wiki writes the pages and
-// uploads them (POST /wiki) as its last step, so Factory only hears of the run when it's done; until
+// uploads them (POST /wiki, and only there: WIKI_UPLOAD_RULE) as its last step, so Factory only hears of the run when it's done; until
 // then it lives here. The office's Factory key goes into that one child's environment (so the run
 // lands in the connected account), never into a log or a line anyone sees.
 
@@ -241,6 +241,41 @@ export function wikiRunSettings(model: Pick<DroidModel, 'id' | 'defaultEffort'>)
   return { subagentModelSettings: s };
 }
 
+/**
+ * Where the office's /wiki uploads go. In exec mode /wiki's skill sends a GitHub repository's pages to
+ * both Factory and the repository's GitHub wiki tab (`--upload-to factory,github`), and Droid has no
+ * flag or setting that turns the GitHub half off, so this is said in /wiki's prompt and system prompt,
+ * and wikiGitBlock() makes git refuse the wiki repository if the model goes ahead anyway.
+ */
+export const WIKI_UPLOAD_RULE = 'Upload targets are already decided: Factory cloud yes, GitHub wiki tab no. Run droid wiki-upload with --upload-to factory, never with github in --upload-to, and do not push to the repository’s GitHub wiki.';
+
+/** Not a git transport: a URL rewritten to it fails at once, without touching the network. */
+const NO_WIKI_URL = 'droid-office-no-github-wiki://blocked/';
+
+/**
+ * Git configuration, as GIT_CONFIG_* environment variables after any `env` already has, that points
+ * the GitHub wiki repository of `origin` (the URL /wiki passes as --repo-url) at NO_WIKI_URL. Droid's
+ * GitHub wiki sync checks, clones and pushes that repository with git, so with these the sync stops at
+ * its first `git ls-remote`. Empty when origin isn't on GitHub (there's no GitHub wiki to reach).
+ */
+export function wikiGitBlock(origin: string, env: Record<string, string | undefined> = {}): Record<string, string> {
+  const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(origin.trim());
+  if (!m) return {};
+  const slug = `${m[1]}/${m[2]}`;
+  // The forms Droid builds the wiki's URL in (https or scp-style ssh), and ssh:// for a model that rewrites it.
+  const wikis = [`https://github.com/${slug}.wiki`, `http://github.com/${slug}.wiki`, `git@github.com:${slug}.wiki`, `ssh://git@github.com/${slug}.wiki`];
+  const from = Number.parseInt(env.GIT_CONFIG_COUNT ?? '', 10) || 0;
+  const out: Record<string, string> = { GIT_CONFIG_COUNT: String(from + wikis.length) };
+  wikis.forEach((url, i) => {
+    out[`GIT_CONFIG_KEY_${from + i}`] = `url.${NO_WIKI_URL}.insteadOf`;
+    out[`GIT_CONFIG_VALUE_${from + i}`] = url;
+  });
+  return out;
+}
+
+/** An argument for cmd.exe, which gets the command line as one string when a .cmd shim runs through the shell. */
+const cmdArg = (a: string) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+
 /** Each floor's /wiki run, at most one at a time per floor. */
 export class WikiRunner {
   private live = new Map<string, Live>();
@@ -435,18 +470,21 @@ export class WikiRunner {
       return this.end(live, 'failed', `Couldn’t make a clean checkout of the default branch: ${(err as Error).message}`);
     }
     if (live.cancelled || live.abandoned) return this.end(live, 'cancelled');
+    const origin = await this.git(['remote', 'get-url', 'origin'], worktree).catch(() => '');
+    if (live.cancelled || live.abandoned) return this.end(live, 'cancelled');
     const settings = path.join(this.dataDir(floor), SETTINGS);
-    const args = ['exec', '--auto', 'high', '-m', model.id, '--settings', settings, '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, '/wiki'];
+    const args = ['exec', '--auto', 'high', '-m', model.id, '--settings', settings, '--append-system-prompt', WIKI_UPLOAD_RULE, '--output-format', 'stream-json', '--tag', 'droid-office-wiki', '--cwd', worktree, `/wiki ${WIKI_UPLOAD_RULE}`];
     // A .cmd shim on Windows only runs through the shell.
     const shell = this.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
+    const env = this.opts.env();
     const note = { startedAt: live.job.startedAt, by: live.job.by, model: model.id, modelName: model.name };
     let child: ChildProcess;
     try {
       writeFileSync(settings, JSON.stringify(wikiRunSettings(model)));
       writeFileSync(path.join(this.dataDir(floor), MARKER), JSON.stringify(note));
-      child = this.spawn(command, args, {
+      child = this.spawn(command, shell ? args.map(cmdArg) : args, {
         cwd: worktree,
-        env: { ...this.opts.env(), FACTORY_API_KEY: key },
+        env: { ...env, ...wikiGitBlock(origin, env), FACTORY_API_KEY: key },
         stdio: ['ignore', 'pipe', 'pipe'],
         // Its own process group, so a cancel ends everything /wiki started too.
         detached: this.platform !== 'win32',
