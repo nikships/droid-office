@@ -74,6 +74,13 @@ export function emptyState(icon: string, title: string, text?: Child, action?: H
   return h('div.empty-state', {}, h('div.empty-icon', { 'aria-hidden': 'true' }, icon), h('b', {}, title), text ? h('p', {}, text) : null, action ?? null);
 }
 
+/** A worker's (or any) color as a round `span.dot`, colored through `el.style` rather than a `style` attribute. */
+export function colorDot(color: string): HTMLSpanElement {
+  const el = h('span.dot', { 'aria-hidden': 'true' });
+  el.style.background = color;
+  return el;
+}
+
 /** A window's header: its title, an optional subtitle under it, and header actions before the ✕ that openModal adds. */
 export function windowHeader(title: Child, sub?: Child, ...actions: Child[]): HTMLElement {
   const shown = actions.filter((a) => a !== null && a !== undefined && a !== false);
