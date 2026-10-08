@@ -5,30 +5,34 @@ import { h, openModal, toast } from './dom';
 
 /** The jukebox: what's on, the tunes to pick from, skip and stop, and a box for a stream. */
 export function openJukebox(net: Net, openVolume: () => void) {
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const close = h('button.btn.icon.close', { 'aria-label': 'Close' }, '✕');
   const now = h('div.jb-now');
-  const list = h('ul.svc-list');
-  const url = h('input', { type: 'text', placeholder: 'https://… internet radio, or a link to an .mp3', 'aria-label': 'Stream or audio file link', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const playUrl = h('button.btn.primary', { type: 'button' }, 'Play');
+  const list = h('ul.list.boxed.jb-tunes');
+  const url = h('input.input', {
+    id: 'jb-stream',
+    type: 'text',
+    placeholder: 'https://… internet radio, or a link to an .mp3',
+    'aria-label': 'Stream or audio file link',
+    spellcheck: 'false',
+    autocomplete: 'off',
+  }) as HTMLInputElement;
+  const playUrl = h('button.btn', { type: 'button' }, 'Play');
   const volume = h('button.btn', { type: 'button' }, 'Your volume');
   const el = h(
-    'div.modal.jukebox',
+    'div.modal.md.jukebox',
     { role: 'dialog', 'aria-label': 'Jukebox' },
-    h('header', {}, h('h2', {}, 'Jukebox'), close),
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Jukebox'), h('p.sub', {}, 'Everyone on this floor hears the same song.')), close),
     h(
-      'div.body',
+      'div.body.stack.loose',
       {},
       now,
-      h('label', { style: 'margin-top:16px' }, 'Put on a tune'),
-      list,
-      h('label', { style: 'margin-top:16px' }, 'Or play a stream'),
-      h('div.webhook', {}, url, playUrl),
-      h('p.setting-note', {}, 'Internet radio or an audio file. It plays from the jukebox, for everyone on this floor.'),
+      h('section.section', {}, h('div.eyebrow', {}, 'Put on a tune'), list),
+      h('section.section', {}, h('div.field', {}, h('label', { for: 'jb-stream' }, 'Or play a stream'), h('div.input-group', {}, url, playUrl), h('p.field-hint', {}, 'Internet radio or an audio file, played from the jukebox.'))),
     ),
-    h('footer', {}, h('span.grow', {}, 'Everyone on this floor hears the same song, louder the closer they are to the lounge.'), volume),
+    h('footer', {}, h('span.grow', {}, 'Louder the closer you are to the lounge.'), volume),
   );
 
-  const button = (label: string, title: string, send: () => void, primary = false) => h(primary ? 'button.btn.primary' : 'button.btn', { type: 'button', title, onclick: send }, label);
+  const button = (label: string, title: string, send: () => void, primary = false) => h(primary ? 'button.btn.sm.primary' : 'button.btn.sm', { type: 'button', title, onclick: send }, label);
 
   const render = () => {
     const j = store.jukebox;
@@ -36,22 +40,28 @@ export function openJukebox(net: Net, openVolume: () => void) {
     now.replaceChildren(
       h('span.jb-disc', { class: j.on ? 'spin' : '' }, stream ? '📻' : '💿'),
       h(
-        'div.svc-main',
+        'div.jb-now-main',
         {},
-        h('div.svc-title', {}, j.on ? trackTitle(j) : 'The jukebox is off'),
-        h('div.svc-meta', {}, j.on ? [stream ? 'a stream' : tuneById(j.track)?.mood, j.by && `put on by ${j.by}`].filter(Boolean).join(' · ') : j.by ? `${j.by} turned it off` : 'Pick a tune to put it on'),
+        h('div.eyebrow', {}, j.on ? 'Now playing' : 'Off'),
+        h('div.jb-now-title', { title: j.on ? trackTitle(j) : '' }, j.on ? trackTitle(j) : 'The jukebox is off'),
+        h('div.jb-now-meta', {}, j.on ? [stream ? 'a stream' : tuneById(j.track)?.mood, j.by && `put on by ${j.by}`].filter(Boolean).join(' · ') : j.by ? `${j.by} turned it off` : 'Pick a tune to put it on'),
       ),
-      j.on ? button('Skip', 'On to the next tune', () => net.send({ t: 'jukebox.skip' })) : button('Play', `Put ${trackTitle(j)} back on`, () => net.send({ t: 'jukebox.play' }), true),
-      j.on ? button('Stop', 'Turn the jukebox off', () => net.send({ t: 'jukebox.stop' })) : '',
+      h(
+        'div.row',
+        {},
+        j.on ? button('Skip', 'On to the next tune', () => net.send({ t: 'jukebox.skip' })) : button('Play', `Put ${trackTitle(j)} back on`, () => net.send({ t: 'jukebox.play' }), true),
+        j.on ? button('Stop', 'Turn the jukebox off', () => net.send({ t: 'jukebox.stop' })) : '',
+      ),
     );
     list.replaceChildren(
       ...JUKEBOX_TUNES.map((t) => {
         const playing = j.on && j.track === t.id;
         const li = h(
-          'li',
+          'li.list-row',
           { class: playing ? 'on' : '', tabindex: 0, role: 'button', 'aria-pressed': String(playing), title: playing ? 'Playing now' : `Put on ${t.title}` },
-          h('span.jb-icon', {}, playing ? '🔊' : '🎵'),
-          h('div.svc-main', {}, h('div.svc-title', {}, t.title), h('div.svc-meta', {}, t.mood)),
+          h('span.list-icon', {}, playing ? '🔊' : '🎵'),
+          h('div.list-main', {}, h('div.list-title', {}, t.title), h('div.list-meta', {}, t.mood)),
+          playing ? h('span.list-end.jb-playing', {}, 'Playing') : null,
         );
         const pick = () => {
           if (!playing) net.send({ t: 'jukebox.play', track: t.id });
