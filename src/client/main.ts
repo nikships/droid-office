@@ -1900,26 +1900,28 @@ function paletteEntries(): PaletteEntry[] {
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
   out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
-  out.push(
-    atSpot('ci', 'the CI automations board', {
-      icon: '🏭',
-      kind: 'Board',
-      title: 'CI automations',
-      detail: 'Droid in GitHub Actions, from Factory',
-      keywords: ['factory', 'github actions', 'workflows', 'code review'],
-      open: () => showCi(),
-    }),
-  );
-  out.push(
-    atSpot('ci', 'the CI automations board', {
-      icon: '🤖',
-      kind: 'Action',
-      title: 'Add Droid code review to a repository',
-      detail: 'Factory opens a pull request with the workflow',
-      keywords: ['factory', 'ci', 'github actions', 'workflow'],
-      open: () => showCi(true),
-    }),
-  );
+  if (store.factory.connection.connected) {
+    out.push(
+      atSpot('ci', 'the CI automations board', {
+        icon: '🏭',
+        kind: 'Board',
+        title: 'CI automations',
+        detail: 'Droid in GitHub Actions, from Factory',
+        keywords: ['factory', 'github actions', 'workflows', 'code review'],
+        open: () => showCi(),
+      }),
+    );
+    out.push(
+      atSpot('ci', 'the CI automations board', {
+        icon: '🤖',
+        kind: 'Action',
+        title: 'Add Droid code review to a repository',
+        detail: 'Factory opens a pull request with the workflow',
+        keywords: ['factory', 'ci', 'github actions', 'workflow'],
+        open: () => showCi(true),
+      }),
+    );
+  }
   out.push(
     atSpot('computers', 'the compute wall', {
       icon: '🖥️',
@@ -2736,9 +2738,18 @@ function deskHint(deskId: string): Hint {
   }
   if (w.cloud) {
     const doing = w.cloud.error ? `⚠️ ${clip(w.cloud.error, 48)}` : w.activity ? clip(w.activity, 48) : '';
+    const credits = creditsNote(store.factory.sessions, w.sessionId);
     return {
-      k: `cloud|${w.id}|${w.status}|${doing}|${cloudLine(w)}`,
-      parts: [h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`), aside(cloudLine(w)), doing ? aside(doing) : '', key('E', 'Open'), key('P', 'Prompt'), key('X', 'Send home')],
+      k: `cloud|${w.id}|${w.status}|${doing}|${cloudLine(w)}|${credits}`,
+      parts: [
+        h('span.title', {}, `${w.name} · ${statusWord(w, STATUS_LABEL)}`),
+        credits ? h('span.cost', { title: 'Factory credits its Droid session (and its subagents) used' }, credits) : '',
+        aside(cloudLine(w)),
+        doing ? aside(doing) : '',
+        key('E', 'Open'),
+        key('P', 'Prompt'),
+        key('X', 'Send home'),
+      ],
     };
   }
   if (w.guest) {
@@ -3241,7 +3252,16 @@ const hudActions: HudAction[] = [
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
   { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
   { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
-  { id: 'ci', icon: '🏭', label: 'CI automations', section: 'Open', count: () => store.factory.ci.workflows.length, title: () => 'Droid in GitHub Actions, from Factory', run: () => showCi() },
+  {
+    id: 'ci',
+    icon: '🏭',
+    label: 'CI automations',
+    section: 'Open',
+    shown: () => store.factory.connection.connected,
+    count: () => store.factory.ci.workflows.length,
+    title: () => 'Droid in GitHub Actions, from Factory',
+    run: () => showCi(),
+  },
   { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
   // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
   {

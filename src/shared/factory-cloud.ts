@@ -106,7 +106,14 @@ export interface CloudTurn {
   countAtSend?: number;
   /** It has been seen pending or running since the last message (or since the office started watching). */
   seenBusy?: boolean;
+  /** Its turn ended before its reply was in the messages: the office reads them again until then (ms). */
+  replyBy?: number;
+  /** While it does: the reply is one made after this (ms), when the office knows when the turn began. */
+  replyAfter?: number;
 }
+
+/** How far Factory's clock may be from the office's, for "made after the message went". */
+export const CLOCK_SKEW_MS = 2000;
 
 /** How long a sent message may go unseen (still idle, no new messages) before the turn counts as over anyway. */
 export const SEND_SETTLE_MS = 90_000;
@@ -128,10 +135,16 @@ export function cloudStatus(session: { status: string; messageCount?: number }, 
   return { turn };
 }
 
-/** The newest message is an assistant's (its reply landed): the turn it answers is over, even if the session was never seen running. */
-export function answeredByAssistant(messages: readonly unknown[]): boolean {
-  const m = messages.find((x) => x && typeof x === 'object') as { role?: unknown } | undefined;
-  return m?.role === 'assistant';
+/**
+ * The newest message is an assistant's (its reply landed): the turn it answers is over, even if the
+ * session was never seen running. With `since` (ms), only a reply made then or later counts: Factory
+ * lists a new message many seconds late, so the newest listed can still be the last turn's reply.
+ */
+export function answeredByAssistant(messages: readonly unknown[], since?: number): boolean {
+  const m = messages.find((x) => x && typeof x === 'object') as { role?: unknown; createdAt?: unknown } | undefined;
+  if (m?.role !== 'assistant') return false;
+  const at = Number(m.createdAt);
+  return since === undefined || !Number.isFinite(at) || at >= since;
 }
 
 /** A content block of a message as GET /sessions/{id}/messages has it. */

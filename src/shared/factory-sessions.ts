@@ -97,6 +97,11 @@ export const SESSIONS_KEPT = 100;
 /** The longest title the slice keeps; Factory titles a session with its first prompt, which can be long. */
 export const SESSION_TITLE_MAX = 200;
 export const CREDIT_DAYS = 7;
+/**
+ * Factory 404s a session it just made for a while (a few seconds, sometimes longer): until it's this
+ * old, a 404 for it means "not readable yet" rather than "gone".
+ */
+export const NEW_SESSION_GRACE_MS = 3 * 60_000;
 
 export interface FactorySessionsState {
   items: FactorySession[];

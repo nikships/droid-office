@@ -1,5 +1,5 @@
 import { mergeMessages, resultsByCall, toolLine, type FactoryBlock, type FactoryMessage } from '../../shared/factory-sessions';
-import { factoryFetch } from '../factory';
+import { FactoryFetchError, factoryFetch } from '../factory';
 import { h } from './dom';
 import { markdown } from './markdown';
 
@@ -15,6 +15,13 @@ export interface TranscriptOptions {
   live?: () => boolean;
   /** Messages per page (1-100). */
   pageSize?: number;
+  /**
+   * Whether the session was only just made: Factory 404s one for a few seconds, so while this says so
+   * a 404 reads as starting (and is tried again every few seconds) instead of an error.
+   */
+  starting?: () => boolean;
+  /** What to say while it has no messages (default "No messages yet"). Read at every paint. */
+  empty?: () => string;
 }
 
 export interface Transcript {
@@ -28,6 +35,8 @@ export interface Transcript {
 
 /** While the session runs, the newest messages are read this often. */
 const LIVE_MS = 3000;
+/** After it stops running, the newest are read until its reply is in, for at most this long. */
+const SETTLE_MS = 90_000;
 /** How near the bottom (px) still counts as at the bottom, so new messages scroll into view. */
 const STICK_PX = 80;
 
@@ -143,12 +152,20 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
       at = next;
     }
     older.classList.toggle('hidden', !hasMore);
-    status.textContent = messages.length ? '' : 'No messages yet';
+    status.textContent = messages.length ? '' : (opts.empty?.() ?? 'No messages yet');
     status.classList.remove('error');
     if (stick) element.scrollTop = element.scrollHeight;
   };
 
+  /** The last read was a just-made session's 404: read again at the next tick, live or not. */
+  let unborn = false;
   const fail = (err: unknown) => {
+    unborn = err instanceof FactoryFetchError && err.status === 404 && !messages.length && !!opts.starting?.();
+    if (unborn) {
+      status.textContent = 'Starting… Factory is getting the session ready';
+      status.classList.remove('error');
+      return;
+    }
     status.textContent = `Couldn’t read the transcript: ${(err as Error).message}`;
     status.classList.add('error');
   };
@@ -158,6 +175,7 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
     const stick = !messages.length || atBottom();
     const page = await factoryFetch<Page>('sessions', path, { query: { limit } });
     if (disposed) return;
+    unborn = false;
     const known = new Set(messages.map((m) => m.id));
     if (!messages.length || !page.messages.some((m) => known.has(m.id))) {
       messages = page.messages;
@@ -167,8 +185,18 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
     paint(stick);
   };
 
+  // A read asked for while one is on its way runs after it: the one on its way may have left before
+  // what the caller wants to see (the reply to a message just sent) was there.
+  let next: Promise<void> | undefined;
   const refresh = (): Promise<void> => {
-    reading ??= readNewest()
+    if (reading) {
+      next ??= reading.then(() => {
+        next = undefined;
+        return refresh();
+      });
+      return next;
+    }
+    reading = readNewest()
       .catch(fail)
       .finally(() => {
         reading = undefined;
@@ -199,12 +227,25 @@ export function mountTranscript(opts: TranscriptOptions): Transcript {
   };
   older.addEventListener('click', () => void loadOlder());
 
-  // While it runs: the newest every few seconds, and once more when it stops, for its last words.
+  // While it runs: the newest every few seconds, and after it stops until its last words are in:
+  // Factory lists a message many seconds after it was made, and says the session is idle before then.
+  const lastReply = () => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'assistant') return messages[i].id;
+    return '';
+  };
+  let settleUntil = 0;
+  let settleFrom = '';
   let wasLive = false;
   const tick = () => {
     if (disposed) return;
     const live = opts.live?.() ?? false;
-    if ((live || wasLive) && !document.hidden) void refresh();
+    if (wasLive && !live) {
+      settleUntil = Date.now() + SETTLE_MS;
+      settleFrom = lastReply();
+    }
+    // A reply newer than the one there was when it stopped, and nothing after it: that's its answer.
+    if (settleUntil && messages.at(-1)?.role === 'assistant' && lastReply() !== settleFrom) settleUntil = 0;
+    if ((live || Date.now() < settleUntil || unborn) && !document.hidden) void refresh();
     wasLive = live;
     timer = setTimeout(tick, LIVE_MS);
   };
