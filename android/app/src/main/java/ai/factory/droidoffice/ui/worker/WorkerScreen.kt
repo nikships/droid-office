@@ -1,6 +1,7 @@
 package ai.factory.droidoffice.ui.worker
 
 import android.content.ClipData
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -53,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -89,6 +91,7 @@ import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermSize
+import ai.factory.droidoffice.core.TermView
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.Workers
@@ -126,12 +129,22 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
     val worker = data.workers[workerId]
+    var phone by rememberSaveable(workerId) { mutableStateOf(false) }
+    val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
+    val activity = LocalActivity.current
+    val ptySize by rememberUpdatedState(worker?.let { TermSize(it.cols, it.rows) })
 
     DisposableEffect(workerId) {
         connection.attach(workerId)
         graph.visibility.viewing.value = workerId
         graph.alerts.cancel(workerId)
         onDispose {
+            // Leaving the phone view puts the desktop's size back (before detaching: the office takes
+            // a resize only from an attached window). Rotating keeps the phone view and its size.
+            if (activity?.isChangingConfigurations != true) {
+                ptySize?.let { now -> sizing.restore(now) }?.let { connection.send(ClientMsg.termResize(workerId, it.cols, it.rows)) }
+                sizing.release()
+            }
             connection.detach(workerId)
             if (graph.visibility.viewing.value == workerId) graph.visibility.viewing.value = null
         }
@@ -153,10 +166,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         val live = !worker.state.asleep
         val screen = screens[workerId]
         NeedsYou(worker, screen, live && link.phase == Phase.Connected)
-        val zoom = rememberTerminalZoom(workerId)
-        var phone by rememberSaveable(workerId) { mutableStateOf(false) }
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
-        val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
         LaunchedEffect(phone, phoneSize, canResize, currentSize) {
@@ -165,6 +175,12 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 return@LaunchedEffect
             }
             if (phone) {
+                // The desktop typed into it and took the size back: show it as the desktop has it.
+                if (sizing.takenOver(currentSize)) {
+                    sizing.release()
+                    phone = false
+                    return@LaunchedEffect
+                }
                 val target = phoneSize ?: return@LaunchedEffect
                 // Wait for keyboard and panel animations to settle before resizing the shared PTY.
                 delay(150)
@@ -178,9 +194,9 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         }
         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
-                screen, live && link.phase == Phase.Connected, zoom,
+                workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
-                phone = phone, onPhoneSize = { phoneSize = it },
+                onFit = { phoneSize = it },
             )
             if (worker.isCloud) Cloud(worker) else if (worker.state.asleep) Asleep(worker)
         }
@@ -191,10 +207,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud) {
-                    QuickKeys(workerId, zoom, phone) {
-                        phone = !phone
-                        zoom.zoom = 1f
-                    }
+                    QuickKeys(workerId, phone) { phone = !phone }
                 }
                 Composer(worker)
             }
@@ -443,7 +456,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
 
 /** The keys a TUI waits for that a phone keyboard doesn't have: menus, permission prompts, interrupts. */
 @Composable
-private fun QuickKeys(workerId: String, zoom: TerminalZoom, phone: Boolean, onPhone: () -> Unit) {
+private fun QuickKeys(workerId: String, phone: Boolean, onPhone: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
     // Label, what TalkBack says, bytes.
@@ -457,12 +470,6 @@ private fun QuickKeys(workerId: String, zoom: TerminalZoom, phone: Boolean, onPh
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (!phone && zoom.zoomable) {
-            QuickKey(if (zoom.zoomed) "Fit" else "Aa", if (zoom.zoomed) "Fit the terminal to the screen" else "Zoom the terminal in", Tags.Worker.ZOOM, selected = zoom.zoomed) {
-                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                zoom.toggle()
-            }
-        }
         QuickKey("Phone", "Resize the terminal for this phone", Tags.Worker.PHONE, selected = phone, checked = phone) {
             haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
             onPhone()

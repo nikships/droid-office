@@ -1,9 +1,5 @@
 package ai.factory.droidoffice.ui.theme
 
-import android.graphics.Typeface as AndroidTypeface
-import android.graphics.fonts.Font as AndroidFont
-import android.graphics.fonts.FontFamily as AndroidFontFamily
-import android.os.Build
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -16,7 +12,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -53,7 +48,6 @@ object Palette {
 @Immutable
 data class OfficeType(
     val mono: FontFamily,
-    val terminal: TerminalFaces,
     /** Small upper-case mono labels: the office's metadata voice ("WORKING · 12M"). */
     val eyebrow: TextStyle,
     val monoBody: TextStyle,
@@ -129,41 +123,11 @@ private val Scheme = darkColorScheme(
     scrim = Color(0xCC000000),
 )
 
-/** The terminal's typefaces, for drawing cells straight onto a canvas. */
-@Immutable
-data class TerminalFaces(val regular: AndroidTypeface, val bold: AndroidTypeface)
-
-/**
- * Geist Mono at its regular and bold weights, with the office's Nerd Font symbols (bundled as
- * terminal_symbols) behind it, so agent TUIs that draw icons from the private-use area render the
- * glyphs instead of tofu. Fallback chains need API 29; on 28 it's plain Geist Mono.
- */
-@Composable
-private fun rememberTerminalFaces(): TerminalFaces {
-    val res = LocalResources.current
-    return remember(res) {
-        val plain = res.getFont(R.font.geist_mono)
-        val fallback = TerminalFaces(plain, AndroidTypeface.create(plain, 700, false))
-        if (Build.VERSION.SDK_INT < 29) return@remember fallback
-        runCatching {
-            val symbols = AndroidFontFamily.Builder(AndroidFont.Builder(res, R.font.terminal_symbols).build()).build()
-            fun face(weight: Int): AndroidTypeface {
-                val mono = AndroidFont.Builder(res, R.font.geist_mono).setFontVariationSettings("'wght' $weight").setWeight(weight).build()
-                return AndroidTypeface.CustomFallbackBuilder(AndroidFontFamily.Builder(mono).build())
-                    .addCustomFallback(symbols).setSystemFallback("monospace").setStyle(mono.style).build()
-            }
-            TerminalFaces(face(400), face(700))
-        }.getOrDefault(fallback)
-    }
-}
-
 @Composable
 fun DroidOfficeTheme(content: @Composable () -> Unit) {
-    val terminal = rememberTerminalFaces()
-    val type = remember(terminal) {
+    val type = remember {
         OfficeType(
             mono = GeistMono,
-            terminal = terminal,
             eyebrow = TextStyle(fontFamily = GeistMono, fontSize = 10.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.08.em, color = Palette.TextSecondary),
             monoBody = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 19.sp, color = Palette.Text),
         )

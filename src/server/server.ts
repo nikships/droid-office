@@ -18,6 +18,7 @@ import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
 import { Services } from './services.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
+import { PhoneSizes } from './phone-sizes.js';
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
@@ -93,6 +94,8 @@ interface Client {
   isAlive: boolean;
   /** The paired phone this connection came in with (its device token), if it did. */
   device?: string;
+  /** Terminals this phone resized, put back when it disconnects (see phone-sizes.ts). */
+  phoneSizes?: PhoneSizes;
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
@@ -1066,7 +1069,7 @@ export async function startServer(cfg: Config) {
       playing: false,
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
-      ...(device ? { device } : {}),
+      ...(device ? { device, phoneSizes: new PhoneSizes() } : {}),
     };
     clients.set(id, client);
     ws.on('pong', () => (client.isAlive = true));
@@ -1108,6 +1111,7 @@ export async function startServer(cfg: Config) {
     });
     ws.on('close', () => {
       clients.delete(id);
+      for (const r of client.phoneSizes?.restores((wid) => workerFloor(wid)?.workers.get(wid)) ?? []) workerFloor(r.workerId)?.workers.resize(r.workerId, r.size.cols, r.size.rows);
       for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
       stopPlaying(client);
       for (const f of floors.values()) {
@@ -1505,9 +1509,15 @@ export async function startServer(cfg: Config) {
       case 'term.input':
         if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.write(msg.workerId, str(msg.data, 64 * 1024));
         break;
-      case 'term.resize':
-        if (c.attached.has(msg.workerId)) workerFloor(msg.workerId)?.workers.resize(msg.workerId, num(msg.cols), num(msg.rows));
+      case 'term.resize': {
+        const w = c.attached.has(msg.workerId) ? worker(msg.workerId) : undefined;
+        if (!w) break;
+        const before = { cols: w.info.cols, rows: w.info.rows };
+        w.floor.workers.resize(w.wid, num(msg.cols), num(msg.rows));
+        const after = w.floor.workers.get(w.wid);
+        if (after) c.phoneSizes?.resized(w.wid, before, after);
         break;
+      }
       case 'gh.refresh':
         void floorOf(c)?.board.refresh();
         break;
