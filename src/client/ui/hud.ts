@@ -2,9 +2,11 @@ import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
 import { store } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
+import { cloudLine } from './factory-cloud';
 import { DESK_BY_ID } from '../../shared/layout';
 import { teamSummary, workersByTeam } from '../../shared/team';
 import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
+import { creditsNote } from '../../shared/factory-sessions';
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
@@ -17,9 +19,12 @@ export function renderWorkers(onOpen: (id: string) => void) {
     const sub = [
       teamSummary(team),
       w.kind === 'agent' && `⚙️ ${w.guest ? PROVIDER_LABEL[w.guest.provider] : 'Droid'}${badge ? ` · ${badge}` : ''}`,
+      w.cloud && cloudLine(w),
+      w.cloud?.error && `⚠️ ${w.cloud.error}`,
       w.worktree && `🌿 ${w.worktree.branch}`,
       w.repos?.length && `🗂️ ${w.repos.length + 1} repos`,
       w.pr && `🔀 PR #${w.pr.number}`,
+      creditsNote(store.factory.sessions, w.sessionId),
       w.guest && `🚪 outside the office · pid ${w.guest.pid}`,
       w.activity || w.title || w.prompt,
     ]
@@ -30,7 +35,13 @@ export function renderWorkers(onOpen: (id: string) => void) {
         'li',
         {
           onclick: () => onOpen(w.id),
-          title: w.guest ? `${w.name} runs outside the office (${processLabel(w.guest)}): see what the office knows of it` : lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`,
+          title: w.cloud
+            ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}`
+            : w.guest
+              ? `${w.name} runs outside the office (${processLabel(w.guest)}): see what the office knows of it`
+              : lead
+                ? `Open ${w.name}'s terminal (a subagent of ${lead.name})`
+                : `Open ${w.name}'s terminal`,
           class: lead ? 'subagent' : team.length ? 'lead' : undefined,
           style: lead ? `--lead:${lead.color}` : undefined,
         },
@@ -83,10 +94,6 @@ export function openHelp() {
     ],
     ['🎉', 'Whenever a pull request merges, the gong next to the PR board rings, confetti rains down all over the floor and every worker gets up on its desk for a quick dance. Walk up to the gong and press E to bang it yourself'],
     ['N', "Next worker that needs you: go to whoever has waited longest (needs input, or done and nobody's looked), and again for the next one. Arrows at the edge of the screen point to the ones out of sight"],
-    [
-      '🏀',
-      'The hoop on the west wall, by the exit door: E at the ball picks it up. Hold E (or the mouse, in first person) and let go when the meter is in the green to sink it. In first person it goes where you look. Q drops it. Everyone on your floor sees your shot',
-    ],
     ['🍸', 'The elevator goes up to the rooftop bar: a DJ playing drum and bass under the lights, and the city all around. Press E at the bar for a drink (it goes to your head for a bit) and at the DJ booth for the air horn'],
     ['Drag / wheel', 'Orbit and zoom the camera in third person'],
     ['P', 'Prompt: give a task to a new or existing worker at the desk you face'],
@@ -95,7 +102,7 @@ export function openHelp() {
     ['R', 'Resume a sleeping worker'],
     ['X', 'Send a worker home (frees the desk)'],
     ['F', 'Hang a picture from the web on a wall. Look at a picture and press E to move, edit or take it down'],
-    ['Q', 'Put back the issue card in your hands (E at a note on the issues board, or Pick it up in an issue; then E at an empty desk, a worker or the queue board), or drop the basketball'],
+    ['Q', 'Put back the issue card in your hands (E at a note on the issues board, or Pick it up in an issue; then E at an empty desk, a worker or the queue board)'],
     ['O', 'Open a pull request for a worker on its own branch, or see the one it has'],
     [
       'G / 1–6',

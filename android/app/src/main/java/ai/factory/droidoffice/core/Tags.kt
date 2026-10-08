@@ -119,6 +119,7 @@ object Tags {
         const val LATEST = "worker.latest"
         const val ASLEEP = "worker.asleep"
         const val ASLEEP_RESUME = "worker.asleep.resume"
+        const val CLOUD = "worker.cloud"
         const val GONE = "worker.gone"
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"

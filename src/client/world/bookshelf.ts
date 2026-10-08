@@ -5,12 +5,19 @@ import type { Collider, Interactable } from './office';
 
 // The bookshelf against the south wall: a tall wooden case, five shelves packed with books of every
 // size and color (a few leaning over, a stack lying flat, a plant and a globe among them), and a
-// Docs sign over the crown. E at it opens the project's Markdown to read (ui/bookshelf.ts).
+// Docs sign over the crown. E at it opens the project's Markdown to read (ui/bookshelf.ts). The
+// right end of the fourth shelf is the floor's AutoWiki: a matched set of black volumes with orange
+// spines once Factory has one for the repository, plain binders until then (setWiki).
+
+/** What the AutoWiki end of the shelf shows: plain binders, the wiki's volumes, or them being written. */
+export type ShelfWiki = 'none' | 'wiki' | 'writing';
 
 export interface BookshelfModel {
   group: THREE.Group;
   collider: Collider;
   interactable: Interactable;
+  /** Shows the floor's AutoWiki on the shelf. Only swaps what's visible: nothing is built or drawn. */
+  setWiki(state: ShelfWiki): void;
 }
 
 // Binders and manuals in graphite, steel and light gray, with a Factory orange one now and then.
@@ -20,6 +27,10 @@ const SHELVES = 5;
 const SIDE = 0.05;
 const BASE = 0.1;
 const BOARD = 0.03;
+/** The AutoWiki's place: the shelf it's on (from the bottom) and how much of its right end it takes. */
+const WIKI_SHELF = 3;
+const WIKI_RUN = 0.5;
+const WIKI_ORANGE = '#ee6018';
 
 export function buildBookshelf(): BookshelfModel {
   const { width: W, depth: D, height: H } = BOOKSHELF;
@@ -47,7 +58,7 @@ export function buildBookshelf(): BookshelfModel {
     box(inner, BOARD, D - 0.03, wood, 0, floor - BOARD / 2, -0.015);
     const room = bay - BOARD - 0.04;
     let x = -inner / 2 + 0.02;
-    const end = inner / 2 - 0.02;
+    const end = inner / 2 - 0.02 - (s === WIKI_SHELF ? WIKI_RUN : 0);
     // Now and then something that isn't a book: a globe on one shelf, a little plant on another.
     let ornament = s === 1 ? 'globe' : s === 3 ? 'plant' : null;
     const ornamentAt = -inner / 2 + inner * (0.5 + rand() * 0.2);
@@ -104,6 +115,47 @@ export function buildBookshelf(): BookshelfModel {
   }
   const group = new THREE.Group();
   group.add(mergeByMaterial(parts));
+
+  // The AutoWiki end: two sets of volumes in the same place, one shown at a time.
+  const wikiFloor = BASE + WIKI_SHELF * bay + BOARD;
+  const wikiRoom = bay - BOARD - 0.04;
+  const startX = inner / 2 - 0.02 - WIKI_RUN + 0.02;
+  const plain = new THREE.Group();
+  const volumes = new THREE.Group();
+  const spine = toon('#141414');
+  const band = toon(WIKI_ORANGE);
+  // Unlit, so the spines' stripes read as a faint glow in the room's night light.
+  const glow = new THREE.MeshBasicMaterial({ color: WIKI_ORANGE });
+  for (let i = 0, vx = startX; i < 9; i++) {
+    const t = 0.045;
+    const d = 0.24;
+    const vh = wikiRoom * 0.9;
+    volumes.add(mesh(new THREE.BoxGeometry(t, vh, d), spine, vx + t / 2, wikiFloor + vh / 2, front - d / 2));
+    volumes.add(mesh(new THREE.BoxGeometry(t + 0.004, 0.03, d + 0.004), band, vx + t / 2, wikiFloor + vh * 0.8, front - d / 2));
+    volumes.add(mesh(new THREE.BoxGeometry(t * 0.5, vh * 0.42, 0.004), glow, vx + t / 2, wikiFloor + vh * 0.42, front + 0.001, false));
+    const pt = 0.03 + rand() * 0.018;
+    const ph = wikiRoom * (0.65 + rand() * 0.3);
+    if (vx - startX < WIKI_RUN - 0.06) plain.add(mesh(new THREE.BoxGeometry(pt, ph, 0.2), toon(pick(['#2a2a2a', '#3a3a3a', '#5a5a5a', '#1c1c1c', '#8c8c8c'])), startX + i * 0.052 + pt / 2, wikiFloor + ph / 2, front - 0.1));
+    vx += t + 0.006;
+  }
+  const label = (text: string) => {
+    const l = textPlane(text, { size: 18, bg: '#0a0a0a', color: WIKI_ORANGE, border: '#2e2e2e' });
+    l.scale.setScalar(0.55);
+    l.position.set(startX + WIKI_RUN / 2 - 0.02, wikiFloor - BOARD / 2, D / 2 + 0.004);
+    return l;
+  };
+  const written = label('AUTOWIKI');
+  const writing = label('AUTOWIKI · WRITING');
+  const plainMerged = mergeByMaterial(plain);
+  const volumesMerged = mergeByMaterial(volumes);
+  group.add(plainMerged, volumesMerged, written, writing);
+  const setWiki = (state: ShelfWiki) => {
+    plainMerged.visible = state === 'none';
+    volumesMerged.visible = state !== 'none';
+    written.visible = state === 'wiki';
+    writing.visible = state === 'writing';
+  };
+  setWiki('none');
   // A label along the crown; the zone's 06 DOCUMENTATION plate hangs on the wall over it (world/factory-floor.ts).
   const sign = textPlane('PROJECT DOCS', { size: 28, bg: '#0a0a0a', color: '#eeeeee', border: '#2e2e2e' });
   sign.position.set(0, H + 0.3, 0.02);
@@ -115,5 +167,5 @@ export function buildBookshelf(): BookshelfModel {
   const collider: Collider = { minX: BOOKSHELF.x - W / 2 - 0.04, maxX: BOOKSHELF.x + W / 2 + 0.04, minZ: BOOKSHELF.z - D / 2 - 0.03, maxZ: FLOOR.maxZ, top: H + 0.07 };
   const interactable: Interactable = { kind: 'bookshelf', x: BOOKSHELF.x, z: BOOKSHELF.z - 1.2, radius: 1.6 };
   group.userData.interact = interactable;
-  return { group, collider, interactable };
+  return { group, collider, interactable, setWiki };
 }

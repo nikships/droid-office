@@ -4,7 +4,8 @@ import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
-import type { BallState } from './hoop.js';
+import type { FactoryFeatureId, FactoryState } from './factory.js';
+import type { CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
@@ -18,7 +19,7 @@ export type WorkerStatus =
   | 'exited' // process ended (can be resumed if it had a session)
   | 'offline'; // restored from disk after a server restart; resumable
 
-export type WorkerKind = 'agent' | 'shell';
+export type WorkerKind = 'agent' | 'shell' | 'cloud';
 
 /**
  * What a working agent's latest tool call looks like from across the room (see shared/actions.ts):
@@ -65,7 +66,7 @@ export const WORKER_REVIVE_MS = 30_000;
 
 export interface WorkerInfo {
   id: string;
-  /** 'agent' runs Droid; 'shell' is a plain shared login shell. */
+  /** 'agent' runs Droid; 'shell' is a plain shared login shell; 'cloud' runs its Droid session on a Factory computer (see `cloud`). */
   kind: WorkerKind;
   /** Droid model requested for this worker, instead of Droid's own default. */
   model?: string;
@@ -149,6 +150,12 @@ export interface WorkerInfo {
    * server/guests.ts): they're this worker's, rather than guests of their own.
    */
   outside?: OutsideProcess[];
+  /**
+   * Set for a cloud worker (kind 'cloud'): its Droid session (`sessionId`) runs on one of the
+   * account's Factory computers, driven through Factory's Sessions API (see server/factory/cloud.ts).
+   * It has no terminal, worktree or hooks on this machine.
+   */
+  cloud?: CloudWorker;
 }
 
 /** The agent CLIs whose processes the office recognises as guests. */
@@ -672,8 +679,6 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-  /** The basketball by the hoop: who has it, or how it was last thrown. */
-  ball: BallState;
 }
 
 /** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
@@ -885,7 +890,8 @@ export type ClientMsg =
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
-  | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
+  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left in the Sessions window. */
+  | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string }
   /** Revives a nearby shot worker before its deadline, without restarting its session. */
@@ -955,6 +961,14 @@ export type ClientMsg =
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
+  /** Connect the office to Factory with an API key (replacing the one it has); answered with `factory.setup`. */
+  | { t: 'factory.connect'; key: string }
+  /** Forget the office's Factory key, and everything read with it. */
+  | { t: 'factory.disconnect' }
+  /** Read one Factory feature again now; without one, check the key again ("Check again") and read them all. */
+  | { t: 'factory.refresh'; feature?: FactoryFeatureId }
+  /** A board or window of `feature` opened (`on`) or closed in this tab: it polls fast while one is open. */
+  | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
   /**
    * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
    * floor's repository of a worker across repositories; none follows its own.
@@ -1008,10 +1022,6 @@ export type ClientMsg =
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
-  /** Pick up the floor's basketball (or catch it): yours if it isn't held. */
-  | { t: 'ball.take' }
-  /** Throw the basketball in your hands from (x, y, z) at (vx, vy, vz) m/s, or drop it; every window flies it the same way. */
-  | { t: 'ball.throw'; x: number; y: number; z: number; vx: number; vy: number; vz: number }
   /** Rewrite one of the office's prompts; null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
@@ -1056,6 +1066,8 @@ export type ServerMsg =
       subagents: SubagentsState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
+      /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
+      factory: FactoryState;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
@@ -1097,8 +1109,6 @@ export type ServerMsg =
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
-  /** The basketball on your floor was picked up, thrown, or put back under the hoop. */
-  | { t: 'ball'; ball: BallState }
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }
@@ -1110,6 +1120,10 @@ export type ServerMsg =
   | { t: 'jira.board'; state: JiraBoardState | null }
   /** To whoever is setting Jira up: done, or why not. */
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
+  /** The Factory connection or a Factory feature's slice changed: all of it, to everyone. */
+  | { t: 'factory'; state: FactoryState }
+  /** To whoever sent `factory.connect`: connected, or why not. */
+  | { t: 'factory.setup'; ok: boolean; error?: string }
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }

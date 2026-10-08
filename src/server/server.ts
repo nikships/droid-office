@@ -12,7 +12,7 @@ import { bearerToken, isLoopback, lanAllowed, lanIPv4s, mintLanToken, tailscaleI
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
-import { MAX_REPOS, resolveCommand, type RepoSource } from './workers.js';
+import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
@@ -21,6 +21,7 @@ import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './
 import { ImageProxy } from './decor.js';
 import { Webhook } from './webhook.js';
 import { JiraOffice } from './jira.js';
+import { mountFactory, sendDownload } from './factory/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
@@ -399,6 +400,30 @@ export async function startServer(cfg: Config) {
 
   // The office's one Jira Cloud account, which every floor's epic board reads through (⚙️ Settings).
   const jira = new JiraOffice(cfg.dataDir);
+  // The office's Factory API key and every Factory feature read with it (⚙️ Settings → Factory, docs/factory.md).
+  // AutoWiki's /wiki runs on a floor's default branch with the office's Droid command (factory/wiki-run.ts).
+  const factory = mountFactory({
+    dataDir: cfg.dataDir,
+    broadcast: (state) => broadcast({ t: 'factory', state }),
+    toast: (text, level) => toastAll(text, level),
+    // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
+    cloud: {
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
+      agentArgs: cfg.agentArgs,
+      toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
+    },
+    // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
+    // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
+    officeSessions: () =>
+      [...floors.values()].flatMap((f) =>
+        f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working', createdAt: w.createdAt }] : [])),
+      ),
+    wiki: {
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, repo: f.def.repo, name: f.def.name })),
+      runner: { command: () => resolveCommand(cfg.agentCmd), env: childEnv },
+    },
+  });
+  const cloud = factory.cloud!;
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
@@ -541,7 +566,6 @@ export async function startServer(cfg: Config) {
     queue: floor?.queue.state() ?? { tasks: [], maxWorkers: 0 },
     decor: floor?.decor.list() ?? [],
     services: servicesState(floor),
-    ball: floor?.court.state() ?? {},
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     meeting: floor?.meetings.state() ?? { current: null, past: [] },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
@@ -906,6 +930,12 @@ export async function startServer(cfg: Config) {
         res.end(r.body);
         return;
       }
+      if (p.startsWith('/api/factory/')) {
+        // A Factory feature's actions and on-demand reads (see factory/registry.ts); anything but a GET only from the office's own page.
+        const r = await factory.registry.http(req.method ?? 'GET', p.slice('/api/factory'.length), url.searchParams, (limit) => readBody(req, limit), { trusted: ownRequest(), by: str(req.headers['x-droid-office-name'], 24) });
+        if (r.download) return sendDownload(res, r.download);
+        return send(res, r.status, r.body);
+      }
       if (p === '/api/jira/ticket' && req.method === 'GET') {
         // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
         if (!floor) return send(res, 404, { error: 'No such floor' });
@@ -1055,6 +1085,7 @@ export async function startServer(cfg: Config) {
       leaveOnMerge: leaveOnMerge.state(),
       subagents: subagents.state(),
       prompts: prompts.state(),
+      factory: factory.state(),
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
@@ -1082,16 +1113,16 @@ export async function startServer(cfg: Config) {
       for (const f of floors.values()) {
         f.workers.detachAll(id);
         f.guests.detachAll(id);
+        f.cloud.detachAll(id);
         f.changes.unwatchAll(id);
-        if (f.court.left(id)) ballChanged(f);
       }
+      factory.drop(id);
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
-  const ballChanged = (floor: Floor) => toFloor(floor, { t: 'ball', ball: floor.court.state() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
 
   /**
@@ -1105,7 +1136,6 @@ export async function startServer(cfg: Config) {
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor, c) });
     screensOf(c, floor);
-    arrived(left);
     floor.arrived();
     floor.workers.wakeAll();
     floorsChanged();
@@ -1118,16 +1148,14 @@ export async function startServer(cfg: Config) {
     c.floor = ROOF;
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView(c) });
-    arrived(left);
     floorsChanged();
   };
 
   /** Out to the lobby, where the elevator has nowhere to go: the building's last floor was taken off. */
   const toLobby = (c: Client) => {
-    const left = leave(c);
+    leave(c);
     c.floor = null;
     sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined, c) });
-    arrived(left);
   };
 
   /**
@@ -1161,20 +1189,14 @@ export async function startServer(cfg: Config) {
     if (was) {
       was.workers.detachAll(c.id);
       was.guests.detachAll(c.id);
+      was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
-    // The ball stays on its floor, back under the hoop. That floor hears so once they're off it (see
-    // arrived), or their own page would put it down before it knew they'd gone.
-    const ballLeft = !!was?.court.left(c.id);
     c.attached.clear();
     c.stale.clear();
     stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
-    return { was, ballLeft, spot };
-  };
-
-  const arrived = (left: ReturnType<typeof leave>) => {
-    if (left.ballLeft && left.was) ballChanged(left.was);
+    return { spot };
   };
 
   /**
@@ -1227,6 +1249,13 @@ export async function startServer(cfg: Config) {
     const asked = (msg as { workerId?: unknown }).workerId;
     const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
     if (guest?.guest) return warn(c, guestRefusal(guest, msg.t));
+    // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
+    const cloudie = typeof asked === 'string' && /^(worker|term|changes|guest)\./.test(msg.t) ? cloud.find(asked) : undefined;
+    if (cloudie) {
+      const floor = floors.get(cloudie.floor.id);
+      cloud.message(msg as Parameters<typeof cloud.message>[0], { who, client: c.id, warn: (text) => warn(c, text), takeIssue: (n) => floor && takeIssue(c, floor, n) });
+      return;
+    }
     switch (msg.t) {
       case 'profile': {
         // Display provenance only (see Client.peer).
@@ -1283,16 +1312,6 @@ export async function startServer(cfg: Config) {
         const state = building.projectsDirState();
         broadcast({ t: 'projectsDir', state });
         toastAll(state.custom ? `📁 ${who} moved the workspace folder to ${state.dir}` : `📁 ${who} put the workspace folder back to ${state.dir}`);
-        break;
-      }
-      case 'ball.take':
-      case 'ball.throw': {
-        const floor = floorOf(c);
-        if (!floor) break;
-        const changed = msg.t === 'ball.take' ? floor.court.take(c.id) : floor.court.throw(c.id, { x: num(msg.x), y: num(msg.y), z: num(msg.z), vx: num(msg.vx), vy: num(msg.vy), vz: num(msg.vz) });
-        // Whoever didn't get it (someone else caught it first) is told where it really is.
-        if (changed) ballChanged(floor);
-        else sendTo(c, { t: 'ball', ball: floor.court.state() });
         break;
       }
       case 'worker.spawn': {
@@ -1742,6 +1761,12 @@ export async function startServer(cfg: Config) {
       case 'jira.refresh':
         void floorOf(c)?.jira.refresh(true);
         break;
+      case 'factory.connect':
+      case 'factory.disconnect':
+      case 'factory.refresh':
+      case 'factory.watch':
+        factory.message(c.id, who, msg, (reply) => sendTo(c, reply));
+        break;
       case 'changes.watch': {
         const w = worker(msg.workerId);
         if (w) w.floor.changes.watch(w.wid, c.id, repoOf(msg.repo));
@@ -1932,6 +1957,7 @@ export async function startServer(cfg: Config) {
     webhook.stop();
     machine.stop();
     sky.stop();
+    factory.stop();
     for (const f of floors.values()) f.shutdown(keep);
     for (const c of clients.values()) c.ws.close();
     server.close();

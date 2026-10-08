@@ -30,7 +30,7 @@ import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
-import type { BallState } from '../shared/hoop';
+import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
 
 export type Topic =
@@ -59,7 +59,7 @@ export type Topic =
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
-  | 'ball';
+  | 'factory';
 
 export interface Profile {
   name: string;
@@ -249,8 +249,6 @@ class Store {
   notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
   machine: MachineState = { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
-  /** The basketball on this floor, as the office last said (see world/hoop.ts). */
-  ball: BallState = {};
   /** Outside the windows; null until the server says. */
   sky: SkyState | null = null;
   /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
@@ -259,6 +257,8 @@ class Store {
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
+  /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
+  factory: FactoryState = emptyFactoryState();
   private subs = new Map<Topic, Set<() => void>>();
 
   on(topic: Topic, fn: () => void) {
@@ -316,8 +316,7 @@ class Store {
     this.cabinet = { player: v.cabinet.player, scores: v.cabinet.scores };
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
-    this.ball = v.ball ?? {};
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'ball'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -340,8 +339,9 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.prompts = msg.prompts ?? { custom: {} };
+        this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -444,10 +444,6 @@ class Store {
         this.machine = msg.state;
         this.emit('machine');
         break;
-      case 'ball':
-        this.ball = msg.ball;
-        this.emit('ball');
-        break;
       case 'sky':
         this.sky = msg.state;
         this.emit('sky');
@@ -463,6 +459,10 @@ class Store {
       case 'prompts':
         this.prompts = msg.state;
         this.emit('prompts');
+        break;
+      case 'factory':
+        this.factory = msg.state;
+        this.emit('factory');
         break;
     }
   }

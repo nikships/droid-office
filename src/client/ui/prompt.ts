@@ -2,6 +2,7 @@ import type { AgentEffort, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState
 import { h, openModal } from './dom';
 import { promptImages, type PromptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
+import type { CloudChoice, RunsOn } from './factory-cloud';
 
 export interface PromptOptions {
   title: string;
@@ -24,6 +25,10 @@ export interface PromptOptions {
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
   onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[] }): void;
+  /** The "Runs on" choice of a hire: this machine, or one of the account's Factory computers (factory-cloud.ts). */
+  runsOn?: RunsOn | null;
+  /** Hires on a Factory computer instead of onSubmit; resolves to why it didn't, which the box stays open to show. */
+  onCloud?(text: string, opts: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Promise<string | undefined>;
 }
 
 const WT_KEY = 'droid-office.worktree';
@@ -82,6 +87,12 @@ export function openPrompt(opts: PromptOptions) {
   const models: AgentFields | null = opts.modelOption ? agentPicker('hire-models', opts.deskId ? `desk:${opts.deskId}` : 'hire') : null;
   const submit = h('button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send');
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
+  const failed = h('p.setting-note.bad.hidden', { style: 'margin:10px 0 0', role: 'alert' });
+  // A worker on a Factory computer works in a folder there: no worktree here, no other floors.
+  opts.runsOn?.onChange((cloud) => {
+    wtRow?.classList.toggle('hidden', cloud);
+    repos.element?.classList.toggle('hidden', cloud);
+  });
   const form = h(
     'form.modal',
     { role: 'dialog', 'aria-label': opts.title },
@@ -94,8 +105,10 @@ export function openPrompt(opts: PromptOptions) {
       ta,
       images?.element ?? null,
       models?.element ?? null,
+      opts.runsOn?.element ?? null,
       wtRow,
       repos.element,
+      failed,
     ),
     h('footer', {}, h('span.grow', {}, `Enter to send · Shift+Enter for a new line${images ? ' · paste or drop pictures' : ''}`), cancel, submit),
   ) as HTMLFormElement;
@@ -118,6 +131,28 @@ export function openPrompt(opts: PromptOptions) {
       void images.settled().then(() => {
         waiting = false;
         send();
+      });
+      return;
+    }
+    const cloud = opts.onCloud && opts.runsOn?.choice();
+    if (cloud && opts.onCloud) {
+      // Making the session takes a while, and when Factory says no the box stays open saying why.
+      waiting = true;
+      const label = submit.textContent;
+      submit.toggleAttribute('disabled', true);
+      submit.textContent = `☁ Starting on ${cloud.computerName}…`;
+      failed.classList.add('hidden');
+      void opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud }).then((why) => {
+        waiting = false;
+        submit.toggleAttribute('disabled', false);
+        submit.textContent = label;
+        if (why) {
+          failed.textContent = `☁ ${why}`;
+          failed.classList.remove('hidden');
+          return;
+        }
+        images?.take();
+        modal.close();
       });
       return;
     }

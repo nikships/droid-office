@@ -7,6 +7,7 @@ import {
   BOARDS,
   BOOKSHELF,
   CABINET,
+  COMPUTE_WALL,
   DESKS,
   DESK_SIZE,
   ELEVATOR,
@@ -18,7 +19,6 @@ import {
   KIOSK,
   LADDER,
   LOFT,
-  MACHINE_MONITOR,
   MEETING_BOARD,
   MEETING_ROOM,
   MEETING_SEATS,
@@ -50,16 +50,14 @@ import { mergeByMaterial, mesh, roundedBox, textPlane, toon, toonUnique } from '
 import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
-import { buildBookshelf } from './bookshelf';
+import { buildBookshelf, type ShelfWiki } from './bookshelf';
 import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { buildCoffeeMachine } from './coffee';
-import { buildHoop, type HoopView } from './hoop';
 import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
-import { HOOP } from '../../shared/hoop';
 
 export interface Collider {
   minX: number;
@@ -80,6 +78,7 @@ export type InteractKind =
   | 'pulls'
   | 'services'
   | 'queue'
+  | 'ci'
   | 'tv'
   | 'coffee'
   | 'decor'
@@ -96,7 +95,7 @@ export type InteractKind =
   | 'dj'
   | 'bookshelf'
   | 'golf'
-  | 'ball';
+  | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -147,8 +146,9 @@ export interface Office {
   tvScreen: THREE.Mesh;
   /** The monitor on the boss's desk upstairs, where Minesweeper plays (ui/arcade.ts). */
   bossScreen: THREE.Mesh;
-  /** The monitor on the west wall showing how busy the office's machine is (world/machine.ts). */
+  /** The compute wall's two screens on the west wall: the office's machine, and the Droid Computers (world/factory-computers.ts). */
   machineScreen: THREE.Mesh;
+  fleetScreen: THREE.Mesh;
   /** The meeting room's board, showing the meeting's output as it's written, and the sign by its door. */
   meetingBoard: THREE.Mesh;
   meetingSign: THREE.Mesh;
@@ -160,11 +160,11 @@ export interface Office {
   jukebox: JukeboxView;
   /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
   cabinet: CabinetModel;
+  /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
+  setShelfWiki(state: ShelfWiki): void;
   /** The golf tee on the balcony, and the hole across the street it's hit at. */
   tee: Tee;
   green: Green;
-  /** The basketball hoop on the west wall (the ball is main.ts's: see world/hoop.ts). */
-  hoop: HoopView;
   /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
   stack: Stack;
   /** The sign over the elevator doors: which floor you're on. */
@@ -1410,12 +1410,14 @@ export function buildOffice(): Office {
     bg.rotation.y = b.rotY;
     group.add(bg);
     boardMeshes[key] = face;
-    // Its title on a sign over it, half as far out from the wall.
-    const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
-    label.scale.multiplyScalar(1.3);
-    label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
-    label.rotation.y = b.rotY;
-    group.add(label);
+    // Its title on a sign over it, half as far out from the wall (a board without one has it painted on).
+    if (b.label) {
+      const label = textPlane(b.label, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 64 });
+      label.scale.multiplyScalar(1.3);
+      label.position.set(b.x + nx * 0.04, b.y + b.height / 2 + 0.5, b.z + nz * 0.04);
+      label.rotation.y = b.rotY;
+      group.add(label);
+    }
     const it: Interactable = { kind: key, x: b.x + nx * 1.6, z: b.z + nz * 1.6, radius: 2.4 };
     interactables.push(it);
     bg.userData.interact = it;
@@ -1440,19 +1442,29 @@ export function buildOffice(): Office {
   tvGroup.userData.interact = tv;
   fixture('east', TV.z, TV.y, TV.width + 0.3, TV.height + 0.3);
 
-  // The machine monitor between the west windows, facing the desks.
-  const monitor = new THREE.Group();
-  const bezel = mesh(roundedBox(MACHINE_MONITOR.width + 0.16, 0.1, MACHINE_MONITOR.height + 0.16, 0.06), toon(PALETTE.ink), 0, 0, 0);
+  // The compute wall between the exit door and the kitchen, facing the desks: two screens in one
+  // bezel, this machine on the left and the Droid Computers on the right (see world/factory-computers.ts).
+  const CW = COMPUTE_WALL;
+  const computeWall = new THREE.Group();
+  const bezel = mesh(roundedBox(CW.width + 0.16, 0.1, CW.height + 0.16, 0.06), toon(PALETTE.ink), 0, 0, 0);
   bezel.rotation.x = Math.PI / 2;
-  monitor.add(bezel);
-  const machineScreen = new THREE.Mesh(new THREE.PlaneGeometry(MACHINE_MONITOR.width, MACHINE_MONITOR.height), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-  machineScreen.position.z = 0.06;
-  monitor.add(machineScreen);
-  monitor.position.set(MACHINE_MONITOR.x + 0.07, MACHINE_MONITOR.y, MACHINE_MONITOR.z);
-  monitor.rotation.y = Math.PI / 2;
-  group.add(monitor);
-  // Pictures keep clear of the monitor, so it never covers one.
-  fixture('west', MACHINE_MONITOR.z, MACHINE_MONITOR.y, MACHINE_MONITOR.width + 0.2, MACHINE_MONITOR.height + 0.2);
+  computeWall.add(bezel);
+  const fleetWidth = CW.width - CW.machineWidth - CW.gap;
+  const machineScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.machineWidth, CW.height), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  machineScreen.position.set(-CW.width / 2 + CW.machineWidth / 2, 0, 0.06);
+  const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(fleetWidth, CW.height), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  fleetScreen.position.set(CW.width / 2 - fleetWidth / 2, 0, 0.06);
+  // The orange seam between the two screens.
+  computeWall.add(machineScreen, fleetScreen, mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + CW.machineWidth + CW.gap / 2, 0, 0.056, false));
+  // Facing +x, its local +x runs toward -z: seen from the room, the machine's screen is the south end, by the kitchen.
+  computeWall.position.set(CW.x + 0.07, CW.y, CW.z);
+  computeWall.rotation.y = Math.PI / 2;
+  group.add(computeWall);
+  const computers: Interactable = { kind: 'computers', x: CW.x + 2.6, z: CW.z, radius: 2.8 };
+  interactables.push(computers);
+  computeWall.userData.interact = computers;
+  // Pictures keep clear of it, so it never covers one.
+  fixture('west', CW.z, CW.y, CW.width + 0.3, CW.height + 0.3);
 
   // A long charcoal sofa on a black steel plinth, with a light and a dark cushion.
   const sofa = new THREE.Group();
@@ -1590,12 +1602,6 @@ export function buildOffice(): Office {
   interactables.push(gong.interactable);
   fixture('north', GONG.x, (GONG.height + 0.3) / 2, GONG.width + 1.2, GONG.height + 0.3);
 
-  // The basketball hoop, on the west wall between the exit door and the kitchen.
-  const hoop = buildHoop();
-  group.add(hoop.group);
-  colliders.push(...hoop.colliders);
-  fixture('west', HOOP.z, (HOOP.board.bottom - 0.6 + HOOP.board.top + 0.1) / 2, HOOP.board.width + 0.2, HOOP.board.top - HOOP.board.bottom + 0.7);
-
   // Pictures stay clear of the stairs (step by step, so they can hang above them) and of what's on
   // the loft's walls upstairs, as buildLoft places it: the couch and the sign.
   const run = (STAIRS.toX - STAIRS.fromX) / STAIRS.steps;
@@ -1655,7 +1661,6 @@ export function buildOffice(): Office {
     elevator.update(dt);
     gong.update(dt);
     green.update(t);
-    hoop.update(dt);
     for (const d of dressing) d.update(t, dt);
   };
 
@@ -1669,6 +1674,7 @@ export function buildOffice(): Office {
     tvScreen,
     bossScreen,
     machineScreen,
+    fleetScreen,
     meetingBoard: meeting.board,
     meetingSign: meeting.sign,
     fixtures: () => fixtures,
@@ -1676,9 +1682,9 @@ export function buildOffice(): Office {
     gong,
     jukebox,
     cabinet,
+    setShelfWiki: shelf.setWiki,
     tee,
     green,
-    hoop,
     stack,
     setProjectName,
     setLook,

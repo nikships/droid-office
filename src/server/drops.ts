@@ -105,6 +105,19 @@ export class DropStore {
     return paths;
   }
 
+  /** A staged picture's bytes, for a prompt that carries pictures inline rather than by path (a cloud worker's). */
+  stagedPicture(id: string): { body: Buffer; ext: string } | undefined {
+    const file = this.staged(id);
+    if (!file) return undefined;
+    try {
+      const body = readFileSync(file);
+      const ext = pictureExt(body);
+      return ext ? { body, ext } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private staged(id: string): string | undefined {
     if (!PROMPT_IMAGE_ID.test(id)) return undefined;
     const dir = path.join(this.dir, STAGED, id);
