@@ -46,7 +46,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   bar: 'Sky Bar',
   dj: 'DJ booth',
   bookshelf: 'Bookshelf',
-  golf: 'Golf tee',
 };
 
 export type TargetKind = 'desk' | 'kiosk' | 'board' | 'place' | 'floor';
@@ -230,7 +229,6 @@ export interface RawState {
   workers: WorkerInfo[];
   carrying: number | null;
   hanging: boolean;
-  golfing: boolean;
   gun: boolean;
   /** What the gun is doing: drawing, holstering, a trick (world/gun-motion.ts), or null at the ready or away. */
   gunMove: string | null;
@@ -253,7 +251,6 @@ export interface Snapshot {
     climbing: boolean;
     carrying: number | null;
     hanging: boolean;
-    golfing: boolean;
     gun: boolean;
     gunMove: string | null;
   };
@@ -295,7 +292,6 @@ export function buildSnapshot(raw: RawState): Snapshot {
       climbing: p.climbing,
       carrying: raw.carrying,
       hanging: raw.hanging,
-      golfing: raw.golfing,
       gun: raw.gun,
       gunMove: raw.gunMove,
     },

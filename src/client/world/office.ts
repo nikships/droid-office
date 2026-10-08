@@ -55,7 +55,6 @@ import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { buildCoffeeMachine } from './coffee';
-import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
 
@@ -94,7 +93,6 @@ export type InteractKind =
   | 'bar'
   | 'dj'
   | 'bookshelf'
-  | 'golf'
   | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
@@ -162,9 +160,6 @@ export interface Office {
   cabinet: CabinetModel;
   /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
   setShelfWiki(state: ShelfWiki): void;
-  /** The golf tee on the balcony, and the hole across the street it's hit at. */
-  tee: Tee;
-  green: Green;
   /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
   stack: Stack;
   /** The sign over the elevator doors: which floor you're on. */
@@ -1292,7 +1287,6 @@ export function buildOffice(): Office {
   doors.push(slider.door);
   fixture(BALCONY_DOOR.wall, BALCONY_DOOR.u, (BALCONY_DOOR.y1 + 0.1) / 2, BALCONY_DOOR.width + 0.2, BALCONY_DOOR.y1 + 0.1);
   buildBalcony(group, colliders, interactables, night);
-  const tee = buildTee(group, colliders, interactables);
 
   // Down to the street, which is the bottom floor's: its exit door and the steps down from it, the
   // posts under its balcony, the garage under it and the street out front. On a floor above it, all
@@ -1311,7 +1305,6 @@ export function buildOffice(): Office {
   buildGarage(ground, groundColliders);
   // The clouds stay up in the sky, however far down the street is.
   buildStreet(ground, groundColliders, night, group);
-  const green = buildGreen(ground, groundColliders, night);
   group.add(ground);
   colliders.push(...groundColliders);
   const groundBase = groundColliders.map((c) => ({ c, top: c.top, bottom: c.bottom ?? 0 }));
@@ -1660,7 +1653,6 @@ export function buildOffice(): Office {
     }
     elevator.update(dt);
     gong.update(dt);
-    green.update(t);
     for (const d of dressing) d.update(t, dt);
   };
 
@@ -1683,8 +1675,6 @@ export function buildOffice(): Office {
     jukebox,
     cabinet,
     setShelfWiki: shelf.setWiki,
-    tee,
-    green,
     stack,
     setProjectName,
     setLook,
