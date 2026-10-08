@@ -3,6 +3,7 @@ import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search';
 import { store } from '../state';
 import { withToken } from '../token';
 import { h, openModal } from './dom';
+import { emptyState, windowHeader } from './kit';
 import { colorDot, type TerminalFind } from './terminal';
 
 // The search window: words in every worker's terminal, including what they showed before the office
@@ -36,7 +37,7 @@ function highlight(text: string, needle: string): (string | HTMLElement)[] {
 }
 
 export function openSearch(openTerminal: (workerId: string, find: TerminalFind) => void) {
-  const input = h('input', {
+  const input = h('input.input.lg', {
     type: 'text',
     placeholder: 'Search every terminal…',
     maxlength: SEARCH_MAX,
@@ -47,11 +48,10 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
   input.value = lastQuery;
   const status = h('p.search-status', { role: 'status' });
   const results = h('div.search-results');
-  const close = h('button.btn.icon.close', { 'aria-label': 'Close' }, '✕');
   const el = h(
-    'div.modal.lg.search',
+    'div.modal.search',
     { role: 'dialog', 'aria-label': 'Search' },
-    h('header', {}, h('div.titles', {}, h('h2', {}, 'Search'), h('p.sub', {}, "Every worker's terminal on this floor")), close),
+    windowHeader('Search', "Every worker's terminal on this floor"),
     h('div.search-find', {}, h('span.search-icon', { 'aria-hidden': 'true' }, '🔎'), input),
     h('div.body', {}, status, results),
   );
@@ -109,7 +109,7 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
     }
     if (!found) {
       status.textContent = '';
-      results.replaceChildren(h('div.empty-state', {}, h('div.empty-icon', {}, '🔎'), h('b', {}, 'Search every terminal'), h('p', {}, "Finds words in every worker's terminal, including what they showed before the office restarted.")));
+      results.replaceChildren(emptyState('🔎', 'Search every terminal', "Finds words in every worker's terminal, including what they showed before the office restarted."));
       return;
     }
     const needle = searchKey(found.q);
@@ -124,7 +124,7 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
     const count = [...byWorker.values()].reduce((n, l) => n + l.length, 0);
     if (!count) {
       status.textContent = '';
-      results.replaceChildren(h('div.empty-state', {}, h('div.empty-icon', {}, '🔎'), h('b', {}, `Nothing in any terminal matches “${found.q.trim()}”`), h('p', {}, 'Try fewer or different words.')));
+      results.replaceChildren(emptyState('🔎', `Nothing in any terminal matches “${found.q.trim()}”`, 'Try fewer or different words.'));
       return;
     }
     status.textContent = `${count} ${count === 1 ? 'line' : 'lines'}, newest first${found.more ? ' (only the newest are shown; add words to narrow it down)' : ''}.`;
@@ -169,8 +169,7 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
     (next ?? (e.key === 'ArrowUp' ? input : at)).focus();
   });
 
-  const modal = openModal(el, { doing: '🔎 searching the office', onClose: () => clearTimeout(timer) });
-  close.addEventListener('click', () => modal.close());
+  const modal = openModal(el, { size: 'lg', doing: '🔎 searching the office', onClose: () => clearTimeout(timer) });
   render();
   void run();
   // Right away, so the first keys typed after / land in the box.

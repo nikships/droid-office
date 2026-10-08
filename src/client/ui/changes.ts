@@ -3,6 +3,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { withToken } from '../token';
 import { h, openModal, type Modal } from './dom';
+import { emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
 import { colorDot } from './terminal';
 
@@ -177,14 +178,12 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   const renderEmpty = () => {
     diffHead.replaceChildren();
     if (!state) return diffBody.replaceChildren(h('div.empty-state', {}, h('span.spinner')));
-    if (state.error) return diffBody.replaceChildren(h('div.empty-state', {}, h('div.empty-icon', {}, '🚧'), h('b', {}, `Couldn't read ${where()}`), h('p', {}, state.error)));
+    if (state.error) return diffBody.replaceChildren(emptyState('🚧', `Couldn't read ${where()}`, state.error));
     diffBody.replaceChildren(
-      h(
-        'div.empty-state',
-        {},
-        h('div.empty-icon', {}, '🌱'),
-        h('b', {}, state.base === 'HEAD' ? `Nothing uncommitted in ${where()}` : `${info.name} hasn't changed anything since ${state.base} yet`),
-        h('p', {}, 'This window follows the checkout as the worker works, so changes show up here as they are made.'),
+      emptyState(
+        '🌱',
+        state.base === 'HEAD' ? `Nothing uncommitted in ${where()}` : `${info.name} hasn't changed anything since ${state.base} yet`,
+        'This window follows the checkout as the worker works, so changes show up here as they are made.',
       ),
     );
   };
@@ -220,7 +219,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     );
     diffHead.replaceChildren(
       statusLetter(f),
-      h('span.path', { title: f.from ? `${f.from} → ${f.path}` : f.path }, f.from ? `${f.from} → ${f.path}` : f.path),
+      f.from ? h('span.path', { title: `${f.from} → ${f.path}` }, `${f.from} → ${f.path}`) : pathLabel(f.path),
       h('span.word', {}, f.uncommitted ? `${STATUS_WORD[f.status]} · not committed` : STATUS_WORD[f.status]),
       plusMinus(f.additions, f.deletions, f.binary),
     );

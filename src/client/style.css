@@ -600,7 +600,7 @@ button.chip { font-family: var(--font-sans); }
 .modal.search { height: min(640px, calc(100vh - 32px)); }
 .search-find { position: relative; flex: none; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); }
 .search-icon { position: absolute; left: calc(var(--space-5) + var(--space-3)); top: 50%; translate: 0 -50%; font-size: 14px; line-height: 1; opacity: .6; pointer-events: none; }
-.modal .search-find input[type=text] { height: var(--control-h-lg); padding-left: calc(var(--space-3) + 24px); }
+.search-find .input { padding-left: calc(var(--space-3) + 24px); }
 .modal.search .body { display: flex; flex-direction: column; gap: var(--space-3); flex: 1; min-height: 0; }
 .search-status { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .search-status:empty { display: none; }
@@ -610,6 +610,8 @@ button.chip { font-family: var(--font-sans); }
 .search-group-head .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .search-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; color: var(--text-tertiary); }
 .search-hit.term { min-height: 0; cursor: pointer; }
+/* One line of terminal text, so its highlights stay inline rather than a .list-main column. */
+.search-hit code.list-main { display: block; }
 .search-hit code { font: 12.5px/1.5 var(--font-mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .search-hit mark { background: var(--warning); color: var(--text-inverse); border-radius: 1px; padding: 0 1px; }
 
@@ -652,7 +654,7 @@ button.chip { font-family: var(--font-sans); }
 .team-chip .dot { width: 8px; height: 8px; }
 .team-chip-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The A−/A+ glyphs read as letters, not as an uppercase label. */
-.term-zoom .btn { min-width: var(--control-h-sm); justify-content: center; text-transform: none; letter-spacing: 0; }
+.term-zoom .btn { text-transform: none; letter-spacing: 0; font-size: 12px; }
 /* Files dragged over a terminal, and on their way to the office: they go in where its cursor is. */
 .modal.term.dropping .term-host::after, .modal.term.uploading .term-host::after { content: attr(data-drop); position: absolute; inset: var(--space-3); z-index: 10; display: grid; place-items: center; padding: var(--space-4); text-align: center; border: 2px dashed var(--accent); border-radius: var(--radius-lg); background: rgba(10, 10, 10, .9); color: var(--text); font: 500 15px/1.4 var(--font-sans); pointer-events: none; }
 .modal.term.uploading:not(.dropping) .term-host::after { content: 'Putting it in the terminal…'; color: var(--text-secondary); }
@@ -676,9 +678,9 @@ button.chip { font-family: var(--font-sans); }
 .st.D { background: rgba(239, 68, 68, .16); color: var(--danger); border-color: rgba(239, 68, 68, .4); }
 .st.R, .st.T { background: rgba(90, 169, 230, .16); color: var(--info); border-color: rgba(90, 169, 230, .4); }
 /* The folder gives way first, so the file name stays readable however deep it is. */
-.changes-files .path { display: flex; min-width: 0; font: 400 12px/1.4 var(--font-mono); white-space: nowrap; }
-.changes-files .dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
-.changes-files .name { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.desk-changes .path { display: flex; min-width: 0; font: 400 12px/1.4 var(--font-mono); white-space: nowrap; }
+.desk-changes .path .dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+.desk-changes .path .name { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .changes-files .list-end { display: flex; align-items: center; gap: var(--space-2); flex: none; }
 /* A fixed slot whether or not the file is committed, so the counts line up down the list. */
 .changes-files .dirty { width: 6px; height: 6px; border-radius: 1px; flex: none; }
@@ -691,7 +693,7 @@ button.chip { font-family: var(--font-sans); }
 .changes-diff { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--surface); }
 .changes-diff .dh { flex: none; display: flex; align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); }
 .changes-diff .dh:empty { display: none; }
-.changes-diff .dh .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px/1.4 var(--font-mono); color: var(--text); }
+.changes-diff .dh .path { flex: 1; overflow: hidden; text-overflow: ellipsis; font: 500 12.5px/1.4 var(--font-mono); color: var(--text); }
 .changes-diff .dh .word { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .diff-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .diff-lines { font: 12.5px/1.45 var(--font-mono); tab-size: 4; padding-bottom: 12px; }
