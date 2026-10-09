@@ -22,3 +22,12 @@ test('settings show the workers panel by default, and yesterday’s spend/limits
   assert.deepEqual(s.hud, { workers: true, floor: true });
   assert.deepEqual(s.pins, ['search']);
 });
+
+test('7 puts the wand in your hand unless you opted into the Magnum', () => {
+  mem.clear();
+  assert.equal(loadSettings().sidearm, 'wand');
+  mem.set('droid-office.settings', JSON.stringify({ sidearm: 'magnum' }));
+  assert.equal(loadSettings().sidearm, 'magnum');
+  mem.set('droid-office.settings', JSON.stringify({ sidearm: 'bazooka' }));
+  assert.equal(loadSettings().sidearm, 'wand');
+});

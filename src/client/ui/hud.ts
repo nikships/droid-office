@@ -1,5 +1,5 @@
 import { BUZZ_SECONDS, type Caffeine } from '../caffeine';
-import { store } from '../state';
+import { store, type Sidearm } from '../state';
 import { $, glyphText, h, openModal, STATUS_LABEL } from './dom';
 import { modelBadge } from './models';
 import { windowHeader } from './kit';
@@ -80,8 +80,13 @@ export function renderCaffeine(caffeine: Caffeine, now: number) {
 /** A row of the help sheet: what it does, a line more about it, and its keys ('or' between two that each do it). */
 type HelpRow = [what: string, more: string, keys: string[]];
 
-export function openHelp() {
+/** `sidearm` is what `7` puts in your hand (Settings → You), so its row says what it does. */
+export function openHelp(sidearm: Sidearm = 'wand') {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+  const seven: HelpRow =
+    sidearm === 'wand'
+      ? ['Magic wand', 'Draw or put it away; click to cast at the worker under the crosshair and it falls asleep. E wakes it; zap it again to send it home now. The .44 Magnum is in ⚙️ Settings → You', ['7']]
+      : ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']];
   const sections: [string, HelpRow[]][] = [
     [
       'Move',
@@ -126,8 +131,8 @@ export function openHelp() {
     [
       'Fun',
       [
-        ['Emote', 'Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the Magnum drawn they are its tricks', ['G', 'or', '1–6']],
-        ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']],
+        ['Emote', `Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the ${sidearm === 'wand' ? 'wand' : 'Magnum'} drawn they are its tricks`, ['G', 'or', '1–6']],
+        seven,
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['Arcade cabinet', 'BLOCKFALL, in the lounge: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],

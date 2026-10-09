@@ -24,6 +24,7 @@ import type {
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
 import type { ScreenState } from './world/laptop';
+import type { Sidearm } from './world/wand';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
@@ -109,7 +110,11 @@ export interface Settings {
   hud: Record<HudPanel, boolean>;
   /** The ☰ menu's actions you pinned to the top bar, by id. */
   pins: string[];
+  /** What `7` puts in your hand: a magic wand that puts workers to sleep, or the .44 Magnum and its blood (opt-in). */
+  sidearm: Sidearm;
 }
+
+export type { Sidearm };
 
 const SETTINGS_KEY = 'droid-office.settings';
 const FLOOR_KEY = 'droid-office.floor';
@@ -173,7 +178,7 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
+  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand' };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
@@ -181,6 +186,7 @@ export function loadSettings(): Settings {
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));
     if (typeof saved?.musicMuted === 'boolean') s.musicMuted = saved.musicMuted;
     if (typeof saved?.notify === 'boolean') s.notify = saved.notify;
+    if (saved?.sidearm === 'wand' || saved?.sidearm === 'magnum') s.sidearm = saved.sidearm;
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
     // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
     if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string' && p !== 'people' && p !== 'chat').slice(0, 30);

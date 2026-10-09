@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BLEED_TIME, Casualties, FADE_TIME, FALL_TIME, LOAD_TIME, POOL_R, type CasualtyLaptop, type CasualtyModel, type Medic } from '../src/client/world/casualties.js';
+import { BLEED_TIME, Casualties, FADE_TIME, FALL_TIME, LOAD_TIME, POOL_R, SPELL_TIME, type CasualtyLaptop, type CasualtyModel, type Medic } from '../src/client/world/casualties.js';
 
 class Model implements CasualtyModel {
   readonly root = new THREE.Group();
   dead = false;
+  asleep = false;
   disposed = false;
   updates = 0;
   update(_dt: number, _t: number) {
     this.updates++;
   }
-  die() {
+  die(asleep = false) {
     this.dead = true;
+    this.asleep = asleep;
   }
   revive() {
     this.dead = false;
@@ -54,6 +56,7 @@ function rig() {
   parent.add(seat);
   const medics: MedicStub[] = [];
   const lands: THREE.Vector3[] = [];
+  const landLooks: string[] = [];
   const sirens: THREE.Vector3[] = [];
   const casualties = new Casualties(parent, () => 0, {
     spawnMedic: () => {
@@ -61,7 +64,10 @@ function rig() {
       medics.push(m);
       return m;
     },
-    onLand: (at) => void lands.push(at.clone()),
+    onLand: (at, look) => {
+      lands.push(at.clone());
+      landLooks.push(look);
+    },
     onSiren: (at) => void sirens.push(at.clone()),
   });
   const model = new Model();
@@ -69,8 +75,45 @@ function rig() {
   const frames = (n: number, dt = 1 / 60) => {
     for (let i = 0; i < n; i++) casualties.update(dt, i * dt);
   };
-  return { parent, seat, medics, lands, sirens, casualties, model, frames };
+  return { parent, seat, medics, lands, landLooks, sirens, casualties, model, frames };
 }
+
+/** What's on the floor under a body: the blood pool or the spell circle (the casualty's only other child of the parent). */
+function under(parent: THREE.Object3D, model: Model): THREE.Object3D | undefined {
+  return parent.children.find((o) => o !== model.root && o.type === 'Group' && o.children.length && o.name !== 'medic-team' && o.position.y > 0);
+}
+
+test('the wand puts it to sleep on a spell circle instead of a blood pool, and the rest of the scene is the same', () => {
+  const { parent, seat, landLooks, casualties, model, frames } = rig();
+  assert.equal(casualties.lookOf('w1'), null);
+  assert.equal(casualties.shoot('w1', model, seat, 'spell'), true);
+  assert.equal(casualties.lookOf('w1'), 'spell');
+  assert.equal(model.asleep, true, 'eyes shut, asleep');
+  const circle = under(parent, model);
+  assert.equal(circle?.name, 'spell-circle');
+  assert.equal(circle.children.filter((o) => o.name === 'spell-star').length, 4, 'stars circling over it');
+  frames(Math.ceil(FALL_TIME * 60) + 2);
+  assert.equal(casualties.phaseOf('w1'), 'bled');
+  assert.deepEqual(landLooks, ['spell'], 'it dozes off rather than thuds');
+  const turned = circle.rotation.y;
+  frames(Math.ceil(SPELL_TIME * 60) + 1);
+  assert.ok(circle.rotation.y > turned, 'the circle turns while the spell holds');
+  assert.ok(Math.abs(circle.scale.x - POOL_R) < 1e-6, 'opens to the pool size well before blood would spread');
+  assert.ok(SPELL_TIME < BLEED_TIME / 2);
+  assert.equal(casualties.revive('w1'), true);
+  assert.equal(circle.parent, null, 'gone with the spell');
+  assert.equal(model.dead, false);
+});
+
+test('the Magnum still leaves a blood pool, face slack', () => {
+  const { parent, seat, landLooks, casualties, model, frames } = rig();
+  casualties.shoot('w1', model, seat);
+  assert.equal(casualties.lookOf('w1'), 'blood');
+  assert.equal(model.asleep, false);
+  assert.notEqual(under(parent, model)?.name, 'spell-circle');
+  frames(Math.ceil(FALL_TIME * 60) + 2);
+  assert.deepEqual(landLooks, ['blood']);
+});
 
 test('one shot drops it out of its chair with a thud, and it bleeds out where it lands', () => {
   const { seat, lands, casualties, model, frames } = rig();

@@ -223,10 +223,15 @@ export class Muzzle {
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
 
-  constructor(private flash: FlashLight = ROOM_FLASH) {
-    this.group.position.copy(MUZZLE_AT);
+  /** `at` is where the flash sits on the prop, `colors` its white-hot core and the star round it. */
+  constructor(
+    private flash: FlashLight = ROOM_FLASH,
+    at: THREE.Vector3 = MUZZLE_AT,
+    colors: { core: string; star: string } = { core: '#fff6d8', star: '#ffb347' },
+  ) {
+    this.group.position.copy(at);
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive('#fff6d8', 0));
+    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive(colors.core, 0));
     this.group.add(this.core);
     this.star = [];
     for (const [w, l] of [
@@ -234,7 +239,7 @@ export class Muzzle {
       [0.05, 0.22],
       [0.09, 0.12],
     ]) {
-      const blade = new THREE.Mesh(new THREE.PlaneGeometry(w, l), additive('#ffb347', 0));
+      const blade = new THREE.Mesh(new THREE.PlaneGeometry(w, l), additive(colors.star, 0));
       if (this.star.length === 1) blade.rotation.z = Math.PI / 2;
       if (this.star.length === 2) blade.rotation.y = Math.PI / 2;
       // Along the barrel, half of it past the muzzle.

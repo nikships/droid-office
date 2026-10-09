@@ -827,6 +827,122 @@ export class OfficeSound {
     }
   }
 
+  // ---- The magic wand ----------------------------------------------------------------------------
+
+  /** Your spell: a bright rising zing over a quick run of chimes and a shimmer. Yours, so not positional. */
+  wandZap() {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('wandZap');
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(this.ambience, t0, 520, 3.2, 0.22, 0.16, 'triangle');
+    [1319, 1568, 1976, 2637].forEach((f, i) => this.blip(this.ambience, t0 + 0.04 + i * 0.045, f, 1.01, 0.28, 0.07));
+    this.shimmer(this.ambience, t0, 0.45, 0.06);
+  }
+
+  /** A spell landing on a worker, from where it hit: a soft "boing" down and a sprinkle of chimes. */
+  spellHit(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('spellHit');
+    const out = this.panner(at, 3, 0.9);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(out, t0, 880, 0.5, 0.3, 0.14);
+    [2093, 2637, 3136].forEach((f, i) => this.blip(out, t0 + 0.05 + i * 0.06, f, 1, 0.22, 0.05));
+    this.shimmer(out, t0, 0.5, 0.05);
+  }
+
+  /** A spell fizzling out on a wall or the floor, from where it landed. */
+  fizzle(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('fizzle');
+    const out = this.panner(at, 3, 0.9);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(out, t0, 1400, 0.6, 0.16, 0.06, 'triangle');
+    this.shimmer(out, t0, 0.3, 0.04);
+  }
+
+  /** A worker under the wand's spell drifting off on the floor: a soft bump and a sleepy three-note slide down. */
+  doze(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('doze');
+    const out = this.panner(at, 2.5, 1);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.play(pick(this.buf.steps), { gain: 0.18, rate: 0.6, when: t0, dest: out });
+    [784, 659, 523].forEach((f, i) => this.blip(out, t0 + 0.12 + i * 0.22, f, 0.97, 0.3, 0.07));
+  }
+
+  /**
+   * The wand's moves (world/gun-motion.ts, the same moves as the gun's): twinkles on the way out
+   * and back, swishes for spins and catches, and glittering runs where the gun would click and ratchet.
+   */
+  wandCue(cue: GunCue) {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const t0 = ctx.currentTime + 0.005;
+    switch (cue) {
+      case 'draw':
+        this.count('wandDraw');
+        [1047, 1319, 1568].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 1.01, 0.2, 0.06));
+        this.swish(t0, 0.18, 600, 2400, 0.12, 1.1);
+        break;
+      case 'holster':
+        this.count('wandHolster');
+        [1568, 1319, 1047].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 0.99, 0.18, 0.05));
+        break;
+      case 'whoosh':
+      case 'swap':
+      case 'handle':
+      case 'blow':
+        // Not metal: the same air and cloth as the gun's.
+        this.gunCue(cue);
+        break;
+      case 'catch':
+        this.count('wandCatch');
+        this.play(pick(this.buf.steps), { gain: 0.35, rate: 2.1, when: t0 });
+        break;
+      case 'cock':
+      case 'open':
+      case 'shut':
+        this.count('wandTwinkle');
+        this.blip(this.ambience, t0, rand(1800, 2600), 1.02, 0.15, 0.05);
+        break;
+      case 'ratchet':
+        // Charging up: a glittering run that climbs.
+        this.count('wandCharge');
+        for (let i = 0; i < 10; i++) this.blip(this.ambience, t0 + i * 0.09, 880 * 2 ** (i / 6), 1.01, 0.14, 0.035);
+        this.shimmer(this.ambience, t0, 1, 0.03);
+        break;
+      case 'puff':
+        break;
+    }
+  }
+
+  /** High, airy noise swelling and fading over `len` seconds: the glitter under a spell. */
+  private shimmer(dest: AudioNode, when: number, len: number, gain: number) {
+    const ctx = this.ctx!;
+    const n = this.noise(this.buf.white);
+    const g = ctx.createGain();
+    envelope(g.gain, when, [
+      [len * 0.2, gain],
+      [len, 0],
+    ]);
+    n.connect(biquad(ctx, 'bandpass', 7000, 2))
+      .connect(g)
+      .connect(dest);
+    n.start(when);
+    n.stop(when + len + 0.02);
+  }
+
   /** A short steel click: a tick of bright noise over a pinged tone at `freq`. */
   private click(when: number, freq: number, gain: number) {
     const ctx = this.ctx!;

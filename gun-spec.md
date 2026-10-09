@@ -1,5 +1,10 @@
 # Spec: .44 Magnum, worker Darwin Awards
 
+> The Magnum is now opt-in. By default `7` draws a magic wand (`src/client/world/wand.ts`): the
+> same moves, deadline, revival and cleanup, with sparkles, a spell circle and a sleeping worker
+> in place of the gunshot, blood and slack face. Settings → You → "What 7 puts in your hand"
+> (`Settings.sidearm`, kept in the browser) picks the Magnum described below.
+
 ## Summary
 
 Pressing `7` toggles a realistic silver .44 Magnum in your right hand.

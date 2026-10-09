@@ -5,10 +5,11 @@ import type { Drink } from '../../shared/rooftop';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
-import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
+import { type Muzzle, SPIN_AT, disposeGun, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { Glove, gunHand, type HandShape, SHAPES } from './glove';
 import { mesh, toonUnique } from './toon';
+import { type Sidearm, sidearmProp } from './wand';
 
 export interface HandsInput {
   yaw: number;
@@ -108,7 +109,7 @@ export class Hands {
    * round on the trigger finger, the prop and its muzzle flash, the pose it's in, and how far it has
    * gone over from the fist onto the trigger finger (the pose's `finger`, eased).
    */
-  private gun: { mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose>; onFinger: number } | null = null;
+  private gun: { kind: Sidearm; mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose>; onFinger: number } | null = null;
 
   constructor(shirt: string, skin: string) {
     this.shirt = shirt;
@@ -274,17 +275,16 @@ export class Hands {
   }
 
   /**
-   * The .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered, mid-trick), or away
-   * in its holster (null). The left hand keeps what it holds.
+   * The .44 Magnum (or the wand) in the right fist, posed (see GunMotion: drawn, holstered,
+   * mid-trick), or away in its holster (null). The left hand keeps what it holds.
    */
-  setGunPose(pose: Readonly<GunPose> | null) {
-    if (!pose) {
-      if (!this.gun) return;
+  setGunPose(pose: Readonly<GunPose> | null, kind: Sidearm = 'magnum') {
+    if (this.gun && (!pose || this.gun.kind !== kind)) {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
-      return;
     }
+    if (!pose) return;
     if (this.gun) {
       this.gun.pose = pose;
       return;
@@ -296,14 +296,13 @@ export class Hands {
     this.right.glove.shape(gunHand(pose.finger), true);
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
-    const prop = magnum();
+    const { prop, muzzle } = sidearmProp(kind);
     prop.position.copy(SPIN_AT).negate();
-    const muzzle = new Muzzle();
     prop.add(muzzle.group);
     pivot.add(prop);
     mount.add(pivot);
     this.right.group.add(mount);
-    this.gun = { mount, pivot, prop, muzzle, pose, onFinger: pose.finger };
+    this.gun = { kind, mount, pivot, prop, muzzle, pose, onFinger: pose.finger };
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
@@ -469,7 +468,7 @@ export class Hands {
     const both = this.bothShape();
     if (both) return both;
     const g = this.gun;
-    if (g && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.cylinder;
+    if (g?.kind === 'magnum' && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.cylinder;
     const id = this.emoting?.emote.id;
     if (id === 'clap') return SHAPES.flat;
     if (id === 'dance') return SHAPES.fist;
@@ -519,7 +518,7 @@ export class Hands {
     // The left hand in at the cylinder as it swings out: in the gun's own frame, the palm flat on
     // its far side, the fingers along it toward the muzzle and the thumb up, sweeping round it
     // (`palm`) to spin it.
-    if (free && p.left > 0) {
+    if (free && p.left > 0 && g.kind === 'magnum') {
       const prop = g.prop;
       prop.updateMatrixWorld(true);
       const drum = prop.worldToLocal(prop.getObjectByName('gun-drum')!.getWorldPosition(lift));

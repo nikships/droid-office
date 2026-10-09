@@ -203,6 +203,7 @@ function raw(over: Partial<RawState> = {}): RawState {
     hanging: false,
     gun: false,
     gunMove: null,
+    sidearm: 'wand',
     ...over,
   };
 }
@@ -216,6 +217,8 @@ test('state() is a rounded JSON snapshot of where you are, what is open and who 
   assert.equal(s.player.lookPitch, -0.2);
   assert.equal(Math.abs(s.player.facing), 3.14, 'the heading wrapped into ±π');
   assert.equal(s.player.controls, true);
+  assert.equal(s.player.sidearm, 'wand');
+  assert.equal(buildSnapshot(raw({ sidearm: 'magnum' })).player.sidearm, 'magnum');
   assert.equal(s.camera.x, 1.23);
   assert.equal(s.using, null);
   assert.equal(s.terminal, null);
