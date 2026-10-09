@@ -1135,8 +1135,6 @@ a.when:hover { text-decoration: underline; }
 .bs-find { flex: none; padding: var(--space-3) var(--space-3) var(--space-2); }
 .bs-count { flex: none; min-height: 18px; padding: 0 var(--space-4) var(--space-2); font: 400 11px/1.5 var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 .bs-list { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--space-2) var(--space-3); }
-/* ↑ ↓ move a cursor through the docs; the doc that's open keeps the accent. */
-.bs-list .list-row[aria-selected=true]:not(.on) { background: var(--surface-hover); border-left-color: var(--border-strong); }
 .bs-item mark, .wk-hit mark { background: none; color: var(--accent); font-weight: 600; }
 .bs-path { font-family: var(--font-mono); font-size: 11px; }
 .bs-none { padding: var(--space-3); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
