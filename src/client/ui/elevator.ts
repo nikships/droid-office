@@ -4,6 +4,8 @@ import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, type Modal } from './dom';
+import { floorNo, floorStats } from './floormenu';
+import { emptyState, windowHeader } from './kit';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
@@ -48,20 +50,19 @@ export function openElevator(opts: ElevatorOptions): void {
   /** The search box and list are in place (rebuilding them would lose the focus mid-typing). */
   let built = false;
 
-  const floorsEl = h('div.floors');
-  const addEl = h('div.add');
+  const floorsEl = h('div.list.boxed.floors', { role: 'list', 'aria-label': 'Floors' });
+  const addEl = h('section.section.add');
   const input = h('input', { type: 'text', placeholder: 'Search your projects, or type a checkout’s full path', 'aria-label': 'Project', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
-  const listEl = h('div.repo-list', { role: 'listbox', 'aria-label': 'Projects' });
-  const statusEl = h('div');
+  const listEl = h('div.list.boxed.repo-list', { role: 'listbox', 'aria-label': 'Projects' });
+  const statusEl = h('div.stack.tight.add-status');
   const addBtn = h('button.btn.primary', { type: 'button' }, 'Add floor');
-  const refreshBtn = h('button.btn', { type: 'button', title: 'Look in the workspace folder again' }, '↻');
-  const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
+  const refreshBtn = h('button.btn.icon', { type: 'button', title: 'Look in the workspace folder again', 'aria-label': 'Look again' }, '↻');
 
   // Where checkouts are looked for. It can be moved right here: the first project is when it matters.
   const dirInput = h('input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const dirSave = h('button.btn.primary', { type: 'button' }, 'Save');
-  const dirCancel = h('button.btn', { type: 'button' }, 'Cancel');
-  const dirEl = h('div.webhook.dir-pick.hidden', {}, dirInput, dirSave, dirCancel);
+  const dirCancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
+  const dirEl = h('div.row.dir-pick.hidden', {}, dirInput, dirCancel, dirSave);
   const editDir = (on: boolean) => {
     dirEl.classList.toggle('hidden', !on);
     if (!on) return;
@@ -98,16 +99,12 @@ export function openElevator(opts: ElevatorOptions): void {
   const floorButton = (f: FloorInfo, i: number) => {
     const here = f.id === store.floor;
     const p = floorPalette(f.palette);
-    const stats: HTMLElement[] = [];
-    if (f.busy) stats.push(h('span', { title: 'Working' }, `👷 ${f.busy}`));
-    if (f.waiting) stats.push(h('span.waiting', { title: 'Waiting on someone' }, `🙋 ${f.waiting}`));
-    stats.push(h('span', { title: 'Workers at desks' }, `💻 ${f.workers}`));
     const btn = h(
       'button.floor-btn',
       { type: 'button', class: here ? 'here' : '', disabled: here, title: here ? "You're on this floor" : `Ride to ${f.name}` },
-      h('span.floor-no', { style: `background:${p.trim}` }, String(i + 1)),
-      h('span.floor-text', {}, h('span.floor-name', {}, f.name, here ? h('span.here-tag', {}, 'you are here') : null), h('span.floor-sub', {}, f.repo ?? f.dir)),
-      h('span.floor-stats', {}, ...stats.flatMap((s, j) => (j ? [' ', s] : [s]))),
+      floorNo(String(i + 1), p.trim),
+      h('span.list-main', {}, h('span.list-title', { title: f.name }, f.name), h('span.list-meta', { title: f.repo ?? f.dir }, f.repo ?? f.dir)),
+      h('span.list-end', {}, here ? h('span.pill.floor-here', {}, 'You are here') : null, floorStats(f)),
     );
     btn.addEventListener('click', () => {
       if (here) return;
@@ -117,12 +114,12 @@ export function openElevator(opts: ElevatorOptions): void {
     return btn;
   };
 
-  /** The floor's button, with a 🗑 beside it to take it off the building. */
+  /** The floor's button, with a 🗑 beside it to take it off the building (an empty slot where it can't be, so the rows line up). */
   const floorRow = (f: FloorInfo, i: number) => {
     const btn = floorButton(f, i);
-    const off = h('button.btn.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
+    const off = h('button.btn.icon.ghost.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
     off.addEventListener('click', () => confirmRemove(f));
-    return h('div.floor-row', {}, btn, ...(f.home ? [] : [off]));
+    return h('div.list-row.floor-row', { role: 'listitem', class: f.id === store.floor ? 'here on' : '' }, btn, f.home ? h('span.floor-off-slot') : off);
   };
 
   const confirmRemove = (f: FloorInfo) => {
@@ -139,34 +136,38 @@ export function openElevator(opts: ElevatorOptions): void {
     const btn = h(
       'button.floor-btn',
       { type: 'button', class: here ? 'here' : '', disabled: here, title: here ? "You're up on the roof" : `Ride up to the ${ROOF_NAME.toLowerCase()}` },
-      h('span.floor-no', { style: 'background:#14181f' }, '🍸'),
-      h('span.floor-text', {}, h('span.floor-name', {}, ROOF_NAME, here ? h('span.here-tag', {}, 'you are here') : null), h('span.floor-sub', {}, 'The roof: a DJ playing drum and bass, a bar, and the city all around')),
-      h('span.floor-stats', {}, ''),
+      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🍸'),
+      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'A DJ playing drum and bass, a bar, and the city all around')),
+      h('span.list-end', {}, here ? h('span.pill.floor-here', {}, 'You are here') : null),
     );
     btn.addEventListener('click', () => {
       if (here) return;
       modal.close();
       opts.ride(ROOF);
     });
-    return btn;
+    return h('div.list-row.floor-row', { role: 'listitem', class: here ? 'here on' : '' }, btn, h('span.floor-off-slot'));
   };
 
   const renderFloors = () => {
     const floors = store.floors;
     // Top floor first, the way an elevator's buttons stack, with the roof over them and floor 1 at the bottom.
-    floorsEl.replaceChildren(...(floors.length ? [roofButton()] : []), ...(floors.length ? floors.map(floorRow).reverse() : [h('p.empty', {}, 'No floors yet.')]));
+    floorsEl.classList.toggle('boxed', floors.length > 0);
+    floorsEl.replaceChildren(...(floors.length ? [roofButton()] : []), ...(floors.length ? floors.map(floorRow).reverse() : [emptyState('🛗', 'No floors yet', 'Add a project below to make the first one.')]));
   };
 
   const repoRow = (r: RepoChoice) => {
     const floor = store.floors.find((f) => f.dir === r.dir);
     const on = selected === r.dir;
     const row = h(
-      'div.repo',
-      { role: 'option', class: on ? 'sel' : '', 'aria-selected': String(on), title: r.dir },
-      h('span.forge', { title: r.forge === 'gitlab' ? 'GitLab' : r.forge === 'github' ? 'GitHub' : 'Local folder' }, r.forge === 'gitlab' ? '🦊' : r.forge === 'github' ? '🐙' : '📁'),
-      h('span.nm', {}, r.name),
-      h('span.desc', {}, tildePath(r.dir)),
-      floor ? h('span.pill', {}, floor.id === store.floor ? 'you are here' : `floor ${store.floors.indexOf(floor) + 1}`) : r.activeAt ? h('span.when', {}, timeAgo(r.activeAt)) : null,
+      'div.list-row.repo',
+      { role: 'option', class: on ? 'on' : '', 'aria-selected': String(on), title: r.dir },
+      h('span.list-icon.forge', { title: r.forge === 'gitlab' ? 'GitLab' : r.forge === 'github' ? 'GitHub' : 'Local folder' }, r.forge === 'gitlab' ? '🦊' : r.forge === 'github' ? '🐙' : '📁'),
+      h('span.list-main', {}, h('span.list-title', {}, r.name), h('span.list-meta', {}, tildePath(r.dir))),
+      h(
+        'span.list-end',
+        {},
+        floor ? h('span.pill', { class: floor.id === store.floor ? 'floor-here' : '' }, floor.id === store.floor ? 'you are here' : `floor ${store.floors.indexOf(floor) + 1}`) : r.activeAt ? h('span.when', {}, timeAgo(r.activeAt)) : null,
+      ),
     );
     row.addEventListener('click', () => {
       if (adding) return;
@@ -195,7 +196,7 @@ export function openElevator(opts: ElevatorOptions): void {
 
   const renderAdd = () => {
     if (!showAdd) {
-      const open = h('button.btn', { type: 'button' }, '➕ Add a project');
+      const open = h('button.btn.add-open', { type: 'button' }, '＋ Add a project');
       open.addEventListener('click', () => {
         showAdd = true;
         needRepos();
@@ -214,8 +215,8 @@ export function openElevator(opts: ElevatorOptions): void {
     if (!rows.length)
       rows.push(
         h(
-          'p.empty',
-          { style: 'padding:10px' },
+          'p.repo-empty',
+          {},
           r.loading
             ? `Looking for git projects in ${store.projectsDir.dir}…`
             : r.error
@@ -225,23 +226,31 @@ export function openElevator(opts: ElevatorOptions): void {
                 : `No git projects in ${store.projectsDir.dir}. Change the folder below.`,
         ),
       );
-    if (matches.length > SHOWN) rows.push(h('p.empty', { style: 'padding:8px 10px' }, `…and ${matches.length - SHOWN} more — type to narrow it down`));
+    if (matches.length > SHOWN) rows.push(h('p.repo-empty.more', {}, `…and ${matches.length - SHOWN} more — type to narrow it down`));
     listEl.replaceChildren(...rows);
     const pick = choice();
-    const change = h('button.btn.dir-change', { type: 'button', title: 'Look for projects in another folder on the office’s machine' }, 'Change folder');
+    const change = h('button.btn.sm.dir-change', { type: 'button', title: 'Look for projects in another folder on the office’s machine (also in ⚙️ Settings)' }, 'Change folder');
     change.addEventListener('click', () => editDir(true));
     statusEl.replaceChildren(
       adding
-        ? h('p.note.busy', {}, `⏳ Adding ${adding}…`)
-        : h('p.note', {}, `Looking in ${store.projectsDir.dir || 'the workspace folder'} for git projects. The new floor works in the checkout where it is: nothing is cloned or copied. Pick another folder here or in ⚙️ Settings.`, change),
-      ...[r.error, error].filter(Boolean).map((e) => h('p.err', {}, e)),
+        ? h('p.note.info.busy', {}, h('span.spinner'), `Adding ${adding}…`)
+        : h(
+            'div.row.between.dir-line',
+            {},
+            h('p.field-hint', {}, 'Looking in ', h('code', { title: store.projectsDir.dir }, store.projectsDir.dir || 'the workspace folder'), '. The new floor works in the checkout where it is: nothing is cloned or copied.'),
+            change,
+          ),
+      ...[r.error, error].filter(Boolean).map((e) => h('p.note.bad', {}, e)),
     );
     addBtn.disabled = !!adding || !pick || store.floors.some((f) => f.dir === pick);
     addBtn.textContent = adding ? 'Adding…' : 'Add floor';
     input.disabled = !!adding;
     if (!built) {
       built = true;
-      addEl.replaceChildren(h('h3', {}, setup && !store.floors.length ? 'Pick your first project' : '➕ Add a project'), h('div.repo-search', {}, input, refreshBtn), listEl, statusEl, dirEl);
+      addEl.replaceChildren(
+        h('div.eyebrow', {}, h('span.no', {}, '02'), setup && !store.floors.length ? 'Pick your first project' : 'Add a project'),
+        h('div.stack.tight', {}, h('div.input-group.repo-search', {}, input, refreshBtn), listEl, statusEl, dirEl),
+      );
     }
   };
 
@@ -290,21 +299,18 @@ export function openElevator(opts: ElevatorOptions): void {
     net.send({ t: 'floor.repos', refresh: true });
   });
 
-  const intro = setup
-    ? h(
-        'p.intro',
-        {},
-        store.floors.length
-          ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
-          : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your git projects: it becomes the first floor, and the office works in it right where it is.",
-      )
-    : null;
+  const sub = setup
+    ? store.floors.length
+      ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
+      : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your git projects: it becomes the first floor, and the office works in it right where it is."
+    : 'Every project is a floor. Pick one to ride to.';
+  const floorsSection = h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Floors'), floorsEl);
   const el = h(
     'div.modal.elevator',
     { role: 'dialog', 'aria-label': 'Elevator' },
-    h('header', {}, h('h2', {}, setup ? 'Welcome to Droid Office' : 'Elevator'), close),
-    h('div.body', {}, intro, floorsEl, addEl),
-    h('footer', {}, h('span.grow', {}, setup ? 'Your office, one floor per project' + ' · Esc to look around first' : 'Pick a floor' + ' · Esc to stay here'), addBtn),
+    windowHeader(setup ? 'Welcome to Droid Office' : 'Elevator', sub),
+    h('div.body', {}, h('div.stack.loose', {}, floorsSection, addEl)),
+    h('footer', {}, h('span.grow', {}, h('span.key', {}, 'Esc'), setup ? 'look around first' : 'stay here'), addBtn),
   );
   const unsubs = [store.on('floors', () => (renderFloors(), renderAdd())), store.on('repos', renderAdd), store.on('projectsDir', () => (editDir(false), renderAdd())), store.on('floor', renderFloors)];
   const modal = openModal(el, {
@@ -318,7 +324,6 @@ export function openElevator(opts: ElevatorOptions): void {
     },
   });
   current = modal;
-  close.addEventListener('click', () => modal.close());
   renderFloors();
   if (showAdd) needRepos();
   renderAdd();
