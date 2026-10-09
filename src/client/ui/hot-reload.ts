@@ -4,13 +4,13 @@ import { h } from './dom';
 
 /** Polls separately from the game connection, only while Settings is open. */
 export function hotReloadSettings(): { element: HTMLElement; dispose: () => void } {
-  const note = h('p.setting-note', {}, 'For the local office started with npm run build && npm run start (normally :4600). Source changes rebuild the browser client and refresh your page; server changes still need a restart.');
-  const status = h('p.setting-note', { role: 'status', 'aria-live': 'polite' }, 'Checking source reload…');
-  const error = h('pre.setting-note', { style: 'white-space:pre-wrap;overflow:auto;max-height:180px', hidden: true });
-  const toggle = h('button.btn', { type: 'button', disabled: true }, 'Enable');
-  const rebuild = h('button.btn', { type: 'button', disabled: true }, 'Build & reload');
-  const controls = h('div.seg', {}, toggle, rebuild);
-  const element = h('div', {}, note, controls, status, error);
+  const note = h('small.setting-desc', {}, 'For the local office started with npm run build && npm run start (normally :4600). Source changes rebuild the browser client and refresh your page; server changes still need a restart.');
+  const status = h('p.note.info', { role: 'status', 'aria-live': 'polite' }, 'Checking source reload…');
+  const error = h('pre.setting-error', { hidden: true });
+  const toggle = h('button.btn.sm', { type: 'button', disabled: true }, 'Enable');
+  const rebuild = h('button.btn.sm', { type: 'button', disabled: true }, 'Build & reload');
+  const controls = h('div.row', {}, toggle, rebuild);
+  const element = h('div.stack.tight', {}, note, controls, status, error);
   if (!document.querySelector<HTMLMetaElement>('meta[name="office-revision"]')?.content.trim()) {
     status.textContent = 'This is Vite development (normally :5173), which already reloads source changes. Use the built local office on :4600 for these settings.';
     controls.hidden = true;

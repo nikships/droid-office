@@ -543,30 +543,38 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .tab:focus-visible { outline-offset: -2px; }
 :where(.tab) .n { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 /* ======================================= end of the UI kit ====================================== */
-/* Settings: categories down the side, the one picked on the right, a card per setting. */
-.modal.settings { width: min(960px, 100%); height: min(760px, calc(100vh - 32px)); }
-.settings-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
-.settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; overflow: auto; background: var(--bg); border-right: 1px solid var(--border); }
-.settings-tab { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; text-align: left; font: 500 13px/1.3 var(--font-sans); color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; }
-.settings-tab .icon { flex: none; width: 18px; font-size: 14px; text-align: center; }
+/* Settings: categories down the side; the one picked on the right, as .group blocks of .group-row settings. */
+.modal.settings { height: min(760px, calc(100vh - 32px)); }
+.settings-nav { gap: 2px; padding: var(--space-3) var(--space-2); }
+.settings-tab { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 34px; padding: 0 var(--space-3); text-align: left; font: 500 var(--text-body)/1.3 var(--font-sans); color: var(--text-secondary); background: none; border: 0; border-radius: var(--radius); cursor: pointer; transition: background var(--duration) var(--ease), color var(--duration) var(--ease); }
+.settings-tab .icon { flex: none; width: 20px; font-size: 14px; line-height: 1; text-align: center; }
 .settings-tab:hover { background: var(--surface-hover); color: var(--text); }
-.settings-tab.on { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text); }
-.settings-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
-.settings-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 16px 18px 22px; overflow: auto; }
-.settings-head h3 { margin: 0; font: 600 14px/1.3 var(--font-sans); }
-.settings-head p { margin: 4px 0 0; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--text-secondary); }
-.setting { flex: none; padding: 12px 14px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
-.setting-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.setting-head h4 { margin: 0; font: 600 13px/1.3 var(--font-sans); }
-.scope { margin-left: auto; padding: 1px 7px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); color: var(--text-secondary); cursor: default; }
-.scope.you { color: var(--info); border-color: rgba(90, 169, 230, .45); }
-.scope.floor { color: var(--success); border-color: rgba(60, 207, 145, .45); }
-.scope.office { color: var(--accent); border-color: rgba(238, 96, 24, .45); }
+.settings-tab.on { background: var(--surface-hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-pane { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-6) var(--space-6) var(--space-8); }
+.settings-head { display: flex; flex-direction: column; gap: var(--space-1); }
+.settings-head h3 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font: 600 16px/1.3 var(--font-sans); color: var(--text); }
+.settings-head h3 .icon { font-size: 16px; line-height: 1; }
+.settings-head p { margin: 0; max-width: 64ch; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.settings-group { display: flex; flex-direction: column; min-width: 0; }
+/* The badge sits on the title's line, right after it. */
+.settings .group-label b { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.setting-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
+.setting-meta { font: 400 11px/1.5 var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.setting-desc { font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
+.setting-number { width: 88px; flex: none; }
+.input-group > .input.setting-number { flex: none; }
+.setting-error { margin: 0; max-height: 180px; overflow: auto; padding: var(--space-2) var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12px/1.5 var(--font-mono); color: var(--danger); background: var(--danger-muted); border-left: 2px solid var(--danger); border-radius: 0 var(--radius) var(--radius) 0; }
+.settings .model-choice { margin: 0; }
+.scope { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; font: 500 9.5px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-xs); color: var(--text-tertiary); cursor: default; }
+.scope::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 1px; background: currentColor; }
+.scope.you::before { background: var(--info); }
+.scope.floor::before { background: var(--success); }
+.scope.office::before { background: var(--accent); }
 @media (max-width: 720px) {
-  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .settings-tab { flex: none; width: auto; white-space: nowrap; }
-  .settings-pane { padding: 12px; }
+  .settings-tab.on { box-shadow: inset 0 -2px 0 var(--accent); }
+  .settings-pane { padding: var(--space-4); gap: var(--space-5); }
 }
 /* The ✕: always the last thing in a header, the size of a header button. */
 .close { flex: none; width: var(--control-h); min-width: var(--control-h); height: var(--control-h); padding: 0; justify-content: center; letter-spacing: 0; font-size: 13px; }
@@ -585,7 +593,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:hover { position: relative; z-index: 1; color: var(--text); border-color: var(--border-strong); }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:focus-visible { position: relative; z-index: 3; }
 .seg:is([role=radiogroup], [role=group], :has(> .btn.on)) > .btn:is(.on, [aria-checked=true], [aria-pressed=true]) { position: relative; z-index: 2; border-color: var(--accent); background: var(--accent-muted); color: var(--text); }
-.setting .seg + .seg { margin-top: 8px; }
 .seg.disabled { opacity: .45; }
 /* The Droid model and effort a new worker runs on, wherever it sits: Model and Effort side by side,
    each label over its picker, the hint under both at full width. */
@@ -602,7 +609,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.gh-window.issue footer .model-choice { flex: 0 1 320px; grid-template-columns: minmax(0, 1fr) minmax(0, 120px); gap: var(--space-1) var(--space-2); }
 .webhook { display: flex; gap: 8px; }
 .webhook input[type=text] { flex: 1; min-width: 0; }
-.outside-now { margin: 0; font-size: 14px; font-weight: 600; }
+.outside-now { display: inline-flex; align-items: center; gap: var(--space-2); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.outside-now .outside-icon { font-size: 14px; line-height: 1; }
 
 /* Prompt boxes and the hire dialog (ui/prompt.ts): the prompt first, its options in one group under it. */
 .prompt-input { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -964,25 +972,23 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 
 /* Upgrading the office */
 .conn.upgrading { background: rgba(242, 184, 75, .1); border-color: rgba(242, 184, 75, .5); color: var(--warning); }
-.upgrade .version { display: block; font-weight: 500; }
-.upgrade .version small { color: var(--text-secondary); }
-.upgrade code, .restart code { font: 12px var(--font-mono); background: var(--surface-hover); border-radius: var(--radius-xs); padding: 1px 5px; }
-.upgrade .note { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-.upgrade-status { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 13px; background: var(--surface-raised); }
-.upgrade-status.ok { border-color: rgba(60, 207, 145, .4); color: var(--success); background: rgba(60, 207, 145, .06); }
-.upgrade-status.error { border-color: rgba(239, 68, 68, .45); color: var(--danger); background: rgba(239, 68, 68, .06); }
-.upgrade-error { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 var(--font-mono); color: var(--danger); background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .45); border-radius: var(--radius); padding: 10px; max-height: 240px; overflow: auto; }
-.changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; max-height: 220px; overflow: auto; }
-.modal.restart { width: min(480px, 100%); text-align: center; }
-.modal.restart .body p { margin: 10px 0 0; font-weight: 500; }
-.modal.restart .upgrade-status { justify-content: center; }
-.modal.restart .note { font-size: 13px; color: var(--text-secondary); }
-.restart-art { font-size: 64px; line-height: 1; }
+.upgrade .section { gap: var(--space-2); }
+.upgrade-sha { flex: none; font: 500 12px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.upgrade .list-row { cursor: default; }
+.upgrade .list-row:hover { background: none; }
+.upgrade-changes { max-height: 240px; overflow: auto; }
+.upgrade-status { display: flex; align-items: center; gap: var(--space-2); }
+.restart code { font: 12px var(--font-mono); background: var(--surface-hover); border-radius: var(--radius-xs); padding: 1px 5px; }
+.restart-body { align-items: center; text-align: center; padding-top: var(--space-6); padding-bottom: var(--space-6); }
+.restart-body > p { margin: 0; font: 500 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text); }
+.restart-body > .upgrade-status { align-self: stretch; justify-content: center; text-align: left; }
+.restart-body > .field-hint { display: flex; align-items: center; justify-content: center; gap: var(--space-2); }
+.restart-art { font-size: 48px; line-height: 1; }
 
 /* Settings: office sounds volume */
-.volume { display: flex; align-items: center; gap: 12px; }
-.volume .btn { flex: none; min-width: 112px; justify-content: center; }
-.vol-pct { flex: none; min-width: 52px; text-align: right; font: 600 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+.volume { display: flex; align-items: center; gap: var(--space-3); width: 300px; max-width: 100%; }
+.volume .btn { flex: none; min-width: 76px; justify-content: center; }
+.vol-pct { flex: none; min-width: 44px; text-align: right; font: 500 12px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 .volume input[type=range] { flex: 1; min-width: 0; height: 28px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; --fill: 70%; }
 .volume input[type=range]:focus { outline: none; }
 .volume input[type=range]::-webkit-slider-runnable-track { height: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: linear-gradient(to right, var(--accent) var(--fill), var(--surface-hover) var(--fill)); }
@@ -1511,34 +1517,26 @@ a.when:hover { text-decoration: underline; }
 
 /* The office's prompts (Settings): the list down the side, the one picked on the right. */
 .modal.prompts { width: min(1100px, 100%); height: min(820px, calc(100vh - 32px)); }
-.prompts-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
-.prompt-list { display: flex; flex-direction: column; gap: 2px; padding: 10px; overflow: auto; background: var(--surface-raised); border-right: 1px solid var(--border); }
-.prompt-list h4 { margin: 12px 6px 4px; font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
-.prompt-list h4:first-child { margin-top: 2px; }
-.prompt-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; font-size: 13px; font-weight: 500; color: var(--text); background: none; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease); }
-.prompt-item > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prompt-item:hover { background: var(--surface-hover); }
-.prompt-item.on { background: var(--surface-hover); border-color: var(--border-strong); }
-.prompt-mark { font-size: 12px; color: var(--accent); }
-.prompt-edit { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; padding: 14px 16px; overflow: auto; }
-.prompt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.prompt-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.prompt-status { font: 400 11px var(--font-mono); color: var(--text-secondary); }
-.prompt-status.dirty { color: var(--accent); }
-.prompt-used { margin: 0; font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
-.modal textarea.prompt-text { flex: 1 1 auto; min-height: 220px; font: 12.5px/1.5 var(--font-mono); resize: none; }
-.modal textarea.prompt-text[readonly] { background: var(--surface); color: var(--text-secondary); }
-.prompt-vars { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.prompt-vars-head { flex-basis: 100%; font: 400 11px var(--font-mono); color: var(--text-secondary); }
-.prompt-var { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 3px 8px; font: inherit; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color var(--duration) var(--ease); }
-.prompt-var:hover:not(:disabled) { border-color: var(--accent); }
-.prompt-var:disabled { cursor: default; }
+.prompts-body { grid-template-columns: 260px minmax(0, 1fr); }
+.prompt-list { padding: var(--space-3) var(--space-2); }
+.prompt-list .eyebrow { padding: var(--space-4) var(--space-3) var(--space-1); }
+.prompt-list .eyebrow:first-child { padding-top: var(--space-1); }
+.prompt-item { min-height: 34px; padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.prompt-mark { min-width: 12px; justify-content: center; font-size: 12px; color: var(--accent); }
+.prompt-edit { gap: var(--space-3); }
+.prompt-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.prompt-head h3 { margin: 0; font: 600 16px/1.3 var(--font-sans); }
+.prompt-status.dirty { color: var(--accent); border-color: rgba(238, 96, 24, .4); }
+.modal textarea.prompt-text { flex: 1 1 auto; min-height: 220px; font: 12.5px/1.6 var(--font-mono); resize: none; }
+.prompt-vars { display: flex; flex-direction: column; gap: var(--space-2); }
+.prompt-vars-hint { text-transform: none; letter-spacing: 0; font: 400 var(--text-small)/1.4 var(--font-sans); color: var(--text-tertiary); }
+.prompt-var { gap: var(--space-2); }
 .prompt-var code { font: 500 12px var(--font-mono); color: var(--text); }
-.prompt-var small { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-secondary); }
-.prompt-warnings p { margin: 0; font-size: 12.5px; font-weight: 500; color: var(--danger); }
+.prompt-var small { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-secondary); }
+.prompt-warnings { display: flex; flex-direction: column; gap: var(--space-2); }
+.prompt-warnings:empty { display: none; }
 @media (max-width: 720px) {
-  .prompts-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 180px minmax(0, 1fr); }
-  .prompt-list { border-right: 0; border-bottom: 1px solid var(--border); }
+  .prompts-body { grid-template-rows: 180px minmax(0, 1fr); }
 }
 
 /* The loading screen (index.html): up from the first paint, over everything, until ui/loading.ts takes it down. */
@@ -1555,14 +1553,13 @@ a.when:hover { text-decoration: underline; }
 }
 
 /* ⚙️ Settings → Factory: what the office's key reaches. */
-.factory-caps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
-.factory-caps li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.factory-caps .mark { flex: none; width: 1.2em; text-align: center; font: 700 13px/1.3 var(--font-mono); color: var(--text-tertiary); }
-.factory-caps .ok .mark { color: var(--success); }
-.factory-caps .denied .mark { color: var(--danger); }
-.factory-caps .error .mark { color: var(--warning); }
-.factory-caps .what { flex: none; font-weight: 600; }
-.factory-caps .why { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.factory-caps { list-style: none; margin: 0; padding: 0; }
+.factory-mark { display: inline-flex; align-items: center; gap: 6px; font: 500 10.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-tertiary); }
+.factory-mark > span { font-size: 13px; }
+.factory-caps .ok .factory-mark { color: var(--success); }
+.factory-caps .denied .factory-mark { color: var(--danger); }
+.factory-caps .error .factory-mark { color: var(--warning); }
+.factory-who { font: 500 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text); }
 .factory-intro a { color: var(--accent); }
 
 /* CI automations window (ui/factory-ci.ts) */
