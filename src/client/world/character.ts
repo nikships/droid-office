@@ -1383,8 +1383,8 @@ const ease = (x: number) => x * x * (3 - 2 * x);
 /** 0 → 1 with a little overshoot, for props popping in. */
 const popIn = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 + 2.7 * (x - 1) ** 3 + 1.7 * (x - 1) ** 2);
 
-/** A stack of papers held up to read, bound at the top; its top sheet flips over. The sheets face -z. */
-function papers(): { group: THREE.Group; page: THREE.Group } {
+/** A stack of papers held up to read, bound at the top. The sheets face -z. */
+function papers(): { group: THREE.Group } {
   const group = new THREE.Group();
   const W = 0.34;
   const H = 0.44;
@@ -1402,13 +1402,10 @@ function papers(): { group: THREE.Group; page: THREE.Group } {
     }
   };
   lines(group, -0.01);
-  // The top sheet hangs from the binding, so it flips up over the top.
-  const page = new THREE.Group();
-  page.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016, false));
-  lines(page, -0.022);
-  group.add(page);
+  group.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016, false));
+  lines(group, -0.022);
   group.add(mesh(new THREE.BoxGeometry(W * 0.5, 0.05, 0.05), toon('#adb5bd'), 0, 0, 0, false));
-  return { group, page };
+  return { group };
 }
 
 /** A little globe: blue sea, green blobs of land and a gold ring round its middle. */
@@ -1506,7 +1503,6 @@ export class Worker {
   private turnY = 0;
   /** Seconds into its finishing spin, or -1. */
   private twirlT = -1;
-  private flipT = 0;
   private papers: ReturnType<typeof papers>;
   private globe: ReturnType<typeof globe>;
   /** Beside its laptop, where the globe floats (see setPropSpot). */
@@ -1864,7 +1860,7 @@ export class Worker {
     }
     this.body.rotation.y = this.turnY + twirl;
     this.body.rotation.z = isAsleep(this.status) ? Math.sin(t * 1.5) * 0.08 : s.roll;
-    this.props(dt, t);
+    this.props(t);
     this.blink(dt, s.lid);
     this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
@@ -1908,20 +1904,14 @@ export class Worker {
   }
 
   /** The papers and the globe come and go with the act they belong to. */
-  private props(dt: number, t: number) {
+  private props(t: number) {
     const show = (prop: THREE.Object3D, act: Act) => {
       const w = this.acts.get(act) ?? 0;
       prop.visible = w > 0.02;
       if (prop.visible) prop.scale.setScalar(Math.max(0.001, popIn(w)));
       return prop.visible;
     };
-    if (show(this.papers.group, 'read')) {
-      // A page every second or so, flipped up and over the top.
-      this.flipT = (this.flipT + dt) % 1.1;
-      const f = Math.min(1, this.flipT / 0.45);
-      this.papers.page.rotation.x = -ease(f) * Math.PI * 1.1;
-      this.papers.page.visible = f < 1;
-    }
+    show(this.papers.group, 'read');
     if (show(this.globe.group, 'web')) {
       this.globe.group.position.copy(this.spot).y += Math.sin(t * 2) * 0.03;
       this.globe.ball.rotation.y = t * 2.2;
