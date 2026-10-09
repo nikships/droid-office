@@ -1018,8 +1018,9 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .gh-side-branch code { max-width: 100%; }
 .gh-side-branch small { font: 400 var(--text-small)/1.4 var(--font-sans); color: var(--text-secondary); }
 .gh-side .desk-link { align-self: flex-start; }
-/* The issue's queue picker, stacked to fit the side column. */
-.gh-queue .model-choice { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 0; }
+/* The issue's queue picker, stacked to fit the side column. Hiring's .model-choice is a two-column grid with named areas; clear the areas and each child's grid-area, so the five children auto-place down one column. (The areas alone are not enough: a grid-area naming a missing area keeps its item out of auto-placement and the pickers pile up.) */
+.gh-queue .model-choice { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: none; gap: var(--space-1); min-width: 0; }
+.gh-side .gh-queue .model-choice > * { grid-area: auto; }
 .gh-queue .model-choice label { margin: var(--space-1) 0 0; }
 .gh-queue .model-choice select { width: 100%; min-width: 0; }
 .gh-queue .model-hint { margin-top: var(--space-1); }
