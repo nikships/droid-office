@@ -153,13 +153,35 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeo
   return value;
 }
 
+/** The messages the office pasted into one launch's terminal, oldest first. */
+function pastedInto(f: Fixture, launch: Invocation): string[] {
+  const stdin = f
+    .read()
+    .filter((r) => r.stdin !== undefined && r.env.hookToken === launch.env.hookToken)
+    .map((r) => r.stdin)
+    .join('');
+  return [...stdin.matchAll(/\x1b\[200~([\s\S]*?)\x1b\[201~/g)].map((m) => m[1]);
+}
+
+/**
+ * Droid says it can take input (SessionStart), and the office types in the message that launch was
+ * started for: that message, or undefined when none comes.
+ */
+async function startedWith(f: Fixture, workers: WorkerManager, launch: Invocation, session: string): Promise<string | undefined> {
+  const before = pastedInto(f, launch).length;
+  assert.equal(workers.handleHook(launch.env.workerId!, launch.env.hookToken!, 'SessionStart', { session_id: session, hook_event_name: 'SessionStart' }), true);
+  const end = Date.now() + 1000;
+  while (pastedInto(f, launch).length === before && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 25));
+  return pastedInto(f, launch)[before];
+}
+
 test('Droid workers launch with their own hook overlay and resume the correct session', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);
   const previousExit = process.env.FAKE_AGENT_EXIT_MS;
   const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '180';
+  process.env.FAKE_AGENT_EXIT_MS = '1500';
   process.env.FAKE_AGENT_LOG = f.log;
   t.after(() => {
     if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
@@ -181,7 +203,8 @@ test('Droid workers launch with their own hook overlay and resume the correct se
     )
   ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
   assert.deepEqual(first.args.slice(0, 3), ['--settings', path.join(f.data, 'droid-hooks.json'), '--from-test']);
-  assert.deepEqual(first.args.slice(-2), ['--', '- inspect this code']);
+  // Droid started with a prompt argument never opens /rewind-conversation: the prompt is typed in instead.
+  assert.equal(first.args.at(-1), '--from-test');
   assert.equal(first.env.workerId, worker.id);
   assert.ok(first.env.hookToken);
   const settings = JSON.parse(readFileSync(path.join(f.data, 'droid-hooks.json'), 'utf8'));
@@ -190,8 +213,18 @@ test('Droid workers launch with their own hook overlay and resume the correct se
 
   const hook = (event: string, data: Record<string, unknown> = {}, token = first.env.hookToken!) => workers.handleHook(worker.id, token, event, { session_id: 'droid-1', hook_event_name: event, ...data });
   assert.equal(hook('SessionStart', { source: 'startup' }, 'wrong-token'), false);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(pastedInto(f, first), [], 'nothing is typed before droid can take it');
   assert.equal(hook('SessionStart', { source: 'startup' }), true);
   assert.equal(workers.get(worker.id)?.status, 'idle');
+  await waitFor(
+    () => pastedInto(f, first),
+    (typed) => typed.length > 0,
+  );
+  // Typed in once: a later SessionStart in the same run doesn't send it again.
+  assert.equal(hook('SessionStart', { source: 'startup' }), true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(pastedInto(f, first), ['- inspect this code']);
   assert.equal(hook('UserPromptSubmit', { prompt: 'inspect this code' }), true);
   assert.equal(workers.get(worker.id)?.status, 'working');
   assert.equal(hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'src/main.ts' } }), true);
@@ -217,10 +250,10 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(workers.resume(worker.id), undefined);
   const second = (
     await waitFor(
-      () => f.read(),
-      (records) => records.filter((r) => r.kind === 'droid' && r.args.includes('--settings')).length >= 2,
+      () => launchesOf(f),
+      (launches) => launches.length >= 2,
     )
-  ).filter((r) => r.kind === 'droid' && r.args.includes('--settings'))[1];
+  )[1];
   assert.deepEqual(second.args.slice(-2), ['--resume', 'droid-1']);
   assert.notEqual(second.env.hookToken, first.env.hookToken);
   assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
@@ -238,10 +271,10 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.equal(restored.get(worker.id)?.sessionId, 'droid-1');
   const third = (
     await waitFor(
-      () => f.read(),
-      (records) => records.filter((r) => r.kind === 'droid' && r.args.includes('--settings')).length >= 3,
+      () => launchesOf(f),
+      (launches) => launches.length >= 3,
     )
-  ).filter((r) => r.kind === 'droid' && r.args.includes('--settings'))[2];
+  )[2];
   assert.deepEqual(third.args.slice(-2), ['--resume', 'droid-1']);
 });
 
@@ -406,7 +439,7 @@ test('a worker nobody picked for starts on the office default worker, told its b
       (records) => records.some((x) => x.kind === 'droid' && x.args.includes('--settings')),
     )
   ).find((x) => x.kind === 'droid' && x.args.includes('--settings'))!;
-  assert.ok(launch.args.includes('You review pull requests on GitHub. The request:\n\nSum up the open PRs'));
+  assert.equal(await startedWith(f, workers, launch, 'pulls-session'), 'You review pull requests on GitHub. The request:\n\nSum up the open PRs');
   const overlay = JSON.parse(readFileSync(path.join(f.data, `droid-${r.info.id}.json`), 'utf8'));
   assert.equal(overlay.sessionDefaultSettings.model, 'custom:droidproxy:opus-5-5');
   assert.equal(overlay.sessionDefaultSettings.reasoningEffort, 'high');
@@ -466,7 +499,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   isolateAgentEnvironment(f, t);
   const previousExit = process.env.FAKE_AGENT_EXIT_MS;
   const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '600';
+  process.env.FAKE_AGENT_EXIT_MS = '1500';
   process.env.FAKE_AGENT_LOG = f.log;
   t.after(() => {
     if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
@@ -493,7 +526,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   assert.equal(hired.info.deskId, 'station-issues');
   assert.equal(hired.info.activity, 'File an issue about the dog');
   const [first] = await waitFor(launches, (l) => l.length === 1);
-  const initial = first.args.at(-1)!;
+  const initial = (await startedWith(f, workers, first, 'issues-session')) ?? '';
   assert.match(initial, /Issues agent/);
   assert.match(initial, /office-queue add/);
   assert.ok(initial.endsWith('File an issue about the dog'));
@@ -508,7 +541,6 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   );
 
   // Waiting on an answer, a prompt would answer the question, so it's refused.
-  assert.equal(workers.handleHook(id, first.env.hookToken!, 'SessionStart', { session_id: 'issues-session', hook_event_name: 'SessionStart' }), true);
   assert.equal(workers.handleHook(id, first.env.hookToken!, 'Notification', { session_id: 'issues-session', hook_event_name: 'Notification', notification_type: 'permission_prompt' }), true);
   assert.equal(workers.get(id)?.status, 'needs_input');
   assert.match(workers.station('station-issues', 'Ada', 'hello?') as string, /waiting on an answer/i);
@@ -528,7 +560,7 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   assert.deepEqual(typeof woken === 'object' && [woken.hired, woken.info.id], [false, id]);
   const [, second] = await waitFor(launches, (l) => l.length === 2);
   assert.ok(second.args.includes('--resume') && second.args.includes('issues-session'));
-  assert.equal(second.args.at(-1), 'Close the duplicates');
+  assert.equal(await startedWith(f, workers, second, 'issues-session'), 'Close the duplicates');
 });
 
 test('board agents get office-queue on their PATH, and the queue agent is told by its brief alone', async (t) => {
@@ -537,7 +569,7 @@ test('board agents get office-queue on their PATH, and the queue agent is told b
   isolateAgentEnvironment(f, t);
   const previousExit = process.env.FAKE_AGENT_EXIT_MS;
   const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '600';
+  process.env.FAKE_AGENT_EXIT_MS = '1500';
   process.env.FAKE_AGENT_LOG = f.log;
   t.after(() => {
     if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
@@ -566,11 +598,10 @@ test('board agents get office-queue on their PATH, and the queue agent is told b
   );
   // Its brief is what keeps it from doing the work itself; it keeps its tools.
   assert.equal(first.args.includes('--disallowedTools'), false);
-  assert.ok(first.args.at(-1)!.endsWith('Fix the typo in the README'));
+  assert.ok((await startedWith(f, workers, first, 'queue-session'))?.endsWith('Fix the typo in the README'));
   assert.ok(onPath(first), 'office-queue is first on its PATH');
 
   // Woken up carrying on its session, the command is still there.
-  assert.equal(workers.handleHook(id, first.env.hookToken!, 'SessionStart', { session_id: 'queue-session', hook_event_name: 'SessionStart' }), true);
   await waitFor(
     () => workers.get(id)?.status,
     (s) => s === 'exited',
@@ -581,7 +612,7 @@ test('board agents get office-queue on their PATH, and the queue agent is told b
     (l) => l.length === 2,
   );
   assert.ok(second.args.includes('--resume') && second.args.includes('queue-session'));
-  assert.equal(second.args.at(-1), 'Also bump the version');
+  assert.equal(await startedWith(f, workers, second, 'queue-session'), 'Also bump the version');
   assert.ok(onPath(second));
 
   // The other board agents get the command too; a desk worker gets none of it.
@@ -856,10 +887,41 @@ test("a status the hooks left wrong follows the agent's screen once it has settl
   assert.equal(status(), 'needs_input');
 });
 
+test('a first prompt whose SessionStart never comes is typed in once droid shows its input box', async (t) => {
+  const f = carryOnFixture(t);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const worker = workers.spawn('desk-1', 'test', 'fix the login');
+  if (typeof worker === 'string') throw new Error(worker);
+  const [launch] = await waitFor(
+    () => launchesOf(f),
+    (x) => x.length > 0,
+  );
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  await show(workers, worker.id, '[⏱ 6s, context: 4%] ? for help');
+  const before = pastedInto(f, launch).length;
+  t.mock.timers.setTime(start + 10_000);
+  workers.reconcile();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(pastedInto(f, launch).length, before, 'a slow start still gets its SessionStart');
+  t.mock.timers.setTime(start + 15_000);
+  workers.reconcile();
+  workers.reconcile();
+  await waitFor(
+    () => pastedInto(f, launch),
+    (typed) => typed.length > before,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
+  // Its SessionStart turning up late doesn't send it again.
+  assert.equal(workers.handleHook(worker.id, launch.env.hookToken!, 'SessionStart', { session_id: 'late', hook_event_name: 'SessionStart' }), true);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(pastedInto(f, launch).slice(before), ['fix the login']);
+});
+
 /** Each worker launch so far (not the task namer's calls, nor what was typed into it), oldest first. */
 const launchesOf = (f: Fixture) => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
-/** What a launch was told to do: the prompt after `--`, if any. */
-const promptOf = (r: Invocation) => (r.args.includes('--') ? r.args[r.args.indexOf('--') + 1] : undefined);
 
 function carryOnFixture(t: { after(fn: () => void): void }) {
   const f = fixture();
@@ -917,10 +979,10 @@ test('a restart that takes a mid-turn worker down resumes it with continue; a fi
   const of = (session: string) => resumed.find((r) => r.args.includes(session));
   for (const session of ['mid-turn', 'asking']) {
     assert.ok(of(session)?.args.includes('--resume'));
-    assert.equal(promptOf(of(session) as Invocation), CARRY_ON_PROMPT);
+    assert.equal(await startedWith(f, after, of(session) as Invocation, session), CARRY_ON_PROMPT);
   }
   assert.ok(of('finished')?.args.includes('--resume'));
-  assert.equal(promptOf(of('finished') as Invocation), undefined);
+  assert.equal(await startedWith(f, after, of('finished') as Invocation, 'finished'), undefined);
 });
 
 test('a worker whose terminal outlives the office is picked back up mid-turn, not relaunched or told to continue', async (t) => {
@@ -958,8 +1020,8 @@ test('a worker whose terminal was in the host when an older office went down car
     () => launchesOf(f),
     (x) => x.length >= 2,
   );
-  assert.equal(promptOf(resumed.find((r) => r.args.includes('was-working')) as Invocation), CARRY_ON_PROMPT);
-  assert.equal(promptOf(resumed.find((r) => r.args.includes('was-done')) as Invocation), undefined);
+  assert.equal(await startedWith(f, workers, resumed.find((r) => r.args.includes('was-working')) as Invocation, 'was-working'), CARRY_ON_PROMPT);
+  assert.equal(await startedWith(f, workers, resumed.find((r) => r.args.includes('was-done')) as Invocation, 'was-done'), undefined);
 });
 
 test('stopping the office on purpose (Ctrl+C) leaves nothing to carry on', async (t) => {
@@ -981,7 +1043,7 @@ test('stopping the office on purpose (Ctrl+C) leaves nothing to carry on', async
     )
   )[1];
   assert.ok(resumed.args.includes('stopped'));
-  assert.equal(promptOf(resumed), undefined);
+  assert.equal(await startedWith(f, after, resumed, 'stopped'), undefined);
 });
 
 test('a worktree worker that makes its own branch is followed there: O finds the PR it opened, and sending it home tidies both branches', async (t) => {
@@ -1429,8 +1491,8 @@ test('a subagent sits down told who hired it and where it works; every agent get
     () => launches(sub.id),
     (l) => l.length === 1,
   );
-  assert.equal(promptOf(leadLaunch), 'Ship the login fix', 'a worker nobody hired is told nothing extra');
-  const brief = promptOf(subLaunch) ?? '';
+  assert.equal(await startedWith(f, workers, leadLaunch, 'lead-session'), 'Ship the login fix', 'a worker nobody hired is told nothing extra');
+  const brief = (await startedWith(f, workers, subLaunch, 'sub-session')) ?? '';
   assert.match(brief, new RegExp(`^You're ${sub.name}, a subagent in Droid Office.*${lead.name} hired you`));
   assert.match(brief, /the project's main checkout/);
   assert.match(brief, /office-workers report <<'EOF'/);
@@ -1438,10 +1500,10 @@ test('a subagent sits down told who hired it and where it works; every agent get
   for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
   assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'office-queue stays with the board agents');
 
-  // What its lead reads of it: the end of its terminal, as text.
+  // What its lead reads of it: the end of its terminal, as text (the brief typed into it, echoed).
   await waitFor(
     () => workers.tail(sub.id, 20),
-    (s) => !!s?.includes('fake-agent-ready'),
+    (s) => !!s?.includes('Fix the redirect'),
   );
   assert.equal(workers.tail('nobody', 20), undefined);
   // Its lead's title goes on its card.
@@ -1496,7 +1558,7 @@ test('pictures staged for a prompt are listed, numbered, after a new worker’s 
   assert.equal(hired.prompt, 'What is wrong here?');
   const drops = path.join(f.data, 'drops', hired.id);
   const [first] = await waitFor(launches, (l) => l.length === 1);
-  const given = first.args.at(-1)!;
+  const given = (await startedWith(f, workers, first, 'pictures-session')) ?? '';
   assert.match(given, new RegExp(`^What is wrong here\\?\\n\\nImage 1: ${drops.replace(/[\\/^$.*+?()[\]{}|]/g, '\\$&')}[\\\\/][0-9a-f]{8}-first\\.png\\nImage 2: .*[0-9a-f]{8}-second\\.png$`));
   assert.deepEqual(readFileSync(given.match(/Image 1: (.*)/)![1]), PICTURE);
 
@@ -1547,7 +1609,7 @@ test('a picture-only first prompt hires a worker with the list as its prompt', a
     () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined),
     (l) => l.length === 1,
   );
-  assert.match(first.args.at(-1)!, /\n\nImage 1: .*[0-9a-f]{8}-shot\.png$/);
+  assert.match((await startedWith(f, workers, first, 'shot-session')) ?? '', /\n\nImage 1: .*[0-9a-f]{8}-shot\.png$/);
   assert.equal(workers.station('station-issues', 'Ada', '', undefined, undefined, []), 'Empty prompt');
 });
 
