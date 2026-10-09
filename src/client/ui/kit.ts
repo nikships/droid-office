@@ -33,8 +33,11 @@ export interface ChoiceOption {
 
 export type Choices = HTMLDivElement & { value(): string; select(value: string): void };
 
-/** Option cards for picking one of a few alternatives: `.choices` of `label.choice` radios named `name`. */
-export function choices(name: string, options: ChoiceOption[], selected: string, onChange?: (value: string) => void): Choices {
+/**
+ * Option cards for picking one of a few alternatives: `.choices` of `label.choice` radios named `name`.
+ * `rows` puts one full-width card per line with the icon in a column on the left (`.choices.rows`).
+ */
+export function choices(name: string, options: ChoiceOption[], selected: string, onChange?: (value: string) => void, opts: { rows?: boolean } = {}): Choices {
   const radios = options.map((o) =>
     h('input', {
       type: 'radio',
@@ -45,7 +48,7 @@ export function choices(name: string, options: ChoiceOption[], selected: string,
     }),
   );
   const el = h(
-    'div.choices',
+    opts.rows ? 'div.choices.rows' : 'div.choices',
     { role: 'radiogroup' },
     ...options.map((o, i) => h('label.choice', {}, radios[i], h('span.choice-body', {}, o.icon ? h('span.choice-icon', { 'aria-hidden': 'true' }, o.icon) : null, h('b', {}, o.title), o.description ? h('small', {}, o.description) : null))),
   );
