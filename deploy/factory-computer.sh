@@ -5,8 +5,9 @@
 #   bash deploy/factory-computer.sh
 #
 # Installs Node.js 22 (test:coverage needs 22.8+), git, the GitHub CLI, build tools and the Droid
-# CLI where they're missing, then runs `npm ci`, whose prepare script installs the pre-commit hook
-# and builds the client and server. Idempotent: safe to re-run on every build.
+# CLI where they're missing, puts /sbin and /bin on login shells' PATH, then runs `npm ci`, whose
+# prepare script installs the pre-commit hook and builds the client and server. Idempotent: safe
+# to re-run on every build.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 # Electron is only for the Mac app; a Linux computer never runs it.
@@ -61,6 +62,20 @@ if ! node_ok; then
   # An older node earlier on PATH (nvm, a toolcache) shadows the one apt installed.
   echo "factory-computer: $(command -v node) is $(node -v); Node.js 22.8+ is needed. Put /usr/bin first on PATH." >&2
   exit 1
+fi
+
+if [[ -d /etc/profile.d ]]; then
+  # A computer's PATH starts without /sbin and /bin, which Ubuntu's own login gets from
+  # /etc/environment. A login shell keeps the PATH it inherits, so tests/desktop.test.ts's
+  # loginShellEnv('/bin/sh') check fails without them.
+  step "Putting /sbin and /bin on login shells' PATH"
+  "${SUDO[@]}" tee /etc/profile.d/droid-office-path.sh >/dev/null <<'EOF'
+for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+  case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
+done
+unset d
+export PATH
+EOF
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
