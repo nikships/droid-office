@@ -214,7 +214,7 @@ interface FrameView {
 /** The pictures on the walls. Put `group` in the office so looking at a picture targets it. */
 export class Gallery {
   readonly group = new THREE.Group();
-  /** For walking up to a picture in third person. */
+  /** For walking up to a picture. */
   readonly interactables: Interactable[] = [];
   private frames = new Map<string, FrameView>();
   private hidden: string | null = null;

@@ -36,7 +36,6 @@ export const SETTINGS_SCOPE: Record<SettingsScope, readonly [label: string, titl
 /** Which category each setting lives in, and who it's for. The page is built from these titles. */
 export const SETTINGS_CARDS = [
   { pane: 'you', title: 'Your character', scope: null },
-  { pane: 'you', title: 'Camera view', scope: 'you' },
   { pane: 'sound', title: 'Office sounds', scope: 'you' },
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },

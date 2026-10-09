@@ -66,14 +66,14 @@ EOF
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Elevator to a floor id or name, or `roof` |
-| `office.camera(preset)` | `first`, `third`, `close` or `wide`, a fixed pose so screenshots compare between runs |
-| `office.state()` | Floor, position, facing, view, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors` |
+| `office.camera(preset)` | `first`, a fixed level pose looking straight ahead, so screenshots compare between runs |
+| `office.state()` | Floor, position, facing, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors` |
 
 Assert on `state()` JSON. Use screenshots for what JSON cannot show (a mesh, a layout, a color):
 
 ```bash
-agent-browser eval "office.camera('wide').then(() => 'ok')"
-agent-browser screenshot /tmp/office-wide.png
+agent-browser eval "office.camera('first').then(() => 'ok')"
+agent-browser screenshot /tmp/office-first.png
 ```
 
 ### Without a browser driver

@@ -385,13 +385,14 @@ bindFactory(net);
 
 const me = new Person(store.profile.name, store.profile.color, store.profile.look);
 me.showLabel(false);
+// You are the camera: the hands are all you see of yourself.
+me.root.visible = false;
 scene.add(me.root);
 noOutline(me.root);
 const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
-player.view = settings.view;
 const hands = new Hands(store.profile.color, me.skinColor);
 const caffeine = new Caffeine();
 /** No shaking the view for the coffee jitters when the system asks for less motion. */
@@ -399,11 +400,9 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 // Cigarette smoke, from anyone on a smoke break.
 const smoke = new Smoke();
 scene.add(smoke.group);
-const puff = (kind: 'wisp' | 'exhale', at: THREE.Vector3, dir: THREE.Vector3) => (kind === 'wisp' ? smoke.wisp(at) : smoke.exhale(at, dir));
 const camLocal = new THREE.Vector3();
-// In first person yours comes off the cigarette in your hand and out in front of the camera.
-me.onSmoke = (kind, at, dir) => {
-  if (player.view !== 'first') return puff(kind, at, dir);
+// Yours comes off the cigarette in your hand and out in front of the camera.
+me.onSmoke = (kind) => {
   if (kind === 'wisp') return smoke.wisp(camera.localToWorld(hands.cigTip(camLocal)));
   smoke.exhale(camera.localToWorld(camLocal.set(0, -0.14, -0.3)), camera.getWorldDirection(camLocal).setY(0.1).normalize());
 };
@@ -602,9 +601,8 @@ function gunTrick(id: GunTrickId) {
   hintKey = 'stale';
 }
 
-/** The gun's muzzle in the world, in whichever view you're in, or null with it away. */
+/** The gun's muzzle in the world, or null with it away. */
 function muzzleAt(out: THREE.Vector3): THREE.Vector3 | null {
-  if (player.view !== 'first') return me.muzzleTip(out);
   const tip = hands.muzzleTip(out);
   return tip && camera.localToWorld(tip);
 }
@@ -625,8 +623,8 @@ function gunCues(cues: readonly GunCue[]) {
 const muzzleWorld = new THREE.Vector3();
 const blowDir = new THREE.Vector3();
 
-/** A click with the gun out: fire at what's under the crosshair (or the mouse, in third person). */
-function fireGun(ndc: THREE.Vector2) {
+/** A click with the gun out: fire at what's under the crosshair. */
+function fireGun() {
   gunMotion.fire();
   hands.fireGun();
   me.fire();
@@ -643,7 +641,7 @@ function fireGun(ndc: THREE.Vector2) {
       smoke.wisp(tip);
     }
   }
-  raycaster.setFromCamera(ndc, camera);
+  raycaster.setFromCamera(CROSSHAIR, camera);
   resolveGunShot();
 }
 
@@ -2131,7 +2129,7 @@ function orderDrink(d: Drink) {
     if (!upTop) return;
     booze.drink(drink, performance.now() / 1000);
     reach();
-    if (player.view === 'first') hands.sip();
+    hands.sip();
     if (!cut) toast(`${drink.emoji} ${drink.name}. ${CHEERS[drink.id] ?? 'Enjoy!'}`);
   }, 1500);
 }
@@ -2159,7 +2157,7 @@ function drinking(now: number) {
   const glass = booze.holding(secs);
   me.holdDrink(glass);
   hands.holdDrink(glass);
-  if (glass && player.view === 'first' && now > nextSip) {
+  if (glass && now > nextSip) {
     if (nextSip) hands.sip();
     nextSip = now + 9000 + Math.random() * 9000;
   }
@@ -2182,7 +2180,7 @@ function drinking(now: number) {
 function drinkCoffee() {
   const jittery = caffeine.drink(performance.now() / 1000);
   sound.coffee();
-  if (player.view === 'first') hands.sip();
+  hands.sip();
   if (jittery) toast('☕ One cup too many… you’ve got the jitters!', 'warn');
   else if (caffeine.cups > 1) toast('☕ Another cup: back to a full minute of buzz');
   else toast('☕ Fresh coffee! A minute of quicker feet and higher jumps');
@@ -2843,7 +2841,7 @@ function renderHangHint(el: HTMLElement) {
 let crossKey = '';
 const finePointer = window.matchMedia('(pointer: fine)').matches;
 function renderCrosshair() {
-  const show = player.view === 'first' && !modalOpen();
+  const show = !modalOpen();
   const free = show && finePointer && player.canLock && !player.locked;
   const k = `${show}|${!!target}|${free}|${relookOnKey}|${gunOut}`;
   if (k === crossKey) return;
@@ -2859,7 +2857,7 @@ function renderCrosshair() {
 // ---- Reaching out ---------------------------------------------------------------------------------
 /** Plays the reach on your hands and your character. */
 function reach() {
-  if (player.view === 'first') hands.reach();
+  hands.reach();
   me.reach();
 }
 
@@ -2879,7 +2877,7 @@ function emote(id: EmoteId) {
   }
   me.emote(id);
   hands.emote(id);
-  if (player.view === 'first') popEmoji(id);
+  popEmoji(id);
 }
 /** Number `i` on the keys (0 for 1) and round the wheel: a trick with the gun out, else an emote. */
 function emoteOrTrick(i: number) {
@@ -3056,7 +3054,7 @@ onModalChange((open) => {
   hintKey = '';
 });
 
-/** Once the last window is closed, the game has the keyboard again and, in first person, the mouse. */
+/** Once the last window is closed, the game has the keyboard again and the mouse. */
 function backToGame() {
   if (modalOpen()) return;
   if (!isTyping()) canvas.focus({ preventScroll: true });
@@ -3072,7 +3070,7 @@ document.addEventListener('pointerlockchange', () => {
   if (player.locked) relookOnKey = false;
 });
 
-// ---- Clicking the world: use what's under the crosshair (first person) or the mouse (third) ----------
+// ---- Clicking the world: use what's under the crosshair ----------
 const raycaster = new THREE.Raycaster();
 const CROSSHAIR = new THREE.Vector2(0, 0);
 /** How close (meters from your eyes) you must be to use each kind of thing. */
@@ -3152,44 +3150,27 @@ function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
   return true;
 }
 
-/** The note on the issues board under the crosshair (or, in third person, the mouse), which E takes. */
+/** The note on the issues board under the crosshair, which E takes. */
 let aimedNote: GhIssue | null = null;
-/** The tab or Jira card on the issues board under the crosshair or the mouse. */
+/** The tab or Jira card on the issues board under the crosshair. */
 let aimedSpot: BoardSpot | null = null;
-/** Where the mouse is over the scene, for pointing at notes in third person; null when it's off it. */
-let pointer: THREE.Vector2 | null = null;
-canvas.addEventListener('pointermove', (e) => {
-  const r = canvas.getBoundingClientRect();
-  (pointer ??= new THREE.Vector2()).set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-});
-canvas.addEventListener('pointerleave', () => (pointer = null));
 
-player.onClick = (ndc) => {
+player.onClick = () => {
   if (modalOpen()) return;
   if (emoteWheel.isOpen) return emoteWheel.click();
-  // The gun out: a click fires at what's under the crosshair (or the mouse).
+  // The gun out: a click fires at what's under the crosshair.
   if (gunOut) {
-    fireGun(ndc);
+    fireGun();
     return;
   }
   if (hanger.active) {
     reach();
-    hanger.place(ndc);
+    hanger.place();
     return;
   }
-  if (player.view === 'first') {
-    // Reach out even at nothing, like poking the air.
-    reach();
-    if (target) interact(target, 'E');
-    return;
-  }
-  const aim = aimedAt(ndc, 2.5);
-  if (!aim) return;
-  if (!aim.near) {
-    toast('Walk closer to that first');
-    return;
-  }
-  use(aim.it, 'E', noteUnder(aim), spotUnder(aim));
+  // Reach out even at nothing, like poking the air.
+  reach();
+  if (target) interact(target, 'E');
 };
 
 // Buttons must not keep focus, or Space (jump) would click them again.
@@ -3301,7 +3282,6 @@ function showSettings(pane?: SettingsPane) {
     (s) => {
       Object.assign(settings, s);
       saveSettings(settings);
-      player.setView(settings.view);
       sound.setVolume(settings.volume, settings.muted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
     },
@@ -3336,7 +3316,6 @@ const timer = new THREE.Timer();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
-const headPos = new THREE.Vector3();
 /** Last frame went through the drunk vision. */
 let drunkVisionOn = false;
 
@@ -3389,10 +3368,7 @@ function frame(ts?: number) {
   me.setGunPose(gunMotion.pose);
   hands.setGunPose(gunMotion.pose);
   me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip, player.speedBoost);
-  const firstPerson = player.view === 'first';
-  // In first person you are the camera; in third, hide yourself when it's zoomed in right behind your head.
-  me.root.visible = !firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5;
-  if (firstPerson) hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
+  hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   gunCues(gunCuesNow);
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
@@ -3457,22 +3433,12 @@ function frame(ts?: number) {
   aimedNote = null;
   aimedSpot = null;
   if (modalOpen() || hanger.active || climber.active) target = null;
-  else if (firstPerson) {
+  else {
     const aim = aimedAt(CROSSHAIR);
     target = aim?.near ? aim.it : mySeat();
     if (aim?.near) {
       aimedNote = noteUnder(aim);
       aimedSpot = spotUnder(aim);
-    }
-  } else {
-    target = mySeat() ?? pickTarget();
-    // By the issues board, the mouse points at the note you'd take, a tab or a Jira card.
-    if (target?.kind === 'issues' && pointer) {
-      const aim = aimedAt(pointer, 2.5);
-      if (aim?.near) {
-        aimedNote = noteUnder(aim);
-        aimedSpot = spotUnder(aim);
-      }
     }
   }
   issuesTex.lift(aimedNote?.number ?? null);
@@ -3488,7 +3454,7 @@ function frame(ts?: number) {
   effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (firstPerson && !arcade.zoomed && !cabinet.zoomed) {
+  if (!arcade.zoomed && !cabinet.zoomed) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();
@@ -3554,22 +3520,19 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
   return { x: c.x, y: c.y, z: c.z };
 }
 
-/** Faces and looks at `face` from where you stand, in either view. */
+/** Faces and looks at `face` from where you stand. */
 function aimAt(face: { x: number; y: number; z: number }) {
   player.facing = facingToward(player.pos, face);
   player.camYaw = player.facing - Math.PI;
   player.lookPitch = pitchToward({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z }, face);
-  player.updateCamera(true);
+  player.updateCamera();
 }
 
 function setCamera(pose: CameraPose) {
-  player.setView(pose.view);
   player.camYaw = pose.camYaw;
-  if (pose.lookPitch !== undefined) player.lookPitch = pose.lookPitch;
-  if (pose.camPitch !== undefined) player.camPitch = pose.camPitch;
-  if (pose.camDist !== undefined) player.camDist = pose.camDist;
-  if (pose.view === 'first') player.facing = pose.camYaw + Math.PI;
-  player.updateCamera(true);
+  player.lookPitch = pose.lookPitch;
+  player.facing = pose.camYaw + Math.PI;
+  player.updateCamera();
 }
 
 const automation = createAutomation({
@@ -3584,7 +3547,6 @@ const automation = createAutomation({
       z: player.pos.z,
       facing: player.facing,
       lookPitch: player.lookPitch,
-      view: player.view,
       seat: player.seat?.seatId ?? null,
       enabled: player.enabled,
       walking: !!errand,

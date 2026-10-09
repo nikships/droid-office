@@ -1,5 +1,5 @@
 import type { Net } from '../net';
-import { store, type Settings, type ViewMode } from '../state';
+import { store, type Settings } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
@@ -12,11 +12,6 @@ import { hotReloadSettings } from './hot-reload';
 import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
-
-const VIEWS: [ViewMode, string, string][] = [
-  ['first', 'First person', 'See through your own eyes. Click the office to look around and click things to use them; Esc frees the mouse.'],
-  ['third', 'Third person', 'Follow your character from behind. Drag to orbit, scroll to zoom, and click things to use them.'],
-];
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
@@ -112,33 +107,6 @@ function subagentSettings(): SubagentSettings {
 
 /** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
 export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, outside?: { now: string; live: boolean }, first?: SettingsPane) {
-  const seg = h('div.seg', { role: 'radiogroup', 'aria-label': 'Camera view' });
-  const note = desc();
-  const paint = () => {
-    seg.replaceChildren(
-      ...VIEWS.map(([view, label]) =>
-        h(
-          'button.btn',
-          {
-            type: 'button',
-            role: 'radio',
-            'aria-checked': String(settings.view === view),
-            class: settings.view === view ? 'on' : '',
-            onclick: () => {
-              if (settings.view === view) return;
-              settings = { ...settings, view };
-              onChange(settings);
-              paint();
-            },
-          },
-          label,
-        ),
-      ),
-    );
-    note.textContent = VIEWS.find(([v]) => v === settings.view)![2];
-  };
-  paint();
-
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
     const slider = h('input', { type: 'range', min: 0, max: 100, step: 1, 'aria-label': label });
@@ -608,7 +576,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const sourceReload = hotReloadSettings();
   const factoryKey = factoryKeySettings(net);
   const panes: Record<SettingsPane, Node[]> = {
-    you: [group(null, card('Your character', { desc: desc('How you look and the name above your head.'), control: character }), card('Camera view', { desc: note, control: seg }))],
+    you: [group(null, card('Your character', { desc: desc('How you look and the name above your head.'), control: character }))],
     sound: [
       group(
         null,
