@@ -4,6 +4,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { meetingStage } from '../world/meeting';
 import { h, openModal, timeAgo, toast, STATUS_LABEL, type Modal } from './dom';
+import { colorDot } from './kit';
 import { confirmDialog } from './prompt';
 import { promptImages } from './images';
 import { agentPicker } from './models';
@@ -38,11 +39,12 @@ const PART_LABEL: Record<MeetingTurn['state'], string> = { waiting: 'up next', s
  * that calls one.
  */
 export function openMeeting(net: Net, actions: MeetingActions, preset?: MeetingPreset) {
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
+  const close = h('button.btn.icon.close', { 'aria-label': 'Close' }, '✕');
   const title = h('h2', {}, 'Meeting room');
+  const sub = h('p.sub');
   const body = h('div.body.meeting');
   const foot = h('footer');
-  const el = h('div.modal.meeting-window', { role: 'dialog', 'aria-label': 'Meeting room' }, h('header', {}, title, close), body, foot);
+  const el = h('div.modal.lg.meeting-window', { role: 'dialog', 'aria-label': 'Meeting room' }, h('header', {}, h('div.titles', {}, title, sub), close), body, foot);
   let view: 'status' | 'form' = preset || !store.meeting.current ? 'form' : 'status';
   let form: ReturnType<typeof meetingForm> | null = null;
   const render = () => {
@@ -50,6 +52,7 @@ export function openMeeting(net: Net, actions: MeetingActions, preset?: MeetingP
       form?.images.discard();
       form = null;
       title.textContent = 'Meeting room';
+      sub.textContent = 'Workers around the table, and what they’re writing.';
       renderStatus(store.meeting.current, body, foot, net, actions, () => {
         view = 'form';
         render();
@@ -67,6 +70,7 @@ export function openMeeting(net: Net, actions: MeetingActions, preset?: MeetingP
         },
       );
       title.textContent = 'Call a meeting';
+      sub.textContent = 'Seat a few workers at the table to settle a question or split a task.';
       body.replaceChildren(form.body);
       foot.replaceChildren(...form.foot);
     }
@@ -89,52 +93,78 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
   const running = m.status === 'running';
   const pill = h('span.pill', { class: running ? 'working' : m.status === 'done' ? 'done' : 'needs_input' }, running ? 'in a meeting' : m.status);
   const seats = h(
-    'ul.meeting-seats',
+    'ul.list.boxed.meeting-seats',
     {},
     ...m.seats.map((s, i) => {
       const w = s.workerId ? store.workers.get(s.workerId) : undefined;
       const t = m.turns.find((x) => x.seat === i);
       const part = running ? (t ? `${PART_LABEL[t.state]}: ${t.doing}` : 'listening') : '';
       return h(
-        'li',
+        'li.list-row',
         {},
-        h('span.dot', { style: `background:${w?.color ?? 'var(--muted)'}` }),
-        h('b', {}, s.role),
-        h('span.muted', {}, `${i === 0 ? 'head of the table · ' : ''}${s.workerName ?? '…'}`),
-        w ? h('span.pill', { class: w.status }, STATUS_LABEL[w.status]) : h('span.pill.exited', {}, 'gone home'),
-        part ? h('span.meeting-part', { title: t?.file ?? '' }, part) : null,
-        w ? h('button.btn.small', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal') : null,
+        h('span.list-icon', {}, colorDot(w?.color ?? 'var(--text-tertiary)')),
+        h(
+          'div.list-main',
+          {},
+          h('div.list-title', {}, s.role, h('span.meeting-who', {}, s.workerName ?? '…'), i === 0 ? h('span.pill.meeting-head-pill', { title: 'The head of the table' }, 'Head') : null),
+          h('div.list-meta', { title: t?.file ?? '' }, part || (i === 0 ? 'Head of the table' : 'At the table')),
+        ),
+        h(
+          'div.list-end',
+          {},
+          w ? h('span.pill', { class: w.status }, STATUS_LABEL[w.status]) : h('span.pill.exited', {}, 'gone home'),
+          w ? h('button.btn.sm', { type: 'button', onclick: () => actions.openTerminal(w.id) }, 'Terminal') : null,
+        ),
       );
     }),
   );
-  const where = m.worktree ? h('span', {}, '🌿 ', h('code', {}, m.worktree.branch), m.commit ? ` · committed ${m.commit}` : '') : null;
+  const where = m.worktree ? h('span.meeting-branch', { title: m.worktree.branch }, h('code', {}, m.worktree.branch), m.commit ? ` · committed ${m.commit}` : '') : null;
   const review = m.review?.url
     ? h('a', { href: m.review.url, target: '_blank', rel: 'noopener noreferrer' }, `The review on ${words().pr} ${words().ref(m.pr ?? 0)} ↗`)
     : m.review?.error
-      ? h('span.bad', {}, `Couldn't post the review: ${m.review.error}`)
+      ? h('span.meeting-error', {}, `Couldn't post the review: ${m.review.error}`)
       : null;
   body.replaceChildren(
-    ...present(
-      h('div.meeting-head', {}, pill, h('b', {}, `${p.icon} ${p.label}`), h('span.meeting-title', { title: m.prompt }, m.title)),
-      h(
-        'p.meeting-line',
-        {},
-        running
-          ? `${meetingStage(m)} · called by ${m.calledBy} ${timeAgo(new Date(m.startedAt).toISOString())}`
-          : m.status === 'done'
-            ? `Wrote ${m.output} in ${m.round} round${m.round === 1 ? '' : 's'}`
-            : `Stopped in round ${m.round}: ${m.reason ?? 'stopped'}`,
-      ),
-      seats,
-      h('div.meeting-out', {}, h('div.meeting-out-head', {}, h('code', {}, m.output), where, review), h('pre.meeting-preview', {}, m.preview?.trim() ? m.preview : running ? 'Nothing written yet.' : 'Nothing was written.')),
-      store.meeting.past.length
-        ? h(
-            'details.meeting-past',
+    h(
+      'div.stack.loose',
+      {},
+      ...present(
+        h(
+          'div.meeting-head',
+          {},
+          h('div.row.wrap', {}, pill, h('span.meeting-kind', {}, h('span', { 'aria-hidden': 'true' }, p.icon), p.label)),
+          h('h3.meeting-title', { title: m.prompt }, m.title),
+          h(
+            'p.meeting-line',
             {},
-            h('summary', {}, `Earlier meetings (${store.meeting.past.length})`),
-            h('ul', {}, ...store.meeting.past.map((r) => h('li', { title: `Called by ${r.calledBy}` }, h('b', {}, r.title), h('div.muted', {}, r.summary)))),
-          )
-        : null,
+            running
+              ? `${meetingStage(m)} · called by ${m.calledBy} ${timeAgo(new Date(m.startedAt).toISOString())}`
+              : m.status === 'done'
+                ? `Wrote ${m.output} in ${m.round} round${m.round === 1 ? '' : 's'}`
+                : `Stopped in round ${m.round}: ${m.reason ?? 'stopped'}`,
+          ),
+        ),
+        h('section.section', {}, h('div.eyebrow', {}, 'At the table'), seats),
+        h(
+          'section.section',
+          {},
+          h('div.eyebrow', {}, 'Output'),
+          h(
+            'div.meeting-out',
+            {},
+            h('div.meeting-out-head', {}, h('code', { title: m.output }, m.output), where, review),
+            h('pre.meeting-preview', {}, m.preview?.trim() ? m.preview : running ? 'Nothing written yet.' : 'Nothing was written.'),
+          ),
+        ),
+        store.meeting.past.length
+          ? h(
+              'details.section.meeting-past',
+              {},
+              h('summary.eyebrow', {}, `Earlier meetings (${store.meeting.past.length})`),
+              h('ul.list.boxed', {}, ...store.meeting.past.map((r) => h('li.list-row', { title: `Called by ${r.calledBy}` }, h('div.list-main', {}, h('div.list-title', {}, r.title), h('div.list-meta.meeting-summary', {}, r.summary))))),
+            )
+          : null,
+      ),
     ),
   );
   const head = m.seats[0]?.workerId ? store.workers.get(m.seats[0].workerId) : undefined;
@@ -164,28 +194,34 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   let pattern: MeetingPattern = preset?.pattern ?? 'debate';
   let roles: string[] = [];
   let outputTouched = false;
-  const patterns = h('div.meeting-patterns', { role: 'radiogroup', 'aria-label': 'Pattern' });
-  const about = h('textarea', { rows: 4, placeholder: 'The question to settle, or the task to do: e.g. “Should workers use A* or a navmesh?”', 'aria-label': 'What the meeting is about' }) as HTMLTextAreaElement;
+  const patterns = h('div.seg.meeting-patterns', { role: 'radiogroup', 'aria-label': 'Pattern' });
+  const blurb = h('p.field-hint.meeting-blurb');
+  const about = h('textarea.input', {
+    id: 'meeting-about',
+    rows: 4,
+    placeholder: 'The question to settle, or the task to do: e.g. “Should workers use A* or a navmesh?”',
+    'aria-label': 'What the meeting is about',
+  }) as HTMLTextAreaElement;
   about.value = preset?.prompt ?? '';
   const images = promptImages(about);
-  const titleIn = h('input', { type: 'text', placeholder: 'Title (optional): the first line otherwise', maxlength: 100, 'aria-label': 'Title' }) as HTMLInputElement;
+  const titleIn = h('input.input', { id: 'meeting-title', type: 'text', placeholder: 'The first line, otherwise', maxlength: 100, 'aria-label': 'Title' }) as HTMLInputElement;
   titleIn.value = preset?.title ?? '';
-  const outputIn = h('input', { type: 'text', 'aria-label': 'Output file', spellcheck: 'false' }) as HTMLInputElement;
-  const outputNote = h('small.muted');
-  const prSel = h('select.meeting-select', { 'aria-label': 'Pull request' }) as HTMLSelectElement;
-  const prRow = h('div.meeting-field', {}, h('label', {}, 'Pull request'), prSel);
-  const partsIn = h('textarea', { rows: 3, placeholder: 'src/server/\nsrc/client/\nsrc/shared/', 'aria-label': 'Parts', spellcheck: 'false' }) as HTMLTextAreaElement;
-  const partsRow = h('div.meeting-field', {}, h('label', {}, 'Parts, one per line'), partsIn, h('small.muted', {}, 'Handed out to the mappers in turn: files, folders, modules or issues.'));
-  const count = h('b');
-  const minus = h('button.btn.small', { type: 'button', 'aria-label': 'Fewer workers' }, '−');
-  const plus = h('button.btn.small', { type: 'button', 'aria-label': 'More workers' }, '+');
+  const outputIn = h('input.input', { id: 'meeting-output', type: 'text', 'aria-label': 'Output file', spellcheck: 'false' }) as HTMLInputElement;
+  const outputNote = h('p.field-hint');
+  const prSel = h('select.select', { id: 'meeting-pr', 'aria-label': 'Pull request' }) as HTMLSelectElement;
+  const prRow = h('div.field', {}, h('label', { for: 'meeting-pr' }, 'Pull request'), prSel);
+  const partsIn = h('textarea.input', { id: 'meeting-parts', rows: 3, placeholder: 'src/server/\nsrc/client/\nsrc/shared/', 'aria-label': 'Parts', spellcheck: 'false' }) as HTMLTextAreaElement;
+  const partsRow = h('div.field', {}, h('label', { for: 'meeting-parts' }, 'Parts, one per line'), partsIn, h('p.field-hint', {}, 'Handed out to the mappers in turn: files, folders, modules or issues.'));
+  const count = h('span.meeting-count', { 'aria-live': 'polite' });
+  const minus = h('button.btn.icon', { type: 'button', 'aria-label': 'Fewer workers' }, '−');
+  const plus = h('button.btn.icon', { type: 'button', 'aria-label': 'More workers' }, '+');
   const roleList = h('div.meeting-roles');
-  const roundsIn = h('input', { type: 'number', 'aria-label': 'Rounds' }) as HTMLInputElement;
-  const roundsNote = h('small.muted');
+  const roundsIn = h('input.input.meeting-rounds', { id: 'meeting-rounds', type: 'number', 'aria-label': 'Rounds' }) as HTMLInputElement;
+  const roundsNote = h('p.field-hint');
   const models = agentPicker('meeting-models', 'meeting');
-  const busy = h('p.meeting-busy');
+  const busy = h('p.note.warn', { hidden: true, role: 'status' });
   const submit = h('button.btn.primary', { type: 'submit' }, 'Start the meeting');
-  const cancel = h('button.btn', { type: 'button', onclick: store.meeting.current ? back : done }, store.meeting.current ? '← Back' : 'Cancel');
+  const cancel = h('button.btn.ghost', { type: 'button', onclick: store.meeting.current ? back : done }, store.meeting.current ? '← Back' : 'Cancel');
 
   const def = () => MEETING_PATTERNS[pattern];
   const slug = () => slugify(titleIn.value.trim() || about.value.trim().split('\n')[0] || 'meeting', 32);
@@ -194,13 +230,13 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     if (!outputTouched) outputIn.value = def().output(slug(), pr());
     const problem = outputProblem(outputIn.value.trim());
     outputNote.textContent = problem
-      ? `⚠️ ${problem}`
+      ? problem
       : pattern === 'review'
         ? 'It ends when this file is written; the office then posts it on the PR as one review.'
         : store.project?.branch
           ? 'It ends when this file is written; the office commits it on the meeting’s own branch.'
           : 'It ends when this file is written.';
-    outputNote.classList.toggle('bad', !!problem);
+    outputNote.className = problem ? 'field-error' : 'field-hint';
   };
   const renderRoles = () => {
     const d = def();
@@ -209,9 +245,16 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     plus.toggleAttribute('disabled', roles.length >= d.seats.max);
     roleList.replaceChildren(
       ...roles.map((r, i) => {
-        const input = h('input', { type: 'text', value: r, maxlength: 40, 'aria-label': `Role ${i + 1}` }) as HTMLInputElement;
+        const input = h('input.input', { type: 'text', value: r, maxlength: 40, 'aria-label': `Role ${i + 1}` }) as HTMLInputElement;
         input.addEventListener('input', () => (roles[i] = input.value));
-        return h('div.meeting-role', {}, h('span.muted', {}, i === 0 ? '👑' : `${i + 1}`), input);
+        const head = i === 0;
+        return h(
+          'div.meeting-role',
+          { class: head ? 'head' : '' },
+          h('span.meeting-seat', { title: head ? 'Seat 1, the head of the table' : `Seat ${i + 1}`, 'aria-hidden': 'true' }, String(i + 1)),
+          input,
+          head ? h('span.pill.meeting-head-pill', { title: 'The head of the table' }, 'Head') : null,
+        );
       }),
     );
   };
@@ -221,6 +264,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     roles = d.roles.slice(0, d.seats.default);
     for (const b of patterns.children) b.classList.toggle('on', (b as HTMLElement).dataset.pattern === p);
     for (const b of patterns.children) b.setAttribute('aria-checked', String((b as HTMLElement).dataset.pattern === p));
+    blurb.textContent = d.blurb;
     roundsIn.min = String(d.rounds.min);
     roundsIn.max = String(d.rounds.max);
     roundsIn.value = String(d.rounds.default);
@@ -233,7 +277,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   };
   for (const id of MEETING_PATTERN_IDS) {
     const d = MEETING_PATTERNS[id];
-    patterns.append(h('button.meeting-pattern', { type: 'button', role: 'radio', 'data-pattern': id, onclick: () => pickPattern(id) }, h('b', {}, `${d.icon} ${d.label}`), h('small', {}, d.blurb)));
+    patterns.append(h('button.btn', { type: 'button', role: 'radio', 'data-pattern': id, title: d.blurb, onclick: () => pickPattern(id) }, h('span.meeting-pattern-icon', { 'aria-hidden': 'true' }, d.icon), d.label));
   }
   minus.addEventListener('click', () => {
     if (roles.length > def().seats.min) roles.pop();
@@ -251,19 +295,30 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   about.addEventListener('input', syncOutput);
   prSel.addEventListener('change', syncOutput);
 
+  const eyebrow = (no: string, text: string) => h('div.eyebrow', {}, h('span.no', {}, no), text);
   const bodyEl = h(
-    'form.meeting-form',
+    'form.meeting-form.stack.loose',
     {},
-    patterns,
-    h('div.meeting-field', {}, h('label', {}, 'What’s it about?'), about, images.element),
-    h('div.meeting-field', {}, titleIn),
-    prRow,
-    partsRow,
-    h('div.meeting-field', {}, h('label', {}, 'Output file'), outputIn, outputNote),
-    h('div.meeting-field', {}, h('label.meeting-count', {}, 'Workers at the table', minus, count, plus), roleList),
-    h('div.meeting-bounds', {}, h('div.meeting-field', {}, h('label', {}, 'Round limit'), roundsIn, roundsNote)),
-    models.element,
     busy,
+    h('section.section', {}, eyebrow('01', 'Pattern'), h('div.field', {}, patterns, blurb)),
+    h(
+      'section.section.stack',
+      {},
+      eyebrow('02', 'The topic'),
+      h('div.field', {}, h('label', { for: 'meeting-about' }, 'What’s it about?'), about, images.element),
+      h('div.field', {}, h('label', { for: 'meeting-title' }, 'Title (optional)'), titleIn),
+      prRow,
+      partsRow,
+    ),
+    h(
+      'section.section.stack',
+      {},
+      eyebrow('03', 'The table'),
+      h('div.field', {}, h('div.row.between', {}, h('label', {}, 'Workers at the table'), h('div.row.meeting-stepper', { role: 'group', 'aria-label': 'Workers at the table' }, minus, count, plus)), roleList),
+      h('div.field', {}, h('label', { for: 'meeting-rounds' }, 'Round limit'), roundsIn, roundsNote),
+      models.element,
+    ),
+    h('section.section', {}, eyebrow('04', 'The output'), h('div.field', {}, h('label', { for: 'meeting-output' }, 'Output file'), outputIn, outputNote)),
   ) as HTMLFormElement;
   bodyEl.noValidate = true;
   images.dropZone(bodyEl);
@@ -340,11 +395,12 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     const m = store.meeting.current;
     const taken = m?.status === 'running';
     busy.textContent = taken ? `The room is busy with “${m.title}” until it ends or someone stops it.` : m ? `Starting this sends the last meeting’s workers home.` : '';
+    busy.hidden = !busy.textContent;
     submit.toggleAttribute('disabled', taken);
   };
   pickPattern(pattern);
   if (preset?.pr) prSel.value = String(preset.pr);
   refresh();
   setTimeout(() => (preset?.prompt ? titleIn : about).focus(), 0);
-  return { body: bodyEl, images, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings short.'), cancel, submit], refresh };
+  return { body: bodyEl, images, foot: [h('span.grow', {}, 'Few rounds and one file at the end keep meetings short.'), cancel, submit], refresh };
 }

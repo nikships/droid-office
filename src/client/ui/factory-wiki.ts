@@ -19,6 +19,7 @@ import { store } from '../state';
 import { withToken } from '../token';
 import { anchorHeadings, jumpTo } from './bookshelf';
 import { clip, h, timeAgo, toast } from './dom';
+import { emptyState } from './kit';
 import { markdownFile } from './markdown';
 
 // The bookshelf's AutoWiki tab: the wiki Factory keeps for the floor's repository, read the way the
@@ -93,18 +94,18 @@ function highlight(text: string, q: string): (string | HTMLElement)[] {
 
 export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
   const { floor } = deps;
-  const search = h('input', { type: 'text', role: 'searchbox', placeholder: 'Search the wiki…', 'aria-label': 'Search the wiki', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const search = h('input.input', { type: 'text', role: 'searchbox', placeholder: 'Search the wiki…', 'aria-label': 'Search the wiki', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const status = h('div.wk-status');
   const jobCard = h('div.wk-job', { hidden: true, role: 'status' });
   const count = h('div.bs-count');
-  const list = h('ul.bs-list', { role: 'listbox', 'aria-label': 'Wiki pages' });
+  const list = h('ul.list.bs-list', { role: 'listbox', 'aria-label': 'Wiki pages' });
   const crumbs = h('div.bs-crumbs');
   const meta = h('div.bs-meta');
-  const toc = h('select.bs-toc', { 'aria-label': 'Jump to a heading', title: 'Jump to a heading' }) as HTMLSelectElement;
+  const toc = h('select.select.sm.bs-toc', { 'aria-label': 'Jump to a heading', title: 'Jump to a heading' }) as HTMLSelectElement;
   const page = h('div.bs-page', { tabindex: -1 });
   const side = h('aside.bs-side', {}, status, jobCard, h('div.bs-find', {}, search), count, list);
-  const reader = h('article.bs-reader', {}, h('div.bs-bar', {}, crumbs, meta, toc), page);
-  const panel = h('div.wk-panel');
+  const reader = h('article.bs-reader.flush', {}, h('div.bs-bar', {}, crumbs, meta, toc), page);
+  const panel = h('div.empty-state.wk-panel');
   toc.hidden = true;
 
   let watching: (() => void) | undefined;
@@ -176,14 +177,15 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const opt = (m: DroidModel) => h('option', { value: m.id, selected: m.id === model }, m.name);
     const own = list.filter((m) => m.custom);
     const select = h(
-      'select.bs-toc.wk-model',
+      'select.select.sm.wk-model',
       { 'aria-label': 'Model', title: 'The model /wiki and its subagents run on' },
       ...(own.length ? [h('optgroup', { label: 'Factory' }, ...list.filter((m) => !m.custom).map(opt)), h('optgroup', { label: 'Your own models' }, ...own.map(opt))] : list.map(opt)),
     ) as HTMLSelectElement;
     select.addEventListener('change', () => {
       model = select.value;
     });
-    return h('label.wk-row.wk-model-row', {}, h('span', {}, 'Model'), select);
+    select.id = 'wk-model';
+    return h('div.field.inline.wk-model-row', {}, h('label', { for: select.id }, 'Model'), select);
   };
 
   const stop = async () => {
@@ -195,16 +197,16 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
 
   const confirmBox = (yes: string, onYes: () => void, text = CONFIRM_TEXT, danger = false) =>
     h(
-      'div.wk-confirm',
-      { role: 'alertdialog' },
+      'div.note.wk-confirm',
+      { role: 'alertdialog', class: danger ? 'bad' : 'info' },
       h('p', {}, text),
       danger ? '' : modelPicker(),
       h(
-        'div.wk-actions',
+        'div.row.wrap.wk-actions',
         {},
-        h(`button.btn.${danger ? 'danger' : 'primary'}`, { type: 'button', onclick: onYes }, yes),
+        h(`button.btn.sm.${danger ? 'danger' : 'primary'}`, { type: 'button', onclick: onYes }, yes),
         h(
-          'button.btn',
+          'button.btn.sm.ghost',
           {
             type: 'button',
             onclick: () => {
@@ -217,9 +219,9 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       ),
     );
 
-  const generateButton = (label: string) =>
+  const generateButton = (label: string, small = false) =>
     h(
-      'button.btn.primary',
+      small ? 'button.btn.sm.primary' : 'button.btn.primary',
       {
         type: 'button',
         disabled: busy,
@@ -251,11 +253,11 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       [`started by ${job.by}`, job.startedAt ? timeAgo(job.startedAt) : '', job.commit ? `at ${job.commit}` : '', job.model ? `on ${job.modelName ?? modelName(job.model)}` : ''].filter(Boolean).join(' · '),
     );
     const lines = running || !job.error ? h('pre.wk-lines', {}, job.lines.join('\n')) : h('pre.wk-lines.bad', {}, job.error);
-    const actions = h('div.wk-actions');
-    if (running) actions.append(h('button.btn.danger', { type: 'button', onclick: () => void stop() }, 'Stop'));
+    const actions = h('div.row.wrap.wk-actions');
+    if (running) actions.append(h('button.btn.sm.danger', { type: 'button', onclick: () => void stop() }, 'Stop'));
     into.className = `wk-job ${job.state}${big ? ' big' : ''}`;
     into.replaceChildren(head, who, lines, actions);
-    if (running && big) into.append(h('p.wk-note', {}, 'The pages appear here on their own once /wiki uploads them. A first run takes a while: it reads the whole repository.'));
+    if (running && big) into.append(h('p.field-hint', {}, 'The pages appear here on their own once /wiki uploads them. A first run takes a while: it reads the whole repository.'));
   };
 
   /** The run's line: its version menu, when it's from, and what can be done with it. */
@@ -266,7 +268,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       return;
     }
     const versions = f.history.length ? f.history : f.latest ? [f.latest] : [];
-    const picker = h('select.bs-toc.wk-version', { 'aria-label': 'Which version', title: 'Older versions of the wiki' }) as HTMLSelectElement;
+    const picker = h('select.select.sm.wk-version', { 'aria-label': 'Which version', title: 'Older versions of the wiki' }) as HTMLSelectElement;
     for (const r of versions) picker.append(h('option', { value: r.id, selected: r.id === run.id }, `${r.id === f.latest?.id ? '● ' : ''}${runLabel(r)}`));
     if (!versions.some((r) => r.id === run.id)) picker.append(h('option', { value: run.id, selected: true }, runLabel(run)));
     picker.addEventListener('change', () => {
@@ -274,7 +276,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       void loadRun(picker.value);
     });
     const privacy = h(
-      'select.bs-toc.wk-privacy',
+      'select.select.sm.wk-privacy',
       { 'aria-label': 'Who can see it', title: run.canUpdatePrivacy === false ? 'This key can’t change who sees it' : 'Who can see it on Factory', disabled: run.canUpdatePrivacy === false || busy },
       h('option', { value: 'private', selected: run.privacyLevel !== 'organization' }, '🔒 Only you'),
       h('option', { value: 'organization', selected: run.privacyLevel === 'organization' }, '👥 Organization'),
@@ -286,10 +288,10 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       if (!ok) privacy.value = run.privacyLevel ?? 'private';
       paint(true);
     });
-    const exportLink = h('a.btn', { href: withToken(`/api/factory/wiki/runs/${encodeURIComponent(run.id)}/export`), download: '', title: 'Download its pages as a .zip' }, '⬇ .zip');
-    const factoryLink = h('a.btn', { href: `https://app.factory.ai/wiki/${encodeURIComponent(run.id)}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open it on Factory' }, 'Factory ↗');
+    const exportLink = h('a.btn.sm', { href: withToken(`/api/factory/wiki/runs/${encodeURIComponent(run.id)}/export`), download: '', title: 'Download its pages as a .zip' }, '⬇ .zip');
+    const factoryLink = h('a.btn.sm', { href: `https://app.factory.ai/wiki/${encodeURIComponent(run.id)}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open it on Factory' }, 'Factory ↗');
     const del = h(
-      'button.btn.danger',
+      'button.btn.sm.danger',
       {
         type: 'button',
         title: 'Delete this version from Factory',
@@ -315,7 +317,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
         .filter(Boolean)
         .join(' · '),
     );
-    const rows: (HTMLElement | string)[] = [h('div.wk-row', {}, picker), age, h('div.wk-actions', {}, writing ? '' : generateButton('Regenerate'), exportLink, factoryLink, del), h('div.wk-row', {}, privacy)];
+    const rows: (HTMLElement | string)[] = [h('div.wk-row', {}, picker), age, h('div.row.wrap.wk-actions', {}, writing ? '' : generateButton('Regenerate', true), exportLink, factoryLink, del), h('div.wk-row', {}, privacy)];
     if (confirming === 'generate') rows.push(confirmBox('Regenerate', () => void generate()));
     if (confirming === 'delete')
       rows.push(
@@ -346,19 +348,19 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const repo = f.repoUrl?.replace(/^https:\/\//, '') ?? 'this repository';
     if (mode === 'off')
       return [
-        h('div.wk-glyph', {}, '🏭'),
-        h('h3', {}, conn.rejected ? 'Factory turned the office’s key down' : 'AutoWiki needs Factory'),
+        h('div.empty-icon', { 'aria-hidden': 'true' }, '🏭'),
+        h('b', {}, conn.rejected ? 'Factory turned the office’s key down' : 'AutoWiki needs Factory'),
         h(
           'p',
           {},
           conn.rejected
-            ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in ⚙️ Settings → Factory.`
-            : 'Connect the office to Factory with an API key in ⚙️ Settings → Factory, and the wiki Factory keeps for this repository shows up here, next to its docs.',
+            ? `Factory rejected the office’s API key (${conn.rejected}). Check it again or replace it in Settings → Factory.`
+            : 'Connect the office to Factory with an API key in Settings → Factory, and the wiki Factory keeps for this repository shows up here, next to its docs.',
         ),
-        deps.openSettings ? h('div.wk-actions', {}, h('button.btn.primary', { type: 'button', onclick: deps.openSettings }, 'Open Settings → Factory')) : '',
+        deps.openSettings ? h('div.row', {}, h('button.btn.primary', { type: 'button', onclick: deps.openSettings }, 'Open Settings → Factory')) : '',
       ];
-    if (mode === 'denied') return [h('div.wk-glyph', {}, '🔒'), h('h3', {}, 'The key can’t reach AutoWiki'), h('p', {}, capabilityOf(conn, 'wiki')?.reason ?? 'Factory said no to the office’s key for AutoWiki.')];
-    if (mode === 'why') return [h('div.wk-glyph', {}, '📭'), h('h3', {}, 'No AutoWiki for this floor'), h('p', {}, f.why ?? '')];
+    if (mode === 'denied') return [h('div.empty-icon', { 'aria-hidden': 'true' }, '🔒'), h('b', {}, 'The key can’t reach AutoWiki'), h('p', {}, capabilityOf(conn, 'wiki')?.reason ?? 'Factory said no to the office’s key for AutoWiki.')];
+    if (mode === 'why') return [h('div.empty-icon', { 'aria-hidden': 'true' }, '📭'), h('b', {}, 'No AutoWiki for this floor'), h('p', {}, f.why ?? '')];
     if (mode === 'writing') {
       const card = h('div.wk-job');
       paintJob(f.job, card, true);
@@ -367,13 +369,13 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const failed = h('div.wk-job');
     paintJob(f.job, failed);
     return [
-      h('div.wk-glyph', {}, '📖'),
-      h('h3', {}, `No AutoWiki for ${repo} yet`),
+      h('div.empty-icon', { 'aria-hidden': 'true' }, '📖'),
+      h('b', {}, `No AutoWiki for ${repo} yet`),
       h('p', {}, 'AutoWiki reads the repository and writes a wiki of it: its architecture, modules, APIs and conventions, page by page. Generate it here and it’s kept on Factory, where the whole team can read it.'),
       f.job && !active(f.job) ? failed : '',
-      f.noAccess ? h('p.wk-warn', {}, `Factory says: ${f.noAccess.replace(/\.$/, '')}. Its GitHub or GitLab integration may not cover this repository, so its upload may be refused.`) : '',
-      confirming === 'generate' ? confirmBox('Generate', () => void generate()) : h('div.wk-actions', {}, generateButton(f.job && !active(f.job) ? 'Try again' : 'Generate wiki')),
-      h('p.wk-note', {}, CI_HINT),
+      f.noAccess ? h('p.note.warn', {}, `Factory says: ${f.noAccess.replace(/\.$/, '')}. Its GitHub or GitLab integration may not cover this repository, so its upload may be refused.`) : '',
+      confirming === 'generate' ? confirmBox('Generate', () => void generate()) : h('div.row', {}, generateButton(f.job && !active(f.job) ? 'Try again' : 'Generate wiki')),
+      h('p.field-hint.wk-note', {}, CI_HINT),
     ];
   };
 
@@ -385,11 +387,15 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
       list.replaceChildren(
         ...hits.map((hit) => {
           const li = h(
-            'li.bs-item.wk-hit',
-            { role: 'option', class: current?.pageId === hit.pageId ? 'open' : '', title: hit.path },
-            h('div.bs-title', {}, ...highlight(hit.title, search.value)),
-            h('div.bs-path', {}, hit.path, hit.matchCount > 1 ? ` · ${hit.matchCount} matches` : ''),
-            hit.snippet ? h('div.wk-snippet', {}, ...highlight(clip(hit.snippet, 220), search.value)) : '',
+            'li.list-row.bs-item.wk-hit',
+            { role: 'option', class: current?.pageId === hit.pageId ? 'on' : '', title: hit.path },
+            h(
+              'div.list-main',
+              {},
+              h('div.list-title', {}, ...highlight(hit.title, search.value)),
+              h('div.list-meta.bs-path', {}, hit.path, hit.matchCount > 1 ? ` · ${hit.matchCount} matches` : ''),
+              hit.snippet ? h('div.wk-snippet', {}, ...highlight(clip(hit.snippet, 220), search.value)) : '',
+            ),
           );
           li.addEventListener('click', () => void openPage(hit.pageId));
           return li;
@@ -403,10 +409,11 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     list.replaceChildren(
       ...all.map(({ node, depth }) => {
         const li = h(
-          'li.bs-item.wk-node',
-          { role: 'option', class: `${current?.pageId === node.pageId ? 'open' : ''} ${node.children.length ? 'section' : ''}`, title: node.path, style: `padding-left:${10 + depth * 14}px` },
-          h('div.bs-title', {}, node.title),
+          'li.list-row.bs-item.wk-node',
+          { role: 'option', class: `${current?.pageId === node.pageId ? 'on' : ''} ${node.children.length ? 'section' : ''}`, title: node.path },
+          h('div.list-main', {}, h('div.list-title', {}, node.title)),
         );
+        li.style.setProperty('--depth', String(depth));
         li.addEventListener('click', () => void openPage(node.pageId));
         return li;
       }),
@@ -455,7 +462,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const key = `${run}/${pageId}`;
     let p = pages.get(key);
     if (!p) {
-      if (!current) page.replaceChildren(h('div.bs-empty', {}, h('span.spinner')));
+      if (!current) page.replaceChildren(h('div.bs-loading', {}, h('span.spinner')));
       p = await call<FactoryWikiPage>(`/runs/${encodeURIComponent(run)}/pages/${encodeURIComponent(pageId)}`);
       if (!p) return;
       pages.set(key, p);
@@ -488,7 +495,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const d = await call<FactoryWikiRunDetail>(`/runs/${encodeURIComponent(id)}`);
     if (mine !== loadingRun || disposed) return;
     if (!d) {
-      page.replaceChildren(h('div.bs-empty', {}, 'Couldn’t read this version of the wiki.'));
+      page.replaceChildren(emptyState('📕', 'Couldn’t read this version of the wiki'));
       return;
     }
     detail = d;
@@ -498,7 +505,7 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     const want = current ? undefined : lastPage(floor);
     const start: FactoryWikiNode | undefined = all.find((n) => n.path === want) ?? all[0];
     if (start) void openPage(start.pageId);
-    else page.replaceChildren(h('div.bs-empty', {}, 'This version has no pages.'));
+    else page.replaceChildren(emptyState('📭', 'This version has no pages'));
   };
 
   const runSearch = async () => {
@@ -562,16 +569,18 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     if (!force && key === drawn) return;
     drawn = key;
     if (mode !== 'wiki') {
-      root.classList.add('panel');
+      root.classList.add('wk-empty');
+      root.classList.remove('split');
       panel.replaceChildren(...panelOf(mode, f));
       if (panel.parentElement !== root) root.replaceChildren(panel);
       return;
     }
-    root.classList.remove('panel');
+    root.classList.remove('wk-empty');
+    root.classList.add('split');
     if (side.parentElement !== root) root.replaceChildren(side, reader);
     // A new run landed and you were reading the newest: the new one replaces it.
     if (f.latest && (!runId || (!pinned && runId !== f.latest.id))) {
-      if (!runId) page.replaceChildren(h('div.bs-empty', {}, h('span.spinner')));
+      if (!runId) page.replaceChildren(h('div.bs-loading', {}, h('span.spinner')));
       void loadRun(f.latest.id);
     }
     paintStatus(f);

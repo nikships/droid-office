@@ -148,7 +148,7 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const canvas = h('canvas', { 'aria-label': 'Your character, drag to spin' }) as HTMLCanvasElement;
   const preview = new Preview(canvas, pick);
 
-  const input = h('input', { type: 'text', maxlength: 24, value: first ? '' : pick.name, placeholder: 'e.g. Ada', 'aria-label': 'Your name' }) as HTMLInputElement;
+  const input = h('input.input', { id: 'charsel-name', type: 'text', maxlength: 24, value: first ? '' : pick.name, placeholder: 'e.g. Ada', 'aria-label': 'Your name' }) as HTMLInputElement;
   if (first && pick.name !== 'Guest') input.value = pick.name;
 
   const skinRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Skin tone' });
@@ -156,8 +156,11 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const hairRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Hair color' });
   const shirtRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Shirt color' });
 
-  const swatch = (color: string, label: string, on: boolean, choose: () => void) =>
-    h('button.swatch', { type: 'button', role: 'radio', 'aria-checked': String(on), style: `background:${color}`, class: on ? 'sel' : '', 'aria-label': label, title: label, onclick: choose });
+  const swatch = (color: string, label: string, on: boolean, choose: () => void) => {
+    const el = h('button.swatch', { type: 'button', role: 'radio', 'aria-checked': String(on), class: on ? 'sel' : '', 'aria-label': label, title: label, onclick: choose });
+    el.style.background = color;
+    return el;
+  };
 
   const change = (look: Partial<Look>, color?: string) => {
     Object.assign(pick.look, look);
@@ -177,20 +180,28 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   };
   paint();
 
-  const surprise = h('button.btn', { type: 'button', title: 'Random look' }, '🎲 Surprise me');
+  const surprise = h('button.btn.ghost', { type: 'button', title: 'Random look' }, '🎲 Surprise me');
   surprise.addEventListener('click', () => change(randomLook(), SHIRTS[Math.floor(Math.random() * SHIRTS.length)]));
-  const save = h('button.btn.primary', { type: 'submit' }, first ? 'Enter the office 🚪' : 'Save');
+  const save = h('button.btn.primary', { type: 'submit' }, first ? 'Enter the office' : 'Save');
   const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: first ? 'Skip: go in with this look (Esc)' : 'Close (Esc)' }, '✕');
 
   const form = h(
-    'form.modal.charsel',
+    'form.modal.lg.charsel',
     { role: 'dialog', 'aria-label': 'Pick your character' },
     h('header', {}, h('h2', {}, first ? '👋 Pick your character' : '🧍 Your character'), close),
     h(
       'div.body',
       {},
       h('div.charsel-stage', {}, canvas, h('span.tip', {}, 'Drag to spin')),
-      h('div.charsel-opts', {}, h('label', {}, 'Your name'), input, h('label', {}, 'Skin tone'), skinRow, h('label', {}, 'Hair'), styleRow, h('label', {}, 'Hair color'), hairRow, h('label', {}, 'Shirt'), shirtRow),
+      h(
+        'div.charsel-opts.stack',
+        {},
+        h('div.field', {}, h('label', { for: 'charsel-name' }, 'Your name'), input),
+        h('div.field', {}, h('label', {}, 'Skin tone'), skinRow),
+        h('div.field', {}, h('label', {}, 'Hair'), styleRow),
+        h('div.field', {}, h('label', {}, 'Hair color'), hairRow),
+        h('div.field', {}, h('label', {}, 'Shirt'), shirtRow),
+      ),
     ),
     h('footer', {}, surprise, h('span.grow'), save),
   ) as HTMLFormElement;

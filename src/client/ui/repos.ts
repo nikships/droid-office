@@ -27,30 +27,39 @@ export interface RepoPullsActions {
  */
 export function openRepoPulls(workerId: string, actions: RepoPullsActions) {
   const title = h('h2');
-  const note = h('p', { style: 'margin:0 0 12px;font-weight:700' });
-  const list = h('ul.repo-pulls');
-  const close = h('button.btn', { type: 'button' }, 'Close');
-  const missing = h('button.btn.primary', { type: 'button' }, '🔀 Open the missing PRs');
-  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Pull requests' }, h('header', {}, title), h('div.body', {}, note, list), h('footer', {}, h('span.grow'), close, missing));
+  const note = h('p.repo-pulls-note');
+  const list = h('ul.list.boxed.repo-pulls');
+  const close = h('button.btn.ghost', { type: 'button' }, 'Close');
+  const missing = h('button.btn.primary', { type: 'button' }, 'Open the missing PRs');
+  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Pull requests' }, h('header', {}, title), h('div.body.stack', {}, note, list), h('footer', {}, h('span.grow'), close, missing));
 
   const render = () => {
     const w = store.workers.get(workerId);
     if (!w?.worktree) return modal.close();
     const repos = workerRepos(w);
     title.textContent = `🔀 ${w.name}'s pull requests`;
-    note.textContent = `One change across ${repos.length} repositories, each on 🌿 ${w.worktree.branch}. Each repository it commits to gets a pull request of its own, and each one lists the others.`;
+    note.replaceChildren(
+      `One change across ${repos.length} repositories, each on `,
+      h('code.wt-branch', { title: w.worktree.branch }, w.worktree.branch),
+      '. Each repository it commits to gets a pull request of its own, and each one lists the others.',
+    );
     list.replaceChildren(
       ...repos.map((r) => {
         const floor = r.floor ? store.floors.find((f) => f.id === r.floor)?.name : store.currentFloor()?.name;
         const pr = r.pr;
         return h(
-          'li',
+          'li.list-row',
           {},
-          h('span.name', {}, `📁 ${r.name}`, h('small', {}, floor ? `${floor} floor${r.floor ? '' : ' · this one'}` : 'no longer in the building')),
-          pr
-            ? h('button.btn', { type: 'button', title: 'Open it', onclick: () => (r.floor ? window.open(pr.url, '_blank', 'noopener') : (modal.close(), actions.openPull(pr.number, pr.url))) }, `🔀 #${pr.number}${r.floor ? ' ↗' : ''}`)
-            : h('span.none', {}, 'No PR yet'),
-          h('button.btn', { type: 'button', title: `What ${w.name} changed in ${r.name}`, onclick: () => (modal.close(), actions.changes(r.floor)) }, '🌿 Changes'),
+          h('span.list-icon', { 'aria-hidden': 'true' }, '📁'),
+          h('span.list-main', {}, h('span.list-title', { title: r.name }, r.name), h('span.list-meta', {}, floor ? `${floor} floor${r.floor ? '' : ' · this one'}` : 'no longer in the building')),
+          h(
+            'span.list-end',
+            {},
+            pr
+              ? h('button.btn.sm', { type: 'button', title: 'Open it', onclick: () => (r.floor ? window.open(pr.url, '_blank', 'noopener') : (modal.close(), actions.openPull(pr.number, pr.url))) }, `#${pr.number}${r.floor ? ' ↗' : ''}`)
+              : h('span.pill', {}, 'No PR yet'),
+            h('button.btn.sm', { type: 'button', title: `What ${w.name} changed in ${r.name}`, onclick: () => (modal.close(), actions.changes(r.floor)) }, 'Changes'),
+          ),
         );
       }),
     );
@@ -60,7 +69,7 @@ export function openRepoPulls(workerId: string, actions: RepoPullsActions) {
       repos.every((r) => r.pr),
     );
     missing.disabled = !!w.prOpening || busy;
-    missing.textContent = w.prOpening ? '⏳ Opening…' : '🔀 Open the missing PRs';
+    missing.textContent = w.prOpening ? 'Opening…' : 'Open the missing PRs';
     missing.title = busy ? `${w.name} is still at it — wait until it's done` : 'Pushes the branch in each repository with commits and no pull request yet, and opens one there';
   };
 

@@ -2,6 +2,7 @@ import { isDocPath, resolveDocLink, type DocFile, type DocList, type DocText } f
 import { withToken } from '../token';
 import { clip, h, openModal, setDoing, timeAgo, toast } from './dom';
 import { mountWikiTab, type WikiTab } from './factory-wiki';
+import { emptyState, windowHeader } from './kit';
 import { markdownFile } from './markdown';
 
 // The bookshelf: every Markdown file in the floor's project, to read without leaving the office.
@@ -191,26 +192,27 @@ export function openBookshelf(deps: ShelfDeps) {
   const blobUrl = (path: string, hash = '') => `${blob?.url}/${path.split('/').map(encodeURIComponent).join('/')}${hash ? `#${hash}` : ''}`;
   const q = (params: Record<string, string>) => new URLSearchParams({ floor, ...params }).toString();
 
-  const filter = h('input', { type: 'text', placeholder: 'Filter the docs…', 'aria-label': 'Filter the docs', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const filter = h('input.input', { type: 'text', placeholder: 'Filter the docs…', 'aria-label': 'Filter the docs', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const count = h('div.bs-count', {}, 'Looking along the shelves…');
-  const list = h('ul.bs-list', { role: 'listbox', 'aria-label': 'Docs' });
+  const list = h('ul.list.bs-list', { role: 'listbox', 'aria-label': 'Docs' });
   const crumbs = h('div.bs-crumbs');
   const meta = h('div.bs-meta');
-  const toc = h('select.bs-toc', { 'aria-label': 'Jump to a heading', title: 'Jump to a heading' }) as HTMLSelectElement;
+  const toc = h('select.select.sm.bs-toc', { 'aria-label': 'Jump to a heading', title: 'Jump to a heading' }) as HTMLSelectElement;
   const page = h('div.bs-page', { tabindex: -1 });
-  const tabButton = (tab: ShelfTab, label: string) => h('button.bs-tab', { type: 'button', role: 'tab', 'data-tab': tab, 'aria-selected': 'false' }, label) as HTMLButtonElement;
-  const tabs = { docs: tabButton('docs', '📚 Docs'), wiki: tabButton('wiki', '🏭 AutoWiki') };
-  const docsBody = h('div.body', { role: 'tabpanel' }, h('aside.bs-side', {}, h('div.bs-find', {}, filter), count, list), h('article.bs-reader', {}, h('div.bs-bar', {}, crumbs, meta, toc), page));
-  const wikiBody = h('div.body.bs-wiki', { role: 'tabpanel', hidden: true });
+  const tabButton = (tab: ShelfTab, label: string) => h('button.tab', { type: 'button', role: 'tab', 'data-tab': tab, 'aria-selected': 'false' }, label) as HTMLButtonElement;
+  const tabs = { docs: tabButton('docs', 'Docs'), wiki: tabButton('wiki', 'AutoWiki') };
+  const docsBody = h('div.body.flush.split.bs-split', { role: 'tabpanel' }, h('aside.bs-side', {}, h('div.bs-find', {}, filter), count, list), h('article.bs-reader.flush', {}, h('div.bs-bar', {}, crumbs, meta, toc), page));
+  const wikiBody = h('div.body.flush.bs-wiki', { role: 'tabpanel', hidden: true });
   const el = h(
-    'div.modal.bookshelf',
+    'div.modal.full.bookshelf',
     { role: 'dialog', 'aria-label': 'Bookshelf' },
-    h('header', {}, h('h2', {}, 'Bookshelf', deps.project ? h('span.bs-project', {}, ` · ${deps.project}`) : ''), h('div.bs-tabs', { role: 'tablist', 'aria-label': 'What to read' }, tabs.docs, tabs.wiki)),
+    windowHeader('Bookshelf', deps.project ? `The docs in ${deps.project}, and its AutoWiki` : 'The project’s docs, and its AutoWiki'),
+    h('div.tabs.bs-tabs', { role: 'tablist', 'aria-label': 'What to read' }, tabs.docs, tabs.wiki),
     docsBody,
     wikiBody,
   );
   toc.hidden = true;
-  page.append(h('div.bs-empty', {}, h('span.spinner')));
+  page.append(h('div.bs-loading', {}, h('span.spinner')));
 
   let files: DocFile[] = [];
   let shown: Hit[] = [];
@@ -257,10 +259,14 @@ export function openBookshelf(deps: ShelfDeps) {
         const { doc } = hit;
         const title = doc.title ?? nameOf(doc.path);
         const li = h(
-          'li.bs-item',
-          { role: 'option', 'aria-selected': String(i === sel), class: `${i === sel ? 'sel' : ''} ${doc.path === current ? 'open' : ''}`, title: doc.path },
-          h('div.bs-title', {}, ...(doc.title ? marked(title, hit.title) : marked(title, new Set([...hit.path].map((p) => p - (doc.path.length - title.length)))))),
-          h('div.bs-path', {}, ...marked(doc.path, hit.path)),
+          'li.list-row.bs-item',
+          { role: 'option', 'aria-selected': String(i === sel), class: doc.path === current ? 'on' : '', title: doc.path },
+          h(
+            'div.list-main',
+            {},
+            h('div.list-title', {}, ...(doc.title ? marked(title, hit.title) : marked(title, new Set([...hit.path].map((p) => p - (doc.path.length - title.length)))))),
+            h('div.list-meta.bs-path', {}, ...marked(doc.path, hit.path)),
+          ),
         );
         li.addEventListener('mousedown', (e) => e.preventDefault());
         li.addEventListener('click', () => {
@@ -338,7 +344,7 @@ export function openBookshelf(deps: ShelfDeps) {
     } catch (err) {
       if (mine !== opening) return;
       toast(`Couldn't open ${nameOf(path)}: ${(err as Error).message}`, 'warn');
-      if (!current) page.replaceChildren(h('div.bs-empty', {}, `Couldn't open ${path}.`));
+      if (!current) page.replaceChildren(emptyState('📕', `Couldn't open ${nameOf(path)}`, (err as Error).message));
       return;
     }
     if (mine !== opening || !el.isConnected) return;
@@ -395,11 +401,11 @@ export function openBookshelf(deps: ShelfDeps) {
       if (r.more) count.textContent += ` (the first ${files.length})`;
       const start = [lastRead(floor), ...shelfOrder(files).map((f) => f.path)].find((p) => p && files.some((f) => f.path === p));
       if (start) void openDoc(start);
-      else page.replaceChildren(h('div.bs-empty', {}, 'Nothing to read here: this project has no Markdown files yet.'));
+      else page.replaceChildren(emptyState('📚', 'Nothing to read here', 'This project has no Markdown files yet.'));
     })
     .catch((err: Error) => {
       if (!el.isConnected) return;
       count.textContent = '';
-      page.replaceChildren(h('div.bs-empty', {}, `Couldn't look along the shelves: ${err.message}`));
+      page.replaceChildren(emptyState('📕', 'Couldn’t look along the shelves', err.message));
     });
 }

@@ -1,6 +1,7 @@
 import type { ServiceInfo, ServicesState } from '../../shared/protocol';
 import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
+import { colorDot, emptyState } from './kit';
 import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './clipboard';
 
 export function serviceUrl(port: number): string {
@@ -26,11 +27,17 @@ export function openServices() {
   let os = guessOs();
   let picked: number | null = null;
   let copied: number | null = null;
-  const body = h('div.body.services');
-  const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const tabs = h('div.os-tabs');
-  const footer = h('footer', {}, h('span.grow', {}, 'Tunnels go through the office: your SSH access to its machine is what guards every page. Keep the terminal open while you look.'));
-  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Services', style: 'width:min(760px,100%)' }, h('header', {}, h('h2', {}, 'Services'), tabs, close), body, footer);
+  const body = h('div.body.stack');
+  const close = h('button.btn.icon.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
+  const tabs = h('div.seg.os-tabs', { role: 'radiogroup', 'aria-label': 'Your computer' });
+  const footer = h('footer', {}, h('span.grow', {}, 'Tunnels go through the office: your SSH access to its machine guards every page. Keep the terminal open while you look.'));
+  const el = h(
+    'div.modal.lg.services',
+    { role: 'dialog', 'aria-label': 'Services' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Services'), h('p.sub', {}, 'Web servers the workers are running')), h('div.actions', {}, tabs), close),
+    body,
+    footer,
+  );
 
   const pick = async (svc: ServiceInfo) => {
     picked = svc.port;
@@ -40,40 +47,41 @@ export function openServices() {
 
   const render = () => {
     const s = store.services;
-    tabs.replaceChildren(...(Object.keys(OS_LABEL) as Os[]).map((o) => h('button.btn', { type: 'button', class: o === os ? 'on' : '', onclick: () => ((os = o), (copied = null), render()) }, OS_LABEL[o])));
-    body.replaceChildren(h('p.note', { style: 'margin:0 0 12px' }, 'Web servers the workers are running. Click one to copy a command that opens it on your computer — run it in a terminal and the page opens by itself.'));
+    tabs.replaceChildren(
+      ...(Object.keys(OS_LABEL) as Os[]).map((o) => h('button.btn.sm', { type: 'button', role: 'radio', 'aria-checked': String(o === os), class: o === os ? 'on' : '', onclick: () => ((os = o), (copied = null), render()) }, OS_LABEL[o])),
+    );
+    body.replaceChildren(h('p.svc-hint', {}, 'Click one to copy a command that opens it on your computer. Run it in a terminal and the page opens by itself.'));
     if (!s.items.length) {
       body.append(
-        h(
-          'div.svc-empty',
-          {},
-          h('p', {}, 'Nothing running yet.'),
+        emptyState(
+          '🌐',
+          'Nothing running yet',
           h(
-            'p.note',
+            'span',
             {},
-            'When a worker starts a web server — ',
+            'When a worker starts a web server (',
             h('code', {}, 'npm run dev'),
             ', a preview build, ',
             h('code', {}, 'python -m http.server'),
-            ' — it shows up here within a few seconds. Try prompting: “start the dev server in the background so we can review it”.',
+            ') it shows up here within a few seconds. Try prompting: “start the dev server in the background so we can review it”.',
           ),
         ),
       );
       return;
     }
-    const list = h('ul.svc-list');
+    const list = h('ul.list.boxed.svc-rows');
     for (const svc of s.items) {
       const { who, color, branch } = describe(svc);
+      const dot = colorDot(color);
       const on = picked === svc.port;
-      const open = h('a.btn', { href: serviceUrl(svc.port), target: '_blank', rel: 'noopener', title: `Open ${serviceUrl(svc.port)} (needs the tunnel, unless the office runs on this computer)` }, 'Open ↗');
+      const open = h('a.btn.sm', { href: serviceUrl(svc.port), target: '_blank', rel: 'noopener', title: `Open ${serviceUrl(svc.port)} (needs the tunnel, unless the office runs on this computer)` }, 'Open ↗');
       open.addEventListener('click', (e) => e.stopPropagation());
       const li = h(
-        'li',
-        { class: on ? 'on' : '', tabindex: 0, role: 'button', title: 'Copy the tunnel command' },
-        h('span.dot', { style: `background:${color}` }),
-        h('div.svc-main', {}, h('div.svc-title', {}, svc.title || svc.command), h('div.svc-meta', {}, [who, branch ? `🌿 ${branch}` : '', svc.title ? svc.command : '', `started ${timeAgo(svc.since)}`].filter(Boolean).join(' · '))),
-        h('span.svc-port', {}, `:${svc.port}`),
-        open,
+        'li.list-row',
+        { class: on ? 'on' : '', 'aria-selected': String(on), tabindex: 0, role: 'button', title: 'Copy the tunnel command' },
+        h('span.list-icon', {}, dot),
+        h('div.list-main', {}, h('div.list-title', {}, svc.title || svc.command), h('div.list-meta', {}, [who, branch ? `🌿 ${branch}` : '', svc.title ? svc.command : '', `started ${timeAgo(svc.since)}`].filter(Boolean).join(' · '))),
+        h('div.list-end', {}, h('span.svc-port', {}, `:${svc.port}`), open),
       );
       li.addEventListener('click', () => void pick(svc));
       li.addEventListener('keydown', (e) => {
@@ -91,8 +99,8 @@ export function openServices() {
       const cmd = serviceTunnel(s, svc.port, os);
       body.append(
         copied === svc.port
-          ? h('p.svc-status.ok', {}, `✅ Copied. Paste it in a terminal: it opens ${serviceUrl(svc.port)} once the tunnel is up.`)
-          : h('p.svc-status', {}, `The command for :${svc.port} — run it in a terminal, and it opens ${serviceUrl(svc.port)}.`),
+          ? h('p.note.good', {}, `Copied. Paste it in a terminal: it opens ${serviceUrl(svc.port)} once the tunnel is up.`)
+          : h('p.note.info', {}, `The command for :${svc.port} — run it in a terminal, and it opens ${serviceUrl(svc.port)}.`),
         h(
           'div.cmd',
           {},
@@ -101,12 +109,12 @@ export function openServices() {
         ),
       );
     } else if (picked !== null) {
-      body.append(h('p.svc-status.error', {}, `The server on :${picked} stopped.`));
+      body.append(h('p.note.bad', {}, `The server on :${picked} stopped.`));
     }
     body.append(
       s.ssh
-        ? h('p.note', {}, 'It tunnels as ', h('code', {}, s.ssh), ', your SSH access to the office’s machine. Or run ', h('code', {}, 'deploy/aws.sh service <port>'), ' instead.')
-        : h('p.note', {}, 'Replace ', h('code', {}, 'you@your-server'), " with how you SSH to the office's machine. If the office runs on this computer, just click Open."),
+        ? h('p.svc-hint', {}, 'It tunnels as ', h('code', {}, s.ssh), ', your SSH access to the office’s machine. Or run ', h('code', {}, 'deploy/aws.sh service <port>'), ' instead.')
+        : h('p.svc-hint', {}, 'Replace ', h('code', {}, 'you@your-server'), " with how you SSH to the office's machine. If the office runs on this computer, just click Open."),
     );
   };
 

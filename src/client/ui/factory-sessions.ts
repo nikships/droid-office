@@ -17,6 +17,7 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { clip, h, openModal, timeAgo, toast, type Modal } from './dom';
 import { mountTranscript, type Transcript } from './factory-transcript';
+import { colorDot, emptyState, field } from './kit';
 import { factoryModels, type DroidModelOption } from './models';
 import { confirmDialog } from './prompt';
 
@@ -51,6 +52,16 @@ let open: { modal: Modal; select(id: string): void } | undefined;
 const statusWord = (s: string) => (s === 'running' ? 'running' : s === 'pending' ? 'pending' : 'idle');
 const pillClass = (s: string) => (s === 'running' ? 'working' : s === 'pending' ? 'needs_input' : 'exited');
 const titleOf = (s: FactorySession) => s.title.replace(/\s+/g, ' ').trim() || `Session ${s.id.slice(0, 8)}`;
+
+type Where = ReturnType<typeof sessionWhere>;
+/** Gives `el` the office worker's color as `--who` (a value per worker, so it can't be a class). */
+const tint = <T extends HTMLElement>(el: T, w: Where): T => {
+  if (w.color) el.style.setProperty('--who', w.color);
+  return el;
+};
+/** Where a session runs, as a list row's icon: the worker's color, a cloud, or a dot. */
+const whereIcon = (w: Where) => h('span.list-icon.fs-where-icon', { class: w.kind, title: w.label, 'aria-hidden': 'true' }, w.kind === 'cloud' ? '☁' : w.color ? colorDot(w.color) : '');
+const whereLabel = (w: Where) => tint(h('span.fs-where', { class: w.kind }, w.kind === 'cloud' ? `☁ ${w.label}` : w.label), w);
 
 /** Pictures pasted or dropped into a message box, read in the page as base64 for Factory. */
 function pictures(textarea: HTMLTextAreaElement, zone: HTMLElement) {
@@ -127,7 +138,7 @@ function pictures(textarea: HTMLTextAreaElement, zone: HTMLElement) {
 }
 
 function select(label: string, options: [string, string][], value = ''): HTMLSelectElement {
-  const el = h('select.fs-select', { 'aria-label': label }, ...options.map(([v, text]) => h('option', { value: v }, text))) as HTMLSelectElement;
+  const el = h('select.select', { 'aria-label': label }, ...options.map(([v, text]) => h('option', { value: v }, text))) as HTMLSelectElement;
   el.value = value;
   return el;
 }
@@ -173,19 +184,19 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
   let picked: string | undefined = selectId;
   let creating = false;
 
-  const search = h('input.fs-search', { type: 'text', placeholder: 'Search titles', 'aria-label': 'Search sessions by title' }) as HTMLInputElement;
-  const statusSeg = h('div.fs-seg', { role: 'group', 'aria-label': 'Status' });
+  const search = h('input.input.fs-search', { type: 'search', placeholder: 'Search titles', 'aria-label': 'Search sessions by title' }) as HTMLInputElement;
+  const statusSeg = h('div.seg.fs-seg', { role: 'group', 'aria-label': 'Status' });
   const whereSel = select('Where', [['all', 'Everywhere']], 'all');
-  const newBtn = h('button.btn.primary', { type: 'button', title: 'Start a Droid session on a Factory computer' }, '＋ New session');
-  const list = h('ul.fs-list', { role: 'listbox', 'aria-label': 'Sessions' });
-  const count = h('span.grow');
+  const newBtn = h('button.btn.primary.sm', { type: 'button', title: 'Start a Droid session on a Factory computer' }, '+ New session');
+  const list = h('ul.list.fs-list', { role: 'listbox', 'aria-label': 'Sessions' });
+  const count = h('span.fs-count');
   const pane = h('section.fs-pane');
-  const header = h('header', {}, h('h2', {}, '🛰️ Droid sessions'), newBtn);
+  const header = h('header', {}, h('div.titles', {}, h('h2', {}, 'Droid sessions'), h('p.sub', {}, 'Every Droid session on the Factory account, the office’s workers’ among them')), h('div.actions', {}, newBtn));
   const el = h(
-    'div.modal.fsessions',
+    'div.modal.full.fsessions',
     { role: 'dialog', 'aria-label': 'Droid sessions' },
     header,
-    h('div.fs-body', {}, h('aside.fs-side', {}, h('div.fs-tools', {}, search, h('div.fs-filters', {}, statusSeg, whereSel)), list, h('footer', {}, count)), pane),
+    h('div.body.flush.fs-body', {}, h('div.split.fs-split', {}, h('aside.fs-side', {}, h('div.fs-tools', {}, search, h('div.row.fs-filters', {}, statusSeg, whereSel)), list, h('div.fs-side-foot', {}, count)), pane)),
   );
 
   // ---- The list ----
@@ -213,7 +224,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
           ['live', `Running ${s.items.filter(isLive).length || ''}`.trim()],
           ['idle', 'Idle'],
         ] as [StatusFilter, string][]
-      ).map(([v, label]) => h('button.btn', { type: 'button', class: status === v ? 'on' : '', 'aria-pressed': String(status === v), onclick: () => ((status = v), renderList()) }, label)),
+      ).map(([v, label]) => h('button.btn.sm', { type: 'button', class: status === v ? 'on' : '', 'aria-pressed': String(status === v), onclick: () => ((status = v), renderList()) }, label)),
     );
     const computers = f.computers.items;
     const wantWhere: [string, string][] = [['all', 'Everywhere'], ['office', 'This office’s workers'], ...computers.map((c): [string, string] => [c.id, `☁ ${c.name}`]), ['elsewhere', 'Elsewhere']];
@@ -229,23 +240,25 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       ...items.map((x) => {
         const w = sessionWhere(s, computers, x);
         const prs = x.artifacts.filter((a) => a.url && a.action !== 'view').slice(0, 3);
+        const on = x.id === picked && !creating;
         const li = h(
-          'li',
-          { role: 'option', 'aria-selected': String(x.id === picked && !creating), class: x.id === picked && !creating ? 'on' : '', tabindex: 0, title: x.title },
+          'li.list-row.fs-row',
+          { role: 'option', 'aria-selected': String(on), class: on ? 'on' : '', tabindex: 0, title: x.title },
+          whereIcon(w),
           h(
-            'div.fs-row1',
+            'span.list-main',
             {},
-            h('span.pill', { class: pillClass(x.status) }, statusWord(x.status)),
-            h('span.fs-title', {}, clip(titleOf(x), 120)),
-            x.credits !== undefined ? h('span.fs-credits', { title: `${x.credits.toLocaleString()} Factory credits` }, `⚡ ${compactCredits(x.credits)}`) : null,
+            h('span.list-title', {}, clip(titleOf(x), 120)),
+            h('span.list-meta', {}, whereLabel(w), [...[x.model, x.effort && EFFORT_WORD[x.effort]].filter(Boolean), `${x.messageCount} msg${x.messageCount === 1 ? '' : 's'}`, timeAgo(x.updatedAt)].map((t) => ` · ${t}`).join('')),
+            prs.length
+              ? h('span.chips.fs-prs', {}, ...prs.map((a) => h('a.chip.fs-pr', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: artifactLabel(a), onclick: (e: Event) => e.stopPropagation() }, artifactLabel(a))))
+              : null,
           ),
           h(
-            'div.fs-row2',
+            'span.list-end.fs-end',
             {},
-            h('span.fs-where', { class: w.kind, style: w.color ? `--who:${w.color}` : undefined }, w.kind === 'cloud' ? `☁ ${w.label}` : w.label),
-            // One text node: contiguous strings would be one flex item and the gap wouldn't show.
-            [...[x.model, x.effort && EFFORT_WORD[x.effort]].filter(Boolean), `${x.messageCount} msg${x.messageCount === 1 ? '' : 's'}`, timeAgo(x.updatedAt)].join(' · '),
-            ...prs.map((a) => h('a.fs-pr', { href: a.url, target: '_blank', rel: 'noopener noreferrer', onclick: (e: Event) => e.stopPropagation() }, artifactLabel(a))),
+            h('span.pill', { class: pillClass(x.status) }, statusWord(x.status)),
+            x.credits !== undefined ? h('span.fs-credits', { title: `${x.credits.toLocaleString()} Factory credits` }, `⚡ ${compactCredits(x.credits)}`) : null,
           ),
         );
         const pick = () => choose(x.id);
@@ -259,7 +272,10 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
         return li;
       }),
     );
-    if (!items.length) list.append(h('li.fs-empty', {}, s.fetchedAt ? (s.items.length ? 'No session matches' : 'No sessions yet') : 'Reading sessions from Factory… (a first read can take a minute)'));
+    if (!items.length) {
+      if (s.fetchedAt) list.append(h('li.fs-empty', {}, emptyState('🛰️', s.items.length ? 'No session matches' : 'No sessions yet', s.items.length ? 'Try another search or filter.' : undefined)));
+      else list.append(...[0, 1, 2, 3, 4].map(() => h('li.skeleton.fs-skeleton', { 'aria-hidden': 'true' })), h('li.fs-loading', {}, 'Reading sessions from Factory… (a first read can take a minute)'));
+    }
     const counted = s.credits.since ? '' : ' · credits not counted yet';
     count.textContent = `${items.length} of the last ${s.items.length} sessions${s.fetchedAt ? ` · read ${timeAgo(s.fetchedAt)}` : ''}${s.error ? ` · ⚠ ${s.error}` : ''}${counted}`;
   };
@@ -298,12 +314,16 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const head = h('div.fs-head');
     const meta = h('dl.fs-meta');
     const extra = h('div.fs-extra');
-    const error = h('div.fs-error.hidden', { role: 'alert' });
-    const box = h('textarea.fs-input', { rows: 2, placeholder: 'Message this session (Enter sends, Shift+Enter for a new line; paste a picture to attach it)', 'aria-label': 'Message' }) as HTMLTextAreaElement;
-    const send = h('button.btn.primary', { type: 'button' }, 'Send');
+    const error = h('div.note.bad.fs-error.hidden', { role: 'alert' });
+    const box = h('textarea.input.fs-input', { rows: 2, placeholder: 'Message this session', 'aria-label': 'Message' }) as HTMLTextAreaElement;
+    const send = h('button.btn.primary', { type: 'button', title: 'Send (Enter)' }, 'Send');
     const composer = h('div.fs-composer');
     const pics = pictures(box, composer);
-    composer.append(pics.element, h('div.fs-compose-row', {}, box, send));
+    composer.append(
+      pics.element,
+      h('div.fs-compose-row', {}, box, send),
+      h('div.fs-compose-hint', {}, h('span.key', {}, 'Enter'), ' sends · ', h('span.key', {}, 'Shift'), ' + ', h('span.key', {}, 'Enter'), ' new line · paste a picture to attach it'),
+    );
     const say = (text: string) => {
       error.textContent = text;
       error.classList.toggle('hidden', !text);
@@ -314,7 +334,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const effort = effortSelect();
     const apply = h('button.btn', { type: 'button', disabled: true }, 'Apply');
     let settingsFor = '';
-    const settingsRow = h('div.fs-settings', {}, h('label', {}, 'Model'), model, h('label', {}, 'Effort'), effort, apply);
+    const settingsRow = h('div.fs-settings', {}, field('Model', model), field('Effort', effort), apply);
     const dirty = () => {
       const s = sessionNow(id, fetched);
       apply.toggleAttribute('disabled', (model.value || '') === (s?.model ?? '') && (effort.value || '') === (s?.effort ?? ''));
@@ -398,26 +418,30 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       if (k === headKey) return;
       headKey = k;
       head.replaceChildren(
-        h('div.fs-head-row', {}, h('span.pill', { class: pillClass(s.status) }, statusWord(s.status)), h('h3', {}, titleOf(s))),
         h(
-          'div.fs-actions',
+          'div.fs-head-row',
           {},
-          isLive(s) ? h('button.btn', { type: 'button', onclick: () => void interrupt(), title: 'Stop what it’s doing' }, '⏹ Interrupt') : null,
-          ours ? h('button.btn', { type: 'button', onclick: () => actions.openWorker(ours.workerId) }, store.workers.get(ours.workerId)?.cloud ? `☁ ${ours.name}’s window` : `💻 ${ours.name}’s terminal`) : null,
-          h('a.btn', { href: sessionWebUrl(id), target: '_blank', rel: 'noopener noreferrer', title: 'Open it in the Factory web app' }, 'Factory ↗'),
-          h('button.btn.danger', { type: 'button', onclick: remove }, 'Delete…'),
+          h('div.fs-head-title', {}, h('h3', { title: titleOf(s) }, titleOf(s)), h('span.pill', { class: pillClass(s.status) }, statusWord(s.status))),
+          h(
+            'div.row.fs-actions',
+            {},
+            isLive(s) ? h('button.btn.sm', { type: 'button', onclick: () => void interrupt(), title: 'Stop what it’s doing' }, '⏹ Interrupt') : null,
+            ours ? h('button.btn.sm', { type: 'button', onclick: () => actions.openWorker(ours.workerId) }, store.workers.get(ours.workerId)?.cloud ? `☁ ${ours.name}’s window` : `💻 ${ours.name}’s terminal`) : null,
+            h('a.btn.sm', { href: sessionWebUrl(id), target: '_blank', rel: 'noopener noreferrer', title: 'Open it in the Factory web app' }, 'Factory ↗'),
+            h('button.btn.sm.danger', { type: 'button', onclick: remove }, 'Delete…'),
+          ),
         ),
       );
-      const row = (label: string, value: string | Node | null | undefined) => (value ? [h('dt', {}, label), h('dd', {}, value)] : []);
+      const row = (label: string, value: string | Node | null | undefined) => (value ? [h('div.fs-fact', {}, h('dt', {}, label), h('dd', { title: typeof value === 'string' ? value : undefined }, value))] : []);
       meta.replaceChildren(
-        ...row('Where', h('span.fs-where', { class: w.kind, style: w.color ? `--who:${w.color}` : undefined }, w.kind === 'cloud' ? `☁ ${w.label}` : w.label)),
+        ...row('Where', whereLabel(w)),
         ...row('Credits', credits !== undefined ? `⚡ ${credits.toLocaleString()} (with its subagents)` : 'reading…'),
         ...row('Messages', String(s.messageCount)),
         ...row('Mode', s.interactionMode ? (MODE_LABEL[s.interactionMode as keyof typeof MODE_LABEL] ?? s.interactionMode) : undefined),
         ...row('Autonomy', s.autonomyLevel ? (AUTONOMY_WORD[s.autonomyLevel] ?? s.autonomyLevel) : undefined),
         ...row('Started', s.createdAt ? `${new Date(s.createdAt).toLocaleString()} (${timeAgo(s.createdAt)})` : undefined),
         ...row('Last active', s.updatedAt ? timeAgo(s.updatedAt) : undefined),
-        ...row('Session', h('code', {}, id)),
+        ...row('Session', h('code', { title: id }, id)),
       );
       // The settings follow the session until you change them here.
       const settingsKey = `${s.model ?? ''}|${s.effort ?? ''}`;
@@ -431,26 +455,43 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       extra.replaceChildren(
         ...(children?.length
           ? [
-              h('h4', {}, `Subagents · ${children.length}`),
+              h('div.eyebrow', {}, `Subagents · ${children.length}`),
               h(
-                'ul.fs-children',
+                'ul.chips.fs-children',
                 {},
                 ...children.map((c) =>
-                  h('li', { tabindex: 0, onclick: () => choose(c.id), title: c.title }, h('span.pill', { class: pillClass(c.status) }, statusWord(c.status)), h('span', {}, clip(titleOf(c), 90)), h('small', {}, timeAgo(c.updatedAt))),
+                  h(
+                    'li.chip',
+                    { tabindex: 0, onclick: () => choose(c.id), title: c.title },
+                    h('span.pill', { class: pillClass(c.status) }, statusWord(c.status)),
+                    h('span.fs-chip-text', {}, clip(titleOf(c), 90)),
+                    h('small', {}, timeAgo(c.updatedAt)),
+                  ),
                 ),
               ),
             ]
           : []),
         ...(arts.length
           ? [
-              h('h4', {}, 'Made'),
-              h('ul.fs-arts', {}, ...arts.map((a) => h('li', {}, h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, artifactLabel(a)), h('small', {}, [a.kind.replace(/_/g, ' '), a.action].filter(Boolean).join(' · '))))),
+              h('div.eyebrow', {}, 'Made'),
+              h(
+                'ul.chips.fs-arts',
+                {},
+                ...arts.map((a) =>
+                  h(
+                    'li.chip',
+                    {},
+                    h('a.fs-chip-text', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: artifactLabel(a) }, artifactLabel(a)),
+                    h('small', {}, [a.kind.replace(/_/g, ' '), a.action].filter(Boolean).join(' · ')),
+                  ),
+                ),
+              ),
             ]
           : []),
       );
     };
 
-    pane.replaceChildren(h('div.fs-detail', {}, head, meta, settingsRow, extra, error, transcript.element, composer));
+    pane.replaceChildren(h('div.fs-detail', {}, h('div.fs-detail-top', {}, head, meta, settingsRow, extra, error), transcript.element, composer));
     paint();
     // Its own read (credits, a fresh status) and its subagents, without holding the window up: either can take a while cold.
     void factoryFetch<{ session: FactorySession }>('sessions', `/${encodeURIComponent(id)}`)
@@ -477,11 +518,11 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const f = store.factory;
     if (!f.connection.connected || f.connection.rejected) {
       pane.replaceChildren(
-        h(
-          'div.fs-blank',
-          {},
-          h('p', {}, f.connection.rejected ? 'Factory rejected the office’s API key.' : 'The office isn’t connected to Factory.'),
-          h('button.btn.primary', { type: 'button', onclick: () => actions.openSettings() }, '⚙️ Settings → Factory'),
+        emptyState(
+          '🛰️',
+          f.connection.rejected ? 'Factory rejected the key' : 'Not connected to Factory',
+          f.connection.rejected ? 'Factory rejected the office’s API key.' : 'The office isn’t connected to Factory.',
+          h('button.btn.primary', { type: 'button', onclick: () => actions.openSettings() }, 'Settings → Factory'),
         ),
       );
       return;
@@ -490,12 +531,14 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
     const c = s.credits;
     pane.replaceChildren(
       h(
-        'div.fs-blank',
+        'div.empty-state.fs-blank',
         {},
-        h('p', {}, 'Pick a session to see its transcript, settings and what it cost, or start a new one.'),
+        h('div.empty-icon', { 'aria-hidden': 'true' }, '🛰️'),
+        h('b', {}, 'Pick a session'),
+        h('p', {}, 'See its transcript, settings and what it cost, or start a new one.'),
         h('div.fs-credits-sum', {}, h('div', {}, h('b', {}, compactCredits(c.today)), h('small', {}, 'credits today')), h('div', {}, h('b', {}, compactCredits(c.week)), h('small', {}, 'last 7 days'))),
         h(
-          'p.note',
+          'p.field-hint.fs-credits-note',
           {},
           c.since ? `Counted from what the office saw since ${new Date(c.since).toLocaleString()}; before that, each session’s credits are put on the day it was last active (an estimate).` : 'The office hasn’t counted any credits yet.',
         ),
@@ -512,7 +555,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       computers.map((c) => [c.id, `${c.name}${c.status !== 'active' ? ` (${c.status})` : ''}${c.managed ? '' : ' · your machine'}`]),
       computers.find((c) => c.name === 'orb')?.id ?? computers.find((c) => c.status === 'active')?.id ?? computers[0]?.id ?? '',
     );
-    const cwd = h('input', { type: 'text', placeholder: 'Folder on the computer (leave empty for its home)', 'aria-label': 'Folder' }) as HTMLInputElement;
+    const cwd = h('input.input', { type: 'text', placeholder: 'Folder on the computer (leave empty for its home)', 'aria-label': 'Folder' }) as HTMLInputElement;
     const fillCwd = () => {
       const c = computers.find((x) => x.id === computer.value);
       cwd.placeholder = c?.remoteUser ? `Folder, like /home/${c.remoteUser}/project (empty: its home)` : 'Folder on the computer (empty: its home)';
@@ -531,23 +574,24 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       SESSION_AUTONOMY.map((a) => [a, AUTONOMY_WORD[a]]),
       'medium',
     );
-    const prompt = h('textarea', { rows: 6, placeholder: 'What should it do?', 'aria-label': 'First message' }) as HTMLTextAreaElement;
+    const prompt = h('textarea.input', { rows: 6, placeholder: 'What should it do?', 'aria-label': 'First message' }) as HTMLTextAreaElement;
     const go = h('button.btn.primary', { type: 'button' }, 'Start session');
-    const cancel = h('button.btn', { type: 'button' }, 'Cancel');
-    const error = h('div.fs-error.hidden', { role: 'alert' });
+    const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
+    const error = h('div.note.bad.fs-error.hidden', { role: 'alert' });
     const form = h('div.fs-new');
     const pics = pictures(prompt, form);
-    const field = (label: string, input: HTMLElement) => h('div.fs-field', {}, h('label', {}, label), input);
     form.append(
-      h('h3', {}, 'New session on a Factory computer'),
-      computers.length ? '' : h('p.note', {}, 'There’s no Factory computer on the account yet. Make one in the Factory web app (or the Computers window), then come back.'),
-      h('div.fs-grid', {}, field('Computer', computer), field('Folder', cwd), field('Model', model), field('Effort', effort), field('Mode', mode), field('Autonomy', autonomy)),
-      field('First message', prompt),
-      pics.element,
-      error,
-      h('div.fs-new-actions', {}, cancel, go),
+      h(
+        'div.stack.loose.fs-new-inner',
+        {},
+        h('h3.fs-new-title', {}, 'New session on a Factory computer'),
+        computers.length ? '' : h('p.note.warn', {}, 'There’s no Factory computer on the account yet. Make one in the Factory web app (or the Computers window), then come back.'),
+        h('div.fs-grid', {}, field('Computer', computer), field('Folder', cwd), field('Model', model), field('Effort', effort), field('Mode', mode), field('Autonomy', autonomy)),
+        h('div.stack.tight', {}, field('First message', prompt), pics.element),
+        error,
+      ),
     );
-    pane.replaceChildren(form);
+    pane.replaceChildren(form, h('div.fs-pane-foot', {}, cancel, go));
     cancel.addEventListener('click', () => {
       creating = false;
       renderList();

@@ -31,35 +31,35 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
   const text = (id: PromptId) => drafts.get(id) ?? saved(id);
   const dirty = (id: PromptId) => drafts.has(id) && norm(drafts.get(id)!) !== saved(id);
 
-  const list = h('nav.prompt-list', { 'aria-label': 'Prompts' });
+  const list = h('nav.list.prompt-list', { 'aria-label': 'Prompts' });
   const items = new Map<PromptId, HTMLButtonElement>();
   const groups = new Map<PromptGroup, PromptId[]>();
   for (const id of PROMPT_IDS) groups.set(PROMPTS[id].group, [...(groups.get(PROMPTS[id].group) ?? []), id]);
   for (const [group, ids] of groups) {
-    list.append(h('h4', {}, PROMPT_GROUPS[group]));
+    list.append(h('h4.eyebrow', {}, PROMPT_GROUPS[group]));
     for (const id of ids) {
-      const b = h('button.prompt-item', { type: 'button', onclick: () => pick(id) }, h('span', {}, PROMPTS[id].label), h('span.prompt-mark')) as HTMLButtonElement;
+      const b = h('button.list-row.prompt-item', { type: 'button', onclick: () => pick(id) }, h('span.list-main', {}, h('span.list-title', {}, PROMPTS[id].label)), h('span.list-end.prompt-mark')) as HTMLButtonElement;
       items.set(id, b);
       list.append(b);
     }
   }
 
   const heading = h('h3');
-  const status = h('span.prompt-status');
-  const used = h('p.prompt-used');
-  const ta = h('textarea.prompt-text', { spellcheck: 'false', 'aria-label': 'Prompt', maxlength: PROMPT_MAX }) as HTMLTextAreaElement;
+  const status = h('span.pill.prompt-status');
+  const used = h('p.field-hint.prompt-used');
+  const ta = h('textarea.input.prompt-text', { spellcheck: 'false', 'aria-label': 'Prompt', maxlength: PROMPT_MAX }) as HTMLTextAreaElement;
   const vars = h('div.prompt-vars');
   const warnings = h('div.prompt-warnings');
-  const reset = h('button.btn', { type: 'button', title: 'Put the office’s own wording back in the box (then Save)' }, 'Default');
+  const reset = h('button.btn.ghost', { type: 'button', title: 'Put the office’s own wording back in the box (then Save)' }, 'Default');
   const undo = h('button.btn', { type: 'button', title: 'Back to what’s saved' }, 'Undo changes');
   const save = h('button.btn.primary', { type: 'button' }, 'Save');
-  const note = h('span.grow');
+  const note = h('span.grow', {}, 'For the whole office, on every floor. A rewritten prompt is used from the next time it’s sent.');
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const el = h(
     'div.modal.prompts',
     { role: 'dialog', 'aria-label': 'Prompts' },
-    h('header', {}, h('h2', {}, 'Prompts'), close),
-    h('div.prompts-body', {}, list, h('section.prompt-edit', {}, h('div.prompt-head', {}, heading, status), used, ta, vars, warnings)),
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Prompts'), h('p.sub', {}, 'What the office tells workers by itself. GitHub and GitLab floors fill in their own commands.')), close),
+    h('div.split.prompts-body', {}, list, h('section.stack.tight.prompt-edit', {}, h('div.prompt-head', {}, heading, status), used, ta, vars, warnings)),
     h('footer', {}, note, reset, undo, save),
   );
 
@@ -81,7 +81,7 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
     if (!ta.value.trim() && !def.optional) lines.push('It can’t be empty: write something, or put the default back.');
     for (const name of inText) if (!(name in def.vars)) lines.push(`{{${name}}} isn’t filled in here, so it’s sent just as it’s written.`);
     for (const name of def.needs ?? []) if (!inText.includes(name)) lines.push(`The office counts on {{${name}}} (${def.vars[name].toLowerCase()}): without it the worker isn’t told.`);
-    warnings.replaceChildren(...lines.map((l) => h('p', {}, l)));
+    warnings.replaceChildren(...lines.map((l) => h('p.note.warn', {}, l)));
   };
 
   const paint = () => {
@@ -95,15 +95,14 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
     vars.replaceChildren(
       ...(names.length
         ? [
-            h('span.prompt-vars-head', {}, 'Placeholders (click one to put it in):'),
-            ...names.map(([name, desc]) => h('button.prompt-var', { type: 'button', title: desc, onclick: () => insert(`{{${name}}}`) }, h('code', {}, `{{${name}}}`), h('small', {}, desc))),
+            h('div.eyebrow.prompt-vars-head', {}, 'Placeholders', h('span.prompt-vars-hint', {}, 'Click one to put it in')),
+            h('div.chips', {}, ...names.map(([name, desc]) => h('button.chip.prompt-var', { type: 'button', title: desc, onclick: () => insert(`{{${name}}}`) }, h('code', {}, `{{${name}}}`), h('small', {}, desc)))),
           ]
-        : [h('span.prompt-vars-head', {}, 'No placeholders: it’s sent just as it’s written.')]),
+        : [h('p.field-hint', {}, 'No placeholders: it’s sent just as it’s written.')]),
     );
     reset.toggleAttribute('disabled', norm(ta.value) === def.text);
     undo.classList.toggle('hidden', !dirty(current));
     save.toggleAttribute('disabled', !dirty(current));
-    note.textContent = 'For the whole office, on every floor: GitHub and GitLab floors fill in their own commands. A rewritten prompt is used from the next time it’s sent.';
     paintItems();
     paintWarnings();
   };

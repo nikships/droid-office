@@ -6,6 +6,19 @@ import { H, Minesweeper, W } from './minesweeper';
 const FILL = 0.8;
 
 /**
+ * The bar under a game's screen: its name, the controls as keycaps, and Stop playing. `tips` pairs
+ * each action with its keys.
+ */
+export function arcadeBar(name: string, tips: [keys: string[], action: string][], stop: HTMLElement): HTMLElement {
+  return h('div.arcade-bar', {}, h('span.arcade-name', {}, name), h('span.arcade-tips', {}, ...tips.map(([keys, action]) => h('span.arcade-tip', {}, ...keys.map((k) => h('span.key', {}, k)), action))), stop);
+}
+
+/** Stop playing, with the Esc that does the same. */
+export function stopButton(): HTMLButtonElement {
+  return h('button.btn.sm', { type: 'button' }, 'Stop playing', h('span.key', {}, 'Esc'));
+}
+
+/**
  * Glides the camera up to a screen in the office while you use it, and back after. The camera looks
  * straight at the screen, so whatever is laid over it on the page is a plain centered box (see `box`).
  */
@@ -93,8 +106,12 @@ export class Arcade {
     // A finished game stays up on the monitor until the next player sits down to a fresh one.
     if (game.state === 'won' || game.state === 'lost') game.reset();
     const board = h('canvas', { 'aria-label': 'Minesweeper board' });
-    const stop = h('button.btn', { type: 'button' }, '✕ Stop playing');
-    const box = h('div.arcade', { role: 'dialog', 'aria-label': 'Minesweeper' }, h('div.arcade-screen', {}, board), h('div.arcade-bar', {}, h('span', {}, 'Minesweeper'), h('span.tip', {}, 'Click to dig · right-click to flag'), stop));
+    const stop = stopButton();
+    const tips: [string[], string][] = [
+      [['Click'], 'dig'],
+      [['Right-click'], 'flag'],
+    ];
+    const box = h('div.arcade', { role: 'dialog', 'aria-label': 'Minesweeper' }, h('div.arcade-screen', {}, board), arcadeBar('Minesweeper', tips, stop));
 
     // Where the mouse is, in the game's 960×540.
     const spot = (e: MouseEvent) => ({ x: (e.offsetX * W) / board.clientWidth, y: (e.offsetY * H) / board.clientHeight });
