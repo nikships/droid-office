@@ -181,18 +181,8 @@ test('standing at a board or a place uses its spot, stepping out of anything in 
   );
 });
 
-test('camera presets sit behind you in third person and look ahead in first', () => {
-  for (const facing of [0, Math.PI / 2, -2]) {
-    const third = cameraPose('third', facing);
-    assert.equal(third.view, 'third');
-    // updateCamera puts the camera at (sin camYaw, cos camYaw) from you: the opposite of where you face.
-    assert.ok(Math.abs(Math.sin(third.camYaw) + Math.sin(facing)) < 1e-9);
-    assert.ok(Math.abs(Math.cos(third.camYaw) + Math.cos(facing)) < 1e-9);
-  }
-  assert.deepEqual(cameraPose('first', 0), { view: 'first', camYaw: -Math.PI, lookPitch: -0.08 });
-  assert.ok(cameraPose('close', 0).camDist! < cameraPose('third', 0).camDist!);
-  assert.ok(cameraPose('wide', 0).camDist! > cameraPose('third', 0).camDist!);
-  assert.ok(cameraPose('wide', 0).camPitch! > cameraPose('third', 0).camPitch!);
+test('the first camera preset looks ahead, level', () => {
+  assert.deepEqual(cameraPose('first', 0), { camYaw: -Math.PI, lookPitch: -0.08 });
 });
 
 function raw(over: Partial<RawState> = {}): RawState {
@@ -203,7 +193,7 @@ function raw(over: Partial<RawState> = {}): RawState {
       { id: 'f2', name: 'website', waiting: 0 },
     ],
     riding: false,
-    player: { x: 1.23456, y: 0, z: -2.0049, facing: Math.PI * 3, lookPitch: -0.2049, view: 'first', seat: null, enabled: true, walking: false, climbing: false },
+    player: { x: 1.23456, y: 0, z: -2.0049, facing: Math.PI * 3, lookPitch: -0.2049, seat: null, enabled: true, walking: false, climbing: false },
     camera: { x: 1.23456, y: 1.4, z: -2.0049 },
     using: null,
     modals: [],
@@ -314,8 +304,7 @@ function fakeOffice() {
       setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, enabled: true } }), 40);
     },
     setCamera: (pose) => {
-      log.push(`camera ${pose.view} ${pose.camDist ?? ''}`);
-      s.raw = { ...s.raw, player: { ...s.raw.player, view: pose.view } };
+      log.push(`camera ${pose.lookPitch}`);
     },
     frames: () => s.frames++,
     wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
@@ -393,9 +382,9 @@ test('open runs a ☰ command by id, closeAll shuts every window, camera picks a
   await assert.rejects(office.open('upgrade'), /isn't offered here/);
   await assert.rejects(office.open('decor'), /can't be used now: no walls up here/);
   assert.equal((await office.open('roof')).floor?.id, ROOF, 'the roof is a ride');
-  assert.equal((await office.camera('wide')).player.view, 'third');
-  await assert.rejects(office.camera('fisheye' as 'wide'), /camera takes one of first, third, close, wide/);
-  assert.deepEqual(log, ['run issues', 'closeAll', `ride ${ROOF}`, 'camera third 14']);
+  await office.camera('first');
+  await assert.rejects(office.camera('third' as 'first'), /camera takes one of first, not "third"/);
+  assert.deepEqual(log, ['run issues', 'closeAll', `ride ${ROOF}`, 'camera -0.08']);
   assert.ok(office.list().some((t) => t.id === 'desk-1'));
   assert.equal(s.raw.floor, ROOF);
 });

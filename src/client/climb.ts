@@ -117,11 +117,9 @@ export class Climber {
     p.pos.y = THREE.MathUtils.clamp(p.pos.y, 0, LADDER_TOP);
     this.state = { kind: 'ladder', auto: 0, waiting: false, rung: Math.round(p.pos.y / 0.3), off: null, bonked: false };
     p.facing = -Math.PI / 2;
-    if (p.view === 'first') {
-      // Face the rungs, looking up them.
-      p.camYaw = Math.PI / 2;
-      p.lookPitch = 0.45;
-    }
+    // Face the rungs, looking up them.
+    p.camYaw = Math.PI / 2;
+    p.lookPitch = 0.45;
     p.moving = false;
     p.rig = (dt) => this.ladderStep(dt);
     this.hooks.sound('grab');
@@ -225,10 +223,8 @@ export class Climber {
       p.pos.y = THREE.MathUtils.lerp(s.off.y, 0, e) + Math.sin(Math.PI * k) * 0.12;
       p.pos.z += (LADDER.z - p.pos.z) * Math.min(1, dt * 12);
       p.facing = THREE.MathUtils.lerp(-Math.PI / 2, s.off.facing, e);
-      if (p.view === 'first') {
-        p.camYaw = THREE.MathUtils.lerp(s.off.yaw, s.off.toYaw, e);
-        p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
-      }
+      p.camYaw = THREE.MathUtils.lerp(s.off.yaw, s.off.toYaw, e);
+      p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
       p.moving = k < 1;
       if (k >= 1) {
         p.pos.y = 0;
@@ -349,11 +345,9 @@ export class Climber {
       // From facing round the pole to facing out, away from it.
       const along = s.angle + Math.PI / 2;
       p.facing = along + Math.atan2(Math.sin(spot.open - along), Math.cos(spot.open - along)) * out;
-      if (p.view === 'first') {
-        const yaw = p.facing - Math.PI;
-        p.camYaw += Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw)) * Math.min(1, dt * 10);
-        p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
-      }
+      const yaw = p.facing - Math.PI;
+      p.camYaw += Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw)) * Math.min(1, dt * 10);
+      p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
       p.moving = out > 0 && k < 1;
       this.rush = Math.max(0, this.rush - dt * 4);
       if (k >= 1) {
@@ -405,7 +399,6 @@ export class Climber {
     const p = this.player;
     const facing = angle + Math.PI / 2;
     p.facing = facing;
-    if (p.view !== 'first') return;
     const yaw = facing + 1.25 - Math.PI;
     const d = Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw));
     p.camYaw += d * Math.min(1, dt * 10);

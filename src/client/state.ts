@@ -91,15 +91,12 @@ export function saveProfile(p: Profile) {
   }
 }
 
-export type ViewMode = 'first' | 'third';
-
 /** The panels you can show or hide on screen, from the ☰ menu. */
 export type HudPanel = 'workers' | 'floor';
 /** The workers show by default; the rest wait in the ☰ menu until turned on. */
 export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, floor: false };
 
 export interface Settings {
-  view: ViewMode;
   /** Office sounds, 0–1. */
   volume: number;
   muted: boolean;
@@ -176,10 +173,9 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
+  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
-    if (saved?.view === 'first' || saved?.view === 'third') s.view = saved.view;
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
     if (typeof saved?.muted === 'boolean') s.muted = saved.muted;
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));

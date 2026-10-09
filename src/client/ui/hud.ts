@@ -88,8 +88,7 @@ export function openHelp() {
       [
         ['Walk', 'Hold Shift to run', ['W', 'A', 'S', 'D']],
         ['Jump', '', ['Space']],
-        ['Look around', 'First person: click to capture the mouse, Esc frees it', ['Mouse']],
-        ['Orbit and zoom', 'Third person. Switch views in ⚙️ Settings, in the ☰ menu', ['Drag', 'or', 'Wheel']],
+        ['Look around', 'Click to capture the mouse, Esc frees it', ['Mouse']],
         ['Next worker that needs you', 'Whoever has waited longest. Arrows at the screen’s edge point to the ones out of sight', ['N']],
         ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the rooftop bar too', ['E']],
       ],

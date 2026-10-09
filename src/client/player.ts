@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { FLOOR, SLAB, STREET_Y, WALL_T, type SeatPlace } from '../shared/layout';
-import type { ViewMode } from './state';
+import { STREET_Y, type SeatPlace } from '../shared/layout';
 import type { Collider } from './world/office';
 
 const RADIUS = 0.32;
@@ -13,7 +12,7 @@ const RUN = 7.5;
 const JUMP_V = 6.4;
 
 export const GRAVITY = 18;
-/** Camera height above your feet in first person (the Person's eyes). */
+/** Camera height above your feet (the Person's eyes). */
 export const EYE_HEIGHT = 1.4;
 /** The Person's hips above their feet, standing. Sitting puts them on the seat, and your eyes move with them. */
 export const HIPS = 0.42;
@@ -28,7 +27,6 @@ const DRAG_LOOK_SPEED = 0.005;
  */
 const SETTLE_REST = 100;
 const SETTLE_MAX = 150;
-const CENTER = new THREE.Vector2(0, 0);
 
 export class PlayerController {
   pos = new THREE.Vector3();
@@ -38,11 +36,8 @@ export class PlayerController {
   grounded = true;
   /** Heading of the camera. You look along (-sin, -cos) of it on the XZ plane. */
   camYaw = Math.PI * 0.15;
-  camPitch = 0.42;
-  camDist = 7.5;
-  /** First-person look up (+) / down (-). */
+  /** Look up (+) / down (-). */
   lookPitch = -0.08;
-  view: ViewMode = 'first';
   /** Walk cycle phase, shared by the camera bob and the first-person hands. */
   walkPhase = 0;
   private bob = 0;
@@ -74,14 +69,11 @@ export class PlayerController {
    * frame, with no walking, falling or bumping into things, and the camera follows.
    */
   rig: ((dt: number) => void) | null = null;
-  /**
-   * A click (not a drag) on the scene, in normalized device coordinates.
-   * In first person it is always the crosshair, (0, 0).
-   */
-  onClick: ((ndc: THREE.Vector2) => void) | null = null;
+  /** A click (not a drag) on the scene, at the crosshair. */
+  onClick: (() => void) | null = null;
   private keys = new Set<string>();
   private drag: { x: number; y: number; moved: number } | null = null;
-  /** Set when this browser won't lock the pointer; first person falls back to drag-to-look. */
+  /** Set when this browser won't lock the pointer; looking around falls back to drag-to-look. */
   private lockFailed = false;
   private lockPending = false;
   private everLocked = false;
@@ -147,14 +139,14 @@ export class PlayerController {
 
     dom.addEventListener('pointerdown', (e) => {
       if (!this.enabled) return;
-      if (this.view === 'first' && e.pointerType === 'mouse' && !this.lockFailed) {
+      if (e.pointerType === 'mouse' && !this.lockFailed) {
         if (this.locked) {
-          if (e.button === 0) this.onClick?.(CENTER);
+          if (e.button === 0) this.onClick?.();
           return;
         }
         this.lock();
       }
-      // Drag to orbit (third person) or to look around (first person without pointer lock).
+      // Drag to look around, without pointer lock.
       this.drag = { x: e.clientX, y: e.clientY, moved: 0 };
     });
     window.addEventListener('pointerup', (e) => {
@@ -162,11 +154,7 @@ export class PlayerController {
       this.drag = null;
       // A click that captured the mouse is not also a click on the world.
       if (!d || d.moved > 5 || !this.enabled || this.locked || this.lockPending || e.target !== dom) return;
-      if (this.view === 'first') this.onClick?.(CENTER);
-      else {
-        const r = dom.getBoundingClientRect();
-        this.onClick?.(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1));
-      }
+      this.onClick?.();
     });
     window.addEventListener('pointermove', (e) => {
       const now = performance.now();
@@ -192,11 +180,7 @@ export class PlayerController {
       this.drag.x = e.clientX;
       this.drag.y = e.clientY;
       this.drag.moved += Math.abs(dx) + Math.abs(dy);
-      if (this.view === 'first') this.look(dx * DRAG_LOOK_SPEED, dy * DRAG_LOOK_SPEED);
-      else {
-        this.camYaw -= dx * 0.006;
-        this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.004, 0.05, 1.3);
-      }
+      this.look(dx * DRAG_LOOK_SPEED, dy * DRAG_LOOK_SPEED);
     });
     document.addEventListener('pointerlockchange', () => {
       this.lockPending = false;
@@ -218,14 +202,7 @@ export class PlayerController {
       if (!this.enabled) this.unlock();
     });
     document.addEventListener('pointerlockerror', () => this.refused());
-    dom.addEventListener(
-      'wheel',
-      (e) => {
-        if (this.view === 'third') this.camDist = THREE.MathUtils.clamp(this.camDist + e.deltaY * 0.01, 2.5, 16);
-        e.preventDefault();
-      },
-      { passive: false },
-    );
+    dom.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
   }
 
   get locked(): boolean {
@@ -239,21 +216,7 @@ export class PlayerController {
 
   /** Whether clicking the scene will capture the mouse for looking around. */
   get canLock(): boolean {
-    return this.view === 'first' && !this.lockFailed && typeof this.dom.requestPointerLock === 'function';
-  }
-
-  setView(view: ViewMode) {
-    if (view === this.view) return;
-    if (view === 'first') {
-      this.lookPitch = -0.08;
-      this.facing = this.camYaw + Math.PI;
-    } else {
-      // Start the orbit camera behind where you were looking.
-      this.camYaw = this.facing - Math.PI;
-      this.unlock();
-    }
-    this.view = view;
-    this.updateCamera(true);
+    return !this.lockFailed && typeof this.dom.requestPointerLock === 'function';
   }
 
   unlock() {
@@ -334,7 +297,7 @@ export class PlayerController {
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy, -1.45, 1.45);
   }
 
-  /** Sits you down in `place`, facing the way it does. In first person you look out from it; in third the camera stays put. */
+  /** Sits you down in `place`, facing the way it does, and you look out from it. */
   sit(place: SeatPlace) {
     this.seat = place;
     this.pos.set(place.x, place.y, place.z);
@@ -344,10 +307,8 @@ export class PlayerController {
     this.stepOffset = 0;
     this.bob = 0;
     this.facing = place.rotY;
-    if (this.view === 'first') {
-      this.camYaw = place.rotY - Math.PI;
-      this.lookPitch = -0.08;
-    }
+    this.camYaw = place.rotY - Math.PI;
+    this.lookPitch = -0.08;
   }
 
   /** Gets you up off your seat onto the floor beside it: out in front (or behind), else wherever there's room. */
@@ -425,7 +386,7 @@ export class PlayerController {
       this.onPathEnd?.('cancelled');
     }
     if (this.path && this.enabled) this.followPath(dt);
-    if (this.view === 'first') this.facing = Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI));
+    this.facing = Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI));
     if (steering) {
       const len = Math.hypot(ix, iz);
       ix /= len;
@@ -441,12 +402,6 @@ export class PlayerController {
       const speed = (k.has('ShiftLeft') || k.has('ShiftRight') ? RUN : WALK) * this.speedBoost;
       this.tryMove(this.pos.x + dx * speed * dt, this.pos.z);
       this.tryMove(this.pos.x, this.pos.z + dz * speed * dt);
-      if (this.view === 'third') {
-        const want = Math.atan2(dx, dz);
-        let diff = want - this.facing;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        this.facing += diff * Math.min(1, dt * 14);
-      }
     }
 
     // Never below the street: past the edge of the grass there's nothing else to stand on.
@@ -482,7 +437,7 @@ export class PlayerController {
     this.updateCamera();
   }
 
-  /** A step along `path`: toward its next corner, turning (and in first person, looking) the way you go. */
+  /** A step along `path`: toward its next corner, turning to look the way you go. */
   private followPath(dt: number) {
     const path = this.path!;
     const next = path[0];
@@ -508,8 +463,7 @@ export class PlayerController {
     this.moving = true;
     const want = Math.atan2(dx, dz);
     const ease = Math.min(1, dt * 8);
-    if (this.view === 'first') this.camYaw += Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease;
-    else this.facing += Math.atan2(Math.sin(want - this.facing), Math.cos(want - this.facing)) * ease;
+    this.camYaw += Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease;
     // Up against something the map didn't know about: give up rather than walk on the spot.
     this.stuckFor = Math.hypot(this.pos.x - x0, this.pos.z - z0) < step * 0.2 ? this.stuckFor + dt : 0;
     if (this.stuckFor > 1) {
@@ -518,49 +472,9 @@ export class PlayerController {
     }
   }
 
-  updateCamera(snap = false) {
-    if (this.view === 'first') {
-      this.camera.position.set(this.pos.x, this.pos.y + EYE_HEIGHT + this.bob + this.stepOffset + this.lift, this.pos.z);
-      this.camera.rotation.set(this.lookPitch, this.camYaw, 0);
-      this.shake();
-      return;
-    }
-    const target = new THREE.Vector3(this.pos.x, this.pos.y + this.stepOffset + this.lift + 1.3, this.pos.z);
-    const off = new THREE.Vector3(Math.sin(this.camYaw) * Math.cos(this.camPitch), Math.sin(this.camPitch), Math.cos(this.camYaw) * Math.cos(this.camPitch)).multiplyScalar(this.camDist);
-    const cam = target.clone().add(off);
-    // Keep the camera on your side of the outside walls, so they never block the view: inside the
-    // room while you're in the office, out of the building while you're outside or on the balcony.
-    // And under the loft, its roof or the garage ceiling.
-    const m = 0.4;
-    // On the ladder or a pole you can be down in a shaft under the floor, but you're still indoors.
-    const rigged = !!this.rig;
-    const indoors = (rigged || this.pos.y > -SLAB - 0.5) && this.pos.x > FLOOR.minX && this.pos.x < FLOOR.maxX && this.pos.z > FLOOR.minZ && this.pos.z < FLOOR.maxZ;
-    if (indoors) {
-      cam.x = THREE.MathUtils.clamp(cam.x, FLOOR.minX + m, FLOOR.maxX - m);
-      cam.z = THREE.MathUtils.clamp(cam.z, FLOOR.minZ + m, FLOOR.maxZ - m);
-    }
-    const floorY = rigged ? 0 : Math.max(groundAt(this.colliders, this.pos.x, this.pos.z, this.pos.y), this.street);
-    const roof = ceilingAt(this.colliders, cam.x, cam.z, floorY) - 0.3;
-    cam.y = THREE.MathUtils.clamp(cam.y, floorY + 0.6, Math.max(floorY + 0.6, Math.min(floorY + 3.5, roof)));
-    // Down on the street, stay under the garage ceiling so its edge never cuts across the view.
-    const garage = this.street - STREET_Y - SLAB;
-    if (this.pos.y < garage - 1 && !rigged) cam.y = Math.min(cam.y, Math.max(floorY + 0.6, garage - 0.3));
-    // How far you are out past each outside wall (west, east, north, south), and how far inside them the camera is.
-    const e = WALL_T + m;
-    const out = [FLOOR.minX - WALL_T - this.pos.x, this.pos.x - FLOOR.maxX - WALL_T, FLOOR.minZ - WALL_T - this.pos.z, this.pos.z - FLOOR.maxZ - WALL_T];
-    const side = out.indexOf(Math.max(...out));
-    const camIn = Math.min(cam.x - (FLOOR.minX - e), FLOOR.maxX + e - cam.x, cam.z - (FLOOR.minZ - e), FLOOR.maxZ + e - cam.z) > 0;
-    // Outside, back the camera out through the wall you're standing beyond: above the garage always,
-    // and down in it where it's walled in (the west and north sides).
-    if (!indoors && out[side] > 0 && camIn && (cam.y > garage || side === 0 || side === 2)) {
-      if (side === 0) cam.x = FLOOR.minX - e;
-      else if (side === 1) cam.x = FLOOR.maxX + e;
-      else if (side === 2) cam.z = FLOOR.minZ - e;
-      else cam.z = FLOOR.maxZ + e;
-    }
-    if (snap) this.camera.position.copy(cam);
-    else this.camera.position.lerp(cam, 0.25);
-    this.camera.lookAt(target);
+  updateCamera() {
+    this.camera.position.set(this.pos.x, this.pos.y + EYE_HEIGHT + this.bob + this.stepOffset + this.lift, this.pos.z);
+    this.camera.rotation.set(this.lookPitch, this.camYaw, 0);
     this.shake();
   }
 

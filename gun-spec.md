@@ -20,8 +20,7 @@ collect it and its owned worktrees and branches are deleted.
   or basketball, and while climbing or hanging a picture.
 - While drawn, the crosshair turns red and the hint bar reads
   `Click: fire · 7: holster`.
-- First person shows the gun in `Hands`; third person shows it in your
-  character's raised right hand (same pattern as the mug prop).
+- The gun shows in `Hands`.
 - `1-6` are emotes, so `7` is free.
 
 ### Firing

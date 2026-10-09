@@ -15,7 +15,7 @@ export const AUTOMATION_KEYS = ['E', 'P', 'R', 'X', 'B', 'C', 'O'] as const;
 export type AutomationKey = (typeof AUTOMATION_KEYS)[number];
 
 /** Fixed camera angles, relative to the way you face, so screenshots line up between runs. */
-export const CAMERA_PRESETS = ['first', 'third', 'close', 'wide'] as const;
+export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
@@ -191,26 +191,13 @@ export function pitchToward(eye: Point3, to: Point3): number {
 }
 
 export interface CameraPose {
-  view: 'first' | 'third';
   camYaw: number;
-  lookPitch?: number;
-  camPitch?: number;
-  camDist?: number;
+  lookPitch: number;
 }
 
-/** A preset's camera for someone facing `facing`: third person sits behind you (see PlayerController.updateCamera). */
-export function cameraPose(preset: CameraPreset, facing: number): CameraPose {
-  const camYaw = facing - Math.PI;
-  switch (preset) {
-    case 'first':
-      return { view: 'first', camYaw, lookPitch: -0.08 };
-    case 'third':
-      return { view: 'third', camYaw, camPitch: 0.42, camDist: 7.5 };
-    case 'close':
-      return { view: 'third', camYaw, camPitch: 0.3, camDist: 3.5 };
-    case 'wide':
-      return { view: 'third', camYaw, camPitch: 1, camDist: 14 };
-  }
+/** A preset's camera for someone facing `facing`: looking straight ahead, level. */
+export function cameraPose(_preset: CameraPreset, facing: number): CameraPose {
+  return { camYaw: facing - Math.PI, lookPitch: -0.08 };
 }
 
 /** What main.ts knows at the moment of a snapshot, before rounding and naming. */
@@ -219,7 +206,7 @@ export interface RawState {
   floors: Pick<FloorInfo, 'id' | 'name' | 'waiting'>[];
   /** On the way to another floor (the elevator, the ladder, a pole). */
   riding: boolean;
-  player: { x: number; y: number; z: number; facing: number; lookPitch: number; view: 'first' | 'third'; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
+  player: { x: number; y: number; z: number; facing: number; lookPitch: number; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
   camera: { x: number; y: number; z: number };
   /** What E would use where you stand. */
   using: Interactable | null;
@@ -244,7 +231,6 @@ export interface Snapshot {
     z: number;
     facing: number;
     lookPitch: number;
-    view: 'first' | 'third';
     seat: string | null;
     controls: boolean;
     walking: boolean;
@@ -285,7 +271,6 @@ export function buildSnapshot(raw: RawState): Snapshot {
       z: r2(p.z),
       facing: angle(p.facing),
       lookPitch: r2(p.lookPitch),
-      view: p.view,
       seat: p.seat,
       controls: p.enabled,
       walking: p.walking,
@@ -338,7 +323,7 @@ export interface AutomationHost {
   aim(face: Point3): void;
   /** Walks you to `at` the way the palette's Shift+Enter does; `done` says how it ended. */
   walk(at: Point3, label: string, done: (why: 'arrived' | 'cancelled' | 'stuck') => void): void;
-  /** What E would use where you stand, by distance (what third person picks). */
+  /** What E would use where you stand, by distance (no crosshair involved). */
   near(): Interactable | null;
   /** Presses `key` at `spot`, as if you were facing it. */
   use(spot: Interactable, key: AutomationKey): void;

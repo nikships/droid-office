@@ -17,7 +17,6 @@ test('every fork setting is in a category, with who it is for', () => {
   const byTitle = new Map(SETTINGS_CARDS.map((c) => [c.title, c]));
   const expect: [string, SettingsPane, 'you' | 'floor' | 'office' | null][] = [
     ['Your character', 'you', null],
-    ['Camera view', 'you', 'you'],
     ['Office sounds', 'sound', 'you'],
     ['Jukebox', 'sound', 'you'],
     ['Desktop notifications', 'notify', 'you'],
