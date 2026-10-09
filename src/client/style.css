@@ -560,27 +560,21 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 /* The badge sits on the title's line, right after it. */
 .settings .group-label b { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .setting-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
-/* A setting with a form or picker under its title: the label and right-hand control on top, the rest full width below. */
-.group-row.setting-wide { flex-wrap: wrap; row-gap: var(--space-3); }
-.group-row > .setting-below { flex: 1 0 100%; max-width: none; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.setting-below > .row { flex-wrap: wrap; }
-.setting-grow { flex: 1; min-width: 0; }
 .setting-meta { font: 400 11px/1.5 var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .setting-desc { font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
 .setting-number { width: 88px; flex: none; }
 .input-group > .input.setting-number { flex: none; }
 .setting-error { margin: 0; max-height: 180px; overflow: auto; padding: var(--space-2) var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12px/1.5 var(--font-mono); color: var(--danger); background: var(--danger-muted); border-left: 2px solid var(--danger); border-radius: 0 var(--radius) var(--radius) 0; }
 .settings .model-choice { margin: 0; }
-.scope { flex: none; padding: 1px 6px; font: 500 9.5px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); color: var(--text-secondary); cursor: default; }
-.scope.you { color: var(--info); border-color: rgba(90, 169, 230, .4); }
-.scope.floor { color: var(--success); border-color: rgba(60, 207, 145, .4); }
-.scope.office { color: var(--accent); border-color: rgba(238, 96, 24, .4); }
+.scope { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; font: 500 9.5px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-xs); color: var(--text-tertiary); cursor: default; }
+.scope::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 1px; background: currentColor; }
+.scope.you::before { background: var(--info); }
+.scope.floor::before { background: var(--success); }
+.scope.office::before { background: var(--accent); }
 @media (max-width: 720px) {
   .settings-tab { flex: none; width: auto; white-space: nowrap; }
   .settings-tab.on { box-shadow: inset 0 -2px 0 var(--accent); }
   .settings-pane { padding: var(--space-4); gap: var(--space-5); }
-  .group-row:has(> .setting-control) { flex-wrap: wrap; }
-  .group-row > .setting-control { max-width: none; }
 }
 /* The ✕: always the last thing in a header, the size of a header button. */
 .close { flex: none; width: var(--control-h); min-width: var(--control-h); height: var(--control-h); padding: 0; justify-content: center; letter-spacing: 0; font-size: 13px; }
@@ -610,7 +604,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.gh-window.issue footer .model-hint { flex: 0 1 auto; max-width: 150px; }
 .webhook { display: flex; gap: 8px; }
 .webhook input[type=text] { flex: 1; min-width: 0; }
-.outside-now { font: 500 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text); white-space: nowrap; }
+.outside-now { display: inline-flex; align-items: center; gap: var(--space-2); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.outside-now .outside-icon { font-size: 14px; line-height: 1; }
 
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .swatch { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-strong); cursor: pointer; }

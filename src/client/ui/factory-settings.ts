@@ -28,13 +28,13 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const keyInput = h('input.input', { type: 'password', placeholder: 'fk-…', 'aria-label': 'Factory API key', spellcheck: 'false', autocomplete: 'new-password' }) as HTMLInputElement;
   const connect = h('button.btn.primary', { type: 'button' }, 'Connect') as HTMLButtonElement;
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
-  const form = h('div.row', {}, h('div.input-group.setting-grow', {}, keyInput, connect), cancel);
+  const form = h('div.row.wrap', {}, h('div.input-group.grow', {}, keyInput, connect), cancel);
   const intro = h(
     'small.factory-intro',
     {},
-    'Connecting shows your Factory cloud computers, Droid sessions and credits, CI automations and AutoWiki in the office, and lets you act on them from here. Make a key at ',
+    'Connecting shows your Factory cloud computers, sessions, credits, CI and AutoWiki in the office, and lets you act on them here. Make a key at ',
     h('a', { href: FACTORY_KEYS_URL, target: '_blank', rel: 'noopener noreferrer' }, 'app.factory.ai/settings/api-keys'),
-    '. It stays on the office’s machine and is never shown again.',
+    '; it stays on this machine and is never shown again.',
   );
   const who = h('span.factory-who');
   const facts = h('span.setting-meta');

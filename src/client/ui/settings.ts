@@ -14,15 +14,15 @@ import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 
 const VIEWS: [ViewMode, string, string][] = [
-  ['first', 'First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
-  ['third', 'Third person', 'Follow your character from behind. Drag to orbit the camera, scroll to zoom, and click things to use them.'],
+  ['first', 'First person', 'See through your own eyes. Click the office to look around and click things to use them; Esc frees the mouse.'],
+  ['third', 'Third person', 'Follow your character from behind. Drag to orbit, scroll to zoom, and click things to use them.'],
 ];
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
 export type { SettingsPane };
 
-/** What a settings row holds besides its title: a description under it, a control on its right, and anything wide (a form, a picker) under both. */
+/** What a settings row holds besides its title: a description under it, a control on its right, and anything wide (a form, a picker) full width under the label. */
 interface RowParts {
   desc?: Node | null;
   control?: Node | null;
@@ -33,10 +33,10 @@ interface RowParts {
 const setting = (title: string, scope: SettingsScope | null, { desc, control, below = [] }: RowParts) =>
   h(
     'div.group-row',
-    { class: below.length ? 'setting-wide' : '' },
+    { class: below.length ? 'block' : '' },
     h('div.group-label', {}, h('b', {}, h('span', {}, title), scope && h('span.scope', { class: scope, title: SETTINGS_SCOPE[scope][1] }, SETTINGS_SCOPE[scope][0])), desc),
     control ? h('div.setting-control', {}, control) : null,
-    below.length ? h('div.setting-below', {}, ...below) : null,
+    ...below,
   );
 
 /** A card from SETTINGS_CARDS, so a setting can't show up without a category and a scope. */
@@ -91,6 +91,12 @@ function radios<T>(label: string, options: readonly (readonly [T, string])[], no
   };
   return { row, paint };
 }
+
+/** The sky and clock outside as a quiet value: its leading weather glyph spaced from the words. */
+const outsideNow = (now: string) => {
+  const icon = now.match(/^\p{Extended_Pictographic}\uFE0F?/u)?.[0] ?? '';
+  return h('span.outside-now', {}, icon ? h('span.outside-icon', { 'aria-hidden': 'true' }, icon) : null, h('span', {}, now.slice(icon.length)));
+};
 
 /** A worker choice in words: "Droid on Opus 5.5 · High", or Droid's own default. */
 function choiceLabel(c: AgentChoice): string {
@@ -212,7 +218,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
         ? 'This browser can’t show notifications from the office here. They need https or localhost (an SSH tunnel counts).'
         : perm === 'denied'
           ? 'Your browser blocks notifications from the office. Allow them in the site settings (the icon left of the address), then open this again.'
-          : 'When a worker needs input or finishes while you’re in another tab or app, you get a notification. Click it to jump to that worker’s terminal. The tab title counts the workers waiting on someone either way.';
+          : 'When a worker needs input or finishes while you’re elsewhere, you get a notification; click it to jump to that worker’s terminal. The tab title counts the waiting workers either way.';
   };
   paintNotify();
 
@@ -264,7 +270,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(now);
     agentNote.textContent =
-      'What a worker starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a model. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
+      'What a worker starts on when nobody picks one. The hire, queue, meeting and ask windows remember their own picks per desk.' +
       (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.');
   };
   paintAgent();
@@ -283,9 +289,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const paintPrompts = () => {
     const n = rewrittenPrompts();
     promptsOpen.textContent = 'Edit prompts…';
-    promptsNote.textContent =
-      'What Hand to a worker, Review and the boards’ other buttons tell a worker, the note the queue adds to a task, the board agents’ briefs, the meeting room’s parts and the sign writer’s instructions. ' +
-      (n ? `${n} of them rewritten.` : 'All as the office wrote them.');
+    const status = n ? `${n} of them rewritten.` : 'All as the office wrote them.';
+    promptsNote.textContent = `What the office tells workers for you: handoffs, reviews, board buttons, the queue’s task note, board agents, meetings and the sign writer. ${status}`;
   };
   paintPrompts();
 
@@ -305,8 +310,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
         ? `No limit: the office hires a worker for every free seat. ${m.workers} ${m.workers === 1 ? 'is' : 'are'} here now, across every floor.`
         : `At most ${m.limit} worker${m.limit === 1 ? '' : 's'} at once, across every floor (${m.workers} now), shells and board agents too. Hiring past that is refused.`;
     const from = m.set ? ` Set by ${m.set.by} ${timeAgo(m.set.at)}.` : '';
-    const cap = m.ceiling ? ` The office was started with --max-workers ${m.ceiling}, so it can't go any higher.` : '';
-    limitNote.textContent = now + from + cap;
+    limitNote.textContent = now + from;
   };
   paintLimit();
   const saveLimit = () => {
@@ -349,9 +353,9 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       ),
     );
     const now = on
-      ? 'Once a worker’s pull request merges, it goes home as soon as it isn’t working or waiting on you and nobody has its terminal open, and its worktree and branch are deleted. A worktree with uncommitted changes, or commits that aren’t on the remote, is kept.'
-      : 'A worker whose pull request merged stays at its desk, outlined in purple, until someone sends it home. Turned on, the ones already merged go too.';
-    leaveNote.textContent = `${now} It’s the same for everyone in the building${by ? `, set by ${by}${at ? ` ${timeAgo(at)}` : ''}` : ''}.`;
+      ? 'Once its pull request merges, a worker goes home when it is idle and nobody has its terminal open, and its worktree and branch are deleted. Worktrees with uncommitted or unpushed changes are kept.'
+      : 'A merged worker stays at its desk, outlined in purple, until someone sends it home. Turning this on sends the already-merged ones too.';
+    leaveNote.textContent = `${now}${by ? ` Set by ${by}${at ? ` ${timeAgo(at)}` : ``}.` : ``}`;
   };
   paintLeave();
 
@@ -359,16 +363,15 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const dirInput = h('input.input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const dirSave = h('button.btn', { type: 'button' }, 'Save');
   const dirDefault = h('button.btn.ghost', { type: 'button' }, 'Use the default');
-  const dirRow = h('div.row', {}, h('div.input-group.setting-grow', {}, dirInput, dirSave), dirDefault);
+  const dirRow = h('div.row.wrap', {}, h('div.input-group.grow', {}, dirInput, dirSave), dirDefault);
   const dirNote = desc();
   const paintDir = () => {
     const { dir, custom, by, at } = store.projectsDir;
     dirInput.value = dir;
     dirDefault.classList.toggle('hidden', !custom);
     dirNote.textContent =
-      `The elevator lists the git projects it finds in ${dir} on the office’s machine (up to four folders deep) and opens the one you pick as a floor, right where it is. Nothing is cloned or copied.` +
-      (custom && by && at ? ` Set by ${by} ${timeAgo(at)}.` : '') +
-      ' Floors you already have stay where they are when you move it.';
+      `The elevator lists the git projects in ${dir}, up to four folders deep, and opens your pick as a floor, right where it is. Nothing is cloned or copied; the floors you have stay put.` +
+      (custom && by && at ? ` Set by ${by} ${timeAgo(at)}.` : '');
   };
   paintDir();
   const saveDir = () => {
@@ -397,7 +400,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const epicInput = h('input.input', { type: 'text', placeholder: 'Epic key, e.g. EDP-168', 'aria-label': 'Jira epic for this floor', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const epicSave = h('button.btn', { type: 'button' }, 'Set epic') as HTMLButtonElement;
   const epicRemove = h('button.btn.ghost', { type: 'button' }, 'Remove epic');
-  const epicRow = h('div.row', {}, h('div.input-group.setting-grow', {}, epicInput, epicSave), epicRemove);
+  const epicRow = h('div.row.wrap', {}, h('div.input-group.grow', {}, epicInput, epicSave), epicRemove);
   const epicNote = desc();
   const epicFail = h('p.note.bad', { role: 'alert' });
   let editingJira = false;
@@ -418,7 +421,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     jiraFail.textContent = jiraError;
     jiraNote.textContent = connection
       ? `Reading ${connection.site} as ${connection.name === connection.email ? connection.email : `${connection.name} (${connection.email})`}, set up by ${connection.by} ${timeAgo(connection.at)}. The office only reads Jira; it never changes a ticket.`
-      : 'Connect the office to Jira Cloud with a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. A read-only token (scope read:jira-work) is enough. The token stays on the office’s machine and is never shown again. Each floor then picks its own epic.';
+      : 'Connect with a site, an email and an API token from https://id.atlassian.com/manage-profile/security/api-tokens — read-only (scope read:jira-work) is enough. The token stays on the office’s machine; each floor then picks its own epic.';
     const showEpic = !!connection && onFloor;
     epicCard?.classList.toggle('hidden', !showEpic);
     epicRemove.classList.toggle('hidden', !epic);
@@ -545,7 +548,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     () => store.subagents.worktree,
     (worktree) => subSet({ worktree }),
   );
-  const subTreeNote = desc('Its own worktree lets subagents change files side by side without stepping on each other, each on its own branch you can merge or hand back. A lead can still ask for the other with --worktree or --no-worktree.');
+  const subTreeNote = desc('Own worktrees let subagents change files side by side, each on a branch you can merge or hand back. A lead can still ask for the other with --worktree or --no-worktree.');
   const subWake = radios(
     'Waking the lead',
     [
@@ -555,7 +558,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     () => store.subagents.wakeLead,
     (wakeLead) => subSet({ wakeLead }),
   );
-  const subWakeNote = desc('When a subagent reports back, finishes or needs input, a lead that is resting gets a short prompt to read the news with office-workers wait. A lead that is busy is told the next time it stops.');
+  const subWakeNote = desc('When a subagent reports back, a resting lead is nudged to read the news with office-workers wait. A busy lead hears it the next time it stops.');
   const subSkill = toggle(
     'Droid skill installed',
     () => store.subagents.skill,
@@ -569,7 +572,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     subWho.row.classList.toggle('disabled', !s.on);
     subNote.textContent =
       (s.on
-        ? 'A lead runs office-workers hire to give a subagent a job. The subagent sits down at the free desk nearest its lead, with its own laptop and a terminal you can open like any worker’s, works, and reports back. Its lead reads the news, sends follow-ups and sends it home when the work is in.'
+        ? 'A lead runs office-workers hire and the subagent sits at the nearest free desk, with its own laptop and a terminal you can open. It works, reports back, and its lead sends it home when the work is in.'
         : 'Hiring is refused. Subagents already working carry on and can still report back to their leads.') + (s.by && s.at ? ` Set by ${s.by} ${timeAgo(s.at)}.` : '');
     if (!subAgentTouched) subAgent.set(subFallback());
     subAgentBack.classList.toggle('hidden', !s.agent);
@@ -582,14 +585,14 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       : !s.on
         ? 'Subagents are off, so the droid-office-subagents skill is out of ~/.factory/skills until they are back on.'
         : s.skill
-          ? `Droid workers at desks learn how to hire from the droid-office-subagents skill${s.skillPath ? ` at ${s.skillPath}` : ''}. It only applies in sessions the office started; outside Droid Office it tells droid to ignore it. The Team lead always knows from its brief.`
-          : 'The droid-office-subagents skill is not in ~/.factory/skills. Workers at desks hire when you tell them to use office-workers (office-workers help explains it), and the Team lead always knows from its brief.';
+          ? `Desk workers learn to hire from the droid-office-subagents skill${s.skillPath ? ` at ${s.skillPath}` : ``}. It only applies in office sessions; the Team lead always knows from its brief.`
+          : 'The droid-office-subagents skill is not in ~/.factory/skills. Desk workers hire when you point them at office-workers; the Team lead always knows from its brief.';
   };
   paintSubagents();
 
   // Droid Office for Android: the pairing QR code is its own window, over this one.
   const phoneOpen = h('button.btn.primary', { type: 'button' }, 'Pair a phone…');
-  const phoneNote = desc('Shows the QR code to scan with the app, the Wi-Fi and Tailscale addresses it carries, and the phones you paired, where you can forget one. A paired phone keeps working after the office restarts.');
+  const phoneNote = desc('The pairing QR code, the addresses it carries, and your paired phones, where you can forget one. A paired phone keeps working after the office restarts.');
   const phoneStatus = h('span.setting-meta', {}, 'Checking for paired phones…');
   const paintPhones = (list: PairedDevice[] | string) => {
     if (typeof list === 'string') phoneStatus.textContent = list;
@@ -610,7 +613,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       group(
         null,
         card('Office sounds', { desc: desc('Workers typing, the coffee machine, thunder, and the ding when a worker is done.'), control: soundRow }),
-        card('Jukebox', { desc: desc('The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.'), control: musicRow }),
+        card('Jukebox', { desc: desc('Everyone on the floor hears the same song, louder near the jukebox; this slider is only your volume.'), control: musicRow }),
       ),
     ],
     notify: [
@@ -628,12 +631,12 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
                     ? 'Everyone sees the same sky: the office’s clock and the live weather where it is.'
                     : 'Everyone sees the same sky: the office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.',
                 ),
-                control: h('span.outside-now', {}, outside.now),
+                control: outsideNow(outside.now),
               }),
             ),
           ]
         : []),
-      group('Jira', card('Jira', { desc: jiraNote, control: jiraActions, below: [jiraForm, jiraFail] }), epicCard),
+      group('Jira', card('Jira', { desc: jiraNote, below: [jiraForm, jiraFail, jiraActions] }), epicCard),
       group('Projects', card('Workspace folder', { desc: dirNote, below: [dirRow] })),
       group('Development', card('Source hot reload', { below: [sourceReload.element] })),
     ],
@@ -646,7 +649,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       group(
         'Hiring',
         card('Subagents', { desc: subNote, control: subOn.el }),
-        setting('Who can hire', null, { desc: desc('The Team lead at its kiosk can always hire. Desk workers can too, when they are allowed.'), control: subWho.row }),
+        setting('Who can hire', null, { desc: desc('The Team lead can always hire; desk workers too, when allowed.'), control: subWho.row }),
         setting('Subagent prompts', null, { desc: desc('What the office tells the Team lead and its subagents.'), control: subPrompts }),
       ),
       group(
