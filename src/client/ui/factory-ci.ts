@@ -23,6 +23,7 @@ import {
 import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
+import { emptyState, field, toggle } from './kit';
 import { confirmDialog } from './prompt';
 
 // The CI automations window, from the board on the north wall (world/factory-ci.ts): every Droid
@@ -67,6 +68,8 @@ export function ciEditable(w: Pick<FactoryCiWorkflow, 'path'>, kind: CiKind): 'c
   return undefined;
 }
 
+const READING = 'Reading Factory…';
+
 /** What the window says instead of the workflows when it can't show them, or undefined. */
 function blocked(): string | undefined {
   const c = store.factory.connection;
@@ -75,7 +78,7 @@ function blocked(): string | undefined {
   if (c.rejected) return `Factory turned the key down (${c.rejected}). Check it again in ⚙️ Settings → Factory.`;
   const cap = capabilityOf(c, 'ci');
   if (cap?.status === 'denied') return `The key can’t read CI automations: ${cap.reason ?? 'no access'}.`;
-  if (!ci.fetchedAt) return 'Reading Factory…';
+  if (!ci.fetchedAt) return READING;
   if (ci.github === false) return 'Factory’s GitHub integration isn’t connected. Connect it in Factory’s settings (app.factory.ai → Settings → Integrations), then Rescan.';
   return undefined;
 }
@@ -93,24 +96,34 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     return open.modal;
   }
   let tab: Tab = 'workflows';
-  /** The add or change form, while it's open. */
+  /** The add or change form, while it's open, and its Cancel and submit buttons for the footer. */
   let form: HTMLElement | undefined;
+  let formActions: HTMLElement[] = [];
   let done: CiEditResult | undefined;
   let rescanning = false;
 
-  const status = h('span.ci-status');
-  const rescan = h('button.btn', { type: 'button', title: 'Look through the repositories again now, past Factory’s 30-minute cache' }, 'Rescan') as HTMLButtonElement;
+  const status = h('p.sub.ci-status');
+  const rescan = h('button.btn.sm', { type: 'button', title: 'Look through the repositories again now, past Factory’s 30-minute cache' }, 'Rescan') as HTMLButtonElement;
   const tabButtons: Record<Tab, HTMLButtonElement> = {
-    workflows: h('button.gh-tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
-    runs: h('button.gh-tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
-    prs: h('button.gh-tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
+    workflows: h('button.tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
+    runs: h('button.tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
+    prs: h('button.tab', { type: 'button', role: 'tab' }) as HTMLButtonElement,
   };
-  const tabs = h('nav.gh-tabs', { role: 'tablist' }, tabButtons.workflows, tabButtons.runs, tabButtons.prs);
-  const notice = h('div.ci-notice', { role: 'status' });
+  const tabs = h('nav.tabs.ci-tabs', { role: 'tablist' }, tabButtons.workflows, tabButtons.runs, tabButtons.prs);
+  const notice = h('div.note.good.ci-notice', { role: 'status' });
   const body = h('div.body.ci-body');
   const note = h('span.grow');
   const add = h('button.btn.primary', { type: 'button' }, '+ Add a workflow') as HTMLButtonElement;
-  const el = h('div.modal.ci-window', { role: 'dialog', 'aria-label': 'CI automations' }, h('header', {}, h('h2', {}, 'CI automations'), status, rescan), tabs, notice, body, h('footer', {}, note, add));
+  const footActions = h('div.row.ci-foot-actions');
+  const el = h(
+    'div.modal.xl.ci-window',
+    { role: 'dialog', 'aria-label': 'CI automations' },
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'CI automations'), status), h('div.actions', {}, rescan)),
+    tabs,
+    notice,
+    body,
+    h('footer', {}, note, footActions),
+  );
 
   const paintNotice = () => {
     notice.replaceChildren();
@@ -118,9 +131,9 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     if (!done) return;
     notice.append(
       done.prUrl
-        ? h('span', {}, '✅ Factory opened ', link(done.prUrl, done.prUrl.replace(/^https:\/\/github\.com\//, '')), ` for ${fileOf(done.path)}. It takes effect once that pull request merges.`)
-        : h('span', {}, `✅ ${done.message ?? 'Done'} (${fileOf(done.path)} in ${done.repo}).`),
-      h('button.btn.ci-dismiss', { type: 'button', 'aria-label': 'Dismiss', onclick: () => ((done = undefined), paintNotice()) }, '✕'),
+        ? h('span', {}, 'Factory opened ', link(done.prUrl, done.prUrl.replace(/^https:\/\/github\.com\//, '')), ` for ${fileOf(done.path)}. It takes effect once that pull request merges.`)
+        : h('span', {}, `${done.message ?? 'Done'} (${fileOf(done.path)} in ${done.repo}).`),
+      h('button.btn.icon.sm.ghost.ci-dismiss', { type: 'button', 'aria-label': 'Dismiss', onclick: () => ((done = undefined), paintNotice()) }, '✕'),
     );
   };
 
@@ -128,36 +141,45 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const ci = store.factory.ci;
     const groups = groupCi(ci, opts.floorRepo);
     const runs = [...ci.runs].sort((a, b) => runTime(b) - runTime(a));
-    tabButtons.workflows.replaceChildren('Workflows', h('span.gh-count', {}, ci.workflows.length));
-    tabButtons.runs.replaceChildren('Runs', h('span.gh-count', {}, runs.length));
-    tabButtons.prs.replaceChildren('Workflow PRs', h('span.gh-count', {}, ci.jobs.length));
+    tabButtons.workflows.replaceChildren('Workflows', h('span.n', {}, ci.workflows.length));
+    tabButtons.runs.replaceChildren('Runs', h('span.n', {}, runs.length));
+    tabButtons.prs.replaceChildren('Workflow PRs', h('span.n', {}, ci.jobs.length));
     for (const [t, b] of Object.entries(tabButtons)) {
       b.classList.toggle('on', !form && t === tab);
       b.setAttribute('aria-selected', String(!form && t === tab));
     }
     const why = blocked();
-    status.textContent = ci.error ? `⚠️ ${ci.error}` : ci.scannedAt ? `scanned ${timeAgo(ci.scannedAt)}` : '';
+    status.textContent = ci.error ? ci.error : ci.scannedAt ? `Scanned ${timeAgo(ci.scannedAt)}` : 'Droid in GitHub Actions, from Factory';
+    status.title = status.textContent;
     status.classList.toggle('bad', !!ci.error);
     rescan.disabled = rescanning || !!why;
     rescan.textContent = rescanning ? 'Scanning…' : 'Rescan';
     add.disabled = !!why || ci.github === false;
-    add.classList.toggle('hidden', !!form);
+    footActions.replaceChildren(...(form ? formActions : [add]));
     const owners = ci.owners.map((o) => o.login).join(', ');
     note.textContent = form ? '' : ci.fetchedAt ? `Read ${timeAgo(ci.fetchedAt)}${owners ? ` · GitHub: ${owners}` : ''}` : '';
     paintNotice();
     if (form) return;
-    if (why) return body.replaceChildren(h('p.empty.ci-empty', {}, why));
-    if (tab === 'workflows') body.replaceChildren(...groups.map((g) => repoSection(g)));
-    else if (tab === 'runs') body.replaceChildren(runs.length ? runsTable(runs) : h('p.empty.ci-empty', {}, 'No runs yet. A run shows here once a Droid workflow runs in GitHub Actions.'));
-    else body.replaceChildren(ci.jobs.length ? jobsList(ci.jobs) : h('p.empty.ci-empty', {}, 'No workflow pull requests yet. Adding, changing or removing a workflow here opens one.'));
+    if (why === READING) return body.replaceChildren(...[0, 1, 2, 3].map(() => h('div.skeleton.ci-skeleton', { 'aria-label': READING })));
+    if (why) return body.replaceChildren(empty('🏭', ci.github === false ? 'GitHub isn’t connected' : 'Nothing to show yet', why));
+    if (tab === 'workflows') body.replaceChildren(...(groups.length ? groups.map((g) => repoSection(g)) : [empty('🤖', 'No Droid workflows yet', 'Add one, and Factory opens a pull request with it.')]));
+    else if (tab === 'runs') body.replaceChildren(runs.length ? runsTable(runs) : empty('▶', 'No runs yet', 'A run shows here once a Droid workflow runs in GitHub Actions.'));
+    else body.replaceChildren(ci.jobs.length ? jobsList(ci.jobs) : empty('⇄', 'No workflow pull requests yet', 'Adding, changing or removing a workflow here opens one.'));
   };
+
+  const empty = (icon: string, title: string, text: string) => emptyState(icon, title, text);
 
   const repoSection = (g: CiRepoGroup) =>
     h(
-      'section.ci-repo',
+      'section.section.ci-repo',
       { class: g.here ? 'here' : undefined },
-      h('h3', {}, link(github(g.repo), g.repo), g.here ? h('span.ci-here', {}, 'this floor') : null, h('button.btn.ci-add-here', { type: 'button', onclick: () => startForm({ repo: g.repo }) }, '+ Add')),
-      g.workflows.length ? h('ul.ci-workflows', {}, ...g.workflows.map((x) => workflowCard(x.workflow, x.kind, x.latest))) : h('p.empty', {}, 'No Droid workflows here yet.'),
+      h(
+        'div.row.between.ci-repo-head',
+        {},
+        h('h3.row', {}, link(github(g.repo), g.repo, 'ci-repo-name'), g.here ? h('span.ci-here', {}, 'this floor') : null),
+        h('button.btn.sm', { type: 'button', onclick: () => startForm({ repo: g.repo }) }, '+ Add'),
+      ),
+      g.workflows.length ? h('ul.list.boxed.ci-workflows', {}, ...g.workflows.map((x) => workflowCard(x.workflow, x.kind, x.latest))) : h('p.ci-none', {}, 'No Droid workflows here yet.'),
     );
 
   const workflowCard = (w: FactoryCiWorkflow, kind: CiKind, latest?: FactoryCiRun) => {
@@ -174,22 +196,27 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     if (w.permission) facts.push(['Your access', w.permission]);
     if (w.sha) facts.push(['Blob', w.sha.slice(0, 7)]);
     const outcome = latest && ciOutcome(latest);
-    const change = h('button.btn', { type: 'button', disabled: !editable, title: editable ? 'Change it with a pull request' : 'Factory changes only the files its templates write; change this one on GitHub' }, 'Change');
+    const change = h('button.btn.sm', { type: 'button', disabled: !editable, title: editable ? 'Change it with a pull request' : 'Factory changes only the files its templates write; change this one on GitHub' }, 'Change');
     change.addEventListener('click', () => startForm({ workflow: w, kind }));
-    const remove = h('button.btn.danger', { type: 'button', title: 'Remove it with a pull request that deletes the file' }, 'Remove');
+    const remove = h('button.btn.sm.danger', { type: 'button', title: 'Remove it with a pull request that deletes the file' }, 'Remove');
     remove.addEventListener('click', () =>
       confirmDialog('Remove this workflow?', `Factory opens a pull request in ${w.repo} that deletes ${w.path}. Droid stops running there once it merges.`, 'Open the pull request', () =>
         send({ action: 'delete', repo: w.repo, path: w.path }, remove),
       ),
     );
     return h(
-      'li.ci-workflow',
+      'li.list-row.ci-workflow',
       {},
-      h('div.ci-wf-head', {}, h('span.ci-kind', { class: kind }, CI_KIND_LABEL[kind]), h('strong', {}, w.name), h('span.grow'), change, remove),
-      latest && outcome
-        ? h('p.ci-latest', {}, h('span.pill', { class: `ci-${outcome}` }, OUTCOME_WORD[outcome]), ' ', link(latest.url, latest.title ?? latest.workflow ?? `Run ${latest.id}`), ` · ${timeAgo(runTime(latest))}`)
-        : h('p.ci-latest.empty', {}, 'No runs seen yet.'),
-      h('dl.ci-facts', {}, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
+      h(
+        'div.list-main',
+        {},
+        h('div.list-title.ci-wf-title', {}, h('span.ci-kind', { class: kind }, CI_KIND_LABEL[kind]), h('span.ci-wf-name', { title: w.name }, w.name)),
+        latest && outcome
+          ? h('div.list-meta.ci-latest', {}, h('span.pill', { class: `ci-${outcome}` }, OUTCOME_WORD[outcome]), link(latest.url, latest.title ?? latest.workflow ?? `Run ${latest.id}`), h('span', {}, timeAgo(runTime(latest))))
+          : h('div.list-meta.ci-latest', {}, 'No runs seen yet.'),
+        h('dl.ci-facts', {}, ...facts.map(([k, v]) => h('div.ci-fact', {}, h('dt', {}, k), h('dd', {}, v)))),
+      ),
+      h('div.list-end.ci-wf-actions', {}, change, remove),
     );
   };
 
@@ -222,18 +249,19 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
 
   const jobsList = (jobs: FactoryCiJob[]) =>
     h(
-      'ul.ci-jobs',
+      'ul.list.boxed.ci-jobs',
       {},
       ...jobs.map((j) =>
         h(
-          'li',
+          'li.list-row',
           {},
-          h('span.ci-kind', {}, j.action === 'create' ? 'Add' : j.action === 'delete' ? 'Remove' : 'Change'),
-          h('span.ci-job-what', {}, `${fileOf(j.path)} in ${j.repo}`),
-          j.prUrl ? link(j.prUrl, `PR #${j.prUrl.split('/').pop()}`) : null,
-          j.error ? h('span.bad', {}, j.error) : j.status ? h('span.ci-sub', {}, j.status) : null,
-          h('span.grow'),
-          h('span.ci-sub', {}, timeAgo(j.updatedAt ?? j.createdAt ?? 0)),
+          h(
+            'span.list-main',
+            {},
+            h('span.list-title.ci-wf-title', {}, h('span.ci-kind', {}, j.action === 'create' ? 'Add' : j.action === 'delete' ? 'Remove' : 'Change'), h('span.ci-job-what', {}, `${fileOf(j.path)} in ${j.repo}`)),
+            j.error ? h('span.list-meta.bad', {}, j.error) : j.status ? h('span.list-meta', {}, j.status) : null,
+          ),
+          h('span.list-end', {}, j.prUrl ? link(j.prUrl, `PR #${j.prUrl.split('/').pop()}`) : null, h('span.ci-sub', {}, timeAgo(j.updatedAt ?? j.createdAt ?? 0))),
         ),
       ),
     );
@@ -262,20 +290,22 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
   function startForm(what: { repo?: string; workflow?: FactoryCiWorkflow; kind?: CiKind } = {}) {
     const w = what.workflow;
     const editing = w ? ciEditable(w, what.kind ?? 'custom') : undefined;
-    form = buildForm({ ...what, template: editing }, () => {
+    const built = buildForm({ ...what, template: editing }, () => {
       form = undefined;
       paint();
     });
+    form = built.el;
+    formActions = built.actions;
     body.replaceChildren(form);
     paint();
     form.querySelector<HTMLElement>('select, input')?.focus();
   }
 
-  function buildForm(what: { repo?: string; workflow?: FactoryCiWorkflow; template?: 'code-review' | 'custom' }, close: () => void): HTMLElement {
+  function buildForm(what: { repo?: string; workflow?: FactoryCiWorkflow; template?: 'code-review' | 'custom' }, close: () => void): { el: HTMLElement; actions: HTMLElement[] } {
     const w = what.workflow;
     let template: 'code-review' | 'custom' = what.template ?? 'code-review';
-    const repo = h('select.ci-input', { 'aria-label': 'Repository', disabled: !!w }) as HTMLSelectElement;
-    const repoNote = h('span.ci-hint');
+    const repo = h('select.select', { 'aria-label': 'Repository', disabled: !!w }) as HTMLSelectElement;
+    const repoNote = h('span');
     const pick = (fullName: string) => repo.append(h('option', { value: fullName }, fullName));
     const wanted = w?.repo ?? what.repo ?? opts.floorRepo;
     if (wanted) pick(wanted);
@@ -303,28 +333,31 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
         template = value;
         sync();
       });
-      return h('label.choice', {}, input, h('span', {}, h('strong', {}, title), h('div.ci-hint', {}, sub)));
+      return h('label.choice', {}, input, h('span.choice-body', {}, h('b', {}, title), h('small', {}, sub)));
     };
-    const name = h('input.ci-input', { type: 'text', 'aria-label': 'Name', placeholder: 'Droid Code Review', value: w?.name ?? '', maxlength: '80' }) as HTMLInputElement;
+    const name = h('input.input', { type: 'text', 'aria-label': 'Name', placeholder: 'Droid Code Review', value: w?.name ?? '', maxlength: '80' }) as HTMLInputElement;
     const given = new Set<CiEvent>(w ? w.triggers.map((t) => EVENT_OF_TRIGGER[t]).filter((e): e is CiEvent => !!e) : ['pull-request']);
     const events = CI_EVENTS.map((e) => {
-      const box = h('input', { type: 'checkbox', value: e.id, checked: given.has(e.id) }) as HTMLInputElement;
-      return { id: e.id, box, label: h('label.ci-check', { title: e.on }, box, e.label) };
+      const label = toggle({ label: e.label, description: e.on, checked: given.has(e.id) });
+      label.input.value = e.id;
+      return { id: e.id, box: label.input, label };
     });
-    const cron = h('input.ci-input', { type: 'text', 'aria-label': 'Schedule', placeholder: 'none, or a cron like 0 9 * * 1', value: w?.cron ?? '' }) as HTMLInputElement;
-    const depth = h('select.ci-input', { 'aria-label': 'Review depth' }, h('option', { value: 'deep' }, 'Deep'), h('option', { value: 'shallow' }, 'Shallow')) as HTMLSelectElement;
+    const cron = h('input.input', { type: 'text', 'aria-label': 'Schedule', placeholder: 'none, or a cron like 0 9 * * 1', value: w?.cron ?? '' }) as HTMLInputElement;
+    const depth = h('select.select', { 'aria-label': 'Review depth' }, h('option', { value: 'deep' }, 'Deep'), h('option', { value: 'shallow' }, 'Shallow')) as HTMLSelectElement;
     depth.value = w?.inputs.reviewDepth === 'shallow' ? 'shallow' : 'deep';
-    const security = h('input', { type: 'checkbox', checked: w?.inputs.automaticSecurityReview === true }) as HTMLInputElement;
+    const securityToggle = toggle({ label: 'Security review too', description: 'Factory’s security review runs alongside it', checked: w?.inputs.automaticSecurityReview === true });
+    securityToggle.classList.add('ci-security');
+    const security = securityToggle.input;
     const modelList = h('datalist', { id: 'ci-models' }, ...MODEL_ALIASES.map((m) => h('option', { value: m })));
-    const model = h('input.ci-input', { type: 'text', 'aria-label': 'Model', list: 'ci-models', placeholder: 'Factory’s default', value: w?.model ?? '' }) as HTMLInputElement;
-    const effort = h('select.ci-input', { 'aria-label': 'Reasoning effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || 'Default'))) as HTMLSelectElement;
+    const model = h('input.input', { type: 'text', 'aria-label': 'Model', list: 'ci-models', placeholder: 'Factory’s default', value: w?.model ?? '' }) as HTMLInputElement;
+    const effort = h('select.select', { 'aria-label': 'Reasoning effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || 'Default'))) as HTMLSelectElement;
     effort.value = typeof w?.inputs.reasoningEffort === 'string' && EFFORTS.includes(w.inputs.reasoningEffort) ? w.inputs.reasoningEffort : '';
-    const prompt = h('textarea.ci-input', { rows: '5', 'aria-label': 'What it does', placeholder: 'What Droid does each time it runs, like “Triage new issues: label them and ask for missing details.”' }) as HTMLTextAreaElement;
+    const prompt = h('textarea.input', { rows: '5', 'aria-label': 'What it does', placeholder: 'What Droid does each time it runs, like “Triage new issues: label them and ask for missing details.”' }) as HTMLTextAreaElement;
     const file = h('code.ci-file');
-    const submit = h('button.btn.primary', { type: 'submit' }, w ? 'Open a PR to change it' : 'Open a PR to add it') as HTMLButtonElement;
-    const cancel = h('button.btn', { type: 'button', onclick: close }, 'Cancel');
+    const submit = h('button.btn.primary', { type: 'submit', form: 'ci-form' }, w ? 'Open a PR to change it' : 'Open a PR to add it') as HTMLButtonElement;
+    const cancel = h('button.btn.ghost', { type: 'button', onclick: close }, 'Cancel');
 
-    const reviewOnly = h('div.ci-row', {}, field('Review depth', depth), h('label.ci-check.ci-security', {}, security, 'Security review too'));
+    const reviewOnly = h('div.ci-row', {}, field('Review depth', depth), securityToggle);
     const customOnly = field('What it does each time', prompt);
     const req = (): CiEditRequest => ({
       action: w ? 'edit' : 'create',
@@ -348,36 +381,33 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     sync();
 
     const el = h(
-      'form.ci-form',
-      { 'aria-label': w ? `Change ${w.name}` : 'Add a Droid workflow' },
-      h('h3', {}, w ? `Change ${w.name}` : 'Add a Droid workflow'),
+      'form.ci-form.stack.loose',
+      { id: 'ci-form', 'aria-label': w ? `Change ${w.name}` : 'Add a Droid workflow' },
+      h('h3.ci-form-title', {}, w ? `Change ${w.name}` : 'Add a Droid workflow'),
       field('Repository', repo, repoNote),
       w
         ? null
         : h(
-            'div.ci-templates',
+            'div.choices.ci-templates',
             {},
             kindRadio('code-review', 'Droid code review', 'Reviews every pull request and comments on it (Factory’s template)'),
             kindRadio('custom', 'A Droid job of your own', 'Runs Droid with your prompt on the events or schedule you pick'),
           ),
       field('Name', name),
-      h('div.ci-field', {}, h('label', {}, 'Runs on'), h('div.ci-events', {}, ...events.map((e) => e.label))),
-      field('Schedule (UTC)', cron),
+      h('div.field', {}, h('label', {}, 'Runs on'), h('div.ci-events', {}, ...events.map((e) => e.label))),
+      h('div.ci-row', {}, field('Schedule (UTC)', cron), h('span')),
       reviewOnly,
       h('div.ci-row', {}, field('Model', model), field('Reasoning effort', effort)),
       modelList,
       customOnly,
-      h('p.ci-hint', {}, 'Factory writes ', file, ` in ${w?.repo ?? 'the repository'} and opens a pull request with it. Nothing runs until it merges. Manual runs (workflow_dispatch) are always on.`),
-      h('div.ci-actions', {}, cancel, submit),
+      h('p.note.info', {}, 'Factory writes ', file, ` in ${w?.repo ?? 'the repository'} and opens a pull request with it. Nothing runs until it merges. Manual runs (workflow_dispatch) are always on.`),
     );
     el.addEventListener('submit', (e) => {
       e.preventDefault();
       void send(req(), submit, close);
     });
-    return el;
+    return { el, actions: [cancel, submit] };
   }
-
-  const field = (label: string, input: HTMLElement, ...after: HTMLElement[]) => h('div.ci-field', {}, h('label', {}, label), input, ...after);
 
   for (const [t, b] of Object.entries(tabButtons) as [Tab, HTMLButtonElement][]) {
     b.addEventListener('click', () => {
