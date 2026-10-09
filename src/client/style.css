@@ -824,7 +824,6 @@ button.chip { font-family: var(--font-sans); }
 .svc-meta { font: 400 11px var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .svc-list .btn { padding: 3px 10px; text-decoration: none; color: inherit; }
 .svc-hint { margin: 0; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }
-.svc-rows .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dot, var(--text-tertiary)); }
 .svc-port { font: 500 12.5px var(--font-mono); color: var(--accent); font-variant-numeric: tabular-nums; }
 .services code { font: 12px var(--font-mono); background: var(--surface-hover); border-radius: var(--radius-xs); padding: 1px 4px; word-break: break-all; }
 
@@ -965,7 +964,7 @@ button.chip { font-family: var(--font-sans); }
 .gh-pm .add { color: var(--success); }
 .gh-pm .del { color: var(--danger); }
 .gh-pm .bin { color: var(--text-secondary); }
-.modal.gh-window .gh-tabs { flex: none; padding: 0 var(--space-5); background: var(--surface); }
+.modal.gh-window .gh-strip { flex: none; padding: 0 var(--space-5); background: var(--surface); }
 /* The tab strip of the CI window (ui/factory-ci.ts) and its counts. */
 .gh-tabs { display: flex; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .gh-tab { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px 7px; margin-bottom: -1px; cursor: pointer; }

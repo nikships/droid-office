@@ -1,7 +1,7 @@
 import type { ServiceInfo, ServicesState } from '../../shared/protocol';
 import { store } from '../state';
 import { h, openModal, timeAgo } from './dom';
-import { emptyState } from './kit';
+import { colorDot, emptyState } from './kit';
 import { copy, copyButton, guessOs, openCommand, OS_LABEL, type Os } from './clipboard';
 
 export function serviceUrl(port: number): string {
@@ -72,8 +72,7 @@ export function openServices() {
     const list = h('ul.list.boxed.svc-rows');
     for (const svc of s.items) {
       const { who, color, branch } = describe(svc);
-      const dot = h('span.dot');
-      dot.style.setProperty('--dot', color);
+      const dot = colorDot(color);
       const on = picked === svc.port;
       const open = h('a.btn.sm', { href: serviceUrl(svc.port), target: '_blank', rel: 'noopener', title: `Open ${serviceUrl(svc.port)} (needs the tunnel, unless the office runs on this computer)` }, 'Open ↗');
       open.addEventListener('click', (e) => e.stopPropagation());

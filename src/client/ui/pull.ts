@@ -689,7 +689,7 @@ export function openLabels(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Ne
 /** The button that opens the label picker, after an issue's or PR's labels. */
 function labelButton(kind: 'issue' | 'pull', it: () => GhIssue | GhPull, net: Net, onSaved: (labels: GhLabel[]) => void) {
   const has = it().labels.length > 0;
-  return h('button.btn.sm.ghost.gh-label-edit', { type: 'button', title: 'Change the labels', 'aria-label': 'Change the labels', onclick: () => openLabels(kind, it(), net, onSaved) }, has ? 'Edit' : 'Add labels');
+  return h('button.btn.sm.gh-label-edit', { type: 'button', title: 'Change the labels', 'aria-label': 'Change the labels', onclick: () => openLabels(kind, it(), net, onSaved) }, has ? 'Edit' : 'Add labels');
 }
 
 // ---- The PR window ------------------------------------------------------------------------------
@@ -738,7 +738,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     { role: 'dialog', 'aria-label': `${words().pull} ${words().ref(it.number)}`, tabindex: -1 },
     h('header', {}, pill, h('div.titles', {}, h('h2', {}, `${words().pull} ${words().ref(it.number)}`)), h('div.actions', {}, reload), close),
     h('div.gh-hero', {}, title, meta),
-    h('nav.tabs.gh-tabs', { role: 'tablist' }, tabConv, tabFiles),
+    h('nav.tabs.gh-strip', { role: 'tablist' }, tabConv, tabFiles),
     h('div.gh-body', {}, conv, filesPane),
     h('footer', {}, h('a.grow.gh-open', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, `Open on ${words().site} ↗`), footBtns),
   );
@@ -813,8 +813,8 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
       ),
     );
     const done = files ? files.filter((f) => reviewed.mark(f) === 'reviewed').length : 0;
-    tabConv.replaceChildren(...nodes('Conversation', detail ? h('span.gh-count', {}, String(detail.comments.length + detail.reviews.length + detail.reviewComments.filter((c) => !c.replyTo).length)) : null));
-    tabFiles.replaceChildren(...nodes('Files changed', files ? h('span.gh-count', {}, String(files.length)) : null, files?.length ? h('span.gh-progress', { class: done === files.length ? 'all' : '' }, `✓ ${done}/${files.length}`) : null));
+    tabConv.replaceChildren(...nodes('Conversation', detail ? h('span.n', {}, String(detail.comments.length + detail.reviews.length + detail.reviewComments.filter((c) => !c.replyTo).length)) : null));
+    tabFiles.replaceChildren(...nodes('Files changed', files ? h('span.n', {}, String(files.length)) : null, files?.length ? h('span.gh-progress', { class: done === files.length ? 'all' : '' }, `✓ ${done}/${files.length}`) : null));
     tabConv.classList.toggle('on', tab === 'conversation');
     tabFiles.classList.toggle('on', tab === 'files');
     tabConv.setAttribute('aria-selected', String(tab === 'conversation'));
