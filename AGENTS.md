@@ -25,7 +25,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
-| `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
+| `deploy/` | `aws.sh` (EC2 lifecycle), `provision.sh` (machine setup it runs) and `factory-computer.sh` (a Factory Droid Computer's repository setup script) |
 | `install.sh`, `install.ps1` | Release installers for macOS/Linux and Windows |
 | `docs/` | `guide.md` (every feature, setup and how each subsystem works) and the README pictures |
 
