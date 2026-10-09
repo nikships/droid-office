@@ -1612,7 +1612,7 @@ a.when:hover { text-decoration: underline; }
 /* ---------- Droid Computers (E at the compute wall) ---------- */
 .modal.computers { height: min(760px, calc(100vh - 32px)); }
 .modal.computers .cmp-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.modal.computers .cmp-split { grid-template-columns: 280px minmax(0, 1fr); }
+.modal.computers .cmp-split { --split-side: 280px; }
 .cmp-list .list-title { display: flex; align-items: center; gap: var(--space-2); }
 .cmp-list-label { margin: var(--space-3) var(--space-3) var(--space-1); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-tertiary); }
 .cmp-skeleton { height: 40px; margin: 0 var(--space-1); border-radius: var(--radius); }
@@ -1685,15 +1685,13 @@ a.when:hover { text-decoration: underline; }
 
 /* 🛰️ Droid sessions (ui/factory-sessions.ts): the list on the left, a session or the new-session form on the right. */
 .modal.fsessions .fs-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.modal.fsessions .fs-split { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); }
+.modal.fsessions .fs-split { --split-side: minmax(300px, 380px); }
 .modal.fsessions .fs-side { padding: 0; gap: 0; overflow: hidden; }
 .modal.fsessions .fs-pane { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 .fs-tools { flex: none; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); }
 .fs-filters { gap: var(--space-2); }
 .fs-filters .select { flex: 1; min-width: 0; height: var(--control-h-sm); font-size: 12.5px; }
 .fs-list { flex: 1; min-height: 0; overflow: auto; padding: var(--space-2); }
-/* .list is a flex column: in a scrolling one, rows would shrink to their min-height and overlap. */
-.fs-list > *, .cmp-list > * { flex: none; }
 .list-row.fs-row { align-items: flex-start; cursor: pointer; padding: var(--space-2) var(--space-3); }
 .fs-row .list-icon { height: 20px; }
 .fs-where-icon:empty::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--text-tertiary); }
