@@ -267,7 +267,12 @@ export class Casualties {
     // Sideways out of the chair, into the open: forward would put it under the desk.
     const side = Math.random() < 0.5 ? -1 : 1;
     const floor = new THREE.Vector3(from.x + Math.cos(yaw) * side * TUMBLE, 0, from.z - Math.sin(yaw) * side * TUMBLE);
-    floor.y = this.ground(floor.x, floor.z, from.y) - FEET;
+    // No collider under the landing spot (or none it can stand on from this height) reads as
+    // -Infinity, which would drop the body through the floor: fall back to the seat's own ground.
+    let top = this.ground(floor.x, floor.z, from.y);
+    if (!Number.isFinite(top)) top = this.ground(from.x, from.z, from.y);
+    if (!Number.isFinite(top)) top = from.y + FEET;
+    floor.y = top - FEET;
     const pool = bloodPool();
     // On top of whatever is underfoot, not at the body's origin (feet are FEET above it, and the
     // rugs under the desks stand 0.021 proud of the floorboards).
