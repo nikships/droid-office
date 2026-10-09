@@ -151,7 +151,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { console.log('st
   return file;
 }
 
-test('the app starts the office, waits for its page, and stops it keeping or ending the workers', async (t) => {
+test('the app starts the office, waits for its page, and stops it keeping or ending the droids', async (t) => {
   const dir = tmp(t);
   for (const [keep, signal] of [
     [true, 'SIGTERM'],
@@ -188,7 +188,7 @@ test('an office that never answers is given up on', async (t) => {
   await assert.rejects(startOffice({ runtime: process.execPath, cli: silent, args: [], port, env: process.env, log: path.join(dir, 'office.log'), timeoutMs: 500 }), /didn't open on port/);
 });
 
-test('commands written for workers run Electron as Node only under the Mac app', () => {
+test('commands written for droids run Electron as Node only under the Mac app', () => {
   assert.deepEqual(runAsNode({ ...process.versions, electron: '44.5.1' }), { sh: 'ELECTRON_RUN_AS_NODE=1 ', cmd: 'set "ELECTRON_RUN_AS_NODE=1" & ' });
   const { electron: _, ...plainNode } = process.versions as NodeJS.ProcessVersions & { electron?: string };
   assert.deepEqual(runAsNode(plainNode as NodeJS.ProcessVersions), { sh: '', cmd: '' });

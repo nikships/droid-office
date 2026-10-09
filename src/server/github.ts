@@ -91,7 +91,7 @@ function commentsOf(raw: any[]): GhComment[] {
 
 /**
  * Spots pull requests that merged between two looks at the list, so the gong rings however they
- * merged: from the PR window, by a worker's `gh pr merge`, by auto-merge, or on GitHub itself.
+ * merged: from the PR window, by a droid's `gh pr merge`, by auto-merge, or on GitHub itself.
  */
 export class MergeWatch {
   /** Open at the last look; unset until the first, so starting the office up rings for nothing. */

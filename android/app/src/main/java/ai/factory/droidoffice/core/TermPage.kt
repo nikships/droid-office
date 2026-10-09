@@ -8,7 +8,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
-/** How the phone shows a worker's terminal. */
+/** How the phone shows a droid's terminal. */
 enum class TermView(val wire: String) {
     /** The PTY at the size the desktop set, scaled to fit the phone. The phone never resizes it. */
     Desktop("desktop"),

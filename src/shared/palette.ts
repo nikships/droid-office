@@ -1,4 +1,4 @@
-// The command palette's matching (Ctrl+K, ⌘K on a Mac): which of the office's workers, issues, pull
+// The command palette's matching (Ctrl+K, ⌘K on a Mac): which of the office's droids, issues, pull
 // requests, boards, teammates and actions a few typed letters mean, best first. Pure, so the ranking
 // is tested without a page (see ui/palette.ts for the window).
 

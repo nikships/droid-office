@@ -1,5 +1,5 @@
 // Getting around the office floor downstairs (no stairs, no loft, no elevator), round the furniture
-// on a coarse grid: a worker's way out when it's sent home.
+// on a coarse grid: a droid's way out when it's sent home.
 
 import {
   BALCONY,
@@ -35,7 +35,7 @@ import {
 export type Pt = [number, number];
 
 const CELL = 0.5;
-/** Half the width of whoever walks it (a worker), plus a little room: how far they keep from things. */
+/** Half the width of whoever walks it (a droid), plus a little room: how far they keep from things. */
 const R = 0.3;
 const COLS = Math.ceil((FLOOR.maxX - FLOOR.minX) / CELL);
 const ROWS = Math.ceil((FLOOR.maxZ - FLOOR.minZ) / CELL);
@@ -43,7 +43,7 @@ const ROWS = Math.ceil((FLOOR.maxZ - FLOOR.minZ) / CELL);
 type Rect = [number, number, number, number]; // minX, maxX, minZ, maxZ
 type Circle = [number, number, number]; // x, z, radius
 
-/** The desk's own frame: `t` along its width, `s` out toward the side the worker sits on. */
+/** The desk's own frame: `t` along its width, `s` out toward the side the droid sits on. */
 export function deskPoint(d: DeskDef, t: number, s: number): Pt {
   return [d.x + Math.cos(d.rotY) * t + Math.sin(d.rotY) * s, d.z - Math.sin(d.rotY) * t + Math.cos(d.rotY) * s];
 }
@@ -78,11 +78,11 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   // The bookshelf against the south wall, as world/bookshelf.ts puts it.
   rects.push([BOOKSHELF.x - BOOKSHELF.width / 2 - 0.04, BOOKSHELF.x + BOOKSHELF.width / 2 + 0.04, BOOKSHELF.z - BOOKSHELF.depth / 2 - 0.03, FLOOR.maxZ]);
   // The ladder up the west wall, and the fire poles: a hole with a railing round it, or a landing mat.
-  // Which spot has which changes floor by floor, so workers keep off both.
+  // Which spot has which changes floor by floor, so droids keep off both.
   rects.push([FLOOR.minX, FLOOR.minX + 0.3, LADDER.z - LADDER.width / 2 - 0.05, LADDER.z + LADDER.width / 2 + 0.05]);
   for (const p of POLES) rects.push([p.x - POLE.rail - 0.05, p.x + POLE.rail + 0.05, p.z - POLE.rail - 0.05, p.z + POLE.rail + 0.05]);
   // The overflow bean bags and their lap desks. They're only out while every desk is taken, but they
-  // always come out in the same spots, so workers keep off those.
+  // always come out in the same spots, so droids keep off those.
   for (const b of BEANBAGS) {
     const corners = [deskPoint(b, -0.62, -1.1), deskPoint(b, 0.62, -1.1), deskPoint(b, -0.62, 0.64), deskPoint(b, 0.62, 0.64)];
     const xs = corners.map(([x]) => x);
@@ -307,11 +307,11 @@ const WALK_OFF_X = -38;
 
 const pathLength = (pts: Pt[]) => pts.reduce((n, p, i) => (i ? n + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0), 0);
 
-/** Where a worker called to a meeting comes in: out of the elevator. */
+/** Where a droid called to a meeting comes in: out of the elevator. */
 const IN_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
 
 /**
- * A worker's walk in to its seat when it's called to a meeting: out of the elevator and round the
+ * A droid's walk in to its seat when it's called to a meeting: out of the elevator and round the
  * furniture to beside its chair (the last point), on whichever side is the shorter way, where it hops on.
  */
 export function wayIn(seat: DeskDef): Pt[] {
@@ -323,7 +323,7 @@ export function wayIn(seat: DeskDef): Pt[] {
 }
 
 /**
- * A worker's walk out of the building once it's sent home. The first point is where it hops down,
+ * A droid's walk out of the building once it's sent home. The first point is where it hops down,
  * beside its chair (or its bean bag) on whichever side is the shorter way out; then round the
  * furniture to the exit door in the west wall, across the landing outside, down the steps to the
  * street and off along the sidewalk.

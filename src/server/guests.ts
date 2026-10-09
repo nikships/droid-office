@@ -13,7 +13,7 @@ import { DROID_SESSIONS_DIR, DroidSessionReader } from './droid-session.js';
 // agent's working directory, and seats the ones working in a floor's checkout at a desk there.
 // Nothing here writes to, signals or otherwise touches those processes, except stopGuest: when the
 // owner brings a droid guest into the office (Floor.bringIn), its process is asked to quit so an
-// office worker can resume the same session.
+// office droid can resume the same session.
 
 const SCAN_MS = 4000;
 /** The session transcript's tail that is read for how a droid guest is doing. */
@@ -112,7 +112,7 @@ export function guestId(pid: number, lstart: string): string {
 }
 
 /**
- * Whether an agent's arguments say an office started it: every Droid Office worker, board agent and
+ * Whether an agent's arguments say an office started it: every Droid Office droid, board agent and
  * meeting seat starts with `--settings <its floor>/.droid-office/droid-….json`, the office's hooks.
  */
 export function officeLaunched(argv: string[] | undefined): boolean {
@@ -123,7 +123,7 @@ export function officeLaunched(argv: string[] | undefined): boolean {
 
 /**
  * The processes that can be guests: an agent CLI with a terminal of its own, that isn't the office's
- * (started with the office's hooks, or under a terminal host, the office or one of its workers, here
+ * (started with the office's hooks, or under a terminal host, the office or one of its droids, here
  * or in another office on this machine) and isn't another agent's helper (only the topmost agent in
  * a process tree counts). Headless runs (`droid exec`) aren't sessions anyone works in.
  */
@@ -160,7 +160,7 @@ function run(cmd: string, args: string[]): Promise<string> {
 
 /**
  * This user's agent processes that could be guests, with their working directories. `officePids`
- * are processes the office runs (itself, its workers' terminals): nothing under them is a guest.
+ * are processes the office runs (itself, its droids' terminals): nothing under them is a guest.
  * Nothing on Windows, which has no ps or lsof.
  */
 export async function scanAgents(officePids: Iterable<number> = []): Promise<AgentProcess[]> {
@@ -280,9 +280,9 @@ export function floorFor(cwd: string, floors: readonly FloorDir[]): string | und
 }
 
 /**
- * Splits a floor's agent processes into the ones started by hand in a worker's own folder (its
- * worktree or workspace), which are that worker's (`outside`, by worker id), and the rest, the guests.
- * `workers` are the floor's workers with their folders; one working in the floor's own checkout has none.
+ * Splits a floor's agent processes into the ones started by hand in a droid's own folder (its
+ * worktree or workspace), which are that droid's (`outside`, by droid id), and the rest, the guests.
+ * `workers` are the floor's droids with their folders; one working in the floor's own checkout has none.
  */
 export function attribute(procs: readonly AgentProcess[], workers: readonly { id: string; folder?: string }[]): { guests: AgentProcess[]; outside: Map<string, OutsideProcess[]> } {
   const outside = new Map<string, OutsideProcess[]>();
@@ -373,7 +373,7 @@ export function transcriptState(head: string, tail: string, partial = false): Tr
  * Otherwise a session is tied to a guest only when it can't be anyone else's: the one guest without
  * a session in that folder gets the session there written most recently since it started. With two
  * or more in one folder, there's no telling whose transcript is whose, so none of them gets one.
- * `files` are each folder's session transcripts; `taken` the sessions of the office's own workers.
+ * `files` are each folder's session transcripts; `taken` the sessions of the office's own droids.
  */
 export function assignSessions(guests: readonly { id: string; cwd: string; startedAt: number; resume?: string }[], files: ReadonlyMap<string, readonly { id: string; mtime: number }[]>, taken: ReadonlySet<string>): Map<string, string> {
   const out = new Map<string, string>();
@@ -485,15 +485,15 @@ export function guestBanner(info: WorkerInfo, now = Date.now()): string {
 }
 
 /**
- * Why a guest can't be brought in as one of the office's own workers now, or undefined when it can.
- * An office worker runs droid in the floor's checkout (or a worktree of its own), so the guest must be
+ * Why a guest can't be brought in as one of the office's own droids now, or undefined when it can.
+ * An office droid runs droid in the floor's checkout (or a worktree of its own), so the guest must be
  * a droid session the office has tied to it, working in that checkout. And it must be between turns:
  * stopping it mid-turn, or while it asks for permission (which looks the same from here), would cut
  * that turn off.
  */
 export function bringInRefusal(g: { provider: GuestProvider; cwd: string }, session: string | undefined, status: WorkerStatus, checkout: string | undefined): string | undefined {
-  if (g.provider !== 'droid') return `the office's workers run Droid, and this is ${PROVIDER_LABEL[g.provider]}`;
-  if (!checkout || g.cwd !== checkout) return `it works in ${g.cwd}, and the office's workers work in the checkout itself (${checkout ?? 'unknown'})`;
+  if (g.provider !== 'droid') return `the office's droids run Droid, and this is ${PROVIDER_LABEL[g.provider]}`;
+  if (!checkout || g.cwd !== checkout) return `it works in ${g.cwd}, and the office's droids work in the checkout itself (${checkout ?? 'unknown'})`;
   if (!session) return "the office can't tell which Droid session it's in (another droid works in the same folder), so there's nothing to resume";
   if (status === 'working') return "it's mid-turn (or asking for permission, which looks the same from here): bring it in once its turn ends";
   return undefined;
@@ -501,7 +501,7 @@ export function bringInRefusal(g: { provider: GuestProvider; cwd: string }, sess
 
 const label = (p: GuestProvider) => PROVIDER_LABEL[p];
 
-/** What the office does to its own workers and never to a guest, which it only watches (see guests.ts). */
+/** What the office does to its own droids and never to a guest, which it only watches (see guests.ts). */
 export const GUEST_REFUSED = new Set<ClientMsg['t']>([
   'worker.resume',
   'worker.kill',
@@ -558,9 +558,9 @@ export interface GuestEvents {
 }
 
 export interface GuestSeating {
-  /** Whether one of the office's own workers sits there. */
+  /** Whether one of the office's own droids sits there. */
   deskTaken(deskId: string): boolean;
-  /** The office's own workers' names, which a guest doesn't take. */
+  /** The office's own droids' names, which a guest doesn't take. */
   names(): Iterable<string>;
   /** Names and colors to pick from. */
   pool: { names: readonly string[]; colors: readonly string[] };
@@ -568,7 +568,7 @@ export interface GuestSeating {
   checkout?: string;
 }
 
-/** A guest on its way into the office (see Guests.takeOut): what its worker starts from. */
+/** A guest on its way into the office (see Guests.takeOut): what its droid starts from. */
 export interface LeavingGuest {
   info: WorkerInfo;
   session: string;
@@ -577,7 +577,7 @@ export interface LeavingGuest {
 /**
  * A floor's guests (see the top of this file). Each sits at a desk or bean bag of its own, which the
  * office's hires and the queue then treat as taken. A guest is never in the WorkerManager: it isn't
- * counted against the worker limit, handed tasks, prompted, sent home or pruned.
+ * counted against the droid limit, handed tasks, prompted, sent home or pruned.
  */
 export class Guests {
   private guests = new Map<string, Guest>();
@@ -590,7 +590,7 @@ export class Guests {
   private checkout?: string;
   /** Guests being brought in: they keep their desks while their process quits, whatever a scan says. */
   private leaving = new Set<string>();
-  /** Processes handed over to an office worker: a scan from before they quit doesn't seat them again. */
+  /** Processes handed over to an office droid: a scan from before they quit doesn't seat them again. */
   private handed = new Set<string>();
 
   constructor(
@@ -640,7 +640,7 @@ export class Guests {
   /**
    * The floor's guests are now `procs`: newcomers sit down, guests whose process is gone leave, and
    * the rest are brought up to date from their transcripts. `sessions` are the office's own
-   * workers' session ids here, which are never a guest's.
+   * droids' session ids here, which are never a guest's.
    */
   async sync(procs: readonly AgentProcess[], sessions: ReadonlySet<string>): Promise<void> {
     if (this.stopped) return;
@@ -822,7 +822,7 @@ export class Guests {
 
   /**
    * Starts bringing a guest in (see Floor.bringIn): it keeps its desk while its process quits, and
-   * then either goes (handOver) or stays a guest (stay). Returns what its worker starts from, or why it can't come in.
+   * then either goes (handOver) or stays a guest (stay). Returns what its droid starts from, or why it can't come in.
    */
   async takeOut(id: string): Promise<LeavingGuest | string> {
     const g = this.guests.get(id);
@@ -853,7 +853,7 @@ export class Guests {
     this.leaving.delete(id);
   }
 
-  /** Its process quit: it leaves its desk to the office worker that carries on its session. */
+  /** Its process quit: it leaves its desk to the office droid that carries on its session. */
   handOver(id: string) {
     this.leaving.delete(id);
     this.handed.add(id);
@@ -898,7 +898,7 @@ export class GuestScanner {
 
   constructor(
     private floors: () => ScannedFloor[],
-    /** The office's own processes (its workers' terminals): nothing under them is a guest. */
+    /** The office's own processes (its droids' terminals): nothing under them is a guest. */
     private officePids: () => Iterable<number>,
     private scan: (officePids: Iterable<number>) => Promise<AgentProcess[]> = scanAgents,
   ) {}

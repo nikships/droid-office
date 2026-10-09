@@ -1,4 +1,4 @@
-// The meeting room's patterns: how 2–5 workers at the table work on one question or task together.
+// The meeting room's patterns: how 2–5 droids at the table work on one question or task together.
 // The server runs them (server/meetings.ts); the client offers them when a meeting is called.
 
 import type { AgentEffort, Meeting, MeetingPattern, MeetingRecord, MeetingRequest } from './protocol.js';
@@ -10,7 +10,7 @@ export interface PatternDef {
   blurb: string;
   /** A role per chair, the head of the table first; a meeting takes the first few. */
   roles: readonly string[];
-  /** How many workers sit down: the fewest, the most, and how many by default. */
+  /** How many droids sit down: the fewest, the most, and how many by default. */
   seats: { min: number; max: number; default: number };
   /** The round limit: the fewest, the most, and the default. Fixed when min equals max. */
   rounds: { min: number; max: number; default: number };
@@ -26,7 +26,7 @@ export const MEETING_PATTERNS: Record<MeetingPattern, PatternDef> = {
   debate: {
     icon: '🗣️',
     label: 'Debate',
-    blurb: 'Each worker proposes, then critiques the others; in the last round the head of the table writes the decision.',
+    blurb: 'Each droid proposes, then critiques the others; in the last round the head of the table writes the decision.',
     roles: ['Chair', 'Pragmatist', 'Skeptic', 'Simplifier', 'User advocate'],
     seats: { min: 2, max: 5, default: 3 },
     rounds: { min: 2, max: 4, default: 3 },

@@ -70,7 +70,7 @@ test('the first frame after a shot shows the whole flash, however long that fram
   muzzle.dispose();
 });
 
-test('a worker hit sprays out of the wound toward the shooter and clears within half a second', () => {
+test('a droid hit sprays out of the wound toward the shooter and clears within half a second', () => {
   const at = new THREE.Vector3(1, 1, 1);
   const spray = new BloodSpray(at, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
   assert.deepEqual(spray.group.position.toArray(), [1, 1, 1]);

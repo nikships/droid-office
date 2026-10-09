@@ -8,7 +8,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const USAGE = `Usage:
-  office-queue list                                  what's on the queue: id, status, title, worker, PR
+  office-queue list                                  what's on the queue: id, status, title, droid, PR
   office-queue add --title "…" [--issue 12] <<'EOF'  add a task, its prompt on stdin (or --prompt "…");
   …the prompt…                                       prints the new task's id
   EOF
@@ -116,7 +116,7 @@ export function formatQueue(view) {
   const width = Math.max(...tasks.map((t) => status(t).length));
   for (const t of tasks) {
     const parts = [`${t.title ?? ''}${t.issue ? ` (issue #${t.issue})` : ''}`];
-    if (t.worker) parts.push(`worker ${t.worker}${t.branch ? ` on ${t.branch}` : ''}`);
+    if (t.worker) parts.push(`droid ${t.worker}${t.branch ? ` on ${t.branch}` : ''}`);
     if (t.pr) parts.push(`PR #${t.pr.number}${t.pr.state ? ` ${String(t.pr.state).toLowerCase()}` : ''} ${t.pr.url}`);
     if (t.error) parts.push(`error: ${t.error}`);
     lines.push(`${t.id}  ${status(t).padEnd(width)}  ${parts.join(' · ')}`);

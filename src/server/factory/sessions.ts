@@ -18,7 +18,7 @@ import { CreditLedger } from './credits.js';
 import { HttpError, SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
 import { NEW_SESSION_MS, alreadyGone, isMissing, whileNew, type NewSessionOptions } from './new-session.js';
 
-/** One of the office's own workers with a Droid session, on any floor (server.ts lists them). */
+/** One of the office's own droids with a Droid session, on any floor (server.ts lists them). */
 export interface OfficeSessionRef {
   sessionId: string;
   workerId: string;
@@ -27,7 +27,7 @@ export interface OfficeSessionRef {
   color?: string;
   /** It's working right now, so its credits are worth reading again sooner. */
   working?: boolean;
-  /** When the worker was made (ms): a cloud worker's session was made just before it. */
+  /** When the droid was made (ms): a cloud droid's session was made just before it. */
   createdAt?: number;
 }
 
@@ -46,7 +46,7 @@ const DETAIL_CONCURRENCY = 3;
 const DETAIL_BUDGET = 24;
 /** A running session's credits and status are read again after this long. */
 const RUNNING_STALE_MS = 15_000;
-/** A working office worker's, after this long. */
+/** A working office droid's, after this long. */
 const WORKING_STALE_MS = 60_000;
 /** The second page of the list is read again after this long (the first, every poll). */
 const PAGE2_MS = 10 * 60_000;
@@ -107,8 +107,8 @@ function messageBody(body: Record<string, unknown>, field = 'text'): { text: str
 /**
  * Droid sessions: the account's last ~100 sessions (two pages of GET /sessions), each one's
  * credits and fresh status from GET /sessions/{id} (cached by its updatedAt, read a few at a time,
- * running ones and the office's own workers' first), the credits ledger (credits.ts), and the
- * routes the Sessions window and cloud workers drive a session with (docs/factory.md).
+ * running ones and the office's own droids' first), the credits ledger (credits.ts), and the
+ * routes the Sessions window and cloud droids drive a session with (docs/factory.md).
  */
 export class SessionsFeature extends SliceFeature<'sessions'> {
   readonly interval = 90_000;
@@ -278,7 +278,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
   }
 
   async poll(api: FactoryApi): Promise<void> {
-    // A cold list can take a minute: the office's workers show the credits the ledger kept meanwhile.
+    // A cold list can take a minute: the office's droids show the credits the ledger kept meanwhile.
     if (!this.slice.fetchedAt) this.publish();
     const r1 = await api.sessions(SESSIONS_LIMIT);
     const now = this.now();
@@ -363,7 +363,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
   }
 
   /**
-   * Session `id` was deleted (here, or as a cloud worker went home): Factory goes on listing a deleted
+   * Session `id` was deleted (here, or as a cloud droid went home): Factory goes on listing a deleted
    * session for a while, so it's kept out of the slice from now on.
    */
   forget(id: string) {
@@ -466,7 +466,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
     };
   }
 
-  /** Puts the slice together from the list, the reads of single sessions, the office's workers and the ledger. */
+  /** Puts the slice together from the list, the reads of single sessions, the office's droids and the ledger. */
   private publish(patch: Partial<ReturnType<SessionsFeature['state']>> = {}) {
     const items = this.listed.filter((s) => !this.deleted.has(s.id)).map((s) => this.merged(s));
     // A session started from the office shows before the next list has it.

@@ -21,9 +21,9 @@ HOME="$T/home" node bin/droid-office.js "$T/proj" --port 4677 --host 127.0.0.1 -
 ```
 
 - Start the last command as a background process (fireAndForget). A process backgrounded with `&` inside a one-off shell dies when that shell exits.
-- `HOME="$T/home"` is required. The office always adds a Home floor at the home directory, and that floor's `.droid-office/` holds the owner's real workers. Without the override the test office resumes their real sessions in a new PTY host that outlives the test.
+- `HOME="$T/home"` is required. The office always adds a Home floor at the home directory, and that floor's `.droid-office/` holds the owner's real droids. Without the override the test office resumes their real sessions in a new PTY host that outlives the test.
 - Pick a free port (`lsof -nP -iTCP:4677 -sTCP:LISTEN` prints nothing). `--host 127.0.0.1` keeps it off the LAN. `--weather clear` keeps screenshots comparable.
-- The office has two floors, `proj` and `Home`. Boards are empty because the temp repository has no GitHub remote. Hired workers would run under the temp HOME without the owner's droid login, so test with UI, boards, places and floors, not real agent work.
+- The office has two floors, `proj` and `Home`. Boards are empty because the temp repository has no GitHub remote. Hired droids would run under the temp HOME without the owner's droid login, so test with UI, boards, places and floors, not real agent work.
 
 ## 2. Open it in a browser session
 
@@ -59,9 +59,9 @@ EOF
 
 | Command | Use |
 | --- | --- |
-| `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `queue`, `services`, `coffee`, `elevator`, `meeting`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `smoke`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
-| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal |
+| `office.list()` | Every target `goTo` accepts here: `{id, kind, label, droid?}` |
+| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, droid id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `queue`, `services`, `coffee`, `elevator`, `meeting`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `smoke`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
+| `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a droid opens its terminal |
 | `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `queue`, `services`, `meeting`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
@@ -105,4 +105,4 @@ lsof -t "$T/proj/.droid-office/pty.sock" "$T/home/.droid-office/pty.sock" 2>/dev
 rm -rf "$T"
 ```
 
-Never kill a `droid-office-ptys` process whose socket is outside `$T`. Those hosts serve the owner's own office and its workers.
+Never kill a `droid-office-ptys` process whose socket is outside `$T`. Those hosts serve the owner's own office and its droids.

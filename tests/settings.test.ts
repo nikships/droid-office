@@ -11,7 +11,7 @@ const storage = {
 
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
 
-test('settings show the workers panel by default, and yesterday’s spend/limits panels can’t come back', () => {
+test('settings show the droids panel by default, and yesterday’s spend/limits panels can’t come back', () => {
   mem.clear();
   assert.deepEqual(loadSettings().hud, { workers: true, floor: false });
   assert.deepEqual(HUD_DEFAULTS, { workers: true, floor: false });

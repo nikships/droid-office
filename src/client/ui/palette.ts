@@ -1,13 +1,13 @@
 import { rankItems, type PaletteItem, type PaletteMatch } from '../../shared/palette';
 import { h, openModal, type Modal } from './dom';
 
-// The command palette (Ctrl+K, ⌘K on a Mac): a few letters find a worker, an issue, a pull request,
+// The command palette (Ctrl+K, ⌘K on a Mac): a few letters find a droid, an issue, a pull request,
 // a board or an action, and Enter opens it the way clicking it in the office does.
 // Shift+Enter walks you over to it first. What there is to find comes from main.ts.
 
 export interface PaletteEntry extends PaletteItem {
   icon: string;
-  /** What kind of thing it is, shown on the right: "Worker", "PR", "Action". */
+  /** What kind of thing it is, shown on the right: "Droid", "PR", "Action". */
   kind: string;
   /** Opens it, as clicking it (or E in front of it) in the office does. */
   open(): void;
@@ -27,7 +27,7 @@ export function togglePalette(entries: () => PaletteEntry[]) {
   const all = entries();
   const input = h('input', {
     type: 'text',
-    placeholder: 'Find a worker, issue, PR, board or action…',
+    placeholder: 'Find a droid, issue, PR, board or action…',
     autocomplete: 'off',
     spellcheck: 'false',
     'aria-label': 'Find anything in the office',

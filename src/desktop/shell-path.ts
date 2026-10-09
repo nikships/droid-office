@@ -33,7 +33,7 @@ export function mergePath(...lists: (string | undefined)[]): string {
   return [...seen].join(path.delimiter);
 }
 
-/** Where the tools a worker needs usually live when the login shell can't say. */
+/** Where the tools a droid needs usually live when the login shell can't say. */
 export function knownDirs(home = os.homedir()): string[] {
   return [
     path.join(home, '.local', 'bin'),
@@ -75,7 +75,7 @@ export function mergeEnv(env: NodeJS.ProcessEnv, login: Record<string, string> |
 /**
  * A Mac app opened from the Finder or the Dock gets launchd's bare environment: PATH is
  * /usr/bin:/bin:/usr/sbin:/sbin, with no droid, gh or Homebrew, and nothing the shell profile
- * exports (JAVA_HOME, API keys, LANG). The office and its workers get the login shell's instead,
+ * exports (JAVA_HOME, API keys, LANG). The office and its droids get the login shell's instead,
  * as they would started from a terminal.
  */
 export async function desktopEnv(env: NodeJS.ProcessEnv = process.env): Promise<NodeJS.ProcessEnv> {

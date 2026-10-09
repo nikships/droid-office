@@ -49,7 +49,7 @@ Commands
   destroy            Terminate the machine and delete everything this script created (asks you
                      to type the office name first). `down` does the same.
 
-  service <port>     Open a worker's web server from the office's 🌐 Services board on
+  service <port>     Open a droid's web server from the office's 🌐 Services board on
                      http://localhost:<port> (through the office; Ctrl-C closes the tunnel)
   status             Show the instance, whether the office is up and which IPs may SSH in
   allow <ip|me>      Let an IP (or CIDR) reach SSH. "me" = your current IP. "anywhere" opens SSH
@@ -219,7 +219,7 @@ resize_instance() {
   have_arch=$(type_arch "$have" || true)
   [[ "$want_arch" == "$have_arch" ]] || die "can't switch CPU architecture ($have is $have_arch, $want is $want_arch) — use destroy + up instead"
   say "Resizing $inst from $have to $want. The office goes offline for a minute or two;"
-  echo "   running workers stop and come back asleep (press R at their desk to resume)."
+  echo "   running droids stop and come back asleep (press R at their desk to resume)."
   if [[ $YES -ne 1 ]]; then
     read -r -p "   Continue? [y/N] " answer
     [[ "$answer" =~ ^[Yy] ]] || die "cancelled"
@@ -337,7 +337,7 @@ tunnel() {
   warn "The tunnel dropped — reopen it with: deploy/aws.sh open$NAME_FLAG"
 }
 
-# A worker's server from the 🌐 Services board: localhost:<port> tunnels to the office, which
+# A droid's server from the 🌐 Services board: localhost:<port> tunnels to the office, which
 # relays it by that port (see src/server/relay.ts), so the local port must match the service's.
 service_tunnel() {
   local port="$1" pid i up=0
@@ -352,7 +352,7 @@ service_tunnel() {
     sleep 0.5
   done
   [[ $up -eq 1 ]] || { kill "$pid" 2>/dev/null; die "the tunnel didn't come up"; }
-  ok "The worker's server: http://localhost:$port"
+  ok "The droid's server: http://localhost:$port"
   echo "   (through the office on $IP — Ctrl-C closes it)"
   open_url "http://localhost:$port"
   wait "$pid" || true
@@ -615,7 +615,7 @@ cmd_pause() {
   local state
   state=$(instance_field "$INSTANCE_ID" State.Name)
   if [[ "$state" != "stopped" ]]; then
-    say "Pausing office \"$NAME\" ($INSTANCE_ID). Running workers stop and come back asleep"
+    say "Pausing office \"$NAME\" ($INSTANCE_ID). Running droids stop and come back asleep"
     echo "   when you resume (press R at their desk). Open tunnels are dropped."
     if [[ $YES -ne 1 ]]; then
       read -r -p "   Continue? [y/N] " answer
@@ -639,7 +639,7 @@ cmd_resume() {
   ensure_eip "$INSTANCE_ID"
   say "Waiting for the office to answer"
   wait_healthy || die "the office didn't come back — check: deploy/aws.sh logs$NAME_FLAG"
-  ok "Your office is back (workers pick up where they left off)"
+  ok "Your office is back (droids pick up where they left off)"
   [[ $NO_OPEN -eq 1 ]] && return
   open_office
 }
@@ -654,7 +654,7 @@ cmd_update() {
     git -C /opt/droid-office reset --hard FETCH_HEAD -q
     echo \"   at \$(git -C /opt/droid-office log -1 --format='%h %s')\"
     cd /opt/droid-office && npm install --no-audit --no-fund --loglevel=error >/dev/null
-    # Offices provisioned before KillMode=process: without it the restart stops every worker too.
+    # Offices provisioned before KillMode=process: without it the restart stops every droid too.
     if [ \"\$(systemctl show --property=KillMode --value droid-office)\" != process ]; then
       sudo mkdir -p /etc/systemd/system/droid-office.service.d
       printf '[Service]\nKillMode=process\n' | sudo tee /etc/systemd/system/droid-office.service.d/keep-workers.conf >/dev/null
@@ -662,7 +662,7 @@ cmd_update() {
     fi
     sudo systemctl restart droid-office" || die "update failed"
   wait_healthy || die "the office didn't come back — check: deploy/aws.sh logs"
-  ok "Updated and restarted (workers carry on through it)"
+  ok "Updated and restarted (droids carry on through it)"
 }
 
 cmd_down() {

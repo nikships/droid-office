@@ -230,7 +230,7 @@ export function ticketColumns(items: JiraTicket[]): { name: string; items: JiraT
   return JIRA_COLUMNS.map((c) => ({ name: c.name, items: items.filter((t) => t.category === c.category) }));
 }
 
-/** The task a worker gets for a Jira ticket from the Jira tab. The office only reads Jira; the worker updates the ticket itself, if told to. */
+/** The task a droid gets for a Jira ticket from the Jira tab. The office only reads Jira; the droid updates the ticket itself, if told to. */
 export function ticketPrompt(t: { key: string; summary: string; description?: string; url?: string }): string {
   const description = (t.description ?? '').trim();
   return `Work on Jira ticket ${t.key}: "${t.summary}".${t.url ? `\n\n${t.url}` : ''}\n\n${description || '(No description.)'}`;

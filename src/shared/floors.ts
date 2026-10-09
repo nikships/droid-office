@@ -121,7 +121,7 @@ export function repoWebUrl(repo: string): string {
   return forgeOf(repo) === 'gitlab' ? `https://${repo}` : `https://github.com/${repo}`;
 }
 
-/** How a forge names things, for text shown to people and prompts given to workers. */
+/** How a forge names things, for text shown to people and prompts given to droids. */
 export interface ForgeWords {
   site: 'GitHub' | 'GitLab';
   cli: 'gh' | 'glab';

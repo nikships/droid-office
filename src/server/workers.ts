@@ -35,72 +35,72 @@ import type { Capacity } from './machine.js';
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
 
-/** Workers' names, and their colors; guests (see guests.ts) pick from the same. */
+/** Droids' names and colors; guests and cloud droids use the same pool. */
 export const NAMES = [
-  'Pixel',
-  'Byte',
-  'Nibble',
-  'Sprocket',
-  'Widget',
-  'Gizmo',
-  'Bolt',
-  'Cosmo',
-  'Dot',
-  'Echo',
-  'Fizz',
-  'Glitch',
-  'Hopper',
-  'Jinx',
-  'Kilo',
-  'Lumen',
-  'Mochi',
-  'Noodle',
-  'Orbit',
-  'Pip',
-  'Quark',
-  'Rivet',
-  'Sparky',
-  'Tofu',
-  'Uno',
-  'Volt',
-  'Waffle',
-  'Zippy',
+  'Anvil',
+  'Axiom',
+  'Alloy',
+  'Atlas',
+  'Beacon',
+  'Carbon',
+  'Catalyst',
+  'Circuit',
+  'Cobalt',
+  'Copper',
+  'Crucible',
+  'Dynamo',
+  'Ember',
+  'Flux',
+  'Forge',
+  'Foundry',
+  'Helix',
+  'Kernel',
+  'Kiln',
+  'Lathe',
+  'Lattice',
+  'Mettle',
+  'Relay',
+  'Servo',
+  'Signal',
+  'Spindle',
+  'Torque',
+  'Vector',
 ];
 export const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb', '#f7aef8', '#72ddf7', '#ffb400', '#00a6a6'];
 
 // Env vars from a parent terminal session (e.g. starting the office from inside another agent)
-// that don't belong in a worker's terminal.
-// ELECTRON_RUN_AS_NODE: the Mac app runs the office on Electron's Node; a worker that kept it would
+// that don't belong in a droid's terminal.
+// ELECTRON_RUN_AS_NODE: the Mac app runs the office on Electron's Node; a droid that kept it would
 // turn every Electron app it starts (VS Code's `code`, another app) into a bare Node process.
 const SCRUB_ENV = new Set(['NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ELECTRON_RUN_AS_NODE']);
 const SCRUB_PREFIXES = ['NEBULA_', 'DROID_OFFICE_'];
 const scrubbed = (k: string) => SCRUB_ENV.has(k) || SCRUB_PREFIXES.some((p) => k.startsWith(p));
 
 const SCREEN_INTERVAL_MS = 250;
-/** What a worker with a live terminal can be doing. */
+/** What a droid with a live terminal can be doing. */
 const RUNNING = new Set<unknown>(['starting', 'idle', 'working', 'done', 'needs_input'] satisfies WorkerStatus[]);
 const KEYFRAME_MS = 8000;
 /** How often a steady typist's "last typed" time is refreshed for everyone. */
 const TYPED_REFRESH_MS = 15_000;
-/** How many of a worker's latest prompts and tool calls the task namer sees. */
+/** How many of a droid's latest prompts and tool calls the task namer sees. */
 const TASK_PROMPTS = 5;
 const TASK_TOOLS = 10;
-/** While a worker works, refresh its task summary after this many tool calls, at most this often. */
+/** While a droid works, refresh its task summary after this many tool calls, at most this often. */
 const TASK_REFRESH_TOOLS = 8;
 const TASK_REFRESH_MS = 90_000;
 const PR_TITLE_MAX = 72;
 const PR_TASK_MAX = 2500;
-/** The most other repositories one worker can take on (see WorkerInfo.repos). */
+/** The most other repositories one droid can take on (see WorkerInfo.repos). */
 export const MAX_REPOS = 8;
 /** Around the list of a change's pull requests in each of their descriptions, so it can be brought up to date. */
 const RELATED_START = '<!-- agent-office:related -->';
 const RELATED_END = '<!-- /agent-office:related -->';
 /**
- * A hook finding the office restarting (its workers keep running through that) retries, once a
+ * A hook finding the office restarting (its droids keep running through that) retries, once a
  * second, this many times in all: long enough for a dev-server reload.
  */
 const HOOK_TRIES = 6;
-/** How often every worker's folder is checked for having been deleted. */
+/** How often every droid's folder is checked for having been deleted. */
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
 const SCREEN_CHECK_MS = 1000;
@@ -108,10 +108,10 @@ const SCREEN_CHECK_MS = 1000;
 const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
 const SAVE_SCROLLBACK_MS = 15_000;
-/** Between a worker's saved scrollback and what it prints after the office restarted. */
+/** Between a droid's saved scrollback and what it prints after the office restarted. */
 const RESTORED_NOTE = '\x1b[2m──── the office restarted · earlier output above ────\x1b[0m\r\n';
 /**
- * What a worker whose terminal didn't make it through a restart (the machine rebooted, the terminal
+ * What a droid whose terminal didn't make it through a restart (the machine rebooted, the terminal
  * host was replaced or died) is resumed with when it was in the middle of something, so it carries on
  * by itself instead of waiting at every desk for someone to type "continue".
  */
@@ -122,7 +122,7 @@ export interface HookEnv {
   token: string;
 }
 
-/** Another floor's repository for a worker to work in too (see WorkerInfo.repos). */
+/** Another floor's repository for a droid to work in too (see WorkerInfo.repos). */
 export interface RepoSource {
   floor: string;
   /** The floor's name, for messages. */
@@ -133,9 +133,9 @@ export interface RepoSource {
   dir: string;
 }
 
-/** A pull request 'worker.pr' opened, or found already open, for a worker's branch. */
+/** A pull request 'worker.pr' opened, or found already open, for a droid's branch. */
 export interface OpenedPr {
-  /** For a worker across repositories: which of its repositories (the folder in its workspace). */
+  /** For a droid across repositories: which of its repositories (the folder in its workspace). */
   repo?: string;
   number: number;
   url: string;
@@ -161,7 +161,7 @@ interface Worker {
   bootBlocked?: boolean;
   /**
    * Sessions of the subagents its droid started with the Task tool. Their hooks come with this
-   * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
+   * droid's token but their own session id, and their SessionStart and Stop are theirs, not its.
    */
   subSessions: Set<string>;
   /** The latest tool each session started (PreToolUse), to know which one a permission prompt is about. */
@@ -202,13 +202,13 @@ export interface WorkerEvents {
   remove(workerId: string): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
   screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
-  /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
+  /** `workerId` names the droid it is about, when one is (a shot droid's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
 }
 
 export class WorkerManager {
   private workers = new Map<string, Worker>();
-  /** Which connections have each worker's terminal open (workerId -> connection IDs). */
+  /** Which connections have each droid's terminal open (workerId -> connection IDs). */
   private subscribers = new Map<string, Set<string>>();
   private statePath: string;
   private droidSettingsPath: string;
@@ -229,16 +229,16 @@ export class WorkerManager {
   /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
   private teamBin: string | undefined;
   private screenTimer: NodeJS.Timeout;
-  /** The office is shutting down: workers exiting now are being stopped, not failing to resume. */
+  /** The office is shutting down: droids exiting now are being stopped, not failing to resume. */
   private closing = false;
-  /** Closing for good (Ctrl+C), not restarting: whatever the workers were doing is stopped on purpose. */
+  /** Closing for good (Ctrl+C), not restarting: whatever the droids were doing is stopped on purpose. */
   private stopping = false;
   private namer: TaskNamer;
   private watchTimer: NodeJS.Timeout;
   private statusTimer: NodeJS.Timeout;
-  /** Runs the workers' terminals outside the office, so they outlive a restart of it (see ptys.ts). */
+  /** Runs the droids' terminals outside the office, so they outlive a restart of it (see ptys.ts). */
   private host: PtyHost;
-  /** Each worker's terminal on disk, so a restart doesn't wipe it (see history.ts). */
+  /** Each droid's terminal on disk, so a restart doesn't wipe it (see history.ts). */
   private scrollback: ScrollbackStore;
   private drops: DropStore;
   private saveTimer: NodeJS.Timeout;
@@ -250,11 +250,11 @@ export class WorkerManager {
     private agentArgs: string[],
     private hook: HookEnv,
     private events: WorkerEvents,
-    /** The office's worker limit, across every floor (see machine.ts). */
+    /** The office's droid limit, across every floor (see machine.ts). */
     private capacity?: Capacity,
-    /** Where workers' pull requests are opened: GitHub, or the floor's GitLab project. */
+    /** Where droids' pull requests are opened: GitHub, or the floor's GitLab project. */
     private pulls: PullHost & { forge?: Forge } = githubPulls,
-    /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings (see prompts.ts). */
+    /** The office's prompts and the droid a new one starts on when nobody picks, as set in Settings (see prompts.ts). */
     private prompts?: PromptSource,
   ) {
     this.trees = new Worktrees(dir);
@@ -276,7 +276,7 @@ export class WorkerManager {
         this.persist();
       },
     );
-    this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
+    this.host = new PtyHost(dataDir, () => this.events.toast("The droids' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
     this.restore();
@@ -295,7 +295,7 @@ export class WorkerManager {
   }
 
   /**
-   * Picks every worker whose terminal outlived the last office (a dev-server reload, an upgrade)
+   * Picks every droid whose terminal outlived the last office (a dev-server reload, an upgrade)
    * back up where it is, mid-turn or not. Whoever else was at a desk when the office stopped (a
    * restart, a crash) gets straight back to work, carrying on with whatever it was in the middle of.
    * Call once, before anyone can walk in.
@@ -320,7 +320,7 @@ export class WorkerManager {
         }
       }),
     );
-    // Terminals nobody saved a claim on (their worker was sent home as the office went down).
+    // Terminals nobody saved a claim on (their droid was sent home as the office went down).
     this.host.killUnclaimed();
     // Whoever's worktree was deleted while the office was down stays asleep, marked lost, rather than failing to start.
     for (const w of this.workers.values()) this.checkLost(w);
@@ -354,7 +354,7 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
-  /** Each worker's terminal process and directory, to tell whose servers are whose. */
+  /** Each droid's terminal process and directory, to tell whose servers are whose. */
   owners(): ServiceOwner[] {
     return [...this.workers.values()].map((w) => ({
       workerId: w.info.id,
@@ -370,23 +370,23 @@ export class WorkerManager {
     return !!this.holds?.desk(deskId);
   }
 
-  /** Whether one of the office's own workers sits there, guests aside. */
+  /** Whether one of the office's own droids sits there, guests aside. */
   ownDesk(deskId: string): boolean {
     for (const w of this.workers.values()) if (w.info.deskId === deskId) return true;
     return false;
   }
 
-  /** Each worker in a folder of its own (its worktree or workspace), with that folder: whose a process started by hand there is. */
+  /** Each droid in a folder of its own (its worktree or workspace), with that folder: whose a process started by hand there is. */
   folders(): { id: string; folder?: string }[] {
     return [...this.workers.values()].map((w) => ({ id: w.info.id, folder: w.info.worktree ? this.cwd(w.info) : undefined }));
   }
 
-  /** The Droid sessions the office's own workers here are in, which are never a guest's. */
+  /** The Droid sessions the office's own droids here are in, which are never a guest's. */
   sessionIds(): Set<string> {
     return new Set([...this.workers.values()].flatMap((w) => (w.info.sessionId ? [w.info.sessionId] : [])));
   }
 
-  /** The agent processes someone started by hand in each worker's own folder (see guests.ts attribute). */
+  /** The agent processes someone started by hand in each droid's own folder (see guests.ts attribute). */
   setOutside(outside: ReadonlyMap<string, OutsideProcess[]>) {
     for (const w of this.workers.values()) {
       const now = outside.get(w.info.id);
@@ -398,10 +398,10 @@ export class WorkerManager {
   }
 
   /**
-   * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
+   * Hires a droid at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
-   * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
-   * `lead` hires a subagent for that worker (see team.ts): it's told who hired it and how to report back.
+   * other floors' repositories a droid in its own worktree works in too (see makeWorkspace).
+   * `lead` hires a subagent for that droid (see team.ts): it's told who hired it and how to report back.
    */
   spawn(
     deskId: string,
@@ -417,7 +417,7 @@ export class WorkerManager {
     /** Pictures staged for its first prompt (see stageImage), listed after it. */
     images?: readonly string[],
   ): WorkerInfo | string {
-    // Nobody picked (a board agent, say): the office's default worker, model and effort included.
+    // Nobody picked (a board agent, say): the office's default droid, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
     if (picked) ({ model, effort } = picked);
     const modelError = validateWorkerModel(kind, model);
@@ -429,10 +429,10 @@ export class WorkerManager {
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
     if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
-    if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
+    if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats droids at the meeting table: call one in the meeting room' : 'A meeting seats its droids at the meeting table';
     if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
-    if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
-    if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
+    if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a droid in its own worktree can work in other repositories too';
+    if (repos.length > MAX_REPOS) return `A droid can take on at most ${MAX_REPOS} other repositories`;
     if (lead !== undefined) {
       const boss = this.workers.get(lead)?.info;
       if (!boss) return 'Its lead has left';
@@ -443,7 +443,7 @@ export class WorkerManager {
     if (full) return full;
     const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
     const agent = seat.station && STATION_AGENT[seat.station];
-    const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Droid ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'] = meeting?.worktree;
     let others: WorkerRepo[] | undefined;
@@ -494,13 +494,13 @@ export class WorkerManager {
     return info;
   }
 
-  /** Why nobody can be hired anywhere in the office right now (its worker limit), if so. */
+  /** Why nobody can be hired anywhere in the office right now (its droid limit), if so. */
   full(): string | undefined {
     return this.capacity?.full();
   }
 
   /**
-   * One of the office's own workers in place of a guest whose droid just quit (see Floor.bringIn): at
+   * One of the office's own droids in place of a guest whose droid just quit (see Floor.bringIn): at
    * its desk, with its name and color, in the floor's checkout, resuming its session `sessionId`.
    * Its model and effort stay the session's own.
    */
@@ -511,7 +511,7 @@ export class WorkerManager {
     const full = this.capacity?.full();
     if (full) return full;
     const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')).concat([...(this.holds?.names() ?? [])]));
-    const name = !used.has(guest.name) ? guest.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const name = !used.has(guest.name) ? guest.name : (NAMES.find((n) => !used.has(n)) ?? `Droid ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
     const prompt = guest.prompt?.trim() || undefined;
     const info: WorkerInfo = {
@@ -556,11 +556,11 @@ export class WorkerManager {
     const wt = w.info.worktree;
     const where = wt
       ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task: commit your work there.`
-      : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
+      : "You work in the project's main checkout, which other people and droids use too: don't switch branches, stash, reset or commit in it unless your task says to.";
     return `${officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge) })}\n\n${prompt}`;
   }
 
-  /** The end of a worker's terminal as plain text, its scrollback included: what a lead reads of its subagent. */
+  /** The end of a droid's terminal as plain text, its scrollback included: what a lead reads of its subagent. */
   tail(id: string, lines: number): string | undefined {
     const term = this.workers.get(id)?.term;
     if (!term) return undefined;
@@ -574,7 +574,7 @@ export class WorkerManager {
     return out.join('\n');
   }
 
-  /** The card over a worker's head, until its own sign writer has something better (a subagent's title from its lead). */
+  /** The card over a droid's head, until its own sign writer has something better (a subagent's title from its lead). */
   setTask(id: string, task: WorkerTask) {
     const w = this.workers.get(id);
     if (!w) return;
@@ -584,7 +584,7 @@ export class WorkerManager {
   }
 
   /**
-   * The workspace of a worker across repositories: `.droid-office/worktrees/<slug>`, with a worktree of
+   * The workspace of a droid across repositories: `.droid-office/worktrees/<slug>`, with a worktree of
    * this floor's project and of each of `repos` in it, all on office/<slug>, and a brief for the agent
    * (the 'worker.repos' prompt, as AGENTS.md). All or nothing: when one repository
    * can't have its worktree, the ones already made are taken out again.
@@ -638,7 +638,7 @@ export class WorkerManager {
   }
 
   /**
-   * The brief in the workspace of a worker across repositories, which folder is which project (the
+   * The brief in the workspace of a droid across repositories, which folder is which project (the
    * 'worker.repos' prompt), as AGENTS.md. `primary` is its own floor's worktree, in the
    * workspace like `others`. Throws when it can't be written.
    */
@@ -653,15 +653,15 @@ export class WorkerManager {
     for (const file of WORKSPACE_FILES) writeFileSync(path.join(this.dir, path.dirname(primary.path), file), `${brief.trim()}\n`);
   }
 
-  /** Starts a worker that isn't running again, carrying on its session, with `prompt` as its next message. */
+  /** Starts a droid that isn't running again, carrying on its session, with `prompt` as its next message. */
   resume(id: string, prompt?: string): string | undefined {
     const w = this.workers.get(id);
-    if (!w) return 'No such worker';
+    if (!w) return 'No such droid';
     if (w.info.downedUntil !== undefined && w.info.downedUntil <= Date.now()) {
       this.dismiss(w);
-      return 'This worker can no longer be revived';
+      return 'This droid can no longer be revived';
     }
-    if (w.pty) return 'Worker is already running';
+    if (w.pty) return 'Droid is already running';
     if (this.checkLost(w, true)) return lostMessage(w.info);
     clockWork(w.info, 'starting');
     w.info.status = 'starting';
@@ -710,29 +710,29 @@ export class WorkerManager {
     this.drops.unstage(ids);
   }
 
-  /** The worker whose terminal holds this hook token: how a worker proves it's asking for itself. */
+  /** The droid whose terminal holds this hook token: how a droid proves it's asking for itself. */
   authenticate(id: string, token: string): WorkerInfo | undefined {
     const w = this.workers.get(id);
     return w?.pty && token && safeEq(token, w.hookToken) ? w.info : undefined;
   }
 
-  /** Starts every worker that isn't running: nobody should be found asleep at their desk. */
+  /** Starts every droid that isn't running: nobody should be found asleep at their desk. */
   wakeAll() {
     for (const w of this.workers.values()) if (!w.pty) this.resume(w.info.id);
   }
 
-  /** Keeps a file dropped or pasted into a worker's terminal on this machine; where it is, for the terminal to type. */
+  /** Keeps a file dropped or pasted into a droid's terminal on this machine; where it is, for the terminal to type. */
   drop(id: string, name: string, type: string, body: Buffer): string | undefined {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
   /**
-   * Down a worker without interrupting its session. A shot at a worker already down confirms the
+   * Down a droid without interrupting its session. A shot at a droid already down confirms the
    * kill: its revival window closes now and it is dismissed as if the deadline had passed.
    */
   shoot(id: string): string | undefined {
     const w = this.workers.get(id);
-    if (!w) return 'No such worker';
+    if (!w) return 'No such droid';
     if (this.closing) return 'The office is closing';
     if (w.info.downedUntil !== undefined) {
       clearTimeout(w.downedTimer);
@@ -751,12 +751,12 @@ export class WorkerManager {
 
   revive(id: string): string | undefined {
     const w = this.workers.get(id);
-    if (!w) return 'No such worker';
+    if (!w) return 'No such droid';
     if (this.closing) return 'The office is closing';
     if (w.info.downedUntil === undefined) return undefined;
     if (w.info.downedUntil <= Date.now()) {
       this.dismiss(w);
-      return 'This worker can no longer be revived';
+      return 'This droid can no longer be revived';
     }
     clearTimeout(w.downedTimer);
     w.downedTimer = undefined;
@@ -790,7 +790,7 @@ export class WorkerManager {
   }
 
   /**
-   * Sends a worker home. For one with its own worktree, `cleanup` says what becomes of it; with no
+   * Sends a droid home. For one with its own worktree, `cleanup` says what becomes of it; with no
    * choice given, the worktree and branch go only when they hold no work, where `landed` (its merged
    * pull request's head commit) is work delivered. Resolves once that's done, with a line for the team
    * about the worktree.
@@ -798,14 +798,14 @@ export class WorkerManager {
   async kill(id: string, cleanup?: WorktreeCleanup, landed?: string, landedRepos?: Record<string, string | undefined>): Promise<{ note?: string; error?: string }> {
     const w = this.workers.get(id);
     if (!w) return {};
-    if (w.info.downedUntil !== undefined && w.info.downedUntil > Date.now()) return { error: 'This worker is downed — revive them or wait until the revival window expires' };
+    if (w.info.downedUntil !== undefined && w.info.downedUntil > Date.now()) return { error: 'This droid is downed — revive them or wait until the revival window expires' };
     const shot = w.info.downedUntil !== undefined;
     this.workers.delete(id);
     this.subscribers.delete(id);
     this.namer.forget(id);
     clearTimeout(w.downedTimer);
     const proc = w.pty;
-    w.pty = undefined; // so the exit handler knows this worker is gone and stays quiet
+    w.pty = undefined; // so the exit handler knows this droid is gone and stays quiet
     try {
       proc?.kill();
     } catch {
@@ -890,7 +890,7 @@ export class WorkerManager {
     return { note: `Deleted ${w.info.name}'s worktrees and owned branches` };
   }
 
-  /** Sending home a worker across repositories: what `kill` does with a worktree, for each of its worktrees, and then its workspace. */
+  /** Sending home a droid across repositories: what `kill` does with a worktree, for each of its worktrees, and then its workspace. */
   private async clearRepos(info: WorkerInfo, cleanup: WorktreeCleanup | undefined, landed?: string, landedRepos?: Record<string, string | undefined>): Promise<{ note?: string; error?: string }> {
     const trees = this.treesOf(info, landed, landedRepos);
     const { name } = info;
@@ -917,7 +917,7 @@ export class WorkerManager {
   }
 
   /**
-   * Each worktree a worker across repositories has, its own floor's first: its folder in the
+   * Each worktree a droid across repositories has, its own floor's first: its folder in the
    * workspace, git plumbing for its repository, its worktree in that repository's terms, and the
    * commit its merged pull request delivered, when known.
    */
@@ -936,7 +936,7 @@ export class WorkerManager {
   }
 
   /**
-   * Whether any worktree of a worker across repositories holds work its merged pull requests didn't
+   * Whether any worktree of a droid across repositories holds work its merged pull requests didn't
    * deliver (`landed` and `landedRepos`, as for kill): then it doesn't go home by itself yet.
    */
   async holdsWork(id: string, landed?: string, landedRepos?: Record<string, string | undefined>): Promise<boolean> {
@@ -946,7 +946,7 @@ export class WorkerManager {
     return states.some(Boolean);
   }
 
-  /** What a worker's worktree holds, so whoever sends it home knows what deleting it would lose. */
+  /** What a droid's worktree holds, so whoever sends it home knows what deleting it would lose. */
   async inspectWorktree(id: string): Promise<WorktreeState | undefined> {
     const w = this.workers.get(id);
     const info = w?.info;
@@ -961,7 +961,7 @@ export class WorkerManager {
     return { exists: repos.every((r) => r.state.exists), dirty: sum('dirty'), ahead: sum('ahead'), unpushed: sum('unpushed'), error: errors.length ? errors.join('; ') : undefined, repos };
   }
 
-  /** Every worker's worktree branch, looked at again (see syncBranch): for when new pull requests may have come in. */
+  /** Every droid's worktree branch, looked at again (see syncBranch): for when new pull requests may have come in. */
   async syncBranches(): Promise<void> {
     await Promise.all([...this.workers.values()].map((w) => this.syncBranch(w)));
   }
@@ -970,7 +970,7 @@ export class WorkerManager {
    * Keeps `worktree.branch` on the branch the worktree is actually on. Agents often make their own
    * (`git checkout -b fix-x`, because the task or the repo's instructions say to) and open the pull
    * request from there, and the PR badge, O at the desk and sending it home go by it. A meeting's
-   * worktree stays the meeting's, and a worker across repositories keeps the branch it was given in
+   * worktree stays the meeting's, and a droid across repositories keeps the branch it was given in
    * each (see openPrs).
    */
   private async syncBranch(w: Worker): Promise<void> {
@@ -991,13 +991,13 @@ export class WorkerManager {
     let made = wt.made ?? (live === wt.branch ? undefined : wt.branch);
     // Back on it, or renamed it (`git branch -m fix-x`): the branch it's on is the office's own.
     // A deleted office branch is not a rename (see Worktrees.renamedTo): `made` stays so send-home
-    // can tell the branch it's on apart from one the worker made.
+    // can tell the branch it's on apart from one the droid made.
     if (made === live || (made && (await this.trees.renamedTo(made, live)))) made = undefined;
     return live === wt.branch && made === wt.made ? wt : { ...wt, branch: live, made };
   }
 
   /**
-   * Whether the folder a worker works in (its worktree, or its workspace across repositories) is gone:
+   * Whether the folder a droid works in (its worktree, or its workspace across repositories) is gone:
    * deleted outside the office. It's then marked lost (WorkerInfo.lost) for whoever comes to its desk,
    * instead of failing to start over and over; once the folder is back, it isn't any more.
    */
@@ -1021,8 +1021,8 @@ export class WorkerManager {
   }
 
   /**
-   * Every so often: a worktree deleted under a worker marks it lost, and one put back by hand
-   * (`git worktree add` at the same place) sets an asleep worker back to work.
+   * Every so often: a worktree deleted under a droid marks it lost, and one put back by hand
+   * (`git worktree add` at the same place) sets an asleep droid back to work.
    */
   private watchFolder(w: Worker) {
     if (!w.info.worktree || w.rebuilding) return;
@@ -1031,7 +1031,7 @@ export class WorkerManager {
   }
 
   /**
-   * Puts a lost worker's worktree back where it was (see Worktrees.restore) and starts it again,
+   * Puts a lost droid's worktree back where it was (see Worktrees.restore) and starts it again,
    * carrying on its conversation; across repositories, each worktree that's gone and the workspace's
    * brief. Everyone else who worked there (the rest of a meeting's table) gets back to work with it.
    * Resolves to whether it `rebuilt` anything, with a note on where a branch came back from (or why
@@ -1039,12 +1039,12 @@ export class WorkerManager {
    */
   async rebuild(id: string): Promise<{ rebuilt?: boolean; note?: string; error?: string }> {
     const w = this.workers.get(id);
-    if (!w) return { error: 'No such worker' };
+    if (!w) return { error: 'No such droid' };
     const { info } = w;
     if (!info.worktree) return { error: `${info.name} works in the main checkout` };
     if (w.rebuilding) return {};
     const folder = this.cwd(info);
-    // Whoever the folder was deleted from under: this worker, and the rest of its meeting's table.
+    // Whoever the folder was deleted from under: this droid, and the rest of its meeting's table.
     const stranded = [...this.workers.values()].filter((o) => o.info.worktree && this.cwd(o.info) === folder && (o.info.lost || this.checkLost(o)));
     const froms: string[] = [];
     if (!existsSync(folder)) {
@@ -1082,7 +1082,7 @@ export class WorkerManager {
   }
 
   /**
-   * Starts a worker in its folder again: an asleep one wakes up, and one whose process was left running
+   * Starts a droid in its folder again: an asleep one wakes up, and one whose process was left running
    * in the folder deleted from under it starts over in the new one, carrying on its conversation.
    */
   private restartIn(w: Worker) {
@@ -1100,7 +1100,7 @@ export class WorkerManager {
     this.resume(w.info.id);
   }
 
-  /** Subscribes one connection to a worker's terminal; opening it acknowledges its wait for attention. */
+  /** Subscribes one connection to a droid's terminal; opening it acknowledges its wait for attention. */
   attach(id: string, clientId: string): { data: string; cols: number; rows: number } | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
@@ -1120,7 +1120,7 @@ export class WorkerManager {
     return { data, cols: w.info.cols, rows: w.info.rows };
   }
 
-  /** Lines of every worker's terminal holding `needle` (a searchKey), newest first, at most `perWorker` each. */
+  /** Lines of every droid's terminal holding `needle` (a searchKey), newest first, at most `perWorker` each. */
   search(needle: string, perWorker: number): { hits: TerminalHit[]; more: boolean } {
     const hits: TerminalHit[] = [];
     let more = false;
@@ -1133,7 +1133,7 @@ export class WorkerManager {
     return { hits, more };
   }
 
-  /** Unsubscribes one connection from a worker's terminal. */
+  /** Unsubscribes one connection from a droid's terminal. */
   detach(id: string, clientId: string) {
     const w = this.workers.get(id);
     if (!w) return;
@@ -1147,7 +1147,7 @@ export class WorkerManager {
     }
   }
 
-  /** Removes one connection's subscription; empty entries go, so removed workers leave nothing behind. */
+  /** Removes one connection's subscription; empty entries go, so removed droids leave nothing behind. */
   private unsubscribe(id: string, clientId: string): boolean {
     const subs = this.subscribers.get(id);
     if (!subs?.delete(clientId)) return false;
@@ -1187,8 +1187,8 @@ export class WorkerManager {
    */
   prompt(id: string, text: string, images?: readonly string[], queue = false): string | undefined {
     const w = this.workers.get(id);
-    if (!w) return 'No such worker';
-    if (!w.pty) return 'Worker is not running';
+    if (!w) return 'No such droid';
+    if (!w.pty) return 'Droid is not running';
     const typed = text.replace(/\r\n?/g, '\n').trim();
     const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
@@ -1205,19 +1205,19 @@ export class WorkerManager {
   }
 
   /**
-   * Pushes a worktree worker's branch and opens a pull request (a merge request on GitLab) for it,
+   * Pushes a worktree droid's branch and opens a pull request (a merge request on GitLab) for it,
    * with a title and body drafted from its task. Resolves to the PR, or to a message saying why
    * there is none. The branch may already have an open PR (a second press, or one opened by hand):
-   * that one is used. A worker across repositories gets one in each repository it committed to
+   * that one is used. A droid across repositories gets one in each repository it committed to
    * (see openPrs).
    */
   async openPr(id: string, by: string): Promise<{ prs: OpenedPr[]; failed: string[] } | string> {
     const w = this.workers.get(id);
-    if (!w) return 'No such worker';
+    if (!w) return 'No such droid';
     const { info } = w;
     const wt = info.worktree;
     const words = forgeWords(this.forge);
-    if (!wt) return `${info.name} works in the main checkout — only workers with their own worktree can open a ${words.pr}`;
+    if (!wt) return `${info.name} works in the main checkout — only droids with their own worktree can open a ${words.pr}`;
     if (info.prOpening) return `${info.name}'s ${words.pull} is already being opened`;
     if (isBusy(info.status)) {
       return `${info.name} is still ${info.status === 'needs_input' ? 'waiting on input' : info.status} — wait until it's done`;
@@ -1251,13 +1251,13 @@ export class WorkerManager {
       return `Couldn't open a ${words.pr} for ${info.name}: ${(err as Error).message}`;
     } finally {
       info.prOpening = false;
-      // The worker may have been sent home meanwhile; an update would bring it back as a ghost.
+      // The droid may have been sent home meanwhile; an update would bring it back as a ghost.
       if (this.workers.get(id) === w) this.emitUpdate(w);
     }
   }
 
   /**
-   * 'worker.pr' for a worker across repositories: a pull request in each repository it committed to
+   * 'worker.pr' for a droid across repositories: a pull request in each repository it committed to
    * (or the one its branch already has there), with every one of them listed in each one's
    * description, so they're reviewed and merged together. The issue its task came from is closed by
    * its own floor's pull request; the others only mention it.
@@ -1365,7 +1365,7 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  /** Droid lifecycle hook callback: what a worker is doing, from its hooks. */
+  /** Droid lifecycle hook callback: what a droid is doing, from its hooks. */
   handleHook(workerId: string, token: string, event: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
     if (!w?.pty || w.info.kind !== 'agent' || !safeEq(token, w.hookToken)) return false;
@@ -1391,7 +1391,7 @@ export class WorkerManager {
     return true;
   }
 
-  /** A hook from the worker's own session. */
+  /** A hook from the droid's own session. */
   private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
     const session = report.session_id as string;
     if (event === 'SessionStart') {
@@ -1426,8 +1426,8 @@ export class WorkerManager {
   }
 
   /**
-   * A hook from one of its subagents. It works inside the worker's turn, and its permission prompts
-   * and questions show in the worker's terminal; its own start, prompt and end are not the worker's.
+   * A hook from one of its subagents. It works inside the droid's turn, and its permission prompts
+   * and questions show in the droid's terminal; its own start, prompt and end are not the droid's.
    */
   private subagentHook(w: Worker, event: string, report: Record<string, unknown>) {
     const session = report.session_id as string;
@@ -1494,7 +1494,7 @@ export class WorkerManager {
     }
   }
 
-  /** Looks up the model and effort droid says the worker's session runs, which no hook reports. */
+  /** Looks up the model and effort droid says the droid's session runs, which no hook reports. */
   private refreshDroidModel(w: Worker) {
     const { sessionId } = w.info;
     if (w.info.kind !== 'agent' || !sessionId) return;
@@ -1507,7 +1507,7 @@ export class WorkerManager {
     });
   }
 
-  /** A new message for the worker: show it right away, and have its task (re)named. */
+  /** A new message for the droid: show it right away, and have its task (re)named. */
   private notePrompt(w: Worker, prompt: string) {
     if (w.info.kind !== 'agent') return;
     const clean = prompt.replace(/\s+/g, ' ').trim();
@@ -1529,7 +1529,7 @@ export class WorkerManager {
 
   /**
    * A tool call finished. Tests or a build that failed again (by exit code, or by the summary it
-   * printed when the exit code was piped away) and the worker puts its head in its hands, until its
+   * printed when the exit code was piped away) and the droid puts its head in its hands, until its
    * next tool call; a passing run ends the streak.
    */
   private noteOutcome(w: Worker, payload: any, failed: boolean) {
@@ -1566,7 +1566,7 @@ export class WorkerManager {
 
   /**
    * The office is closing. On a restart (`keep`), terminals in the host keep running for the next
-   * office to pick back up; otherwise every worker stops.
+   * office to pick back up; otherwise every droid stops.
    */
   shutdown(keep = false) {
     this.closing = true;
@@ -1707,7 +1707,7 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  /** A fresh screen for a worker's terminal, and the title off it. */
+  /** A fresh screen for a droid's terminal, and the title off it. */
   private newTerm(w: Worker): HeadlessTerminal {
     const term = new headless.Terminal({ cols: w.info.cols, rows: w.info.rows, scrollback: SCROLLBACK, allowProposedApi: true });
     const ser = new serialize.SerializeAddon();
@@ -1735,7 +1735,7 @@ export class WorkerManager {
     }
   }
 
-  /** Shows a worker's terminal output as it comes, and deals with the process ending. */
+  /** Shows a droid's terminal output as it comes, and deals with the process ending. */
   private follow(w: Worker, proc: Pty, term: HeadlessTerminal) {
     const { info } = w;
     w.pty = proc;
@@ -1753,7 +1753,7 @@ export class WorkerManager {
         this.startFailed(w, error);
         return;
       }
-      // The terminal host died and took the process with it: nothing the worker did.
+      // The terminal host died and took the process with it: nothing the droid did.
       if (lost && !this.closing) {
         if (midTurn(w)) w.interrupted = true;
         this.resume(info.id);
@@ -1796,12 +1796,12 @@ export class WorkerManager {
     this.emitUpdate(w);
   }
 
-  /** What a worker's terminal runs: the shell, or the configured Droid command. */
+  /** What a droid's terminal runs: the shell, or the configured Droid command. */
   private command(info: WorkerInfo): string {
     return info.kind === 'shell' ? defaultShell() : this.agentCmd;
   }
 
-  /** Where a worker works: its worktree, a workspace for a worker across repositories, or the project itself. */
+  /** Where a droid works: its worktree, a workspace for a droid across repositories, or the project itself. */
   private cwd(info: WorkerInfo): string {
     const rel = workspaceOf(info);
     return rel ? path.join(this.dir, rel) : this.dir;
@@ -1814,20 +1814,20 @@ export class WorkerManager {
     if (status !== 'needs_input') w.asking = undefined;
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
-    // Nobody is looking at the terminal right now -> raise the flag (the worker jumps). A worker at the
+    // Nobody is looking at the terminal right now -> raise the flag (the droid jumps). A droid at the
     // meeting table that ends its part is waiting on the meeting, not on anyone, so it stays quiet.
     if (status === 'done' || status === 'needs_input') {
       w.info.acked = status === 'done' && (w.info.open || !!w.info.meeting);
       w.info.waitingSince = Date.now();
     } else w.info.acked = true;
     this.emitUpdate(w);
-    // What a restarted office picks the worker back up as, should its terminal outlive this one.
+    // What a restarted office picks the droid back up as, should its terminal outlive this one.
     if (w.pty?.id) this.persist();
     // At rest: it may have made a branch of its own this turn, and opened its PR from there.
     if (status === 'done' || status === 'idle') void this.syncBranch(w);
   }
 
-  /** The connections subscribed to a worker's terminal, oldest first. */
+  /** The connections subscribed to a droid's terminal, oldest first. */
   private subscriberIds(id: string): string[] {
     return [...(this.subscribers.get(id) ?? [])];
   }
@@ -1844,7 +1844,7 @@ export class WorkerManager {
     this.events.update({ ...w.info });
   }
 
-  /** Full screens for every running worker — sent to people as they walk in. */
+  /** Full screens for every running droid — sent to people as they walk in. */
   fullScreens() {
     const out: { workerId: string; frame: NonNullable<ReturnType<typeof snapshotScreen>> }[] = [];
     for (const w of this.workers.values()) {
@@ -1917,8 +1917,8 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * The settings file a Droid worker launches with. Interactive droid has no --model flag: a
-   * worker with a model or effort pinned gets its own overlay with the office hooks and a
+   * The settings file a Droid launches with. Interactive droid has no --model flag: a
+   * droid with a model or effort pinned gets its own overlay with the office hooks and a
    * sessionDefaultSettings override, merged for that process only, so the global default is
    * untouched. Rewritten on every launch, so a resume pins the same model again.
    */
@@ -2013,7 +2013,7 @@ process.stdin.on('end', () => {
           model: shell ? undefined : restoredModel(s.model),
           effort: shell ? undefined : isAgentEffort(s.effort) ? s.effort : undefined,
           deskId: s.deskId,
-          name: s.name ?? 'Worker',
+          name: s.name ?? 'Droid',
           color: s.color ?? COLORS[0],
           status: 'offline',
           acked: true,
@@ -2179,7 +2179,7 @@ function officeScript(name: string): string | undefined {
 
 /**
  * What a script prefixes to `process.execPath` to run a .js file with it. Under the Mac app that's
- * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and workers don't
+ * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and droids don't
  * inherit that (SCRUB_ENV), so the commands written for them set it themselves.
  */
 export function runAsNode(versions: NodeJS.ProcessVersions = process.versions): { sh: string; cmd: string } {
@@ -2188,7 +2188,7 @@ export function runAsNode(versions: NodeJS.ProcessVersions = process.versions): 
 
 const WIN = process.platform === 'win32';
 
-/** The shell workers get when none is configured: $SHELL on Unix, cmd.exe on Windows. */
+/** The shell droids get when none is configured: $SHELL on Unix, cmd.exe on Windows. */
 export function defaultShell(): string {
   return process.env.SHELL || (WIN ? process.env.COMSPEC || 'cmd.exe' : '/bin/bash');
 }
@@ -2287,7 +2287,7 @@ function clearWorkspace(abs: string) {
   }
 }
 
-/** The other repositories of a worker across repositories, as workers.json kept them. */
+/** The other repositories of a droid across repositories, as workers.json kept them. */
 function validRepos(raw: unknown): WorkerRepo[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -2337,10 +2337,10 @@ export function withRelated(body: string, block: string): string {
 }
 
 /**
- * A pull request title and body from what the worker was asked to do. The title is the issue's
+ * A pull request title and body from what the droid was asked to do. The title is the issue's
  * title when the task came off the issues board, else the task's first line; the body carries the
  * task, the commits, a "Closes #n" when the task asked for one, and which desk it came from. With
- * `other`, it's for one of the other repositories of a worker across repositories: the issue is its
+ * `other`, it's for one of the other repositories of a droid across repositories: the issue is its
  * own floor's (`home`), so this one only mentions it.
  */
 function draftPr(info: WorkerInfo, commits: string[], by: string, other?: { home?: string }): { title: string; body: string } {
@@ -2383,18 +2383,18 @@ function safeEq(a: string, b: string) {
   return r === 0;
 }
 
-/** How long a worker has spent working (ms), the stretch it's in now included. */
+/** How long a droid has spent working (ms), the stretch it's in now included. */
 export function workedMs(info: WorkerInfo, now = Date.now()): number | undefined {
   const ms = (info.workedMs ?? 0) + (info.workingSince === undefined ? 0 : Math.max(0, now - info.workingSince));
   return ms > 0 ? ms : undefined;
 }
 
-/** What starting a worker whose worktree was deleted (see WorkerInfo.lost) says instead. */
+/** What starting a droid whose worktree was deleted (see WorkerInfo.lost) says instead. */
 function lostMessage(info: WorkerInfo): string {
   return `${info.name}'s worktree ${workspaceOf(info)} was deleted outside droid-office — rebuild it or send ${info.name} home from its desk`;
 }
 
-/** Keeps count of how long a worker has worked (WorkerInfo.workedMs) as it goes from its status into `next`. */
+/** Keeps count of how long a droid has worked (WorkerInfo.workedMs) as it goes from its status into `next`. */
 export function clockWork(info: WorkerInfo, next: WorkerStatus, now = Date.now()) {
   if (next === 'working') {
     info.workingSince ??= now;

@@ -12,14 +12,14 @@ test('Droid model ids accept settings ids and reject whitespace or control chara
   assert.equal(isValidDroidModel(`${'x'.repeat(DROID_MODEL_MAX)}`), true);
 });
 
-test('models can be selected for Droid workers only', () => {
+test('models can be selected for Droids only', () => {
   assert.equal(validateWorkerModel('agent', 'custom:droidproxy:gpt-6-sol'), undefined);
   assert.match(validateWorkerModel('agent', 'has a space') ?? '', /Droid model/);
-  assert.match(validateWorkerModel('shell', 'glm-5.3-flash') ?? '', /Shell workers/);
+  assert.match(validateWorkerModel('shell', 'glm-5.3-flash') ?? '', /Shell droids/);
 });
 
-test('reasoning effort can be selected for agent workers only', () => {
+test('reasoning effort can be selected for agent droids only', () => {
   assert.equal(validateWorkerEffort('agent', 'high'), undefined);
   assert.match(validateWorkerEffort('agent', 'overdrive') ?? '', /effort/);
-  assert.match(validateWorkerEffort('shell', 'high') ?? '', /Shell workers/);
+  assert.match(validateWorkerEffort('shell', 'high') ?? '', /Shell droids/);
 });

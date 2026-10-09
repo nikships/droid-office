@@ -66,7 +66,7 @@ rm -f "$env_file"
 if [[ -n "${GH_TOKEN:-}" ]]; then
   step "Signing the GitHub CLI in"
   # Stored in gh's own config, so gh, git (via gh's credential helper), the office's boards, the
-  # workers and your ssh sessions all use it — and the token never lands in a .git/config.
+  # droids and your ssh sessions all use it — and the token never lands in a .git/config.
   printf '%s' "$GH_TOKEN" | quiet env -u GH_TOKEN gh auth login --hostname github.com --git-protocol https --with-token
   quiet env -u GH_TOKEN gh auth setup-git --hostname github.com
   echo "    $(env -u GH_TOKEN gh api user --jq '"as " + .login' 2>/dev/null || echo 'signed in')"
@@ -87,7 +87,7 @@ echo "    at $(git -C /opt/droid-office log -1 --format='%h %s')"
 step "npm install (builds the office)"
 (cd /opt/droid-office && quiet npm install --no-audit --no-fund)
 
-# The office keeps its data (floors, workers, boards, the queue) in ~/droid-office and
+# The office keeps its data (floors, droids, boards, the queue) in ~/droid-office and
 # clones projects into ~/workspace/<owner>/<repo>. It starts with no project: its elevator
 # lists every repository the GitHub token can see, and cloning one makes it the first floor.
 OFFICE_HOME="$HOME/droid-office"
@@ -152,9 +152,9 @@ Environment=DROID_OFFICE_SELF_UPDATE=1
 ExecStart=/usr/bin/node /opt/droid-office/bin/droid-office.js ${OFFICE_ARGS}--host 127.0.0.1 --port 4600
 Restart=always
 RestartSec=3
-# Stopping or restarting the office stops the office, not its workers: their terminals run in a
+# Stopping or restarting the office stops the office, not its droids: their terminals run in a
 # process of their own that the next office picks back up. The default, control-group, would stop
-# every worker mid-task on each upgrade.
+# every droid mid-task on each upgrade.
 KillMode=process
 LimitNOFILE=65536
 

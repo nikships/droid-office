@@ -10,7 +10,7 @@ export function processLabel(p: OutsideProcess): string {
   return `${PROVIDER_LABEL[p.provider]} · pid ${p.pid} on ${p.tty}`;
 }
 
-/** A worker's status in a word, where a guest the office can't read the state of is only "running". */
+/** A droid's status in a word, where a guest the office can't read the state of is only "running". */
 export function statusWord(w: WorkerInfo, labels: Record<string, string>): string {
   if (w.guest?.seen === 'process') return 'running';
   return labels[w.status] ?? w.status;
@@ -25,7 +25,7 @@ export function guestKeyNote(w: WorkerInfo, key: string): string {
   return `${w.name} runs outside the office (${where}). The office only watches it: E shows what it knows${comeIn}`;
 }
 
-/** A line for a worker that someone also runs an agent by hand in its worktree, outside the office. */
+/** A line for a droid that someone also runs an agent by hand in its worktree, outside the office. */
 export function outsideNote(w: WorkerInfo): string | undefined {
   const o = w.outside;
   if (!o?.length) return undefined;

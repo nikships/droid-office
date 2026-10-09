@@ -86,8 +86,8 @@ test('a second shot confirms the kill: dismissed at once with its worktree and b
   assert.equal(workers.shoot(w.id), undefined);
   assert.equal(workers.get(w.id), undefined);
   assert.deepEqual(f.removed, [w.id]);
-  assert.equal(workers.shoot(w.id), 'No such worker');
-  // The dismissal's worktree cleanup runs after the worker is gone, and toasts when it's done.
+  assert.equal(workers.shoot(w.id), 'No such droid');
+  // The dismissal's worktree cleanup runs after the droid is gone, and toasts when it's done.
   t.mock.timers.reset();
   for (let i = 0; i < 250 && !f.toasts.length; i++) await new Promise((r) => setTimeout(r, 20));
   assert.equal(existsSync(cwd), false);
@@ -100,7 +100,7 @@ test('a second shot confirms the kill: dismissed at once with its worktree and b
   );
 });
 
-test('kill before the deadline rejects every cleanup option and preserves the worker and dismissal timer', async (t) => {
+test('kill before the deadline rejects every cleanup option and preserves the droid and dismissal timer', async (t) => {
   const f = fixture(t);
   const workers = f.manager();
   const w = spawn(workers);
@@ -130,7 +130,7 @@ test('kill before the deadline rejects every cleanup option and preserves the wo
   assert.deepEqual(f.saved(), []);
 });
 
-test('revival cancels only that worker’s timer and leaves its session untouched', (t) => {
+test('revival cancels only that droid’s timer and leaves its session untouched', (t) => {
   const f = fixture(t);
   const workers = f.manager();
   const a = spawn(workers);
@@ -183,7 +183,7 @@ test('shutdown clears old timers, and restart restores the original deadline rat
   assert.deepEqual(f.removed, [w.id]);
 });
 
-test('restart recovers an already expired shot without waking the worker', (t) => {
+test('restart recovers an already expired shot without waking the droid', (t) => {
   const f = fixture(t);
   const workers = f.manager();
   const w = spawn(workers);
@@ -197,7 +197,7 @@ test('restart recovers an already expired shot without waking the worker', (t) =
   assert.deepEqual(f.removed, [w.id]);
 });
 
-test('gun dismissal ignores keep and discards dirty work and unique commits on both worker branches', async (t) => {
+test('gun dismissal ignores keep and discards dirty work and unique commits on both droid branches', async (t) => {
   const f = fixture(t);
   const workers = f.manager();
   const w = spawn(workers, 'desk-1', true);

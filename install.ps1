@@ -71,9 +71,9 @@
       if ($major -lt 20) { throw "Droid Office needs Node.js 20 or newer, and this is $(& node -v). Update it, then run this again." }
       if (-not $npm) { throw "Droid Office needs npm, which comes with Node.js." }
       if (-not (Test-Path -LiteralPath $tar)) { throw "this needs Windows' tar.exe (Windows 10 1803 or newer)." }
-      if (-not (Have 'git')) { Warn "git isn't installed. The office needs it for projects and worker worktrees." }
+      if (-not (Have 'git')) { Warn "git isn't installed. The office needs it for projects and droid worktrees." }
       if (-not (Have 'droid')) {
-        Warn 'no Droid CLI found on your PATH. Workers need it: https://docs.factory.ai/cli/getting-started/quickstart'
+        Warn 'no Droid CLI found on your PATH. Droids need it: https://docs.factory.ai/cli/getting-started/quickstart'
       }
     }
 
@@ -140,7 +140,7 @@
     }
 
     # Removes the versions this install replaced, except any still running: an office, or the terminal
-    # host that keeps its workers alive across office restarts.
+    # host that keeps its droids alive across office restarts.
     function Prune-Versions([string]$keep) {
       $running = @()
       # With slashes turned around, since the Git Bash launcher starts node with a C:/... path.

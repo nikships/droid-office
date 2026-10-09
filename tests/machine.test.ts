@@ -20,7 +20,7 @@ function fixture(ceiling?: number) {
   return { open, told, hire: (n = 1) => (workers += n), close: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-test('worker limits are whole numbers from 1 up', () => {
+test('droid limits are whole numbers from 1 up', () => {
   assert.equal(parseWorkerLimit('6'), 6);
   assert.equal(parseWorkerLimit(' 12 '), 12);
   for (const bad of ['0', '-1', '2.5', 'six', '', 0, 1.5, null, undefined, 10_000]) assert.equal(parseWorkerLimit(bad), undefined, String(bad));
@@ -35,7 +35,7 @@ test('no limit until one is set; then hiring past it is refused, across restarts
   assert.equal(m.full(), undefined);
   assert.equal(m.room(), Infinity);
   assert.equal(m.setLimit(5, 'Ada'), undefined);
-  assert.match(m.full() ?? '', /limit of 5 workers/);
+  assert.match(m.full() ?? '', /limit of 5 droids/);
   assert.equal(m.room(), 0);
   assert.deepEqual(f.told.at(-1)?.set?.limit, 5);
   // Kept on disk.
@@ -65,7 +65,7 @@ test('--max-workers is a ceiling the office can go under but not over', (t) => {
   assert.equal(m.state().ceiling, 4);
 });
 
-test('everyone hears when the worker count moves, and only then', (t) => {
+test('everyone hears when the droid count moves, and only then', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const m = f.open();

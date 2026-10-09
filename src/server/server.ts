@@ -154,7 +154,7 @@ function send(res: http.ServerResponse, status: number, body: unknown, headers: 
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
-/** Which of a worker's repositories a Changes message is about: another floor's (see WorkerInfo.repos), or none for its own. */
+/** Which of a droid's repositories a Changes message is about: another floor's (see WorkerInfo.repos), or none for its own. */
 const repoOf = (v: unknown) => str(v, 64) || undefined;
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 /** What an office tab answered a relayed automation command with (see automationRequest). */
@@ -179,7 +179,7 @@ function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
 const imageIds = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => str(x, 16)).filter((x) => PROMPT_IMAGE_ID.test(x)))].slice(0, PROMPT_IMAGES_MAX) : []);
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-/** The most lines per worker's terminal a search answers with. */
+/** The most lines per droid's terminal a search answers with. */
 const SEARCH_TERMINAL_HITS = 25;
 
 export async function startServer(cfg: Config) {
@@ -221,7 +221,7 @@ export async function startServer(cfg: Config) {
   };
   const toastAll = (text: string, level: ToastLevel = 'info') => broadcast({ t: 'toast', text, level });
 
-  // --- The building: a floor per project, each with its own workers, boards and queue -----------
+  // --- The building: a floor per project, each with its own droids, boards and queue -----------
   const building = new Building(cfg.dataDir, cfg.projectsDir);
   if (cfg.projects) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
@@ -229,7 +229,7 @@ export async function startServer(cfg: Config) {
   }
   const floors = new Map<string, Floor>();
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
-  /** The floor a worker sits on. Worker ids are unique across the building. */
+  /** The floor a droid sits on. Droid ids are unique across the building. */
   const workerFloor = (workerId: string): Floor | undefined => {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
     return undefined;
@@ -252,7 +252,7 @@ export async function startServer(cfg: Config) {
     if (floor) toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
   const floorInfos = (): FloorInfo[] => [...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }))];
-  // The elevator's counts change with every worker update; tell everyone at most a few times a second.
+  // The elevator's counts change with every droid update; tell everyone at most a few times a second.
   let floorsSent = '';
   let floorsTimer: NodeJS.Timeout | undefined;
   const floorsChanged = () => {
@@ -336,7 +336,7 @@ export async function startServer(cfg: Config) {
   };
   /**
    * A lead's subagents, for the office-workers command (see team.ts): a POST with the action in its
-   * JSON body. The worker's own hook token says who's asking, and so whose team it is.
+   * JSON body. The droid's own hook token says who's asking, and so whose team it is.
    */
   const officeWorkers = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
     const workerId = url.searchParams.get('worker') ?? '';
@@ -358,7 +358,7 @@ export async function startServer(cfg: Config) {
       send(res, 500, { error: (err as Error).message });
     }
   };
-  // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
+  // Droids' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');
   const listenHooks = (port: number) =>
@@ -382,15 +382,15 @@ export async function startServer(cfg: Config) {
   // Day, night and the weather outside the windows, the same for everyone.
   const sky = new Sky({ city: cfg.city, weather: cfg.weather }, (state) => broadcast({ t: 'sky', state }));
   sky.start();
-  // Whether a worker whose pull request merged goes home by itself, on every floor (⚙️ Settings).
+  // Whether a droid whose pull request merged goes home by itself, on every floor (⚙️ Settings).
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
-  // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
+  // The prompts the office writes for droids by itself, and the droid a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
-  // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
+  // How droids hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
   const subagents = new Subagents(cfg.dataDir, (state) => broadcast({ t: 'subagents', state }), cfg.skillsDir);
   subagents.syncSkill();
 
-  // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
+  // Slack / Discord pings for droids that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
     cfg.dataDir,
     (workerId) => (workerId && (workerFloor(workerId) ?? guestFloor(workerId))?.def.name) || officeName,
@@ -409,14 +409,14 @@ export async function startServer(cfg: Config) {
     dataDir: cfg.dataDir,
     broadcast: (state) => broadcast({ t: 'factory', state }),
     toast: (text, level) => toastAll(text, level),
-    // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
+    // Cloud droids: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
     cloud: {
       floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
       agentArgs: cfg.agentArgs,
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
     },
-    // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
-    // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
+    // Every floor's droids (desk, cloud and guests) with a session, so each shows what it has cost.
+    // Cloud droids live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
     officeSessions: () =>
       [...floors.values()].flatMap((f) =>
         f.everyone().flatMap((w) => (w.sessionId ? [{ sessionId: w.sessionId, workerId: w.id, name: w.name, floor: f.def.name, color: w.color, working: w.status === 'working', createdAt: w.createdAt }] : [])),
@@ -429,7 +429,7 @@ export async function startServer(cfg: Config) {
   const cloud = factory.cloud!;
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
-  // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
+  // most droids the office runs at once, across every floor (--max-workers, or ⚙️ Settings).
   const machine = new Machine(
     cfg.dataDir,
     cfg.maxWorkers,
@@ -441,7 +441,7 @@ export async function startServer(cfg: Config) {
     (state) => broadcast({ t: 'machine', state }),
   );
   machine.start();
-  /** Queues everywhere may be waiting for room under the worker limit: let them look again. */
+  /** Queues everywhere may be waiting for room under the droid limit: let them look again. */
   const pumpQueues = (except?: Floor) => {
     if (machine.limit === undefined) return;
     // Not right now: whoever freed the seat (a queue making room for its next task) takes it first.
@@ -497,7 +497,7 @@ export async function startServer(cfg: Config) {
     },
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),
   };
-  /** Whether a worker on `from` works in `on`'s project too (see WorkerInfo.repos). */
+  /** Whether a droid on `from` works in `on`'s project too (see WorkerInfo.repos). */
   const worksIn = (from: Floor, on: Floor) => from.workers.list().some((w) => w.repos?.some((r) => r.floor === on.id));
   const openFloor = (def: FloorDef): Floor | undefined => {
     if (!existsSync(def.dir)) {
@@ -518,7 +518,7 @@ export async function startServer(cfg: Config) {
   // The home folder is always a floor, after the projects.
   if (cfg.homeFloor) building.ensureHome(cfg.homeFloor);
   for (const def of building.list()) openFloor(def);
-  // Workers still running from the last office are back at their desks before anyone walks in.
+  // Droids still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
 
   // The owner SSHes to a deployed office as the box's own user (deploy/aws.sh tunnels as ubuntu,
@@ -526,8 +526,8 @@ export async function startServer(cfg: Config) {
   // the box's public address, no team membership involved.
   const ownerSsh = cfg.publicHost ? `ubuntu@${cfg.publicHost}` : undefined;
 
-  // Web servers the workers start, for the Services board and service tunnels (see relay.ts).
-  // One scan covers every floor; each floor's board lists its own workers' servers.
+  // Web servers the droids start, for the Services board and service tunnels (see relay.ts).
+  // One scan covers every floor; each floor's board lists its own droids' servers.
   const servicesState = (floor: Floor | undefined, items = services.list()): ServicesState => ({
     items: floor ? items.filter((s) => floor.workers.get(s.workerId)) : [],
     port: cfg.port,
@@ -585,7 +585,7 @@ export async function startServer(cfg: Config) {
   const upgrader = new Upgrader(
     (state) => broadcast({ t: 'upgrade', state }),
     () => {
-      // cli.ts shuts down gracefully, leaving the workers running in their terminal host; systemd
+      // cli.ts shuts down gracefully, leaving the droids running in their terminal host; systemd
       // (Restart=always) then starts the new version, which picks them back up.
       process.kill(process.pid, 'SIGTERM');
     },
@@ -733,7 +733,7 @@ export async function startServer(cfg: Config) {
     return send(res, answer.ok ? 200 : timedOut ? 504 : 422, out);
   };
 
-  /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
+  /** The 🔎 search: lines of the terminals of every droid on that floor, with the words in them. */
   const search = (q: string, floor: Floor | undefined): SearchResults => {
     q = q.slice(0, SEARCH_MAX);
     const needle = searchKey(q);
@@ -752,7 +752,7 @@ export async function startServer(cfg: Config) {
       } catch {
         return send(res, 400, { error: 'Bad request' });
       }
-      // A service tunnel (localhost:5173 -> the office): relay to that worker's server. SSH tunnels
+      // A service tunnel (localhost:5173 -> the office): relay to that droid's server. SSH tunnels
       // arrive over loopback; anything else needs the token like any other request.
       const tunneled = tunneledPort(req, cfg.port);
       const svc = tunneled ? services.lookup(tunneled) : undefined;
@@ -870,15 +870,15 @@ export async function startServer(cfg: Config) {
         res.end(r.body);
         return;
       }
-      // Which floor a request is about: its boards and its workers.
+      // Which floor a request is about: its boards and its droids.
       const floor = floors.get(url.searchParams.get('floor') ?? '');
       if (p === '/api/term/drop') {
-        // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
+        // A file dropped or pasted into a droid's terminal, kept on this machine for the terminal to type its path.
         if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
         if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
         if (!floor) return send(res, 404, { error: 'No such floor' });
         const workerId = str(url.searchParams.get('worker'), 32);
-        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
+        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such droid' });
         const tooBig = `That file is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
         if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
         let body: Buffer;
@@ -911,20 +911,20 @@ export async function startServer(cfg: Config) {
         return id ? send(res, 200, { id }) : send(res, 415, { error: 'Only PNG, JPEG, GIF and WebP pictures can be sent with a prompt' });
       }
       if (p === '/api/changes/file') {
-        // A changed picture in the Changes window at a desk: before (old) or after (new) the worker's edits.
+        // A changed picture in the Changes window at a desk: before (old) or after (new) the droid's edits.
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
         const workerId = str(url.searchParams.get('worker'), 32);
         const file = str(url.searchParams.get('path'), 4096);
         const side = url.searchParams.get('side');
         if (!workerId || !file || (side !== 'old' && side !== 'new')) return send(res, 400, { error: 'Bad request' });
         if (!floor) return send(res, 404, { error: 'No such floor' });
-        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
+        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such droid' });
         const r = await floor.changes.file(workerId, file, side, repoOf(url.searchParams.get('repo')));
         if ('error' in r) return send(res, r.status, { error: r.error });
         res.writeHead(200, {
           'content-type': r.type,
           'content-length': String(r.body.length),
-          // The worker may change it again any moment.
+          // The droid may change it again any moment.
           'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
           'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
@@ -1164,7 +1164,7 @@ export async function startServer(cfg: Config) {
 
   /**
    * Takes `floor` off the building (already out of floors.json): everyone on it rides the elevator to
-   * the next floor, or out to the lobby if it was the last (the roof goes with it), and its workers stop.
+   * the next floor, or out to the lobby if it was the last (the roof goes with it), and its droids stop.
    */
   const closeFloor = (floor: Floor, who: string) => {
     const name = floor.def.name;
@@ -1183,7 +1183,7 @@ export async function startServer(cfg: Config) {
     floors.delete(floor.id);
     floor.shutdown();
     floorsChanged();
-    // Its workers made room under the worker limit.
+    // Its droids made room under the droid limit.
     pumpQueues();
   };
 
@@ -1204,7 +1204,7 @@ export async function startServer(cfg: Config) {
   };
 
   /**
-   * A worker took on issue `n` (an issue card dropped on its desk): assign it on GitHub or GitLab, which
+   * A droid took on issue `n` (an issue card dropped on its desk): assign it on GitHub or GitLab, which
    * moves it to In progress on the board, and take it off the queue so nobody else is seated for it.
    */
   const takeIssue = (c: Client, floor: Floor, n: number) => {
@@ -1232,7 +1232,7 @@ export async function startServer(cfg: Config) {
     });
   };
 
-  /** Opens a worker's terminal for `c`, or the banner a guest has instead of one. */
+  /** Opens a droid's terminal for `c`, or the banner a guest has instead of one. */
   const attachTerminal = (wid: string, c: Client) => workerFloor(wid)?.workers.attach(wid, c.id) ?? guestFloor(wid)?.guests.attach(wid, c.id);
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
@@ -1243,17 +1243,17 @@ export async function startServer(cfg: Config) {
       if (!f) warn(c, 'Take the elevator to a floor first');
       return f;
     };
-    /** A worker by id, with the floor it sits on. */
+    /** A droid by id, with the floor it sits on. */
     const worker = (id: unknown) => {
       const wid = str(id, 32);
       const floor = workerFloor(wid);
       return floor ? { wid, floor, info: floor.workers.get(wid)! } : undefined;
     };
-    // A guest runs outside the office: nothing the office does with its own workers is done to it.
+    // A guest runs outside the office: nothing the office does with its own droids is done to it.
     const asked = (msg as { workerId?: unknown }).workerId;
     const guest = GUEST_REFUSED.has(msg.t) && typeof asked === 'string' ? guestFloor(asked)?.guests.get(asked) : undefined;
     if (guest?.guest) return warn(c, guestRefusal(guest, msg.t));
-    // A cloud worker's session runs on a Factory computer: factory/cloud.ts answers for it.
+    // A cloud droid's session runs on a Factory computer: factory/cloud.ts answers for it.
     const cloudie = typeof asked === 'string' && /^(worker|term|changes|guest)\./.test(msg.t) ? cloud.find(asked) : undefined;
     if (cloudie) {
       const floor = floors.get(cloudie.floor.id);
@@ -1295,7 +1295,7 @@ export async function startServer(cfg: Config) {
         console.log(`  ${who} added a floor for ${r.repo ?? r.name} (${r.dir})`);
         toastAll(`🛗 New floor: ${r.name}, added by ${who}`);
         sendTo(c, { t: 'floor.added', dir, floor: floor.id });
-        // Its Droid workers find out how to hire subagents from the skill: put it back if it went missing.
+        // Its Droids find out how to hire subagents from the skill: put it back if it went missing.
         if (subagents.syncSkill()) broadcast({ t: 'subagents', state: subagents.state() });
         break;
       }
@@ -1331,7 +1331,7 @@ export async function startServer(cfg: Config) {
           const other = floors.get(id);
           if (!other || other === floor) {
             floor.workers.unstage(images);
-            return warn(c, other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
+            return warn(c, other ? "The droid's own floor's project is already in its workspace" : 'That project is no longer in the building');
           }
           repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
         }
@@ -1359,13 +1359,13 @@ export async function startServer(cfg: Config) {
       }
       case 'worker.resume': {
         const w = worker(msg.workerId);
-        warn(c, w ? w.floor.workers.resume(w.wid) : 'No such worker');
+        warn(c, w ? w.floor.workers.resume(w.wid) : 'No such droid');
         break;
       }
       case 'guest.bringIn': {
         const wid = str(msg.workerId, 64);
         const floor = guestFloor(wid);
-        if (!floor) return warn(c, workerFloor(wid) ? "That's already one of the office's workers" : 'That guest has gone home');
+        if (!floor) return warn(c, workerFloor(wid) ? "That's already one of the office's droids" : 'That guest has gone home');
         void floor.bringIn(wid, who).then((r) => {
           if (typeof r === 'string') warn(c, r);
           else toastFloor(floor, `🚪 ${who} brought ${r.name} into the office: its session carries on at its desk`);
@@ -1383,8 +1383,8 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         if (!w) break;
         const { floor, info } = w;
-        if (info.downedUntil !== undefined && info.downedUntil > Date.now()) return warn(c, 'This worker is downed — revive them or wait until the revival window expires');
-        // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
+        if (info.downedUntil !== undefined && info.downedUntil > Date.now()) return warn(c, 'This droid is downed — revive them or wait until the revival window expires');
+        // The droid leaves right away; its worktree is dealt with after that, and the outcome follows.
         const done = floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined);
         toastFloor(floor, `${who} sent ${info.name} home`);
         void done.then(({ note, error }) => {
@@ -1405,7 +1405,7 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         if (!w) break;
         const { floor } = w;
-        // With `all`, every worker on the floor whose worktree was deleted, this one first.
+        // With `all`, every droid on the floor whose worktree was deleted, this one first.
         const ids = [
           w.wid,
           ...(msg.all === true
@@ -1455,7 +1455,7 @@ export async function startServer(cfg: Config) {
       case 'worker.prompt': {
         const w = worker(msg.workerId);
         const images = imageIds(msg.images);
-        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such worker';
+        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such droid';
         w?.floor.workers.unstage(images);
         warn(c, err);
         const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
@@ -1484,7 +1484,7 @@ export async function startServer(cfg: Config) {
         void floor.workers.openPr(wid, who).then((r) => {
           if (typeof r === 'string') return warn(c, r);
           const info = floor.workers.get(wid);
-          const name = info?.name ?? 'the worker';
+          const name = info?.name ?? 'the droid';
           const words = forgeWords(floor.board.forge);
           const [one] = r.prs;
           if (r.prs.length === 1 && one && !one.repo) toastFloor(floor, one.existed ? `${name}'s branch already has ${words.pr} ${words.ref(one.number)}` : `${who} opened ${words.pr} ${words.ref(one.number)} for ${name}`);
@@ -1687,7 +1687,7 @@ export async function startServer(cfg: Config) {
         const on = msg.on === true;
         if (on === leaveOnMerge.on) break;
         leaveOnMerge.set(on, who);
-        toastAll(on ? `🏠 ${who} set workers to go home by themselves once their pull request merges` : `🪑 ${who} set workers whose pull request merged to stay until they're sent home`);
+        toastAll(on ? `🏠 ${who} set droids to go home by themselves once their pull request merges` : `🪑 ${who} set droids whose pull request merged to stay until they're sent home`);
         // The ones already merged go now.
         if (on) for (const f of floors.values()) f.sendLandedHome();
         break;
@@ -1697,7 +1697,7 @@ export async function startServer(cfg: Config) {
         const err = subagents.set(msg.settings, who);
         if (err) return warn(c, err);
         const after = subagents.settings;
-        if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let workers hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
+        if (before.on !== after.on) toastAll(after.on ? `🧭 ${who} let droids hire subagents` : `🧭 ${who} turned subagents off: nobody hires new ones`);
         else toastAll(`🧭 ${who} changed the Subagents settings`);
         break;
       }
@@ -1721,16 +1721,16 @@ export async function startServer(cfg: Config) {
         };
         const err = prompts.setAgent(choice, who);
         if (err) return warn(c, err);
-        toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to Droid’s own default`);
+        toastAll(choice ? `🤖 ${who} set the office’s default droid` : `🤖 ${who} put the office’s default droid back to Droid’s own default`);
         break;
       }
       case 'machine.limit': {
         const limit = msg.limit === null ? undefined : parseWorkerLimit(msg.limit);
-        if (msg.limit !== null && limit === undefined) return warn(c, `The worker limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
+        if (msg.limit !== null && limit === undefined) return warn(c, `The droid limit is a whole number from 1 to ${MAX_WORKER_LIMIT}`);
         const err = machine.setLimit(limit, who);
         if (err) return warn(c, err);
         const now = machine.limit;
-        toastAll(limit !== undefined ? `⚙️ ${who} set the worker limit to ${now}` : now === undefined ? `⚙️ ${who} took the worker limit off` : `⚙️ ${who} put the worker limit back to ${now} (--max-workers)`);
+        toastAll(limit !== undefined ? `⚙️ ${who} set the droid limit to ${now}` : now === undefined ? `⚙️ ${who} took the droid limit off` : `⚙️ ${who} put the droid limit back to ${now} (--max-workers)`);
         pumpQueues();
         break;
       }
@@ -1784,7 +1784,7 @@ export async function startServer(cfg: Config) {
       }
       case 'changes.unwatch': {
         const wid = str(msg.workerId, 32);
-        // Its worker may have gone home already; stop watching wherever it was.
+        // Its droid may have gone home already; stop watching wherever it was.
         for (const f of floors.values()) f.changes.unwatch(wid, c.id, repoOf(msg.repo));
         break;
       }
@@ -1794,7 +1794,7 @@ export async function startServer(cfg: Config) {
         const repo = repoOf(msg.repo);
         const floor = workerFloor(workerId);
         if (!floor) {
-          sendTo(c, { t: 'changes.diff', workerId, repo, path: file, diff: '', truncated: false, error: 'No such worker' });
+          sendTo(c, { t: 'changes.diff', workerId, repo, path: file, diff: '', truncated: false, error: 'No such droid' });
           break;
         }
         void floor.changes.diff(workerId, file, repo).then((r) => {
@@ -1954,7 +1954,7 @@ export async function startServer(cfg: Config) {
   guestScanner.start();
   await hotReload.start();
 
-  /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
+  /** With `keep` (a restart), droids' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
     clearInterval(heartbeat);
     clearInterval(resync);

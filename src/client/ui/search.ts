@@ -5,14 +5,14 @@ import { withToken } from '../token';
 import { h, openModal } from './dom';
 import type { TerminalFind } from './terminal';
 
-// The search window: words in every worker's terminal, including what they showed before the office
+// The search window: words in every droid's terminal, including what they showed before the office
 // last restarted. A terminal line opens that terminal right at it.
 
 /** What was searched last, so the window opens where you left it. */
 let lastQuery = '';
 
 export async function search(q: string): Promise<SearchResults> {
-  // The terminals searched are the workers on your floor.
+  // The terminals searched are the droids on your floor.
   const floor = store.floor ? `&floor=${encodeURIComponent(store.floor)}` : '';
   const r = await fetch(withToken(`/api/search?q=${encodeURIComponent(q)}${floor}`), { credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
@@ -102,12 +102,12 @@ export function openSearch(openTerminal: (workerId: string, find: TerminalFind) 
       return;
     }
     if (!found) {
-      status.textContent = `Finds words in every worker's terminal, including what they showed before the office restarted.`;
+      status.textContent = `Finds words in every droid's terminal, including what they showed before the office restarted.`;
       results.replaceChildren();
       return;
     }
     const needle = searchKey(found.q);
-    // Workers sent home since the search ran have nothing left to open.
+    // Droids sent home since the search ran have nothing left to open.
     const byWorker = new Map<string, TerminalHit[]>();
     for (const hit of found.terminals) {
       if (!store.workers.has(hit.workerId)) continue;

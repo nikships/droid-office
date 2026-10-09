@@ -7,7 +7,7 @@ import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './
 import { PROMPTS } from '../shared/prompts.js';
 import { PROMPT_IMAGE_ID } from '../shared/drops.js';
 
-/** What the queue needs from the worker manager. Narrow on purpose, so a smoke test can fake it. */
+/** What the queue needs from the droid manager. Narrow on purpose, so a smoke test can fake it. */
 export interface QueueWorkers {
   /** What a task starts on when whoever queued it didn't pick (Settings); Droid's own default without it. */
   readonly officeDefault?: AgentChoice;
@@ -16,7 +16,7 @@ export interface QueueWorkers {
   spawn(deskId: string, by: string, prompt: string, worktree: boolean, kind: 'agent', model?: string, effort?: AgentEffort, images?: readonly string[]): WorkerInfo | string;
   /** Throws away pictures staged for a task that won't start (see Workers.stageImage). */
   unstage?(ids: readonly string[]): void;
-  /** Resolves with a line about what became of the worker's worktree. */
+  /** Resolves with a line about what became of the droid's worktree. */
   kill(id: string): Promise<{ note?: string; error?: string }>;
   /** Fetches what a new worktree starts from; undefined when there's nothing to wait for (see Worktrees.fetch). */
   fetchBase?(): Promise<void> | undefined;
@@ -27,9 +27,9 @@ export interface QueueEvents {
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
   /** Mark the issue as taken on GitHub, so the board moves it to In progress. Resolves to an error message when it can't. */
   claimIssue(issue: number): Promise<string | undefined>;
-  /** Ask GitHub for fresh pull requests, to pick up the one a worker just opened. */
+  /** Ask GitHub for fresh pull requests, to pick up the one a droid just opened. */
   refreshGitHub(): void;
-  /** How many more workers the office has room for under its worker limit (Infinity without one). */
+  /** How many more droids the office has room for under its droid limit (Infinity without one). */
   room?(): number;
   /** The last task on the queue just finished, done: nothing is left queued or running. */
   emptied(): void;
@@ -40,13 +40,13 @@ export interface QueueEvents {
 export const DEFAULT_MAX_WORKERS = 3;
 const MAX_TASKS = 100;
 const PUMP_MS = 10_000;
-/** A worker in one of these states is finished with its task (and can make room for the next one). */
+/** A droid in one of these states is finished with its task (and can make room for the next one). */
 const FINISHED = new Set<WorkerStatus>(['done', 'exited', 'offline']);
 
 /**
  * The 📋 task queue. Tasks (GitHub issues or free text) wait in order; whenever a desk is free and
- * fewer than `maxWorkers` of them are running, the next one is seated as a worktree worker. A running
- * task finishes when its worker ends its turn, stops, or is sent home. Finished workers stay at
+ * fewer than `maxWorkers` of them are running, the next one is seated as a worktree droid. A running
+ * task finishes when its droid ends its turn, stops, or is sent home. Finished droids stay at
  * their desks to be looked at, until the queue needs the desk for the next task.
  */
 export class TaskQueue {
@@ -56,14 +56,14 @@ export class TaskQueue {
   private timer: NodeJS.Timeout;
   private pumping = false;
   private again = false;
-  /** Set on shutdown: the workers' exit events must not seat anyone into a dying office. */
+  /** Set on shutdown: the droids' exit events must not seat anyone into a dying office. */
   private stopped = false;
   private lastStatus = new Map<string, WorkerStatus>();
 
   constructor(
     dataDir: string,
     private workers: QueueWorkers,
-    /** Seat workers in their own git worktree (only when the project is a git repo). */
+    /** Seat droids in their own git worktree (only when the project is a git repo). */
     private useWorktree: boolean,
     private events: QueueEvents,
   ) {
@@ -113,7 +113,7 @@ export class TaskQueue {
   remove(taskId: string): string | undefined {
     const t = this.tasks.find((x) => x.id === taskId);
     if (!t) return 'No such task';
-    if (t.status === 'running') return `${t.workerName ?? 'Its worker'} is on it — send the worker home to stop it`;
+    if (t.status === 'running') return `${t.workerName ?? 'Its droid'} is on it — send the droid home to stop it`;
     this.tasks.splice(this.tasks.indexOf(t), 1);
     this.discard(t);
     this.changed();
@@ -173,7 +173,7 @@ export class TaskQueue {
     this.pump();
   }
 
-  /** A worker changed. Cheap unless its status moved, which can free a slot or finish a task. */
+  /** A droid changed. Cheap unless its status moved, which can free a slot or finish a task. */
   onWorker(info: WorkerInfo) {
     // It switched to a branch of its own (see Workers.syncBranch): its task's pull request comes from there.
     const branch = info.worktree?.branch;
@@ -208,7 +208,7 @@ export class TaskQueue {
     if (changed) this.changed();
   }
 
-  /** Finishes tasks whose worker stopped, then seats queued tasks while there's room. */
+  /** Finishes tasks whose droid stopped, then seats queued tasks while there's room. */
   pump() {
     if (this.stopped) return;
     if (this.pumping) {
@@ -257,19 +257,19 @@ export class TaskQueue {
     t.status = 'done';
     t.outcome = outcome;
     t.finishedAt = Date.now();
-    const who = t.workerName ?? 'Its worker';
+    const who = t.workerName ?? 'Its droid';
     if (outcome === 'done') {
       this.events.toast(`📋 ${who} finished ${label(t)}`, 'info');
-      // The worker most likely just opened the PR; go and link it.
+      // The droid most likely just opened the PR; go and link it.
       this.events.refreshGitHub();
     } else if (outcome === 'exited') this.events.toast(`📋 ${who} stopped before finishing ${label(t)} — requeue it from the queue board`, 'warn');
     return outcome === 'done';
   }
 
   /**
-   * The queue's own tasks at work: the slots under its limit. Workers hired by hand, board agents and
-   * meetings don't hold one, and nor does a worker left at its prompt after a restart; the office's
-   * worker limit (`room`) is what caps everyone together.
+   * The queue's own tasks at work: the slots under its limit. Droids hired by hand, board agents and
+   * meetings don't hold one, and nor does a droid left at its prompt after a restart; the office's
+   * droid limit (`room`) is what caps everyone together.
    */
   private busy(): number {
     return this.tasks.filter((t) => t.status === 'running').length;
@@ -281,8 +281,8 @@ export class TaskQueue {
   }
 
   /**
-   * No desk or bean bag is free: send home a worker the queue hired whose task is finished (nobody
-   * is looking at its terminal), and return its seat. Workers with a linked PR go first — their work
+   * No desk or bean bag is free: send home a droid the queue hired whose task is finished (nobody
+   * is looking at its terminal), and return its seat. Droids with a linked PR go first — their work
    * is delivered.
    */
   private recycleDesk(): string | undefined {
@@ -297,7 +297,7 @@ export class TaskQueue {
     return pick.w.deskId;
   }
 
-  /** The finished worker recycleDesk would send home, if there is one. */
+  /** The finished droid recycleDesk would send home, if there is one. */
   private recyclable(): { t: QueueTask; w: WorkerInfo } | undefined {
     const byId = new Map(this.workers.list().map((w) => [w.id, w]));
     return this.tasks
@@ -312,8 +312,8 @@ export class TaskQueue {
     for (const t of this.tasks) {
       if (t.status !== 'queued') continue;
       if (this.busy() >= this.maxWorkers) break;
-      // So does an office at its worker limit (--max-workers), unless one of the queue's own finished
-      // workers going home makes room. Over the limit (it was just lowered), it waits for people to send some home.
+      // So does an office at its droid limit (--max-workers), unless one of the queue's own finished
+      // droids going home makes room. Over the limit (it was just lowered), it waits for people to send some home.
       const room = this.events.room?.() ?? Infinity;
       if (room < 0) break;
       const free = room > 0 ? this.freeDesk() : undefined;
@@ -338,7 +338,7 @@ export class TaskQueue {
         this.events.toast(`📋 Couldn't start ${label(t)}: ${r}`, 'error');
         continue;
       }
-      // The worker has its own copy of the pictures now.
+      // The droid has its own copy of the pictures now.
       this.discard(t);
       t.status = 'running';
       t.workerId = r.id;
@@ -407,7 +407,7 @@ export class TaskQueue {
           pr: s.pr,
           images: Array.isArray(s.images) ? s.images.filter((i): i is string => typeof i === 'string' && PROMPT_IMAGE_ID.test(i)) : undefined,
         };
-        // Whatever was running died with the old office process; its worker comes back asleep at best.
+        // Whatever was running died with the old office process; its droid comes back asleep at best.
         if (t.status === 'running') {
           t.status = 'done';
           t.outcome = 'exited';

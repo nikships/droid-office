@@ -1,7 +1,7 @@
 package ai.factory.droidoffice.core
 
 /**
- * A worker's terminal as the office renders it: rows of styled runs, kept up to date from `screen`
+ * A droid's terminal as the office renders it: rows of styled runs, kept up to date from `screen`
  * frames. A full frame replaces every row; a diff carries only the rows that changed. Rows are
  * immutable lists, so an unchanged row stays the same instance from frame to frame.
  */

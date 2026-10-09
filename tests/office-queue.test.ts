@@ -49,7 +49,7 @@ test('says what is wrong with a bad command line', () => {
     );
 });
 
-test('needs the office address, its worker id and its token from the environment', () => {
+test('needs the office address, its droid id and its token from the environment', () => {
   assert.deepEqual(officeEnv({ ...ENV, DROID_OFFICE_HOOK_URL: 'http://127.0.0.1:4455/' }), { url: 'http://127.0.0.1:4455', worker: 'w1 &x', token: 'tok' });
   assert.throws(() => officeEnv({}), /DROID_OFFICE_HOOK_URL, DROID_OFFICE_WORKER_ID, DROID_OFFICE_HOOK_TOKEN aren't set.*inside Droid Office/);
   assert.throws(() => officeEnv({ ...ENV, DROID_OFFICE_HOOK_TOKEN: '' }), /^Error: DROID_OFFICE_HOOK_TOKEN isn't set/);
@@ -78,7 +78,7 @@ test('builds the /office/queue requests', () => {
   assert.throws(() => buildRequest({ cmd: 'add', title: 'T' }, OFFICE, '  \n'), /needs a prompt/);
 });
 
-test('lists the queue readably: id, status, title, worker and PR', () => {
+test('lists the queue readably: id, status, title, droid and PR', () => {
   assert.equal(formatQueue({ maxWorkers: 2, tasks: [] }), 'The queue is empty · up to 2 at a time.');
   const text = formatQueue({
     maxWorkers: 2,
@@ -93,9 +93,9 @@ test('lists the queue readably: id, status, title, worker and PR', () => {
     text,
     [
       '4 tasks · up to 2 at a time',
-      'aaa111  running        Fix login (issue #12) · worker Pixel on office/pixel-1a2b',
+      'aaa111  running        Fix login (issue #12) · droid Pixel on office/pixel-1a2b',
       'bbb222  queued         Dark mode',
-      'ccc333  done           Rename the dog · worker Byte · PR #9 open https://github.com/o/r/pull/9',
+      'ccc333  done           Rename the dog · droid Byte · PR #9 open https://github.com/o/r/pull/9',
       'ddd444  done (failed)  Broken · error: no desk',
     ].join('\n'),
   );
@@ -143,8 +143,8 @@ test('clear errors when the environment is missing or the office says no', async
   const stale = await run(['list'], { status: 401, body: { error: 'Send your own DROID_OFFICE_WORKER_ID' } });
   assert.match(stale.err, /didn't accept this agent's token \(401\)/);
 
-  const running = await run(['remove', 'abc123'], { status: 400, body: { error: 'Pixel is on it — send the worker home to stop it' } });
-  assert.equal(running.err, 'office-queue: The office said no (400): Pixel is on it — send the worker home to stop it.');
+  const running = await run(['remove', 'abc123'], { status: 400, body: { error: 'Pixel is on it — send the droid home to stop it' } });
+  assert.equal(running.err, 'office-queue: The office said no (400): Pixel is on it — send the droid home to stop it.');
 
   const noPrompt = await run(['add', '--title', 'T'], { stdin: '' });
   assert.equal(noPrompt.code, 2);

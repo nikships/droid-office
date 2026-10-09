@@ -10,7 +10,7 @@ import type { WorkerInfo } from './protocol.js';
 export const CTRL_ENTER = '\x1b[13;5u';
 export const SHIFT_ENTER = '\x1b[13;2u';
 
-/** Whether a worker's program understands CSI u Enter: every agent runs Droid, which does; a shell doesn't. */
+/** Whether a droid's program understands CSI u Enter: every agent runs Droid, which does; a shell doesn't. */
 export function wantsCsiEnter(kind: WorkerInfo['kind'] | undefined): boolean {
   return kind === 'agent';
 }

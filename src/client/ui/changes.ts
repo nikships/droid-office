@@ -5,8 +5,8 @@ import { withToken } from '../token';
 import { h, openModal, type Modal } from './dom';
 import { confirmDialog, openPrompt } from './prompt';
 
-// The Changes window at a desk: the files a worker changed and their diff against the branch the
-// office was opened on, refreshed while the worker works, with commit / discard / open-a-PR.
+// The Changes window at a desk: the files a droid changed and their diff against the branch the
+// office was opened on, refreshed while the droid works, with commit / discard / open-a-PR.
 
 let current: { workerId: string; repo(): string | undefined; show(repo?: string): void; modal: Modal } | null = null;
 const listeners = new Set<(msg: ServerMsg) => void>();
@@ -106,7 +106,7 @@ function renderPreview(workerId: string, repo: string | undefined, f: ChangedFil
 }
 
 /**
- * The Changes window for a worker. A worker across repositories (see WorkerInfo.repos) gets a tab per
+ * The Changes window for a droid. A droid across repositories (see WorkerInfo.repos) gets a tab per
  * repository, its own floor's first; `repo` opens on another floor's one.
  */
 export function openChanges(net: Net, workerId: string, onTerminal?: () => void, repo?: string) {
@@ -178,7 +178,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
         {},
         h('div.big', {}, '🌱'),
         h('p', {}, state.base === 'HEAD' ? `Nothing uncommitted in ${where()}.` : `${info.name} hasn't changed anything since ${state.base} yet.`),
-        h('p.note', {}, 'This window follows the checkout as the worker works, so changes show up here as they are made.'),
+        h('p.note', {}, 'This window follows the checkout as the droid works, so changes show up here as they are made.'),
       ),
     );
   };
@@ -235,7 +235,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       if (s.files.length) bits.push(plusMinus(adds, dels));
       bits.push(uncommitted ? `${uncommitted} uncommitted` : s.files.length ? 'all committed' : '');
       if (s.ahead) bits.push(`${s.ahead} commit${s.ahead > 1 ? 's' : ''} ahead of ${s.base}`);
-      if (!s.dir) bits.push(h('span', { title: "This worker works in the project folder itself, so this is everything uncommitted there — everyone's edits, not just its own." }, '📁 shared project folder'));
+      if (!s.dir) bits.push(h('span', { title: "This droid works in the project folder itself, so this is everything uncommitted there — everyone's edits, not just its own." }, '📁 shared project folder'));
       else bits.push(h('span', { title: `Its own worktree at ${s.dir}` }, `📁 ${s.dir}`));
       summary.append(...bits.filter(Boolean).map((b) => (typeof b === 'string' ? h('span', {}, b) : b)));
     }

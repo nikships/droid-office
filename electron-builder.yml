@@ -15,7 +15,7 @@ files:
   - dist/**/*
   - '!dist/**/*.map'
 
-# The office runs bin/droid-office.js, its PTY host and the workers' office-queue / office-workers
+# The office runs bin/droid-office.js, its PTY host and the droids' office-queue / office-workers
 # commands as files on disk with Electron's Node, and node-pty spawns its spawn-helper from disk,
 # so nothing is packed into an asar archive.
 asar: false

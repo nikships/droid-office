@@ -7,7 +7,7 @@ export type SettingsScope = 'you' | 'floor' | 'office';
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look and how you see the office.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
-  { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
+  { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a droid that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The sky, Jira, where the elevator looks for projects, and local source reload.' },
   {
     id: 'factory',
@@ -15,15 +15,15 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     label: 'Factory',
     blurb: 'Connect the office to Factory with an API key: its cloud computers, Droid sessions and credits, CI automations and AutoWiki, on the office’s walls and in its windows.',
   },
-  { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home and what the office tells them.' },
+  { id: 'workers', icon: '🤖', label: 'Droids', blurb: 'What droids start on, how many run at once, when they go home and what the office tells them.' },
   {
     id: 'subagents',
     icon: '🧭',
     label: 'Subagents',
     blurb:
-      'Workers that hire workers: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any worker at a desk.',
+      'Droids that hire droids: a lead splits up a big job and hires subagents, who sit down at the desks nearest it, each with its own laptop and terminal, and report back to it. Ask the Team lead at its kiosk on the east wall, or any droid at a desk.',
   },
-  { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android: hire workers, watch their terminals and prompt them from your phone, on your Wi-Fi or over Tailscale.' },
+  { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android: hire droids, watch their terminals and prompt them from your phone, on your Wi-Fi or over Tailscale.' },
 ];
 
 /** The badge by a setting's name, and what it means. */
@@ -47,12 +47,12 @@ export const SETTINGS_CARDS = [
   { pane: 'building', title: 'Workspace folder', scope: 'office' },
   { pane: 'building', title: 'Source hot reload', scope: 'office' },
   { pane: 'factory', title: 'Factory API key', scope: 'office' },
-  { pane: 'workers', title: 'Default worker', scope: 'office' },
+  { pane: 'workers', title: 'Default droid', scope: 'office' },
   { pane: 'workers', title: 'Prompts', scope: 'office' },
-  { pane: 'workers', title: 'Worker limit', scope: 'office' },
-  { pane: 'workers', title: 'Workers whose pull request merged', scope: 'office' },
+  { pane: 'workers', title: 'Droid limit', scope: 'office' },
+  { pane: 'workers', title: 'Droids whose pull request merged', scope: 'office' },
   { pane: 'subagents', title: 'Subagents', scope: 'office' },
-  { pane: 'subagents', title: 'Subagent worker', scope: 'office' },
+  { pane: 'subagents', title: 'Subagent droid', scope: 'office' },
   { pane: 'subagents', title: 'Team size', scope: 'office' },
   { pane: 'subagents', title: 'Where subagents work', scope: 'office' },
   { pane: 'subagents', title: 'Waking the lead', scope: 'office' },

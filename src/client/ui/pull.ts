@@ -13,7 +13,7 @@ import { agentPicker } from './models';
 
 // The windows behind the board cards. A PR opens on its conversation (description, comments,
 // reviews, line comments, checks) with a Files tab for the diff, where you tick files off as
-// reviewed; from here you comment, label, merge or close it, or hand it to a worker to review, fix up and merge.
+// reviewed; from here you comment, label, merge or close it, or hand it to a droid to review, fix up and merge.
 
 /** The board windows ask about the floor you're on. */
 function onFloor(url: string): string {
@@ -320,7 +320,7 @@ function commentBox(kind: 'issue' | 'pull', number: number, itemUrl: string, net
   };
 }
 
-// ---- Prompts for workers ------------------------------------------------------------------------
+// ---- Prompts for droids ------------------------------------------------------------------------
 
 /** What a pull request's prompts fill in on this floor. */
 function pullVars(it: GhPull) {
@@ -383,8 +383,8 @@ function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: () => vo
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
   // Conflicts can't be merged from here, so fixing them is the main button.
   const worker = conflicted(d)
-    ? h('button.btn.primary', { type: 'button', title: 'A new worker merges the base in, resolves the conflicts, then merges it the way picked above' }, 'New worker: fix conflicts & merge')
-    : h('button.btn', { type: 'button', title: 'A worker fixes whatever is in the way, then merges' }, 'Hand to a worker');
+    ? h('button.btn.primary', { type: 'button', title: 'A new droid merges the base in, resolves the conflicts, then merges it the way picked above' }, 'New droid: fix conflicts & merge')
+    : h('button.btn', { type: 'button', title: 'A droid fixes whatever is in the way, then merges' }, 'Hand to a droid');
 
   const el = h(
     'div.modal.gh-merge',
@@ -764,23 +764,23 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     footBtns.replaceChildren(
       ...nodes(
         w ? h('button.btn', { type: 'button', onclick: () => actions.goToDesk(w.deskId) }, `Go to ${w.name}'s desk`) : null,
-        h('button.btn', { type: 'button', title: `Send a worker your own prompt about this ${fw.pr}`, onclick: () => actions.ask(pullContext(it), `Ask about ${pr}`) }, 'Ask a worker…'),
+        h('button.btn', { type: 'button', title: `Send a droid your own prompt about this ${fw.pr}`, onclick: () => actions.ask(pullContext(it), `Ask about ${pr}`) }, 'Ask a droid…'),
         isOpen ? h('button.btn', { type: 'button', onclick: () => actions.assign(reviewPrompt(it), `Review ${pr}`) }, 'Review') : null,
         isOpen
           ? h(
               'button.btn',
               {
                 type: 'button',
-                title: 'A few workers review it in the meeting room, each through its own lens, and the office posts one combined review',
+                title: 'A few droids review it in the meeting room, each through its own lens, and the office posts one combined review',
                 onclick: () => actions.meeting({ pattern: 'review', pr: it.number, title: `Review of ${pr}`, prompt: reviewPanelPrompt(it) }),
               },
               'Review panel…',
             )
           : null,
         conflicts
-          ? h('button.btn.primary', { type: 'button', title: 'A new worker merges the base in, resolves the conflicts, gets the checks green, then merges', onclick: handToWorker }, 'Fix conflicts & merge')
+          ? h('button.btn.primary', { type: 'button', title: 'A new droid merges the base in, resolves the conflicts, gets the checks green, then merges', onclick: handToWorker }, 'Fix conflicts & merge')
           : isOpen
-            ? h('button.btn', { type: 'button', title: 'A worker addresses the review comments, gets the checks green, then merges', onclick: handToWorker }, 'Fix comments & merge')
+            ? h('button.btn', { type: 'button', title: 'A droid addresses the review comments, gets the checks green, then merges', onclick: handToWorker }, 'Fix comments & merge')
             : null,
         isOpen ? h('button.btn', { type: 'button', title: `Close this ${fw.pull} without merging it`, onclick: () => openClose('pull', it, net, loadAll) }, `Close ${fw.pr}…`) : null,
         isOpen ? merge : null,
@@ -828,8 +828,8 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     const st = mergeStatus(d);
     const box = h('section.gh-mergebox', { class: st.cls }, h('div.gh-status', { class: st.cls }, h('span', {}, st.icon), st.text), d.checks.length ? checksList(d.checks) : null);
     if (it.state === 'OPEN' && st.can) box.append(h('div.gh-mergebox-go', {}, h('button.btn.primary', { type: 'button', onclick: () => openMerge(it, d, net, handToWorker, loadAll) }, 'Merge…')));
-    if (conflicted(d)) box.append(h('div.gh-mergebox-go', {}, h('button.btn.primary', { type: 'button', onclick: handToWorker }, 'New worker: fix conflicts & merge')));
-    else if (it.state === 'OPEN' && !st.can && !d.isDraft) box.append(h('div.gh-mergebox-go', {}, h('button.btn', { type: 'button', onclick: handToWorker }, 'Have a worker fix it & merge')));
+    if (conflicted(d)) box.append(h('div.gh-mergebox-go', {}, h('button.btn.primary', { type: 'button', onclick: handToWorker }, 'New droid: fix conflicts & merge')));
+    else if (it.state === 'OPEN' && !st.can && !d.isDraft) box.append(h('div.gh-mergebox-go', {}, h('button.btn', { type: 'button', onclick: handToWorker }, 'Have a droid fix it & merge')));
     thread.append(box);
   };
 
@@ -1211,7 +1211,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     actions.queue(issuePrompt(it), `#${it.number} ${it.title}`, it.number, queueModels.model(), queueModels.effort());
   };
   const queue = h('button.btn', { type: 'button', onclick: addIssueToQueue }) as HTMLButtonElement;
-  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk, a worker or the queue board, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
+  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk, a droid or the queue board, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
   const meta = h('div.gh-meta');
   const el = h(
     'div.modal.gh-window.issue',
@@ -1223,13 +1223,13 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
       'footer',
       {},
       h('a.grow', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, `Open on ${words().site} ↗`),
-      h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a worker…'),
-      h('button.btn', { type: 'button', title: 'Workers take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title)) }, 'Meeting…'),
+      h('button.btn', { type: 'button', title: 'Send a droid your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a droid…'),
+      h('button.btn', { type: 'button', title: 'Droids take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title)) }, 'Meeting…'),
       closeIssue,
       queueModels.element,
       queue,
       pickUp,
-      h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`) }, 'Hand to a worker'),
+      h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a droid`) }, 'Hand to a droid'),
     ),
   );
   const renderFrame = () => {
@@ -1258,8 +1258,8 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     queueModels.element.classList.toggle('hidden', !isOpen || onQueue);
     queue.classList.toggle('hidden', !isOpen);
     queue.disabled = onQueue;
-    queue.title = onQueue ? '' : 'A worker picks it up by itself when a desk is free and there is room under the worker limit';
-    queue.textContent = onQueue ? (task!.status === 'running' ? `${task!.workerName ?? 'A worker'} is on it` : 'On the queue') : 'Add to queue';
+    queue.title = onQueue ? '' : 'A droid picks it up by itself when a desk is free and there is room under the droid limit';
+    queue.textContent = onQueue ? (task!.status === 'running' ? `${task!.workerName ?? 'A droid'} is on it` : 'On the queue') : 'Add to queue';
   };
   const render = () => {
     thread.replaceChildren(commentCard({ id: 'body', author: it.author, body: detail?.body ?? it.body, createdAt: it.createdAt, url: it.url }, itemUrl, 'opened this'));

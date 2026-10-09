@@ -1,12 +1,12 @@
 package ai.factory.droidoffice.core
 
-/** One row of the worker list: a worker, indented under its lead when it's a subagent. */
+/** One row of the droid list: a droid, indented under its lead when it's a subagent. */
 data class WorkerRow(val worker: WorkerInfo, val depth: Int, val subagents: Int, val leadName: String?)
 
 object Workers {
     /**
      * Who needs the owner first: a question or permission prompt, then a finished turn nobody has
-     * looked at, then whoever is working, then the rest. Asleep workers sink to the bottom.
+     * looked at, then whoever is working, then the rest. Asleep droids sink to the bottom.
      */
     fun priority(w: WorkerInfo): Int = when (w.state) {
         WorkerStatus.NeedsInput -> 0
@@ -26,7 +26,7 @@ object Workers {
         .thenBy { it.id }
 
     /**
-     * Desk workers sorted by [priority], each lead followed by its subagents. A lead's group sorts by
+     * Desk droids sorted by [priority], each lead followed by its subagents. A lead's group sorts by
      * its most urgent member, so a subagent's question still lifts the group to the top. Board agents
      * at their kiosks come back separately.
      */

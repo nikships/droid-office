@@ -1,5 +1,5 @@
-// The workers waiting on you on this floor, longest first: N takes you to each in turn (see main.ts),
-// arrows at the edge of the screen point to them (ui/compass.ts), and the top bar and the Workers panel count them.
+// The droids waiting on you on this floor, longest first: N takes you to each in turn (see main.ts),
+// arrows at the edge of the screen point to them (ui/compass.ts), and the top bar and the Droids panel count them.
 
 import type { WorkerInfo } from '../shared/protocol';
 import { waitingOnSomeone } from './notify';
@@ -11,7 +11,7 @@ function since(w: WorkerInfo): number {
   return w.waitingSince ?? w.createdAt;
 }
 
-/** Workers waiting on someone, whoever has waited longest first. */
+/** Droids waiting on someone, whoever has waited longest first. */
 export function waitingInOrder(workers: Iterable<WorkerInfo>): Waiting[] {
   return [...workers].filter(waitingOnSomeone).sort((a, b) => since(a) - since(b) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
@@ -24,15 +24,15 @@ export function waitingLabel(waiting: readonly WorkerInfo[]): string {
 }
 
 /**
- * One press of N after another: the longest-waiting worker you haven't been to yet this round, and
- * once you've been to them all, the longest-waiting again. A worker that starts waiting again after
+ * One press of N after another: the longest-waiting droid you haven't been to yet this round, and
+ * once you've been to them all, the longest-waiting again. A droid that starts waiting again after
  * you've been to it is new to this round.
  */
 export class NextUp {
   /** Who this round has been to, and the wait each was on then. */
   private visited = new Map<string, number>();
 
-  /** The one to go to next. `here` is the worker you're standing at, which only comes up if it's the only one. */
+  /** The one to go to next. `here` is the droid you're standing at, which only comes up if it's the only one. */
   next(workers: Iterable<WorkerInfo>, here?: string): Waiting | undefined {
     const waiting = waitingInOrder(workers);
     for (const [id, at] of this.visited) if (!waiting.some((w) => w.id === id && since(w) === at)) this.visited.delete(id);

@@ -4,10 +4,10 @@ import { isAgentEffort, type AgentChoice, type PromptsState } from '../shared/pr
 import { PROMPTS, PROMPT_MAX, fillPrompt, isPromptId, promptText, type PromptId, type PromptVars } from '../shared/prompts.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 
-/** What the floors read: a prompt as the office has it now, and what workers start on. */
+/** What the floors read: a prompt as the office has it now, and what droids start on. */
 export interface PromptSource {
   text(id: PromptId): string;
-  /** The worker picked in Settings, when one was. */
+  /** The droid picked in Settings, when one was. */
   agent(): AgentChoice | undefined;
 }
 
@@ -16,14 +16,14 @@ export function officePrompt(source: PromptSource | undefined, id: PromptId, var
   return fillPrompt(source ? source.text(id) : PROMPTS[id].text, vars);
 }
 
-/** Why the office can't start `c` as a worker, if it can't. */
+/** Why the office can't start `c` as a droid, if it can't. */
 export function agentChoiceProblem(c: AgentChoice): string | undefined {
   return validateWorkerModel('agent', c.model) ?? validateWorkerEffort('agent', c.effort);
 }
 
 /**
- * The prompts the office writes for workers by itself (shared/prompts.ts), as rewritten in
- * Settings, and the model and effort a worker starts on when whoever starts it doesn't pick one. The same for the whole building, kept in .droid-office/prompts.json.
+ * The prompts the office writes for droids by itself (shared/prompts.ts), as rewritten in
+ * Settings, and the model and effort a droid starts on when whoever starts it doesn't pick one. The same for the whole building, kept in .droid-office/prompts.json.
  */
 export class OfficePrompts implements PromptSource {
   private saved: PromptsState = { custom: {} };
@@ -63,7 +63,7 @@ export class OfficePrompts implements PromptSource {
     return undefined;
   }
 
-  /** Picks the worker a new one starts on when nobody picks; null goes back to Droid's own default. */
+  /** Picks the droid a new one starts on when nobody picks; null goes back to Droid's own default. */
   setAgent(choice: AgentChoice | null, by: string): string | undefined {
     if (!choice) {
       delete this.saved.agent;

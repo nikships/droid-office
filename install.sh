@@ -55,9 +55,9 @@ check_requirements() {
   have npm || die "Droid Office needs npm, which comes with Node.js."
   have curl || die "this needs curl."
   have tar || die "this needs tar."
-  have git || warn "git isn't installed. The office needs it for projects and worker worktrees."
+  have git || warn "git isn't installed. The office needs it for projects and droid worktrees."
   if ! have droid; then
-    warn "no Droid CLI found on your PATH. Workers need it, e.g."
+    warn "no Droid CLI found on your PATH. Droids need it, e.g."
     warn "  curl -fsSL https://app.factory.ai/cli | sh"
   fi
 }
@@ -111,7 +111,7 @@ install_release() {
 }
 
 # Removes the versions this install replaced, except any still running: an office, or the terminal
-# host that keeps its workers alive across office restarts. Without pgrep nothing is removed.
+# host that keeps its droids alive across office restarts. Without pgrep nothing is removed.
 prune_versions() {
   local keep="$1" dir real rc
   have pgrep || return 0

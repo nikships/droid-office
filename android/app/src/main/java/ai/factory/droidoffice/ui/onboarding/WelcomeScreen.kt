@@ -95,16 +95,16 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    "Hire Droid workers, answer their questions and steer them from your phone. Over the same Wi-Fi, or anywhere on your tailnet.",
+                    "Hire Droids, answer their questions and steer them from your phone. Over the same Wi-Fi, or anywhere on your tailnet.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = Palette.TextSecondary,
                 )
                 Spacer(Modifier.height(28.dp))
                 TypedLine()
                 Spacer(Modifier.height(24.dp))
-                Feature(OfficeIcons.Terminal, "Live terminals", "Every worker's screen, in color, as it happens.", 0)
+                Feature(OfficeIcons.Terminal, "Live terminals", "Every droid's screen, in color, as it happens.", 0)
                 Feature(OfficeIcons.Sparkle, "Reprompt anywhere", "Follow up, answer prompts, press keys a TUI waits for.", 1)
-                Feature(OfficeIcons.Bell, "Pinged when it matters", "A notification the moment a worker needs you, with a reply right in it.", 2)
+                Feature(OfficeIcons.Bell, "Pinged when it matters", "A notification the moment a droid needs you, with a reply right in it.", 2)
             }
             Spacer(Modifier.weight(1f).height(32.dp))
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(bottom = 16.dp)) {

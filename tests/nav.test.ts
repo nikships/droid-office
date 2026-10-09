@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BALCONY, BALCONY_DOOR, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, EXIT_STAIRS, FLOOR, MEETING_ROOM, MEETING_SEATS, PARACHUTE, ROAD, SEATS, STATIONS } from '../src/shared/layout.js';
 import { walkable, wayHome, wayIn, wayToBalcony, type Pt } from '../src/shared/nav.js';
 
-test('a worker sent home walks round the furniture, out the exit door and off along the sidewalk', () => {
+test('a droid sent home walks round the furniture, out the exit door and off along the sidewalk', () => {
   for (const seat of [...SEATS, ...STATIONS, ...MEETING_SEATS]) {
     const way = wayHome(seat);
     // It hops down right beside where it sat.
@@ -43,7 +43,7 @@ function clear(a: Pt, b: Pt, what: string) {
   }
 }
 
-test('a worker called to a meeting walks from the elevator, in through the meeting room door, to beside its chair', () => {
+test('a droid called to a meeting walks from the elevator, in through the meeting room door, to beside its chair', () => {
   for (const seat of MEETING_SEATS) {
     const way = wayIn(seat);
     const [x0, z0] = way[0];
@@ -61,7 +61,7 @@ test('a worker called to a meeting walks from the elevator, in through the meeti
   }
 });
 
-test('upstairs, with no exit door, a worker sent home walks out onto the balcony to the railing', () => {
+test('upstairs, with no exit door, a droid sent home walks out onto the balcony to the railing', () => {
   for (const seat of [...SEATS, ...STATIONS, ...MEETING_SEATS]) {
     const way = wayToBalcony(seat);
     assert.ok(Math.hypot(way[0][0] - seat.x, way[0][1] - seat.z) < 1.2, `${seat.id} hops down beside its seat`);

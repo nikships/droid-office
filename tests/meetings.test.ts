@@ -45,7 +45,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
         model,
         effort,
         prompt,
-        name: `Worker ${workers.length + 1}`,
+        name: `Droid ${workers.length + 1}`,
         color: '#fff',
         status: 'starting',
         acked: true,
@@ -96,7 +96,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
     const wt = room.state().current?.worktree;
     return wt ? path.join(dir, wt.path) : dir;
   };
-  /** The worker at seat `i` takes its part: it starts, writes its file (unless `skip`), and ends its turn. */
+  /** The droid at seat `i` takes its part: it starts, writes its file (unless `skip`), and ends its turn. */
   const take = (i: number, text = 'Some notes.', skip = false) => {
     const m = room.state().current!;
     const t = m.turns.find((x) => x.seat === i);
@@ -112,7 +112,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
     w.status = 'done';
     room.onWorker(w);
   };
-  /** Workers who had no part yet say they're ready and end the turn. */
+  /** Droids who had no part yet say they're ready and end the turn. */
   const settle = () => {
     for (const w of workers) {
       if (w.status !== 'starting') continue;
@@ -178,7 +178,7 @@ test('a debate runs its rounds and ends when the chair writes the decision', (t)
   assert.ok(existsSync(path.join(f.dir, '.droid-office', 'meetings', m.id)));
 });
 
-test('a worker that ends its part without writing the file is reminded once, then the meeting stops', (t) => {
+test('a droid that ends its part without writing the file is reminded once, then the meeting stops', (t) => {
   const f = fixture();
   t.after(() => f.close());
   assert.equal(f.start({ rounds: 2, output: 'decision.md' }), undefined);
@@ -192,14 +192,14 @@ test('a worker that ends its part without writing the file is reminded once, the
   assert.match(m.reason!, /round limit without writing decision\.md/);
 });
 
-test('sending a worker home stops the meeting and names who left', async (t) => {
+test('sending a droid home stops the meeting and names who left', async (t) => {
   const f = fixture();
   t.after(() => f.close());
   assert.equal(f.start({}), undefined);
   await f.kill(f.room.state().current!.seats[2].workerId!);
   const m = f.room.state().current!;
   assert.equal(m.status, 'stopped');
-  assert.match(m.reason!, /the Skeptic \(Worker 3\) was sent home/);
+  assert.match(m.reason!, /the Skeptic \(Droid 3\) was sent home/);
 });
 
 test('red / blue ends early when red finds nothing more', (t) => {
@@ -265,14 +265,14 @@ test('bad requests are turned away before anyone sits down', (t) => {
   assert.match(f.start({ output: '../x.md' }) ?? '', /\.\./);
   assert.match(f.start({ output: '/etc/x' }) ?? '', /relative/);
   assert.match(f.start({ output: '.droid-office/x.md' }) ?? '', /\.droid-office/);
-  assert.match(f.start({ roles: ['a', 'b', 'c', 'd', 'e', 'f'] }) ?? '', /2 to 5 workers/);
-  assert.match(f.start({ pattern: 'redblue', roles: ['a', 'b', 'c'] }) ?? '', /seats 2 workers/);
+  assert.match(f.start({ roles: ['a', 'b', 'c', 'd', 'e', 'f'] }) ?? '', /2 to 5 droids/);
+  assert.match(f.start({ pattern: 'redblue', roles: ['a', 'b', 'c'] }) ?? '', /seats 2 droids/);
   assert.equal(f.workers.length, 0);
   assert.equal(f.start({}), undefined);
   assert.match(f.start({}) ?? '', /busy/);
 });
 
-test('meetings seat workers with the requested model and effort', (t) => {
+test('meetings seat droids with the requested model and effort', (t) => {
   const f = fixture();
   t.after(() => f.close());
   assert.match(f.start({ model: 'has a space' }) ?? '', /Droid model/);
@@ -331,7 +331,7 @@ test('the default review request sends a review panel with the pattern defaults'
   assert.equal(req.model, 'opus');
 });
 
-test('a meeting says what the office’s rewritten prompts say, and seats the default worker when nobody picked one', (t) => {
+test('a meeting says what the office’s rewritten prompts say, and seats the default droid when nobody picked one', (t) => {
   const f = fixture({
     rewritten: {
       'meeting.brief': 'You are the {{role}}. Topic: {{about}}{{nothing}}',
@@ -350,7 +350,7 @@ test('a meeting says what the office’s rewritten prompts say, and seats the de
     f.workers.map((w) => [w.model, w.effort]),
     Array(3).fill(['custom:droidproxy:opus-5-5', 'high']),
   );
-  // A worker that ends its turn without its part is nudged in the office's words.
+  // A droid that ends its turn without its part is nudged in the office's words.
   const w = f.workers[0];
   w.status = 'working';
   f.room.onWorker(w);
@@ -419,7 +419,7 @@ test('a meeting about an issue names its forge and CLI, and a teammate with no f
   }
 });
 
-test('every worker at the table is given the meeting’s pictures, and pictures can stand in for the topic', (t) => {
+test('every droid at the table is given the meeting’s pictures, and pictures can stand in for the topic', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const images = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'];

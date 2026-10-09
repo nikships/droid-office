@@ -5,17 +5,17 @@ import path from 'node:path';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, gitError } from './worktrees.js';
 import { scanAgents, type AgentProcess } from './guests.js';
 
-const HELP = `droid-office prune — remove leftover worker worktrees and branches
+const HELP = `droid-office prune — remove leftover droid worktrees and branches
 
 Usage:
   droid-office prune [dir] [options]
 
 Removes the worktrees under ${WORKTREES_DIR}/ and the office/* branches that
-no worker of the office in [dir] (default: current directory) uses any more.
+no droid of the office in [dir] (default: current directory) uses any more.
 Anything with uncommitted changes, or with commits that no remote has, is kept
 and listed, so nothing is lost by accident. A worktree an agent is running in
 (a droid you started there by hand, say) is always kept, even with --force.
-A worker across several projects has
+A droid across several projects has
 worktrees of them in its own floor's workspace: they're kept while the office
 there still lists it, and pruning each project clears them out after.
 
@@ -28,11 +28,11 @@ Options:
 interface SavedWorker {
   name?: string;
   worktree?: { path: string; branch: string; base?: string; made?: string };
-  /** A worker across repositories: its worktrees of other floors' projects (see WorkerInfo.repos). */
+  /** A droid across repositories: its worktrees of other floors' projects (see WorkerInfo.repos). */
   repos?: { path?: string; branch?: string }[];
 }
 
-/** The workers an office keeps in a project's .droid-office/workers.json; none when it has no office there. */
+/** The droids an office keeps in a project's .droid-office/workers.json; none when it has no office there. */
 function savedWorkers(dir: string): SavedWorker[] {
   try {
     const saved = JSON.parse(readFileSync(path.join(dir, '.droid-office', 'workers.json'), 'utf8'));
@@ -43,7 +43,7 @@ function savedWorkers(dir: string): SavedWorker[] {
 }
 
 /**
- * What's left in a workspace folder (a worker across repositories): 'empty' when it's only the brief
+ * What's left in a workspace folder (a droid across repositories): 'empty' when it's only the brief
  * the office wrote there, or the names of folders in it that are still git worktrees.
  */
 function workspaceLeft(abs: string): 'empty' | string[] | undefined {
@@ -102,16 +102,16 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     return 1;
   }
 
-  // Workers the office still has, awake or asleep, keep theirs: send them home from the office instead.
+  // Droids the office still has, awake or asleep, keep theirs: send them home from the office instead.
   const ownerOfBranch = new Map<string, string>();
   const ownerOfPath = new Map<string, string>();
   for (const w of savedWorkers(dir)) {
     if (!w.worktree) continue;
-    ownerOfBranch.set(w.worktree.branch, w.name ?? 'a worker');
-    if (w.worktree.made) ownerOfBranch.set(w.worktree.made, w.name ?? 'a worker');
-    ownerOfPath.set(path.normalize(w.worktree.path), w.name ?? 'a worker');
+    ownerOfBranch.set(w.worktree.branch, w.name ?? 'a droid');
+    if (w.worktree.made) ownerOfBranch.set(w.worktree.made, w.name ?? 'a droid');
+    ownerOfPath.set(path.normalize(w.worktree.path), w.name ?? 'a droid');
     // Across repositories: the workspace folder its worktrees are in is its too.
-    if (w.repos?.length) ownerOfPath.set(path.normalize(path.dirname(w.worktree.path)), w.name ?? 'a worker');
+    if (w.repos?.length) ownerOfPath.set(path.normalize(path.dirname(w.worktree.path)), w.name ?? 'a droid');
   }
 
   const trees = new Worktrees(dir);
@@ -162,7 +162,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     await drop(label, work ? `${work} (forced)` : 'clean, nothing unpushed', () => trees.remove(ref, wt.branch ? 'all' : 'worktree'));
     if (path.dirname(path.normalize(wt.path)) !== path.normalize(WORKTREES_DIR)) emptied.add(path.dirname(wt.path));
   }
-  // This project's worktrees in another floor's workspace, made for a worker there across repositories.
+  // This project's worktrees in another floor's workspace, made for a droid there across repositories.
   for (const [branch, abs] of elsewhere) {
     withWorktree.add(branch);
     const at = abs.lastIndexOf(`${path.sep}${WORKTREES_DIR}${path.sep}`);
@@ -173,7 +173,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     const office = abs.slice(0, at);
     const owner = savedWorkers(office).find((w) => w.worktree?.branch === branch || w.repos?.some((r) => r.branch === branch));
     if (owner) {
-      const name = owner.name ?? 'a worker';
+      const name = owner.name ?? 'a droid';
       keep(branch, `${name}'s, in ${abs} — send ${name} home from the office there to clean it up`);
       continue;
     }
@@ -194,7 +194,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
     if (withWorktree.has(branch)) continue;
     const owner = ownerOfBranch.get(branch);
     if (owner) {
-      keep(branch, `${owner}'s — its worktree is gone, but the office still lists the worker`);
+      keep(branch, `${owner}'s — its worktree is gone, but the office still lists the droid`);
       continue;
     }
     const work = describeWork(await trees.inspect({ branch }));

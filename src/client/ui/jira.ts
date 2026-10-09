@@ -9,7 +9,7 @@ import { markdown } from './markdown';
 // Progress and Done, and the window behind each card with the ticket's description and comments.
 
 export interface JiraActions {
-  /** Start a worker on a ready-made prompt (shown for editing first). */
+  /** Start a droid on a ready-made prompt (shown for editing first). */
   assign(prompt: string, title: string): void;
 }
 
@@ -83,7 +83,7 @@ export function openTicket(first: JiraTicket, actions: JiraActions) {
   const pill = h('span.pill');
   const meta = h('div.gh-meta');
   const thread = h('div.gh-items');
-  const handBtn = h('button.btn.primary', { type: 'button' }, 'Hand to a worker') as HTMLButtonElement;
+  const handBtn = h('button.btn.primary', { type: 'button' }, 'Hand to a droid') as HTMLButtonElement;
 
   const el = h(
     'div.modal.gh-window.issue.jira-ticket',
@@ -128,7 +128,7 @@ export function openTicket(first: JiraTicket, actions: JiraActions) {
 
   handBtn.addEventListener('click', () => {
     modal.close();
-    actions.assign(ticketPrompt({ key: it.key, summary: it.summary, description: detail?.description, url: it.url }), `🎫 Hand ${it.key} to a worker`);
+    actions.assign(ticketPrompt({ key: it.key, summary: it.summary, description: detail?.description, url: it.url }), `🎫 Hand ${it.key} to a droid`);
   });
 
   const unsub = store.on('jiraBoard', () => {

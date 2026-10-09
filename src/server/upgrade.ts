@@ -52,10 +52,10 @@ function parseVersion(line: string | undefined): VersionInfo | undefined {
 const VERSION_FORMAT = '--format=%h%x00%s%x00%cI';
 
 /**
- * systemd's default KillMode stops everything in the service once the office exits: the workers'
- * terminal host too (see ptys.ts), so every worker would be cut off mid-turn by an upgrade. Offices
+ * systemd's default KillMode stops everything in the service once the office exits: the droids'
+ * terminal host too (see ptys.ts), so every droid would be cut off mid-turn by an upgrade. Offices
  * provisioned before deploy/provision.sh set KillMode=process get it from a drop-in here; the
- * install's user has passwordless sudo. Best effort: without it, workers are resumed and carry on.
+ * install's user has passwordless sudo. Best effort: without it, droids are resumed and carry on.
  */
 async function keepWorkersThroughRestart() {
   if (process.platform !== 'linux') return;
@@ -73,7 +73,7 @@ async function keepWorkersThroughRestart() {
 /**
  * Lets an office installed by deploy/aws.sh upgrade itself from the UI. The new version is
  * built next to the running one (the office keeps working meanwhile, and a failed build changes
- * nothing), swapped in, and then the process exits so systemd starts the new version. Workers keep
+ * nothing), swapped in, and then the process exits so systemd starts the new version. Droids keep
  * running through it in their terminal host, which the new version picks back up.
  */
 export class Upgrader {
@@ -203,7 +203,7 @@ export class Upgrader {
       return;
     }
     this.set({ phase: 'restarting' });
-    await keepWorkersThroughRestart().catch((err) => console.warn(`droid-office: workers will be resumed after the restart, not kept running: ${(err as Error).message}`));
+    await keepWorkersThroughRestart().catch((err) => console.warn(`droid-office: droids will be resumed after the restart, not kept running: ${(err as Error).message}`));
     // Give every browser a moment to hear about it, then hand over to the new version.
     setTimeout(this.restart, 1500);
   }

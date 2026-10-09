@@ -2,22 +2,22 @@
 
 The casualty presentation runs in the browser scene.
 `src/client/world/casualties.ts` handles visuals and sound callbacks. `worker.shoot` starts a
-server-owned, persisted 30-second revival deadline without stopping the worker or its PTY.
+server-owned, persisted 30-second revival deadline without stopping the droid or its PTY.
 There is no confirmation dialog: walking within 2.4 metres of the body and pressing E sends
 `worker.revive`, restoring it to its seat with its session untouched. Another `worker.shoot` at
-a downed worker confirms the kill and closes the window at once. When the deadline expires or
-the kill is confirmed, the server dismisses the worker and deletes its owned worktrees and branches, even with
-uncommitted or unpublished work. Collection starts when that worker's removal arrives.
+a downed droid confirms the kill and closes the window at once. When the deadline expires or
+the kill is confirmed, the server dismisses the droid and deletes its owned worktrees and branches, even with
+uncommitted or unpublished work. Collection starts when that droid's removal arrives.
 Every client on the floor renders the downed state and the medic sequence.
-Each body has its own scene, so several can be down at once. The worker tumbles sideways
+Each body has its own scene, so several can be down at once. The droid tumbles sideways
 out of its chair and lands flat along the floor, where the medics and blood pool meet it.
 
 Two medics enter from the elevator at full size, accelerate into their route, and slow before
-turning into the fallen worker's orientation. They approach its torso rather than its foot
+turning into the fallen droid's orientation. They approach its torso rather than its foot
 origin. Both hold an orange split scoop stretcher with steel handles and a head pad.
 
 The pickup lasts 4.8 seconds. The team crouches and lowers the split bed around the body;
-the hands support the head/feet ends while the worker rolls smoothly face up; the halves
+the hands support the head/feet ends while the droid rolls smoothly face up; the halves
 close underneath it. The body then stays attached to the bed through the synchronized rise
 and a short withdrawal from the vacated chair. The medics turn toward the elevator, keep
 their hands on the handles, and walk out. The front medic faces the patient and walks
@@ -35,11 +35,11 @@ Only the canvas halves add new shadow casters. Everything uses ordinary supporte
 meshes and toon materials. The animation changes transforms, visibility and material opacity;
 it does not rebuild buffers, create textures, skin meshes, or add custom shader programs.
 
-`clear()` restores unconfirmed workers. It cancels collections in every later phase, removes
+`clear()` restores unconfirmed droids. It cancels collections in every later phase, removes
 the team and stain, and releases the collected model and laptop once. The thud, siren, laptop
 closing and elevator-door position callbacks retain their existing contracts.
 
-Verification uses the real `Person` and `Worker` geometry in `tests/casualties-medic.test.ts`:
+Verification uses the real `Person` and `Droid` geometry in `tests/casualties-medic.test.ts`:
 hand contact over six fall/yaw combinations and complete carry routes, planted boots,
 continuous position/rotation/world scale across loading and attachment, private fade material
 ownership, revive/clear behavior, and helper reset/disposal.
@@ -47,4 +47,4 @@ The original casualty tests still cover shooting, nearby
 revival, sound and laptop lifecycle behavior.
 
 A standalone browser fixture was reviewed and recorded without connecting to an office,
-starting workers, or sending terminal input. This checks appearance and choreography.
+starting droids, or sending terminal input. This checks appearance and choreography.

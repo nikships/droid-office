@@ -21,14 +21,14 @@ import { factoryModels, type DroidModelOption } from './models';
 import { confirmDialog } from './prompt';
 
 // 🛰️ Sessions: every Droid session of the Factory account the office is connected with, the office's
-// own workers' among them. A list to filter and search on the left; on the right the one you pick
+// own droids' among them. A list to filter and search on the left; on the right the one you pick
 // (its settings, credits, subagents, pull requests and transcript, and a box to message it), or the
 // form that starts a new one on a Factory computer. The lounge TV opens it (E), as do ☰ and ⌘K.
 
 export interface SessionsWindowActions {
   /** ⚙️ Settings → Factory, to connect. */
   openSettings(): void;
-  /** One of the office's workers' terminals. */
+  /** One of the office's droids' terminals. */
   openWorker(workerId: string): void;
 }
 
@@ -216,7 +216,7 @@ export function openFactorySessions(actions: SessionsWindowActions, selectId?: s
       ).map(([v, label]) => h('button.btn', { type: 'button', class: status === v ? 'on' : '', 'aria-pressed': String(status === v), onclick: () => ((status = v), renderList()) }, label)),
     );
     const computers = f.computers.items;
-    const wantWhere: [string, string][] = [['all', 'Everywhere'], ['office', 'This office’s workers'], ...computers.map((c): [string, string] => [c.id, `☁ ${c.name}`]), ['elsewhere', 'Elsewhere']];
+    const wantWhere: [string, string][] = [['all', 'Everywhere'], ['office', 'This office’s droids'], ...computers.map((c): [string, string] => [c.id, `☁ ${c.name}`]), ['elsewhere', 'Elsewhere']];
     if (whereSel.options.length !== wantWhere.length) {
       whereSel.replaceChildren(...wantWhere.map(([v, t]) => h('option', { value: v }, t)));
       whereSel.value = wantWhere.some(([v]) => v === where) ? where : 'all';

@@ -27,9 +27,9 @@ export interface Config {
   trustProxy: boolean;
   /** This machine's public address (set by deploy/aws.sh): the Services board's owner SSH hint. */
   publicHost?: string;
-  /** The most workers the office runs at once, across every floor; ⚙️ Settings can't go past it. */
+  /** The most droids the office runs at once, across every floor; ⚙️ Settings can't go past it. */
   maxWorkers?: number;
-  /** Slack / Discord webhook to post to when a worker needs input or finishes ('' turns it off). */
+  /** Slack / Discord webhook to post to when a droid needs input or finishes ('' turns it off). */
   webhook?: string;
   /** Where the office is: its sun and live weather follow this city's forecast. */
   city?: string;
@@ -37,7 +37,7 @@ export interface Config {
   weather?: Weather;
 }
 
-const HELP = `droid-office — a 3D office where you hire Droid workers at desks and work in their live terminals
+const HELP = `droid-office — a 3D office where you hire Droids at desks and work in their live terminals
 
 Usage:
   droid-office [options]
@@ -47,7 +47,7 @@ Usage:
 
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
-office uses it where it is (it never clones or copies a repository). Workers,
+office uses it where it is (it never clones or copies a repository). Droids,
 terminals, boards and the task queue on a floor all belong to that checkout.
 
 The first time it starts in a terminal with no floors, it walks you through
@@ -62,7 +62,7 @@ Commands:
   setup                   Pick the folder your projects are in and which of them
                           are floors: a walkthrough in a terminal, or just
                           --projects / --project for scripts (see setup --help)
-  prune                   Remove leftover worker worktrees (.droid-office/worktrees/)
+  prune                   Remove leftover droid worktrees (.droid-office/worktrees/)
                           and their office/* branches. Anything with uncommitted
                           changes or unpushed commits is kept unless --force is given.
 
@@ -83,11 +83,11 @@ Options:
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
       --trust-proxy       Trust X-Forwarded-* headers (behind Caddy/nginx)
-      --max-workers <n>   Run at most this many workers at once, across every
+      --max-workers <n>   Run at most this many droids at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
                           Settings, but not raised past this
-      --webhook <url>     Post to this Slack or Discord webhook when a worker
+      --webhook <url>     Post to this Slack or Discord webhook when a droid
                           needs input or finishes (env DROID_OFFICE_WEBHOOK).
                           Also settable from ⚙️ Settings in the office; "" turns it off
       --city <name>       Put the office in a real city, e.g. "Berlin" or
@@ -249,7 +249,7 @@ export function loadConfig(argv: string[]): Config {
   }
 
   // An office already runs in this project (started here before there were floors): carry on with
-  // it and its workers, rather than open an empty building somewhere else.
+  // it and its droids, rather than open an empty building somewhere else.
   const cwd = process.cwd();
   if (!project && !homeGiven && cwd !== home && existsSync(path.join(cwd, '.droid-office', 'config.json'))) project = cwd;
   if (project && !existsSync(project)) {

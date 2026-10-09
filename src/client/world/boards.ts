@@ -384,7 +384,7 @@ export class BoardTexture {
         const subPx = Math.round(fs * 0.6);
         let sx = colTitle;
         if (w) {
-          // A dot in the worker's color, so you can tell whose PR it is from across the room.
+          // A dot in the droid's color, so you can tell whose PR it is from across the room.
           g.beginPath();
           g.arc(sx + subPx * 0.35, mid + fs * 0.62 - subPx * 0.32, subPx * 0.35, 0, Math.PI * 2);
           g.fillStyle = w.color;
@@ -554,7 +554,7 @@ export class BoardTexture {
   }
 }
 
-/** The services board: a wall display listing the web servers workers are running. */
+/** The services board: a wall display listing the web servers droids are running. */
 export class ServicesBoardTexture {
   readonly texture: THREE.CanvasTexture;
   private canvas = document.createElement('canvas');
@@ -574,9 +574,9 @@ export class ServicesBoardTexture {
   render(items: ServiceInfo[], workers: Map<string, WorkerInfo>) {
     const rows = items.map((s) => {
       const w = workers.get(s.workerId);
-      return { port: s.port, title: s.title || s.command, who: [w?.name ?? 'A worker', w?.worktree?.branch].filter(Boolean).join(' · '), color: w?.color ?? '#8d99ae' };
+      return { port: s.port, title: s.title || s.command, who: [w?.name ?? 'A droid', w?.worktree?.branch].filter(Boolean).join(' · '), color: w?.color ?? '#8d99ae' };
     });
-    // Worker updates stream in constantly; only redraw when what's shown changes.
+    // Droid updates stream in constantly; only redraw when what's shown changes.
     const key = JSON.stringify(rows);
     if (key === this.drawn) return;
     this.drawn = key;
@@ -591,7 +591,7 @@ export class ServicesBoardTexture {
       g.fillText('No web servers running', W / 2, H / 2 - 20);
       g.fillStyle = MUTED;
       mono(g, 500, 24, 0.02);
-      g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
+      g.fillText('When a droid starts one, it shows up here', W / 2, H / 2 + 36);
       g.textAlign = 'left';
       track(g, 0);
       this.texture.needsUpdate = true;
@@ -607,7 +607,7 @@ export class ServicesBoardTexture {
       g.strokeStyle = HAIR_STRONG;
       g.lineWidth = 2;
       g.strokeRect(25, y + 7, W - 50, rowH - 14);
-      // A live light, and the worker's color down the row's edge.
+      // A live light, and the droid's color down the row's edge.
       g.fillStyle = r.color;
       g.fillRect(24, y + 6, 6, rowH - 12);
       g.fillStyle = GREEN;
@@ -642,7 +642,7 @@ type QueueRow = { kind: 'running' | 'queued' | 'done' | 'failed'; issue?: number
 
 /**
  * The task queue: a wall display drawn like Factory's Mission Control terminal: a title row with the
- * pinwheel, a RUNNING bar of how many workers it keeps busy against how many it may, and a row per
+ * pinwheel, a RUNNING bar of how many droids it keeps busy against how many it may, and a row per
  * task: what's being worked on, what's waiting, and the PRs that came out of it.
  */
 export class QueueBoardTexture {
@@ -673,7 +673,7 @@ export class QueueBoardTexture {
       ...running.map((t): QueueRow => {
         const w = t.workerId ? workers.get(t.workerId) : undefined;
         const st = { starting: 'starting', idle: 'ready', working: 'working', needs_input: 'needs input', done: 'done', exited: 'stopped', offline: 'asleep' }[w?.status ?? 'working'];
-        return { kind: 'running', issue: t.issue, text: title(t), side: `${t.workerName ?? 'a worker'} · ${st}` };
+        return { kind: 'running', issue: t.issue, text: title(t), side: `${t.workerName ?? 'a droid'} · ${st}` };
       }),
       ...queued.map((t, i): QueueRow => ({ kind: 'queued', issue: t.issue, text: title(t), side: i === 0 ? 'up next' : `${i + 1}${['th', 'st', 'nd', 'rd'][i + 1 <= 3 ? i + 1 : 0]} in line` })),
       ...done.map(
@@ -740,7 +740,7 @@ export class QueueBoardTexture {
       g.fillStyle = ORANGE;
       g.fillRect(bx, barY - 9, bw * f, 18);
     }
-    // A tick per worker it may keep busy.
+    // A tick per droid it may keep busy.
     g.fillStyle = BG;
     for (let i = 1; i < Math.min(state.maxWorkers, 24); i++) g.fillRect(bx + (bw * i) / state.maxWorkers - 1.5, barY - 9, 3, 18);
     g.fillStyle = HAIR;

@@ -7,7 +7,7 @@ function worker(id: string, status: WorkerStatus, waitingSince?: number, acked =
   return { id, kind: 'agent', deskId: `desk-${id}`, name: id, color: '#fff', status, acked, waitingSince, createdBy: 'test', createdAt: 0, cols: 80, rows: 24, open: false };
 }
 
-test('three workers waiting: N three times visits each of them, oldest first, then starts over', () => {
+test('three droids waiting: N three times visits each of them, oldest first, then starts over', () => {
   const workers = new Map([worker('b', 'needs_input', 200), worker('busy', 'working'), worker('a', 'done', 100), worker('c', 'needs_input', 300), worker('seen', 'done', 50, true)].map((w) => [w.id, w]));
   assert.deepEqual(
     waitingInOrder(workers.values()).map((w) => w.id),
@@ -20,7 +20,7 @@ test('three workers waiting: N three times visits each of them, oldest first, th
   );
 });
 
-test('a worker someone got to drops out, and one that starts waiting again is new to the round', () => {
+test('a droid someone got to drops out, and one that starts waiting again is new to the round', () => {
   const workers = new Map([worker('a', 'needs_input', 100), worker('b', 'needs_input', 200), worker('c', 'done', 300)].map((w) => [w.id, w]));
   const n = new NextUp();
   assert.equal(n.next(workers.values())?.id, 'a');
@@ -33,7 +33,7 @@ test('a worker someone got to drops out, and one that starts waiting again is ne
   assert.equal(n.next(workers.values())?.id, 'c');
 });
 
-test("N skips the worker you're standing at, unless it's the only one waiting", () => {
+test("N skips the droid you're standing at, unless it's the only one waiting", () => {
   const workers = [worker('a', 'needs_input', 100), worker('b', 'done', 200)];
   assert.equal(new NextUp().next(workers, 'a')?.id, 'b');
   assert.equal(new NextUp().next([workers[0]], 'a')?.id, 'a');
@@ -49,7 +49,7 @@ test('an office from before waitingSince goes by who was hired first', () => {
   );
 });
 
-test('the Workers panel counts who needs input and who is done', () => {
+test('the Droids panel counts who needs input and who is done', () => {
   assert.equal(waitingLabel(waitingInOrder([worker('a', 'needs_input', 1), worker('b', 'needs_input', 2), worker('c', 'done', 3)])), '🙋 2 waiting · ✅ 1 done');
   assert.equal(waitingLabel([worker('c', 'done', 3)]), '✅ 1 done');
   assert.equal(waitingLabel([]), '');

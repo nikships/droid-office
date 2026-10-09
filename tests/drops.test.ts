@@ -35,7 +35,7 @@ test('dropped paths are typed the way a terminal types a dragged file', () => {
   assert.equal(droppedPaths(['C:\\Users\\sam\\my proj\\a.png']), '"C:\\Users\\sam\\my proj\\a.png"');
 });
 
-test("each worker's drops are kept apart and go when the worker does", (t) => {
+test("each droid's drops are kept apart and go when the droid does", (t) => {
   const store = new DropStore(dataDir(t));
   const a = store.save('w1', 'shot.png', 'image/png', Buffer.from('one'));
   const b = store.save('w1', 'shot.png', 'image/png', Buffer.from('two'));
@@ -72,7 +72,7 @@ test('a prompt lists its pictures after the text, numbered in the order they wer
   assert.equal(withImages(' Fix this ', []), 'Fix this');
 });
 
-test('staged pictures wait for a prompt, are copied to a worker when it is sent, and can be taken out', (t) => {
+test('staged pictures wait for a prompt, are copied to a droid when it is sent, and can be taken out', (t) => {
   const store = new DropStore(dataDir(t));
   const a = store.stage('Screenshot 1.png', PNG);
   const b = store.stage('photo.PNG', JPEG);
@@ -88,14 +88,14 @@ test('staged pictures wait for a prompt, are copied to a worker when it is sent,
   assert.deepEqual(readFileSync(paths[0]), PNG);
   assert.ok(paths[0].includes(`${path.sep}w1${path.sep}`));
 
-  // A second worker adopts the same pictures: they stay staged until the prompt's done with them.
+  // A second droid adopts the same pictures: they stay staged until the prompt's done with them.
   assert.equal(store.adopt('w2', [a]).length, 1);
   store.unstage([a, b, '../etc']);
   assert.deepEqual(store.adopt('w3', [a, b]), []);
-  assert.ok(existsSync(paths[0]), 'what a worker adopted stays with it');
+  assert.ok(existsSync(paths[0]), 'what a droid adopted stays with it');
 });
 
-test('pruning leaves staged pictures alone and still clears the workers that left', (t) => {
+test('pruning leaves staged pictures alone and still clears the droids that left', (t) => {
   const store = new DropStore(dataDir(t));
   const id = store.stage('shot.png', PNG)!;
   const kept = store.save('gone', 'x.png', 'image/png', PNG)!;

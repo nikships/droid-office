@@ -5,7 +5,7 @@ import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type
 test('settings has the eight categories, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound', 'Notifications', 'Building', 'Factory', 'Workers', 'Subagents', 'Phone'],
+    ['You', 'Sound', 'Notifications', 'Building', 'Factory', 'Droids', 'Subagents', 'Phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
@@ -28,12 +28,12 @@ test('every fork setting is in a category, with who it is for', () => {
     ['Workspace folder', 'building', 'office'],
     ['Source hot reload', 'building', 'office'],
     ['Factory API key', 'factory', 'office'],
-    ['Default worker', 'workers', 'office'],
+    ['Default droid', 'workers', 'office'],
     ['Prompts', 'workers', 'office'],
-    ['Worker limit', 'workers', 'office'],
-    ['Workers whose pull request merged', 'workers', 'office'],
+    ['Droid limit', 'workers', 'office'],
+    ['Droids whose pull request merged', 'workers', 'office'],
     ['Subagents', 'subagents', 'office'],
-    ['Subagent worker', 'subagents', 'office'],
+    ['Subagent droid', 'subagents', 'office'],
     ['Team size', 'subagents', 'office'],
     ['Where subagents work', 'subagents', 'office'],
     ['Waking the lead', 'subagents', 'office'],

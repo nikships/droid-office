@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { WorkerStatus } from '../../shared/protocol';
 import { h } from './dom';
 
-/** A worker waiting on you: who, what for, and where its head is. */
+/** A droid waiting on you: who, what for, and where its head is. */
 export interface Bearing {
   id: string;
   name: string;
@@ -26,7 +26,7 @@ interface Mark {
 }
 
 /**
- * An arrow at the edge of the screen for each worker waiting on you that's out of view, pointing the
+ * An arrow at the edge of the screen for each droid waiting on you that's out of view, pointing the
  * way to turn to see it: red for needs input, green for done. They keep inside the HUD's panels.
  */
 export class Compass {
@@ -74,7 +74,7 @@ export class Compass {
       const edge = x <= left + 1 ? 'left' : x >= right - 1 ? 'right' : y <= top + 1 ? 'top' : 'bottom';
       placed.push({ b, x, y, angle: Math.atan2(dy, dx), edge });
     }
-    // Workers at desks side by side land on top of each other: spread them out along their edge.
+    // Droids at desks side by side land on top of each other: spread them out along their edge.
     for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
       const side = edge === 'left' || edge === 'right';
       const axis = side ? 'y' : 'x';

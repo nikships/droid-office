@@ -13,7 +13,7 @@ import ai.factory.droidoffice.ui.theme.DroidOfficeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
-    /** What the latest intent asked for: a pairing link, or a worker to open from a notification. */
+    /** What the latest intent asked for: a pairing link, or a droid to open from a notification. */
     private val incoming = MutableStateFlow<Incoming?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {

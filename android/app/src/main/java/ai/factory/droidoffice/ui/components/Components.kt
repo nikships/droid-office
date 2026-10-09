@@ -126,7 +126,7 @@ fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
     }
 }
 
-/** Three bars that rise and fall in turn: a worker mid-turn. */
+/** Three bars that rise and fall in turn: a droid mid-turn. */
 @Composable
 fun WorkingBars(color: Color, height: Dp = 8.dp) {
     val t = rememberInfiniteTransition(label = "bars")
@@ -142,7 +142,7 @@ fun WorkingBars(color: Color, height: Dp = 8.dp) {
     }
 }
 
-/** A worker's color, as the dot it wears in the office's lists; a ring pulses around it while it waits on you. */
+/** A droid's color, as the dot it wears in the office's lists; a ring pulses around it while it waits on you. */
 @Composable
 fun WorkerDot(color: Color, status: WorkerStatus, size: Dp = 12.dp) {
     val pulse = status == WorkerStatus.NeedsInput

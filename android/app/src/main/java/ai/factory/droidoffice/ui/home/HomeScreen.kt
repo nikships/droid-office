@@ -167,7 +167,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, onOffices: () -> Unit, onScan: ()
                     } else {
                         Column(Modifier.fillMaxSize().tagged(Tags.Home.PICK_WORKER), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             GlyphMark(size = 48.dp, glow = false)
-                            Text("Pick a worker to see its terminal", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
+                            Text("Pick a droid to see its terminal", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
                         }
                     }
                 }
@@ -485,7 +485,7 @@ private fun EmptyFloor(onHire: () -> Unit) {
             modifier = Modifier.widthIn(max = 380.dp),
         )
         Spacer(Modifier.height(18.dp))
-        PrimaryButton("Hire a worker", onHire, Modifier.tagged(Tags.Home.HIRE_FIRST), icon = Icons.Default.Add)
+        PrimaryButton("Hire a droid", onHire, Modifier.tagged(Tags.Home.HIRE_FIRST), icon = Icons.Default.Add)
     }
 }
 

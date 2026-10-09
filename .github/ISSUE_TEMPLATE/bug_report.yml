@@ -38,7 +38,7 @@ body:
     id: model
     attributes:
       label: Droid model
-      description: The model the affected workers run, if it matters (from ~/.factory/settings.json, or "default").
+      description: The model the affected droids run, if it matters (from ~/.factory/settings.json, or "default").
       placeholder: claude-sonnet-4-6 or default
     validations:
       required: false
@@ -80,7 +80,7 @@ body:
       label: Steps to reproduce
       description: The smallest set of steps that shows the bug.
       placeholder: |
-        1. Hire a worker at a desk
+        1. Hire a droid at a desk
         2. Open its terminal
         3. ...
     validations:

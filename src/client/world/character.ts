@@ -318,7 +318,7 @@ const PERSON_GUN_MOUNT = new THREE.Vector3(0, -0.38, 0);
 // ---- Factory crew kit ---------------------------------------------------------------------------
 // Everyone in the building is Factory crew: an orange lanyard and an ID card, a pinwheel patch on
 // the chest and a pinwheel printed on the back. Each kit is a single vertex-colored mesh, built once
-// and shared, so a room full of workers wears it for one draw call apiece.
+// and shared, so a room full of droids wears it for one draw call apiece.
 
 const CREW = {
   black: '#121212',
@@ -334,7 +334,7 @@ interface Capsule {
   readonly half: number;
   readonly r: number;
 }
-/** The worker's bean (see Worker) and a person's torso (see Person). */
+/** The droid's bean (see Droid) and a person's torso (see Person). */
 const BEAN: Capsule = { y: 0.55, half: 0.15, r: 0.28 };
 const TORSO: Capsule = { y: 0.72, half: 0.14, r: 0.26 };
 
@@ -466,13 +466,13 @@ function personKit(): THREE.Group {
   return kit('person', () => [lanyard(TORSO, 0.86, 1.05, 0.6, CREW.orange), ...idCard(TORSO, 0.775, 0.095, 0.13), ...patch(TORSO, 0.83, 0.74, 0.085), hug(TORSO, glyphFlat(0.22, 2), CREW.orange, 0.78, Math.PI, 0.004)]);
 }
 
-/** A worker's crew kit, under its headset: the lanyard runs below its ear cups, the card hangs below its eyes. */
+/** A droid's crew kit, under its headset: the lanyard runs below its ear cups, the card hangs below its eyes. */
 function workerKit(): THREE.Group {
   return kit('worker', () => [lanyard(BEAN, 0.49, 0.8, 0.75, CREW.orange), ...idCard(BEAN, 0.425, 0.095, 0.125), ...patch(BEAN, 0.47, 0.76, 0.07), hug(BEAN, glyphFlat(0.17, 2), CREW.orange, 0.58, Math.PI, 0.004)]);
 }
 
 let headsetGeo: THREE.BufferGeometry | null = null;
-/** A worker's headset in graphite: the band (front to back, under the antenna), the ear cups and a boom out to its mic. */
+/** A droid's headset in graphite: the band (front to back, under the antenna), the ear cups and a boom out to its mic. */
 function headset(): THREE.BufferGeometry {
   let geo = headsetGeo;
   if (!geo) {
@@ -487,7 +487,7 @@ function headset(): THREE.BufferGeometry {
   }
   return geo;
 }
-/** The tip of a worker's mic boom, where its orange LED is. */
+/** The tip of a droid's mic boom, where its orange LED is. */
 const MIC = new THREE.Vector3(0.17, 0.565, 0.255);
 let ledMat: THREE.MeshToonMaterial | null = null;
 /** The LED's lit orange, without the cartoon outline that would swallow something so small. */
@@ -1218,7 +1218,7 @@ const STATUS_BULB: Record<string, string> = {
   offline: '#6c757d',
 };
 
-/** Status pill on a worker's task card: [text, background, text color]. */
+/** Status pill on a droid's task card: [text, background, text color]. */
 const TASK_CHIP: Record<string, [string, string, string]> = {
   starting: ['STARTING', STATUS_BULB.starting, '#2b2d42'],
   idle: ['READY', STATUS_BULB.idle, '#2b2d42'],
@@ -1232,16 +1232,16 @@ const TASK_CHIP: Record<string, [string, string, string]> = {
 /** Card chips are drawn like the DOM's status pills: the status color as ink on a dark pill. */
 const CHIP_BG = '#101010';
 
-/** A worker's pull request as its bubble shows it: open or merged, and the words to label it with ("🎉 MR !12 merged"). */
+/** A droid's pull request as its bubble shows it: open or merged, and the words to label it with ("🎉 MR !12 merged"). */
 export interface PrBadge {
   state: WorkerPr['state'];
   label: string;
 }
 
-/** The chip (or bubble) of a worker whose worktree was deleted outside the office. */
+/** The chip (or bubble) of a droid whose worktree was deleted outside the office. */
 const LOST_CHIP: [string, string, string] = ['WORKTREE DELETED', '#ffb703', '#2b2d42'];
 
-/** The outline of a worker's bubble, and its pill, once it has a pull request: GitHub's open green, or the PR board's merged purple. */
+/** The outline of a droid's bubble, and its pill, once it has a pull request: GitHub's open green, or the PR board's merged purple. */
 const PR_INK: Record<WorkerPr['state'], string> = { open: '#2da44e', merged: '#9d4edd' };
 
 /** Not working on or waiting for something more: its pull request in place of ready / done / asleep. */
@@ -1249,7 +1249,7 @@ function prShown(status: WorkerStatus, pr: PrBadge | undefined): PrBadge | undef
   return pr && status !== 'working' && status !== 'needs_input' && status !== 'starting' ? pr : undefined;
 }
 
-/** The pill on a worker's task card: [text, background, text color]. */
+/** The pill on a droid's task card: [text, background, text color]. */
 function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean): readonly [string, string, string] {
   if (lost) return LOST_CHIP;
   const shown = prShown(status, pr);
@@ -1258,7 +1258,7 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
 }
 
 /**
- * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing, or
+ * What a droid's body is doing: resting, arms up for joy, arms crossed waiting on you, typing, or
  * acting out its latest tool call.
  */
 type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction;
@@ -1369,7 +1369,7 @@ function stanceOf(act: Act, t: number, s: Stance): Stance {
   return s;
 }
 
-/** How long a worker keeps acting something out before the next thing, so quick tool calls don't flicker. */
+/** How long a droid keeps acting something out before the next thing, so quick tool calls don't flicker. */
 const ACT_MIN = 1.2;
 /** Head in its hands lasts at least this long, so you catch it. */
 const DESPAIR_MIN = 4;
@@ -1439,7 +1439,7 @@ function globe(): { group: THREE.Group; ball: THREE.Group; ring: THREE.Mesh } {
   return { group, ball, ring };
 }
 
-/** Where a worker climbs up to dance, in the frame of the seat it sits in (see DeskView.stage). */
+/** Where a droid climbs up to dance, in the frame of the seat it sits in (see DeskView.stage). */
 export interface Stage {
   pos: THREE.Vector3;
   /** Which way it faces up there, turned from the way it faces in its seat. */
@@ -1453,7 +1453,7 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 /** How high a hop between the seat and the desk goes, over the straight line. */
 const HOP = 0.5;
 
-/** The little Droid worker that sits at a desk. Forward is +z. */
+/** The little Droid that sits at a desk. Forward is +z. */
 export class Worker {
   readonly root = new THREE.Group();
   private body = new THREE.Group();

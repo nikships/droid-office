@@ -198,7 +198,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
         if (snapshot.offices.isEmpty() && !nav.contains { it is WelcomeKey || it is ScanKey || it is PairKey }) nav.reset(WelcomeKey)
     }
 
-    // Unpaired while looking at a worker: back to the office screen, which offers to pair again.
+    // Unpaired while looking at a droid: back to the office screen, which offers to pair again.
     val link by graph.connection.link.collectAsStateWithLifecycle()
     LaunchedEffect(link.phase) {
         if (link.phase == Phase.Unauthorized && nav.contains { it is WorkerKey }) nav.home()

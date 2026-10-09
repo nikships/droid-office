@@ -1,6 +1,6 @@
 // A floor's leads and their subagents. Any agent at a desk, and the Team lead at its kiosk, can hire
 // subagents with the office-workers command (bin/office-workers.js), which talks to /office/workers
-// with the worker's own hook token. A subagent is a real worker: it sits at the free desk nearest
+// with the droid's own hook token. A subagent is a real droid: it sits at the free desk nearest
 // its lead, with its own laptop and terminal, and its WorkerInfo.lead says whose it is. This keeps
 // what the lead hasn't heard yet: its subagents' reports and questions, and when one finishes a
 // turn, needs input in its terminal, stops or leaves. A lead at rest is told when there's news
@@ -13,7 +13,7 @@ import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentSettings, 
 import { isAsleep } from '../shared/status.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
-/** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
+/** What the team needs from the floor's droids. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
   list(): WorkerInfo[];
   get(id: string): WorkerInfo | undefined;
@@ -117,7 +117,7 @@ export class Team {
   /** Per lead: the last event it has been woken for. */
   private nudged = new Map<string, number>();
   private timers = new Map<string, NodeJS.Timeout>();
-  /** The last status, name and lead seen of each worker, to tell what changed (and who left). */
+  /** The last status, name and lead seen of each droid, to tell what changed (and who left). */
   private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
@@ -134,7 +134,7 @@ export class Team {
     for (const w of workers.list()) this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
   }
 
-  /** A worker on the floor changed: a subagent's turn may have ended, or a lead may have come to rest with news. */
+  /** A droid on the floor changed: a subagent's turn may have ended, or a lead may have come to rest with news. */
   onWorker(w: WorkerInfo) {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
@@ -153,7 +153,7 @@ export class Team {
     this.push({ lead: w.lead, worker: w.id, name: w.name, kind, ...(text ? { text } : {}) });
   }
 
-  /** A worker left the floor: its lead hears so, and a lead's own news goes with it. */
+  /** A droid left the floor: its lead hears so, and a lead's own news goes with it. */
   onWorkerGone(id: string) {
     const prev = this.known.get(id);
     this.known.delete(id);
@@ -172,7 +172,7 @@ export class Team {
     this.timers.clear();
   }
 
-  /** An office-workers request from `caller`, a worker that proved who it is with its hook token. */
+  /** An office-workers request from `caller`, a droid that proved who it is with its hook token. */
   async handle(caller: WorkerInfo, raw: unknown): Promise<TeamReply> {
     const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
     switch (b.action) {
@@ -207,7 +207,7 @@ export class Team {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with office-workers report --question`;
     }
-    if (w.meeting) return "Workers at the meeting table don't hire subagents";
+    if (w.meeting) return "Droids at the meeting table don't hire subagents";
     const station = DESK_BY_ID.get(w.deskId)?.station;
     if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: put the work on the task queue with office-queue`;
     if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents)`;
@@ -278,7 +278,7 @@ export class Team {
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
-    // A worker hired with no model starts on the office default, effort and all, so what the lead
+    // A droid hired with no model starts on the office default, effort and all, so what the lead
     // leaves out comes from the setting, else from that default.
     const base = s.agent ?? this.workers.officeDefault;
     const pickedModel = model ?? base?.model;

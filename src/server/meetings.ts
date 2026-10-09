@@ -13,7 +13,7 @@ import { PROMPTS, fillPrompt, forgeVars, type PromptId, type PromptVars } from '
 
 const execFileP = promisify(execFile);
 
-/** What the meeting room needs from the worker manager. Narrow on purpose, so a test can fake it. */
+/** What the meeting room needs from the droid manager. Narrow on purpose, so a test can fake it. */
 export interface MeetingWorkers {
   /** What a meeting seats when whoever calls it doesn't pick (Settings); Droid's own default without it. */
   readonly officeDefault?: AgentChoice;
@@ -44,7 +44,7 @@ export interface MeetingEvents {
 }
 
 const PUMP_MS = 3000;
-/** A part handed to a worker that sits ready this long without starting on it is handed over again, once. */
+/** A part handed to a droid that sits ready this long without starting on it is handed over again, once. */
 const START_GRACE_MS = 60_000;
 /** How much of the output file the board in the room shows. */
 const PREVIEW_CHARS = 6000;
@@ -63,21 +63,21 @@ interface Part {
   seat: number;
   doing: string;
   file: string;
-  /** What the worker is told to do, after the "Round n of m" line. */
+  /** What the droid is told to do, after the "Round n of m" line. */
   ask: string;
 }
 
 /**
  * The meeting room. A meeting seats 2–5 agents round the table, each with a role, and runs them
- * through the rounds of its pattern (shared/meetings.ts): in each step every worker with a part gets
+ * through the rounds of its pattern (shared/meetings.ts): in each step every droid with a part gets
  * it as a prompt, and the step is over when each of them has ended its turn with its part written to
  * the file it names. Checking the files, not the talk, is what moves a meeting on. It ends when the
  * output file is written, and stops early, saying why, when a
- * worker won't write its part, or when a worker leaves.
+ * droid won't write its part, or when a droid leaves.
  *
  * Everyone at the table shares the meeting's own git worktree (in a git project). When it's done,
  * the office commits the output there, or for a review panel posts it on the pull request. The
- * workers stay at the table to be looked at until the room is cleared or the next meeting is called.
+ * droids stay at the table to be looked at until the room is cleared or the next meeting is called.
  */
 export class MeetingRoom {
   private current: Meeting | null = null;
@@ -86,10 +86,10 @@ export class MeetingRoom {
   private timer: NodeJS.Timeout;
   private pumping = false;
   private again = false;
-  /** Token counts changed: told everyone on the next tick rather than on every worker update. */
+  /** Token counts changed: told everyone on the next tick rather than on every droid update. */
   private dirty = false;
   private closing = false;
-  /** When each handed-over part's worker was first seen ready without having started on it. */
+  /** When each handed-over part's droid was first seen ready without having started on it. */
   private readySince = new Map<MeetingTurn, number>();
 
   constructor(
@@ -100,7 +100,7 @@ export class MeetingRoom {
     /** Git worktrees, in a project that's a git repository. */
     private trees: MeetingTrees | undefined,
     private events: MeetingEvents,
-    /** Where the project is hosted: which CLI the workers read pull requests and issues with. */
+    /** Where the project is hosted: which CLI the droids read pull requests and issues with. */
     private forge: Forge = 'github',
   ) {
     this.statePath = path.join(dataDir, 'meetings.json');
@@ -124,7 +124,7 @@ export class MeetingRoom {
         .trim()
         .slice(0, PROMPT_MAX) || (images.length ? 'See the attached images.' : '');
     if (!prompt) return 'Say what the meeting is about';
-    // Nobody picked: the office's default worker, model and effort included.
+    // Nobody picked: the office's default droid, model and effort included.
     const picked: Partial<AgentChoice> = (req.model === undefined && this.workers.officeDefault) || { model: req.model, effort: req.effort };
     const model = picked.model || undefined;
     const effort = isAgentEffort(picked.effort) ? picked.effort : undefined;
@@ -141,9 +141,9 @@ export class MeetingRoom {
       : [];
     const count = given.length || pattern.seats.default;
     if (count < pattern.seats.min || count > Math.min(pattern.seats.max, MEETING_SEATS.length)) {
-      return pattern.seats.min === pattern.seats.max ? `A ${pattern.label} meeting seats ${pattern.seats.min} workers` : `A ${pattern.label} meeting seats ${pattern.seats.min} to ${pattern.seats.max} workers`;
+      return pattern.seats.min === pattern.seats.max ? `A ${pattern.label} meeting seats ${pattern.seats.min} droids` : `A ${pattern.label} meeting seats ${pattern.seats.min} to ${pattern.seats.max} droids`;
     }
-    const roles = numbered(Array.from({ length: count }, (_, i) => given[i] || pattern.roles[i] || `Worker ${i + 1}`));
+    const roles = numbered(Array.from({ length: count }, (_, i) => given[i] || pattern.roles[i] || `Droid ${i + 1}`));
 
     const pr = Number.isInteger(req.pr) && (req.pr as number) > 0 ? (req.pr as number) : undefined;
     if (pattern.needs === 'pr' && pr === undefined) return 'A review panel needs a pull request to review';
@@ -151,7 +151,7 @@ export class MeetingRoom {
       .map((p) => String(p ?? '').trim())
       .filter(Boolean)
       .slice(0, PARTS_MAX);
-    if (pattern.needs === 'parts' && parts.length < count - 1) return `List at least ${count - 1} part${count === 2 ? '' : 's'} for the mappers, one per line (or seat fewer workers)`;
+    if (pattern.needs === 'parts' && parts.length < count - 1) return `List at least ${count - 1} part${count === 2 ? '' : 's'} for the mappers, one per line (or seat fewer droids)`;
     const issue = Number.isInteger(req.issue) && (req.issue as number) > 0 ? (req.issue as number) : undefined;
     const rounds = clamp(Math.floor(Number(req.rounds) || pattern.rounds.default), pattern.rounds.min, pattern.rounds.max);
     const title = (
@@ -165,7 +165,7 @@ export class MeetingRoom {
     const outputBad = outputProblem(output);
     if (outputBad) return outputBad;
 
-    // The last meeting's workers make room: they go home, and their worktree is tidied away after them.
+    // The last meeting's droids make room: they go home, and their worktree is tidied away after them.
     const last = this.current;
     if (last) void this.dismiss(last);
     const busy = MEETING_SEATS.slice(0, count).find((d) => this.workers.list().some((w) => w.deskId === d.id));
@@ -221,11 +221,11 @@ export class MeetingRoom {
     if (last) this.archive(last);
     this.current = m;
     this.changed();
-    this.events.toast(`🤝 ${by} called a ${pattern.label} meeting: “${title}” (${count} workers, ${rounds} round${rounds === 1 ? '' : 's'} at most)`, 'info');
+    this.events.toast(`🤝 ${by} called a ${pattern.label} meeting: “${title}” (${count} droids, ${rounds} round${rounds === 1 ? '' : 's'} at most)`, 'info');
     return undefined;
   }
 
-  /** Stops the meeting that's running. Its workers stay at the table. */
+  /** Stops the meeting that's running. Its droids stay at the table. */
   stop(by: string): string | undefined {
     const m = this.current;
     if (m?.status !== 'running') return 'No meeting is on';
@@ -233,7 +233,7 @@ export class MeetingRoom {
     return undefined;
   }
 
-  /** Sends the last meeting's workers home and clears the table. */
+  /** Sends the last meeting's droids home and clears the table. */
   clear(by: string): string | undefined {
     const m = this.current;
     if (!m) return 'Nobody is in the meeting room';
@@ -246,7 +246,7 @@ export class MeetingRoom {
     return undefined;
   }
 
-  /** A worker changed: cheap unless it's at the table. */
+  /** A droid changed: cheap unless it's at the table. */
   onWorker(info: WorkerInfo) {
     if (info.meeting && info.meeting === this.current?.id) this.pump();
   }
@@ -298,7 +298,7 @@ export class MeetingRoom {
     }
     for (const s of m.seats) {
       const w = s.workerId ? byId.get(s.workerId) : undefined;
-      if (!w) return this.halt(m, `the ${s.role} (${s.workerName ?? 'its worker'}) was sent home`);
+      if (!w) return this.halt(m, `the ${s.role} (${s.workerName ?? 'its droid'}) was sent home`);
       if (w.status === 'exited') return this.halt(m, `the ${s.role}'s agent (${w.name}) exited`);
     }
     let changed = false;
@@ -314,7 +314,7 @@ export class MeetingRoom {
     if (changed) this.changed();
   }
 
-  /** Moves one worker's part along. Returns whether anything changed. */
+  /** Moves one droid's part along. Returns whether anything changed. */
   private advance(m: Meeting, t: MeetingTurn, w: WorkerInfo): boolean {
     const now = Date.now();
     const seat = m.seats[t.seat];
@@ -461,7 +461,7 @@ export class MeetingRoom {
   }
 
   /**
-   * Sends a meeting's workers home, then tidies its worktree away: the branch stays when the output
+   * Sends a meeting's droids home, then tidies its worktree away: the branch stays when the output
    * was committed on it, and everything stays when something is left uncommitted.
    */
   private async dismiss(m: Meeting) {
@@ -496,7 +496,7 @@ export class MeetingRoom {
 
   // --- The patterns ----------------------------------------------------------
 
-  /** What every worker is told when it sits down, ahead of its first part. */
+  /** What every droid is told when it sits down, ahead of its first part. */
   private pullName() {
     return this.forge === 'gitlab' ? 'merge request' : 'pull request';
   }
@@ -733,7 +733,7 @@ export class MeetingRoom {
       const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as Partial<MeetingState>;
       if (Array.isArray(saved.past)) this.past = saved.past.filter((r) => r && typeof r.id === 'string' && typeof r.summary === 'string').slice(0, PAST_MAX);
       const m = saved.current;
-      // The workers at the table outlive a restart of the office, so a meeting carries on where it was.
+      // The droids at the table outlive a restart of the office, so a meeting carries on where it was.
       if (m && typeof m.id === 'string' && isMeetingPattern(m.pattern) && Array.isArray(m.seats) && Array.isArray(m.turns)) this.current = m;
     } catch {
       // corrupt state file: an empty room
@@ -765,7 +765,7 @@ function readStart(file: string, bytes: number): string {
   }
 }
 
-/** Roles that repeat get numbered, so each worker at the table has one of its own: Engineer 1, Engineer 2. */
+/** Roles that repeat get numbered, so each droid at the table has one of its own: Engineer 1, Engineer 2. */
 function numbered(roles: string[]): string[] {
   const seen = new Map<string, number>();
   const count = new Map<string, number>();

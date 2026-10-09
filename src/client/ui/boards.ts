@@ -11,13 +11,13 @@ import { officePrompt } from './prompts';
 import { issuePromptVars } from '../../shared/prompts';
 
 export interface BoardActions {
-  /** Start a worker on a ready-made prompt (shown for editing first). */
+  /** Start a droid on a ready-made prompt (shown for editing first). */
   assign(prompt: string, title: string): void;
-  /** Your own prompt about an issue or PR; `context` goes first so the worker knows which. */
+  /** Your own prompt about an issue or PR; `context` goes first so the droid knows which. */
   ask(context: string, title: string): void;
   /** Walks you to the desk a pull request came from. */
   goToDesk(deskId: string): void;
-  /** Put an issue on the 📋 task queue; a worker is seated for it when there's room. */
+  /** Put an issue on the 📋 task queue; a droid is seated for it when there's room. */
   queue(prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort): void;
   /** Take the issue's card off the board, to carry to a desk or the queue. */
   pickUp(issue: GhIssue): void;
@@ -25,7 +25,7 @@ export interface BoardActions {
   meeting(preset: MeetingPreset): void;
 }
 
-/** The task a worker gets for an issue, from the board, a carried card or the queue (the 'issue.work' prompt). */
+/** The task a droid gets for an issue, from the board, a carried card or the queue (the 'issue.work' prompt). */
 export function issuePrompt(it: Pick<GhIssue, 'number' | 'title'> & { url?: string }): string {
   return officePrompt('issue.work', issueVars(it));
 }
@@ -109,12 +109,12 @@ function labelChips(labels: GhLabel[]) {
 
 const CHECK_ICON: Record<GhPull['checks'], string> = { pass: '🟢', fail: '🔴', pending: '🟡', none: '' };
 
-/** A chip naming a worker and desk, color-coded to match the worker back on the floor. */
+/** A chip naming a droid and desk, color-coded to match the droid back on the floor. */
 function workerChip(w: WorkerInfo, title: string) {
   return h('span.desk-link', { style: `--dot:${w.color}`, title }, `🪑 ${w.name} · ${DESK_BY_ID.get(w.deskId)?.label ?? 'a desk'}`);
 }
 
-/** A chip naming the worker and desk a pull request came from. */
+/** A chip naming the droid and desk a pull request came from. */
 function deskChip(w: WorkerInfo) {
   return workerChip(w, `Opened from ${w.name}'s desk (${w.worktree?.branch ?? 'its branch'})`);
 }
@@ -127,7 +127,7 @@ function queueChip(issue: number): Node | '' {
   if (t.status === 'running') {
     const w = t.workerId ? store.workers.get(t.workerId) : undefined;
     if (w) return workerChip(w, `${w.name} is working on this at ${DESK_BY_ID.get(w.deskId)?.label ?? 'a desk'}`);
-    return h('span.qchip.running', {}, `🤖 ${t.workerName ?? 'a worker'}`);
+    return h('span.qchip.running', {}, `🤖 ${t.workerName ?? 'a droid'}`);
   }
   return t.pr ? h('span.qchip.done', {}, `🔀 ${words().pr} ${words().ref(t.pr.number)}`) : '';
 }
@@ -355,7 +355,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
 
   const unsubs = [store.on(kind, render), store.on('queue', render)];
   if (kind === 'issues') unsubs.push(store.on('jiraBoard', render));
-  // Which desk a PR came from can change (a worker sent home, a PR opened from a desk).
+  // Which desk a PR came from can change (a droid sent home, a PR opened from a desk).
   if (kind === 'pulls') unsubs.push(store.on('workers', render));
   const timer = setInterval(statusText, 15000);
   const modal = openModal(el, {

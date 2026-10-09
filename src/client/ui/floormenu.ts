@@ -41,9 +41,9 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     const n = Math.abs(i - here);
     const where = isHere ? 'you are here' : here < 0 ? '' : `${i > here ? '⬆' : '⬇'} ${n} floor${n === 1 ? '' : 's'} ${i > here ? 'up' : 'down'}`;
     const stats: HTMLElement[] = [];
-    if (f.waiting) stats.push(h('span.waiting', { title: 'Workers waiting on someone' }, `🙋 ${f.waiting}`));
+    if (f.waiting) stats.push(h('span.waiting', { title: 'Droids waiting on someone' }, `🙋 ${f.waiting}`));
     if (f.busy) stats.push(h('span', { title: 'Working' }, `👷 ${f.busy}`));
-    stats.push(h('span', { title: 'Workers at desks' }, `💻 ${f.workers}`));
+    stats.push(h('span', { title: 'Droids at desks' }, `💻 ${f.workers}`));
     const btn = h(
       'button.floor-item',
       { type: 'button', role: 'menuitem', class: isHere ? 'here' : '', disabled: isHere, title: isHere ? "You're on this floor" : `Go to ${f.name}, right where you're standing` },

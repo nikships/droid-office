@@ -27,7 +27,7 @@ const USAGE = `Usage:
 
 const GUIDE = `office-workers: run subagents from inside Droid Office.
 
-A subagent is a real Droid Office worker. It sits down at the free desk nearest you, with its own
+A subagent is a real Droid Office droid. It sits down at the free desk nearest you, with its own
 laptop and a live terminal anyone in the office can open, and works on the task you give it, in its
 own git worktree unless you say otherwise. It reports back to you when it's done: you're its lead.
 
@@ -43,7 +43,7 @@ COMMANDS
       Hires a subagent and gives it the brief. Prints its name, desk and worktree. The title goes
       on the card over its head. Options:
         --model <id>     an id from droid's model list. Default: what ⚙️ Settings → Subagents
-                         picks, else the office's default worker.
+                         picks, else the office's default droid.
         --effort <e>     low, medium, high, xhigh or max.
         --no-worktree    work in the project's main checkout instead of a fresh worktree: only for
                          read-only work, or when it has to see your uncommitted changes.
@@ -330,7 +330,7 @@ export function formatStanding(team) {
 /** Why the office turned a request down, in words. */
 export function refusal(status, body) {
   const said = body && typeof body.error === 'string' ? body.error : '';
-  if (status === 401) return `The office didn't accept this agent's token (401)${said ? `: ${said}` : ''}. Is this the terminal of a Droid Office worker that's still running?`;
+  if (status === 401) return `The office didn't accept this agent's token (401)${said ? `: ${said}` : ''}. Is this the terminal of a Droid Office droid that's still running?`;
   return `The office said no (${status})${said ? `: ${said}` : ''}.`;
 }
 

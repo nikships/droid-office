@@ -60,7 +60,7 @@ function radios<T>(label: string, options: readonly (readonly [T, string])[], no
   return { row, paint };
 }
 
-/** A worker choice in words: "Droid on Opus 5.5 · High", or Droid's own default. */
+/** A droid choice in words: "Droid on Opus 5.5 · High", or Droid's own default. */
 function choiceLabel(c: AgentChoice): string {
   const badge = modelBadge(c.model, c.effort);
   return badge ? `Droid on ${badge}` : 'Droid on its default model';
@@ -190,7 +190,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
         ? 'This browser can’t show notifications from the office here. They need https or localhost (an SSH tunnel counts).'
         : perm === 'denied'
           ? 'Your browser blocks notifications from the office. Allow them in the site settings (the icon left of the address), then open this again.'
-          : 'When a worker needs input or finishes while you’re in another tab or app, you get a notification. Click it to jump to that worker’s terminal. The tab title counts the workers waiting on someone either way.';
+          : 'When a droid needs input or finishes while you’re in another tab or app, you get a notification. Click it to jump to that droid’s terminal. The tab title counts the droids waiting on someone either way.';
   };
   paintNotify();
 
@@ -207,7 +207,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     hookSave.textContent = webhook ? 'Replace' : 'Save';
     hookStatus.classList.toggle('bad', !!error);
     hookStatus.textContent = !webhook
-      ? 'Paste an incoming webhook from Slack or Discord, and the office posts to that channel when a worker needs input or finishes and nobody has its terminal open. It’s for everyone in the office.'
+      ? 'Paste an incoming webhook from Slack or Discord, and the office posts to that channel when a droid needs input or finishes and nobody has its terminal open. It’s for everyone in the office.'
       : error
         ? `⚠️ Posting to ${WEBHOOK_NAME[webhook.kind]} (${webhook.hint}) failed: ${error}`
         : `📣 Posting to ${WEBHOOK_NAME[webhook.kind]} (${webhook.hint}), set by ${webhook.by} ${timeAgo(webhook.at)}${lastSentAt ? ` · last message ${timeAgo(lastSentAt)}` : ''}.`;
@@ -226,7 +226,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   hookTest.addEventListener('click', () => net.send({ t: 'notify.test' }));
   hookRemove.addEventListener('click', () => net.send({ t: 'notify.webhook', url: '' }));
 
-  // The worker a new one starts on when whoever starts it picks no model.
+  // The droid a new one starts on when whoever starts it picks no model.
   const agent = agentFields('office-agent', officeChoice());
   let agentTouched = false;
   agent.element.addEventListener('change', () => (agentTouched = true));
@@ -242,7 +242,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(now);
     agentNote.textContent =
-      'What a worker starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a model. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
+      'What a droid starts on when nobody picks one: tasks the Queue agent adds, and anything else started without a model. The hire, queue, meeting and ask windows keep their own pickers, which remember the last choice at each desk.' +
       (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.');
   };
   paintAgent();
@@ -255,20 +255,20 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     net.send({ t: 'prompts.agent', choice: null });
   });
 
-  // The prompts the office writes for workers by itself, for the whole office.
+  // The prompts the office writes for droids by itself, for the whole office.
   const promptsOpen = h('button.btn', { type: 'button', onclick: () => openPromptEditor(net) });
   const promptsNote = h('p.setting-note');
   const paintPrompts = () => {
     const n = rewrittenPrompts();
     promptsOpen.textContent = 'Edit the prompts…';
     promptsNote.textContent =
-      'What Hand to a worker, Review and the boards’ other buttons tell a worker, the note the queue adds to a task, the board agents’ briefs, the meeting room’s parts and the sign writer’s instructions. ' +
+      'What Hand to a droid, Review and the boards’ other buttons tell a droid, the note the queue adds to a task, the board agents’ briefs, the meeting room’s parts and the sign writer’s instructions. ' +
       (n ? `${n} of them rewritten.` : 'All as the office wrote them.');
   };
   paintPrompts();
 
-  // The most workers the office runs at once, across every floor.
-  const limitInput = h('input', { type: 'text', inputmode: 'numeric', 'aria-label': 'Most workers at once', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  // The most droids the office runs at once, across every floor.
+  const limitInput = h('input', { type: 'text', inputmode: 'numeric', 'aria-label': 'Most droids at once', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
   const limitSave = h('button.btn.primary', { type: 'button' }, 'Set limit');
   const limitClear = h('button.btn', { type: 'button' });
   const limitRow = h('div.webhook', {}, limitInput, limitSave, limitClear);
@@ -280,8 +280,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     limitClear.classList.toggle('hidden', !m.set);
     const now =
       m.limit === undefined
-        ? `No limit: the office hires a worker for every free seat. ${m.workers} ${m.workers === 1 ? 'is' : 'are'} here now, across every floor.`
-        : `At most ${m.limit} worker${m.limit === 1 ? '' : 's'} at once, across every floor (${m.workers} now), shells and board agents too. Hiring past that is refused.`;
+        ? `No limit: the office hires a droid for every free seat. ${m.workers} ${m.workers === 1 ? 'is' : 'are'} here now, across every floor.`
+        : `At most ${m.limit} droid${m.limit === 1 ? '' : 's'} at once, across every floor (${m.workers} now), shells and board agents too. Hiring past that is refused.`;
     const from = m.set ? ` Set by ${m.set.by} ${timeAgo(m.set.at)}.` : '';
     const cap = m.ceiling ? ` The office was started with --max-workers ${m.ceiling}, so it can't go any higher.` : '';
     limitNote.textContent = now + from + cap;
@@ -299,8 +299,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   });
   limitClear.addEventListener('click', () => net.send({ t: 'machine.limit', limit: null }));
 
-  // Whether a worker whose pull request merged goes home by itself, for everyone.
-  const leaveRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Workers whose pull request merged' });
+  // Whether a droid whose pull request merged goes home by itself, for everyone.
+  const leaveRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Droids whose pull request merged' });
   const leaveNote = h('p.setting-note');
   const paintLeave = () => {
     const { on, by, at } = store.leaveOnMerge;
@@ -327,8 +327,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       ),
     );
     const now = on
-      ? 'Once a worker’s pull request merges, it goes home as soon as it isn’t working or waiting on you and nobody has its terminal open, and its worktree and branch are deleted. A worktree with uncommitted changes, or commits that aren’t on the remote, is kept.'
-      : 'A worker whose pull request merged stays at its desk, outlined in purple, until someone sends it home. Turned on, the ones already merged go too.';
+      ? 'Once a droid’s pull request merges, it goes home as soon as it isn’t working or waiting on you and nobody has its terminal open, and its worktree and branch are deleted. A worktree with uncommitted changes, or commits that aren’t on the remote, is kept.'
+      : 'A droid whose pull request merged stays at its desk, outlined in purple, until someone sends it home. Turned on, the ones already merged go too.';
     leaveNote.textContent = `${now} It’s the same for everyone in the building${by ? `, set by ${by}${at ? ` ${timeAgo(at)}` : ''}` : ''}.`;
   };
   paintLeave();
@@ -474,12 +474,12 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     net.send({ t: 'jira.epic', key: '' });
   });
 
-  // How workers hire subagents, for the whole office.
+  // How droids hire subagents, for the whole office.
   const subSet = (patch: Partial<SubagentSettings>) => net.send({ t: 'subagents.set', settings: { ...subagentSettings(), ...patch } });
   const subOn = radios(
     'Subagents',
     [
-      [true, 'Workers can hire'],
+      [true, 'Droids can hire'],
       [false, 'Off'],
     ] as const,
     () => store.subagents.on,
@@ -488,7 +488,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const subWho = radios(
     'Who can hire',
     [
-      [true, 'The Team lead and desk workers'],
+      [true, 'The Team lead and desk droids'],
       [false, 'Only the Team lead'],
     ] as const,
     () => store.subagents.deskWorkers,
@@ -504,7 +504,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   subAgent.element.addEventListener('change', () => (subAgentTouched = true));
   subAgent.element.addEventListener('input', () => (subAgentTouched = true));
   const subAgentSave = h('button.btn.primary', { type: 'button' }, 'Save');
-  const subAgentBack = h('button.btn', { type: 'button' }, 'Back to the default worker');
+  const subAgentBack = h('button.btn', { type: 'button' }, 'Back to the default droid');
   const subAgentNote = h('p.setting-note');
   subAgentSave.addEventListener('click', () => {
     subAgentTouched = false;
@@ -567,21 +567,21 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     subWho.row.classList.toggle('disabled', !s.on);
     subNote.textContent =
       (s.on
-        ? 'A lead runs office-workers hire to give a subagent a job. The subagent sits down at the free desk nearest its lead, with its own laptop and a terminal you can open like any worker’s, works, and reports back. Its lead reads the news, sends follow-ups and sends it home when the work is in.'
+        ? 'A lead runs office-workers hire to give a subagent a job. The subagent sits down at the free desk nearest its lead, with its own laptop and a terminal you can open like any droid’s, works, and reports back. Its lead reads the news, sends follow-ups and sends it home when the work is in.'
         : 'Hiring is refused. Subagents already working carry on and can still report back to their leads.') + (s.by && s.at ? ` Set by ${s.by} ${timeAgo(s.at)}.` : '');
     if (!subAgentTouched) subAgent.set(subFallback());
     subAgentBack.classList.toggle('hidden', !s.agent);
     subAgentNote.textContent = s.agent
       ? `Subagents start on ${choiceLabel(s.agent)} unless their lead asks for something else with --model or --effort.`
-      : `Subagents start on the office’s default worker (${choiceLabel(officeChoice())}, from Workers → Default worker) unless their lead asks for something else with --model or --effort. The picker lists every model droid can run: your own models, Factory’s and legacy ones.`;
-    subSizeNote.textContent = `A lead can have at most ${s.maxPerLead} subagent${s.maxPerLead === 1 ? '' : 's'} on the floor at once; sending one home frees its place. The office's worker limit still counts every one.`;
+      : `Subagents start on the office’s default droid (${choiceLabel(officeChoice())}, from Droids → Default droid) unless their lead asks for something else with --model or --effort. The picker lists every model droid can run: your own models, Factory’s and legacy ones.`;
+    subSizeNote.textContent = `A lead can have at most ${s.maxPerLead} subagent${s.maxPerLead === 1 ? '' : 's'} on the floor at once; sending one home frees its place. The office's droid limit still counts every one.`;
     subSkillNote.textContent = s.skillError
       ? s.skillError
       : !s.on
         ? 'Subagents are off, so the droid-office-subagents skill is out of ~/.factory/skills until they are back on.'
         : s.skill
-          ? `Droid workers at desks learn how to hire from the droid-office-subagents skill${s.skillPath ? ` at ${s.skillPath}` : ''}. It only applies in sessions the office started; outside Droid Office it tells droid to ignore it. The Team lead always knows from its brief.`
-          : 'The droid-office-subagents skill is not in ~/.factory/skills. Workers at desks hire when you tell them to use office-workers (office-workers help explains it), and the Team lead always knows from its brief.';
+          ? `Droids at desks learn how to hire from the droid-office-subagents skill${s.skillPath ? ` at ${s.skillPath}` : ''}. It only applies in sessions the office started; outside Droid Office it tells droid to ignore it. The Team lead always knows from its brief.`
+          : 'The droid-office-subagents skill is not in ~/.factory/skills. Droids at desks hire when you tell them to use office-workers (office-workers help explains it), and the Team lead always knows from its brief.';
   };
   paintSubagents();
 
@@ -609,7 +609,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const panes: Record<SettingsPane, Node[]> = {
     you: [card('Your character', character), card('Camera view', seg, note)],
     sound: [
-      card('Office sounds', soundRow, h('p.setting-note', {}, 'Workers typing, the coffee machine, thunder, and the ding when a worker is done.')),
+      card('Office sounds', soundRow, h('p.setting-note', {}, 'Droids typing, the coffee machine, thunder, and the ding when a droid is done.')),
       card('Jukebox', musicRow, h('p.setting-note', {}, 'The jukebox in the lounge. Everyone on the floor hears the same song, louder the closer they are to it; this is how loud it is for you alone.')),
     ],
     notify: [card('Desktop notifications', notifyRow, notifyNote), card('Channel notifications (Slack / Discord)', h('div.webhook', {}, hookInput, hookSave), hookActions, hookStatus)],
@@ -635,10 +635,10 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       card('Source hot reload', sourceReload.element),
     ],
     factory: [card('Factory API key', ...factoryKey.nodes)],
-    workers: [card('Default worker', agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Worker limit', limitRow, limitNote), card('Workers whose pull request merged', leaveRow, leaveNote)],
+    workers: [card('Default droid', agent.element, agentActions, agentNote), card('Prompts', promptsOpen, promptsNote), card('Droid limit', limitRow, limitNote), card('Droids whose pull request merged', leaveRow, leaveNote)],
     subagents: [
       card('Subagents', subOn.row, subWho.row, subNote, h('div.seg', { style: 'margin-top:8px' }, subPrompts)),
-      card('Subagent worker', subAgent.element, h('div.seg', { style: 'margin-top:8px' }, subAgentSave, subAgentBack), subAgentNote),
+      card('Subagent droid', subAgent.element, h('div.seg', { style: 'margin-top:8px' }, subAgentSave, subAgentBack), subAgentNote),
       card('Team size', subSize.row, subSizeNote),
       card('Where subagents work', subTree.row, subTreeNote),
       card('Waking the lead', subWake.row, subWakeNote),

@@ -12,7 +12,7 @@ const PACE = 2.3;
 const PACK = 0.9;
 /** Seconds hopping down off the chair (or the bean bag). */
 const HOP = 0.55;
-/** A worker's feet are this far above its origin, so standing on something its origin is this far below the top. */
+/** A droid's feet are this far above its origin, so standing on something its origin is this far below the top. */
 const FEET = 0.07;
 /** Seconds to shrink away once it's off down the sidewalk. */
 const GONE = 0.6;
@@ -53,7 +53,7 @@ function cloth(color: string): THREE.MeshToonMaterial {
 const CORD = new THREE.LineBasicMaterial({ color: '#2b2d42' });
 
 /**
- * A parachute, to hang from a worker's shoulders: striped gores in a dome over its head, and the
+ * A parachute, to hang from a droid's shoulders: striped gores in a dome over its head, and the
  * cords down to it. Its origin is where it's strapped on, so it pops open (and crumples) from there.
  */
 function parachute(color: string): { group: THREE.Group; dome: THREE.Group } {
@@ -136,7 +136,7 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const pick = <T>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
 /**
- * Workers who've been sent home. Each one packs its things into a cardboard box while its laptop
+ * Droids who've been sent home. Each one packs its things into a cardboard box while its laptop
  * shuts, hops down off its chair, and walks out of the building with the box (see wayHome): out the
  * exit door, down the steps and off along the sidewalk, where it's gone. Only the bottom floor has
  * an exit door, so from the floors above it goes out onto the balcony instead, climbs up on the
@@ -156,7 +156,7 @@ export class Departures {
     private upstairs: () => boolean,
   ) {}
 
-  /** Takes over a worker's model and laptop the moment it's sent home from `desk`. */
+  /** Takes over a droid's model and laptop the moment it's sent home from `desk`. */
   add(model: Worker, laptop: Laptop, desk: DeskView) {
     // Off the desk first if it was up there dancing: it packs up in its seat.
     model.stopDancing();
@@ -428,9 +428,9 @@ const IN_PACE = 2.8;
 const IN_SPACING = 0.9;
 
 /**
- * Workers called to a meeting. Each steps out of the elevator, walks round the furniture to its chair
+ * Droids called to a meeting. Each steps out of the elevator, walks round the furniture to its chair
  * at the meeting table (see wayIn), hops up onto it and sits down, and from then on it's an ordinary
- * worker at its seat.
+ * droid at its seat.
  */
 export class Arrivals {
   private walkers: Arriver[] = [];
@@ -467,7 +467,7 @@ export class Arrivals {
     this.walkers = this.walkers.filter((x) => x !== w);
   }
 
-  /** Off to another floor: whoever is still on the way goes with the rest of that floor's workers. */
+  /** Off to another floor: whoever is still on the way goes with the rest of that floor's droids. */
   clear() {
     for (const w of this.walkers) w.model.walking = false;
     this.walkers = [];
@@ -527,7 +527,7 @@ export class Arrivals {
     return true;
   }
 
-  /** In its seat: from here on it's where every worker sits. */
+  /** In its seat: from here on it's where every droid sits. */
   private sit(w: Arriver) {
     const { root } = w.model;
     w.model.walking = false;

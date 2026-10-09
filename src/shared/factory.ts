@@ -23,7 +23,7 @@ export function isFactoryFeature(v: unknown): v is FactoryFeatureId {
   return typeof v === 'string' && (FACTORY_FEATURES as readonly string[]).includes(v);
 }
 
-/** What the connection probes: the four API groups the features read, plus the organization and service accounts. Cloud workers are sessions. */
+/** What the connection probes: the four API groups the features read, plus the organization and service accounts. Cloud droids are sessions. */
 export type FactoryGroup = 'computers' | 'sessions' | 'ci' | 'wiki' | 'organization' | 'serviceAccounts';
 
 export const FACTORY_GROUPS: readonly { id: FactoryGroup; label: string }[] = [

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { NotifyState, WebhookKind, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
 import { alertDetail } from '../shared/status.js';
 
-/** A worker has to stay put this long before the channel hears about it, so a flicker never posts. */
+/** A droid has to stay put this long before the channel hears about it, so a flicker never posts. */
 const SETTLE_MS = 5_000;
 /** Slack and Discord both throttle a webhook to about one message a second. */
 const GAP_MS = 1_100;
@@ -31,7 +31,7 @@ function hint(url: URL): string {
   return `${url.host}/…${tail}`;
 }
 
-/** Slack reads <, > and & as markup; escaping them keeps a worker's text from pinging <!channel>. */
+/** Slack reads <, > and & as markup; escaping them keeps a droid's text from pinging <!channel>. */
 const slackEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const oneLine = (s: string, max: number) => {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -39,7 +39,7 @@ const oneLine = (s: string, max: number) => {
 };
 
 /**
- * The office's Slack / Discord webhook. When an agent worker starts waiting on input or finishes its
+ * The office's Slack / Discord webhook. When an agent droid starts waiting on input or finishes its
  * turn, and is still that way a few seconds later with nobody at its terminal, the channel gets a
  * line about it. Set from ⚙️ Settings (or --webhook) and kept in .droid-office/webhook.json.
  */
@@ -48,7 +48,7 @@ export class Webhook {
   private error?: string;
   private lastSentAt?: number;
   private path: string;
-  /** Each worker's latest state, and the alert waiting out its settle time. */
+  /** Each droid's latest state, and the alert waiting out its settle time. */
   private latest = new Map<string, WorkerInfo>();
   private pending = new Map<string, { status: Alert; timer: NodeJS.Timeout }>();
   private chain: Promise<unknown> = Promise.resolve();
@@ -56,7 +56,7 @@ export class Webhook {
 
   constructor(
     dataDir: string,
-    /** The project a worker works on (the floor it's on), or the office's name without one. */
+    /** The project a droid works on (the floor it's on), or the office's name without one. */
     private project: (workerId?: string) => string,
     private onState: (state: NotifyState) => void,
   ) {
@@ -93,7 +93,7 @@ export class Webhook {
     return undefined;
   }
 
-  /** Called with every worker update. */
+  /** Called with every droid update. */
   onWorker(w: WorkerInfo) {
     const prev = this.latest.get(w.id);
     this.latest.set(w.id, w);
@@ -120,7 +120,7 @@ export class Webhook {
   /** Posts a test message. Resolves to an error message if it didn't get through. */
   test(by: string): Promise<string | undefined> {
     if (!this.saved) return Promise.resolve('No webhook is set');
-    return this.post({ kind: 'test', title: `🔔 ${by} connected ${this.project()} to this channel`, detail: 'Workers that need input or finish will show up here.' });
+    return this.post({ kind: 'test', title: `🔔 ${by} connected ${this.project()} to this channel`, detail: 'Droids that need input or finish will show up here.' });
   }
 
   stop() {
@@ -165,7 +165,7 @@ export class Webhook {
     if (kind === 'slack') {
       body = { text: `*${slackEscape(msg.title)}*${msg.detail ? `\n>${slackEscape(msg.detail)}` : ''}` };
     } else if (kind === 'discord') {
-      // No @everyone or role pings, whatever a worker's text says.
+      // No @everyone or role pings, whatever a droid's text says.
       body = { content: `**${msg.title}**${msg.detail ? `\n> ${msg.detail}` : ''}`, username: 'Droid Office', allowed_mentions: { parse: [] } };
     } else {
       const w = msg.worker;

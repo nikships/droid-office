@@ -20,7 +20,7 @@ function fixture(t: { after(fn: () => void): void }) {
   writeFileSync(path.join(dir, 'README.md'), '# demo\n');
   git('add', '.');
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
-  const target: ChangesTarget = { name: 'Worker 1', cwd: dir, rel: '' };
+  const target: ChangesTarget = { name: 'Droid 1', cwd: dir, rel: '' };
   const changes = new Changes(
     'main',
     (id) => (id === 'w1' ? target : undefined),
@@ -56,7 +56,7 @@ test('a file outside the checkout, by .. or by a link, is refused', async (t) =>
   // A junction works without admin rights on Windows; elsewhere it's an ordinary symlink.
   symlinkSync(outside, path.join(dir, 'link'), 'junction');
   assert.equal(await insideCheckout(dir, 'link/secret.png'), undefined);
-  // Even when the link itself is one of the worker's changes.
+  // Even when the link itself is one of the droid's changes.
   const r = await changes.file('w1', 'link/secret.png', 'new');
   assert.ok('error' in r && r.status === 404);
 });
@@ -80,7 +80,7 @@ test('the preview serves both sides of a changed picture, and nothing outside th
   assert.deepEqual(await text('old', 'assets/gone.gif'), { type: 'image/gif', body: 'deleted picture' });
   assert.equal(((await text('new', 'assets/gone.gif')) as { status: number }).status, 404);
 
-  // Not a picture, not changed, not in the checkout, no such worker.
+  // Not a picture, not changed, not in the checkout, no such droid.
   assert.equal(((await text('new', 'notes.txt')) as { status: number }).status, 415);
   writeFileSync(path.join(root, 'secret.png'), 'secret');
   for (const p of ['README.png', '../secret.png', path.join(root, 'secret.png')]) assert.equal(((await text('new', p)) as { status: number }).status, 404, p);

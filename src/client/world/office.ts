@@ -112,15 +112,15 @@ export interface Interactable {
   off?: boolean;
 }
 
-/** A desk, a bean bag, a board agent's kiosk or a chair at the meeting table: somewhere a worker sits (or stands). */
+/** A desk, a bean bag, a board agent's kiosk or a chair at the meeting table: somewhere a droid sits (or stands). */
 export interface DeskView {
   def: DeskDef;
   group: THREE.Group;
   /** The laptop goes in here: placed, turned and sized for this seat. */
   laptopAnchor: THREE.Object3D;
-  /** The worker goes in here, the same way. */
+  /** The droid goes in here, the same way. */
   seatAnchor: THREE.Object3D;
-  /** Where the worker gets up to dance when a pull request merges: its feet, and the way it faces. */
+  /** Where the droid gets up to dance when a pull request merges: its feet, and the way it faces. */
   stage: THREE.Object3D;
   chair: THREE.Group;
   /** Shown while nobody is there: the "+" over a free seat, or the board agent waiting to be asked. */
@@ -1039,7 +1039,7 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   group.rotation.y = def.rotY;
   const { width, depth, height } = DESK_SIZE;
   // A workbench: a dark top with a steel edge, on a black square-tube frame with a foot rail, and a
-  // steel modesty panel facing away from the worker with a power pip on it. One mesh per material.
+  // steel modesty panel facing away from the droid with a power pip on it. One mesh per material.
   const body = new THREE.Group();
   const top = 0.05;
   body.add(mesh(roundedBox(width - 0.06, top, depth - 0.04, 0.02), toon(PALETTE.desk), 0, height - top / 2, 0));
@@ -1125,7 +1125,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const seat = mesh(new THREE.SphereGeometry(0.62, 16, 10), cloth, 0, 0.3, 0);
   seat.scale.set(1, 0.52, 1);
   bag.add(seat);
-  // Slumped up behind the worker, like a back rest.
+  // Slumped up behind the droid, like a back rest.
   const back = mesh(new THREE.SphereGeometry(0.5, 14, 10), cloth, 0, 0.6, 0.32);
   back.scale.set(1.05, 0.95, 0.7);
   bag.add(back);

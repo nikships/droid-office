@@ -72,7 +72,7 @@ data class PrRef(val number: Int = 0, val url: String = "")
 @Serializable
 data class GuestInfo(val pid: Int = 0, val provider: String = "", val cwd: String = "", val seen: String = "")
 
-/** A cloud worker's Factory computer (src/shared/factory-cloud.ts): its Droid session runs there, not in a terminal of the office's. */
+/** A cloud droid's Factory computer (src/shared/factory-cloud.ts): its Droid session runs there, not in a terminal of the office's. */
 @Serializable
 data class CloudRef(val computerId: String = "", val computerName: String = "", val cwd: String? = null, val error: String? = null)
 

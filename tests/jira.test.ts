@@ -385,7 +385,7 @@ test('converts Atlassian Document Format to markdown', () => {
   assert.equal(adfToMarkdown('plain'), 'plain');
 });
 
-test('a worker handed a ticket gets its key, summary, link and description, and nothing about updating Jira', () => {
+test('a droid handed a ticket gets its key, summary, link and description, and nothing about updating Jira', () => {
   const p = ticketPrompt({ key: 'EDP-12', summary: 'Fix login', description: 'It breaks.', url: `${SITE}/browse/EDP-12` });
   assert.equal(p, `Work on Jira ticket EDP-12: "Fix login".\n\n${SITE}/browse/EDP-12\n\nIt breaks.`);
   assert.equal(ticketPrompt({ key: 'EDP-12', summary: 'x' }), 'Work on Jira ticket EDP-12: "x".\n\n(No description.)');

@@ -11,12 +11,12 @@ export function isValidDroidModel(value: unknown): value is string {
 
 export function validateWorkerModel(kind: 'agent' | 'shell', model: unknown): string | undefined {
   if (model === undefined) return undefined;
-  if (kind === 'shell') return 'Shell workers do not have an agent model';
+  if (kind === 'shell') return 'Shell droids do not have an agent model';
   return isValidDroidModel(model) ? undefined : 'Invalid Droid model (expected a model id without whitespace)';
 }
 
 export function validateWorkerEffort(kind: 'agent' | 'shell', effort: unknown): string | undefined {
   if (effort === undefined) return undefined;
-  if (kind === 'shell') return 'Shell workers do not have a reasoning effort';
+  if (kind === 'shell') return 'Shell droids do not have a reasoning effort';
   return isAgentEffort(effort) ? undefined : 'Invalid effort (expected low, medium, high, xhigh or max)';
 }

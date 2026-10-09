@@ -50,13 +50,13 @@ const pull = (number: number, state: string, headRefName: string, headRefOid?: s
 
 const ids = (workers: WorkerInfo[], pulls: GhPull[], tasks: QueueTask[] = []) => landedWorkers(workers, pulls, tasks).map((l) => l.worker.id);
 
-test('a worker at rest whose pull request merged goes, with the head of what merged', () => {
+test('a droid at rest whose pull request merged goes, with the head of what merged', () => {
   const head = 'a'.repeat(40);
   assert.deepEqual(landedWorkers([worker('mochi')], [pull(7, 'MERGED', 'office/mochi', head)], []), [{ worker: worker('mochi'), pr: 7, head }]);
   for (const status of ['idle', 'exited', 'offline'] as const) assert.deepEqual(ids([worker('mochi', status)], [pull(7, 'MERGED', 'office/mochi')]), ['mochi'], status);
 });
 
-test('a worker stays while its PR is open, a follow-up is open, or it has none', () => {
+test('a droid stays while its PR is open, a follow-up is open, or it has none', () => {
   assert.deepEqual(ids([worker('a')], [pull(1, 'OPEN', 'office/a')]), []);
   assert.deepEqual(ids([worker('a')], [pull(1, 'MERGED', 'office/a'), pull(2, 'OPEN', 'office/a')]), []);
   assert.deepEqual(ids([worker('a')], [pull(1, 'CLOSED', 'office/a')]), []);
@@ -65,7 +65,7 @@ test('a worker stays while its PR is open, a follow-up is open, or it has none',
   assert.deepEqual(ids([worker('a', 'done', { pr: { number: 9, url: '' } })], [pull(1, 'MERGED', 'office/a')]), []);
 });
 
-test('a worker stays while it works, waits on someone, opens a PR or has its terminal open', () => {
+test('a droid stays while it works, waits on someone, opens a PR or has its terminal open', () => {
   const merged = [pull(1, 'MERGED', 'office/a')];
   for (const status of ['starting', 'working', 'needs_input'] as const) assert.deepEqual(ids([worker('a', status)], merged), [], status);
   assert.deepEqual(ids([worker('a', 'done', { prOpening: true })], merged), []);
@@ -107,7 +107,7 @@ test("commits in the merged PR aren't work a worktree would lose, even with the 
   git('add', '.');
   git('commit', '-qm', 'init');
   const base = git('rev-parse', 'HEAD');
-  // Two commits on the worker's branch, no remote at all (as if the forge deleted it and a fetch pruned it).
+  // Two commits on the droid's branch, no remote at all (as if the forge deleted it and a fetch pruned it).
   git('checkout', '-qb', 'office/mochi');
   for (const n of [1, 2]) {
     writeFileSync(path.join(dir, `f${n}.txt`), String(n));

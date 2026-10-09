@@ -3,15 +3,15 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import path from 'node:path';
 import { PROMPT_IMAGE_ID } from '../shared/drops.js';
 
-/** The folder in drops/ for pictures waiting on a prompt: not a worker's, so pruning leaves it be. */
+/** The folder in drops/ for pictures waiting on a prompt: not a droid's, so pruning leaves it be. */
 const STAGED = 'staged';
 
 /** The name ending a picture dropped without one gets, so the agent can tell it's a picture. */
 const PICTURE_EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' };
 
 /**
- * Files dropped or pasted into a worker's terminal from a browser (see shared/drops.ts), kept in
- * .droid-office/drops/<worker id>/ so the program there can open them by path. They go with the worker.
+ * Files dropped or pasted into a droid's terminal from a browser (see shared/drops.ts), kept in
+ * .droid-office/drops/<droid id>/ so the program there can open them by path. They go with the droid.
  */
 export class DropStore {
   private dir: string;
@@ -20,7 +20,7 @@ export class DropStore {
     this.dir = path.join(dataDir, 'drops');
   }
 
-  /** Keeps a file dropped into a worker's terminal; where it is now, or undefined if it couldn't be. */
+  /** Keeps a file dropped into a droid's terminal; where it is now, or undefined if it couldn't be. */
   save(workerId: string, name: string, type: string, body: Buffer): string | undefined {
     const dir = this.folder(workerId);
     if (!dir) return undefined;
@@ -43,7 +43,7 @@ export class DropStore {
     }
   }
 
-  /** Deletes what was dropped for workers that are no longer at a desk. Pictures waiting for a prompt to be sent stay. */
+  /** Deletes what was dropped for droids that are no longer at a desk. Pictures waiting for a prompt to be sent stay. */
   prune(keep: Set<string>) {
     try {
       for (const id of readdirSync(this.dir)) if (id !== STAGED && !keep.has(id)) this.remove(id);
@@ -85,7 +85,7 @@ export class DropStore {
   }
 
   /**
-   * Copies staged pictures to a worker's own drops (they stay staged: a prompt for several workers
+   * Copies staged pictures to a droid's own drops (they stay staged: a prompt for several droids
    * adopts them once each), in the order given. Where each is now; one that's gone is left out.
    */
   adopt(workerId: string, ids: readonly string[]): string[] {
@@ -105,7 +105,7 @@ export class DropStore {
     return paths;
   }
 
-  /** A staged picture's bytes, for a prompt that carries pictures inline rather than by path (a cloud worker's). */
+  /** A staged picture's bytes, for a prompt that carries pictures inline rather than by path (a cloud droid's). */
   stagedPicture(id: string): { body: Buffer; ext: string } | undefined {
     const file = this.staged(id);
     if (!file) return undefined;

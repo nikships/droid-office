@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DESK_BY_ID, seatHere, vacantSeats } from '../src/shared/layout.js';
 
-// Two floors that each have a Queue agent hired at the queue kiosk and a worker at desk 3.
+// Two floors that each have a Queue agent hired at the queue kiosk and a droid at desk 3.
 const droidOffice = [
   { id: 'w-queue-a', deskId: 'station-queue' },
   { id: 'w-desk-a', deskId: 'desk-3' },
@@ -24,9 +24,9 @@ test('riding the elevator between floors that share a kiosk and a desk leaves ne
   ]) {
     const before = vacantSeats(from);
     const after = vacantSeats(to);
-    // Same kiosk, same desk, different workers: still taken, so no idle Queue agent and no '+'.
+    // Same kiosk, same desk, different droids: still taken, so no idle Queue agent and no '+'.
     assert.ok(!after.has('station-queue'), 'no idle Queue agent beside the hired one');
-    assert.ok(!after.has('desk-3'), "no '+' over the worker at desk 3");
+    assert.ok(!after.has('desk-3'), "no '+' over the droid at desk 3");
     for (const w of to) assert.ok(!after.has(w.deskId), `${w.deskId} is taken`);
     // A seat only the old floor used is free again; the rest are free on both.
     for (const id of DESK_BY_ID.keys()) if (!from.some((w) => w.deskId === id) && !to.some((w) => w.deskId === id)) assert.ok(before.has(id) && after.has(id), `${id} is free`);

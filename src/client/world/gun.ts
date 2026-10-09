@@ -19,10 +19,10 @@ const DRUM_AT = new THREE.Vector3(0, 0.047, 0.03);
 /** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
 const CRANE_AT = new THREE.Vector2(0.008, 0.012);
 
-/** The closest rendered solid struck by a bullet; only registered workers can be targets. */
+/** The closest rendered solid struck by a bullet; only registered droids can be targets. */
 export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
   // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
-  // would throw before any worker could react. Only rendered meshes can absorb a bullet.
+  // would throw before any droid could react. Only rendered meshes can absorb a bullet.
   const solids = new Set<THREE.Mesh>();
   for (const root of [office, ...workers.keys()])
     root.traverseVisible((object) => {
@@ -355,7 +355,7 @@ const SPRAY_TIME = 0.45;
 let sprayBall: THREE.SphereGeometry | null = null;
 
 /**
- * Where a bullet strikes a worker, at the contact point: a red mist bursting back out of the hit
+ * Where a bullet strikes a droid, at the contact point: a red mist bursting back out of the hit
  * and droplets flung out of it that drop and fade in under half a second. update() returns false
  * once it's gone.
  */

@@ -1,4 +1,4 @@
-// Droid sessions: the account's recent sessions, the office's own workers' among them
+// Droid sessions: the account's recent sessions, the office's own droids' among them
 // (WorkerInfo.sessionId matches FactorySession.id), what each has cost, and the transcript's
 // messages. Read by src/server/factory/sessions.ts; drawn by the lounge TV (world/factory-tv.ts),
 // the Sessions window (ui/factory-sessions.ts) and the transcript (ui/factory-transcript.ts).
@@ -58,7 +58,7 @@ export interface FactorySession {
   fetchedAt?: number;
 }
 
-/** One of the office's own workers (on any floor, desk or cloud, guests too) and its session. */
+/** One of the office's own droids (on any floor, desk or cloud, guests too) and its session. */
 export interface FactoryOfficeSession {
   workerId: string;
   name: string;
@@ -109,7 +109,7 @@ export interface FactorySessionsState {
   hasMore: boolean;
   fetchedAt: number;
   error?: string;
-  /** The office's own workers' sessions, by session id. */
+  /** The office's own droids' sessions, by session id. */
   office: Record<string, FactoryOfficeSession>;
   credits: FactoryCredits;
 }
@@ -172,7 +172,7 @@ export function sessionOf(raw: unknown): FactorySession | undefined {
   };
 }
 
-/** The credits the office knows for a session: its worker's, else the list's. */
+/** The credits the office knows for a session: its droid's, else the list's. */
 export function sessionCredits(s: FactorySessionsState, sessionId: string | undefined): number | undefined {
   if (!sessionId) return undefined;
   return s.office[sessionId]?.credits ?? s.items.find((x) => x.id === sessionId)?.credits;
@@ -180,11 +180,11 @@ export function sessionCredits(s: FactorySessionsState, sessionId: string | unde
 
 export const isLive = (s: { status: string }) => s.status === 'running' || s.status === 'pending';
 
-/** Where a session runs: one of this office's workers, a Factory computer, or somewhere else (another machine, the web app). */
+/** Where a session runs: one of this office's droids, a Factory computer, or somewhere else (another machine, the web app). */
 export interface SessionWhere {
   kind: 'office' | 'cloud' | 'elsewhere';
   label: string;
-  /** The worker's color, for one of the office's. */
+  /** The droid's color, for one of the office's. */
   color?: string;
 }
 
@@ -206,7 +206,7 @@ export function spanText(ms: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-/** "⚡ 841k credits" for a worker's session, '' while the office doesn't know (or isn't connected). */
+/** "⚡ 841k credits" for a droid's session, '' while the office doesn't know (or isn't connected). */
 export function creditsNote(s: FactorySessionsState, sessionId: string | undefined): string {
   const n = sessionCredits(s, sessionId);
   return n === undefined ? '' : `⚡ ${compactCredits(n)} credits`;

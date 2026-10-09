@@ -86,7 +86,7 @@ const record = (extra = {}) => fs.appendFileSync(log, JSON.stringify({
 record();
 
 // The task namer invokes droid as a non-interactive JSON command (droid exec). Keep that
-// invocation deterministic and separate from the worker's real PTY process.
+// invocation deterministic and separate from the droid's real PTY process.
 if (args.includes('--output-format')) {
   process.stdout.write(JSON.stringify({ structured_output: { name: 'Fake Task', summary: 'Recording a deterministic test task' } }));
   process.exit(0);
@@ -153,7 +153,7 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeo
   return value;
 }
 
-test('Droid workers launch with their own hook overlay and resume the correct session', async (t) => {
+test('Droids launch with their own hook overlay and resume the correct session', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);
@@ -174,6 +174,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   const worker = workers.spawn('desk-2', 'test', '- inspect this code');
   assert.equal(typeof worker, 'object');
   if (typeof worker === 'string') return;
+  assert.equal(worker.name, 'Anvil');
   const first = (
     await waitFor(
       () => f.read(),
@@ -223,7 +224,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   ).filter((r) => r.kind === 'droid' && r.args.includes('--settings'))[1];
   assert.deepEqual(second.args.slice(-2), ['--resume', 'droid-1']);
   assert.notEqual(second.env.hookToken, first.env.hookToken);
-  assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
+  assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed droid');
   assert.equal(hook('SessionStart', { source: 'resume' }, second.env.hookToken!), true);
 
   await waitFor(
@@ -261,7 +262,7 @@ test('a guest brought in sits at its desk with its name and resumes its own sess
     id: 'guest-89430-abc',
     kind: 'agent',
     deskId: 'desk-4',
-    name: 'Pixel',
+    name: 'Anvil',
     color: '#ff8800',
     status: 'done',
     acked: true,
@@ -280,8 +281,8 @@ test('a guest brought in sits at its desk with its name and resumes its own sess
   assert.equal(typeof info, 'object');
   if (typeof info === 'string') return;
   assert.notEqual(info.id, guest.id);
-  assert.equal(info.guest, undefined, 'one of the office’s own workers now');
-  assert.deepEqual([info.deskId, info.name, info.color, info.sessionId], ['desk-4', 'Pixel', '#ff8800', 'outside-session']);
+  assert.equal(info.guest, undefined, 'one of the office’s own droids now');
+  assert.deepEqual([info.deskId, info.name, info.color, info.sessionId], ['desk-4', 'Anvil', '#ff8800', 'outside-session']);
   assert.equal(info.model, undefined, 'its model stays the session’s own');
   assert.equal(info.activeModel, 'claude-opus-5-5');
   assert.equal(info.task?.name, 'Login redirect');
@@ -300,11 +301,11 @@ test('a guest brought in sits at its desk with its name and resumes its own sess
   assert.match(String(workers.takeIn({ ...guest, deskId: 'station-issues' }, 's-3', 'Nik')), /desk or a bean bag/);
   const second = workers.takeIn({ ...guest, id: 'guest-3', deskId: 'desk-5' }, 's-4', 'Nik');
   assert.equal(typeof second, 'object');
-  assert.notEqual(typeof second === 'object' && second.name, 'Pixel', 'a name already taken here is not reused');
+  assert.notEqual(typeof second === 'object' && second.name, 'Anvil', 'a name already taken here is not reused');
   assert.equal(workers.full(), undefined);
 });
 
-test('Droid workers pin their model and effort in a per-worker settings overlay, kept across a restart', async (t) => {
+test('Droids pin their model and effort in a per-worker settings overlay, kept across a restart', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);
@@ -335,7 +336,7 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(overlay.sessionDefaultSettings.model, 'custom:droidproxy:gpt-6-sol');
   assert.equal(overlay.sessionDefaultSettings.reasoningEffort, 'high');
   assert.match(overlay.hooks.SessionStart[0].hooks[0].command, /\/hooks\/droid/);
-  // The shared hooks file stays model-free for workers without an override.
+  // The shared hooks file stays model-free for droids without an override.
   const shared = JSON.parse(readFileSync(path.join(f.data, 'droid-hooks.json'), 'utf8'));
   assert.equal(shared.sessionDefaultSettings, undefined);
 
@@ -346,7 +347,7 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(restored.get(worker.id)?.model, 'custom:droidproxy:gpt-6-sol');
   assert.equal(restored.get(worker.id)?.effort, 'high');
   await workers.kill(worker.id);
-  assert.equal(existsSync(overlayPath), false, 'a worker going home takes its overlay with it');
+  assert.equal(existsSync(overlayPath), false, 'a droid going home takes its overlay with it');
 });
 
 test('board agents are hired with the requested model and effort', async (t) => {
@@ -381,7 +382,7 @@ test('board agents are hired with the requested model and effort', async (t) => 
   assert.equal(workers.get(r.info.id)?.model, 'custom:droidproxy:gpt-6-sol');
 });
 
-test('a worker nobody picked for starts on the office default worker, told its board brief in the office’s words', async (t) => {
+test('a droid nobody picked for starts on the office default droid, told its board brief in the office’s words', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousLog = process.env.FAKE_AGENT_LOG;
@@ -425,7 +426,7 @@ test('a worker nobody picked for starts on the office default worker, told its b
   assert.deepEqual([plain.model, plain.effort], [undefined, undefined]);
 });
 
-test('workers reject malformed model ids, unknown efforts, and models or efforts on shells', (t) => {
+test('droids reject malformed model ids, unknown efforts, and models or efforts on shells', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const workers = manager(f, []);
@@ -436,7 +437,7 @@ test('workers reject malformed model ids, unknown efforts, and models or efforts
   assert.match(workers.spawn('desk-4', 'test', 'bad', false, 'shell', undefined, 'high' as AgentEffort) as string, /shell/i);
 });
 
-test('a saved worker comes back with a valid model, without an invalid one', (t) => {
+test('a saved droid comes back with a valid model, without an invalid one', (t) => {
   const f = fixture();
   t.after(() => f.close());
   writeFileSync(
@@ -584,7 +585,7 @@ test('board agents get office-queue on their PATH, and the queue agent is told b
   assert.equal(second.args.at(-1), 'Also bump the version');
   assert.ok(onPath(second));
 
-  // The other board agents get the command too; a desk worker gets none of it.
+  // The other board agents get the command too; a desk droid gets none of it.
   const pulls = workers.station('station-pulls', 'Ada', 'Sum up the open PRs');
   const desk = workers.spawn('desk-2', 'Ada', 'Fix login');
   assert.ok(typeof pulls === 'object' && typeof desk === 'object');
@@ -601,7 +602,7 @@ test('board agents get office-queue on their PATH, and the queue agent is told b
   assert.equal((deskLaunch.env.path ?? '').split(path.delimiter).includes(bin), false);
 });
 
-test('a Droid worker acts out its latest tool call, and puts its head in its hands when its tests keep failing', async (t) => {
+test('a Droid acts out its latest tool call, and puts its head in its hands when its tests keep failing', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const previousExit = process.env.FAKE_AGENT_EXIT_MS;
@@ -661,7 +662,7 @@ test('a Droid worker acts out its latest tool call, and puts its head in its han
   assert.equal(action(), undefined);
 });
 
-test('a worker is stamped with when it started waiting on someone, afresh each time', async (t) => {
+test('a droid is stamped with when it started waiting on someone, afresh each time', async (t) => {
   const f = fixture();
   isolateAgentEnvironment(f, t);
   const oldLog = process.env.FAKE_AGENT_LOG;
@@ -694,7 +695,7 @@ test('a worker is stamped with when it started waiting on someone, afresh each t
   assert.ok(worker.waitingSince! > asked, 'finishing is a new wait');
 });
 
-/** A worker that stays running, and its hooks as `session` (or another session). */
+/** A droid that stays running, and its hooks as `session` (or another session). */
 async function liveWorker(t: { after(fn: () => void): void }, session: string) {
   const f = fixture();
   isolateAgentEnvironment(f, t);
@@ -715,7 +716,7 @@ async function liveWorker(t: { after(fn: () => void): void }, session: string) {
   return { workers, worker, hook, status };
 }
 
-test("a prompt answered in the terminal puts the worker back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
+test("a prompt answered in the terminal puts the droid back to work, and a cancelled one puts it at rest (droid's own hook order)", async (t) => {
   const { hook, status } = await liveWorker(t, 'answered');
   const execute = { tool_name: 'Execute', tool_input: { command: 'sleep 5 && echo done' } };
   hook('SessionStart', { source: 'startup' });
@@ -752,7 +753,7 @@ test("a prompt answered in the terminal puts the worker back to work, and a canc
   assert.equal(status(), 'idle');
 });
 
-test("a subagent's hooks don't take over its worker's session (droid's own hook order)", async (t) => {
+test("a subagent's hooks don't take over its droid's session (droid's own hook order)", async (t) => {
   const { workers, worker, hook, status } = await liveWorker(t, 'lead-session');
   const sub = (event: string, extra: Record<string, unknown> = {}) => hook(event, extra, 'sub-session');
   const task = { tool_name: 'Task', tool_input: { subagent_type: 'worker', description: 'Run echo command' } };
@@ -765,22 +766,22 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
   assert.equal(sub('SessionStart', { source: 'startup', calling_session_id: 'someone-else' }), false);
   assert.equal(sub('SessionStart', { source: 'startup', calling_session_id: 'lead-session' }), true);
   assert.equal(sub('SessionStart', { source: 'resume', calling_session_id: 'lead-session' }), true);
-  assert.equal(sub('UserPromptSubmit', { prompt: '# Task Tool Invocation\n\nSubagent type: worker' }), true);
-  assert.equal(workers.get(worker.id)?.sessionId, 'lead-session', 'the worker resumes its own session, not the subagent');
+  assert.equal(sub('UserPromptSubmit', { prompt: '# Task Tool Invocation\n\nSubagent type: droid' }), true);
+  assert.equal(workers.get(worker.id)?.sessionId, 'lead-session', 'the droid resumes its own session, not the subagent');
   assert.equal(status(), 'working');
   assert.doesNotMatch(workers.get(worker.id)?.activity ?? '', /Task Tool Invocation/);
 
-  // Its permission prompt shows in the worker's terminal.
+  // Its permission prompt shows in the droid's terminal.
   assert.equal(sub('PreToolUse', execute), true);
   assert.equal(sub('Notification', { notification_type: 'permission_prompt', message: 'Factory CLI needs permission to execute 1 tool(s)' }), true);
   assert.equal(status(), 'needs_input');
-  // The worker's own tools don't answer the subagent's prompt.
+  // The droid's own tools don't answer the subagent's prompt.
   hook('PostToolUse', { tool_name: 'Read' });
   assert.equal(status(), 'needs_input');
   sub('PostToolUse', { ...execute, tool_response: 'from-sub' });
   assert.equal(status(), 'working');
 
-  // The subagent finishing is not the worker finishing.
+  // The subagent finishing is not the droid finishing.
   assert.equal(sub('Stop', {}), true);
   assert.equal(sub('Notification', { notification_type: 'idle_prompt' }), true);
   assert.equal(status(), 'working');
@@ -803,7 +804,7 @@ test("a subagent's hooks don't take over its worker's session (droid's own hook 
   assert.equal(sub('PreToolUse', execute), false);
 });
 
-/** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */
+/** Types `text` into a droid's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */
 async function show(workers: WorkerManager, id: string, text: string) {
   workers.write(id, `${text}\r`);
   for (let i = 0; i < 200 && !workers.tail(id, 3)?.includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -856,7 +857,7 @@ test("a status the hooks left wrong follows the agent's screen once it has settl
   assert.equal(status(), 'needs_input');
 });
 
-/** Each worker launch so far (not the task namer's calls, nor what was typed into it), oldest first. */
+/** Each droid launch so far (not the task namer's calls, nor what was typed into it), oldest first. */
 const launchesOf = (f: Fixture) => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
 /** What a launch was told to do: the prompt after `--`, if any. */
 const promptOf = (r: Invocation) => (r.args.includes('--') ? r.args[r.args.indexOf('--') + 1] : undefined);
@@ -874,7 +875,7 @@ function carryOnFixture(t: { after(fn: () => void): void }) {
   return f;
 }
 
-/** Hires a worker and puts its session in `state`: mid-turn ('working', 'needs_input') or finished ('done'). */
+/** Hires a droid and puts its session in `state`: mid-turn ('working', 'needs_input') or finished ('done'). */
 async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, session: string, state: 'working' | 'needs_input' | 'done') {
   const before = launchesOf(f).length;
   const worker = workers.spawn(deskId, 'test', `task for ${session}`);
@@ -895,7 +896,7 @@ async function hireInState(f: Fixture, workers: WorkerManager, deskId: string, s
   return worker;
 }
 
-test('a restart that takes a mid-turn worker down resumes it with continue; a finished one just wakes up', async (t) => {
+test('a restart that takes a mid-turn droid down resumes it with continue; a finished one just wakes up', async (t) => {
   const f = carryOnFixture(t);
   const before = manager(f, []);
   // Never started, so its terminals run in-process and go down with it.
@@ -923,7 +924,7 @@ test('a restart that takes a mid-turn worker down resumes it with continue; a fi
   assert.equal(promptOf(of('finished') as Invocation), undefined);
 });
 
-test('a worker whose terminal outlives the office is picked back up mid-turn, not relaunched or told to continue', async (t) => {
+test('a droid whose terminal outlives the office is picked back up mid-turn, not relaunched or told to continue', async (t) => {
   const f = carryOnFixture(t);
   const before = manager(f, []);
   await before.start();
@@ -938,7 +939,7 @@ test('a worker whose terminal outlives the office is picked back up mid-turn, no
   assert.equal(launchesOf(f).length, 1);
 });
 
-test('a worker whose terminal was in the host when an older office went down carries on if the host is gone', async (t) => {
+test('a droid whose terminal was in the host when an older office went down carries on if the host is gone', async (t) => {
   const f = carryOnFixture(t);
   // workers.json as the office before midTurn left it: only the host terminal's status says it was mid-turn.
   const saved = (id: string, deskId: string, sessionId: string, status: string) => ({
@@ -984,14 +985,14 @@ test('stopping the office on purpose (Ctrl+C) leaves nothing to carry on', async
   assert.equal(promptOf(resumed), undefined);
 });
 
-test('a worktree worker that makes its own branch is followed there: O finds the PR it opened, and sending it home tidies both branches', async (t) => {
+test('a worktree droid that makes its own branch is followed there: O finds the PR it opened, and sending it home tidies both branches', async (t) => {
   const f = carryOnFixture(t);
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
   git(f.root, 'init', '-q', '-b', 'main');
   writeFileSync(path.join(f.root, 'a.txt'), 'a');
   git(f.root, 'add', 'a.txt');
   git(f.root, 'commit', '-qm', 'init');
-  // GitHub has one open pull request, from the branch the worker is about to make.
+  // GitHub has one open pull request, from the branch the droid is about to make.
   writeFileSync(path.join(path.dirname(f.droid), 'gh'), `#!/bin/sh\ncase "$*" in *"--head fix-x "*) echo '[{"number":242,"url":"https://github.com/o/r/pull/242"}]';; *) echo '[]';; esac\n`, { mode: 0o700 });
   const updates: WorkerInfo[] = [];
   const workers = manager(f, updates);
@@ -1047,7 +1048,7 @@ test('a worktree worker that makes its own branch is followed there: O finds the
   assert.equal(git(f.root, 'branch', '--list', '--format=%(refname:short)', 'release', other.worktree!.branch), 'release');
 });
 
-test("the office's branch keeps a worker's commits once it has moved on: the dialog warns, and sending it home never deletes them", async (t) => {
+test("the office's branch keeps a droid's commits once it has moved on: the dialog warns, and sending it home never deletes them", async (t) => {
   const f = carryOnFixture(t);
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
   git(f.root, 'init', '-q', '-b', 'main');
@@ -1057,7 +1058,7 @@ test("the office's branch keeps a worker's commits once it has moved on: the dia
   execFileSync('git', ['branch', 'release'], { cwd: f.root, env: { ...process.env, GIT_COMMITTER_DATE: '@1000000000 +0000' } });
   const workers = manager(f, []);
   t.after(() => workers.shutdown());
-  /** A worker that commits on the office's branch, then goes to another one. */
+  /** A droid that commits on the office's branch, then goes to another one. */
   const hire = (desk: string, ...checkout: string[]) => {
     const w = workers.spawn(desk, 'test', 'commit, then switch branches', true);
     if (typeof w === 'string') throw new Error(w);
@@ -1093,7 +1094,7 @@ test("the office's branch keeps a worker's commits once it has moved on: the dia
   assert.equal(tip(c.office), 'work at desk-3');
 });
 
-test("a worker that renames the office's branch goes home with it; one that deletes it leaves the branch it's on", async (t) => {
+test("a droid that renames the office's branch goes home with it; one that deletes it leaves the branch it's on", async (t) => {
   const f = carryOnFixture(t);
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
   git(f.root, 'init', '-q', '-b', 'main');
@@ -1147,7 +1148,7 @@ test("a worker that renames the office's branch goes home with it; one that dele
   assert.ok(!existsSync(c.cwd));
 });
 
-test("only a branch the worker made is its own to delete, and the office's stays when it has commits that one doesn't", async (t) => {
+test("only a branch the droid made is its own to delete, and the office's stays when it has commits that one doesn't", async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-made-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
@@ -1155,7 +1156,7 @@ test("only a branch the worker made is its own to delete, and the office's stays
   writeFileSync(path.join(dir, 'a.txt'), 'a');
   git('add', 'a.txt');
   git('commit', '-qm', 'init');
-  // A branch that was there long before any worker (its reflog says it was made in 2001).
+  // A branch that was there long before any droid (its reflog says it was made in 2001).
   execFileSync('git', ['branch', 'release'], { cwd: dir, env: { ...process.env, GIT_COMMITTER_DATE: '@1000000000 +0000' } });
   const trees = new Worktrees(dir);
   const made = trees.create('mochi-1234');
@@ -1177,7 +1178,7 @@ test("only a branch the worker made is its own to delete, and the office's stays
   assert.equal(git('branch', '--list', made.branch).replace(/^\*?\s+/, ''), made.branch);
 });
 
-test('a worker whose worktree was deleted outside the office waits, marked lost, instead of failing to start; rebuilding puts it back and it carries on', async (t) => {
+test('a droid whose worktree was deleted outside the office waits, marked lost, instead of failing to start; rebuilding puts it back and it carries on', async (t) => {
   const f = carryOnFixture(t);
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
   git(f.root, 'init', '-q', '-b', 'main');
@@ -1342,7 +1343,7 @@ test('opening a finished terminal acknowledges its wait; answering a question ta
   );
 });
 
-test('a worker restored from before subscriptions keeps its names, maps its last input time, and starts unopened', async (t) => {
+test('a droid restored from before subscriptions keeps its names, maps its last input time, and starts unopened', async (t) => {
   const f = carryOnFixture(t);
   writeFileSync(
     path.join(f.data, 'workers.json'),
@@ -1429,7 +1430,7 @@ test('a subagent sits down told who hired it and where it works; every agent get
     () => launches(sub.id),
     (l) => l.length === 1,
   );
-  assert.equal(promptOf(leadLaunch), 'Ship the login fix', 'a worker nobody hired is told nothing extra');
+  assert.equal(promptOf(leadLaunch), 'Ship the login fix', 'a droid nobody hired is told nothing extra');
   const brief = promptOf(subLaunch) ?? '';
   assert.match(brief, new RegExp(`^You're ${sub.name}, a subagent in Droid Office.*${lead.name} hired you`));
   assert.match(brief, /the project's main checkout/);
@@ -1470,7 +1471,7 @@ const typed = (records: Invocation[]) => records.map((r) => r.stdin ?? '').join(
 
 const PICTURE = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('pixels')]);
 
-test('pictures staged for a prompt are listed, numbered, after a new worker’s first prompt and after later ones', async (t) => {
+test('pictures staged for a prompt are listed, numbered, after a new droid’s first prompt and after later ones', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);
@@ -1518,14 +1519,14 @@ test('pictures staged for a prompt are listed, numbered, after a new worker’s 
   assert.equal(workers.prompt(hired.id, '  ', []), 'Empty prompt');
   assert.equal(workers.prompt(hired.id, '  ', ['ffffffffffffffff']), 'Empty prompt');
 
-  // The pictures go when the worker does; the staged originals when they're thrown away.
+  // The pictures go when the droid does; the staged originals when they're thrown away.
   workers.unstage([a, b, c, d]);
   assert.deepEqual(workers.stageImage('x.png', PICTURE)?.length, 16);
   await workers.kill(hired.id);
   assert.ok(!existsSync(drops));
 });
 
-test('a picture-only first prompt hires a worker with the list as its prompt', async (t) => {
+test('a picture-only first prompt hires a droid with the list as its prompt', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);

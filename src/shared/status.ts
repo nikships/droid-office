@@ -1,4 +1,4 @@
-// What a worker's status means, for the checks the server and the browser both make.
+// What a droid's status means, for the checks the server and the browser both make.
 
 import type { GhPull, QueueTask, WorkerInfo, WorkerStatus } from './protocol.js';
 
@@ -13,14 +13,14 @@ export function isBusy(status: WorkerStatus): boolean {
 }
 
 /**
- * One line for a notification about a worker: what it's asking for when it needs input, or what it
+ * One line for a notification about a droid: what it's asking for when it needs input, or what it
  * was on when it's done (its last activity may be a permission prompt it has long got past).
  */
 export function alertDetail(w: WorkerInfo): string | undefined {
   return w.status === 'needs_input' ? (w.activity ?? w.task?.summary) : (w.task?.summary ?? w.prompt);
 }
 
-/** A worker's pull request: still open, or merged (time to send it home). */
+/** A droid's pull request: still open, or merged (time to send it home). */
 export interface WorkerPr {
   state: 'open' | 'merged';
   number: number;

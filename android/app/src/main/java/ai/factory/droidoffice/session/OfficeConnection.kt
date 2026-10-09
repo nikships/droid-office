@@ -126,7 +126,7 @@ class OfficeConnection(
     private val _worktrees = MutableSharedFlow<ServerMsg.Worktree>(extraBufferCapacity = 8)
     val worktrees: SharedFlow<ServerMsg.Worktree> = _worktrees.asSharedFlow()
 
-    /** A worker this phone just hired arrived at its desk. */
+    /** A droid this phone just hired arrived at its desk. */
     private val _hired = MutableSharedFlow<WorkerInfo>(extraBufferCapacity = 4)
     val hired: SharedFlow<WorkerInfo> = _hired.asSharedFlow()
 
@@ -280,7 +280,7 @@ class OfficeConnection(
             return
         }
         if (!d.online) {
-            _link.value = Link(Phase.Offline, office.id, detail = "The phone is offline. Workers keep going at the office.")
+            _link.value = Link(Phase.Offline, office.id, detail = "The phone is offline. Droids keep going at the office.")
             return
         }
         val token = store.token(office.id)

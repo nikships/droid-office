@@ -1,6 +1,6 @@
 /**
- * Office sounds, synthesized with Web Audio so there are no audio files to ship: workers typing
- * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a worker
+ * Office sounds, synthesized with Web Audio so there are no audio files to ship: droids typing
+ * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a droid
  * needs you. And the lounge jukebox, whose tunes are in music.ts, and up on the roof, the DJ's drum
  * and bass (dnb.ts).
  *
@@ -81,7 +81,7 @@ export class OfficeSound {
   private master!: GainNode;
   /** The room itself; it goes quiet while the tab is hidden. */
   private ambience!: GainNode;
-  /** Worker dings, which you still want to hear from another tab. */
+  /** Droid dings, which you still want to hear from another tab. */
   private alerts!: GainNode;
   private analyser!: AnalyserNode;
   private buf!: Buffers;
@@ -239,9 +239,9 @@ export class OfficeSound {
     this.scheduleTyping(now);
   }
 
-  // ---- Workers typing ----------------------------------------------------------------------------
+  // ---- Droids typing ----------------------------------------------------------------------------
 
-  /** The worker at desk (x, z) types while `on`. */
+  /** The droid at desk (x, z) types while `on`. */
   setTyping(id: string, x: number, z: number, on: boolean) {
     let t = this.typists.get(id);
     if (!t) this.typists.set(id, (t = { x, z, on: false, panner: null, next: 0, left: 0, word: 0 }));
@@ -883,7 +883,7 @@ export class OfficeSound {
     this.play(pick(this.buf.steps), { gain: 0.3, rate: 0.55, when: t0, dest: out });
   }
 
-  /** A bullet striking a worker, from where it went in: a short wet smack over a dull thump. */
+  /** A bullet striking a droid, from where it went in: a short wet smack over a dull thump. */
   hit(at: Pos) {
     const ctx = this.ctx;
     if (!ctx) return;
@@ -970,7 +970,7 @@ export class OfficeSound {
 
   // ---- Alerts ----------------------------------------------------------------------------------
 
-  /** Two notes up when a worker is done, a three-note nudge when it needs input. */
+  /** Two notes up when a droid is done, a three-note nudge when it needs input. */
   ding(kind: 'done' | 'needs_input') {
     this.unlock();
     const ctx = this.ctx;

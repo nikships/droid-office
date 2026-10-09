@@ -4,7 +4,7 @@ import { promptImages } from './images';
 import { agentPicker, type AgentFields } from './models';
 import { repoPicker } from './prompt';
 
-// Send a prompt about an issue or PR to a worker: a new one at a free desk, or one already sitting
+// Send a prompt about an issue or PR to a droid: a new one at a free desk, or one already sitting
 // at a desk (it lands in their input box, queued if they're busy).
 
 export interface AskWorker {
@@ -16,21 +16,21 @@ export interface AskWorker {
 
 export interface AskOptions {
   title: string;
-  /** Told to the worker before your text, so it knows what you mean. Shown, not editable. */
+  /** Told to the droid before your text, so it knows what you mean. Shown, not editable. */
   context?: string;
   /** A ready-made prompt to start from. */
   initial?: string;
   placeholder?: string;
-  /** The desk a new worker would take, when one is free. */
+  /** The desk a new droid would take, when one is free. */
   newDesk?: string;
   workers: AskWorker[];
-  /** Offer the "own git worktree" option for a new worker. */
+  /** Offer the "own git worktree" option for a new droid. */
   worktreeOption: boolean;
-  /** Offer the model and effort pickers for a new worker. */
+  /** Offer the model and effort pickers for a new droid. */
   modelOption?: boolean;
-  /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
+  /** Other floors' projects a new droid in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
-  /** `to` is a worker id, or null for a new worker. */
+  /** `to` is a droid id, or null for a new droid. */
   onSubmit(prompt: string, to: string | null, worktree: boolean, model?: string, effort?: AgentEffort, repos?: string[], images?: string[]): void;
 }
 
@@ -39,7 +39,7 @@ const WT_KEY = 'droid-office.worktree';
 
 export function openAsk(opts: AskOptions) {
   let to: string | null = opts.newDesk ? null : (opts.workers[0]?.id ?? null);
-  const ta = h('textarea', { rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the droid do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images = promptImages(ta);
   const wtBox = h('input', { type: 'checkbox', id: 'ask-wt' }) as HTMLInputElement;
@@ -48,7 +48,7 @@ export function openAsk(opts: AskOptions) {
   } catch {
     // storage blocked
   }
-  const wtRow = h('label.ask-wt', { for: 'ask-wt', title: 'Isolate the new worker on its own branch so parallel workers never collide' }, wtBox, '🌿 Work in its own git worktree & branch');
+  const wtRow = h('label.ask-wt', { for: 'ask-wt', title: 'Isolate the new droid on its own branch so parallel droids never collide' }, wtBox, '🌿 Work in its own git worktree & branch');
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);
   const models: AgentFields | null = opts.modelOption ? agentPicker('ask-models') : null;
   const submit = h('button.btn.primary', { type: 'submit' });
@@ -62,7 +62,7 @@ export function openAsk(opts: AskOptions) {
     models?.element.classList.toggle('hidden', !!id);
     submit.textContent = id ? 'Send' : 'Hire & start';
   };
-  if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New worker · ${opts.newDesk}`));
+  if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New droid · ${opts.newDesk}`));
   for (const w of opts.workers) {
     choices.append(
       h('button.btn', { type: 'button', 'data-to': w.id, title: `Type it into ${w.name}'s prompt`, onclick: () => pick(w.id) }, h('span.dot', { style: `background:${w.color}` }), w.name, h('small', {}, STATUS_LABEL[w.status] ?? w.status)),
@@ -79,7 +79,7 @@ export function openAsk(opts: AskOptions) {
       {},
       h('label', {}, 'Send to'),
       choices,
-      opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
+      opts.context ? h('details.ask-context', {}, h('summary', {}, 'The droid is told first…'), h('pre', {}, opts.context)) : null,
       h('label', { style: 'margin-top:14px' }, 'Prompt'),
       ta,
       images.element,

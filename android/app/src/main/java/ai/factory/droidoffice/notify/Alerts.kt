@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 data class Banner(val workerId: String, val name: String, val color: String, val needsInput: Boolean, val detail: String?)
 
 /**
- * Watches the office for workers that start waiting on the owner (a question or permission prompt)
+ * Watches the office for droids that start waiting on the owner (a question or permission prompt)
  * or finish a turn, and tells the owner: a notification with a direct reply when the app is in the
  * background, a banner when it's on screen, and nothing for the terminal they're already looking at.
  */
@@ -51,7 +51,7 @@ class Alerts(
     private val last = HashMap<String, WorkerStatus>()
     private val acked = HashMap<String, Boolean>()
     private val floorWaiting = HashMap<String, Int>()
-    /** What each worker's notification says, so it can be brought up to date without buzzing again. */
+    /** What each droid's notification says, so it can be brought up to date without buzzing again. */
     private val shown = HashMap<String, String>()
 
     init {
@@ -152,7 +152,7 @@ class Alerts(
             .setSmallIcon(R.drawable.ic_glyph)
             .setColor(ACCENT)
             .setContentTitle("$floorName: $waiting waiting on you")
-            .setContentText("A worker on another floor needs an answer")
+            .setContentText("A droid on another floor needs an answer")
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()

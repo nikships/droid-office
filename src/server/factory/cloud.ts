@@ -11,13 +11,13 @@ import { alreadyGone, whileNew, type NewSessionOptions } from './new-session.js'
 import type { FactoryRegistry } from './registry.js';
 import type { SessionsFeature } from './sessions.js';
 
-// Cloud workers (docs/factory.md): office workers whose Droid session runs on one of the account's
+// Cloud droids (docs/factory.md): office droids whose Droid session runs on one of the account's
 // Factory computers. Hiring makes the session (POST /sessions) and sends the first prompt as its
 // first message; after that the office polls each one's session (quickly while it works, slowly at
-// rest) and acts its status and latest tool call out at its desk, like a local worker's. Each floor
+// rest) and acts its status and latest tool call out at its desk, like a local droid's. Each floor
 // keeps its own (cloud-workers.ts); this is the part that talks to Factory.
 
-/** How often a resting cloud worker's session is read: someone may type to it in Factory's web app. */
+/** How often a resting cloud droid's session is read: someone may type to it in Factory's web app. */
 const IDLE_EVERY_MS = 60_000;
 /** Newest messages read for what it's doing now. */
 const TAIL = 8;
@@ -33,7 +33,7 @@ const clip = (s: string, n: number) => {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 };
 
-/** One floor's cloud workers, as the feature reaches them. */
+/** One floor's cloud droids, as the feature reaches them. */
 export interface CloudFloor {
   id: string;
   name: string;
@@ -44,7 +44,7 @@ export interface CloudFloor {
 
 export interface CloudOptions {
   floors(): Iterable<CloudFloor>;
-  /** The office's `--agent-args`, for the autonomy its workers run at (see officeAutonomy). */
+  /** The office's `--agent-args`, for the autonomy its droids run at (see officeAutonomy). */
   agentArgs: readonly string[];
   /** The computers slice, to check a computer is there and can take a session. */
   computers(): FactoryComputersState | undefined;
@@ -53,7 +53,7 @@ export interface CloudOptions {
   now?: () => number;
   /** How a write to a just-made session tries again after a 404 (new-session.ts); for tests. */
   retry?: Omit<NewSessionOptions, 'now'>;
-  /** A worker's session was deleted as it went home: the Sessions feature drops it (SessionsFeature.forget). */
+  /** A droid's session was deleted as it went home: the Sessions feature drops it (SessionsFeature.forget). */
   sessionDeleted?(sessionId: string): void;
 }
 
@@ -62,17 +62,17 @@ type Picture = { type: 'base64'; data: string; mediaType: string };
 
 const MEDIA: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
 
-/** The cloud slice, and the poller and routes of every floor's cloud workers. */
+/** The cloud slice, and the poller and routes of every floor's cloud droids. */
 export class CloudFeature extends SliceFeature<'cloud'> {
   readonly interval = IDLE_EVERY_MS;
   readonly fastInterval = 4000;
-  /** Workers to read on the next poll whatever their clock says (just prompted, interrupted, asked to check again). */
+  /** Droids to read on the next poll whatever their clock says (just prompted, interrupted, asked to check again). */
   private due = new Set<string>();
   private now: () => number;
 
   readonly routes: readonly FactoryRoute[] = [
     {
-      // Hire a cloud worker: { floor, deskId, computerId, cwd?, prompt?, model?, effort?, images? }.
+      // Hire a cloud droid: { floor, deskId, computerId, cwd?, prompt?, model?, effort?, images? }.
       method: 'POST',
       path: '/hire',
       handle: async ({ api, json, by }) => {
@@ -82,7 +82,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       },
     },
     {
-      // A message to a cloud worker's session: { text, images? }.
+      // A message to a cloud droid's session: { text, images? }.
       method: 'POST',
       path: '/:id/message',
       handle: async ({ params, json }) => {
@@ -97,7 +97,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       path: '/:id/interrupt',
       handle: async ({ api, params }) => {
         const found = this.find(params.id);
-        if (!found?.info.sessionId) throw notFound('No such cloud worker');
+        if (!found?.info.sessionId) throw notFound('No such cloud droid');
         const sid = found.info.sessionId;
         await this.whileNew(found.info, () => api.post(`/sessions/${encodeURIComponent(sid)}/interrupt`, {}));
         this.recheck(found.info.id);
@@ -114,7 +114,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     this.now = opts.now ?? Date.now;
   }
 
-  /** The floor a cloud worker sits on, and the worker. */
+  /** The floor a cloud droid sits on, and the droid. */
   find(id: string): { floor: CloudFloor; info: WorkerInfo } | undefined {
     for (const floor of this.opts.floors()) {
       const info = floor.cloud.get(id);
@@ -135,12 +135,12 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return by !== undefined && now < by;
   }
 
-  /** `call` on a worker's session, tried again for a while when it 404s because the session was only just made. */
+  /** `call` on a droid's session, tried again for a while when it 404s because the session was only just made. */
   private whileNew<T>(info: WorkerInfo, call: () => Promise<T>): Promise<T> {
     return whileNew(info.createdAt, call, { now: this.now, ...this.opts.retry });
   }
 
-  /** Reads a worker's session on the next poll, which comes right away. */
+  /** Reads a droid's session on the next poll, which comes right away. */
   recheck(id: string) {
     this.due.add(id);
     this.host.pollSoon();
@@ -151,7 +151,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return c && { id: c.id, name: c.name, providerType: c.providerType, status: c.status, remoteUser: c.remoteUser };
   }
 
-  /** Makes the session on the computer, seats the worker, then sends it its first prompt. */
+  /** Makes the session on the computer, seats the droid, then sends it its first prompt. */
   async hire(api: FactoryApi, body: Record<string, unknown>, by: string): Promise<WorkerInfo> {
     const floor = [...this.opts.floors()].find((f) => f.id === str(body.floor, 64));
     if (!floor) throw badRequest('That floor is no longer in the building');
@@ -165,7 +165,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (typeof where === 'string') throw badRequest(where);
     const model = str(body.model, MODEL_MAX + 1) || undefined;
     if (model && (model.length > MODEL_MAX || /[\s\p{Cc}]/u.test(model))) throw badRequest('That model id is not valid');
-    if (model?.startsWith('custom:')) throw badRequest("Your own (BYOK) models only run on this machine: pick one of Factory's for a cloud worker");
+    if (model?.startsWith('custom:')) throw badRequest("Your own (BYOK) models only run on this machine: pick one of Factory's for a cloud droid");
     const effort = isAgentEffort(body.effort) ? body.effort : undefined;
     const prompt = str(body.prompt, PROMPT_MAX);
     const held = floor.cloud.hold(deskId);
@@ -210,10 +210,10 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return floor.cloud.get(info.id) ?? info;
   }
 
-  /** Sends a message to a cloud worker's session; why not, or undefined once Factory has it. */
+  /** Sends a message to a cloud droid's session; why not, or undefined once Factory has it. */
   async send(id: string, text: string, images: readonly string[]): Promise<string | Error | undefined> {
     const found = this.find(id);
-    if (!found) return 'That worker has gone home';
+    if (!found) return 'That droid has gone home';
     const { floor, info } = found;
     const pictures: Picture[] = [];
     for (const imageId of images.slice(0, MAX_IMAGES)) {
@@ -256,7 +256,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   }
 
   /**
-   * Sends a cloud worker home: it leaves its desk now, its session is interrupted when it's working,
+   * Sends a cloud droid home: it leaves its desk now, its session is interrupted when it's working,
    * and deleted when `deleteSession` (otherwise it stays in the Sessions window). Resolves to what to
    * tell the floor about the session, if anything.
    */
@@ -285,7 +285,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return { note: `☁ ${info.name}'s session was stopped; it stays in Factory's sessions` };
   }
 
-  /** Reads every cloud worker's session that's due: each working one at every poll, the rest on the slow clock. */
+  /** Reads every cloud droid's session that's due: each working one at every poll, the rest on the slow clock. */
   async poll(api: FactoryApi): Promise<void> {
     const now = this.now();
     const jobs: Promise<void>[] = [];
@@ -404,7 +404,7 @@ function imageIds(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{16}$/.test(x)).slice(0, MAX_IMAGES) : [];
 }
 
-/** The ws messages that act on a worker, as a cloud worker answers them. */
+/** The ws messages that act on a droid, as a cloud droid answers them. */
 type WorkerMsg = Extract<ClientMsg, { workerId: string }>;
 
 export interface CloudMessageContext {
@@ -419,8 +419,8 @@ export interface CloudMessageContext {
 }
 
 /**
- * Cloud workers in the office: the feature registered with the Factory registry, and what server.ts
- * calls for a ws message about one. Returns undefined when `workerId` isn't a cloud worker's.
+ * Cloud droids in the office: the feature registered with the Factory registry, and what server.ts
+ * calls for a ws message about one. Returns undefined when `workerId` isn't a cloud droid's.
  */
 export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, 'computers'>) {
   const feature = registry.register(
@@ -432,7 +432,7 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
       }),
   ) as CloudFeature;
 
-  /** Handles a message about a cloud worker; false when it isn't one. */
+  /** Handles a message about a cloud droid; false when it isn't one. */
   const message = (msg: WorkerMsg, ctx: CloudMessageContext): boolean => {
     const found = feature.find(msg.workerId);
     if (!found) return false;
@@ -479,10 +479,10 @@ export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, '
   return { feature, message, find: (id: string) => feature.find(id) };
 }
 
-/** Why something the office does with a local worker isn't done to a cloud one. */
+/** Why something the office does with a local droid isn't done to a cloud one. */
 export function cloudRefusal(w: WorkerInfo, t: ClientMsg['t']): string {
   const where = w.cloud ? cloudBadge(w.cloud) : 'a Factory computer';
   if (t === 'worker.shoot' || t === 'worker.revive') return `${w.name} works on ${where}: there's nobody really at this desk to shoot`;
   if (t === 'worker.pr' || t.startsWith('changes.')) return `${w.name} works on ${where}, not in a checkout on this machine: ask it to commit and open the pull request itself`;
-  return `${w.name} works on ${where}: that only works for a worker on this machine`;
+  return `${w.name} works on ${where}: that only works for a droid on this machine`;
 }

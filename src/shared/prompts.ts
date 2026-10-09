@@ -1,4 +1,4 @@
-// Every prompt the office writes for a worker by itself: what Hand to a worker, Review and the
+// Every prompt the office writes for a droid by itself: what Hand to a droid, Review and the
 // boards' other buttons send, what the queue adds to a task, the board agents' briefs, the meeting
 // room's parts and the sign writer's instructions. Each can be rewritten in Settings (kept by
 // server/prompts.ts, for the whole building); these are the defaults, which "Default" goes back to.
@@ -21,7 +21,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   stations: 'Board agents',
   subagents: '🧭 Team lead & subagents',
   meetings: 'Meeting room',
-  office: 'Worker signs',
+  office: 'Droid signs',
 };
 
 export interface PromptDef {
@@ -112,8 +112,8 @@ const BOARD: Record<BoardKind, string> = {
 };
 
 /** How a board agent reaches the queue: the office-queue command, which the office puts on its PATH. */
-const QUEUE_API = `The task queue gives each task a fresh worker in its own git worktree, a few at a time; a task usually ends with a {{pullName}}. Use it with the office-queue command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself):
-- See it: office-queue list (each task's id, status, title, worker and {{pullName}})
+const QUEUE_API = `The task queue gives each task a fresh droid in its own git worktree, a few at a time; a task usually ends with a {{pullName}}. Use it with the office-queue command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself):
+- See it: office-queue list (each task's id, status, title, droid and {{pullName}})
 - Add a task: office-queue add --title "Short title" [--issue <number>], with the task's prompt on stdin in a quoted heredoc so nothing in it gets expanded. It prints the new task's id. With --issue the task is linked to that {{site}} issue, which is assigned when the task starts.
   office-queue add --title "Fix the login redirect" <<'EOF'
   …the full prompt…
@@ -126,7 +126,7 @@ function stationDefault(kind: BoardKind): string {
   return [
     `You're the ${STATION_AGENT[kind].name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk by ${BOARD[kind]}, and whoever walks up types you a request. The first one is at the end of this message.`,
     '{{job}}',
-    `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. Work that needs code changed goes on the task queue, ${queue ? 'always' : 'unless the person asks you for something else'}.`,
+    `You're in the project's main checkout, which other people and droids use too: don't switch branches, commit, or leave edits in it. Work that needs code changed goes on the task queue, ${queue ? 'always' : 'unless the person asks you for something else'}.`,
     QUEUE_API,
     `${queue ? "When you've queued it, say in a few lines what you queued: each task's id and title." : "When you've done what was asked, say in a few lines what you did, with links."} Then wait: the next request may come from someone else.`,
     `The request:`,
@@ -148,7 +148,7 @@ const LEAD_DEFAULT = [
 2. Hire one subagent per piece. Each starts knowing nothing, so give it a complete brief: the goal, where to look, what's off limits, how to check its work, and how to finish (usually committing in its own worktree and opening a {{pullName}}).
 3. Wait for their reports and deal with what comes back: answer questions, send follow-ups, and look at their changes (git -C <their worktree> diff) before you count a piece as done.
 4. When every piece is done, tell the person in a few lines what each subagent did, with links, and what's left. Leave your team at their desks unless you're asked to send them home: people may want to look at their work.`,
-  `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. When you've reported back, wait: the next request may come from someone else.`,
+  `You're in the project's main checkout, which other people and droids use too: don't switch branches, commit, or leave edits in it. When you've reported back, wait: the next request may come from someone else.`,
   `The request:`,
 ].join('\n\n');
 
@@ -222,15 +222,15 @@ const DEFS = {
   // --- Issues board ---
   'issue.work': {
     group: 'issues',
-    label: 'Hand to a worker',
-    used: 'The task a worker gets for an issue: Hand to a worker, Add to queue, and a card carried to a desk or the queue.',
+    label: 'Hand to a droid',
+    used: 'The task a droid gets for an issue: Hand to a droid, Add to queue, and a card carried to a desk or the queue.',
     vars: { ...ISSUE_VARS, openPull: 'How to finish: open a pull request that closes it (on GitLab, a merge request with glab mr create that says "Closes #12")' },
     text: 'Work on {{site}} issue #{{number}}: "{{title}}".\n\nRead it first with `{{cli}} issue view {{number}} --comments`. Create a new branch, implement the change, verify it, then {{openPull}}.',
   },
   'issue.ask': {
     group: 'issues',
-    label: 'Ask a worker (context)',
-    used: 'Told to the worker ahead of your own words when you Ask a worker about an issue.',
+    label: 'Ask a droid (context)',
+    used: 'Told to the droid ahead of your own words when you Ask a droid about an issue.',
     vars: ISSUE_VARS,
     optional: true,
     text: 'This is about {{site}} issue #{{number}} "{{title}}" ({{url}}). Read it with `{{cli}} issue view {{number}} --comments`.',
@@ -247,14 +247,14 @@ const DEFS = {
   'pull.review': {
     group: 'pulls',
     label: 'Review',
-    used: 'What Review on an open pull request sends a worker.',
+    used: 'What Review on an open pull request sends a droid.',
     vars: { ...PULL_VARS, ...READ_VARS },
     text: 'Review {{pullName}} {{ref}}: "{{title}}".\n\nUse `{{view}}` and `{{diff}}`. Look for bugs, risky changes and missing tests, then give me a short summary with concrete suggestions. Don\'t push any commits.',
   },
   'pull.fixMerge': {
     group: 'pulls',
     label: 'Fix up & merge',
-    used: 'What the merge dialog\'s "Hand to a worker" sends when the pull request has no conflicts: address the feedback, get the checks green, merge.',
+    used: 'What the merge dialog\'s "Hand to a droid" sends when the pull request has no conflicts: address the feedback, get the checks green, merge.',
     vars: MERGE_VARS,
     text: [
       'Get {{pullName}} {{ref}} "{{title}}" ({{url}}) ready and merge it.',
@@ -270,7 +270,7 @@ const DEFS = {
   'pull.fixConflicts': {
     group: 'pulls',
     label: 'Fix conflicts & merge',
-    used: 'What the merge dialog\'s "Hand to a worker" sends when the pull request conflicts with its base.',
+    used: 'What the merge dialog\'s "Hand to a droid" sends when the pull request conflicts with its base.',
     vars: MERGE_VARS,
     text: [
       '{{PullName}} {{ref}} "{{title}}" ({{url}}) has merge conflicts with `{{base}}`. Resolve them and merge it.',
@@ -285,8 +285,8 @@ const DEFS = {
   },
   'pull.ask': {
     group: 'pulls',
-    label: 'Ask a worker (context)',
-    used: 'Told to the worker ahead of your own words when you Ask a worker about a pull request.',
+    label: 'Ask a droid (context)',
+    used: 'Told to the droid ahead of your own words when you Ask a droid about a pull request.',
     vars: { ...PULL_VARS, ...READ_VARS },
     optional: true,
     text: 'This is about {{pullName}} {{ref}} "{{title}}" ({{url}}), branch `{{branch}}` into `{{base}}`. Read it with `{{view}}` and see its changes with `{{diff}}`.',
@@ -332,7 +332,7 @@ const DEFS = {
     used: 'Told to every subagent a lead hires with office-workers, ahead of the task its lead wrote for it.',
     vars: {
       name: "The subagent's name",
-      lead: 'The worker that hired it',
+      lead: 'The droid that hired it',
       where: 'Where it works: its own worktree and branch, or the main checkout',
       ...PULL_WORDS,
     },
@@ -342,7 +342,7 @@ const DEFS = {
     group: 'subagents',
     label: 'Wake the lead',
     used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave (⚙️ Settings → Subagents → Waking the lead).',
-    vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
+    vars: { news: 'What happened, one sentence per subagent: "Anvil reported back. Axiom finished its turn."' },
     needs: ['news'],
     text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',
   },
@@ -351,7 +351,7 @@ const DEFS = {
   'meeting.brief': {
     group: 'meetings',
     label: 'Sitting down',
-    used: 'What every worker at the table is told when it sits down, ahead of its first part.',
+    used: 'What every droid at the table is told when it sits down, ahead of its first part.',
     vars: {
       title: "The meeting's title",
       role: 'Their role at the table',
@@ -383,14 +383,14 @@ const DEFS = {
   'meeting.wait': {
     group: 'meetings',
     label: 'No part in round 1',
-    used: 'Told (after sitting down) to a worker with nothing to do in the first round, like the team in Lead & team.',
+    used: 'Told (after sitting down) to a droid with nothing to do in the first round, like the team in Lead & team.',
     vars: {},
     text: "Round 1 has no part for you. Reply in one line that you're ready and end your turn; your part comes in a later message.",
   },
   'meeting.nudge': {
     group: 'meetings',
     label: 'Nudge',
-    used: 'Sent once to a worker that ended its turn without writing its part.',
+    used: 'Sent once to a droid that ended its turn without writing its part.',
     vars: { file: 'The file the meeting is waiting on' },
     needs: ['file'],
     text: 'You ended your turn without writing {{file}}, which the meeting is waiting on. Write it now, then end your turn.',
@@ -512,11 +512,11 @@ const DEFS = {
   'worker.repos': {
     group: 'repos',
     label: 'Workspace brief',
-    used: "Written into the workspace of a worker hired across several floors' repositories, as its AGENTS.md, which the agent reads when it starts.",
+    used: "Written into the workspace of a droid hired across several floors' repositories, as its AGENTS.md, which the agent reads when it starts.",
     vars: {
       branch: 'The branch every worktree in the workspace is on',
       repos: "One line per repository: its folder in the workspace, its project and the branch it's cut from",
-      home: 'The project of the floor the worker was hired on (owner/name when the forge reports one)',
+      home: 'The project of the floor the droid was hired on (owner/name when the forge reports one)',
     },
     needs: ['repos'],
     text: [
@@ -524,18 +524,18 @@ const DEFS = {
       '',
       '{{repos}}',
       '',
-      "- Make every change inside these folders. The projects' own checkouts are other people's and other workers': don't edit them, switch their branches, stash or reset them.",
+      "- Make every change inside these folders. The projects' own checkouts are other people's and other droids': don't edit them, switch their branches, stash or reset them.",
       "- cd into a project's folder before running git or its tools, read its own instructions (AGENTS.md, README) before changing it, and install its dependencies there when you need them.",
       '- When the task spans projects, keep them working together and test them together. Commit in each project you change.',
       "- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}'s; in the other projects' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.",
     ].join('\n'),
   },
 
-  // --- Worker signs ---
+  // --- Droid signs ---
   'office.namer': {
     group: 'office',
     label: 'Sign writer',
-    used: "The instructions for the small model (Haiku, through `droid exec`) that writes the name and one-line summary on the card above each worker's head. It always answers with a name and a summary.",
+    used: "The instructions for the small model (Haiku, through `droid exec`) that writes the name and one-line summary on the card above each droid's head. It always answers with a name and a summary.",
     vars: {},
     text: `You write the label for a sign above an AI coding agent's head in a virtual office, so people walking past can tell what it is working on.
 Reply with JSON only:

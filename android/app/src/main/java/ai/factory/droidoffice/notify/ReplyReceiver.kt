@@ -8,13 +8,13 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.graph
 import kotlinx.coroutines.launch
 
-/** A direct reply typed into a worker's notification: sent to it as a prompt, like the composer does. */
+/** A direct reply typed into a droid's notification: sent to it as a prompt, like the composer does. */
 class ReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim().orEmpty()
         val workerId = intent.getStringExtra(EXTRA_WORKER)?.takeIf { ID.matches(it) } ?: return
         val officeId = intent.getStringExtra(EXTRA_OFFICE).orEmpty()
-        val name = intent.getStringExtra(EXTRA_NAME)?.take(40) ?: "the worker"
+        val name = intent.getStringExtra(EXTRA_NAME)?.take(40) ?: "the droid"
         if (text.isEmpty()) return
         val graph = context.graph
         val pending = goAsync()

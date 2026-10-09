@@ -160,7 +160,7 @@ export function rememberedChoice(key: string): AgentChoice {
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 
-/** The office's default worker as set in Settings, on Droid's own default model when nobody set one. */
+/** The office's default droid as set in Settings, on Droid's own default model when nobody set one. */
 export function officeChoice(): AgentChoice {
   const picked = store.prompts.agent;
   return { ...(picked?.model ? { model: picked.model } : {}), ...(picked?.effort ? { effort: picked.effort } : {}) };
@@ -176,7 +176,7 @@ export interface AgentFields {
 }
 
 /**
- * The model and effort a new worker runs on, from the Droid catalogue. `key` scopes what gets
+ * The model and effort a new droid runs on, from the Droid catalogue. `key` scopes what gets
  * remembered between hires — a desk id for the hire dialog, or a fixed key like "queue" for the
  * queue's add form — so a desk that always got Opus offers Opus again next time, without one hire
  * changing another's.
@@ -185,14 +185,14 @@ export function agentPicker(id: string, key = id): AgentFields {
   return buildFields(id, key, rememberedModel(key), rememberedEffort(key), officeChoice);
 }
 
-/** The same fields, started on `initial` and remembering nothing: the office's default worker in Settings. */
+/** The same fields, started on `initial` and remembering nothing: the office's default droid in Settings. */
 export function agentFields(id: string, initial: AgentChoice): AgentFields {
   return buildFields(id, undefined, initial.model, initial.effort, () => ({}));
 }
 
 /**
  * `fallback` is what "Default" runs besides Droid's own settings. A hire with no model picked gets
- * the office's default worker from the server, so its picker has to name that one, not Droid's.
+ * the office's default droid from the server, so its picker has to name that one, not Droid's.
  */
 function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
   const modelSelect = h('select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
@@ -211,7 +211,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   let wantedModel = initialModel;
   let wantedEffort = initialEffort;
 
-  /** The model "Default" runs: the office's default worker, else Droid's own default. */
+  /** The model "Default" runs: the office's default droid, else Droid's own default. */
   const defaultModel = () => fallback().model ?? catalogue?.defaultModel;
   /** The model picked, or the one droid runs on "Default". */
   const pickedModel = () => catalogue?.models.find((x) => x.id === (modelSelect.value || defaultModel()));
@@ -233,7 +233,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
 
   const fill = () => {
     const selected = wantedModel;
-    hint.textContent = catalogue ? 'Overrides the office default for this worker; pinned in its Droid settings overlay.' : 'Loading Droid models…';
+    hint.textContent = catalogue ? 'Overrides the office default for this droid; pinned in its Droid settings overlay.' : 'Loading Droid models…';
     void fetchCatalogue()
       .then(({ models }) => {
         const runs = defaultModel();
@@ -244,7 +244,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
         // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
         if (selected && !models.some((m) => m.id === selected)) modelSelect.append(h('option', { value: selected }, `${withoutGlyph(droidDisplayName(selected))} (unavailable)`));
         modelSelect.value = selected ?? '';
-        hint.textContent = models.length ? 'Overrides the office default for this worker; pinned in its Droid settings overlay.' : 'No Droid models found in the office settings — the worker runs the global default.';
+        hint.textContent = models.length ? 'Overrides the office default for this droid; pinned in its Droid settings overlay.' : 'No Droid models found in the office settings — the droid runs the global default.';
         applyEfforts();
       })
       .catch(() => {
@@ -253,7 +253,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
           modelSelect.append(h('option', { value: selected }, withoutGlyph(droidDisplayName(selected))));
           modelSelect.value = selected;
         }
-        hint.textContent = 'Model list unavailable; the worker runs the global default.';
+        hint.textContent = 'Model list unavailable; the droid runs the global default.';
         applyEfforts();
       });
   };

@@ -1,4 +1,4 @@
-// What a Droid worker's terminal shows it doing, as a check on the status its hooks report.
+// What a Droid's terminal shows it doing, as a check on the status its hooks report.
 //
 // The hooks miss some turns (a message queued with Ctrl+Enter starts one without UserPromptSubmit)
 // and the office misses hooks that fire while it's down for longer than they retry. Droid's own
@@ -38,7 +38,7 @@ export function readDroidScreen(rows: readonly string[]): DroidScreen | undefine
 }
 
 /**
- * The status a worker should have, when its settled screen says its status is wrong. `quiet` is
+ * The status a droid should have, when its settled screen says its status is wrong. `quiet` is
  * whether its terminal has printed nothing for a while: a turn always prints (the spinner, the
  * elapsed time), so a busy screen has to be printing and an idle one has to be still.
  */

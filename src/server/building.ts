@@ -177,7 +177,7 @@ export class Building {
   }
 
   /**
-   * Takes a floor off the building. Its checkout stays where it is, with its workers, queue and
+   * Takes a floor off the building. Its checkout stays where it is, with its droids, queue and
    * pictures in its .droid-office folder: adding the checkout again moves back in. Returns the
    * floor, or why it can't.
    */

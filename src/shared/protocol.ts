@@ -34,7 +34,7 @@ export function isAgentEffort(value: unknown): value is AgentEffort {
   return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max';
 }
 
-/** Which Droid model and reasoning effort a worker runs on. */
+/** Which Droid model and reasoning effort a droid runs on. */
 export interface AgentChoice {
   /** A Droid model id; unset for Droid's own default. */
   model?: string;
@@ -42,35 +42,35 @@ export interface AgentChoice {
 }
 
 /**
- * The prompts the office writes for workers by itself (shared/prompts.ts) and the worker a new one
+ * The prompts the office writes for droids by itself (shared/prompts.ts) and the droid a new one
  * starts on when nobody picks, as set in Settings: the same on every floor.
  */
 export interface PromptsState {
   /** Prompts someone rewrote, by id; the rest are the defaults. */
   custom: Partial<Record<PromptId, { text: string; by: string; at: number }>>;
   /**
-   * What a worker starts on when whoever starts it picks no model (the Queue agent's tasks, say).
+   * What a droid starts on when whoever starts it picks no model (the Queue agent's tasks, say).
    * Unset: Droid's own default model.
    */
   agent?: AgentChoice & { by: string; at: number };
 }
 
-/** What a worker is on, for the card above its head: "Fix Login Redirect" + what it's doing now. */
+/** What a droid is on, for the card above its head: "Fix Login Redirect" + what it's doing now. */
 export interface WorkerTask {
   name: string;
   summary: string;
 }
 
-/** How long a shot worker can be revived before dismissal and worktree cleanup. */
+/** How long a shot droid can be revived before dismissal and worktree cleanup. */
 export const WORKER_REVIVE_MS = 30_000;
 
 export interface WorkerInfo {
   id: string;
   /** 'agent' runs Droid; 'shell' is a plain shared login shell; 'cloud' runs its Droid session on a Factory computer (see `cloud`). */
   kind: WorkerKind;
-  /** Droid model requested for this worker, instead of Droid's own default. */
+  /** Droid model requested for this droid, instead of Droid's own default. */
   model?: string;
-  /** Reasoning effort requested for this worker, when one was chosen. */
+  /** Reasoning effort requested for this droid, when one was chosen. */
   effort?: AgentEffort;
   /** The model its session is running now, as the agent reports it (Droid), even when none was requested. Wins over `model` for display. */
   activeModel?: string;
@@ -90,9 +90,9 @@ export interface WorkerInfo {
   createdAt: number;
   prompt?: string;
   /**
-   * Set when the worker runs in its own git worktree (path relative to the office dir). `from` is
+   * Set when the droid runs in its own git worktree (path relative to the office dir). `from` is
    * the branch the office was on when the worktree was cut, which its pull request targets.
-   * `branch` is the branch the worktree is on: the office's own office/<name>-<id> until the worker
+   * `branch` is the branch the worktree is on: the office's own office/<name>-<id> until the droid
    * switches to one of its own (`git checkout -b fix-x`), which `made` then remembers.
    */
   worktree?: { path: string; branch: string; base: string; from?: string; made?: string };
@@ -103,8 +103,8 @@ export interface WorkerInfo {
    */
   lost?: { branch: LostBranch };
   /**
-   * Other floors' repositories this worker works in too, each as its own worktree inside the same
-   * workspace folder as `worktree` (see server/workers.ts). Only a worker hired into its own worktree.
+   * Other floors' repositories this droid works in too, each as its own worktree inside the same
+   * workspace folder as `worktree` (see server/workers.ts). Only a droid hired into its own worktree.
    */
   repos?: WorkerRepo[];
   /** The pull request opened from this desk for the worktree branch (see 'worker.pr'). */
@@ -120,17 +120,17 @@ export interface WorkerInfo {
   open: boolean;
   /** Latest line of meaningful activity (e.g. last prompt or tool). */
   activity?: string;
-  /** What its latest tool call is, for the worker to act out while it works. */
+  /** What its latest tool call is, for the droid to act out while it works. */
   action?: WorkerAction;
   /** Written by a small model from its prompts and recent tool calls (see server/tasks.ts). */
   task?: WorkerTask;
   /** When its terminal last took input (keystrokes or a prompt). */
   lastInputAt?: number;
-  /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
+  /** The meeting it was called to, for a droid at the meeting room's table (see Meeting). */
   meeting?: string;
   /**
-   * The worker that hired this one as its subagent with `office-workers hire` (see server/team.ts),
-   * while that worker is still on the floor. Subagents report back to it and can't hire their own.
+   * The droid that hired this one as its subagent with `office-workers hire` (see server/team.ts),
+   * while that droid is still on the floor. Subagents report back to it and can't hire their own.
    */
   lead?: string;
   /**
@@ -146,12 +146,12 @@ export interface WorkerInfo {
    */
   guest?: GuestInfo;
   /**
-   * Agent processes started by hand inside this worker's own worktree, outside the office (see
-   * server/guests.ts): they're this worker's, rather than guests of their own.
+   * Agent processes started by hand inside this droid's own worktree, outside the office (see
+   * server/guests.ts): they're this droid's, rather than guests of their own.
    */
   outside?: OutsideProcess[];
   /**
-   * Set for a cloud worker (kind 'cloud'): its Droid session (`sessionId`) runs on one of the
+   * Set for a cloud droid (kind 'cloud'): its Droid session (`sessionId`) runs on one of the
    * account's Factory computers, driven through Factory's Sessions API (see server/factory/cloud.ts).
    * It has no terminal, worktree or hooks on this machine.
    */
@@ -183,18 +183,18 @@ export interface GuestInfo extends OutsideProcess {
   /** When its transcript was last written (ms), when it has one. */
   writtenAt?: number;
   /**
-   * Why it can't be brought in as one of the office's own workers right now (see 'guest.bringIn'),
+   * Why it can't be brought in as one of the office's own droids right now (see 'guest.bringIn'),
    * or unset when it can: a droid session the office has tied to it, in the floor's checkout, between turns.
    */
   cantBringIn?: string;
 }
 
-/** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
+/** Where the branch of a droid whose worktree was deleted still is (see WorkerInfo.lost). */
 export type LostBranch = 'here' | 'origin' | 'gone';
 
 /**
- * One other floor's repository a worker works in (see WorkerInfo.repos): a worktree of that floor's
- * checkout, on the same branch as the worker's own, living in the worker's workspace folder.
+ * One other floor's repository a droid works in (see WorkerInfo.repos): a worktree of that floor's
+ * checkout, on the same branch as the droid's own, living in the droid's workspace folder.
  */
 export interface WorkerRepo {
   /** The other floor. */
@@ -205,7 +205,7 @@ export interface WorkerRepo {
   repo?: string;
   /** That floor's checkout, on the office's machine. */
   dir: string;
-  /** The worktree, relative to the worker's own floor (the workspace lives there). */
+  /** The worktree, relative to the droid's own floor (the workspace lives there). */
   path: string;
   branch: string;
   /** The commit it was branched from. */
@@ -216,10 +216,10 @@ export interface WorkerRepo {
   pr?: { number: number; url: string };
 }
 
-/** What becomes of a worker's git worktree when it is sent home. */
+/** What becomes of a droid's git worktree when it is sent home. */
 export type WorktreeCleanup = 'keep' | 'worktree' | 'all';
 
-/** What a worker's worktree holds, so whoever sends it home knows what deleting it would lose. */
+/** What a droid's worktree holds, so whoever sends it home knows what deleting it would lose. */
 export interface WorktreeState {
   /** The worktree folder is still there. */
   exists: boolean;
@@ -232,8 +232,8 @@ export interface WorktreeState {
   /** Set when git couldn't tell, e.g. the branch is gone. */
   error?: string;
   /**
-   * A worker across repositories: each worktree, its own floor's first. The totals above are the sum,
-   * and `error` joins each one's. Absent for a worker in one checkout.
+   * A droid across repositories: each worktree, its own floor's first. The totals above are the sum,
+   * and `error` joins each one's. Absent for a droid in one checkout.
    */
   repos?: { name: string; state: WorktreeState }[];
 }
@@ -299,7 +299,7 @@ export interface GhPull {
 
 export type TaskStatus = 'queued' | 'running' | 'done';
 
-/** A task on the 📋 queue whiteboard: a GitHub issue or free text, seated to a worker by itself. */
+/** A task on the 📋 queue whiteboard: a GitHub issue or free text, seated to a droid by itself. */
 export interface QueueTask {
   id: string;
   /** Droid model requested for this task, instead of Droid's own default. */
@@ -313,17 +313,17 @@ export interface QueueTask {
   addedBy: string;
   addedAt: number;
   status: TaskStatus;
-  /** The worker seated for it (it may have gone home since). */
+  /** The droid seated for it (it may have gone home since). */
   workerId?: string;
   workerName?: string;
-  /** The worker's own branch, when it got a worktree. */
+  /** The droid's own branch, when it got a worktree. */
   branch?: string;
   startedAt?: number;
   finishedAt?: number;
-  /** How it ended: the worker finished its turn, stopped or fell asleep, was sent home, or never started. */
+  /** How it ended: the droid finished its turn, stopped or fell asleep, was sent home, or never started. */
   outcome?: 'done' | 'exited' | 'killed' | 'failed';
   error?: string;
-  /** The pull request that closes the issue, or was opened from the worker's branch. */
+  /** The pull request that closes the issue, or was opened from the droid's branch. */
   pr?: { number: number; url: string; state: string; title: string };
   /** Ids of the pictures pasted into the task (see ClientMsg `images`), kept until it starts. */
   images?: string[];
@@ -331,14 +331,14 @@ export interface QueueTask {
 
 export interface QueueState {
   tasks: QueueTask[];
-  /** How many workers the queue may keep busy at once; 0 pauses it. */
+  /** How many droids the queue may keep busy at once; 0 pauses it. */
   maxWorkers: number;
 }
 
-/** How the workers at the meeting table work together (see shared/meetings.ts). */
+/** How the droids at the meeting table work together (see shared/meetings.ts). */
 export type MeetingPattern = 'debate' | 'lead' | 'mapreduce' | 'redblue' | 'review';
 
-/** A worker's place at a meeting. */
+/** A droid's place at a meeting. */
 export interface MeetingSeat {
   /** Its part in the meeting, e.g. "Skeptic", "Red team" or "Security". */
   role: string;
@@ -348,7 +348,7 @@ export interface MeetingSeat {
   workerName?: string;
 }
 
-/** One worker's part in a round: what it's doing, and the file that says it has done it. */
+/** One droid's part in a round: what it's doing, and the file that says it has done it. */
 export interface MeetingTurn {
   /** Which of the meeting's seats. */
   seat: number;
@@ -366,7 +366,7 @@ export interface MeetingTurn {
 export type MeetingStatus = 'running' | 'done' | 'stopped';
 
 /**
- * A meeting in the meeting room: 2–5 workers on one question or task, in rounds, following a pattern.
+ * A meeting in the meeting room: 2–5 droids on one question or task, in rounds, following a pattern.
  * It ends when its output file is written, or stops at its round limit and says why.
  */
 export interface Meeting {
@@ -412,7 +412,7 @@ export interface Meeting {
   review?: { url?: string; error?: string };
   /** The start of the output file as it gets written, for the board in the room. */
   preview?: string;
-  /** Its workers have gone home and its worktree was tidied away. */
+  /** Its droids have gone home and its worktree was tidied away. */
   cleared?: boolean;
 }
 
@@ -444,7 +444,7 @@ export interface MeetingRequest {
   title?: string;
   /** The output file, relative to the checkout; the pattern's default when missing. */
   output?: string;
-  /** A role per worker, the head of the table first. */
+  /** A role per droid, the head of the table first. */
   roles: string[];
   parts?: string[];
   pr?: number;
@@ -452,14 +452,14 @@ export interface MeetingRequest {
   rounds?: number;
   model?: string;
   effort?: AgentEffort;
-  /** Pictures pasted into the dialog, as the ids their upload answered with; every worker at the table is given them. */
+  /** Pictures pasted into the dialog, as the ids their upload answered with; every droid at the table is given them. */
   images?: string[];
 }
 
 /** Where a team webhook posts: Slack and Discord get their own message format, anything else plain JSON. */
 export type WebhookKind = 'slack' | 'discord' | 'other';
 
-/** The office's Slack / Discord webhook, pinged when a worker needs input or finishes (see server/webhook.ts). */
+/** The office's Slack / Discord webhook, pinged when a droid needs input or finishes (see server/webhook.ts). */
 export interface NotifyState {
   /** Never the URL itself (it lets anyone post to the channel): just where it goes. */
   webhook?: { kind: WebhookKind; hint: string; by: string; at: number };
@@ -470,7 +470,7 @@ export interface NotifyState {
 
 /**
  * The office's machine (see server/machine.ts): how busy it is, for the wall monitor and a warning
- * before hiring, and the most workers the office runs at once, across every floor.
+ * before hiring, and the most droids the office runs at once, across every floor.
  */
 export interface MachineState {
   /** Percent of every core busy, 0-100, over the last few seconds. */
@@ -481,11 +481,11 @@ export interface MachineState {
   memTotal: number;
   /** The last few minutes, oldest first: [cpu %, memory %] a few seconds apart. */
   history: [number, number][];
-  /** What makes another worker a strain right now, e.g. "memory is 93% used"; missing when nothing does. */
+  /** What makes another droid a strain right now, e.g. "memory is 93% used"; missing when nothing does. */
   pressure?: string;
-  /** Workers in the office now: every floor's, shells and board agents too. */
+  /** Droids in the office now: every floor's, shells and board agents too. */
   workers: number;
-  /** The most workers the office takes; missing when there's no limit. */
+  /** The most droids the office takes; missing when there's no limit. */
   limit?: number;
   /** --max-workers: the limit can't be set any higher from the office. */
   ceiling?: number;
@@ -597,13 +597,13 @@ export interface ProjectInfo {
   dir: string;
   branch?: string;
   remote?: string;
-  /** Where its repository is hosted, and so which CLI its boards and workers use. */
+  /** Where its repository is hosted, and so which CLI its boards and droids use. */
   forge: Forge;
   agentCmd: string;
 }
 
 /**
- * One floor of the building: a project in its own checkout, with its own desks, workers, boards
+ * One floor of the building: a project in its own checkout, with its own desks, droids, boards
  * and queue. You go between them in the elevator.
  */
 export interface FloorInfo {
@@ -630,7 +630,7 @@ export interface FloorInfo {
    */
   workers: number;
   busy: number;
-  /** Workers waiting on someone: a question, a permission, or a finished turn nobody looked at. */
+  /** Droids waiting on someone: a question, a permission, or a finished turn nobody looked at. */
   waiting: number;
 }
 
@@ -681,7 +681,7 @@ export interface FloorView {
   jiraBoard: JiraBoardState | null;
 }
 
-/** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
+/** A web server a droid started (a dev server, a preview), found by the ports it listens on. */
 export interface ServiceInfo {
   port: number;
   /** The address the office reaches it on, on its own machine. */
@@ -689,7 +689,7 @@ export interface ServiceInfo {
   pid: number;
   /** Its command line, shortened, e.g. "vite --port 5173". */
   command: string;
-  /** The worker whose terminal started it. */
+  /** The droid whose terminal started it. */
   workerId: string;
   /** Its working directory relative to its floor's checkout ('' is the project root). */
   cwd?: string;
@@ -708,7 +708,7 @@ export interface ServicesState {
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
 
-/** One file a worker changed, against the base of its branch. */
+/** One file a droid changed, against the base of its branch. */
 export interface ChangedFile {
   path: string;
   /** The old path, when the file was renamed. */
@@ -746,10 +746,10 @@ export function changedImageType(filePath: string): string | undefined {
   return Object.hasOwn(CHANGED_IMAGE_TYPES, ext) ? CHANGED_IMAGE_TYPES[ext] : undefined;
 }
 
-/** What a worker changed in its checkout, against the branch the office was opened on. */
+/** What a droid changed in its checkout, against the branch the office was opened on. */
 export interface ChangesState {
   workerId: string;
-  /** Another floor's repository of a worker across repositories (see WorkerInfo.repos); none for its own. */
+  /** Another floor's repository of a droid across repositories (see WorkerInfo.repos); none for its own. */
   repo?: string;
   /** The checkout, relative to the office dir ('' is the project folder itself, shared by everyone). */
   dir: string;
@@ -820,7 +820,7 @@ export interface SkyState {
 }
 
 /**
- * Whether a worker whose pull request merged goes home by itself (⚙️ Settings), for every floor:
+ * Whether a droid whose pull request merged goes home by itself (⚙️ Settings), for every floor:
  * once it's at rest and nobody has its terminal open, it leaves and its worktree and branch are deleted.
  */
 export interface LeaveOnMergeState {
@@ -830,15 +830,15 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
-/** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
+/** What ⚙️ Settings → Subagents sets: how droids hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
-  /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
+  /** Droids may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
   on: boolean;
-  /** Desk workers may hire too, not just the Team lead at its kiosk. */
+  /** Desk droids may hire too, not just the Team lead at its kiosk. */
   deskWorkers: boolean;
-  /** Keep the droid-office-subagents skill in ~/.factory/skills, so Droid workers know how to hire. */
+  /** Keep the droid-office-subagents skill in ~/.factory/skills, so Droids know how to hire. */
   skill: boolean;
-  /** What a subagent runs when its lead doesn't pick. Unset: the office's default worker. */
+  /** What a subagent runs when its lead doesn't pick. Unset: the office's default droid. */
   agent?: AgentChoice;
   /** Each subagent gets its own git worktree unless its lead asks for none. */
   worktree: boolean;
@@ -861,12 +861,12 @@ export interface SubagentsState extends SubagentSettings {
   skillError?: string;
 }
 
-/** A line of a worker's terminal that matched a search. */
+/** A line of a droid's terminal that matched a search. */
 export interface TerminalHit {
   workerId: string;
   /** The line, cut down around the match. */
   text: string;
-  /** Where it is: its row in the worker's terminal, and how many rows that terminal had. */
+  /** Where it is: its row in the droid's terminal, and how many rows that terminal had. */
   row: number;
   rows: number;
 }
@@ -885,30 +885,30 @@ export type GongWhy = 'hit' | 'merged' | 'queue';
 export type ClientMsg =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
-   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
+   * With `issue`, the droid is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
    * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
-  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left in the Sessions window. */
+  /** `deleteSession`: a cloud droid's Factory session is deleted too, not just left in the Sessions window. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
-  /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
+  /** Drops the droid for 30 seconds; expiry deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string }
-  /** Revives a nearby shot worker before its deadline, without restarting its session. */
+  /** Revives a nearby shot droid before its deadline, without restarting its session. */
   | { t: 'worker.revive'; workerId: string }
-  /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
+  /** Asks what the droid's worktree holds; answered with a `worker.worktree` message. */
   | { t: 'worker.worktree'; workerId: string }
-  /** Puts a lost worker's worktree back and starts it again (see WorkerInfo.lost); `all`: every lost worker on the floor. */
+  /** Puts a lost droid's worktree back and starts it again (see WorkerInfo.lost); `all`: every lost droid on the floor. */
   | { t: 'worker.rebuild'; workerId: string; all?: boolean }
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
   /**
-   * Makes a guest one of the office's own workers (see GuestInfo.cantBringIn): its process outside
-   * the office is asked to quit, and a worker at the same desk, with the same name, resumes its session.
+   * Makes a guest one of the office's own droids (see GuestInfo.cantBringIn): its process outside
+   * the office is asked to quit, and a droid at the same desk, with the same name, resumes its session.
    */
   | { t: 'guest.bringIn'; workerId: string }
   /**
-   * With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn.
+   * With `issue`, the prompt hands the droid that GitHub issue, which is taken as for worker.spawn.
    * With `queue`, an agent's prompt is submitted with Ctrl+Enter instead of Enter, so Droid queues it
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
@@ -919,7 +919,7 @@ export type ClientMsg =
    * `model`/`effort` pick its engine when it's hired; an agent that's already there keeps its own.
    */
   | { t: 'station.prompt'; deskId: string; prompt: string; model?: string; effort?: AgentEffort; images?: string[] }
-  /** Push a worktree worker's branch and open a pull request for it, drafted from its task. */
+  /** Push a worktree droid's branch and open a pull request for it, drafted from its task. */
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
@@ -945,17 +945,17 @@ export type ClientMsg =
   /** Forget the finished tasks. */
   | { t: 'queue.clear' }
   | { t: 'queue.limit'; maxWorkers: number }
-  /** Call a meeting: workers sit down round the meeting room's table and work through it in rounds. */
+  /** Call a meeting: droids sit down round the meeting room's table and work through it in rounds. */
   | ({ t: 'meeting.start' } & MeetingRequest)
-  /** Stop the meeting that's running; its workers stay at the table. */
+  /** Stop the meeting that's running; its droids stay at the table. */
   | { t: 'meeting.stop' }
-  /** Send the last meeting's workers home and clear the table. */
+  /** Send the last meeting's droids home and clear the table. */
   | { t: 'meeting.clear' }
   /** Set the office's Slack / Discord webhook; '' removes it. */
   | { t: 'notify.webhook'; url: string }
   /** Post a test message through the webhook; the outcome comes back as a toast. */
   | { t: 'notify.test' }
-  /** The most workers the office runs at once, across every floor; null takes the limit off. */
+  /** The most droids the office runs at once, across every floor; null takes the limit off. */
   | { t: 'machine.limit'; limit: number | null }
   /** Connect the office to Jira Cloud with one account's email and API token (read-only is enough); answered with `jira.setup`. */
   | { t: 'jira.connect'; site: string; email: string; token: string }
@@ -974,8 +974,8 @@ export type ClientMsg =
   /** A board or window of `feature` opened (`on`) or closed in this tab: it polls fast while one is open. */
   | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
   /**
-   * Follow what a worker changed (the office polls its checkout while anyone watches). `repo` is another
-   * floor's repository of a worker across repositories; none follows its own.
+   * Follow what a droid changed (the office polls its checkout while anyone watches). `repo` is another
+   * floor's repository of a droid across repositories; none follows its own.
    */
   | { t: 'changes.watch'; workerId: string; repo?: string }
   | { t: 'changes.unwatch'; workerId: string; repo?: string }
@@ -1020,15 +1020,15 @@ export type ClientMsg =
   | { t: 'floor.add'; dir: string }
   /** Take a floor off the building. Its checkout stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
-  /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
+  /** Droids whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
-  /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
+  /** How droids hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Rewrite one of the office's prompts; null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
-  /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
+  /** Pick the droid a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
@@ -1068,7 +1068,7 @@ export type ServerMsg =
       sky: SkyState;
       leaveOnMerge: LeaveOnMergeState;
       subagents: SubagentsState;
-      /** The office's prompts, and the worker a new one starts on when nobody picks. */
+      /** The office's prompts, and the droid a new one starts on when nobody picks. */
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
       factory: FactoryState;
@@ -1106,7 +1106,7 @@ export type ServerMsg =
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */
   | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string }
   /**
-   * A line for the toast stack. `workerId` names the worker it is about, when one is: a client
+   * A line for the toast stack. `workerId` names the droid it is about, when one is: a client
    * already showing that in its world can leave the text out.
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
@@ -1133,7 +1133,7 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'prompts'; state: PromptsState }
-  /** Sent to whoever watches that worker's changes, whenever they change. */
+  /** Sent to whoever watches that droid's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
   | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }
   /**

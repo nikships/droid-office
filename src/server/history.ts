@@ -7,7 +7,7 @@ import { logicalLines, searchKey, snippet } from '../shared/search.js';
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Serializer = InstanceType<typeof serialize.SerializeAddon>;
 
-/** Each worker's latest terminal output, kept in .droid-office/scrollback/<worker id>.ansi across restarts. */
+/** Each droid's latest terminal output, kept in .droid-office/scrollback/<droid id>.ansi across restarts. */
 export class ScrollbackStore {
   private dir: string;
 
@@ -45,7 +45,7 @@ export class ScrollbackStore {
     }
   }
 
-  /** Deletes what's kept for workers that are no longer at a desk. */
+  /** Deletes what's kept for droids that are no longer at a desk. */
   prune(keep: Set<string>) {
     try {
       for (const f of readdirSync(this.dir)) {
@@ -86,7 +86,7 @@ export function terminalTail(term: HeadlessTerminal, ser: Serializer, maxLines: 
 }
 
 /**
- * The lines of a worker's terminal holding `needle` (a searchKey), newest first, one per distinct
+ * The lines of a droid's terminal holding `needle` (a searchKey), newest first, one per distinct
  * line: a full-screen program's screen first, then the scrollback.
  */
 export function searchTerminal(term: HeadlessTerminal, needle: string, limit: number): { hits: { text: string; row: number; rows: number }[]; more: boolean } {

@@ -1,10 +1,10 @@
-// What a worker is doing, read off its latest tool call, so the office can act it out: flipping
+// What a droid is doing, read off its latest tool call, so the office can act it out: flipping
 // through papers while it reads, typing fast while it edits, leaning back while its tests run, a
 // globe spinning over the desk while it's on the web.
 
 import type { WorkerAction } from './protocol.js';
 
-/** Test runs or builds that fail in a row before a worker puts its head in its hands. */
+/** Test runs or builds that fail in a row before a droid puts its head in its hands. */
 export const FAILS_TO_DESPAIR = 2;
 
 /** Tool names, lowercased. */

@@ -1,5 +1,5 @@
 /**
- * Modified Enter for worker terminals.
+ * Modified Enter for droid terminals.
  *
  * xterm.js (6.0) encodes Enter as a bare CR whatever the modifiers (Alt adds an ESC prefix) and
  * speaks neither the kitty keyboard protocol nor xterm's modifyOtherKeys, so Ctrl+Enter and
@@ -7,7 +7,7 @@
  *
  * Droid binds Ctrl+Enter (queue a message while it works) and Shift+Enter (newline) to exactly
  * those sequences, and parses them even when it has not negotiated the kitty protocol, so its
- * workers get them. Everything else keeps xterm.js's default bytes: a plain shell that never
+ * droids get them. Everything else keeps xterm.js's default bytes: a plain shell that never
  * asked for CSI u would print them as garbage.
  */
 

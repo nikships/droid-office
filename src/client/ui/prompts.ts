@@ -20,7 +20,7 @@ const drafts = new Map<PromptId, string>();
 const norm = (text: string) => text.replace(/\r\n?/g, '\n').trim();
 
 /**
- * The office's prompts, to read and rewrite: what the boards' buttons send workers, the queue's
+ * The office's prompts, to read and rewrite: what the boards' buttons send droids, the queue's
  * worktree note, the board agents' briefs, the meeting room's parts and the sign writer's
  * instructions. A list down the side, grouped by where they're used; the one picked, with its
  * placeholders, on the right.
@@ -80,7 +80,7 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
     const lines: string[] = [];
     if (!ta.value.trim() && !def.optional) lines.push('It can’t be empty: write something, or put the default back.');
     for (const name of inText) if (!(name in def.vars)) lines.push(`{{${name}}} isn’t filled in here, so it’s sent just as it’s written.`);
-    for (const name of def.needs ?? []) if (!inText.includes(name)) lines.push(`The office counts on {{${name}}} (${def.vars[name].toLowerCase()}): without it the worker isn’t told.`);
+    for (const name of def.needs ?? []) if (!inText.includes(name)) lines.push(`The office counts on {{${name}}} (${def.vars[name].toLowerCase()}): without it the droid isn’t told.`);
     warnings.replaceChildren(...lines.map((l) => h('p', {}, l)));
   };
 

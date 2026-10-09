@@ -1,4 +1,4 @@
-// Files dropped or pasted into a worker's terminal: the browser sends them to the office, which keeps
+// Files dropped or pasted into a droid's terminal: the browser sends them to the office, which keeps
 // them on its own machine (see server/drops.ts), and the terminal types where they are, as a terminal
 // does with a file dragged into it. Droid turns a pasted picture's path into an image.
 

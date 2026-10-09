@@ -20,7 +20,7 @@ const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
 let settings: DesktopSettings = loadSettings(settingsFile);
-/** What the office and its workers run with: the login shell's environment (see desktopEnv). */
+/** What the office and its droids run with: the login shell's environment (see desktopEnv). */
 let officeEnv: NodeJS.ProcessEnv = process.env;
 let win: BrowserWindow | undefined;
 /** The office this app started, if it started one (it may be using one that was already running). */
@@ -102,7 +102,7 @@ function createWindow(loadOffice = true) {
 
 /**
  * Opened from its disk image or from Downloads, macOS runs the app from a read-only, randomized
- * copy: it can't update itself, and the terminal host that keeps workers running across restarts
+ * copy: it can't update itself, and the terminal host that keeps droids running across restarts
  * is left pointing at files that go away. Offers the move; true when the app is relaunching moved.
  */
 async function moveToApplications(): Promise<boolean> {
@@ -110,7 +110,7 @@ async function moveToApplications(): Promise<boolean> {
   const { response } = await dialog.showMessageBox({
     type: 'question',
     message: 'Move Droid Office to your Applications folder?',
-    detail: "It's running from its disk image or from where it was downloaded. From there it can't update itself, and workers' terminals stop working once the disk image is ejected.",
+    detail: "It's running from its disk image or from where it was downloaded. From there it can't update itself, and droids' terminals stop working once the disk image is ejected.",
     buttons: ['Move to Applications', 'Not Now'],
     defaultId: 0,
     cancelId: 1,
@@ -130,7 +130,7 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
     const { response } = await dialog.showMessageBox({
       type: 'question',
       message: 'Where does your office live?',
-      detail: `Droid Office keeps its data (floors, workers, queue) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
+      detail: `Droid Office keeps its data (floors, droids, queue) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
       buttons: [`Use ${fallback.replace(os.homedir(), '~')}`, 'Choose Folder…'],
       defaultId: 0,
       cancelId: 0,

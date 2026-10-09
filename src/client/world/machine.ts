@@ -12,12 +12,12 @@ export function fmtGb(bytes: number): string {
   return `${gb.toFixed(gb < 10 ? 1 : 0)} GB`;
 }
 
-/** The office has as many workers as it takes. */
+/** The office has as many droids as it takes. */
 export function officeFull(s: MachineState): boolean {
   return s.limit !== undefined && s.workers >= s.limit;
 }
 
 /** What the hire dialog says while the machine is under pressure. */
 export function pressureNote(s: MachineState): string | undefined {
-  return s.pressure ? `⚠️ This machine is under pressure: ${s.pressure}. Another worker may slow down the ones already working.` : undefined;
+  return s.pressure ? `⚠️ This machine is under pressure: ${s.pressure}. Another droid may slow down the ones already working.` : undefined;
 }

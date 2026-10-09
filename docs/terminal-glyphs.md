@@ -46,7 +46,7 @@ After:
 - The real terminal UI passed 14 px and 20 px browser
   fixtures. A delayed font load, closing before completion and reopening left
   only one terminal and one attach. These fixtures used a local message stub;
-  they did not connect to or type into workers.
+  they did not connect to or type into droids.
 - The idle-laptop regression covers a failed prose face while the other fonts
   are pending, completion without another PTY frame, shared loading, and no
   continuous repaint afterward.

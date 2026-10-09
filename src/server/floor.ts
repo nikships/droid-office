@@ -34,33 +34,33 @@ export interface FloorContext {
   agentCmd: string;
   agentArgs: string[];
   hook: HookEnv;
-  /** The office's worker limit, across every floor. */
+  /** The office's droid limit, across every floor. */
   capacity: Capacity;
   /** The office's Jira connection, which every floor's epic goes through. */
   jira: JiraOffice;
-  /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings. */
+  /** The office's prompts and the droid a new one starts on when nobody picks, as set in Settings. */
   prompts: PromptSource;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
-  /** To everyone on this floor; `workerId` names the worker it is about, when one is. */
+  /** To everyone on this floor; `workerId` names the droid it is about, when one is. */
   toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string): void;
-  /** A worker's terminal output, for whoever has that terminal open. */
+  /** A droid's terminal output, for whoever has that terminal open. */
   termData(workerId: string, data: string, connectionIds: string[]): void;
-  /** What a worker changed, for whoever has its Changes window open. */
+  /** What a droid changed, for whoever has its Changes window open. */
   changes(state: ChangesState, clients: string[]): void;
-  /** A worker on this floor changed, or left (then just its id). */
+  /** A droid on this floor changed, or left (then just its id). */
   workerChanged(floor: Floor, w: WorkerInfo | string): void;
   /** How many owner connections are on this floor right now. */
   connections(floor: Floor): number;
-  /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
+  /** ⚙️ Settings: a droid whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
-  /** ⚙️ Settings → Subagents: how workers hire subagents. */
+  /** ⚙️ Settings → Subagents: how droids hire subagents. */
   subagents(): SubagentSettings;
-  /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
+  /** Another floor of the building: a droid across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
-  /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
+  /** This floor's pull requests came back: a droid on another floor with a repository here may have landed. */
   pullsChanged(floor: Floor): void;
-  /** Whether a worker on another floor works in this floor's project too. */
+  /** Whether a droid on another floor works in this floor's project too. */
   lent(floor: Floor): boolean;
 }
 
@@ -70,7 +70,7 @@ function openPull(floor: Floor, branch: string): { number: number; url: string }
   return pr ? { number: pr.number, url: pr.url } : undefined;
 }
 
-/** How long after a PR list or a worker's change the office looks for workers whose PR merged. */
+/** How long after a PR list or a droid's change the office looks for droids whose PR merged. */
 const LANDED_DELAY_MS = 1500;
 /** Boards on a floor nobody is on, with nothing running, are asked GitHub or GitLab about this seldom. */
 const IDLE_REFRESH_MS = 10 * 60_000;
@@ -96,7 +96,7 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
 }
 
 /**
- * One floor of the building: a project's checkout with its own desks and workers, issues and PR
+ * One floor of the building: a project's checkout with its own desks and droids, issues and PR
  * boards, task queue, pictures and jukebox, all kept in that checkout's .droid-office folder.
  */
 export class Floor {
@@ -112,7 +112,7 @@ export class Floor {
   readonly changes: Changes;
   readonly decor: Decor;
   readonly jukebox: Jukebox;
-  /** The meeting room, where workers work through a question together (see meetings.ts). */
+  /** The meeting room, where droids work through a question together (see meetings.ts). */
   readonly meetings: MeetingRoom;
   /** The bookshelf: the project's Markdown files (see docs.ts). */
   readonly docs: Docs;
@@ -120,16 +120,16 @@ export class Floor {
   readonly team: Team;
   /** Agent processes started by hand in this checkout, outside the office, at desks of their own (see guests.ts). */
   readonly guests: Guests;
-  /** Workers whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
+  /** Droids whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
   readonly cloud: CloudWorkers;
-  /** Settles once the workers whose terminals outlived the last office are picked back up, and the rest woken. */
+  /** Settles once the droids whose terminals outlived the last office are picked back up, and the rest woken. */
   readonly ready: Promise<void>;
   private timer: NodeJS.Timeout;
   /** Pull requests merging, to ring the gong for. */
   private merges = new MergeWatch();
-  /** A look for workers whose pull request merged, due shortly (see sendLandedHome). */
+  /** A look for droids whose pull request merged, due shortly (see sendLandedHome). */
   private landedTimer?: NodeJS.Timeout;
-  /** Workers across repositories whose worktrees are being checked before they go home. */
+  /** Droids across repositories whose worktrees are being checked before they go home. */
   private landing = new Set<string>();
   /** How this floor's forge names things: PR #n on GitHub, MR !n on GitLab. */
   private words: ForgeWords;
@@ -153,7 +153,7 @@ export class Floor {
       ctx.emit(this, { t: 'gh.pulls', state });
       this.queue?.onPulls(state.items);
       if (state.loading || state.error) return;
-      // A worker may have opened one from a branch it made itself, mid-turn or from a shell.
+      // A droid may have opened one from a branch it made itself, mid-turn or from a shell.
       void this.workers.syncBranches();
       for (const p of this.merges.look(state.items)) {
         ctx.toast(this, `🎉 ${words.pr} ${words.ref(p.number)} merged: ${p.title}`);
@@ -177,7 +177,7 @@ export class Floor {
       {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
-          // Still being built: the first updates come from waking the workers already at their desks.
+          // Still being built: the first updates come from waking the droids already at their desks.
           this.queue?.onWorker(worker);
           this.meetings?.onWorker(worker);
           this.team?.onWorker(worker);
@@ -236,7 +236,7 @@ export class Floor {
     );
     this.workers.holds = { desk: (id) => this.guests.deskTaken(id) || this.cloud.deskTaken(id), names: () => [...this.guests.names(), ...this.cloud.names()] };
 
-    // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
+    // The 📋 task queue seats droids by itself: it watches the droids and links PRs from GitHub.
     const queued = this.workers;
     this.queue = new TaskQueue(
       dataDir,
@@ -270,7 +270,7 @@ export class Floor {
       },
     );
 
-    // Meetings seat their own workers round the meeting room's table and run them round by round.
+    // Meetings seat their own droids round the meeting room's table and run them round by round.
     const workers = this.workers;
 
     this.team = new Team(
@@ -321,7 +321,7 @@ export class Floor {
       forge,
     );
 
-    // What each worker changed, for the Changes window at its desk (see changes.ts).
+    // What each droid changed, for the Changes window at its desk (see changes.ts).
     this.changes = new Changes(
       this.project.branch,
       (workerId, repo) => {
@@ -371,7 +371,7 @@ export class Floor {
   }
 
   /**
-   * With ⚙️ Settings' *go home once merged* on, sends home every worker whose pull request merged,
+   * With ⚙️ Settings' *go home once merged* on, sends home every droid whose pull request merged,
    * once it's at rest and nobody has its terminal open, deleting its worktree and branch unless they
    * hold work that isn't on the remote. Called whenever that might have changed; it looks a moment
    * later, once for a burst of calls, and not from inside the event that prompted it.
@@ -414,7 +414,7 @@ export class Floor {
 
   /**
    * The agent processes working in this floor's checkout, from the building's scan (see GuestScanner):
-   * one started by hand in a worker's own worktree is that worker's, the rest are guests.
+   * one started by hand in a droid's own worktree is that droid's, the rest are guests.
    */
   async syncGuests(procs: AgentProcess[]): Promise<void> {
     const { guests, outside } = attribute(procs, this.workers.folders());
@@ -423,10 +423,10 @@ export class Floor {
   }
 
   /**
-   * Makes a droid guest one of the office's own workers: its process outside is asked to quit, and
-   * once it has, a worker at the same desk resumes the same session in a terminal of the office's.
-   * Two droids in one session would write over each other, so the worker only starts after the guest's
-   * droid is gone. Resolves to the new worker, or why the guest stays a guest.
+   * Makes a droid guest one of the office's own droids: its process outside is asked to quit, and
+   * once it has, a droid at the same desk resumes the same session in a terminal of the office's.
+   * Two droids in one session would write over each other, so the droid only starts after the guest's
+   * droid is gone. Resolves to the new droid, or why the guest stays a guest.
    */
   async bringIn(guestId: string, by: string): Promise<WorkerInfo | string> {
     const full = this.workers.full();
@@ -443,7 +443,7 @@ export class Floor {
     return this.workers.takeIn(info, session, by);
   }
 
-  /** Everyone at a desk here: the office's workers, its cloud workers and the guests. */
+  /** Everyone at a desk here: the office's droids, its cloud droids and the guests. */
   everyone(): WorkerInfo[] {
     return [...this.workers.list(), ...this.cloud.list(), ...this.guests.list()];
   }
@@ -475,7 +475,7 @@ export class Floor {
     };
   }
 
-  /** With `keep` (a restart), the workers' terminals keep running for the next office to pick up. */
+  /** With `keep` (a restart), the droids' terminals keep running for the next office to pick up. */
   shutdown(keep = false) {
     clearInterval(this.timer);
     clearTimeout(this.landedTimer);

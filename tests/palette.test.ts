@@ -4,7 +4,7 @@ import { PALETTE_MAX, isPaletteKey, matchItem, matchText, rankItems, type Palett
 
 const titles = (q: string, items: PaletteItem[]) => rankItems(q, items).map((m) => m.item.title);
 
-test('"login" finds the worker whose task card is "Fix Login Redirect"', () => {
+test('"login" finds the droid whose task card is "Fix Login Redirect"', () => {
   const workers: PaletteItem[] = [
     { title: 'Ada', detail: 'Write the release notes · Desk 2' },
     { title: 'Bo', detail: 'Fix Login Redirect · Desk 7' },
@@ -67,11 +67,11 @@ test('numbers find issues and pull requests, and desks by label', () => {
 });
 
 test('ties keep their order, and the list stops at the most it shows', () => {
-  const items = Array.from({ length: PALETTE_MAX + 20 }, (_, i) => ({ title: `Worker ${i}` }));
-  const found = rankItems('worker', items);
+  const items = Array.from({ length: PALETTE_MAX + 20 }, (_, i) => ({ title: `Droid ${i}` }));
+  const found = rankItems('droid', items);
   assert.equal(found.length, PALETTE_MAX);
-  assert.equal(found[0].item.title, 'Worker 0');
-  assert.equal(found[1].item.title, 'Worker 1');
+  assert.equal(found[0].item.title, 'Droid 0');
+  assert.equal(found[1].item.title, 'Droid 1');
 });
 
 test('Ctrl+K opens the palette, ⌘K on a Mac, and no other combination does', () => {

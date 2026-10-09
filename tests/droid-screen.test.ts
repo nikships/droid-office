@@ -59,7 +59,7 @@ test('a settled screen corrects only the status it contradicts', () => {
   for (const status of ['working', 'done', 'idle'] as const) assert.equal(screenStatus(status, 'asking', true), 'needs_input');
   assert.equal(screenStatus('needs_input', 'asking', true), undefined);
 
-  // Nothing to correct about a worker that isn't running a session.
+  // Nothing to correct about a droid that isn't running a session.
   for (const status of ['starting', 'exited', 'offline'] as const) {
     for (const screen of ['busy', 'asking', 'idle'] as const) {
       assert.equal(screenStatus(status, screen, true), undefined);

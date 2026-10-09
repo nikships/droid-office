@@ -316,7 +316,7 @@ export class Laptop {
 
   /**
    * Swaps the procedural stand-in for the MacBook GLBs once they are cached. Laptops are
-   * built as workers arrive, before or after the preload, so each one swaps itself the
+   * built as droids arrive, before or after the preload, so each one swaps itself the
    * first frame its GLBs are ready rather than going through the pending queue.
    */
   private maybeSwap() {

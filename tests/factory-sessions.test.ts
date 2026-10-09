@@ -113,7 +113,7 @@ test('polling: two pages, each session’s credits read a few at a time with run
   const read = [...credits.keys()];
   assert.equal(read.length + 1, 24, 'at most 24 single-session reads a poll (one of them the missing session)');
   assert.equal(read[0], 'p1-7');
-  assert.ok(read.slice(0, 5).includes('p1-40') && read.slice(0, 5).includes('old-worker'), 'office workers’ sessions come early, even one past the list');
+  assert.ok(read.slice(0, 5).includes('p1-40') && read.slice(0, 5).includes('old-worker'), 'office droids’ sessions come early, even one past the list');
   const pixel = s.items.find((x) => x.id === 'p1-40')!;
   assert.equal(pixel.credits, 1000);
   assert.equal(s.items.find((x) => x.id === 'p1-3')?.status, 'running', 'a session’s own read says it runs, though the list says idle');
@@ -131,7 +131,7 @@ test('polling: two pages, each session’s credits read a few at a time with run
   await feature.poll(detailApi);
   assert.equal(credits.get('p1-0'), 1000, 'unchanged updatedAt: no second read');
   assert.equal(credits.get('p1-3'), 2000, 'a running one is read again');
-  assert.equal(credits.get('p1-40'), 2000, 'a working office worker’s, after a minute');
+  assert.equal(credits.get('p1-40'), 2000, 'a working office droid’s, after a minute');
   assert.ok(!f.seen.slice(2).some((p) => p.includes('cursor=c1')), 'the second page is kept for 10 minutes');
   assert.equal(feature.state().items.find((x) => x.id === 'p1-3')?.credits, 2000);
   const ledger = feature.ledger.snapshot();

@@ -10,7 +10,7 @@ const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
 const SKIP = new Set(['node_modules', 'dist']);
 const INSTALLERS = ['install.sh', 'install.ps1'];
 
-/** Set by the office for its own workers, or by the installers for themselves: not user settings. */
+/** Set by the office for its own droids, or by the installers for themselves: not user settings. */
 const INTERNAL = new Set(['DROID_OFFICE_HOOK_URL', 'DROID_OFFICE_HOOK_TOKEN', 'DROID_OFFICE_WORKER_ID', 'DROID_OFFICE_SESSION_ID', 'DROID_OFFICE_INSTALL_REFRESH']);
 /** The operating system's own variables, read to find the shell and programs. */
 const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC', 'GROK_HOME', 'XDG_CONFIG_HOME']);

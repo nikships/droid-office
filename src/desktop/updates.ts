@@ -8,7 +8,7 @@ const CHECK_EVERY_MS = 30 * 60_000;
 
 export interface UpdatesOptions {
   log: string;
-  /** Runs before the app quits to install an update: stops the office, keeping its workers. */
+  /** Runs before the app quits to install an update: stops the office, keeping its droids. */
   beforeInstall: () => Promise<void>;
 }
 
@@ -73,7 +73,7 @@ export class Updates {
     const { response } = await dialog.showMessageBox({
       type: 'info',
       message: `Droid Office ${version} is ready to install`,
-      detail: 'Restart now to update. Workers keep running and the office picks them back up. Otherwise it installs the next time you quit.',
+      detail: 'Restart now to update. Droids keep running and the office picks them back up. Otherwise it installs the next time you quit.',
       buttons: ['Restart Now', 'Later'],
       defaultId: 0,
       cancelId: 1,

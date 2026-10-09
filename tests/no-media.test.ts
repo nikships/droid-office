@@ -119,6 +119,6 @@ test('no chat or teammate presence anywhere: protocol, server, stores or UI', ()
   assert.doesNotMatch(file('client/ui/menu.ts'), /'people'|'chat'/);
   assert.doesNotMatch(file('client/index.html'), /people-panel|chat-log|chat-input/);
   assert.doesNotMatch(file('client/style.css'), /#chat-log|#chat-input|chat-out|\.people/);
-  // The workers panel shows by default; removed panels can't come back from old settings.
+  // The droids panel shows by default; removed panels can't come back from old settings.
   assert.match(file('client/state.ts'), /workers: true, floor: false/);
 });

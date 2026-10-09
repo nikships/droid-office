@@ -83,7 +83,7 @@ type Point3 = { x: number; y: number; z: number };
 const deskKind = (d: DeskDef): TargetKind => (d.station ? 'kiosk' : 'desk');
 const deskSpotOf = (spots: Interactable[], deskId: string) => spots.find((s) => s.deskId === deskId && !s.off);
 
-/** Everything `goTo` can take you to from here: the desks with a worker or a free seat, the boards, the places, and the floors. */
+/** Everything `goTo` can take you to from here: the desks with a droid or a free seat, the boards, the places, and the floors. */
 export function listTargets(ctx: TargetContext): TargetInfo[] {
   const out: TargetInfo[] = [];
   const byDesk = new Map(ctx.workers.map((w) => [w.deskId, w]));
@@ -93,7 +93,7 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
     const desk = DESK_BY_ID.get(spot.deskId);
     if (!desk) continue;
     const w = byDesk.get(desk.id);
-    // An empty meeting chair isn't anywhere to go: a meeting seats its own workers there.
+    // An empty meeting chair isn't anywhere to go: a meeting seats its own droids there.
     if (desk.room && !w) continue;
     seen.add(desk.id);
     out.push({ id: desk.id, kind: deskKind(desk), label: desk.label, deskId: desk.id, ...(w ? { worker: { id: w.id, name: w.name, status: w.status } } : {}) });
@@ -111,12 +111,12 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
 
 /**
  * The target a `goTo` query names: an id from `list()` (a desk id, a board or place kind, a floor
- * id), a worker's id or name, a desk's label, a board agent's name or a floor's name. Case doesn't
+ * id), a droid's id or name, a desk's label, a board agent's name or a floor's name. Case doesn't
  * matter past an exact id. 'roof' is the rooftop bar.
  */
 export function resolveTarget(query: string, ctx: TargetContext): { ok: true; target: ResolvedTarget } | { ok: false; error: string } {
   const q = typeof query === 'string' ? query.trim() : '';
-  if (!q) return { ok: false, error: 'goTo needs a target: a desk id, a worker name, a board or a place (see office.list())' };
+  if (!q) return { ok: false, error: 'goTo needs a target: a desk id, a droid name, a board or a place (see office.list())' };
   const targets = listTargets(ctx);
   const done = (t: TargetInfo) => ({ ok: true as const, target: withSpot(t, ctx.spots) });
   const exact = targets.find((t) => t.id === q) ?? targets.find((t) => t.worker?.id === q);
@@ -135,7 +135,7 @@ export function resolveTarget(query: string, ctx: TargetContext): { ok: true; ta
   if (hits.length > 1) return { ok: false, error: `"${q}" could be ${hits.map((t) => `${t.label} (${t.id})`).join(' or ')}: use the id` };
   const desk = DESK_BY_ID.get(q) ?? [...DESK_BY_ID.values()].find((d) => d.label.toLowerCase() === low);
   if (desk) return { ok: false, error: `${desk.label} isn't somewhere to go on this floor right now${ctx.floor === ROOF ? ' (you are up on the roof)' : ''}` };
-  return { ok: false, error: `No such target "${q}": see office.list() for desks, workers, boards, places and floors` };
+  return { ok: false, error: `No such target "${q}": see office.list() for desks, droids, boards, places and floors` };
 }
 
 function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
@@ -145,7 +145,7 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
 }
 
 /**
- * Where to stand for a target, and what to look at: behind a worker looking over its shoulder at
+ * Where to stand for a target, and what to look at: behind a droid looking over its shoulder at
  * the laptop, in front of a kiosk, or (anywhere else) on the interactable's spot, stepping out
  * from it when something stands there. `center` is the thing itself, when the scene knows it.
  */
@@ -224,7 +224,7 @@ export interface RawState {
   /** What E would use where you stand. */
   using: Interactable | null;
   modals: { label: string; doing?: string }[];
-  /** The worker whose terminal is open, if one is. */
+  /** The droid whose terminal is open, if one is. */
   terminal: string | null;
   workers: WorkerInfo[];
   carrying: number | null;
@@ -259,7 +259,7 @@ export interface Snapshot {
   using: { kind: InteractKind; id: string; label: string } | null;
   /** Open windows, bottom to top, by their aria-label. */
   modals: { label: string; doing?: string }[];
-  /** The worker whose terminal is open, if one is. */
+  /** The droid whose terminal is open, if one is. */
   terminal: { workerId: string; name: string } | null;
   workers: { id: string; name: string; kind: string; deskId: string; desk: string; status: string; waiting: boolean; task?: string }[];
   floors: { id: string; name: string; waiting: number; here: boolean }[];
@@ -360,7 +360,7 @@ export interface GoToOptions {
 }
 
 export interface OfficeAutomation {
-  /** Goes to a desk, a worker, a board, a place, a floor or the roof, and resolves once you're there. */
+  /** Goes to a desk, a droid, a board, a place, a floor or the roof, and resolves once you're there. */
   goTo(target: string, opts?: GoToOptions): Promise<Snapshot>;
   /** Presses a key (E by default) at what you went to, or else at what's nearest, as if you faced it. */
   interact(key?: AutomationKey): Promise<Snapshot>;

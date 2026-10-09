@@ -88,7 +88,7 @@ test('only agents someone runs in a terminal of their own are candidates: never 
     row(11, 10, '/usr/local/bin/droid'), // started by hand in a terminal: a guest
     row(12, 11, '/usr/local/bin/droid'), // that droid's own helper: not a second guest
     row(20, 1, 'droid-office-pty', '??'),
-    row(21, 20, '/usr/local/bin/droid', 'ttys009'), // an office worker, in the terminal host
+    row(21, 20, '/usr/local/bin/droid', 'ttys009'), // an office droid, in the terminal host
     row(22, 20, '/bin/zsh', 'ttys010'),
     row(23, 22, '/usr/local/bin/claude', 'ttys010'), // started in an office shell: the office's
     row(30, 1, '/usr/local/bin/droid', '??'), // a daemon, no terminal
@@ -129,7 +129,7 @@ test('a guest’s id stays the same for its process and differs from a later pro
   assert.equal(a, guestId(77381, 'Mon Oct 5 21:30:05 2026'));
   assert.notEqual(a, guestId(77381, 'Tue Oct 6 09:00:00 2026'));
   assert.notEqual(a, guestId(77382, 'Mon Oct 5 21:30:05 2026'));
-  assert.ok(a.length <= 32, 'fits the 32 characters the server takes for a worker id');
+  assert.ok(a.length <= 32, 'fits the 32 characters the server takes for a droid id');
 });
 
 test('a working directory belongs to the innermost floor whose checkout it is in; the home floor only to itself', () => {
@@ -152,7 +152,7 @@ test('a working directory belongs to the innermost floor whose checkout it is in
 
 const proc = (pid: number, cwd: string, extra: Partial<AgentProcess> = {}): AgentProcess => ({ id: `guest-${pid}-x`, pid, tty: `/dev/ttys00${pid % 10}`, provider: 'droid', cwd, startedAt: 1_000_000, ...extra });
 
-test('a process started by hand in a worker’s own worktree is that worker’s, not a second guest', () => {
+test('a process started by hand in a droid’s own worktree is that droid’s, not a second guest', () => {
   const procs = [proc(1, '/p'), proc(2, '/p/.droid-office/worktrees/pixel-1a2b'), proc(3, '/p/.droid-office/worktrees/pixel-1a2b/src'), proc(4, '/p/.droid-office/worktrees/byte-9f9f')];
   const { guests, outside } = attribute(procs, [
     { id: 'pixel', folder: '/p/.droid-office/worktrees/pixel-1a2b' },
@@ -226,7 +226,7 @@ test('sessions are tied to guests only when they can’t be anyone else’s', ()
     { id: 'g4', cwd: '/c', startedAt: 1_000, resume: 'resumed' },
   ];
   const got = assignSessions(guests, files, new Set(['office']));
-  // The one guest in /a gets the newest session there since it started, not the office worker's.
+  // The one guest in /a gets the newest session there since it started, not the office droid's.
   assert.equal(got.get('g1'), 'new');
   // Two guests in /b: no telling whose transcript is whose.
   assert.equal(got.has('g2'), false);
@@ -271,7 +271,7 @@ function guestFixture(t: { after(fn: () => void): void }) {
 
 const office = (taken: string[] = [], names: string[] = []) => ({ deskTaken: (id: string) => taken.includes(id), names: () => names, pool: { names: NAMES, colors: COLORS } });
 
-test('guests sit at free desks of their own, with names the office’s workers don’t have, and go home when their process does', async (t) => {
+test('guests sit at free desks of their own, with names the office’s droids don’t have, and go home when their process does', async (t) => {
   const f = guestFixture(t);
   const ev = recorder();
   const guests = new Guests(f.data, office([DESKS[0].id], [NAMES[0]]), ev, f.sessions);
@@ -285,8 +285,8 @@ test('guests sit at free desks of their own, with names the office’s workers d
   const [ga, gb] = list;
   assert.notEqual(ga.deskId, gb.deskId, 'two processes in one checkout get two desks');
   assert.notEqual(ga.id, gb.id);
-  assert.notEqual(ga.deskId, DESKS[0].id, 'never a desk an office worker sits at');
-  assert.ok(!list.some((g) => g.name === NAMES[0]), 'never the name of an office worker');
+  assert.notEqual(ga.deskId, DESKS[0].id, 'never a desk an office droid sits at');
+  assert.ok(!list.some((g) => g.name === NAMES[0]), 'never the name of an office droid');
   assert.notEqual(ga.name, gb.name);
   assert.equal(guests.deskTaken(ga.deskId), true);
   // Neither can be tied to a transcript: the office says only that they run.
@@ -358,7 +358,7 @@ test('a droid guest’s status, task and waiting flag come from its transcript',
   assert.equal(guests.get(g.id)?.open, false);
 });
 
-test('an office worker’s session is never a guest’s', async (t) => {
+test('an office droid’s session is never a guest’s', async (t) => {
   const f = guestFixture(t);
   const guests = new Guests(f.data, office(), recorder(), f.sessions);
   t.after(() => guests.stop());

@@ -122,7 +122,7 @@ test('on a detached HEAD there is no branch to fetch', (t) => {
   assert.equal(made.from, undefined);
 });
 
-test("the Changes window doesn't count PRs merged on origin as the worker's changes", async (t) => {
+test("the Changes window doesn't count PRs merged on origin as the droid's changes", async (t) => {
   const f = fixture(t);
   f.merge('fix.txt');
   const trees = new Worktrees(f.dir);

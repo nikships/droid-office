@@ -50,7 +50,7 @@ function computersState(raw = [ORB, MAC, SLEEPY], fetchedAt = 1): FactoryCompute
   return { items: raw.map((c) => computerOf(c)!), metrics: {}, providers: [], fetchedAt };
 }
 
-/** A floor's cloud workers in a temp folder, with the feature that drives them, against `f`. */
+/** A floor's cloud droids in a temp folder, with the feature that drives them, against `f`. */
 function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: string; agentArgs?: string[]; taken?: string[]; computers?: () => FactoryComputersState | undefined } = {}) {
   const dir = opts.dir ?? mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
   if (!opts.dir) t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -185,7 +185,7 @@ test('shared: what it is doing, from the newest messages', () => {
   assert.equal(answeredByAssistant([]), false);
 });
 
-test('hire: makes the session on the computer, seats the worker and sends its first prompt with its pictures', async (t) => {
+test('hire: makes the session on the computer, seats the droid and sends its first prompt with its pictures', async (t) => {
   const f = factory({
     'POST /sessions': () => json(201, { sessionId: 's1', status: 'idle', sessionSettings: { model: 'claude-opus-4' } }),
     'POST /sessions/s1/messages': () => json(200, { messageId: 'm1', status: 'running' }),
@@ -194,7 +194,7 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   const pic = r.cloud.drops.stage('shot.png', PNG)!;
   const w = await r.feature.hire(f.api, hireBody({ images: [pic, 'not-an-id'] }), 'Nik');
   assert.equal(w.kind, 'cloud');
-  assert.equal(w.name, 'Bea', 'the next free name: Ada is taken by a local worker');
+  assert.equal(w.name, 'Bea', 'the next free name: Ada is taken by a local droid');
   assert.equal(w.sessionId, 's1');
   assert.equal(w.deskId, DESK[0].id);
   assert.deepEqual(w.cloud, { computerId: 'orb-id', computerName: 'orb', provider: 'e2b', cwd: '/home/factory-user/proj', autonomy: 'medium' });
@@ -229,7 +229,7 @@ test('hire: a failed create hires nobody, gives the desk back and says what Fact
   await assert.rejects(r.feature.hire(f.api, hireBody({ images: [pic], prompt: '' }), 'Nik'), (err: Error) => err instanceof FactoryError && /not reachable/.test(err.message));
   assert.equal(r.cloud.list().length, 0);
   assert.ok(r.cloud.drops.stagedPicture(pic), 'the dialog keeps its pictures to try again');
-  // The desk is free again, and with no prompt the worker waits for one.
+  // The desk is free again, and with no prompt the droid waits for one.
   fail = false;
   const w = await r.feature.hire(f.api, hireBody({ prompt: '' }), 'Nik');
   assert.equal(w.status, 'idle');
@@ -433,7 +433,7 @@ test('poll: a deleted session or computer is a clear error at the desk, and a fa
   await assert.rejects(r.feature.poll(k.api), (err: Error) => err instanceof FactoryError && err.status === 401);
 });
 
-test('restart: a cloud worker is back at its desk and picks its session up again by id', async (t) => {
+test('restart: a cloud droid is back at its desk and picks its session up again by id', async (t) => {
   const f = factory({
     'POST /sessions': () => json(201, { sessionId: 's1' }),
     'POST /sessions/s1/messages': () => json(200, { status: 'idle' }),
@@ -459,7 +459,7 @@ test('restart: a cloud worker is back at its desk and picks its session up again
   assert.equal(again.cloud.get(w.id)!.status, 'done', 'the turn it was on when the office stopped ended meanwhile');
   assert.equal(again.cloud.get(w.id)!.activity, 'hi');
 
-  // A worker caught mid-hire comes back at rest, and a broken file is skipped.
+  // A droid caught mid-hire comes back at rest, and a broken file is skipped.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const raw = [
@@ -526,7 +526,7 @@ test('send home: interrupts it when it works, deletes the session only when aske
   const y = factory({ 'POST /sessions': () => json(201, { sessionId: 's7' }), 'DELETE /sessions/s7': () => (misses-- > 0 ? json(404, { detail: 'not yet' }) : new Response(null, { status: 204 })) });
   const r4 = rig(t, y);
   const young = await r4.feature.hire(y.api, hireBody({ prompt: '' }), 'Nik');
-  // The rig's clock starts at 1_000_000: the worker was made just now by it.
+  // The rig's clock starts at 1_000_000: the droid was made just now by it.
   r4.cloud.update(young.id, (i) => {
     i.createdAt = 1_000_000;
   });
@@ -548,7 +548,7 @@ test('send home: interrupts it when it works, deletes the session only when aske
   assert.match((await r3.feature.sendHome(w3.id, true)).error ?? '', /session/);
 });
 
-test('messages: a cloud worker takes prompts, opens and closes its window, and skips every terminal and worktree path', async (t) => {
+test('messages: a cloud droid takes prompts, opens and closes its window, and skips every terminal and worktree path', async (t) => {
   const f = factory({
     'POST /sessions': () => json(201, { sessionId: 's1' }),
     'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
@@ -577,7 +577,7 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   const ctx = { who: 'Nik', client: 'c1', warn: (x: string) => warned.push(x), takeIssue: (n: number) => issues.push(n) };
   const send = (msg: Record<string, unknown>) => mounted.message({ workerId: w.id, ...msg } as Extract<ClientMsg, { workerId: string }>, ctx);
 
-  assert.equal(mounted.message({ t: 'worker.attach', workerId: 'local-1' }, ctx), false, 'a local worker is not the cloud’s');
+  assert.equal(mounted.message({ t: 'worker.attach', workerId: 'local-1' }, ctx), false, 'a local droid is not the cloud’s');
   assert.equal(send({ t: 'worker.attach' }), true);
   assert.equal(cloud.get(w.id)!.open, true);
   send({ t: 'worker.detach' });
@@ -591,7 +591,7 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   assert.equal(warned.length, 8);
   assert.match(warned[0], /nobody really at this desk to shoot/);
   assert.match(warned[2], /open the pull request itself/);
-  assert.match(warned[3], /only works for a worker on this machine/);
+  assert.match(warned[3], /only works for a droid on this machine/);
   assert.equal(cloudRefusal({ ...w, cloud: undefined }, 'worker.pr').includes('a Factory computer'), true);
 
   send({ t: 'worker.prompt', prompt: 'look at issue 7', issue: 7 });
@@ -612,7 +612,7 @@ test('messages: a cloud worker takes prompts, opens and closes its window, and s
   assert.deepEqual(await route('/:id/interrupt').handle(req({ id: w.id }, {})), { ok: true });
   assert.deepEqual(await route('/:id/message').handle(req({ id: w.id }, { text: 'again' })), { ok: true });
   await assert.rejects(Promise.resolve(route('/:id/message').handle(req({ id: 'nobody' }, { text: 'x' }))), /gone home/);
-  await assert.rejects(Promise.resolve(route('/:id/interrupt').handle(req({ id: 'nobody' }, {}))), /No such cloud worker/);
+  await assert.rejects(Promise.resolve(route('/:id/interrupt').handle(req({ id: 'nobody' }, {}))), /No such cloud droid/);
   const hired = (await route('/hire').handle(req({}, hireBody({ prompt: '', deskId: DESK[5].id })))) as { worker: WorkerInfo };
   assert.equal(hired.worker.kind, 'cloud');
 

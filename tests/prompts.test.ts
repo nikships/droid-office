@@ -161,7 +161,7 @@ test('the board agents are briefed as they always were on both forges', () => {
       const b = brief(kind, forge);
       assert.doesNotMatch(b, /\{\{/, `${forge} ${kind}`);
       assert.match(b, new RegExp(`a task usually ends with a ${pull}\\. Use it`));
-      assert.match(b, new RegExp(`each task's id, status, title, worker and ${pull}\\)`));
+      assert.match(b, new RegExp(`each task's id, status, title, droid and ${pull}\\)`));
       assert.match(b, new RegExp(`linked to that ${site} issue, which is assigned`));
       assert.ok(b.endsWith('The request:'));
     }
@@ -205,7 +205,7 @@ test('a rewritten prompt is kept, used, and put back to the default', (t) => {
   assert.equal(promptText(book.state().custom, 'office.namer'), PROMPTS['office.namer'].text);
 });
 
-test('the default worker is checked before it is kept, and one the office can no longer start is forgotten', (t) => {
+test('the default droid is checked before it is kept, and one the office can no longer start is forgotten', (t) => {
   const dir = scratch(t);
   const book = new OfficePrompts(dir, () => {});
   assert.equal(book.agent(), undefined);
@@ -279,7 +279,7 @@ function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentCh
   return { queue, workers };
 }
 
-test('a task nobody picked a worker for runs on the office default, model and effort included; one that did keeps its own', (t) => {
+test('a task nobody picked a droid for runs on the office default, model and effort included; one that did keeps its own', (t) => {
   const { queue, workers } = queueFixture(t, { model: 'custom:droidproxy:gpt-6-sol', effort: 'low' });
   assert.equal(queue.add('Fix the dog', 'Queue agent'), undefined);
   assert.deepEqual([workers[0].model, workers[0].effort], ['custom:droidproxy:gpt-6-sol', 'low']);

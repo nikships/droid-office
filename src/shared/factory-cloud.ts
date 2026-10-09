@@ -1,11 +1,11 @@
-// Cloud workers: office workers whose Droid session runs on one of the account's Factory computers
+// Cloud droids: office droids whose Droid session runs on one of the account's Factory computers
 // instead of in a terminal on this machine (see src/server/factory/cloud.ts). The office drives the
 // session through Factory's Sessions API with its key: it has no PTY, worktree or hooks here.
 
 import type { WorkerAction, WorkerStatus } from './protocol.js';
 import { toolAction } from './actions.js';
 
-/** What a cloud worker's WorkerInfo carries about where its session runs. */
+/** What a cloud droid's WorkerInfo carries about where its session runs. */
 export interface CloudWorker {
   computerId: string;
   /** The computer's name when it was hired, like `orb`. */
@@ -20,7 +20,7 @@ export interface CloudWorker {
   error?: string;
 }
 
-/** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */
+/** The cloud slice of FactoryState: when the office last read its cloud droids' sessions, and why the last read failed. */
 export interface FactoryCloudState {
   fetchedAt: number;
   error?: string;
@@ -34,9 +34,9 @@ export type CloudAutonomy = 'off' | 'low' | 'medium' | 'high';
 const AUTONOMY: readonly CloudAutonomy[] = ['off', 'low', 'medium', 'high'];
 
 /**
- * The autonomy a cloud worker runs at: the office's own `--auto <level>` for its workers (from
+ * The autonomy a cloud droid runs at: the office's own `--auto <level>` for its droids (from
  * `--agent-args`), else high. Nobody can answer a permission prompt for a session on a Factory
- * computer from the office, so a cloud worker never asks.
+ * computer from the office, so a cloud droid never asks.
  */
 export function officeAutonomy(agentArgs: readonly string[]): CloudAutonomy {
   for (let i = 0; i < agentArgs.length; i++) {
@@ -91,11 +91,11 @@ export function sessionCwd(typed: string, c: Pick<CloudComputer, 'name' | 'provi
 /** A session's page in Factory's web app. */
 export const cloudSessionUrl = (sessionId: string) => `https://app.factory.ai/sessions/${encodeURIComponent(sessionId)}`;
 
-/** The badge a cloud worker wears on its card, its desk hint and the Workers panel: ☁ and its computer. */
+/** The badge a cloud droid wears on its card, its desk hint and the Droids panel: ☁ and its computer. */
 export const cloudBadge = (c: Pick<CloudWorker, 'computerName'>) => `☁ ${c.computerName}`;
 
 /**
- * What the office remembers of a cloud worker's turns between polls, to tell a turn that ended from
+ * What the office remembers of a cloud droid's turns between polls, to tell a turn that ended from
  * one that hasn't started yet: right after a message is sent, Factory can still say `idle` with the
  * old message count for a few seconds.
  */
@@ -119,7 +119,7 @@ export const CLOCK_SKEW_MS = 2000;
 export const SEND_SETTLE_MS = 90_000;
 
 /**
- * A cloud worker's status from its session's `{status, messageCount}`: pending or running is
+ * A cloud droid's status from its session's `{status, messageCount}`: pending or running is
  * working; idle after a turn (one the office started, or anyone did) is done; idle with nothing
  * sent is ready for a first prompt. `undefined` keeps the status it has (idle, with no turn seen).
  */
@@ -155,7 +155,7 @@ interface RawBlock {
   text?: unknown;
 }
 
-/** One line for a tool call, the way a local worker's card says it: "Execute: npm test". */
+/** One line for a tool call, the way a local droid's card says it: "Execute: npm test". */
 export function toolActivity(name: string, input: unknown): string {
   const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const detail = [i.command, i.file_path, i.path, i.pattern, i.url, i.query, i.description, i.summary].find((v) => typeof v === 'string' && v.trim());
@@ -164,7 +164,7 @@ export function toolActivity(name: string, input: unknown): string {
 }
 
 /**
- * What a cloud worker is doing, from its newest messages (newest first, as the API pages them): its
+ * What a cloud droid is doing, from its newest messages (newest first, as the API pages them): its
  * latest tool call, as an activity line and the action the character acts out. Undefined when the
  * newest assistant message has no tool call (it's writing its answer).
  */
@@ -182,7 +182,7 @@ export function latestTool(messages: readonly unknown[]): { activity: string; ac
   return undefined;
 }
 
-/** The text of the newest assistant message that has some, for a worker's card once it's done. */
+/** The text of the newest assistant message that has some, for a droid's card once it's done. */
 export function latestReply(messages: readonly unknown[]): string | undefined {
   for (const m of messages) {
     if (!m || typeof m !== 'object') continue;

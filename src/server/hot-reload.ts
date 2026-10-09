@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HotReloadState } from '../shared/hot-reload.js';
 
-/** Resolve the running office's install, never the project workers happen to be editing. */
+/** Resolve the running office's install, never the project droids happen to be editing. */
 export function sourceAppDir(url = import.meta.url): string | undefined {
   let dir = path.dirname(fileURLToPath(url));
   for (let i = 0; i < 6; i++, dir = path.dirname(dir)) {

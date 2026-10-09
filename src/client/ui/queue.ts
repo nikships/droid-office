@@ -38,9 +38,9 @@ export function openQueue(net: Net, actions: QueueActions) {
   const body = h('div.body.queue');
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
   const limitValue = h('b');
-  const minus = h('button.btn', { type: 'button', title: 'Fewer workers at once', 'aria-label': 'Fewer workers at once' }, '−');
-  const plus = h('button.btn', { type: 'button', title: 'More workers at once', 'aria-label': 'More workers at once' }, '+');
-  const limit = h('div.queue-limit', { title: 'How many workers the queue keeps busy at once. 0 pauses it.' }, 'Workers at once', minus, limitValue, plus);
+  const minus = h('button.btn', { type: 'button', title: 'Fewer droids at once', 'aria-label': 'Fewer droids at once' }, '−');
+  const plus = h('button.btn', { type: 'button', title: 'More droids at once', 'aria-label': 'More droids at once' }, '+');
+  const limit = h('div.queue-limit', { title: 'How many droids the queue keeps busy at once. 0 pauses it.' }, 'Droids at once', minus, limitValue, plus);
   minus.addEventListener('click', () => net.send({ t: 'queue.limit', maxWorkers: store.queue.maxWorkers - 1 }));
   plus.addEventListener('click', () => net.send({ t: 'queue.limit', maxWorkers: store.queue.maxWorkers + 1 }));
   const el = h(
@@ -48,10 +48,10 @@ export function openQueue(net: Net, actions: QueueActions) {
     { role: 'dialog', 'aria-label': 'Task queue', style: 'width:min(800px,100%)' },
     h('header', {}, h('h2', {}, 'Task queue'), limit, close),
     body,
-    h('footer', {}, h('span.grow', {}, 'The queue keeps going while you are away. Set “workers at once” to 0 to pause it.')),
+    h('footer', {}, h('span.grow', {}, 'The queue keeps going while you are away. Set “droids at once” to 0 to pause it.')),
   );
 
-  const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free worker… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: 2, placeholder: 'Describe a task for the next free droid… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
   const images = promptImages(ta);
   const models = agentPicker('queue-models', 'queue');
   const addBtn = h('button.btn.primary', { type: 'submit' }, 'Add to queue');
@@ -103,7 +103,7 @@ export function openQueue(net: Net, actions: QueueActions) {
     let pos: string | null = null;
     if (t.status === 'running') {
       meta.push(`⚙️ Droid${model}`);
-      meta.push(`${t.workerName ?? 'a worker'} · ${w ? (STATUS_LABEL[w.status] ?? w.status) : 'gone'}`);
+      meta.push(`${t.workerName ?? 'a droid'} · ${w ? (STATUS_LABEL[w.status] ?? w.status) : 'gone'}`);
       if (t.branch) meta.push(`🌿 ${t.branch}`);
       if (t.startedAt) meta.push(`started ${timeAgo(t.startedAt)}`);
       meta.push(`by ${t.addedBy}`);
@@ -114,7 +114,7 @@ export function openQueue(net: Net, actions: QueueActions) {
             'button.btn',
             {
               type: 'button',
-              title: 'Send the worker home; the task counts as stopped',
+              title: 'Send the droid home; the task counts as stopped',
               onclick: () => confirmDialog(`Stop ${w.name}?`, `This sends ${w.name} home and stops the task. You can requeue it afterwards.`, 'Stop', () => net.send({ t: 'worker.kill', workerId: w.id })),
             },
             'Stop',
@@ -145,7 +145,7 @@ export function openQueue(net: Net, actions: QueueActions) {
     return h('li', { class: t.status }, pos ? h('span.pos', {}, pos) : null, h('div.queue-main', {}, taskTitle(t), h('div.queue-meta', {}, ...glyphText(meta.join(' · ')))), h('div.queue-actions', {}, ...buttons));
   };
 
-  // The form stays put and only the list below it re-renders, so worker updates don't pull focus out of the textarea.
+  // The form stays put and only the list below it re-renders, so droid updates don't pull focus out of the textarea.
   const list = h('div');
   body.append(form, list);
 
@@ -168,10 +168,10 @@ export function openQueue(net: Net, actions: QueueActions) {
         h('b', {}, 'Add to queue'),
         ' on an issue. Whenever a desk is free and fewer than ',
         h('b', {}, q.maxWorkers === 0 ? '0' : String(q.maxWorkers)),
-        ` of its tasks are running, the next task gets a fresh worker in its own git worktree (workers you hire yourself don't count). Issues are assigned on ${words().site} when they start, and the ${words().pull} is linked when it shows up.`,
+        ` of its tasks are running, the next task gets a fresh droid in its own git worktree (droids you hire yourself don't count). Issues are assigned on ${words().site} when they start, and the ${words().pull} is linked when it shows up.`,
       ),
       queued.length && officeFull(m)
-        ? h('p.note', {}, `⏸ The office is at its limit of ${m.limit} worker${m.limit === 1 ? '' : 's'}, so the next task waits until one goes home. A queue worker that's finished goes home by itself to make room.`)
+        ? h('p.note', {}, `⏸ The office is at its limit of ${m.limit} droid${m.limit === 1 ? '' : 's'}, so the next task waits until one goes home. A queue droid that's finished goes home by itself to make room.`)
         : null,
       section('01', 'Working on it', running),
       section('02', 'Up next', queued),

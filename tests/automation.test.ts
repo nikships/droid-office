@@ -53,7 +53,7 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   const ids = list.map((t) => t.id);
   assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'meeting-1', 'issues', 'pulls', 'coffee', 'meeting', 'f1', 'f2', ROOF]);
   assert.deepEqual(list[0], { id: 'desk-1', kind: 'desk', label: 'Desk 1', deskId: 'desk-1', worker: { id: 'w1', name: 'Ada', status: 'idle' } });
-  assert.equal(list[1].worker, undefined, 'a free desk is listed without a worker');
+  assert.equal(list[1].worker, undefined, 'a free desk is listed without a droid');
   assert.equal(list.find((t) => t.id === 'station-issues')?.kind, 'kiosk');
   assert.equal(list.find((t) => t.id === 'issues')?.kind, 'board');
   assert.equal(list.find((t) => t.id === 'coffee')?.kind, 'place');
@@ -74,7 +74,7 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   assert.ok(!empty.includes(ROOF));
 });
 
-test('goTo targets resolve by id, worker, label, agent name and floor, and say why when they do not', () => {
+test('goTo targets resolve by id, droid, label, agent name and floor, and say why when they do not', () => {
   const ctx = context();
   const id = (q: string) => {
     const r = resolveTarget(q, ctx);
@@ -83,9 +83,9 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   };
   assert.equal(id('desk-2').id, 'desk-2');
   assert.equal(id('desk-2').spot?.deskId, 'desk-2', 'the desk carries the spot E uses there');
-  assert.equal(id('w1').id, 'desk-1', 'a worker id goes to its desk');
-  assert.equal(id('ada').id, 'desk-1', 'a worker name, any case');
-  assert.equal(id('Grace').id, 'meeting-1', 'a worker at the meeting table');
+  assert.equal(id('w1').id, 'desk-1', 'a droid id goes to its desk');
+  assert.equal(id('ada').id, 'desk-1', 'a droid name, any case');
+  assert.equal(id('Grace').id, 'meeting-1', 'a droid at the meeting table');
   assert.equal(id('desk 2').id, 'desk-2', 'a desk label');
   assert.equal(id('Issues agent').id, 'station-issues', "the board agent's name goes to its kiosk");
   assert.equal(id('issues').kind, 'board', 'the board, not its kiosk');
@@ -110,7 +110,7 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.match(fail('Ada', twins), /could be Desk 1 \(desk-1\) or Desk 2 \(desk-2\): use the id/);
 });
 
-test('standing at a desk puts you behind the worker, looking at its laptop', () => {
+test('standing at a desk puts you behind the droid, looking at its laptop', () => {
   const t = resolveTarget('desk-1', context());
   assert.ok(t.ok);
   const stand = standFor(t.target, () => false)!;
@@ -124,7 +124,7 @@ test('standing at a desk puts you behind the worker, looking at its laptop', () 
   const len = Math.hypot(desk.x - stand.at.x, desk.z - stand.at.z);
   assert.ok(Math.abs(look.x - (desk.x - stand.at.x) / len) < 1e-9);
   assert.ok(Math.abs(look.z - (desk.z - stand.at.z) / len) < 1e-9);
-  // desk-1 is in the north row of its pod (rotY PI): its worker sits on the −z side, so you stand north of it.
+  // desk-1 is in the north row of its pod (rotY PI): its droid sits on the −z side, so you stand north of it.
   assert.ok(stand.at.z < desk.z);
   assert.ok(pitchToward({ ...stand.at, y: 1.4 }, stand.face) < 0, 'looking down at the laptop');
 });

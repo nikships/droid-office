@@ -1,4 +1,4 @@
-// The way over to a spot you picked (a waiting worker, a palette hit): round the furniture
+// The way over to a spot you picked (a waiting droid, a palette hit): round the furniture
 // downstairs (see shared/nav.ts), and up the stairs to the boss's office or out through the
 // balcony doors when that's where it is.
 

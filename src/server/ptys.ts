@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import * as pty from '@lydell/node-pty';
 
 /**
- * Workers' terminals live in a small host process of their own (ptyhost.ts), not in the office.
+ * Droids' terminals live in a small host process of their own (ptyhost.ts), not in the office.
  * When the office restarts (a dev-server reload, a self-upgrade), Droid keeps working in the host,
  * and the new office picks every terminal back up where it was. Without a host, terminals run
  * in-process as before and die with the office.
@@ -40,7 +40,7 @@ export interface PtyExit {
   lost?: boolean;
 }
 
-/** A worker's terminal process, wherever it runs. */
+/** A droid's terminal process, wherever it runs. */
 export interface Pty {
   /** Its session in the host, which outlives the office. None: it dies with the office. */
   readonly id?: string;
@@ -107,7 +107,7 @@ class RemotePty implements Pty {
   pid = 0;
   private dataCbs: ((data: string) => void)[] = [];
   private exitCbs: ((e: PtyExit) => void)[] = [];
-  /** Output that came in before anyone listened (between an attach and the worker wiring up). */
+  /** Output that came in before anyone listened (between an attach and the droid wiring up). */
   private held: string[] = [];
   private exited?: PtyExit;
 
@@ -153,7 +153,7 @@ export class PtyHost {
   private sock: net.Socket | null = null;
   private ptys = new Map<string, RemotePty>();
   private attaching = new Map<string, (msg: FromHost | undefined) => void>();
-  /** Sessions the host already had when the office connected, not yet claimed by a worker. */
+  /** Sessions the host already had when the office connected, not yet claimed by a droid. */
   private unclaimed = new Set<string>();
   /** Leaving on purpose: the connection closing is not the host dying. */
   private leaving = false;
@@ -184,7 +184,7 @@ export class PtyHost {
     try {
       let found = await this.hello();
       if (found && found.version !== PTY_PROTOCOL) {
-        // A host from an older build: its terminals go (workers resume their conversations).
+        // A host from an older build: its terminals go (droids resume their conversations).
         await new Promise<void>((resolve) => {
           found!.sock.once('close', () => resolve());
           found!.sock.end(frame({ t: 'stop' }));
@@ -241,7 +241,7 @@ export class PtyHost {
     });
     if (msg?.t !== 'attached') {
       this.ptys.delete(id);
-      // Its worker resumes the conversation afresh; the old process mustn't carry on beside it.
+      // Its droid resumes the conversation afresh; the old process mustn't carry on beside it.
       this.send({ t: 'kill', id });
       return undefined;
     }
@@ -249,7 +249,7 @@ export class PtyHost {
     return { pty: p, cols: msg.cols, rows: msg.rows, title: msg.title, snapshot: msg.snapshot };
   }
 
-  /** Ends the host's terminals that no worker claimed (their worker was sent home meanwhile). */
+  /** Ends the host's terminals that no droid claimed (their droid was sent home meanwhile). */
   killUnclaimed() {
     for (const id of this.unclaimed) this.send({ t: 'kill', id });
     this.unclaimed.clear();

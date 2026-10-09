@@ -195,7 +195,7 @@ noOutline(office.group);
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
-  queue: { icon: '📋', offer: 'Ask me to queue work', does: 'I turn it into tasks for fresh workers', example: 'Queue every open bug issue, most important first' },
+  queue: { icon: '📋', offer: 'Ask me to queue work', does: 'I turn it into tasks for fresh droids', example: 'Queue every open bug issue, most important first' },
   lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
 };
 /** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
@@ -235,7 +235,7 @@ mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['is
 const pullsTex = new BoardTexture('pulls');
 const renderPullsBoard = () => pullsTex.render(store.pulls, store.workers);
 mountBoard(office.boardMeshes.pulls, pullsTex.texture, renderPullsBoard, ['pulls']);
-// PR notes name the desk they came from. Redraw when that changes, not on every worker update.
+// PR notes name the desk they came from. Redraw when that changes, not on every droid update.
 let deskLinks = '';
 store.on('workers', () => {
   const k = JSON.stringify([...store.workers.values()].filter((w) => w.worktree).map((w) => [w.worktree!.branch, w.pr?.number, w.name, w.color, w.deskId]));
@@ -302,7 +302,7 @@ scene.add(confetti.mesh);
 
 // The lounge TV: the Factory sessions dashboard while the office is connected to Factory, else its
 // standby screen (world/factory-tv.ts). E there opens 🛰️ Sessions. The same slice puts each
-// worker's credits in the Workers panel, its desk hint and its terminal's header.
+// droid's credits in the Droids panel, its desk hint and its terminal's header.
 const tvTex = new FactoryTvTexture();
 const renderTv = (force = false) => tvTex.render(store.factory, Date.now(), force);
 const tvMat = office.tvScreen.material as THREE.MeshBasicMaterial;
@@ -543,18 +543,18 @@ interface WorkerView {
   acked: boolean;
 }
 const workerViews = new Map<string, WorkerView>();
-/** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
+/** Droids a `worker.remove` is taking out of the store right now. They walk out of the building; a droid that's gone because you changed floors just vanishes. */
 const sentHome = new Set<string>();
-// Workers sent home, packing up and walking out with a box of their things.
+// Droids sent home, packing up and walking out with a box of their things.
 const departures = new Departures(
   scene,
   (x, z, y) => groundAt(office.colliders, x, z, y),
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
-// Workers called to a meeting, walking in from the elevator to the meeting table.
+// Droids called to a meeting, walking in from the elevator to the meeting table.
 const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
-// Workers shot with the .44 Magnum: shared downed state, then revival or a medic pickup.
+// Droids shot with the .44 Magnum: shared downed state, then revival or a medic pickup.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
   spawnMedic: (name) => {
     const m = new Person(name, '#f2f4f6', randomLook());
@@ -568,7 +568,7 @@ const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders,
 let gunOut = false;
 /** The gun's draw, holster and tricks, played on your hands and your character alike. */
 const gunMotion = new GunMotion();
-/** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
+/** Dust where missed shots cracked into the walls and floor, and the spray where droids were hit. */
 const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
 /** `7`: the .44 Magnum out of its holster, or back in. Mash it and each press cancels the last, like a yy. */
@@ -651,7 +651,7 @@ function resolveGunShot() {
   if (upTop) return;
   const byRoot = new Map<THREE.Object3D, string>();
   for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
-  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
+  // Droids sit inside the office; ones still walking in are out in the scene. Players are never targets.
   const result = gunHit(raycaster, office.group, byRoot);
   const direction = raycaster.ray.direction.clone();
   landShot(result, direction);
@@ -659,7 +659,7 @@ function resolveGunShot() {
 
 /**
  * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
- * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
+ * with dust. A droid sprays blood back out of the wound with a wet smack and is shot: the server
  * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
  * session still running. Shooting it again while it's down confirms the kill. No menu opens anywhere.
  */
@@ -675,7 +675,7 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
     sound.impact(hit.point);
     return;
   }
-  // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
+  // A guest isn't the office's to shoot, nor is a cloud droid on its Factory computer: the round goes into its chair like a miss.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
     const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
@@ -715,7 +715,7 @@ function reviveNearby(): boolean {
   return true;
 }
 
-/** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
+/** Set while a floor's droids arrive with it (a welcome, an elevator ride): they're in their seats already. */
 let seatedAlready = false;
 let firstWelcome = true;
 /** The server version this page was loaded with. */
@@ -802,7 +802,7 @@ net.onMessage((msg) => {
     case 'toast': {
       const el = toast(msg.text, msg.level);
       const id = msg.workerId;
-      // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
+      // About a droid on this floor (a subagent hired, a report back): a click opens its terminal.
       if (id && store.workers.has(id)) {
         el.classList.add('link');
         el.title = 'Open its terminal';
@@ -869,7 +869,7 @@ function renderProject() {
 store.on('floors', renderProject);
 store.on('project', renderProject);
 
-/** The tab title counts the workers waiting on someone, on every floor, so you can see them from another tab. */
+/** The tab title counts the droids waiting on someone, on every floor, so you can see them from another tab. */
 function renderTitle() {
   const name = store.project?.name;
   const elsewhere = store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0);
@@ -1109,7 +1109,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   }, 450);
 }
 
-/** Workers waiting on someone, per floor, the last time the elevator said so. */
+/** Droids waiting on someone, per floor, the last time the elevator said so. */
 const waitingOn = new Map<string, number>();
 /** Someone's waiting on another floor: say so, since you can't see or hear it from here. */
 function noticeWaiting() {
@@ -1120,14 +1120,14 @@ function noticeWaiting() {
     if (f.id === store.floor) continue;
     elsewhere += f.waiting;
     if (before !== undefined && f.waiting > before) {
-      toast(`🙋 A worker on the ${f.name} floor is waiting on someone — take the elevator up`, 'warn');
+      toast(`🙋 A droid on the ${f.name} floor is waiting on someone — take the elevator up`, 'warn');
       sound.ding('needs_input');
     }
   }
   const badge = $('floors-waiting');
   badge.textContent = elsewhere ? String(elsewhere) : '';
   badge.classList.toggle('hidden', !elsewhere);
-  $('project').title = elsewhere ? `${elsewhere} worker${elsewhere === 1 ? '' : 's'} on other floors waiting on someone — click to go there` : 'Floors: go to another project';
+  $('project').title = elsewhere ? `${elsewhere} droid${elsewhere === 1 ? '' : 's'} on other floors waiting on someone — click to go there` : 'Floors: go to another project';
 }
 
 // ---- Walking over to a spot -----------------------------------------------------------------------
@@ -1188,8 +1188,8 @@ function errandEnd(why: WalkEnd) {
   e.end?.(why);
 }
 
-// ---- Workers ------------------------------------------------------------------------------------
-/** How close (meters) you stop a worker jumping, and how far you go before it starts again. */
+// ---- Droids ------------------------------------------------------------------------------------
+/** How close (meters) you stop a droid jumping, and how far you go before it starts again. */
 const HOLD_NEAR = 4;
 const HOLD_LEAVE = 5;
 
@@ -1220,7 +1220,7 @@ function syncWorkers() {
       if (waitingOnSomeone(w) && v.status !== '' && w.status !== v.status) {
         sound.ding(w.status);
         notifier.alert(w);
-        // Playing at the arcade: a worker waiting on input stops the game.
+        // Playing at the arcade: a droid waiting on input stops the game.
         if (w.status === 'needs_input') cabinet.needsYou(w);
       }
       // Finished what it was on: a little spin and a puff of confetti.
@@ -1238,7 +1238,7 @@ function syncWorkers() {
     v.model.setLost(!!w.lost);
     const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
-    // A cloud worker's card says where it runs even before it has a task.
+    // A cloud droid's card says where it runs even before it has a task.
     const task = w.task ?? (w.cloud ? { name: 'Ready', summary: w.cloud.error ?? 'Waiting for a prompt' } : undefined);
     v.model.setTask(meetingCard(w) ?? (task && w.kind !== 'shell' ? { ...task, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task));
     // Keys clack while it types, not while it reads, watches its tests or browses.
@@ -1256,7 +1256,7 @@ function syncWorkers() {
     if (store.workers.has(id)) continue;
     arrivals.forget(v.model);
     const desk = office.desks.get(v.deskId);
-    // A shot worker: the medics take the body instead of the send-home walk-out.
+    // A shot droid: the medics take the body instead of the send-home walk-out.
     if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
@@ -1306,7 +1306,7 @@ function syncTeamLines() {
 }
 
 /**
- * The card over a worker at the meeting table: its role, the round, and whether it has the floor
+ * The card over a droid at the meeting table: its role, the round, and whether it has the floor
  * (working on its part) or is listening while the others work on theirs.
  */
 function meetingCard(w: WorkerInfo): WorkerTask | undefined {
@@ -1324,7 +1324,7 @@ function meetingCard(w: WorkerInfo): WorkerTask | undefined {
 
 /**
  * A seat or kiosk shows it's free (its '+', or the board agent waiting there) only while nobody's at
- * it, and once every desk is taken, bean bags come out for the workers who don't fit.
+ * it, and once every desk is taken, bean bags come out for the droids who don't fit.
  */
 function arrangeSeats() {
   // Someone sent home still counts until they get up, so a bean bag stays out under them.
@@ -1336,17 +1336,17 @@ function arrangeSeats() {
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
 store.on('workers', syncWorkers);
-// A worker at the meeting table shows its role and round over its head (see meetingCard).
+// A droid at the meeting table shows its role and round over its head (see meetingCard).
 store.on('meeting', syncWorkers);
 
-/** A worker's pull request for its bubble, named the way this floor's forge names it ("🎉 MR !12 merged"). */
+/** A droid's pull request for its bubble, named the way this floor's forge names it ("🎉 MR !12 merged"). */
 function prBadge(w: WorkerInfo): PrBadge | undefined {
   const pr = workerPr(w, store.pulls.items, store.queue.tasks);
   if (!pr) return undefined;
   const { pr: kind, ref } = words();
   return { state: pr.state, label: `${pr.state === 'open' ? '🔀' : '🎉'} ${kind} ${ref(pr.number)} ${pr.state}` };
 }
-// A worker's bubble shows whether it has a pull request open (green) or merged (purple: send it home).
+// A droid's bubble shows whether it has a pull request open (green) or merged (purple: send it home).
 const paintPrs = () => {
   for (const [id, v] of workerViews) {
     const w = store.workers.get(id);
@@ -1374,11 +1374,11 @@ function freeDesk(): string | null {
 
 let askedToNotify = false;
 
-/** The office is at its worker limit: says so, and says yes (the office would refuse the hire anyway). */
+/** The office is at its droid limit: says so, and says yes (the office would refuse the hire anyway). */
 function officeIsFull(): boolean {
   const m = store.machine;
   if (!officeFull(m)) return false;
-  toast(`🚫 The office is at its limit of ${m.limit} worker${m.limit === 1 ? '' : 's'} — send one home before hiring another`, 'warn');
+  toast(`🚫 The office is at its limit of ${m.limit} droid${m.limit === 1 ? '' : 's'} — send one home before hiring another`, 'warn');
   return true;
 }
 
@@ -1391,7 +1391,7 @@ function hire(deskId: string, prompt?: string, worktree = false, model?: string,
   }
 }
 
-/** The building's other projects a new worker can work in too, each in a worktree of its own (see WorkerInfo.repos). */
+/** The building's other projects a new droid can work in too, each in a worktree of its own (see WorkerInfo.repos). */
 function repoChoices(): { id: string; name: string }[] {
   return store.floors.filter((f) => f.id !== store.floor && f.branch).map((f) => ({ id: f.id, name: f.name }));
 }
@@ -1408,7 +1408,7 @@ function promptAtDesk(deskId: string) {
     if (officeIsFull()) return;
     openPrompt({
       title: `✨ New task at ${desk.label}`,
-      subtitle: 'A fresh worker will sit down and start on this right away. Pick its model below.',
+      subtitle: 'A fresh droid will sit down and start on this right away. Pick its model below.',
       warning: pressureNote(store.machine),
       submitLabel: 'Hire & start',
       modelOption: true,
@@ -1447,7 +1447,7 @@ function hireAtDesk(deskId: string) {
   const desk = DESK_BY_ID.get(deskId)!;
   if (officeIsFull()) return;
   openPrompt({
-    title: `✨ Hire a worker at ${desk.label}`,
+    title: `✨ Hire a droid at ${desk.label}`,
     subtitle: 'Pick its model. You can start with an empty prompt and send work later.',
     warning: pressureNote(store.machine),
     placeholder: 'Optional first task…',
@@ -1482,7 +1482,7 @@ function killWorker(id: string) {
     return;
   }
   if (w.worktree) {
-    // A worker with its own worktree: choose what becomes of the worktree and its branch.
+    // A droid with its own worktree: choose what becomes of the worktree and its branch.
     sendHomeDialog({
       workerId: id,
       name: w.name,
@@ -1536,14 +1536,14 @@ function askStation(deskId: string) {
 }
 
 /**
- * Makes a droid guest one of the office's workers (see 'guest.bringIn'): once it has sat back down
+ * Makes a droid guest one of the office's droids (see 'guest.bringIn'): once it has sat back down
  * as one, its terminal opens, unless another window took the screen meanwhile.
  */
 function bringInGuest(w: WorkerInfo) {
   const g = w.guest;
   if (!g) return;
   if (g.cantBringIn) return toast(`${w.name} can't be brought in: ${g.cantBringIn}`, 'warn');
-  const body = `Its droid on ${g.tty} quits, and that terminal goes back to the shell. ${w.name} then carries on the same session at this desk, as one of the office's workers: you type to it here.`;
+  const body = `Its droid on ${g.tty} quits, and that terminal goes back to the shell. ${w.name} then carries on the same session at this desk, as one of the office's droids: you type to it here.`;
   confirmDialog(`Bring ${w.name} into the office?`, body, 'Bring it in', () => {
     net.send({ t: 'guest.bringIn', workerId: w.id });
     const { deskId } = w;
@@ -1565,7 +1565,7 @@ function resumeWorker(w: WorkerInfo) {
 }
 
 /**
- * Anything done with a worker whose worktree was deleted outside droid-office (see WorkerInfo.lost):
+ * Anything done with a droid whose worktree was deleted outside droid-office (see WorkerInfo.lost):
  * it can't work there, so this says so and offers to put the folder back, everyone's at once when
  * more are lost, or to send it home.
  */
@@ -1587,12 +1587,12 @@ function fixLostWorktree(w: WorkerInfo) {
   });
 }
 
-/** Whether a worker's branch can become a PR: it has its own worktree, still there, and isn't mid-turn. */
+/** Whether a droid's branch can become a PR: it has its own worktree, still there, and isn't mid-turn. */
 function prReady(w: WorkerInfo) {
   return !!w.worktree && !w.lost && !isBusy(w.status);
 }
 
-/** O at a desk: see the worker's pull request, or push its branch and open one. */
+/** O at a desk: see the droid's pull request, or push its branch and open one. */
 function pullRequestFor(w: WorkerInfo) {
   if (w.cloud) return toast(cloudKeyNote(w), 'warn');
   if (w.repos?.length) return pullRequestsFor(w);
@@ -1602,7 +1602,7 @@ function pullRequestFor(w: WorkerInfo) {
     else window.open(w.pr.url, '_blank', 'noopener');
     return;
   }
-  if (!w.worktree) return toast(`${w.name} works in the main checkout — only workers with their own worktree can open a PR`, 'warn');
+  if (!w.worktree) return toast(`${w.name} works in the main checkout — only droids with their own worktree can open a PR`, 'warn');
   if (w.lost) return fixLostWorktree(w);
   if (w.prOpening) return;
   if (!prReady(w)) return toast(`${w.name} is still ${STATUS_LABEL[w.status]} — wait until it's done`, 'warn');
@@ -1611,7 +1611,7 @@ function pullRequestFor(w: WorkerInfo) {
 }
 
 /**
- * O at the desk of a worker across repositories: with no pull request yet, the office opens one in
+ * O at the desk of a droid across repositories: with no pull request yet, the office opens one in
  * each repository it committed to (and lists them all in each one). Once it has one, O shows each
  * repository's, with a button for the ones still missing.
  */
@@ -1646,7 +1646,7 @@ function goToDesk(deskId: string) {
   toast(w ? `You're at ${desk.label}, ${w.name}'s desk` : `You're at ${desk.label}`);
 }
 
-/** Behind the worker, looking over their shoulder at the laptop (or in front of a board agent's kiosk). */
+/** Behind the droid, looking over their shoulder at the laptop (or in front of a board agent's kiosk). */
 function standAt(desk: DeskDef) {
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
@@ -1660,13 +1660,13 @@ function standAt(desk: DeskDef) {
   player.lookPitch = -0.2;
 }
 
-// ---- Who's waiting on you: N, the count in the Workers panel, and the compass --------------------------
+// ---- Who's waiting on you: N, the count in the Droids panel, and the compass --------------------------
 const nextUp = new NextUp();
 const compass = new Compass($('compass'));
 /** What the last press of N said, which the next press replaces. */
 let nextToast: HTMLElement | null = null;
 
-/** N: to the worker that has waited longest on someone, and on each press after, the next. */
+/** N: to the droid that has waited longest on someone, and on each press after, the next. */
 function goToNextWaiting() {
   if (trip) return;
   const w = nextUp.next(store.workers.values(), waitingBeside());
@@ -1684,7 +1684,7 @@ function goToNextWaiting() {
   nextToast = toast(`${w.status === 'needs_input' ? `🙋 ${w.name} needs input` : `✅ ${w.name} is done`}${of}. E opens its terminal`);
 }
 
-/** The waiting worker you're standing at, if any: N skips it while anyone else is waiting. */
+/** The waiting droid you're standing at, if any: N skips it while anyone else is waiting. */
 function waitingBeside(): string | undefined {
   let best: string | undefined;
   let bestD = 2.5;
@@ -1714,7 +1714,7 @@ $('waiting').addEventListener('click', () => goToNextWaiting());
 
 const bearings: Bearing[] = [];
 const heads: THREE.Vector3[] = [];
-/** Arrows to the waiting workers you can't see from where you're looking. */
+/** Arrows to the waiting droids you can't see from where you're looking. */
 function pointToWaiting(now: number) {
   bearings.length = 0;
   if (!trip && !modalOpen()) {
@@ -1729,7 +1729,7 @@ function pointToWaiting(now: number) {
   compass.update(camera, bearings, now);
 }
 
-/** Opening a sleeping worker's terminal wakes it, so there's nothing to press first. */
+/** Opening a sleeping droid's terminal wakes it, so there's nothing to press first. */
 function openWorkerTerminal(id: string, find?: TerminalFind) {
   const w = store.workers.get(id);
   if (!w) return;
@@ -1750,7 +1750,7 @@ function showSearch() {
   openSearch(openWorkerTerminal);
 }
 
-/** What the worker changed: changed files, diff, commit / discard / open a PR; `repo` for another floor's repository it works in. */
+/** What the droid changed: changed files, diff, commit / discard / open a PR; `repo` for another floor's repository it works in. */
 function openWorkerChanges(id: string, repo?: string) {
   const w = store.workers.get(id);
   if (!w) return;
@@ -1772,7 +1772,7 @@ function spotOf(kind: InteractKind): Interactable | undefined {
   return office.interactables.find((it) => it.kind === kind && !it.off);
 }
 
-/** Where you stand at a desk: behind the worker, or in front of a kiosk. Meeting chairs are the chair itself. */
+/** Where you stand at a desk: behind the droid, or in front of a kiosk. Meeting chairs are the chair itself. */
 function deskSpot(desk: DeskDef): { x: number; z: number } | undefined {
   if (desk.room) return office.interactables.find((it) => it.deskId === desk.id);
   return deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
@@ -1809,7 +1809,7 @@ function paletteEntries(): PaletteEntry[] {
     const open = () => openWorkerTerminal(w.id);
     out.push({
       icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
-      kind: 'Worker',
+      kind: 'Droid',
       title: w.name,
       detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office', w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
@@ -1824,13 +1824,13 @@ function paletteEntries(): PaletteEntry[] {
   out.push({
     icon: '✨',
     kind: 'Action',
-    title: 'Hire a worker',
+    title: 'Hire a droid',
     detail: free ? `At ${free.label}, the free desk nearest you` : 'Every desk is taken',
-    keywords: ['new worker', 'spawn an agent'],
+    keywords: ['new droid', 'spawn an agent'],
     open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
     walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
   });
-  out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a worker', keywords: ['backlog', 'tasks'], open: showQueue }));
+  out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a droid', keywords: ['backlog', 'tasks'], open: showQueue }));
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
@@ -1855,7 +1855,7 @@ function paletteEntries(): PaletteEntry[] {
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
-  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
+  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the droids are running', open: () => openServices() }));
   if (store.factory.connection.connected) {
     out.push(
       atSpot('ci', 'the CI automations board', {
@@ -1994,12 +1994,12 @@ function turnPage() {
   hands.turnPage();
 }
 
-/** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
+/** A prompt from the boards goes to a new droid at a free desk, or to one already at a desk. */
 function sendToWorker(title: string, text: { context?: string; initial?: string }) {
   const desk = freeDesk();
   const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !w.guest && !isAsleep(w.status));
   if (!desk && !awake.length) {
-    toast('Every desk and bean bag is taken — send a worker home first', 'warn');
+    toast('Every desk and bean bag is taken — send a droid home first', 'warn');
     return;
   }
   openAsk({
@@ -2046,7 +2046,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (useSpot(spot, key)) return;
   if (target.kind === 'desk' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
-    // Nobody is hired at the meeting table: a meeting seats its own workers there.
+    // Nobody is hired at the meeting table: a meeting seats its own droids there.
     if (!w && DESK_BY_ID.get(target.deskId)?.room) return key === 'E' ? showMeeting() : undefined;
     if (key === 'B' && !w) return openShell(target.deskId);
     // A guest runs outside the office: there's only what the office knows of it to look at, or bringing it in.
@@ -2236,7 +2236,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
+  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a droid or the 📋 queue and press E`);
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -2248,8 +2248,8 @@ function putBack() {
 }
 
 /**
- * E with a card in your hands: an empty desk hires a worker for the issue (with the prompt 🤖 Hand
- * to a worker uses), an agent at a desk gets it as its next prompt, the queue board queues it, and
+ * E with a card in your hands: an empty desk hires a droid for the issue (with the prompt 🤖 Hand
+ * to a droid uses), an agent at a desk gets it as its next prompt, the queue board queues it, and
  * the issues board takes it back (or swaps it for the `note` you point at there). False when it's none
  * of those, so E does what it always does there.
  */
@@ -2301,7 +2301,7 @@ function onQueue(issue: number): boolean {
   return !!t && t.status !== 'done';
 }
 
-/** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
+/** Why the droid at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
   if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
@@ -2382,13 +2382,13 @@ function hitGong() {
   net.send({ t: 'gong' });
 }
 
-/** Where confetti comes from over a desk: above the worker's head. */
+/** Where confetti comes from over a desk: above the droid's head. */
 function burstOver(deskId: string, n: number) {
   const d = DESK_BY_ID.get(deskId);
   if (d) confetti.burst(d.x, 2.3, d.z, n);
 }
 
-/** Where a worker at `desk` climbs up to dance, in the frame of whatever it sits or stands in. */
+/** Where a droid at `desk` climbs up to dance, in the frame of whatever it sits or stands in. */
 function stageOf(desk: DeskView, model: Worker): Stage {
   const seat = model.root.parent!;
   seat.updateWorldMatrix(true, false);
@@ -2401,7 +2401,7 @@ function stageOf(desk: DeskView, model: Worker): Stage {
   return { pos, yaw: Math.atan2(ahead.x, ahead.z) };
 }
 
-/** A pull request merged: every worker awake on the floor gets up on its desk and dances. */
+/** A pull request merged: every droid awake on the floor gets up on its desk and dances. */
 function danceParty() {
   for (const [id, v] of workerViews) {
     const desk = office.desks.get(v.deskId);
@@ -2426,7 +2426,7 @@ function gongRang(why: GongWhy, pr?: number) {
   sound.gong(why);
   const top = office.gong.top;
   if (why === 'merged') {
-    // Confetti rains down all over the floor, and pops over the desk the PR came from while its worker's still there.
+    // Confetti rains down all over the floor, and pops over the desk the PR came from while its droid's still there.
     confetti.rain(FLOOR, floorArea(FLOOR) * CONFETTI_DENSITY, 3, ceilingOver);
     confetti.rain(LOFT, floorArea(LOFT) * CONFETTI_DENSITY, 3, () => LOFT.y + LOFT.height - 0.1);
     const it = store.pulls.items.find((p) => p.number === pr);
@@ -2656,7 +2656,7 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   }
   if (it?.kind === 'desk' && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
-    if (!w) return { k: '', parts: parts(key('E', 'Hire a worker for it')) };
+    if (!w) return { k: '', parts: parts(key('E', 'Hire a droid for it')) };
     const why = cantTakeCard(w);
     return { k: w.id + w.status + why, parts: parts(why ? aside(why) : key('E', `Hand it to ${w.name}`)) };
   }
@@ -2665,7 +2665,7 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
     const rest = hintFor(it);
     return { k: rest.k, parts: parts(...rest.parts) };
   }
-  return { k: '', parts: parts(aside('take it to an empty desk, a worker or the 📋 queue')) };
+  return { k: '', parts: parts(aside('take it to an empty desk, a droid or the 📋 queue')) };
 }
 
 function casualtyHint(w: WorkerInfo, near: boolean): Hint {
@@ -2692,8 +2692,8 @@ function deskHint(deskId: string): Hint {
       parts: [
         h('span.title', {}, `${DESK_BY_ID.get(deskId)!.label} · empty`),
         ...(full
-          ? [h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`)]
-          : [m.pressure ? h('span.cost', { title: `This machine is under pressure: ${m.pressure}` }, '⚠️ Machine under pressure') : '', key('E', 'Hire a worker'), key('P', 'Hire with a task'), key('B', 'Shell')]),
+          ? [h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} droids`)]
+          : [m.pressure ? h('span.cost', { title: `This machine is under pressure: ${m.pressure}` }, '⚠️ Machine under pressure') : '', key('E', 'Hire a droid'), key('P', 'Hire with a task'), key('B', 'Shell')]),
       ],
     };
   }
@@ -2747,19 +2747,19 @@ function deskHint(deskId: string): Hint {
   };
 }
 
-/** Why the office doesn't do something of a local worker's to a cloud one: its session isn't on this machine. */
+/** Why the office doesn't do something of a local droid's to a cloud one: its session isn't on this machine. */
 function cloudKeyNote(w: WorkerInfo): string {
   return `${w.name} works on ${w.cloud ? cloudBadge(w.cloud) : 'a Factory computer'}, not in a checkout here: ask it to commit and open the pull request itself`;
 }
 
-/** The hint's word on a worker's team: whose subagent it is, or how its own subagents are doing. */
+/** The hint's word on a droid's team: whose subagent it is, or how its own subagents are doing. */
 function teamNote(w: WorkerInfo): string {
   const lead = w.lead ? store.workers.get(w.lead) : undefined;
   if (lead) return `🧭 ${lead.name}'s subagent`;
   return teamSummary(store.teamOf(w.id)) ?? '';
 }
 
-/** The O in the desk hint of a worker across repositories: its pull requests so far, or opening them. */
+/** The O in the desk hint of a droid across repositories: its pull requests so far, or opening them. */
 function reposKey(w: WorkerInfo) {
   const repos = workerRepos(w);
   const prs = repos.filter((r) => r.pr).length;
@@ -2778,7 +2778,7 @@ function stationHint(deskId: string): Hint {
     const full = officeFull(m);
     return {
       k: `${full}|${m.workers}|${m.limit}`,
-      parts: [h('span.title', {}, `${info.icon} ${STATION_AGENT[kind].name}`), aside(info.offer.replace(/^Ask me /, '')), full ? h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} workers`) : key('E', 'Prompt')],
+      parts: [h('span.title', {}, `${info.icon} ${STATION_AGENT[kind].name}`), aside(info.offer.replace(/^Ask me /, '')), full ? h('span.cost', {}, `🚫 Office full · ${m.workers} of ${m.limit} droids`) : key('E', 'Prompt')],
     };
   }
   if (w.downedUntil !== undefined) return casualtyHint(w, nearbyCasualty()?.id === w.id);
@@ -3208,8 +3208,8 @@ const waitingNow = () => waitingInOrder(store.workers.values());
 const hudActions: HudAction[] = [
   { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
-  { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
-  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
+  { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a droid', run: showQueue },
+  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the droids are running', run: () => openServices() },
   {
     id: 'ci',
     icon: '🏭',
@@ -3229,7 +3229,7 @@ const hudActions: HudAction[] = [
     section: 'Open',
     status: () => store.meeting.current?.status === 'running',
     chip: () => 'In a meeting',
-    title: () => 'Call a meeting: workers work through a question or a task together',
+    title: () => 'Call a meeting: droids work through a question or a task together',
     run: () => showMeeting(),
   },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
@@ -3272,11 +3272,11 @@ const hudActions: HudAction[] = [
     title: () => (store.upgrade.latest ? `New version: ${store.upgrade.latest.subject}` : 'Upgrade the office'),
     run: () => openUpgrade(net),
   },
-  // Up on the top bar while workers wait on someone (N does the same), next to the Workers button.
+  // Up on the top bar while droids wait on someone (N does the same), next to the Droids button.
   {
     id: 'waiting',
     icon: () => (waitingNow().some((w) => w.status === 'needs_input') ? '🙋' : '✅'),
-    label: 'Next worker that needs you',
+    label: 'Next droid that needs you',
     section: 'Open',
     key: 'N',
     shown: () => waitingNow().length > 0,
@@ -3284,7 +3284,7 @@ const hudActions: HudAction[] = [
     chip: () => waitingLabel(waitingNow()).replace(/^(🙋|✅) /, ''),
     on: () => waitingNow().every((w) => w.status === 'done'),
     tone: () => (waitingNow().some((w) => w.status === 'needs_input') ? 'danger' : undefined),
-    title: () => 'Go to the worker that has waited longest on someone (N)',
+    title: () => 'Go to the droid that has waited longest on someone (N)',
     run: goToNextWaiting,
   },
 ];
@@ -3415,7 +3415,7 @@ function frame(ts?: number) {
   let screens = 0;
   for (const [id, v] of workerViews) {
     const desk = DESK_BY_ID.get(v.deskId)!;
-    // A jumping worker holds still while you're near enough to read its card, and jumps again once you walk away.
+    // A jumping droid holds still while you're near enough to read its card, and jumps again once you walk away.
     const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
     v.model.update(dt, t);

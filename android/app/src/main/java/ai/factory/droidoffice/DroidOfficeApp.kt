@@ -35,7 +35,7 @@ class DroidOfficeApp : Application() {
 
 val Context.graph: AppGraph get() = (applicationContext as DroidOfficeApp).graph
 
-/** Whether the app is on screen, and which worker's terminal is open, so alerts don't repeat what's in view. */
+/** Whether the app is on screen, and which droid's terminal is open, so alerts don't repeat what's in view. */
 class AppVisibility {
     private val _foreground = MutableStateFlow(false)
     val foreground: StateFlow<Boolean> = _foreground.asStateFlow()
@@ -78,7 +78,7 @@ class AppGraph(val app: Application) {
     private companion object {
         const val UI_HOLD = "ui"
 
-        /** What the office shows as who hired a worker: the phone's own name when the owner set one. */
+        /** What the office shows as who hired a droid: the phone's own name when the owner set one. */
         fun deviceName(context: Context): String {
             val named = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }.getOrNull()
             val model = Build.MODEL.orEmpty().let { m ->

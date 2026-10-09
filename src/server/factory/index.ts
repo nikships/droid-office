@@ -19,9 +19,9 @@ export interface MountOptions {
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
   fetchImpl?: typeof fetch;
   base?: string;
-  /** The floors' cloud workers (cloud.ts), when the office has floors to seat them on. */
+  /** The floors' cloud droids (cloud.ts), when the office has floors to seat them on. */
   cloud?: Omit<CloudOptions, 'computers'>;
-  /** The office's own workers with a Droid session, on every floor, for their credits. */
+  /** The office's own droids with a Droid session, on every floor, for their credits. */
   officeSessions?: () => OfficeSessionRef[];
   /** The floors and the Droid command AutoWiki's /wiki runs need (wiki.ts). */
   wiki?: Pick<WikiOptions, 'floors' | 'runner'>;

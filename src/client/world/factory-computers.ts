@@ -10,7 +10,7 @@ import { ANISOTROPY } from './texture-quality';
 import { paintGlyph, track } from './toon';
 
 // The compute wall on the west wall, between the exit door and the kitchen: this machine on the
-// left screen (CPU, memory and workers, as the machine monitor showed them) and every Factory Droid
+// left screen (CPU, memory and droids, as the machine monitor showed them) and every Factory Droid
 // Computer on the right one. Two canvases, so the machine's few-second readings don't upload the
 // fleet's bigger texture each time. Building one touches no DOM; tests load the view functions.
 
@@ -356,12 +356,12 @@ export class ComputeWallTextures {
       s.history.map(([, m]) => m),
     );
 
-    // The workers, one pip each, against the limit.
+    // The droids, one pip each, against the limit.
     const y = 906;
     label(g, 'WRK', 30, y, 22, MUTED, 3);
     g.font = `500 30px ${MONO}`;
     g.fillStyle = INK;
-    const words = s.limit === undefined ? `${s.workers} worker${s.workers === 1 ? '' : 's'} · no limit` : `${s.workers} / ${s.limit} workers`;
+    const words = s.limit === undefined ? `${s.workers} droid${s.workers === 1 ? '' : 's'} · no limit` : `${s.workers} / ${s.limit} droids`;
     g.fillText(words, 104, y);
     if (s.limit !== undefined) {
       const n = Math.max(s.limit, s.workers);

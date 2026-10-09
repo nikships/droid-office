@@ -69,7 +69,7 @@ test('settings persist; the skill is written, kept current and removed with them
   assert.deepEqual(again.settings.agent, { model: 'glm-5.3' });
   assert.equal(again.state().by, 'Nik');
 
-  // Settings without an agent go back to the office's default worker.
+  // Settings without an agent go back to the office's default droid.
   again.set({ ...again.settings, agent: undefined, skill: true }, 'Nik');
   assert.equal(again.settings.agent, undefined);
   assert.ok(existsSync(r.file));

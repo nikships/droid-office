@@ -4,10 +4,10 @@ import { nearestWalkable, route, type Pt } from '../../shared/nav';
 import type { MedicPose } from './character';
 
 /**
- * Workers shot with the .44 Magnum. The server owns their revival deadlines; this class renders
+ * Droids shot with the .44 Magnum. The server owns their revival deadlines; this class renders
  * the shared downed state and the medic pickup after dismissal.
  *
- * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
+ * One shot, one scene: the droid tumbles out of its chair onto the floor with a thud, and a blood
  * pool spreads under it while its session keeps running (see shoot). Pressing E nearby
  * stands it back up in its seat with its session untouched, or expiry calls in two
  * paramedics with a stretcher (see confirm): they walk in from the elevator, lower and open the scoop
@@ -33,7 +33,7 @@ export const FADE_TIME = 0.7;
 const TEAM_IN = 0.65;
 /** Seconds for a shut laptop to shrink away. */
 const LAPTOP_GONE = 0.3;
-/** A worker's feet are this far above its origin. */
+/** A droid's feet are this far above its origin. */
 const FEET = 0.07;
 /** How high the stretcher's bed is. */
 const BED_Y = 0.72;
@@ -44,7 +44,7 @@ const LOWER_END = 0.85;
 const SUPPORT_END = 1.8;
 const SETTLE_END = 2.9;
 const LIFT_END = 4.3;
-/** How far out of its seat the shot worker lands. */
+/** How far out of its seat the shot droid lands. */
 const TUMBLE = 0.65;
 
 /** Where the medics come from: out of the elevator, on every floor. */
@@ -53,7 +53,7 @@ const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
 /** Falling, bled out waiting for revival, medics on the way, loading, carrying out, gone. */
 export type CasualtyPhase = 'fall' | 'bled' | 'fetch' | 'load' | 'carry' | 'fade';
 
-/** What a casualty needs of a worker's model (see world/character.ts Worker). */
+/** What a casualty needs of a droid's model (see world/character.ts Droid). */
 export interface CasualtyModel {
   readonly root: THREE.Group;
   update(dt: number, t: number): void;
@@ -152,7 +152,7 @@ interface Team {
   group: THREE.Group;
   medics: Medic[];
   bed: ReturnType<typeof stretcher>;
-  /** Only private material copies fade; character and worker materials may be shared elsewhere. */
+  /** Only private material copies fade; character and droid materials may be shared elsewhere. */
   materials: Map<THREE.Material, THREE.Material>;
   way: Pt[];
   next: number;
@@ -248,7 +248,7 @@ export class Casualties {
   }
 
   /**
-   * Shoots the worker: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
+   * Shoots the droid: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
    * out under a spreading pool. False when it already has a scene running.
    */
   shoot(id: string, model: CasualtyModel, seat: THREE.Object3D): boolean {
@@ -297,7 +297,7 @@ export class Casualties {
   }
 
   /**
-   * Revive stands the worker back up in its seat with its session untouched, blood gone. False
+   * Revive stands the droid back up in its seat with its session untouched, blood gone. False
    * when there's nothing (left) to revive.
    */
   revive(id: string): boolean {
@@ -337,7 +337,7 @@ export class Casualties {
     });
     group.add(bed.root);
     this.parent.add(group);
-    // The worker origin is at its feet. Approach the torso center, not the chair-side origin.
+    // The droid origin is at its feet. Approach the torso center, not the chair-side origin.
     const torso = c.model.root.localToWorld(new THREE.Vector3(0, 0.55, 0));
     const body: Pt = [torso.x, torso.z];
     const way = route(MEDIC_FROM, nearestWalkable(body));
@@ -563,7 +563,7 @@ export class Casualties {
       for (let hand = 0; hand < 2; hand++) {
         const side = hand ? 1 : -1;
         const target = hand ? team.right : team.left;
-        // Handles are expressed in the team frame, support points in the worker's own frame.
+        // Handles are expressed in the team frame, support points in the droid's own frame.
         target.set(side * (0.35 + Math.abs(team.bed.halves[0].position.x)), team.bed.root.position.y, end * HANDLE_Z);
         if (support) {
           team.scratch.set(0, i ? 1.02 : 0.12, 0);
@@ -640,7 +640,7 @@ export class Casualties {
     if (!team) return;
     c.team = null;
     team.group.removeFromParent();
-    // Medic helpers free their own geometry. Keep the worker's geometry out of team cleanup.
+    // Medic helpers free their own geometry. Keep the droid's geometry out of team cleanup.
     const geometry = new Set(team.bed.geometries);
     for (const medic of team.medics) {
       medic.medicPose?.(null);

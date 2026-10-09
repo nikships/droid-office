@@ -95,7 +95,7 @@ export type ViewMode = 'first' | 'third';
 
 /** The panels you can show or hide on screen, from the ☰ menu. */
 export type HudPanel = 'workers' | 'floor';
-/** The workers show by default; the rest wait in the ☰ menu until turned on. */
+/** The droids show by default; the rest wait in the ☰ menu until turned on. */
 export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, floor: false };
 
 export interface Settings {
@@ -106,7 +106,7 @@ export interface Settings {
   /** The lounge jukebox, 0–1, apart from the office sounds. */
   music: number;
   musicMuted: boolean;
-  /** Desktop notifications when a worker needs input or finishes while you're in another tab (once the browser allows them). */
+  /** Desktop notifications when a droid needs input or finishes while you're in another tab (once the browser allows them). */
   notify: boolean;
   /** Which panels show on screen. */
   hud: Record<HudPanel, boolean>;
@@ -202,7 +202,7 @@ export function saveSettings(s: Settings) {
   }
 }
 
-/** The worker whose worktree branch a pull request came from, if it is still at a desk. */
+/** The droid whose worktree branch a pull request came from, if it is still at a desk. */
 export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: number; headRefName: string }): WorkerInfo | undefined {
   for (const w of workers) if (w.pr?.number === pr.number || (w.worktree && w.worktree.branch === pr.headRefName)) return w;
   return undefined;
@@ -247,15 +247,15 @@ class Store {
   meeting: MeetingState = { current: null, past: [] };
   /** The office's Slack / Discord webhook. */
   notify: NotifyState = {};
-  /** How busy the office's machine is, and its worker limit. */
+  /** How busy the office's machine is, and its droid limit. */
   machine: MachineState = { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
   /** Outside the windows; null until the server says. */
   sky: SkyState | null = null;
-  /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
+  /** Whether droids whose pull request merged go home by themselves (⚙️ Settings). */
   leaveOnMerge: LeaveOnMergeState = { on: false };
-  /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
+  /** How droids hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
-  /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
+  /** The office's prompts as rewritten in Settings, and the droid a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
   factory: FactoryState = emptyFactoryState();
@@ -287,7 +287,7 @@ class Store {
     return undefined;
   }
 
-  /** The subagents a worker on this floor hired, oldest first. */
+  /** The subagents a droid on this floor hired, oldest first. */
   teamOf(leadId: string): WorkerInfo[] {
     return teamOf(this.workers.values(), leadId);
   }

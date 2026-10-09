@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">Droid Office</string>
     <string name="channel_needs_input">Needs you</string>
-    <string name="channel_needs_input_desc">A worker asked a question or wants a permission</string>
+    <string name="channel_needs_input_desc">A droid asked a question or wants a permission</string>
     <string name="channel_done">Finished</string>
-    <string name="channel_done_desc">A worker finished its turn</string>
+    <string name="channel_done_desc">A droid finished its turn</string>
     <string name="channel_connection">Stay connected</string>
     <string name="channel_connection_desc">Keeps the office connection open while the app is in the background</string>
 </resources>

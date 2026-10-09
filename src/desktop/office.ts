@@ -43,7 +43,7 @@ export interface Office {
   /** Resolves with the exit code once the office has stopped, whoever stopped it. */
   exited: Promise<number | null>;
   /**
-   * Stops the office. Keeping workers is a restart (SIGTERM): their terminals stay up in the PTY
+   * Stops the office. Keeping droids is a restart (SIGTERM): their terminals stay up in the PTY
    * host for the next office to take back. Otherwise it's Ctrl+C (SIGINT), which ends them.
    */
   stop(keepWorkers: boolean): Promise<void>;

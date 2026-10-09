@@ -81,7 +81,7 @@ import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.launch
 
-/** Hire a worker at the next free desk: a Droid agent with a task (or none yet), or a plain shell. */
+/** Hire a droid at the next free desk: a Droid agent with a task (or none yet), or a plain shell. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HireSheet(onDismiss: () -> Unit) {

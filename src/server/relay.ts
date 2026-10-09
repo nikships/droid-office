@@ -4,7 +4,7 @@ import type { Duplex } from 'node:stream';
 import type { ServiceInfo } from '../shared/protocol.js';
 
 // Service tunnels: `ssh -L 5173:localhost:4600 ubuntu@box` lands on the office's own port, and the
-// browser's Host header (localhost:5173) says which worker server it's for. So the owner's
+// browser's Host header (localhost:5173) says which droid server it's for. So the owner's
 // forwarded port reaches every service through the one SSH connection.
 
 /** Set on everything the office relays, so a server that proxies back to the office can't loop. */
@@ -80,5 +80,5 @@ function page(res: http.ServerResponse, status: number, title: string, body: str
 }
 
 export function stoppedPage(res: http.ServerResponse, port: number) {
-  page(res, 503, '💤 Not running', `<p>Nothing is serving port ${port} right now. The worker may have stopped its server — check the 🌐 Services board in the office, or ask the worker to start it again.</p>`);
+  page(res, 503, '💤 Not running', `<p>Nothing is serving port ${port} right now. The droid may have stopped its server — check the 🌐 Services board in the office, or ask the droid to start it again.</p>`);
 }

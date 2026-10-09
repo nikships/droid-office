@@ -4,9 +4,9 @@ import http from 'node:http';
 import path from 'node:path';
 import type { ServiceInfo } from '../shared/protocol.js';
 
-// Finds the web servers workers start (npm run dev, python -m http.server, ...) so the owner can
+// Finds the web servers droids start (npm run dev, python -m http.server, ...) so the owner can
 // reach them through the office: every few seconds, list the TCP ports this user's processes
-// listen on, and credit each one to the worker whose terminal started it. Servers no worker
+// listen on, and credit each one to the droid whose terminal started it. Servers no droid
 // started (from another terminal) aren't listed.
 
 const SCAN_MS = 4000;
@@ -17,7 +17,7 @@ const NOISE = /--remote-debugging-port|--type=(?:renderer|gpu-process|utility|zy
 
 export interface ServiceOwner {
   workerId: string;
-  /** The worker's PTY process, when it's running. */
+  /** The droid's PTY process, when it's running. */
   pid?: number;
   /** The agent itself, as opposed to a shell: its own ports (IDE, OAuth callbacks) aren't services. */
   agent: boolean;
@@ -116,7 +116,7 @@ async function cwds(pids: number[]): Promise<Map<number, string>> {
   return out;
 }
 
-/** The worker a process was started by, from the env var every worker's processes inherit (Linux). */
+/** The droid a process was started by, from the env var every droid's processes inherit (Linux). */
 async function workerFromEnv(pid: number): Promise<string | undefined> {
   if (process.platform !== 'linux') return undefined;
   const env = await readFile(`/proc/${pid}/environ`, 'latin1').catch(() => '');
@@ -235,7 +235,7 @@ export class Services {
     for (const l of ports.values()) {
       const args = procs.get(l.pid)?.args ?? '';
       if (NOISE.test(args)) continue;
-      // Walk up to the worker terminal that started it.
+      // Walk up to the droid terminal that started it.
       let owner: ServiceOwner | undefined;
       let underOffice = false;
       for (let p = l.pid, i = 0; p > 1 && i < 64; p = procs.get(p)?.ppid ?? 0, i++) {

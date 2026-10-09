@@ -84,19 +84,19 @@ if (pairing?.link) {
 }
 
 let closing = false;
-// SIGTERM is a restart (tsx watch reloading, a plain `kill`, systemd): workers keep running in their
+// SIGTERM is a restart (tsx watch reloading, a plain `kill`, systemd): droids keep running in their
 // terminal host and the next office picks them back up. Ctrl+C closes the office and stops them.
 // (Under systemd that needs KillMode=process, or stopping the service stops the host with it; see
-// deploy/provision.sh. Workers cut off that way are resumed and carry on.)
+// deploy/provision.sh. Droids cut off that way are resumed and carry on.)
 const stop = (signal: NodeJS.Signals) => {
   if (closing) process.exit(1);
   closing = true;
   const keep = signal === 'SIGTERM';
-  console.log(keep ? '\n  closing the office — workers keep running for the next one…' : '\n  closing the office…');
+  console.log(keep ? '\n  closing the office — droids keep running for the next one…' : '\n  closing the office…');
   office.shutdown(keep);
   setTimeout(() => process.exit(0), 300);
 };
-// Last line of defense: one bad request must never take down every running worker.
+// Last line of defense: one bad request must never take down every running droid.
 process.on('unhandledRejection', (err) => console.error('droid-office: unhandled rejection', err));
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

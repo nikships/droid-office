@@ -3,7 +3,7 @@ package ai.factory.droidoffice.core
 /**
  * Stable names for every screen and control. The app maps them to `resource-id` in the
  * accessibility tree, so `adb shell uiautomator dump` and UI Automator's `By.res` find a control by
- * name instead of by its text or position. A dynamic part (a worker's, floor's, office's or model's
+ * name instead of by its text or position. A dynamic part (a droid's, floor's, office's or model's
  * id) follows a `/`.
  *
  * Agents script against these names: renaming one breaks them, so add new names rather than
@@ -93,7 +93,7 @@ object Tags {
         const val REPAIR_FORGET = "home.repair.forget"
         const val PICK_WORKER = "home.pick_worker"
 
-        // Inside each worker card; the card itself is [worker].
+        // Inside each droid card; the card itself is [droid].
         const val CARD_NAME = "home.worker.name"
         const val CARD_STATUS = "home.worker.status"
         const val CARD_META = "home.worker.meta"

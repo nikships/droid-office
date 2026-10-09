@@ -11,7 +11,7 @@ import { WorkerManager, relatedBlock, withRelated, workspaceNames, type RepoSour
 import { Worktrees } from '../src/server/worktrees.js';
 import type { ChangesState, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
-// A worker across repositories (WorkerInfo.repos): hired on one floor with other floors' projects,
+// A droid across repositories (WorkerInfo.repos): hired on one floor with other floors' projects,
 // it works in a workspace holding a worktree of each, all on one branch, and opens a PR in each.
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -135,7 +135,7 @@ function manager(f: Fixture, t: { after(fn: () => void): void }): WorkerManager 
 
 const source = (floor: string, dir: string): RepoSource => ({ floor, name: path.basename(dir), repo: `acme/${path.basename(dir)}`, dir });
 
-/** The fake agent fires no hooks, so its worker is seated the way Droid's SessionStart would seat it. */
+/** The fake agent fires no hooks, so its droid is seated the way Droid's SessionStart would seat it. */
 async function sessionStart(workers: WorkerManager, data: string, id: string) {
   const token = await waitFor(
     () => (JSON.parse(readFileSync(path.join(data, 'workers.json'), 'utf8')) as { id: string; hookToken?: string }[]).find((s) => s.id === id)?.hookToken,
@@ -155,7 +155,7 @@ async function waitFor<T>(read: () => T, ok: (v: T) => boolean, timeout = 5000):
   return v;
 }
 
-test('a worker across repositories gets a workspace with a worktree of each on one branch, and starts in it', async (t) => {
+test('a droid across repositories gets a workspace with a worktree of each on one branch, and starts in it', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
   const w = workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]);
@@ -171,7 +171,7 @@ test('a worker across repositories gets a workspace with a worktree of each on o
       ['floor-admin', 'admin', path.join('.droid-office', 'worktrees', slug, 'admin'), w.worktree!.branch, 'main'],
     ],
   );
-  // Each is a worktree of its own repository, on the worker's branch.
+  // Each is a worktree of its own repository, on the droid's branch.
   for (const [name, dir] of [
     ['web', f.a],
     ['api', f.b],
@@ -234,7 +234,7 @@ test('hiring across repositories needs its own worktree and different repositori
   assert.equal(git(f.b, 'branch', '--list', 'office/sprocket-0000'), 'office/sprocket-0000', "api's own branch stays");
 });
 
-test('sending a worker across repositories home checks every worktree, and deletes them all and its workspace', async (t) => {
+test('sending a droid across repositories home checks every worktree, and deletes them all and its workspace', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
   const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
@@ -352,7 +352,7 @@ test("each checkout's folder in a workspace is named after it, once", () => {
   assert.deepEqual(workspaceNames(['/p/acme/web', '/p/other/web', '/p/acme/api', '/x/.hidden', '/y/AGENTS.md', '/z/my repo']), ['web', 'web-2', 'api', 'hidden', 'AGENTS.md-repo', 'my-repo']);
 });
 
-test('the Changes window follows each repository of a worker across repositories against its own branch', async (t) => {
+test('the Changes window follows each repository of a droid across repositories against its own branch', async (t) => {
   const f = fixture(t);
   const wt = new Worktrees(f.b).create('pip-1', 'api', f.a);
   if (typeof wt === 'string') return assert.fail(wt);
@@ -388,7 +388,7 @@ test('the Changes window follows each repository of a worker across repositories
   assert.equal(await changes.commit('w1', 'Add new.js', 'Cody', 'floor-api'), undefined);
   assert.equal(git(cwd, 'log', '-1', '--format=%s'), 'Add new.js');
   // Its own floor's checkout is a different target.
-  assert.equal(await changes.diff('w1', 'new.js'), 'No such worker');
+  assert.equal(await changes.diff('w1', 'new.js'), 'No such droid');
 });
 
 test('prune leaves a workspace with worktrees in it alone, and lists the other repository’s branch as checked out elsewhere', async (t) => {
@@ -429,7 +429,7 @@ const pull = (number: number, state: string, headRefName: string, headRefOid?: s
   closes: [],
 });
 
-test('a worker across repositories goes home once its pull requests have merged and none is open, on any floor', () => {
+test('a droid across repositories goes home once its pull requests have merged and none is open, on any floor', () => {
   const w: WorkerInfo = {
     id: 'pip',
     kind: 'agent',

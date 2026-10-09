@@ -1,13 +1,13 @@
-// Names what each worker is on: a few words and a one-line summary for the card above its head.
+// Names what each droid is on: a few words and a one-line summary for the card above its head.
 // A small model (Haiku, through `droid exec`, the Droid the office already needs) writes them from
-// the worker's prompts and recent tool calls, told how by the 'office.namer' prompt
+// the droid's prompts and recent tool calls, told how by the 'office.namer' prompt
 // (shared/prompts.ts). Without it, the card falls back to the prompt itself.
 
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import type { WorkerTask } from '../shared/protocol.js';
 
-/** What a worker has been asked and has been doing lately. */
+/** What a droid has been asked and has been doing lately. */
 export interface TaskContext {
   prompts: string[];
   tools: string[];
@@ -50,7 +50,7 @@ export class TaskNamer {
     return this.droid !== null && Date.now() >= this.pausedUntil;
   }
 
-  /** Asks for a fresh label. Calls for the same worker close together collapse into one. */
+  /** Asks for a fresh label. Calls for the same droid close together collapse into one. */
   request(workerId: string, ctx: TaskContext) {
     if (!this.enabled || !ctx.prompts.length) return;
     this.pending.set(workerId, ctx);
@@ -74,7 +74,7 @@ export class TaskNamer {
 
   private pump() {
     while (this.running.size < CONCURRENCY) {
-      // One call per worker at a time; a newer request waits for it and runs after.
+      // One call per droid at a time; a newer request waits for it and runs after.
       const i = this.queue.findIndex((id) => !this.running.has(id));
       if (i < 0) return;
       const [id] = this.queue.splice(i, 1);

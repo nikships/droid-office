@@ -188,7 +188,7 @@ test('sessions: deleting an old session Factory can’t find counts as gone; a j
   assert.deepEqual(c.slept, []);
   assert.match(h.toasts.at(-1) ?? '', /deleted/);
 
-  // A cloud worker's session, made when the worker was: Factory hasn't caught up.
+  // A cloud droid's session, made when the droid was: Factory hasn't caught up.
   await assert.rejects(
     () => call(route(feature, 'DELETE', '/:id'), { api: f.api, params: { id: 'cloudy' } }),
     (err) => err instanceof HttpError && err.status === 409 && /only just made/.test(err.message),

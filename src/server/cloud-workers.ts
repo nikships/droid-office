@@ -8,18 +8,18 @@ import { DESK_BY_ID } from '../shared/layout.js';
 import { DropStore } from './drops.js';
 import { clockWork } from './workers.js';
 
-// A floor's cloud workers (see factory/cloud.ts, which drives their sessions on Factory): who sits
+// A floor's cloud droids (see factory/cloud.ts, which drives their sessions on Factory): who sits
 // where, what they're doing, and what the office remembers of their turns, kept in the floor's
 // .droid-office/cloud-workers.json so they're back at their desks after a restart. They are sent
-// with the same worker.update and worker.remove messages as the office's own workers, but never
+// with the same worker.update and worker.remove messages as the office's own droids, but never
 // reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the queue, the team, meetings,
-// the worker limit) ever sees one.
+// the droid limit) ever sees one.
 
 const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
 const LIVE: readonly (keyof WorkerInfo)[] = ['open'];
 
-/** What else on the floor takes desks and names: its own workers and guests. */
+/** What else on the floor takes desks and names: its own droids and guests. */
 export interface CloudSeating {
   deskTaken(deskId: string): boolean;
   names(): Iterable<string>;
@@ -84,7 +84,7 @@ export class CloudWorkers {
     return this.workers.get(id)?.info;
   }
 
-  /** The turn the office is following for a worker (see cloudStatus). */
+  /** The turn the office is following for a droid (see cloudStatus). */
   turn(id: string): CloudTurn | undefined {
     return this.workers.get(id)?.turn;
   }
@@ -104,7 +104,7 @@ export class CloudWorkers {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (seat.station) return 'A board agent always works on this machine';
-    if (seat.room) return 'Only a meeting seats workers at the meeting table';
+    if (seat.room) return 'Only a meeting seats droids at the meeting table';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     return undefined;
   }
@@ -121,12 +121,12 @@ export class CloudWorkers {
     this.held.delete(deskId);
   }
 
-  /** Seats a cloud worker whose session was just made (at a desk `hold` kept for it). */
+  /** Seats a cloud droid whose session was just made (at a desk `hold` kept for it). */
   add(n: NewCloudWorker): WorkerInfo {
     this.held.delete(n.deskId);
     const used = new Set([...this.seating.names(), ...this.names()].map((x) => x.replace(/ 🐚$/, '')));
     const { names, colors } = this.seating.pool;
-    const name = names.find((x) => !used.has(x)) ?? `Worker ${used.size + 1}`;
+    const name = names.find((x) => !used.has(x)) ?? `Droid ${used.size + 1}`;
     const prompt = n.prompt?.trim() || undefined;
     const info: WorkerInfo = {
       id: randomBytes(6).toString('hex'),
@@ -156,7 +156,7 @@ export class CloudWorkers {
     return info;
   }
 
-  /** Changes a worker with `fn` and tells everyone, when something changed. Status changes go through setStatus. */
+  /** Changes a droid with `fn` and tells everyone, when something changed. Status changes go through setStatus. */
   update(id: string, fn: (info: WorkerInfo, w: { turn: CloudTurn; seen?: { count: number; updatedAt: number } }) => void): WorkerInfo | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
@@ -165,7 +165,7 @@ export class CloudWorkers {
     return w.info;
   }
 
-  /** Remembers what the last poll saw of a worker's session, and when. */
+  /** Remembers what the last poll saw of a droid's session, and when. */
   polled(id: string, seen: { count: number; updatedAt: number } | undefined, turn: CloudTurn, at: number) {
     const w = this.workers.get(id);
     if (!w) return;
@@ -183,7 +183,7 @@ export class CloudWorkers {
   }
 
   /**
-   * The same rules as a local worker's status (WorkerManager.setStatus): done or needs input raises
+   * The same rules as a local droid's status (WorkerManager.setStatus): done or needs input raises
    * the flag unless its window is open, and anything else lowers it.
    */
   setStatus(id: string, status: WorkerStatus) {
@@ -199,7 +199,7 @@ export class CloudWorkers {
     this.emit(w);
   }
 
-  /** Sends a worker home: it leaves its desk now. */
+  /** Sends a droid home: it leaves its desk now. */
   remove(id: string): WorkerInfo | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
@@ -211,7 +211,7 @@ export class CloudWorkers {
     return w.info;
   }
 
-  /** Someone opened a worker's window: a finished turn counts as seen. */
+  /** Someone opened a droid's window: a finished turn counts as seen. */
   attach(id: string, clientId: string): boolean {
     const w = this.workers.get(id);
     if (!w) return false;
@@ -295,7 +295,7 @@ export class CloudWorkers {
 
 const STATUSES = new Set<unknown>(['starting', 'idle', 'working', 'needs_input', 'done', 'exited', 'offline']);
 
-/** A saved cloud worker that still makes sense, or undefined. */
+/** A saved cloud droid that still makes sense, or undefined. */
 function validInfo(raw: unknown): WorkerInfo | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as WorkerInfo;

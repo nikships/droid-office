@@ -4,7 +4,7 @@ package ai.factory.droidoffice.core
 data class Choice(val number: Int, val label: String)
 
 /**
- * A menu a worker is waiting on (Droid's AskUser, its folder-trust prompt, a permission prompt):
+ * A menu a droid is waiting on (Droid's AskUser, its folder-trust prompt, a permission prompt):
  * the question above it when one can be found, the choices, and the one a pointer (`>`, `❯`)
  * marks, when the TUI moves a pointer rather than taking a digit.
  */

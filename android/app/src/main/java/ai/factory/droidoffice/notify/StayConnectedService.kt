@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 
 /**
  * The opt-in "stay connected" mode: a foreground service that holds the office connection while the
- * app is in the background, so [Alerts] can tell the owner the moment a worker needs them. The office
+ * app is in the background, so [Alerts] can tell the owner the moment a droid needs them. The office
  * has no push channel, so an open socket is the only way to hear.
  */
 class StayConnectedService : LifecycleService() {

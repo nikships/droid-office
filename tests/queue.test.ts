@@ -231,10 +231,10 @@ test("a board agent at work does not hold one of the queue's slots", (t) => {
   assert.match(f.workers[1].deskId, /^desk-/);
 });
 
-test("workers hired by hand, or left at their prompt after a restart, do not hold the queue's slots", (t) => {
+test("droids hired by hand, or left at their prompt after a restart, do not hold the queue's slots", (t) => {
   const f = fixture();
   t.after(() => f.close());
-  // A room full of workers from before the restart, back at their prompts, and a couple at work.
+  // A room full of droids from before the restart, back at their prompts, and a couple at work.
   for (let i = 1; i <= 6; i++) {
     f.workers.push({
       id: `resumed-${i}`,
@@ -265,7 +265,7 @@ test("workers hired by hand, or left at their prompt after a restart, do not hol
     f.workers.slice(6).map((w) => w.deskId),
     ['desk-7', 'desk-8'],
   );
-  // One of its tasks finishes: the third takes the slot, whatever the other workers are up to.
+  // One of its tasks finishes: the third takes the slot, whatever the other droids are up to.
   f.workers[6].status = 'done';
   q.onWorker(f.workers[6]);
   assert.deepEqual(
@@ -274,7 +274,7 @@ test("workers hired by hand, or left at their prompt after a restart, do not hol
   );
 });
 
-test('an office at its worker limit holds the queue, and a finished queue worker makes room', (t) => {
+test('an office at its droid limit holds the queue, and a finished queue droid makes room', (t) => {
   const f = fixture();
   t.after(() => f.close());
   let limit = 1;
@@ -286,7 +286,7 @@ test('an office at its worker limit holds the queue, and a finished queue worker
     ['running', 'queued'],
   );
   assert.equal(f.workers.length, 1);
-  // The first finishes: its worker goes home to make room, and the second task gets the seat.
+  // The first finishes: its droid goes home to make room, and the second task gets the seat.
   f.workers[0].status = 'done';
   q.onWorker(f.workers[0]);
   assert.deepEqual(
@@ -317,7 +317,7 @@ test('an office at its worker limit holds the queue, and a finished queue worker
   assert.equal(q.state().tasks[2].status, 'running');
 });
 
-test('an open terminal holds its finished queue worker at its desk until it closes', (t) => {
+test('an open terminal holds its finished queue droid at its desk until it closes', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open(() => 1 - f.workers.length);
@@ -336,7 +336,7 @@ test('an open terminal holds its finished queue worker at its desk until it clos
     ['done', 'queued'],
   );
   assert.equal(f.workers.length, 1);
-  // Closed: its worker goes home to make room, and the second task gets the seat.
+  // Closed: its droid goes home to make room, and the second task gets the seat.
   f.workers[0].open = false;
   q.pump();
   assert.deepEqual(
@@ -349,7 +349,7 @@ test('an open terminal holds its finished queue worker at its desk until it clos
   );
 });
 
-test("a queue worker that switches to a branch of its own takes its task's branch along, so the PR from there is linked", (t) => {
+test("a queue droid that switches to a branch of its own takes its task's branch along, so the PR from there is linked", (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open(undefined, true);
@@ -490,7 +490,7 @@ test("a queue that has nowhere to seat anyone doesn't fetch", (t) => {
   assert.equal(fetches, 0);
 });
 
-test('a task can be pictures alone: they go to its worker, and the queue lets go of them', (t) => {
+test('a task can be pictures alone: they go to its droid, and the queue lets go of them', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const q = f.open();
@@ -513,7 +513,7 @@ test('pictures waiting on a queued task are thrown away when the task is removed
   assert.deepEqual(f.unstaged, [['cccccccccccccccc']]);
 });
 
-test('queued pictures survive a restart and go to the worker the task gets', (t) => {
+test('queued pictures survive a restart and go to the droid the task gets', (t) => {
   const f = fixture();
   t.after(() => f.close());
   const first = f.open(() => 0);

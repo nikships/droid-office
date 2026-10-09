@@ -97,7 +97,7 @@ test('snippets cut long lines down around the match', () => {
   assert.ok(s.length <= 62);
 });
 
-test('scrollback files are per worker, and pruning keeps only workers still at a desk', (t) => {
+test('scrollback files are per droid, and pruning keeps only droids still at a desk', (t) => {
   const store = new ScrollbackStore(dataDir(t));
   store.save('aaa', 'one');
   store.save('bbb', 'two');

@@ -3,10 +3,10 @@ import { isBusy } from '../../shared/status';
 import { store } from '../state';
 import { h, openModal } from './dom';
 
-// A worker across repositories (see WorkerInfo.repos): one task in worktrees of several floors'
+// A droid across repositories (see WorkerInfo.repos): one task in worktrees of several floors'
 // projects, all on the same branch, with a pull request in each repository it commits to.
 
-/** Each of a worker's repositories, its own floor's first (no `floor`): the folder in its workspace, and its pull request. */
+/** Each of a droid's repositories, its own floor's first (no `floor`): the folder in its workspace, and its pull request. */
 export function workerRepos(w: WorkerInfo): { floor?: string; name: string; pr?: { number: number; url: string } }[] {
   if (!w.worktree) return [];
   return [{ name: w.worktree.path.split(/[\\/]/).pop() || 'project', pr: w.pr }, ...(w.repos ?? []).map((r) => ({ floor: r.floor, name: r.name, pr: r.pr }))];
@@ -22,7 +22,7 @@ export interface RepoPullsActions {
 }
 
 /**
- * O at the desk of a worker across repositories, once it has a pull request: each repository with
+ * O at the desk of a droid across repositories, once it has a pull request: each repository with
  * its pull request (or none yet) and its changes, and a button that opens the missing ones.
  */
 export function openRepoPulls(workerId: string, actions: RepoPullsActions) {

@@ -83,7 +83,7 @@ interface Rig {
   toasts: string[];
   settings: SubagentSettings;
   dir: string;
-  /** Moves a worker to a new status, as the floor reports it. */
+  /** Moves a droid to a new status, as the floor reports it. */
   set(id: string, status: WorkerStatus, extra?: Partial<WorkerInfo>): void;
   call(caller: string, body: Record<string, unknown>): Promise<{ status: number; body: Record<string, any> }>;
 }

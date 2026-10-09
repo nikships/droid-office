@@ -18,7 +18,7 @@ function fixture() {
   return { office, worker, body, workers, ray, blocker };
 }
 
-test('a hidden office subtree cannot block the visible worker behind it', () => {
+test('a hidden office subtree cannot block the visible droid behind it', () => {
   const f = fixture();
   const hidden = new THREE.Group();
   hidden.visible = false;
@@ -40,7 +40,7 @@ test('invisible and zero-opacity materials do not absorb a bullet', () => {
   }
 });
 
-test('visible furniture and glass still block the worker behind them', () => {
+test('visible furniture and glass still block the droid behind them', () => {
   for (const glass of [false, true]) {
     const f = fixture();
     if (glass) {
@@ -75,14 +75,14 @@ test('UI billboards and glow points are not solid shot targets or blockers', () 
   assert.equal(gunHit(f.ray, f.office, f.workers)?.hit.object, f.body);
 });
 
-test('a hidden worker stays untargetable even when supplied as a separate root', () => {
+test('a hidden droid stays untargetable even when supplied as a separate root', () => {
   const f = fixture();
   f.worker.visible = false;
   f.office.updateMatrixWorld(true);
   assert.equal(gunHit(f.ray, f.office, f.workers), null);
 });
 
-test('a visible arriving worker outside the office is targetable, while unregistered players are excluded', () => {
+test('a visible arriving droid outside the office is targetable, while unregistered players are excluded', () => {
   const f = fixture();
   const scene = new THREE.Scene();
   scene.add(f.office, f.worker);

@@ -5,7 +5,7 @@ import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
 
 /**
- * Whether a worker whose pull request merged goes home by itself, picked in ⚙️ Settings by anyone
+ * Whether a droid whose pull request merged goes home by itself, picked in ⚙️ Settings by anyone
  * and kept in .droid-office/leave-on-merge.json. The same on every floor; off until someone turns it on.
  */
 export class LeaveOnMerge {
@@ -39,7 +39,7 @@ export class LeaveOnMerge {
       const s = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<LeaveOnMergeState>;
       if (typeof s.on === 'boolean') this.saved = { on: s.on, by: typeof s.by === 'string' ? s.by : 'someone', at: typeof s.at === 'number' ? s.at : 0 };
     } catch {
-      // never set: workers wait to be sent home
+      // never set: droids wait to be sent home
     }
   }
 
@@ -52,24 +52,24 @@ export class LeaveOnMerge {
   }
 }
 
-/** A worker whose work has landed, with the pull request that merged. */
+/** A droid whose work has landed, with the pull request that merged. */
 export interface Landed {
   worker: WorkerInfo;
-  /** Its own floor's merged PR; for a worker across repositories, the first of them that merged. */
+  /** Its own floor's merged PR; for a droid across repositories, the first of them that merged. */
   pr: number;
   /** The merged PR's head commit, when the forge said: everything up to it is delivered. */
   head?: string;
-  /** A worker across repositories: the head of each other repository's merged PR, by floor. */
+  /** A droid across repositories: the head of each other repository's merged PR, by floor. */
   heads?: Record<string, string | undefined>;
   /** …and every PR of its that merged, as "api #7". */
   prs?: string[];
 }
 
 /**
- * The workers free to go home because their work landed: a pull request of theirs merged and none
+ * The droids free to go home because their work landed: a pull request of theirs merged and none
  * is still open (the same call as the purple bubble, see workerPr), they're at rest, and nobody has
  * their terminal open. Board agents, shells and the meeting table don't come and go by pull request.
- * A worker across repositories has pull requests on other floors too (`pullsOf` has their lists):
+ * A droid across repositories has pull requests on other floors too (`pullsOf` has their lists):
  * none of them may be open, or opened from its desk but missing from its floor's list.
  */
 export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], tasks: QueueTask[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
@@ -89,7 +89,7 @@ export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], tasks: Que
   return out;
 }
 
-/** landedWorkers for a worker across repositories, whose own floor's PR, if any, is `own`. */
+/** landedWorkers for a droid across repositories, whose own floor's PR, if any, is `own`. */
 function landedAcross(w: WorkerInfo, own: WorkerPr | undefined, pulls: GhPull[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed | undefined {
   if (own?.state === 'open') return undefined;
   const heads: Record<string, string | undefined> = {};

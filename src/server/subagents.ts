@@ -11,7 +11,7 @@ export const SKILL_NAME = 'droid-office-subagents';
 export const SKILL_MARK = '<!-- Written by Droid Office (⚙️ Settings → Subagents), which keeps this file up to date: edits here are overwritten. Turn the skill off there to remove it. -->';
 
 /**
- * The Droid skill that tells a Droid worker how to hire subagents in the office. It lives with the
+ * The Droid skill that tells a Droid how to hire subagents in the office. It lives with the
  * user's own skills, so every droid session sees it: its description and its first step keep it to
  * sessions the office started (they have DROID_OFFICE_WORKER_ID), and it hands everything else to
  * `office-workers help`, which always matches the office that's running.
@@ -19,14 +19,14 @@ export const SKILL_MARK = '<!-- Written by Droid Office (⚙️ Settings → Sub
 export function subagentSkill(): string {
   return `---
 name: ${SKILL_NAME}
-description: Spawn and coordinate subagents as new Droid Office workers, each at its own desk with a laptop and a live terminal in your room. Use only when the DROID_OFFICE_WORKER_ID environment variable is set (this session is a Droid Office worker) and you are asked to, or decide to, delegate work to subagents. Outside Droid Office this skill does not apply; never use it there.
+description: Spawn and coordinate subagents as new Droid Office droids, each at its own desk with a laptop and a live terminal in your room. Use only when the DROID_OFFICE_WORKER_ID environment variable is set (this session is a Droid Office droid) and you are asked to, or decide to, delegate work to subagents. Outside Droid Office this skill does not apply; never use it there.
 ---
 
 ${SKILL_MARK}
 
 # Subagents in Droid Office
 
-In Droid Office a subagent is a real worker: it sits down at a free desk near you, with its own laptop and a terminal anyone in the office can open, works in its own git worktree, and reports back to you when it's done. You hire and run subagents with the \`office-workers\` command. Use it instead of the built-in Task tool, or any terminal-pane workflow, whenever you delegate work here.
+In Droid Office a subagent is a real droid: it sits down at a free desk near you, with its own laptop and a terminal anyone in the office can open, works in its own git worktree, and reports back to you when it's done. You hire and run subagents with the \`office-workers\` command. Use it instead of the built-in Task tool, or any terminal-pane workflow, whenever you delegate work here.
 
 ## 1. Check that you're in Droid Office
 
@@ -34,7 +34,7 @@ In Droid Office a subagent is a real worker: it sits down at a free desk near yo
 [ -n "$DROID_OFFICE_WORKER_ID" ] && command -v office-workers >/dev/null && office-workers whoami
 \`\`\`
 
-- Nothing printed, or an error: this session isn't a Droid Office worker. The skill doesn't apply: stop following it and carry on without it. Don't install or imitate \`office-workers\`.
+- Nothing printed, or an error: this session isn't a Droid Office droid. The skill doesn't apply: stop following it and carry on without it. Don't install or imitate \`office-workers\`.
 - It says you're a subagent: you can't hire. Do your task yourself and report to your lead with \`office-workers report\`.
 - It says you can't hire for another reason (subagents are turned off, say): tell the user what it said and carry on without subagents.
 
@@ -74,7 +74,7 @@ export function cleanSettings(raw: unknown, base: SubagentSettings = SUBAGENT_DE
 }
 
 /**
- * How workers hire subagents (⚙️ Settings → Subagents), for every floor, kept in
+ * How droids hire subagents (⚙️ Settings → Subagents), for every floor, kept in
  * .droid-office/subagents.json, and the Droid skill that goes with it in ~/.factory/skills.
  */
 export class Subagents {
@@ -101,7 +101,7 @@ export class Subagents {
     return { ...this.settings, ...(this.saved.by ? { by: this.saved.by, at: this.saved.at } : {}), ...(this.skill.path ? { skillPath: this.skill.path } : {}), ...(this.skill.error ? { skillError: this.skill.error } : {}) };
   }
 
-  /** Saves new settings (all of them: no `agent` is the office's default worker); returns why it can't, if it can't. */
+  /** Saves new settings (all of them: no `agent` is the office's default droid); returns why it can't, if it can't. */
   set(raw: unknown, by: string): string | undefined {
     const { agent: _agent, ...rest } = this.settings;
     const next = cleanSettings(raw, rest);

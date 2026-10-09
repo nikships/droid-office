@@ -21,7 +21,7 @@ export interface MeetingPreset {
 
 export interface MeetingActions {
   openTerminal(workerId: string): void;
-  /** Push the meeting's branch and open a pull request for it, through the head of the table's worker. */
+  /** Push the meeting's branch and open a pull request for it, through the head of the table's droid. */
   openPr(workerId: string): void;
 }
 
@@ -140,11 +140,11 @@ function renderStatus(m: Meeting, body: HTMLElement, foot: HTMLElement, net: Net
   const head = m.seats[0]?.workerId ? store.workers.get(m.seats[0].workerId) : undefined;
   foot.replaceChildren(
     ...present(
-      h('span.grow', {}, running ? 'The workers stay at the table after it ends, so you can read their terminals.' : 'Clearing the room sends the workers home. A committed output stays on its branch.'),
+      h('span.grow', {}, running ? 'The droids stay at the table after it ends, so you can read their terminals.' : 'Clearing the room sends the droids home. A committed output stays on its branch.'),
       running
         ? h(
             'button.btn',
-            { type: 'button', onclick: () => confirmDialog('Stop the meeting?', `The workers stop where they are and stay at the table. ${m.output} is only there if it was written.`, 'Stop it', () => net.send({ t: 'meeting.stop' })) },
+            { type: 'button', onclick: () => confirmDialog('Stop the meeting?', `The droids stop where they are and stay at the table. ${m.output} is only there if it was written.`, 'Stop it', () => net.send({ t: 'meeting.stop' })) },
             'Stop meeting',
           )
         : null,
@@ -165,7 +165,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   let roles: string[] = [];
   let outputTouched = false;
   const patterns = h('div.meeting-patterns', { role: 'radiogroup', 'aria-label': 'Pattern' });
-  const about = h('textarea', { rows: 4, placeholder: 'The question to settle, or the task to do: e.g. “Should workers use A* or a navmesh?”', 'aria-label': 'What the meeting is about' }) as HTMLTextAreaElement;
+  const about = h('textarea', { rows: 4, placeholder: 'The question to settle, or the task to do: e.g. “Should droids use A* or a navmesh?”', 'aria-label': 'What the meeting is about' }) as HTMLTextAreaElement;
   about.value = preset?.prompt ?? '';
   const images = promptImages(about);
   const titleIn = h('input', { type: 'text', placeholder: 'Title (optional): the first line otherwise', maxlength: 100, 'aria-label': 'Title' }) as HTMLInputElement;
@@ -177,8 +177,8 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   const partsIn = h('textarea', { rows: 3, placeholder: 'src/server/\nsrc/client/\nsrc/shared/', 'aria-label': 'Parts', spellcheck: 'false' }) as HTMLTextAreaElement;
   const partsRow = h('div.meeting-field', {}, h('label', {}, 'Parts, one per line'), partsIn, h('small.muted', {}, 'Handed out to the mappers in turn: files, folders, modules or issues.'));
   const count = h('b');
-  const minus = h('button.btn.small', { type: 'button', 'aria-label': 'Fewer workers' }, '−');
-  const plus = h('button.btn.small', { type: 'button', 'aria-label': 'More workers' }, '+');
+  const minus = h('button.btn.small', { type: 'button', 'aria-label': 'Fewer droids' }, '−');
+  const plus = h('button.btn.small', { type: 'button', 'aria-label': 'More droids' }, '+');
   const roleList = h('div.meeting-roles');
   const roundsIn = h('input', { type: 'number', 'aria-label': 'Rounds' }) as HTMLInputElement;
   const roundsNote = h('small.muted');
@@ -240,7 +240,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     renderRoles();
   });
   plus.addEventListener('click', () => {
-    if (roles.length < def().seats.max) roles.push(def().roles[roles.length] ?? `Worker ${roles.length + 1}`);
+    if (roles.length < def().seats.max) roles.push(def().roles[roles.length] ?? `Droid ${roles.length + 1}`);
     renderRoles();
   });
   outputIn.addEventListener('input', () => {
@@ -260,7 +260,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     prRow,
     partsRow,
     h('div.meeting-field', {}, h('label', {}, 'Output file'), outputIn, outputNote),
-    h('div.meeting-field', {}, h('label.meeting-count', {}, 'Workers at the table', minus, count, plus), roleList),
+    h('div.meeting-field', {}, h('label.meeting-count', {}, 'Droids at the table', minus, count, plus), roleList),
     h('div.meeting-bounds', {}, h('div.meeting-field', {}, h('label', {}, 'Round limit'), roundsIn, roundsNote)),
     models.element,
     busy,
@@ -279,7 +279,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       .map((l) => l.trim())
       .filter(Boolean);
     if (def().needs === 'parts' && parts.length < roles.length - 1) {
-      toast(`List at least ${roles.length - 1} parts, one per line, or seat fewer workers`, 'warn');
+      toast(`List at least ${roles.length - 1} parts, one per line, or seat fewer droids`, 'warn');
       return partsIn.focus();
     }
     const output = outputIn.value.trim();
@@ -309,7 +309,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       effort: models.effort(),
       images: picked.length ? picked : undefined,
     });
-    toast(`🤝 Calling the ${def().label} meeting: the workers are heading for the meeting room`);
+    toast(`🤝 Calling the ${def().label} meeting: the droids are heading for the meeting room`);
     done();
   };
   bodyEl.addEventListener('submit', (e) => {
@@ -339,7 +339,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     }
     const m = store.meeting.current;
     const taken = m?.status === 'running';
-    busy.textContent = taken ? `The room is busy with “${m.title}” until it ends or someone stops it.` : m ? `Starting this sends the last meeting’s workers home.` : '';
+    busy.textContent = taken ? `The room is busy with “${m.title}” until it ends or someone stops it.` : m ? `Starting this sends the last meeting’s droids home.` : '';
     submit.toggleAttribute('disabled', taken);
   };
   pickPattern(pattern);

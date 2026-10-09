@@ -6,9 +6,9 @@ import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesStat
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 
-// What a worker changed, for the Changes window at its desk: the files it touched and their diff,
+// What a droid changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
-// that worker's checkout (its worktree, or the project folder) every couple of seconds and pushes
+// that droid's checkout (its worktree, or the project folder) every couple of seconds and pushes
 // the file list whenever it changes. Diffs of single files are fetched on demand.
 
 const POLL_MS = 2000;
@@ -20,7 +20,7 @@ const MAX_COUNT_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export interface ChangesTarget {
-  /** The worker's name, for toasts. */
+  /** The droid's name, for toasts. */
   name: string;
   /** Absolute directory it works in. */
   cwd: string;
@@ -29,7 +29,7 @@ export interface ChangesTarget {
   /** The commit its worktree branched from, when it has one. */
   worktreeBase?: string;
   /**
-   * For another floor's repository a worker works in (see WorkerInfo.repos): the branch diffs are
+   * For another floor's repository a droid works in (see WorkerInfo.repos): the branch diffs are
    * taken against and PRs target, instead of the one the office was opened on (null: none), where
    * that repository's open pull requests are, and how to refresh its boards.
    */
@@ -47,7 +47,7 @@ export interface ChangesEvents {
 
 interface Watch {
   workerId: string;
-  /** One of the other floors' repositories of a worker across repositories; none for its own. */
+  /** One of the other floors' repositories of a droid across repositories; none for its own. */
   repo?: string;
   clients: Set<string>;
   timer?: NodeJS.Timeout;
@@ -167,14 +167,14 @@ async function signature(file: string): Promise<string> {
   }
 }
 
-/** A worker's checkout the Changes window can show: its own, or one of its other repositories'. */
+/** A droid's checkout the Changes window can show: its own, or one of its other repositories'. */
 const watchKey = (workerId: string, repo?: string) => (repo ? `${workerId} ${repo}` : workerId);
 
-/** A worker across repositories has the same branch name in each of them. */
+/** A droid across repositories has the same branch name in each of them. */
 const openedKey = (repo: string | undefined, branch: string) => `${repo ?? ''}\n${branch}`;
 
 export class Changes {
-  /** By worker, and repository for a worker across repositories (see watchKey). */
+  /** By droid, and repository for a droid across repositories (see watchKey). */
   private watches = new Map<string, Watch>();
   /** PRs opened from the office, until the boards catch up, by repository and branch. */
   private opened = new Map<string, { number: number; url: string }>();
@@ -182,7 +182,7 @@ export class Changes {
   constructor(
     /** The branch the office was opened on: what diffs are taken against and what PRs target. */
     private baseBranch: string | undefined,
-    /** A worker's checkout; with `repo`, its worktree of that floor's repository (see WorkerInfo.repos). */
+    /** A droid's checkout; with `repo`, its worktree of that floor's repository (see WorkerInfo.repos). */
     private target: (workerId: string, repo?: string) => ChangesTarget | undefined,
     /** An open pull request whose head is that branch, from the PR board. */
     private openPull: (branch: string) => { number: number; url: string } | undefined,
@@ -211,7 +211,7 @@ export class Changes {
     for (const key of [...this.watches.keys()]) this.unwatchKey(key, clientId);
   }
 
-  /** The worker is gone. */
+  /** The droid is gone. */
   forget(workerId: string) {
     for (const [key, w] of [...this.watches]) if (w.workerId === workerId) this.drop(key);
   }
@@ -223,7 +223,7 @@ export class Changes {
   /** The diff of one changed file, as `git diff` prints it. */
   async diff(workerId: string, filePath: string, repo?: string): Promise<{ diff: string; truncated: boolean } | string> {
     const t = this.target(workerId, repo);
-    if (!t) return 'No such worker';
+    if (!t) return 'No such droid';
     const file = await this.changedFile(workerId, repo, t, filePath);
     if (typeof file === 'string') return file;
     try {
@@ -248,13 +248,13 @@ export class Changes {
 
   /**
    * One side of a changed picture, for the preview in the Changes window: 'old' is the file at the
-   * commit the diff is taken from, 'new' is what's in the checkout now. Only files in the worker's
+   * commit the diff is taken from, 'new' is what's in the checkout now. Only files in the droid's
    * list of changes are served, and only pictures.
    */
   async file(workerId: string, filePath: string, side: 'old' | 'new', repo?: string): Promise<ImageResult> {
     if (!changedImageType(filePath)) return { status: 415, error: 'Only pictures can be previewed' };
     const t = this.target(workerId, repo);
-    if (!t) return { status: 404, error: 'No such worker' };
+    if (!t) return { status: 404, error: 'No such droid' };
     const file = await this.changedFile(workerId, repo, t, filePath);
     if (typeof file === 'string') return { status: 404, error: file };
     // A renamed file was something else before; its old side is only a picture if that name was one.
@@ -354,7 +354,7 @@ export class Changes {
     if (!w.clients.size && !w.busy) this.drop(key);
   }
 
-  /** The watch on a worker's checkout, made when there is none yet. */
+  /** The watch on a droid's checkout, made when there is none yet. */
   private entry(workerId: string, repo?: string): Watch {
     const key = watchKey(workerId, repo);
     let w = this.watches.get(key);
@@ -365,7 +365,7 @@ export class Changes {
     return w;
   }
 
-  /** A file in the worker's list of changes, looking again when it isn't in the last one. */
+  /** A file in the droid's list of changes, looking again when it isn't in the last one. */
   private async changedFile(workerId: string, repo: string | undefined, t: ChangesTarget, filePath: string): Promise<ChangedFile | string> {
     let state = this.watches.get(watchKey(workerId, repo))?.last;
     if (!state?.files.some((f) => f.path === filePath)) state = await this.compute({ workerId, repo }, t);
@@ -375,7 +375,7 @@ export class Changes {
   /** Runs one commit / discard / PR at a time per checkout, showing watchers that it's in progress. */
   private async action(workerId: string, repo: string | undefined, label: string, fn: (t: ChangesTarget, w: Watch) => Promise<string | undefined>): Promise<string | undefined> {
     const t = this.target(workerId, repo);
-    if (!t) return 'No such worker';
+    if (!t) return 'No such droid';
     const key = watchKey(workerId, repo);
     const w = this.entry(workerId, repo);
     if (w.busy) return `Hold on — still ${w.busy.toLowerCase().replace(/…$/, '')}`;
@@ -400,7 +400,7 @@ export class Changes {
     w.polling = true;
     try {
       const t = this.target(w.workerId, w.repo);
-      const state = t ? await this.compute(w, t) : errorState(w, '', 'No such worker');
+      const state = t ? await this.compute(w, t) : errorState(w, '', 'No such droid');
       if (w.busy) state.busy = w.busy;
       const key = JSON.stringify({ ...state, at: 0 });
       if (key !== w.lastKey) {
@@ -430,7 +430,7 @@ export class Changes {
     let label = 'HEAD';
     if (baseBranch && branch !== baseBranch && (await gitMaybe(['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}`], t.cwd))) {
       // Origin's copy too, whichever is newer: a worktree starts from PRs merged there that the
-      // project may never have pulled (see Worktrees.create), and they aren't this worker's changes.
+      // project may never have pulled (see Worktrees.create), and they aren't this droid's changes.
       const remote = `refs/remotes/origin/${baseBranch}`;
       refs = (await gitMaybe(['rev-parse', '--verify', '--quiet', remote], t.cwd)) ? [baseBranch, remote] : [baseBranch];
       label = baseBranch;

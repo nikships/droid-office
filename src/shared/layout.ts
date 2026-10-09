@@ -10,14 +10,14 @@ export interface DeskDef {
   id: string;
   x: number;
   z: number;
-  /** Rotation around Y. At 0 the worker sits on the desk's +z side, facing -z. */
+  /** Rotation around Y. At 0 the droid sits on the desk's +z side, facing -z. */
   rotY: number;
   label: string;
-  /** A bean bag on the floor instead of a desk; the worker sits on it at (x, z), facing -z at rotY 0. */
+  /** A bean bag on the floor instead of a desk; the droid sits on it at (x, z), facing -z at rotY 0. */
   beanbag?: boolean;
-  /** A board agent's kiosk instead of a desk (see STATIONS): the worker stands behind it. */
+  /** A board agent's kiosk instead of a desk (see STATIONS): the droid stands behind it. */
   station?: StationKind;
-  /** A chair at the meeting room's table (see MEETING_SEATS): only a meeting seats a worker here. */
+  /** A chair at the meeting room's table (see MEETING_SEATS): only a meeting seats a droid here. */
   room?: boolean;
 }
 
@@ -76,7 +76,7 @@ export const BEANBAGS: DeskDef[] = (
   ] as const
 ).map(([x, z, rotY], i) => ({ id: `beanbag-${i + 1}`, x, z, rotY, label: `Bean bag ${i + 1}`, beanbag: true }));
 
-/** Everywhere a worker can sit: the desks, then the bean bags. */
+/** Everywhere a droid can sit: the desks, then the bean bags. */
 export const SEATS: DeskDef[] = [...DESKS, ...BEANBAGS];
 
 /**
@@ -86,9 +86,9 @@ export const SEATS: DeskDef[] = [...DESKS, ...BEANBAGS];
 export type StationKind = 'issues' | 'pulls' | 'queue' | 'lead';
 
 /**
- * The board agents: a worker standing behind a little kiosk just west of each of those boards (see
+ * The board agents: a droid standing behind a little kiosk just west of each of those boards (see
  * BOARDS), there for anyone to prompt about it, and the Team lead's on the east wall. (x, z) is the
- * kiosk. They face into the room, so the worker stands on the wall side of it: at rotY PI by the north
+ * kiosk. They face into the room, so the droid stands on the wall side of it: at rotY PI by the north
  * wall, at PI / 2 by the east one. Nobody hires them from the desks or the queue.
  */
 export const STATIONS: DeskDef[] = [
@@ -118,7 +118,7 @@ export const STAIRS = { fromX: 3, toX: LOFT.minX, minZ: 11.2, maxZ: FLOOR.maxZ, 
 
 /**
  * The meeting room: glass walls round the space under the boss office, from the loft's posts to the
- * outside walls, with a long table in the middle. Workers called to a meeting sit round it (see
+ * outside walls, with a long table in the middle. Droids called to a meeting sit round it (see
  * MEETING_SEATS and server/meetings.ts). The glass stops under the loft's floor; the door is in the
  * north wall, facing the lounge.
  */
@@ -141,10 +141,10 @@ export const MEETING_SEATS: DeskDef[] = (
 /** The board on the meeting room's back (south) wall that shows the meeting's output file as it's written. */
 export const MEETING_BOARD = { x: MEETING_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
 
-/** Any place a worker can be by id: the seats, the board agents' kiosks and the meeting room's chairs. */
+/** Any place a droid can be by id: the seats, the board agents' kiosks and the meeting room's chairs. */
 export const DESK_BY_ID = new Map([...SEATS, ...STATIONS, ...MEETING_SEATS].map((d) => [d.id, d]));
 
-/** The seat a new worker takes when nobody picks one: the first free desk, else the first free bean bag. */
+/** The seat a new droid takes when nobody picks one: the first free desk, else the first free bean bag. */
 export function nextFreeSeat(taken: (id: string) => boolean): DeskDef | undefined {
   return SEATS.find((d) => !taken(d.id));
 }
@@ -166,7 +166,7 @@ export function nearestFreeSeat(x: number, z: number, taken: (id: string) => boo
 
 /**
  * The bean bags that are out: every one in use, and while every desk is taken, the next free one
- * too, so there's always somewhere to hire the next worker.
+ * too, so there's always somewhere to hire the next droid.
  */
 export function beanbagsOut(taken: (id: string) => boolean): Set<string> {
   const out = new Set(BEANBAGS.filter((b) => taken(b.id)).map((b) => b.id));
@@ -178,10 +178,10 @@ export function beanbagsOut(taken: (id: string) => boolean): Set<string> {
 }
 
 /**
- * The places nobody is at: every seat and board agent's kiosk with no worker there and nobody sent
+ * The places nobody is at: every seat and board agent's kiosk with no droid there and nobody sent
  * home still packing up there (`packing`). Each shows that it's free, with a '+' over a seat and the
  * board agent waiting at a kiosk. It's worked out afresh from who's there rather than seat by seat as
- * workers come and go, so swapping one floor's workers for another's never leaves a place showing
+ * droids come and go, so swapping one floor's droids for another's never leaves a place showing
  * free under someone (two floors can each have a Queue agent at the same kiosk).
  */
 export function vacantSeats(workers: Iterable<{ deskId: string }>, packing: (id: string) => boolean = () => false): Set<string> {
@@ -190,7 +190,7 @@ export function vacantSeats(workers: Iterable<{ deskId: string }>, packing: (id:
   return new Set([...DESK_BY_ID.keys()].filter((id) => !taken.has(id) && !packing(id)));
 }
 
-/** Where the worker (and the interacting player) stands relative to the desk. */
+/** Where the droid (and the interacting player) stands relative to the desk. */
 export function deskSeat(desk: DeskDef, offset = 0.85): { x: number; z: number } {
   return {
     x: desk.x + Math.sin(desk.rotY) * offset,
@@ -201,7 +201,7 @@ export function deskSeat(desk: DeskDef, offset = 0.85): { x: number; z: number }
 /** Wall boards. `rotY` is the way the board faces (0 = +z, like the north-wall boards). */
 export const BOARDS = {
   // Side by side along the north wall, the way work goes: an issue goes on the task queue (the
-  // whiteboard in the middle), and its worker's pull request comes out the other side. Each has its
+  // whiteboard in the middle), and its droid's pull request comes out the other side. Each has its
   // board agent's kiosk just west of it (see STATIONS).
   issues: { x: -11.7, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '01 TRIAGE' },
   queue: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 TICKET TO CODE' },
@@ -219,7 +219,7 @@ export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 }
 /**
  * The compute wall: a big screen on the west wall between the exit door and the kitchen corner,
  * facing into the room. The office's own machine is on its left `machineWidth` (how busy it is, and
- * how many workers it runs of the most it takes), then a `gap` of bezel, then every Factory Droid
+ * how many droids it runs of the most it takes), then a `gap` of bezel, then every Factory Droid
  * Computer. Its bottom clears the Droid Computer rack under it; its north edge clears the door's EXIT sign.
  */
 export const COMPUTE_WALL = { x: FLOOR.minX, y: 2.45, z: 10.15, width: 4.8, height: 2.6, machineWidth: 1.7, gap: 0.1 } as const;
@@ -293,7 +293,7 @@ export const WINDOWS: Opening[] = [
 
 /**
  * The way out of the bottom floor: a door in the west wall onto a landing, with stairs down to the
- * street. The floors above have no door there; workers leave them off the balcony (see PARACHUTE).
+ * street. The floors above have no door there; droids leave them off the balcony (see PARACHUTE).
  */
 export const EXIT_DOOR: Opening = { wall: 'west', u: 6.5, width: 1.4, y0: 0, y1: 2.4 };
 export const EXIT_STAIRS = {
@@ -382,7 +382,7 @@ export interface SeatDef {
 
 /**
  * Where people can sit: the office's couches, beanbags, chairs and the balcony bench (buildOffice puts
- * them there). Workers have their own seats, the desks and bean bags in SEATS.
+ * them there). Droids have their own seats, the desks and bean bags in SEATS.
  */
 export const SEATING: SeatDef[] = [
   // The lounge couch, its back to the room, facing the TV.

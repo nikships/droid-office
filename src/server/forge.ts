@@ -7,13 +7,13 @@ export interface PullRef {
   url: string;
 }
 
-/** What workers and the Changes window need to open a pull request for a branch they pushed. */
+/** What droids and the Changes window need to open a pull request for a branch they pushed. */
 export interface PullHost {
   /** Opens a pull request from `head` (already pushed) into `base` (the default branch when unset). */
   createPull(cwd: string, head: string, base: string | undefined, title: string, body: string): Promise<PullRef>;
   /** The open pull request whose head is `branch`, if there is one. */
   findOpenPull(branch: string, cwd: string): Promise<PullRef | undefined>;
-  /** The description of an open pull request, so a worker across repositories can list the others in it. */
+  /** The description of an open pull request, so a droid across repositories can list the others in it. */
   pullBody?(ref: PullRef, cwd: string): Promise<string>;
   /** Replaces that description. */
   setPullBody?(ref: PullRef, cwd: string, body: string): Promise<void>;

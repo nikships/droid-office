@@ -10,7 +10,7 @@ const SESSION_ID = /^[a-zA-Z0-9-]{1,160}$/;
 /** Droid's own bookkeeping file is a few KB; anything bigger isn't one. */
 const MAX_BYTES = 1024 * 1024;
 
-/** What a running Droid session is on, whether or not the worker pinned it. */
+/** What a running Droid session is on, whether or not the droid pinned it. */
 export interface DroidSessionModel {
   model: string;
   effort?: AgentEffort;
@@ -25,7 +25,7 @@ const exists = (file: string) =>
 /**
  * Reads the model and reasoning effort Droid records for a session in
  * `<sessions dir>/<working directory, slashes as dashes>/<session id>.settings.json`. That is the
- * model actually in use, including the one droid picked from its own settings when the worker
+ * model actually in use, including the one droid picked from its own settings when the droid
  * pinned nothing, and one changed with /model since.
  */
 export class DroidSessionReader {

@@ -6,7 +6,7 @@ export function teamOf(workers: Iterable<WorkerInfo>, leadId: string): WorkerInf
 }
 
 /**
- * Every worker by when it was hired, each lead's subagents right under it, so a team reads as one
+ * Every droid by when it was hired, each lead's subagents right under it, so a team reads as one
  * block. A subagent whose lead has gone stands on its own.
  */
 export function workersByTeam(workers: Iterable<WorkerInfo>): WorkerInfo[] {

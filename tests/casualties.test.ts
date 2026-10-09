@@ -75,7 +75,7 @@ function rig() {
 test('one shot drops it out of its chair with a thud, and it bleeds out where it lands', () => {
   const { seat, lands, casualties, model, frames } = rig();
   assert.equal(casualties.shoot('w1', model, seat), true);
-  assert.equal(casualties.shoot('w1', model, seat), false, 'no second scene for the same worker');
+  assert.equal(casualties.shoot('w1', model, seat), false, 'no second scene for the same droid');
   assert.equal(casualties.phaseOf('w1'), 'fall');
   assert.equal(casualties.dying('w1'), true);
   assert.equal(model.dead, true);
@@ -104,7 +104,7 @@ test('revive stands it back up in its seat with nothing disposed', () => {
   assert.deepEqual([model.root.rotation.x, model.root.rotation.y, model.root.rotation.z], [0, 0, 0]);
 });
 
-test('revival targets a nearby fallen worker, not a distant body or a different storey', () => {
+test('revival targets a nearby fallen droid, not a distant body or a different storey', () => {
   const { seat, casualties, model, frames } = rig();
   casualties.shoot('w1', model, seat);
   frames(60);

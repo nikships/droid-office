@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { commandAction, outputFailed, toolAction } from '../src/shared/actions.js';
 
-test('tool calls map to what a worker acts out', () => {
+test('tool calls map to what a droid acts out', () => {
   for (const [tool, action] of [
     ['Read', 'read'],
     ['Grep', 'read'],

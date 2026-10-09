@@ -12,17 +12,17 @@ export interface PromptOptions {
   placeholder?: string;
   initial?: string;
   submitLabel?: string;
-  /** Allow hiring a worker without an initial prompt (the direct hire flow). */
+  /** Allow hiring a droid without an initial prompt (the direct hire flow). */
   allowEmpty?: boolean;
-  /** Offer the "own git worktree" option (only when hiring a new worker). */
+  /** Offer the "own git worktree" option (only when hiring a new droid). */
   worktreeOption?: boolean;
-  /** Offer the model and effort pickers (only when hiring a new worker). */
+  /** Offer the model and effort pickers (only when hiring a new droid). */
   modelOption?: boolean;
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
   imagesOption?: boolean;
   /** The desk being hired at, so the model/effort choice remembered here is this desk's, not the whole office's. */
   deskId?: string;
-  /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
+  /** Other floors' projects a new droid in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
   onSubmit(text: string, opts: { worktree: boolean; model?: string; effort?: AgentEffort; repos: string[]; images: string[] }): void;
   /** The "Runs on" choice of a hire: this machine, or one of the account's Factory computers (factory-cloud.ts). */
@@ -50,7 +50,7 @@ export function setWorktreePref(worktree: boolean) {
 }
 
 /**
- * Hiring across repositories: other floors' projects the new worker takes on too, each in a worktree
+ * Hiring across repositories: other floors' projects the new droid takes on too, each in a worktree
  * of its own on the same branch. That needs a worktree of its own here, so picking one ticks `wtBox`
  * and unticking that clears them.
  */
@@ -70,7 +70,7 @@ export function repoPicker(options: { id: string; name: string }[] | undefined, 
 }
 
 export function openPrompt(opts: PromptOptions) {
-  const ta = h('textarea', { rows: 7, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
+  const ta = h('textarea', { rows: 7, placeholder: opts.placeholder ?? 'What should the droid work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
   const wtBox = h('input', { type: 'checkbox', id: 'wt-toggle' }) as HTMLInputElement;
@@ -78,7 +78,7 @@ export function openPrompt(opts: PromptOptions) {
   const wtRow = opts.worktreeOption
     ? h(
         'label',
-        { for: 'wt-toggle', style: 'display:flex;gap:8px;align-items:center;margin:10px 0 0;font-weight:700;cursor:pointer', title: 'Isolate this worker on its own branch so parallel workers never collide' },
+        { for: 'wt-toggle', style: 'display:flex;gap:8px;align-items:center;margin:10px 0 0;font-weight:700;cursor:pointer', title: 'Isolate this droid on its own branch so parallel droids never collide' },
         wtBox,
         '🌿 Work in its own git worktree & branch',
       )
@@ -88,7 +88,7 @@ export function openPrompt(opts: PromptOptions) {
   const submit = h('button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send');
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
   const failed = h('p.setting-note.bad.hidden', { style: 'margin:10px 0 0', role: 'alert' });
-  // A worker on a Factory computer works in a folder there: no worktree here, no other floors.
+  // A droid on a Factory computer works in a folder there: no worktree here, no other floors.
   opts.runsOn?.onChange((cloud) => {
     wtRow?.classList.toggle('hidden', cloud);
     repos.element?.classList.toggle('hidden', cloud);
@@ -197,14 +197,14 @@ export interface SendHomeOptions {
   /** The desk's label. */
   where: string;
   worktree: { path: string; branch: string };
-  /** A worker across repositories: the folders of its workspace, its own floor's first (see WorkerInfo.repos). */
+  /** A droid across repositories: the folders of its workspace, its own floor's first (see WorkerInfo.repos). */
   repos?: string[];
   /** Asks the office what the worktree holds; the answer comes back through routeWorktreeMessage. */
   ask(): void;
   onConfirm(cleanup: WorktreeCleanup): void;
 }
 
-/** Whoever is waiting to hear what a worker's worktree holds, by worker id. */
+/** Whoever is waiting to hear what a droid's worktree holds, by droid id. */
 const worktreeChecks = new Map<string, (state: WorktreeState) => void>();
 
 export function routeWorktreeMessage(msg: ServerMsg) {
@@ -232,7 +232,7 @@ const CLEANUP_LABEL: Record<WorktreeCleanup, string> = {
 };
 
 /**
- * Sending home a worker that has its own worktree: pick what becomes of the worktree and its branch.
+ * Sending home a droid that has its own worktree: pick what becomes of the worktree and its branch.
  * Opens on "keep" while the office checks the worktree, then suggests deleting when nothing would be lost.
  */
 export function sendHomeDialog(opts: SendHomeOptions) {
@@ -320,9 +320,9 @@ export interface LostWorktreeOptions {
   name: string;
   worktree: { path: string; branch: string };
   lost: { branch: LostBranch };
-  /** A worker across repositories: its workspace folder, deleted with every worktree in it. */
+  /** A droid across repositories: its workspace folder, deleted with every worktree in it. */
   workspace?: string;
-  /** The other workers on the floor whose worktrees were deleted too. */
+  /** The other droids on the floor whose worktrees were deleted too. */
   others: string[];
   /** Its process is still running, in the deleted folder: its terminal is there to look at. */
   openTerminal?: () => void;
@@ -332,8 +332,8 @@ export interface LostWorktreeOptions {
 }
 
 /**
- * A worker whose worktree was deleted outside droid-office (see WorkerInfo.lost): says what happened
- * and what's left, and puts it back (every lost worker's at once, when there are more), or sends it home.
+ * A droid whose worktree was deleted outside droid-office (see WorkerInfo.lost): says what happened
+ * and what's left, and puts it back (every lost droid's at once, when there are more), or sends it home.
  */
 export function lostWorktreeDialog(opts: LostWorktreeOptions) {
   const { name, others } = opts;
@@ -358,7 +358,7 @@ export function lostWorktreeDialog(opts: LostWorktreeOptions) {
       {},
       h('p', { style: 'margin:0 0 10px;font-weight:700' }, `${folder} was deleted outside droid-office, so ${name} ${opts.openTerminal ? 'is running in a folder that no longer exists' : "can't start there"}.`),
       h('p.wt-status', { style: 'margin:0' }, what),
-      others.length ? h('p.wt-status.warn', {}, `${plural(others.length, 'other worker')} on this floor lost ${others.length === 1 ? 'its worktree' : 'their worktrees'} too: ${others.join(', ')}.`) : null,
+      others.length ? h('p.wt-status.warn', {}, `${plural(others.length, 'other droid')} on this floor lost ${others.length === 1 ? 'its worktree' : 'their worktrees'} too: ${others.join(', ')}.`) : null,
     ),
     h('footer', {}, home, h('span.grow'), look, all, one),
   );

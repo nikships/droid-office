@@ -74,7 +74,7 @@ export class Decor {
 // Browsers only let WebGL draw an image from another site when that site sends CORS headers, and
 // most don't. So the office fetches pictures itself and serves them from its own origin. It only
 // does this for signed-in people, who can already run any command on this machine from a shell
-// worker, so fetching a link for them gives them nothing new.
+// droid, so fetching a link for them gives them nothing new.
 
 export type ImageResult = { type: string; body: Buffer } | { status: number; error: string };
 

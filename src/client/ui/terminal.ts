@@ -21,11 +21,11 @@ import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_
 export interface TerminalFind {
   /** What was searched for, as a searchKey. */
   needle: string;
-  /** How many rows from the bottom of the worker's terminal the line was. */
+  /** How many rows from the bottom of the droid's terminal the line was. */
   fromEnd: number;
 }
 
-/** Sends a file dropped or pasted into a worker's terminal to the office; where the office keeps it. */
+/** Sends a file dropped or pasted into a droid's terminal to the office; where the office keeps it. */
 async function uploadDrop(workerId: string, f: File): Promise<string> {
   const name = f.name || 'That file';
   if (f.size > DROP_MAX_BYTES) throw new Error(`${name} is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`);
@@ -58,7 +58,7 @@ export function routeTerminalMessage(msg: ServerMsg) {
   listeners.forEach((fn) => fn(msg));
 }
 
-/** The worker whose terminal window is open, if any. */
+/** The droid whose terminal window is open, if any. */
 export function openTerminalFor(): string | null {
   return current?.workerId ?? null;
 }
@@ -81,7 +81,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const smaller = h('button.btn.term-zoom', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
   const bigger = h('button.btn.term-zoom', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
   const zoom = h('span.term-zoom-group', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
-  const changesBtn = h('button.btn', { type: 'button', title: 'What this worker changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
+  const changesBtn = h('button.btn', { type: 'button', title: 'What this droid changed: files, diff, commit, open a PR (C at the desk)' }, '🌿 Changes');
   const bringInBtn = h('button.btn', { type: 'button' }, '🚪 Bring it in');
   const closeBtn = h('button.btn.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
   const host = h('div.term-host', guest ? {} : { 'data-drop': '📎 Drop screenshots or files here to put them in the terminal' });
@@ -191,7 +191,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (w.guest) {
       const why = w.guest.cantBringIn;
       bringInBtn.toggleAttribute('disabled', !!why);
-      bringInBtn.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's workers (R at its desk)";
+      bringInBtn.title = why ? `Can't be brought in right now: ${why}` : "Quit its droid outside and carry on the same session here, as one of the office's droids (R at its desk)";
     }
     paintTeam(w);
     // Another window claimed the shared PTY (the latest typist wins): follow it so this view

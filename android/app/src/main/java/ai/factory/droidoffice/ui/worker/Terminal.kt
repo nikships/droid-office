@@ -58,7 +58,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 private val TermBg = Color(TermPalette.BACKGROUND)
 
 /**
- * A worker's terminal: the office's own stream in xterm.js (see [TerminalPage]), with its history.
+ * A droid's terminal: the office's own stream in xterm.js (see [TerminalPage]), with its history.
  * A swipe scrolls back through it, or scrolls a full-screen program. In [TermView.Desktop] the
  * PTY's grid is scaled to fit; in [TermView.Phone] the text stays readable and [onFit] reports the
  * grid that fits, for the PTY to adopt. The view follows new output while it's at the bottom.

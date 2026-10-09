@@ -128,7 +128,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Notifications are off", style = MaterialTheme.typography.titleSmall)
-                                Text("Allow them to hear when a worker needs you.", style = MaterialTheme.typography.bodySmall)
+                                Text("Allow them to hear when a droid needs you.", style = MaterialTheme.typography.bodySmall)
                             }
                             Text("ALLOW", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
                         }
@@ -144,11 +144,11 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                         if (on && !canNotify) askToNotify()
                     }
                     HorizontalDivider(color = Palette.Border)
-                    Toggle(OfficeIcons.Bell, "When a worker needs you", "A question or a permission prompt, with a reply right in the notification.", store.settings.notifyNeedsInput, Tags.Offices.NOTIFY_NEEDS_INPUT) { on ->
+                    Toggle(OfficeIcons.Bell, "When a droid needs you", "A question or a permission prompt, with a reply right in the notification.", store.settings.notifyNeedsInput, Tags.Offices.NOTIFY_NEEDS_INPUT) { on ->
                         settings { it.copy(notifyNeedsInput = on) }
                     }
                     HorizontalDivider(color = Palette.Border)
-                    Toggle(OfficeIcons.Sparkle, "When a worker finishes", "Its turn is done and the result is waiting.", store.settings.notifyDone, Tags.Offices.NOTIFY_DONE) { on ->
+                    Toggle(OfficeIcons.Sparkle, "When a droid finishes", "Its turn is done and the result is waiting.", store.settings.notifyDone, Tags.Offices.NOTIFY_DONE) { on ->
                         settings { it.copy(notifyDone = on) }
                     }
                 }

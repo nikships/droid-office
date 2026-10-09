@@ -37,7 +37,7 @@ const KEYS: Record<string, 'left' | 'right' | 'down' | 'turn' | 'back' | 'drop' 
 
 /**
  * The arcade cabinet in the lounge. Press E there and the camera glides up to its screen, where you
- * play BLOCKFALL (ui/blocks.ts) on the keyboard. One of your workers needing input pauses it and
+ * play BLOCKFALL (ui/blocks.ts) on the keyboard. One of your droids needing input pauses it and
  * says who; walking away leaves it paused for when you come back. Its score goes on the building's
  * high-score table when you walk away and when the game ends.
  */
@@ -52,14 +52,14 @@ export class Cabinet {
   /** Its game-over sound has played. */
   private ended = false;
   private sent = { version: -1, at: 0 };
-  /** The worker whose question paused your game. */
+  /** The droid whose question paused your game. */
   private waiting: WorkerInfo | null = null;
   /** What the cabinet in the office shows. */
   private readonly picture = document.createElement('canvas');
   private readonly texture = new THREE.CanvasTexture(this.picture);
   /** The screen you play or watch on up close, drawn at the size it shows on the page so it stays crisp. */
   private board: HTMLCanvasElement | null = null;
-  /** Over the screen while a worker waits on you: who, and a way to its terminal. */
+  /** Over the screen while a droid waits on you: who, and a way to its terminal. */
   private call: HTMLElement | null = null;
   private dirty = true;
   private painted = -1;
@@ -110,7 +110,7 @@ export class Cabinet {
     this.open();
   }
 
-  /** One of your workers started waiting on an answer: your game stops for it, and says who. */
+  /** One of your droids started waiting on an answer: your game stops for it, and says who. */
   needsYou(w: WorkerInfo) {
     if (this.mode !== 'play' || !this.game) return;
     this.game.pause(true);
@@ -281,7 +281,7 @@ export class Cabinet {
     this.dirty = true;
   }
 
-  /** The worker that paused your game got its answer from someone else. */
+  /** The droid that paused your game got its answer from someone else. */
   private onWorkers() {
     if (!this.waiting || store.workers.get(this.waiting.id)?.status === 'needs_input') return;
     this.waiting = null;

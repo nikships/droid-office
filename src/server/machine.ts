@@ -12,14 +12,14 @@ const HISTORY = 60;
 const MEM_PRESSURE = 90;
 const CPU_PRESSURE = 90;
 const CPU_WINDOW = 6;
-/** The highest worker limit there is: past this it isn't a limit. */
+/** The highest droid limit there is: past this it isn't a limit. */
 export const MAX_WORKER_LIMIT = 500;
 
-/** What hiring asks of the office's machine: whether it can take one more worker. */
+/** What hiring asks of the office's machine: whether it can take one more droid. */
 export interface Capacity {
-  /** Why the office can't take another worker (it's at its worker limit), if it can't. */
+  /** Why the office can't take another droid (it's at its droid limit), if it can't. */
   full(): string | undefined;
-  /** How many more workers it has room for: Infinity with no limit, below 0 once it's over. */
+  /** How many more droids it has room for: Infinity with no limit, below 0 once it's over. */
   room(): number;
 }
 
@@ -29,7 +29,7 @@ interface Saved {
   at: number;
 }
 
-/** A worker limit as given: a whole number from 1 to MAX_WORKER_LIMIT, or undefined when it isn't one. */
+/** A droid limit as given: a whole number from 1 to MAX_WORKER_LIMIT, or undefined when it isn't one. */
 export function parseWorkerLimit(v: unknown): number | undefined {
   const n = typeof v === 'string' ? Number(v.trim()) : v;
   return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_WORKER_LIMIT ? n : undefined;
@@ -64,7 +64,7 @@ function availableMemory(): Promise<number> {
 
 /**
  * The machine the office runs on: how busy its CPU and memory are (for the monitor on the wall, and
- * a warning before hiring while it's under pressure), and the most workers the office runs at once,
+ * a warning before hiring while it's under pressure), and the most droids the office runs at once,
  * across every floor. That limit comes from --max-workers, or from ⚙️ Settings (kept in
  * .droid-office/machine.json), which can lower it but never raise it past --max-workers.
  */
@@ -76,14 +76,14 @@ export class Machine implements Capacity {
   private cpu = 0;
   private memUsed = 0;
   private history: [number, number][] = [];
-  /** The worker count everyone was last told. */
+  /** The droid count everyone was last told. */
   private told = -1;
 
   constructor(
     dataDir: string,
     /** --max-workers. */
     private ceiling: number | undefined,
-    /** How many workers the office has now, on every floor. */
+    /** How many droids the office has now, on every floor. */
     private count: () => number,
     private onState: (state: MachineState) => void,
   ) {
@@ -104,7 +104,7 @@ export class Machine implements Capacity {
     clearInterval(this.timer);
   }
 
-  /** The most workers the office takes, or undefined for no limit. */
+  /** The most droids the office takes, or undefined for no limit. */
   get limit(): number | undefined {
     const set = this.saved?.limit;
     if (set === undefined) return this.ceiling;
@@ -119,7 +119,7 @@ export class Machine implements Capacity {
   full(): string | undefined {
     const limit = this.limit;
     if (limit === undefined || this.count() < limit) return undefined;
-    return `The office is at its limit of ${limit} worker${limit === 1 ? '' : 's'} on this machine — send one home before hiring another`;
+    return `The office is at its limit of ${limit} droid${limit === 1 ? '' : 's'} on this machine — send one home before hiring another`;
   }
 
   state(): MachineState {
@@ -149,7 +149,7 @@ export class Machine implements Capacity {
     return undefined;
   }
 
-  /** A worker came, went or changed: when that moved the count, everyone hears the new one. */
+  /** A droid came, went or changed: when that moved the count, everyone hears the new one. */
   workersChanged() {
     if (this.count() !== this.told) this.emit();
   }

@@ -10,7 +10,7 @@ import { mountTranscript } from './factory-transcript';
 import { promptImages } from './images';
 import { modelBadge } from './models';
 
-// Cloud workers in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice, the
+// Cloud droids in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice, the
 // window E opens at one's desk (its session on Factory and a prompt box), and sending one home.
 
 /** A hire's Factory computer and the folder its session starts in there. */
@@ -97,7 +97,7 @@ export function runsOnPicker(): RunsOn | null {
   };
 }
 
-/** Makes a cloud worker's session at `deskId` and seats it; why it didn't, for the dialog to show. */
+/** Makes a cloud droid's session at `deskId` and seats it; why it didn't, for the dialog to show. */
 export async function hireCloud(deskId: string, text: string, o: { model?: string; effort?: AgentEffort; images: string[]; cloud: CloudChoice }): Promise<string | undefined> {
   saveCwd(o.cloud.computerId, o.cloud.cwd);
   try {
@@ -111,14 +111,14 @@ export async function hireCloud(deskId: string, text: string, o: { model?: strin
   }
 }
 
-/** The line under a cloud worker's name: where it runs, its model, its folder there. */
+/** The line under a cloud droid's name: where it runs, its model, its folder there. */
 export function cloudLine(w: WorkerInfo): string {
   if (!w.cloud) return '';
   const badge = modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort);
   return [cloudBadge(w.cloud), badge, w.cloud.cwd ?? '~'].filter(Boolean).join(' · ');
 }
 
-/** Sending a cloud worker home: it leaves its desk, and its Factory session is kept unless the box is ticked. */
+/** Sending a cloud droid home: it leaves its desk, and its Factory session is kept unless the box is ticked. */
 export function sendCloudHome(net: Net, w: WorkerInfo) {
   const box = h('input', { type: 'checkbox', id: 'cloud-delete' }) as HTMLInputElement;
   const yes = h('button.btn.danger', { type: 'button' }, 'Send home');
@@ -148,13 +148,13 @@ export function sendCloudHome(net: Net, w: WorkerInfo) {
 
 let current: { workerId: string; modal: Modal } | null = null;
 
-/** The cloud worker whose window is open, if any. */
+/** The cloud droid whose window is open, if any. */
 export function openCloudFor(): string | null {
   return current?.workerId ?? null;
 }
 
 /**
- * A cloud worker's window: where it runs, its session's transcript (factory-transcript.ts, read live
+ * A cloud droid's window: where it runs, its session's transcript (factory-transcript.ts, read live
  * while it works), its session in Factory's web app, and a prompt box (Enter sends, Shift+Enter is a
  * new line, pictures pasted or dropped) with Interrupt while it works. The office reads its session
  * quickly while this is open.

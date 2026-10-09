@@ -9,14 +9,14 @@ export type { WorktreeCleanup, WorktreeState } from '../shared/protocol.js';
 
 const execFileP = promisify(execFile);
 
-/** Where the office keeps its workers' worktrees, relative to the project. */
+/** Where the office keeps its droids' worktrees, relative to the project. */
 export const WORKTREES_DIR = path.join('.droid-office', 'worktrees');
-/** Their branches are office/<worker>-<id>. */
+/** Their branches are office/<droid>-<id>. */
 export const BRANCH_PREFIX = 'office/';
 /** A fetch this recent is fresh enough for the next worktree: a burst of hires shares one. */
 const FETCH_FRESH_MS = 15_000;
 const FETCH_TIMEOUT_MS = 15_000;
-/** What the office writes into a worker's workspace (see WorkerInfo.repos), besides the worktrees. */
+/** What the office writes into a droid's workspace (see WorkerInfo.repos), besides the worktrees. */
 export const WORKSPACE_FILES = new Set(['AGENTS.md']);
 
 export interface WorktreeRef {
@@ -25,7 +25,7 @@ export interface WorktreeRef {
   branch: string;
   /** The commit it was branched from, when known. */
   base?: string;
-  /** The branch the office made for it, when the worker has since switched to `branch`, one of its own. */
+  /** The branch the office made for it, when the droid has since switched to `branch`, one of its own. */
   made?: string;
 }
 
@@ -42,7 +42,7 @@ export interface ListedWorktree {
   head: string;
 }
 
-/** Git plumbing for the worktrees the office makes for its workers: hiring, sending home and pruning. */
+/** Git plumbing for the worktrees the office makes for its droids: hiring, sending home and pruning. */
 export class Worktrees {
   /** The project dir with symlinks resolved, so it compares with the paths git prints. */
   private readonly root: string;
@@ -57,11 +57,11 @@ export class Worktrees {
 
   /**
    * A new branch and worktree, from the latest of the branch the project is on (see startPoint).
-   * `from` is that branch, which the worker's pull request targets; `note` says when commits the
+   * `from` is that branch, which the droid's pull request targets; `note` says when commits the
    * project has were left out. Returns what went wrong as a string. Does not move the project's checkout.
    *
-   * For a worker across repositories, `sub` puts it in the folder of that name in the workspace
-   * `slug`, which is in `root` (the worker's own floor, when that isn't this project). The path it
+   * For a droid across repositories, `sub` puts it in the folder of that name in the workspace
+   * `slug`, which is in `root` (the droid's own floor, when that isn't this project). The path it
    * returns is relative to `root`.
    */
   create(slug: string, sub?: string, root = this.dir): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
@@ -170,7 +170,7 @@ export class Worktrees {
   }
 
   /**
-   * The branch a worktree is on now, which may be one the worker made itself; undefined when HEAD
+   * The branch a worktree is on now, which may be one the droid made itself; undefined when HEAD
    * is detached (mid-rebase, say) or the folder is gone.
    */
   async branchOf(wt: WorktreeRef): Promise<string | undefined> {
@@ -183,7 +183,7 @@ export class Worktrees {
 
   /**
    * Whether `branch` was made since `than` was, going by the first line of each one's reflog: a
-   * worker's own branch, made after the office made it one. False when git can't say.
+   * droid's own branch, made after the office made it one. False when git can't say.
    */
   async madeSince(branch: string, than: string): Promise<boolean> {
     const [a, b] = await Promise.all([this.createdAt(branch), this.createdAt(than)]);
@@ -303,7 +303,7 @@ export class Worktrees {
           () => true,
           () => false,
         ));
-      // The office's own branch, when the worker has moved to another, holds its work too.
+      // The office's own branch, when the droid has moved to another, holds its work too.
       const made = wt.made && wt.made !== wt.branch && (await this.hasBranch(wt.made)) ? [wt.made] : [];
       // On no remote and not in the project's own checkout either: what deleting the branch would lose.
       state.unpushed = Number(await this.git(['rev-list', '--count', wt.branch, ...made, '--not', 'HEAD', '--remotes', ...(known ? [landed] : [])]));
@@ -332,7 +332,7 @@ export class Worktrees {
       // Forget worktrees whose folders are gone: this one, and any someone rm -rf'd by hand.
       await this.git(['worktree', 'prune']);
       if (cleanup === 'all') {
-        // The office's own branch, left behind when the worker made one of its own: it goes too,
+        // The office's own branch, left behind when the droid made one of its own: it goes too,
         // unless it has commits that no remote, the project's checkout or that one has.
         const made = wt.made && wt.made !== wt.branch && !(await this.wouldLose(wt.made, [wt.branch])) ? wt.made : undefined;
         await this.git(['branch', '-D', wt.branch]);
@@ -344,10 +344,10 @@ export class Worktrees {
     }
   }
 
-  /** Gun dismissal: discard owned work, never a project checkout or a branch that predates this worker. */
+  /** Gun dismissal: discard owned work, never a project checkout or a branch that predates this droid. */
   async dismiss(wt: WorktreeRef, home = this.dir, ownership?: WorktreeOwnership): Promise<string | undefined> {
     try {
-      if (!wt.path) throw new Error('the worker has no owned worktree folder');
+      if (!wt.path) throw new Error('the droid has no owned worktree folder');
       const abs = path.resolve(this.dir, wt.path);
       if (!within(path.join(real(home), WORKTREES_DIR), real(abs))) throw new Error('refusing to delete a worktree outside the owning office');
       if (existsSync(abs) && real(path.resolve(abs, await this.git(['rev-parse', '--git-common-dir'], abs))) !== this.commonDir()) throw new Error('the worktree belongs to a different repository');
@@ -358,7 +358,7 @@ export class Worktrees {
       if (existsSync(abs)) {
         const live = await this.branchOf(wt);
         if (live) candidates.add(live);
-        // Includes earlier branches the worker created and left behind, not just the active one.
+        // Includes earlier branches the droid created and left behind, not just the active one.
         const log = await this.git(['reflog', 'show', '--format=%gs', 'HEAD'], abs);
         for (const line of log.split('\n')) {
           const checkout = /^checkout: moving from (\S+) to (\S+)$/.exec(line);
@@ -409,9 +409,9 @@ export class Worktrees {
 
   /**
    * The worktrees git has under .droid-office/worktrees, every office/* branch, and folders there git
-   * doesn't know. A workspace (a worker across repositories) is a folder there with worktrees in it,
+   * doesn't know. A workspace (a droid across repositories) is a folder there with worktrees in it,
    * not a stray. `elsewhere` are office/* branches checked out somewhere else: in another floor's
-   * workspace, by a worker across repositories that this project's office doesn't list.
+   * workspace, by a droid across repositories that this project's office doesn't list.
    */
   async list(): Promise<{ worktrees: ListedWorktree[]; branches: string[]; strays: string[]; elsewhere: Map<string, string> }> {
     const home = path.join(this.root, WORKTREES_DIR);
@@ -458,7 +458,7 @@ export class Worktrees {
 }
 
 /**
- * Where a worker works: its worktree, or for a worker across repositories the workspace folder its
+ * Where a droid works: its worktree, or for a droid across repositories the workspace folder its
  * worktrees are in. Relative to its floor's dir; undefined for the floor's own checkout.
  */
 export function workspaceOf(info: { worktree?: { path: string }; repos?: unknown[] }): string | undefined {

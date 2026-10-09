@@ -22,7 +22,7 @@ function canvasDocument() {
 }
 
 /** A frame that lands on the same timestamp as the one before (or the very first one) has a delta of 0. */
-test('a worker whose first frame has no time in it still has a body', (t) => {
+test('a droid whose first frame has no time in it still has a body', (t) => {
   t.after(canvasDocument());
   for (const status of ['working', 'idle', 'needs_input', 'done'] as const) {
     const worker = new Worker('Lead', '#e76f51');

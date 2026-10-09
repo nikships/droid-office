@@ -1,5 +1,5 @@
 // Getting your attention when the office isn't the tab you're looking at: desktop notifications
-// for workers that need input or finish (the tab title counts them too, see main.ts).
+// for droids that need input or finish (the tab title counts them too, see main.ts).
 
 import type { WorkerInfo } from '../shared/protocol';
 import { alertDetail } from '../shared/status';
@@ -29,7 +29,7 @@ export function waitingOnSomeone(w: WorkerInfo): w is WorkerInfo & { status: 'ne
 }
 
 export class DesktopNotifier {
-  /** The notification up for each worker, to take down once it's handled. */
+  /** The notification up for each droid, to take down once it's handled. */
   private shown = new Map<string, Notification>();
 
   constructor(
@@ -40,14 +40,14 @@ export class DesktopNotifier {
     window.addEventListener('focus', () => this.closeAll());
   }
 
-  /** A worker just started waiting on input, or finished its turn. */
+  /** A droid just started waiting on input, or finished its turn. */
   alert(w: WorkerInfo & { status: 'needs_input' | 'done' }) {
     if (!this.enabled() || notifyPermission() !== 'granted') return;
     if (!document.hidden && document.hasFocus()) return;
     const title = `${w.name} ${w.status === 'done' ? 'is done' : 'needs input'}`;
     const body = [w.task?.name, alertDetail(w)].filter(Boolean).join('\n');
     this.shown.get(w.id)?.close();
-    // Needs input blocks the worker, so that one stays up until you deal with it.
+    // Needs input blocks the droid, so that one stays up until you deal with it.
     const n = this.show(title, { body, tag: `worker-${w.id}`, requireInteraction: w.status === 'needs_input' });
     if (!n) return;
     n.onclick = () => {
@@ -61,7 +61,7 @@ export class DesktopNotifier {
     this.shown.set(w.id, n);
   }
 
-  /** Takes down notifications for workers nobody needs to get to any more (someone else did). */
+  /** Takes down notifications for droids nobody needs to get to any more (someone else did). */
   sync(workers: Map<string, WorkerInfo>) {
     for (const [id, n] of this.shown) {
       const w = workers.get(id);
@@ -73,7 +73,7 @@ export class DesktopNotifier {
 
   /** What one looks like, from ⚙️ Settings. */
   sample() {
-    const n = this.show('🔔 Notifications are on', { body: 'This is how a worker that needs input or is done gets your attention while you are in another tab.' });
+    const n = this.show('🔔 Notifications are on', { body: 'This is how a droid that needs input or is done gets your attention while you are in another tab.' });
     if (!n) return;
     n.onclick = () => {
       window.focus();

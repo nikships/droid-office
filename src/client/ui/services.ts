@@ -9,7 +9,7 @@ export function serviceUrl(port: number): string {
 }
 
 /**
- * One command that tunnels localhost:<port> to the office, which relays it to the worker's
+ * One command that tunnels localhost:<port> to the office, which relays it to the droid's
  * server, and opens it once the tunnel is up, over the owner's SSH access to its machine.
  */
 export function serviceTunnel(s: ServicesState, port: number, os: Os): string {
@@ -19,7 +19,7 @@ export function serviceTunnel(s: ServicesState, port: number, os: Os): string {
 
 function describe(svc: ServiceInfo): { who: string; color: string; branch?: string } {
   const w = store.workers.get(svc.workerId);
-  return { who: w?.name ?? 'A worker', color: w?.color ?? 'var(--muted)', branch: w?.worktree?.branch };
+  return { who: w?.name ?? 'A droid', color: w?.color ?? 'var(--muted)', branch: w?.worktree?.branch };
 }
 
 export function openServices() {
@@ -41,7 +41,7 @@ export function openServices() {
   const render = () => {
     const s = store.services;
     tabs.replaceChildren(...(Object.keys(OS_LABEL) as Os[]).map((o) => h('button.btn', { type: 'button', class: o === os ? 'on' : '', onclick: () => ((os = o), (copied = null), render()) }, OS_LABEL[o])));
-    body.replaceChildren(h('p.note', { style: 'margin:0 0 12px' }, 'Web servers the workers are running. Click one to copy a command that opens it on your computer — run it in a terminal and the page opens by itself.'));
+    body.replaceChildren(h('p.note', { style: 'margin:0 0 12px' }, 'Web servers the droids are running. Click one to copy a command that opens it on your computer — run it in a terminal and the page opens by itself.'));
     if (!s.items.length) {
       body.append(
         h(
@@ -51,7 +51,7 @@ export function openServices() {
           h(
             'p.note',
             {},
-            'When a worker starts a web server — ',
+            'When a droid starts a web server — ',
             h('code', {}, 'npm run dev'),
             ', a preview build, ',
             h('code', {}, 'python -m http.server'),

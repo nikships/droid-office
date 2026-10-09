@@ -69,7 +69,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     {},
     h('li', {}, h('span', {}, h('b', {}, 'Open Droid Office for Android'), ' on your phone.')),
     h('li', {}, h('span', {}, 'Start pairing in the app and point the camera at this code.')),
-    h('li', {}, h('span', {}, 'Your phone shows up under ', h('b', {}, 'Paired phones'), '. Hire workers, watch their terminals and prompt them from it.')),
+    h('li', {}, h('span', {}, 'Your phone shows up under ', h('b', {}, 'Paired phones'), '. Hire droids, watch their terminals and prompt them from it.')),
   );
   const pairCard = h('section.phone-pair', {}, h('div.phone-qr-col', {}, tile, caption), h('div.phone-side', {}, steps, h('h4.phone-label', {}, 'In this code'), addresses, addressNote));
   const paired = h('section.phone-paired', {}, h('div.phone-paired-head', {}, h('h4.phone-label', {}, 'Paired phones'), devicesCount), devicesList);

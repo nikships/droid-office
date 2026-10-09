@@ -164,7 +164,7 @@ test('loading stays supported and reparenting has no position, rotation or size 
       const rotation = f.model.root.getWorldQuaternion(new THREE.Quaternion());
       assert.ok(position.distanceTo(previous) < 0.03, 'no teleport at load/carry boundary');
       assert.ok(rotation.angleTo(previousRotation) < 0.055, 'body turns smoothly to face up');
-      assert.ok(f.model.root.getWorldScale(new THREE.Vector3()).distanceTo(startScale) < 1e-9, 'worker size survives attachment');
+      assert.ok(f.model.root.getWorldScale(new THREE.Vector3()).distanceTo(startScale) < 1e-9, 'droid size survives attachment');
       assert.deepEqual(team.scale.toArray(), [1, 1, 1], 'people do not shrink to enter or depart');
       lowest = Math.min(lowest, bed.getWorldPosition(new THREE.Vector3()).y);
       previous = position;
@@ -173,7 +173,7 @@ test('loading stays supported and reparenting has no position, rotation or size 
     assert.ok(lowest < 0.15, 'the scoop lowers to the patient');
     assert.equal(f.model.root.parent, team);
     const up = new THREE.Vector3(0, 0, 1).applyQuaternion(f.model.root.getWorldQuaternion(new THREE.Quaternion()));
-    assert.ok(up.y > 0.999, 'the worker faces upward on the bed');
+    assert.ok(up.y > 0.999, 'the droid faces upward on the bed');
     f.casualties.clear();
   } finally {
     restore();

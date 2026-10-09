@@ -393,7 +393,7 @@ private fun NeedsYou(w: WorkerInfo, screen: ScreenState?, canAnswer: Boolean) {
     }
 }
 
-/** A cloud worker has no terminal here: what it's doing, and that its session is in the office and on Factory. */
+/** A cloud droid has no terminal here: what it's doing, and that its session is in the office and on Factory. */
 @Composable
 private fun Cloud(w: WorkerInfo) {
     Box(Modifier.fillMaxSize().tagged(Tags.Worker.CLOUD).background(Palette.Bg, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
@@ -401,7 +401,7 @@ private fun Cloud(w: WorkerInfo) {
             Text("☁ ${w.name} works on ${w.cloud?.computerName?.ifBlank { null } ?: "a Factory computer"}", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Spacer(Modifier.height(6.dp))
             Text(
-                w.cloud?.error?.let { "It can't work right now: $it." } ?: (w.activity?.ifBlank { null } ?: "This worker runs on Factory: open it in the office to read its session. You can still message it below."),
+                w.cloud?.error?.let { "It can't work right now: $it." } ?: (w.activity?.ifBlank { null } ?: "This droid runs on Factory: open it in the office to read its session. You can still message it below."),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (w.cloud?.error != null) Palette.Danger else Palette.TextSecondary,
                 modifier = Modifier.widthIn(max = 300.dp),
@@ -445,7 +445,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
                     Icon(OfficeIcons.Door, null, tint = Palette.TextSecondary)
                 }
                 Spacer(Modifier.height(12.dp))
-                Text("This worker went home", style = MaterialTheme.typography.titleLarge)
+                Text("This droid went home", style = MaterialTheme.typography.titleLarge)
                 Text("Its desk is free again, or it's on another floor.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(16.dp))
                 SecondaryButton("Back to the office", onBack, Modifier.tagged(Tags.Worker.GONE_BACK))

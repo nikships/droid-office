@@ -16,7 +16,7 @@ export interface HudAction {
   count?: () => number;
 
   on?: () => boolean;
-  /** Stands out: an update to install, a worker waiting. */
+  /** Stands out: an update to install, a droid waiting. */
   tone?: () => 'primary' | 'danger' | undefined;
 
   shown?: () => boolean;
@@ -31,7 +31,7 @@ export interface HudAction {
 }
 
 const PANELS: { id: HudPanel; icon: string; label: string; what: string }[] = [
-  { id: 'workers', icon: '🤖', label: 'Workers', what: 'Every desk and what it’s up to' },
+  { id: 'workers', icon: '🤖', label: 'Droids', what: 'Every desk and what it’s up to' },
   { id: 'floor', icon: '🏢', label: 'Floor details', what: 'Branch, folder, agent' },
 ];
 
@@ -64,7 +64,7 @@ export function actionIcon(a: HudAction): string {
 }
 
 /**
- * The HUD: the top bar's dock (what you pinned, what needs you now, the workers and the ☰ menu),
+ * The HUD: the top bar's dock (what you pinned, what needs you now, the droids and the ☰ menu),
  * and the panels you choose to show. Everything else waits in the menu, so the office stays in view.
  */
 export function mountHud(actions: HudAction[], settings: Settings, save: () => void): Hud {
@@ -139,10 +139,10 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
     // Hired onto desks, bean bags and the meeting room's table; the board agents at their kiosks don't count.
     const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
     const waiting = workers.filter(waitingOnSomeone).length;
-    const workersTitle = hired || waiting ? `${hired} worker${hired === 1 ? '' : 's'} on this floor${waiting ? `, ${waiting} waiting on someone` : ''}` : 'No workers on this floor yet';
+    const workersTitle = hired || waiting ? `${hired} droid${hired === 1 ? '' : 's'} on this floor${waiting ? `, ${waiting} waiting on someone` : ''}` : 'No droids on this floor yet';
     // Who's waiting has its own button on the bar (the 'waiting' action), so this just counts them.
-    items.push(panelChip('workers', '🤖', 'Workers', hired, workersTitle));
-    // Redrawn only when it looks different, so a busy worker's updates don't swap a button out from under a click.
+    items.push(panelChip('workers', '🤖', 'Droids', hired, workersTitle));
+    // Redrawn only when it looks different, so a busy droid's updates don't swap a button out from under a click.
     const next = h('div', {}, ...items);
     if (
       next.innerHTML !==
