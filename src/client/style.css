@@ -607,9 +607,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 /* Prompt boxes and the hire dialog (ui/prompt.ts): the prompt first, its options in one group under it. */
 .prompt-input { display: flex; flex-direction: column; gap: var(--space-2); }
 .prompt-input textarea { min-height: 96px; }
-/* The model row is the pickers alone, full width, rather than a title with a control on the right. */
-.prompt-opts .group-row.model-row { display: block; }
-.prompt-opts .model-row .model-choice { max-width: none; }
+/* The model row is the pickers alone, full width: a kit .group-row.block with no label. */
 .send-hint { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
 .send-hint .key { margin: 0; }
 .send-hint-more { white-space: nowrap; }
@@ -821,12 +819,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 /* Help */
 .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; font-weight: 500; font-size: 13.5px; }
 
-/* Send-home dialog: what becomes of a worker's worktree (its .choices are in the UI kit) */
-/* The three choices are long sentences with paths in them: one card per line rather than a grid. */
-.send-home .choices { grid-template-columns: minmax(0, 1fr); }
-/* One card per line: the icon sits in a column of its own beside the title and description. */
-.send-home .choice-body { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--space-3); align-items: start; }
-.send-home .choice-icon { grid-row: 1 / 3; margin: 0; line-height: 1.4; }
+/* Send-home dialog: what becomes of a worker's worktree (its .choices.rows are in the UI kit) */
+/* The descriptions hold long worktree paths: let them break anywhere rather than run off the card. */
 .send-home .choice small { overflow-wrap: anywhere; }
 
 @media (max-width: 800px) {

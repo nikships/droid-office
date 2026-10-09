@@ -52,7 +52,7 @@ export function openAsk(opts: AskOptions) {
   const { row: wtRow, box: wtBox } = worktreeRow('ask-wt', remembered);
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);
   const models: AgentFields | null = opts.modelOption ? agentPicker('ask-models') : null;
-  const modelRow = models ? h('div.group-row.model-row', {}, models.element) : null;
+  const modelRow = models ? h('div.group-row.block', {}, models.element) : null;
   const newOpts = h('div.group.prompt-opts', { role: 'group', 'aria-label': 'New worker options' }, modelRow, wtRow, repos.element);
   const submit = h('button.btn.primary', { type: 'submit' });
 

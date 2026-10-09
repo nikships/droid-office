@@ -108,7 +108,7 @@ export function openPrompt(opts: PromptOptions) {
     wtRow?.classList.toggle('hidden', cloud);
     repos.element?.classList.toggle('hidden', cloud);
   });
-  const rows = [models ? h('div.group-row.model-row', {}, models.element) : null, ...(opts.runsOn?.rows ?? []), wtRow, repos.element].filter((r): r is HTMLElement => !!r);
+  const rows = [models ? h('div.group-row.block', {}, models.element) : null, ...(opts.runsOn?.rows ?? []), wtRow, repos.element].filter((r): r is HTMLElement => !!r);
   const form = h(
     'form.modal.prompt-box',
     { role: 'dialog', 'aria-label': opts.title },
@@ -262,10 +262,16 @@ export function sendHomeDialog(opts: SendHomeOptions) {
       ];
   let touched = false;
   const yes = h('button.btn.danger', { type: 'submit' }, CLEANUP_LABEL.keep);
-  const list = optionCards('cleanup', options, 'keep', (v) => {
-    touched = true;
-    yes.textContent = CLEANUP_LABEL[v as WorktreeCleanup];
-  });
+  const list = optionCards(
+    'cleanup',
+    options,
+    'keep',
+    (v) => {
+      touched = true;
+      yes.textContent = CLEANUP_LABEL[v as WorktreeCleanup];
+    },
+    { rows: true },
+  );
   const chosen = (): WorktreeCleanup => (list.value() as WorktreeCleanup) || 'keep';
   const pick = (c: WorktreeCleanup) => {
     list.select(c);
