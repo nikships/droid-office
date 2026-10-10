@@ -128,7 +128,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
+  // The addon's default opens a blank window and then assigns its location. Electron's window
+  // open handler only sees the blank URL and denies it, so pass the real URL up front.
+  term.loadAddon(
+    new WebLinksAddon((event, uri) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      window.open(uri, '_blank', 'noopener,noreferrer');
+    }),
+  );
   // Unicode 11 widths, so powerline glyphs, emoji, CJK and combining marks take the cells
   // they should instead of overlapping or leaving gaps (oh-my-zsh, agnoster…).
   const unicode = new Unicode11Addon();
