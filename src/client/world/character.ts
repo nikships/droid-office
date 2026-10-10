@@ -1369,10 +1369,10 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 const HOP = 0.5;
 
 /** Task cards are drawn this much smaller than other labels: at full size one is wider than the desk under it. */
-const CARD_SCALE = 0.75;
+const CARD_SCALE = 0.55;
 /** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
 export const FADE_NEAR = 1.4;
-export const FADE_FAR = 3.2;
+export const FADE_FAR = 6.4;
 
 /** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
 export function labelFade(d: number): number {
