@@ -13,7 +13,7 @@ Run from `android/` with JDK 17+ (CI uses 21). The SDK path comes from `ANDROID_
 | Build and install a debug APK on the connected device | `./gradlew installDebug` |
 | Release APK (R8) | `./gradlew assembleRelease` |
 
-CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest lintDebug` and then `assembleRelease`; run the same before a PR. `npm` checks don't cover the Kotlin code; they do cover the terminal page's JavaScript (below).
+CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest lintDebug` and then `assembleRelease`; run the same before a PR. On a pull request it runs only when the PR touches `android/` or the workflow. `npm` checks don't cover the Kotlin code; they do cover the terminal page's JavaScript (below).
 
 ## The office is the contract
 
