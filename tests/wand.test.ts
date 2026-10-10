@@ -4,8 +4,9 @@ import { before, test } from 'node:test';
 import * as THREE from 'three';
 import { READY } from '../src/client/world/gun-motion.js';
 import { Hands, WAND_HOLD } from '../src/client/world/hands.js';
-import { BOLT_SPEED, Flare, GRIP_R, GRIP_Z, parseWand, SPELL_HIT, SpellBolt, SpellImpact, Sparkles, TipTrail, WAND_BACK, WAND_SEGMENTS, WAND_TIP, WARD_TIME, Wand, Ward, wandReady } from '../src/client/world/wand.js';
-import { RELEASE_AT, sampleWandMove, WAND_CHANNELS, WAND_MOVES, WAND_READY, WAND_SPELLS, type WandMoveId, WandMotion } from '../src/client/world/wand-motion.js';
+import { Confetti } from '../src/client/world/confetti.js';
+import { BOLT_SPEED, GRIP_R, GRIP_Z, parseWand, SPELL_CONFETTI, SPELL_HIT, SpellBolt, SpellImpact, Sparkles, TipTrail, WAND_BACK, WAND_SEGMENTS, WAND_TIP, WARD_TIME, Wand, Ward, wandReady } from '../src/client/world/wand.js';
+import { CONFETTI_AT, RELEASE_AT, sampleWandMove, WAND_CHANNELS, WAND_MOVES, WAND_READY, WAND_SPELLS, type WandMoveId, WandMotion } from '../src/client/world/wand-motion.js';
 
 const input = { yaw: 0, pitch: 0, walkPhase: 0, walking: false, airborne: false, jitter: 0 };
 
@@ -136,7 +137,7 @@ test('a cast takes over a spell at once, from wherever the wand was', () => {
   const m = new WandMotion();
   m.draw();
   for (let i = 0; i < 60; i++) m.update(1 / 60);
-  m.spell('twirl');
+  m.spell('sparkler');
   for (let i = 0; i < 20; i++) m.update(1 / 60);
   const mid = { ...m.pose! };
   m.cast();
@@ -314,23 +315,47 @@ test('a spell marks what it lands on with the glyph, flat on the surface, and fa
   impact.dispose();
 });
 
-test('a flare climbs to the ceiling, bursts there, and burns out', () => {
-  const flare = new Flare(new THREE.Vector3(0, 1.4, 0), 3.4);
-  let t = 0;
-  let top = 0;
-  while (!flare.burst && t < 3) {
-    flare.update(1 / 60);
-    t += 1 / 60;
-    flare.group.traverse((o) => {
-      if (o instanceof THREE.PointLight) top = Math.max(top, o.getWorldPosition(new THREE.Vector3()).y);
-    });
+test('the sparkler and Ship it keep the tip in front of your eyes, where you see their magic', () => {
+  for (const id of ['sparkler', 'ship'] as const) {
+    const hands = heldWand();
+    const move = WAND_MOVES[id];
+    const magic = move.cues.filter(([, c]) => c === 'spark' || c === 'confetti').map(([t]) => t);
+    assert.ok(magic.length > 0, `${id} does something`);
+    for (const t of magic) {
+      hands.setWandPose(sampleWandMove(move, t));
+      hands.update(1 / 120, t, input);
+      const { tip } = measureHold(hands);
+      assert.ok(Math.abs(tip.x) < 0.8 && Math.abs(tip.y) < 0.8, `${id}'s tip on screen at ${t.toFixed(2)} s: ${tip.x.toFixed(2)}, ${tip.y.toFixed(2)}`);
+    }
   }
-  assert.ok(flare.burst, 'burst');
-  assert.ok(Math.abs(top - 3.4) < 0.05, `at the top, ${top}`);
-  let left = 0;
-  while (flare.update(1 / 60)) left += 1 / 60;
-  assert.ok(left > 1 && left < 3.5, `burns ${left.toFixed(2)} s`);
-  flare.dispose();
+  assert.ok(WAND_MOVES.sparkler.cues.filter(([, c]) => c === 'spark').length >= 10, 'the sparkler keeps spitting');
+  assert.deepEqual(
+    WAND_MOVES.ship.cues.filter(([, c]) => c === 'confetti').map(([t]) => t),
+    [CONFETTI_AT],
+  );
+});
+
+test('confetti sprayed along a direction flies that way, then falls and lands', () => {
+  const confetti = new Confetti(() => 0);
+  confetti.spray(new THREE.Vector3(0, 1.5, 0), new THREE.Vector3(0, 0.3, -1), 40, SPELL_CONFETTI);
+  assert.equal(confetti.count, 40);
+  for (let i = 0; i < 30; i++) confetti.update(1 / 60);
+  const at = new THREE.Vector3();
+  const m = new THREE.Matrix4();
+  let ahead = 0;
+  for (let i = 0; i < 40; i++) {
+    confetti.mesh.getMatrixAt(i, m);
+    if (at.setFromMatrixPosition(m).z < -0.5) ahead++;
+  }
+  assert.ok(ahead > 35, `${ahead} of 40 out in front after half a second`);
+  // Every bit lives at least 4 s, so all of them are still there.
+  for (let i = 0; i < 180; i++) confetti.update(1 / 60);
+  let down = 0;
+  for (let i = 0; i < 40; i++) {
+    confetti.mesh.getMatrixAt(i, m);
+    if (Math.abs(at.setFromMatrixPosition(m).y - 0.01) < 1e-6) down++;
+  }
+  assert.ok(down > 35, `${down} of 40 on the floor after 3.5 s`);
 });
 
 test('the tip leaves a trail of light only while a move asks for one, and it fades', () => {

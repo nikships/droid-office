@@ -943,15 +943,20 @@ export class OfficeSound {
         this.blip(this.ambience, t0 + 0.03, 1568, 1.5, 0.25, 0.08);
         this.shimmer(this.ambience, t0, 0.6, 0.05);
         break;
-      case 'flare':
-        // Off the tip and climbing: a whistle rising an octave and a half.
-        this.count('wandFlare');
-        this.blip(this.ambience, t0, 900, 2.8, 0.7, 0.05);
-        this.swish(t0, 0.5, 800, 4200, 0.12, 3);
+      case 'spark':
+        // A sparkler fizzing: a few tiny crackles at random, over a breath of hiss.
+        this.count('wandSpark');
+        for (let i = 0; i < 3; i++) this.click(t0 + Math.random() * 0.06, rand(3200, 6400), 0.035);
+        this.shimmer(this.ambience, t0, 0.09, 0.025);
         break;
-      case 'catch':
-        this.count('wandCatch');
-        this.play(pick(this.buf.steps), { gain: 0.35, rate: 2.1, when: t0 });
+      case 'confetti':
+        // A party popper: a sharp pop, paper rushing out, and a bright little fanfare.
+        this.count('wandConfetti');
+        this.click(t0, 1800, 0.22);
+        this.blip(this.ambience, t0, 320, 0.5, 0.08, 0.12, 'triangle');
+        this.swish(t0 + 0.01, 0.4, 3500, 900, 0.1, 0.8);
+        [784, 988, 1175, 1568].forEach((f, i) => this.blip(this.ambience, t0 + 0.06 + i * 0.06, f, 1, 0.3, 0.05));
+        this.shimmer(this.ambience, t0 + 0.1, 0.8, 0.035);
         break;
       case 'tick':
         this.count('wandTick');

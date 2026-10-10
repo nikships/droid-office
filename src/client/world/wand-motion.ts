@@ -11,8 +11,8 @@ import { type Key, sampleTrack } from './gun-motion';
 export const WAND_SPELLS = [
   { id: 'lumos', emoji: '💡', label: 'Lumos' },
   { id: 'leviosa', emoji: '🪶', label: 'Swish and flick' },
-  { id: 'flare', emoji: '🎆', label: 'Flare' },
-  { id: 'twirl', emoji: '🌀', label: 'Twirl' },
+  { id: 'sparkler', emoji: '🎇', label: 'Sparkler' },
+  { id: 'ship', emoji: '🎉', label: 'Ship it' },
   { id: 'build', emoji: '🔨', label: 'Run the build' },
   { id: 'protego', emoji: '🛡️', label: 'Protego' },
 ] as const;
@@ -23,10 +23,10 @@ export type WandMoveId = 'draw' | 'holster' | 'cast' | WandSpellId;
 /**
  * What a move sounds like and when its magic happens. main.ts turns these into sound (sound.ts
  * wandCue) and into the spell's effect: `release` sends a cast's bolt off the tip, `lumos` turns
- * the light at the tip on or off, `flick` and `flare` and `shield` set off their spells, and
- * `tick` is one segment of the progress bar lighting up.
+ * the light at the tip on or off, `flick`, `confetti` and `shield` set off their spells, `spark`
+ * is one spit of the sparkler, and `tick` is one segment of the progress bar lighting up.
  */
-export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'lumos' | 'swish' | 'flick' | 'flare' | 'catch' | 'tick' | 'done' | 'shield';
+export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'lumos' | 'swish' | 'flick' | 'spark' | 'confetti' | 'tick' | 'done' | 'shield';
 
 export const WAND_CHANNELS = ['out', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'twirl', 'spin', 'glow', 'charge', 'trail'] as const;
 export type WandChannel = (typeof WAND_CHANNELS)[number];
@@ -78,6 +78,20 @@ export const RELEASE_AT = 0.11;
 const BUILD_FROM = 0.45;
 const BUILD_STEP = 0.13;
 const BUILD_TICKS = Array.from({ length: 10 }, (_, i) => [BUILD_FROM + 0.02 + i * BUILD_STEP, 'tick'] as const);
+
+/** Each spit of sparks off the sparkler's tip while it writes its loops. */
+const SPARKS = Array.from({ length: 16 }, (_, i) => [0.24 + i * 0.075, 'spark'] as const);
+/** When Ship it pops its confetti: the snap forward after the wind-up. */
+export const CONFETTI_AT = 0.5;
+
+/**
+ * Keys every 25 ms tracing `turns` circles of radius `r` round `c` from `from` to `to` seconds,
+ * linear between them so the loop doesn't stop at each key: `Math.cos` for x, `Math.sin` for y.
+ */
+const circle = (from: number, to: number, turns: number, r: number, c: number, f: (a: number) => number): Key[] => {
+  const n = Math.round((to - from) / 0.025);
+  return Array.from({ length: n + 1 }, (_, i) => [from + ((to - from) * i) / n, c + r * f((i / n) * turns * TAU), 'linear'] as const);
+};
 
 /** The moves. Each starts and ends on the ready pose (the twirl may end whole turns round). */
 export const WAND_MOVES: Record<WandMoveId, WandMove> = {
@@ -339,101 +353,116 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       [0.78, 'flick'],
     ],
   },
-  // Straight up over your head and a flare off the tip, bursting under the ceiling.
-  flare: {
-    seconds: 0.95,
+  // Held up in front of you like a sparkler, the tip spitting sparks as it writes two loops in the
+  // air, the progress bar burning down as it goes.
+  sparkler: {
+    seconds: 1.6,
+    tracks: {
+      x: [[0, 0], ...circle(0.24, 1.36, 2, 0.03, -0.06, Math.cos), [1.6, 0]],
+      y: [[0, 0], ...circle(0.24, 1.36, 2, 0.03, 0.035, Math.sin), [1.6, 0]],
+      z: [
+        [0, 0],
+        [0.24, 0.03, 'out'],
+        [1.36, 0.03],
+        [1.6, 0],
+      ],
+      pitch: [
+        [0, 0],
+        [0.24, 0.2, 'out'],
+        [1.36, 0.2],
+        [1.6, 0],
+      ],
+      yaw: [
+        [0, 0],
+        [0.24, 0.15, 'out'],
+        [1.36, 0.15],
+        [1.6, 0],
+      ],
+      spin: [
+        [0, 0],
+        [0.2, 1],
+        [1.36, 1],
+        [1.6, 0],
+      ],
+      glow: [
+        [0.16, 0],
+        [0.24, 1, 'snap'],
+        [1.36, 1],
+        [1.6, 0],
+      ],
+      charge: [
+        [0, 0],
+        [0.22, 1, 'out'],
+        [1.4, 0, 'linear'],
+      ],
+      trail: [
+        [0.2, 0],
+        [0.26, 0.8],
+        [1.36, 0.8],
+        [1.45, 0],
+      ],
+    },
+    cues: [[0, 'whoosh'], ...SPARKS],
+  },
+  // Wound back toward you while the progress bar charges, then snapped forward to pop a burst of
+  // confetti out in front of you (CONFETTI_AT).
+  ship: {
+    seconds: 1.15,
     tracks: {
       pitch: [
         [0, 0],
-        [0.25, 0.55, 'out'],
-        [0.38, 0.62],
-        [0.43, 0.42, 'snap'],
-        [0.95, 0],
-      ],
-      y: [
-        [0, 0],
-        [0.25, 0.07, 'out'],
-        [0.43, 0.05],
-        [0.95, 0],
-      ],
-      x: [
-        [0, 0],
-        [0.25, -0.03],
-        [0.95, 0],
+        [0.4, 0.35, 'out'],
+        [CONFETTI_AT, -0.45, 'snap'],
+        [0.65, -0.4],
+        [1.15, 0],
       ],
       z: [
         [0, 0],
-        [0.25, 0.02],
-        [0.43, -0.015, 'snap'],
-        [0.95, 0],
-      ],
-      spin: [
-        [0, 0],
-        [0.3, 1],
-        [0.95, 0],
-      ],
-      charge: [
-        [0.05, 0],
-        [0.36, 1, 'linear'],
-        [0.5, 1],
-        [0.95, 0],
-      ],
-      glow: [
-        [0.3, 0],
-        [0.4, 1, 'snap'],
-        [0.95, 0],
-      ],
-      trail: [
-        [0.38, 0],
-        [0.42, 1],
-        [0.5, 0],
-      ],
-    },
-    cues: [
-      [0, 'whoosh'],
-      [0.1, 'charge'],
-      [0.4, 'flare'],
-    ],
-  },
-  // Twice end over end through the fingers, light trailing off the tip, and caught at the ready.
-  twirl: {
-    seconds: 0.9,
-    tracks: {
-      twirl: [
-        [0.05, 0],
-        [0.8, TAU * 2, 'inOut'],
+        [0.4, 0.035, 'out'],
+        [CONFETTI_AT, -0.05, 'snap'],
+        [0.65, -0.045],
+        [1.15, 0],
       ],
       y: [
         [0, 0],
-        [0.3, 0.03],
-        [0.9, 0],
-      ],
-      x: [
-        [0, 0],
-        [0.3, -0.02],
-        [0.9, 0],
+        [0.4, 0.025, 'out'],
+        [CONFETTI_AT, -0.02, 'snap'],
+        [0.65, -0.018],
+        [1.15, 0],
       ],
       roll: [
         [0, 0],
-        [0.4, 0.3],
-        [0.9, 0],
+        [0.4, -0.2],
+        [CONFETTI_AT, 0.05, 'snap'],
+        [1.15, 0],
       ],
       spin: [
         [0, 0],
-        [0.3, 0.8],
-        [0.9, 0],
+        [0.4, 1],
+        [1.15, 0],
+      ],
+      charge: [
+        [0.05, 0],
+        [0.4, 1, 'linear'],
+        [0.6, 1],
+        [1.0, 0],
+      ],
+      glow: [
+        [0, 0],
+        [0.4, 0.2],
+        [CONFETTI_AT, 1, 'snap'],
+        [1.15, 0],
       ],
       trail: [
-        [0.1, 0],
-        [0.2, 0.7],
-        [0.7, 0.7],
-        [0.8, 0],
+        [0.42, 0],
+        [0.46, 1],
+        [0.56, 1],
+        [0.66, 0],
       ],
     },
     cues: [
-      [0.12, 'whoosh'],
-      [0.45, 'whoosh'],
-      [0.8, 'catch'],
+      [0.02, 'charge'],
+      [CONFETTI_AT, 'confetti'],
     ],
   },
   // Up close and turned to the light, the rotor ticking over while the progress bar fills one

@@ -11,6 +11,8 @@ const GRAVITY = 9.8;
 const DRAG = 2.5;
 /** ...and paper can't fall faster than this (m/s): it flutters. */
 const FALL = 1.2;
+/** How far off its aim a sprayed bit can fly, in radians. */
+const SPRAY_CONE = 0.45;
 
 interface Bit {
   life: number;
@@ -95,6 +97,29 @@ export class Confetti {
   }
 
   /**
+   * Pops `n` bits out of `at` in a cone along `dir`, the way a party popper is aimed, in `colors`
+   * (the party's own by default).
+   */
+  spray(at: THREE.Vector3, dir: THREE.Vector3, n = 90, colors: readonly string[] = COLORS) {
+    const away = dir.clone().normalize();
+    const side = new THREE.Vector3(away.z, 0, -away.x);
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+    side.normalize();
+    const up = new THREE.Vector3().crossVectors(away, side);
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.tan(SPRAY_CONE * Math.sqrt(Math.random()));
+      const vel = away
+        .clone()
+        .addScaledVector(side, Math.cos(a) * r)
+        .addScaledVector(up, Math.sin(a) * r)
+        .normalize()
+        .multiplyScalar(3 + Math.random() * 3.5);
+      this.add(at.clone(), vel, 4 + Math.random() * 2.5, at.y, colors[k % colors.length]);
+    }
+  }
+
+  /**
    * Lets `n` bits go all over `area` for `seconds`, from `from(x, z)` overhead (the ceiling), to
    * flutter down on everything and everyone.
    */
@@ -120,7 +145,7 @@ export class Confetti {
     }
   }
 
-  private add(pos: THREE.Vector3, vel: THREE.Vector3, life: number, look: number) {
+  private add(pos: THREE.Vector3, vel: THREE.Vector3, life: number, look: number, color = COLORS[Math.floor(Math.random() * COLORS.length)]) {
     const i = this.next;
     this.next = (this.next + 1) % MAX;
     if (!this.bits[i]) this.live++;
@@ -138,7 +163,7 @@ export class Confetti {
       look,
       landed: false,
     };
-    this.mesh.setColorAt(i, this.c.set(COLORS[Math.floor(Math.random() * COLORS.length)]));
+    this.mesh.setColorAt(i, this.c.set(color));
     this.mesh.instanceColor!.needsUpdate = true;
     this.mesh.visible = true;
   }

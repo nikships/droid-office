@@ -133,7 +133,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
       [
         [
           'Emote',
-          `Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. ${sidearm === 'wand' ? 'With the wand drawn they are its spells: Lumos, swish and flick, flare, twirl, run the build, Protego' : 'With the Magnum drawn they are its tricks'}`,
+          `Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. ${sidearm === 'wand' ? 'With the wand drawn they are its spells: Lumos, swish and flick, sparkler, ship it, run the build, Protego' : 'With the Magnum drawn they are its tricks'}`,
           ['G', 'or', '1–6'],
         ],
         seven,

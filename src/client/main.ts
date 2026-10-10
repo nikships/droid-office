@@ -71,7 +71,7 @@ import { TeamLines, type TeamLink } from './world/team-lines';
 import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
-import { Flare, type Sidearm, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
+import { type Sidearm, SPELL_CONFETTI, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
 import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
@@ -702,8 +702,16 @@ function wandCues(cues: readonly WandCue[]) {
           addEffect(new SpellImpact(tip.clone().addScaledVector(blowDir, 0.25), blowDir.clone().negate(), false));
         }
         break;
-      case 'flare':
-        if (tip && !upTop) launchFlare(tip);
+      case 'spark':
+        // A sparkler's spit: sparks flung every way that fall away as they fade.
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 7, speed: 1.3, size: 0.011, seconds: 0.55, lift: -2.2 }));
+        break;
+      case 'confetti':
+        if (tip) {
+          const out = camera.getWorldDirection(blowDir).addScaledVector(UP, 0.35).normalize();
+          confetti.spray(tip.clone().addScaledVector(out, 0.08), out, 90, SPELL_CONFETTI);
+          addEffect(new Sparkles(tip, out, { colors: SPELL_TIP, count: 16, speed: 1.6, size: 0.014, seconds: 0.5, lift: 0.2 }));
+        }
         break;
       case 'shield':
         hands.ward();
@@ -768,15 +776,6 @@ function castBolt(tip: THREE.Vector3) {
   if (!reduceMotion.matches) thud = Math.max(thud, 0.08);
 }
 
-/** Flare: up off the tip to just under whatever's overhead (or a few meters into the sky), and bursting there. */
-function launchFlare(tip: THREE.Vector3) {
-  flareRay.set(tip, UP);
-  flareRay.far = 6;
-  const over = flareRay.intersectObject(office.group, true).find((h) => h.object.visible);
-  const top = over ? over.point.y - 0.3 : tip.y + 3.2;
-  addEffect(new Flare(tip, top));
-}
-const flareRay = new THREE.Raycaster();
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** What a shot along `raycaster` would strike first: a worker, something else solid, or nothing. */

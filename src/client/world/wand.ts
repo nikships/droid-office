@@ -14,7 +14,7 @@ import { toonUnique } from './toon';
  * runs out along +Z and +Y is up (the progress bar is on top). The rotor spins, the emitter
  * lights and the progress bar fills while you hold it (Wand.update).
  *
- * Also here: the spells' effects in the world (SpellBolt, SpellImpact, Flare, TipTrail, Sparkles)
+ * Also here: the spells' effects in the world (SpellBolt, SpellImpact, TipTrail, Sparkles)
  * and the Protego ward in front of your eyes (Ward). Factory's palette: orange, white and steel.
  * No DOM or WebGL at import time, so tests can load it in Node.
  */
@@ -280,6 +280,8 @@ export const SPELL_HIT = ['#ffffff', ORANGE, ORANGE_HOT, '#ffd8c2', WHITE];
 export const SPELL_MISS = [ORANGE, '#8c8c8c', '#ffffff'];
 /** Sparks shaken off the tip as it casts. */
 export const SPELL_TIP = ['#ffffff', ORANGE_HOT, ORANGE];
+/** Ship it's confetti: Factory's oranges, white and steel. */
+export const SPELL_CONFETTI = [ORANGE, ORANGE_HOT, ORANGE_DEEP, WHITE, '#ffffff', '#8c8c8c'];
 
 let sparkleGeo: THREE.OctahedronGeometry | null = null;
 
@@ -495,125 +497,6 @@ export class SpellImpact {
     this.ring.material.dispose();
     this.flash.material.dispose();
     this.sparks.dispose();
-  }
-}
-
-/** How fast a flare climbs, in meters a second, and how long its burst lasts. */
-const FLARE_SPEED = 6.5;
-const BURST_TIME = 1.6;
-/** The burst's spokes: the pinwheel's eight blades. */
-const SPOKES = 8;
-
-/**
- * Flare: a bright orange star climbing from the tip with sparks streaming off it, bursting under
- * the ceiling (`top`) into a pinwheel of sparks: eight curling spokes round a flash of the glyph,
- * that light the room orange as they fall and fade. update() returns false once it's out.
- */
-export class Flare {
-  readonly group = new THREE.Group();
-  private t = 0;
-  private star: THREE.Sprite;
-  private core: THREE.Sprite;
-  private light: THREE.PointLight;
-  private climb: number;
-  private burstAt = -1;
-  private embers: { s: THREE.Sprite; vel: THREE.Vector3; life: number; age: number; swirl: number }[] = [];
-  private sigil: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
-  private from: THREE.Vector3;
-  /** The flare itself; its embers stay where they were shed, in the group's (the world's) frame. */
-  private head = new THREE.Group();
-
-  constructor(from: THREE.Vector3, top: number) {
-    this.from = from.clone();
-    this.climb = Math.max(0.6, top - from.y);
-    this.star = glowSprite(ORANGE, 0.22, 1);
-    this.core = glowSprite('#ffffff', 0.07, 1);
-    this.light = new THREE.PointLight(ORANGE_HOT, 2.5, 6, 2);
-    this.head.add(this.star, this.core, this.light);
-    this.head.position.copy(from);
-    this.group.add(this.head);
-  }
-
-  /** Burst, or still climbing. */
-  get burst(): boolean {
-    return this.burstAt >= 0;
-  }
-
-  update(dt: number): boolean {
-    this.t += dt;
-    const flying = this.climb / FLARE_SPEED;
-    if (this.burstAt < 0) {
-      // Fast off the tip, slowing as it nears the top.
-      const p = Math.min(1, this.t / flying);
-      this.head.position.copy(this.from);
-      this.head.position.y += this.climb * (1 - (1 - p) ** 2);
-      this.star.material.rotation = this.t * 12;
-      this.light.intensity = 2.5;
-      if (Math.random() < 0.9) this.ember(new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.6 - Math.random(), (Math.random() - 0.5) * 0.4), 0.45, 0.04, 0);
-      if (p >= 1) this.explode();
-    } else {
-      const k = Math.max(0, 1 - (this.t - this.burstAt) / BURST_TIME);
-      this.star.material.opacity = 0;
-      this.core.material.opacity = Math.max(0, 1 - (this.t - this.burstAt) * 6);
-      this.light.intensity = 9 * k * k;
-      if (this.sigil) {
-        const q = 1 - k;
-        this.sigil.scale.setScalar(0.3 + 1.6 * (1 - (1 - q) ** 3));
-        this.sigil.rotation.z = -q * 1.6;
-        this.sigil.material.opacity = Math.max(0, 1 - q * 2.2);
-      }
-    }
-    for (let i = this.embers.length - 1; i >= 0; i--) {
-      const e = this.embers[i];
-      e.age += dt;
-      const q = e.age / e.life;
-      if (q >= 1) {
-        e.s.material.dispose();
-        this.group.remove(e.s);
-        this.embers.splice(i, 1);
-        continue;
-      }
-      // Curling round like the pinwheel's blades, slowing, then falling.
-      if (e.swirl) e.vel.applyAxisAngle(new THREE.Vector3(0, 1, 0), e.swirl * dt);
-      e.vel.multiplyScalar(Math.exp(-dt * 1.6));
-      e.vel.y -= dt * 1.4;
-      e.s.position.addScaledVector(e.vel, dt);
-      e.s.material.opacity = (1 - q) * (0.75 + 0.25 * Math.sin(e.age * 30 + i));
-    }
-    return this.burstAt < 0 || this.t - this.burstAt < BURST_TIME || this.embers.length > 0;
-  }
-
-  /** A spark off the flare, flying at `vel` (relative to the flare) for `life` seconds. */
-  private ember(vel: THREE.Vector3, life: number, size: number, swirl: number) {
-    const s = glowSprite(Math.random() < 0.3 ? '#ffffff' : Math.random() < 0.5 ? ORANGE_HOT : ORANGE, size, 1);
-    s.position.copy(this.head.position);
-    this.group.add(s);
-    this.embers.push({ s, vel, life, age: 0, swirl });
-  }
-
-  private explode() {
-    this.burstAt = this.t;
-    const blades = SPOKES;
-    for (let b = 0; b < blades; b++) {
-      const a = (b / blades) * Math.PI * 2;
-      for (let j = 0; j < 7; j++) {
-        const speed = 1.2 + j * 0.42;
-        const dir = new THREE.Vector3(Math.cos(a), 0.15 + (Math.random() - 0.5) * 0.3, Math.sin(a)).normalize().multiplyScalar(speed);
-        this.ember(dir, 0.9 + Math.random() * 0.7, 0.05 + 0.02 * Math.random(), 1.4);
-      }
-    }
-    for (let i = 0; i < 24; i++) this.ember(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(0.6 + Math.random() * 1.6), 0.6 + Math.random() * 0.8, 0.035, 0);
-    // The glyph flashing out flat under the ceiling, face down so you see it from below.
-    this.sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), new THREE.MeshBasicMaterial({ color: ORANGE_HOT, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    this.sigil.rotation.x = Math.PI / 2;
-    this.sigil.position.copy(this.head.position);
-    this.group.add(this.sigil);
-    this.core.scale.setScalar(0.9);
-  }
-
-  dispose() {
-    for (const s of [this.star, this.core, ...this.embers.map((e) => e.s)]) s.material.dispose();
-    this.sigil?.material.dispose();
   }
 }
 
