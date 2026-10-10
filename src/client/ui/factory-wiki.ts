@@ -18,6 +18,7 @@ import { factoryFetch, refreshFactory, watchFactory } from '../factory';
 import { store } from '../state';
 import { withToken } from '../token';
 import { anchorHeadings, jumpTo } from './bookshelf';
+import { drawDiagram } from './diagram';
 import { clip, h, timeAgo, toast } from './dom';
 import { emptyState } from './kit';
 import { markdownFile } from './markdown';
@@ -445,10 +446,13 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     for (const img of body.querySelectorAll<HTMLImageElement>('img[src]')) {
       if (!/^https:\/\//i.test(img.getAttribute('src') ?? '')) img.replaceWith(h('span.wk-missing', {}, `🖼 ${img.alt || 'picture'}`));
     }
-    // Diagrams (```mermaid) stay as their source, labelled, rather than a picture the office can't draw.
+    // Mermaid diagrams are drawn; the other diagram languages stay as their source, labelled.
     for (const code of body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]')) {
       const lang = /language-([\w-]+)/.exec(code.className)?.[1];
-      if (lang && ['mermaid', 'plantuml', 'dot', 'graphviz', 'd2'].includes(lang)) code.parentElement?.before(h('div.wk-diagram', {}, `${lang} diagram, shown as its source`));
+      const pre = code.parentElement;
+      if (!lang || !pre) continue;
+      if (lang === 'mermaid') void drawDiagram(pre, code.textContent ?? '');
+      else if (['plantuml', 'dot', 'graphviz', 'd2'].includes(lang)) pre.before(h('div.wk-diagram', {}, `${lang} diagram, shown as its source`));
     }
   };
 
@@ -470,7 +474,8 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     if (mine !== opening || disposed || run !== runId) return;
     current = p;
     rememberPage(floor, p.path);
-    const body = p.content.trim() ? markdownFile(p.content) : h('div.md', {}, h('p.none', {}, 'This page is empty.'));
+    const text = p.content.replace(/\r\n?/g, '\n').replace(/^\uFEFF?---\n[\s\S]*?\n---[ \t]*(?:\n|$)/, '');
+    const body = text.trim() ? markdownFile(text) : h('div.md', {}, h('p.none', {}, 'This page is empty.'));
     wire(body, p);
     page.replaceChildren(body);
     const dir = p.path.includes('/') ? p.path.slice(0, p.path.lastIndexOf('/') + 1) : '';
