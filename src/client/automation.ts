@@ -36,7 +36,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   computers: 'Compute wall',
   tv: 'Office TV',
   coffee: 'Coffee machine',
-  smoke: 'Ashtray on the balcony',
   elevator: 'Elevator',
   gong: 'Merge gong',
   jukebox: 'Jukebox',

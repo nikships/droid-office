@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import {
-  ASHTRAY,
   BALCONY,
   BALCONY_DOOR,
   BEANBAGS,
@@ -81,7 +80,6 @@ export type InteractKind =
   | 'tv'
   | 'coffee'
   | 'decor'
-  | 'smoke'
   | 'elevator'
   | 'gong'
   | 'jukebox'
@@ -569,9 +567,8 @@ function stringLights(a: THREE.Vector3, b: THREE.Vector3, sag: number, bulbs: [s
 }
 
 /**
- * The smoking balcony off the south wall, over the garage entrance: a deck with a glass railing on
- * its three open sides, string lights, a bench under the window, a bistro table, plants and the
- * ashtray, where you take a smoke break.
+ * The balcony off the south wall, over the garage entrance: a deck with a glass railing on its
+ * three open sides, string lights, a bench under the window, a bistro table and plants.
  */
 function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: Interactable[], night: NightParts) {
   const { minX, maxX, minZ, maxZ } = BALCONY;
@@ -676,34 +673,6 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   }
 
   group.add(mergeByMaterial(parts));
-
-  // The ashtray: a standing bin with a sand-filled bowl and a couple of butts in it.
-  const tray = new THREE.Group();
-  const steel = toon(PALETTE.brushed);
-  tray.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.05, 16), steel, 0, 0.025, 0));
-  tray.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.8, 10), steel, 0, 0.45, 0));
-  tray.add(mesh(new THREE.CylinderGeometry(0.2, 0.14, 0.14, 16), steel, 0, 0.9, 0));
-  tray.add(mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), toon('#e9d8a6'), 0, 0.965, 0, false));
-  for (const [bx, bz, a] of [
-    [0.06, 0.02, 0.4],
-    [-0.05, -0.06, 2.1],
-    [-0.02, 0.08, 1.2],
-  ]) {
-    const butt = mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.07, 6).rotateZ(Math.PI / 2), toon(a > 1 ? '#fffaf3' : '#e9a03b'), bx, 0.98, bz, false);
-    butt.rotation.y = a;
-    tray.add(butt);
-  }
-  tray.position.set(ASHTRAY.x, 0, ASHTRAY.z);
-  group.add(tray);
-  colliders.push({ minX: ASHTRAY.x - 0.2, maxX: ASHTRAY.x + 0.2, minZ: ASHTRAY.z - 0.2, maxZ: ASHTRAY.z + 0.2, top: 1 });
-  const it: Interactable = { kind: 'smoke', x: ASHTRAY.x, z: ASHTRAY.z, radius: 1.8 };
-  interactables.push(it);
-  tray.userData.interact = it;
-
-  const sign = textPlane('SMOKE BREAK', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
-  sign.scale.multiplyScalar(0.8);
-  sign.position.set(-6.5, 2.2, minZ + 0.02);
-  group.add(sign);
 }
 
 /** The bottom floor's balcony stands on posts down to the street, at its outer corners (the ones above it hang off their walls). */
