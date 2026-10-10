@@ -1317,6 +1317,8 @@ function errandEnd(why: WalkEnd) {
 /** How close (meters) you stop a worker jumping, and how far you go before it starts again. */
 const HOLD_NEAR = 4;
 const HOLD_LEAVE = 5;
+/** Where its card and name tag fade from, above a worker's feet (see Worker.seenFrom). */
+const WORKER_HEAD = 1.6;
 
 function syncWorkers() {
   for (const w of store.workers.values()) {
@@ -3503,6 +3505,8 @@ function frame(ts?: number) {
     // A jumping worker holds still while you're near enough to read its card, and jumps again once you walk away.
     const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
+    workerPos.y += WORKER_HEAD;
+    v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
     // A board agent's kiosk has no laptop to paint (see buildKiosk).
     if (desk.station) continue;

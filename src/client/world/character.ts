@@ -1368,6 +1368,18 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 /** How high a hop between the seat and the desk goes, over the straight line. */
 const HOP = 0.5;
 
+/** Task cards are drawn this much smaller than other labels: at full size one is wider than the desk under it. */
+const CARD_SCALE = 0.75;
+/** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
+export const FADE_NEAR = 1.4;
+export const FADE_FAR = 3.2;
+
+/** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
+export function labelFade(d: number): number {
+  const u = Math.min(1, Math.max(0, (d - FADE_NEAR) / (FADE_FAR - FADE_NEAR)));
+  return u * u * (3 - 2 * u);
+}
+
 /** The little Droid worker that sits at a desk. Forward is +z. */
 export class Worker {
   readonly root = new THREE.Group();
@@ -1387,6 +1399,8 @@ export class Worker {
   /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
   private lost = false;
   private nameTag: THREE.Sprite | null = null;
+  /** How opaque its card and name tag are (see seenFrom). */
+  private labelAlpha = 1;
   private name = '';
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
@@ -1727,11 +1741,26 @@ export class Worker {
         color: '#ffffff',
         muted: '#a6a6a6',
       });
+      this.bubble.scale.multiplyScalar(CARD_SCALE);
     } else if (bubble) this.bubble = textSprite(bubble, { bg: '#0a0a0a', color: lost ? LOST_CHIP[1] : (border ?? '#eeeeee'), border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });
     if (this.bubble) this.root.add(this.bubble);
   }
 
+  /** You're `d` metres from its head: its card and name tag fade out as you come up to it (see labelFade). */
+  seenFrom(d: number) {
+    this.labelAlpha = labelFade(d);
+  }
+
+  /**
+   * Called every frame, since the card is redrawn whenever what it says changes. Opacity only:
+   * `visible` belongs to whoever hides the labels outright (a medic team carrying it off).
+   */
+  private fadeLabels() {
+    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = this.labelAlpha;
+  }
+
   update(dt: number, t: number) {
+    this.fadeLabels();
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     if (this.dead) return this.flatline(dt);
