@@ -108,7 +108,7 @@ function messageBody(body: Record<string, unknown>, field = 'text'): { text: str
  * Droid sessions: the account's last ~100 sessions (two pages of GET /sessions), each one's
  * credits and fresh status from GET /sessions/{id} (cached by its updatedAt, read a few at a time,
  * running ones and the office's own workers' first), the credits ledger (credits.ts), and the
- * routes the Sessions window and cloud workers drive a session with (docs/factory.md).
+ * routes cloud workers and a session's transcript drive it with (docs/factory.md).
  */
 export class SessionsFeature extends SliceFeature<'sessions'> {
   readonly interval = 90_000;
@@ -272,7 +272,7 @@ export class SessionsFeature extends SliceFeature<'sessions'> {
     this.slice = { ...this.slice, credits: this.ledger.summary() };
   }
 
-  /** A session on a Factory computer is running: its window and board want it fresh. */
+  /** A session on a Factory computer is running: the lounge TV wants it fresh. */
   busy(): boolean {
     return this.slice.items.some((s) => live(s) && !!s.computerId);
   }

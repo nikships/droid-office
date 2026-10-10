@@ -257,7 +257,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   /**
    * Sends a cloud worker home: it leaves its desk now, its session is interrupted when it's working,
-   * and deleted when `deleteSession` (otherwise it stays in the Sessions window). Resolves to what to
+   * and deleted when `deleteSession` (otherwise it stays on the Factory account). Resolves to what to
    * tell the floor about the session, if anything.
    */
   async sendHome(id: string, deleteSession: boolean): Promise<{ note?: string; error?: string }> {

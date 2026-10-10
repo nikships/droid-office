@@ -88,7 +88,6 @@ import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWor
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { bindFactory, watchFactory } from './factory';
-import { openFactorySessions } from './ui/factory-sessions';
 import { FactoryTvTexture } from './world/factory-tv';
 import { creditsNote } from '../shared/factory-sessions';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
@@ -304,8 +303,8 @@ const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, f
 scene.add(confetti.mesh);
 
 // The lounge TV: the Factory sessions dashboard while the office is connected to Factory, else its
-// standby screen (world/factory-tv.ts). E there opens 🛰️ Sessions. The same slice puts each
-// worker's credits in the Workers panel, its desk hint and its terminal's header.
+// standby screen (world/factory-tv.ts). It is a board only: nothing opens from it. The same slice
+// puts each worker's credits in the Workers panel, its desk hint and its terminal's header.
 const tvTex = new FactoryTvTexture();
 const renderTv = (force = false) => tvTex.render(store.factory, Date.now(), force);
 const tvMat = office.tvScreen.material as THREE.MeshBasicMaterial;
@@ -324,14 +323,6 @@ store.on('factory', () => {
   renderWorkers((id) => openWorkerTerminal(id));
   hintKey = '';
 });
-function showSessions(sessionId?: string) {
-  openFactorySessions({ openSettings: () => showSettings('factory'), openWorker: (id) => openWorkerTerminal(id) }, sessionId);
-}
-/** E at the TV: the sessions, or connecting Factory first. */
-function useTv() {
-  if (store.factory.connection.connected) showSessions();
-  else showSettings('factory');
-}
 // The world's canvases drew at boot, before the bundled fonts were necessarily in: repaint them
 // once Geist and Geist Mono are loaded, so nothing is left in a fallback typeface.
 void loadFonts().then(() => {
@@ -1967,23 +1958,6 @@ function paletteEntries(): PaletteEntry[] {
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
-  if (store.factory.connection.connected) {
-    out.push(
-      atSpot('tv', 'the lounge TV', { icon: '🛰️', kind: 'Board', title: 'Droid sessions', detail: 'Factory sessions, transcripts and credits', keywords: ['factory', 'credits', 'cloud', 'transcript', 'tv'], open: () => showSessions() }),
-    );
-    for (const x of store.factory.sessions.items.slice(0, 30)) {
-      out.push(
-        atSpot('tv', 'the lounge TV', {
-          icon: '🛰️',
-          kind: 'Session',
-          title: x.title.replace(/\s+/g, ' ').trim().slice(0, 90) || `Session ${x.id.slice(0, 8)}`,
-          detail: [x.status, store.factory.sessions.office[x.id]?.name].filter(Boolean).join(' · '),
-          open: () => showSessions(x.id),
-        }),
-      );
-    }
-  }
-
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
@@ -2212,7 +2186,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'ci') showCi();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
-  else if (target.kind === 'tv') useTv();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'coffee') drinkCoffee();
@@ -2654,13 +2627,6 @@ function hintFor(it: Interactable): Hint {
     case 'queue': {
       const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
       return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
-    }
-    case 'tv': {
-      const f = store.factory;
-      const on = f.connection.connected && !f.connection.rejected;
-      const running = f.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length;
-      const about = !on ? 'standby · connect Factory in ⚙️ Settings' : running ? `${running} session${running === 1 ? '' : 's'} running` : 'Droid sessions & credits';
-      return { k: about, parts: [title('📺 Droid sessions TV'), aside(about), key('E', on ? 'Open Sessions' : 'Connect Factory')] };
     }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
@@ -3191,7 +3157,6 @@ const REACH: Record<InteractKind, number> = {
   queue: 9,
   ci: 9,
   computers: 9,
-  tv: 10,
   decor: 9,
   elevator: 4.5,
   gong: 3.5,
@@ -3320,16 +3285,6 @@ const hudActions: HudAction[] = [
     run: () => showMeeting(),
   },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
-  {
-    id: 'sessions',
-    icon: '🛰️',
-    label: 'Droid sessions',
-    section: 'Open',
-    shown: () => store.factory.connection.connected,
-    count: () => store.factory.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length,
-    title: () => 'Every Droid session on the Factory account: what each is doing and what it costs (the lounge TV)',
-    run: () => showSessions(),
-  },
   { id: 'autowiki', icon: '🏭', label: 'AutoWiki', section: 'Open', title: () => "Factory's wiki of this repository, on the bookshelf", run: () => showBookshelf('wiki') },
   { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
   { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
