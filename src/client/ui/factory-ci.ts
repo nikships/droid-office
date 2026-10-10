@@ -214,7 +214,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
         latest && outcome
           ? h('div.list-meta.ci-latest', {}, h('span.pill', { class: `ci-${outcome}` }, OUTCOME_WORD[outcome]), link(latest.url, latest.title ?? latest.workflow ?? `Run ${latest.id}`), h('span', {}, timeAgo(runTime(latest))))
           : h('div.list-meta.ci-latest', {}, 'No runs seen yet.'),
-        h('dl.ci-facts', {}, ...facts.map(([k, v]) => h('div.ci-fact', {}, h('dt', {}, k), h('dd', {}, v)))),
+        h('dl.ci-facts', {}, ...facts.map(([k, v]) => h('div.ci-fact', { class: k === 'File' ? 'wide' : undefined }, h('dt', {}, k), h('dd', {}, v)))),
       ),
       h('div.list-end.ci-wf-actions', {}, change, remove),
     );
@@ -222,28 +222,32 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
 
   const runsTable = (runs: FactoryCiRun[]) =>
     h(
-      'table.ci-runs',
+      'div.ci-table',
       {},
-      h('thead', {}, h('tr', {}, ...['Result', 'Workflow', 'Repository', 'Event', 'For', 'Started', 'Took'].map((c) => h('th', {}, c)))),
       h(
-        'tbody',
+        'table.ci-runs',
         {},
-        ...runs.map((r) => {
-          const o = ciOutcome(r);
-          const word = r.conclusion ?? r.status ?? OUTCOME_WORD[o];
-          const what = r.pr ? link(r.pr.url ?? (r.repo ? github(r.repo, `/pull/${r.pr.number}`) : undefined), `PR #${r.pr.number}`) : r.sha && r.repo ? link(github(r.repo, `/commit/${r.sha}`), r.sha.slice(0, 7)) : (r.branch ?? '');
-          return h(
-            'tr',
-            {},
-            h('td', {}, h('span.pill', { class: `ci-${o}` }, word.replace(/_/g, ' '))),
-            h('td', {}, link(r.url, r.workflow ?? r.path ?? r.id), r.title ? h('div.ci-sub', {}, r.title) : null),
-            h('td', {}, r.repo ?? ''),
-            h('td', {}, r.event ? triggerLabel(r.event) : ''),
-            h('td', {}, what, r.branch && r.pr ? h('div.ci-sub', {}, r.branch) : null),
-            h('td', {}, runTime(r) ? timeAgo(runTime(r)) : ''),
-            h('td', {}, r.durationMs !== undefined ? duration(r.durationMs) : o === 'running' ? '…' : ''),
-          );
-        }),
+        h('thead', {}, h('tr', {}, ...['Result', 'Workflow', 'Repository', 'Event', 'For', 'Started', 'Took'].map((c) => h('th', {}, c)))),
+        h(
+          'tbody',
+          {},
+          ...runs.map((r) => {
+            const o = ciOutcome(r);
+            const word = r.conclusion ?? r.status ?? OUTCOME_WORD[o];
+            const what = r.pr ? link(r.pr.url ?? (r.repo ? github(r.repo, `/pull/${r.pr.number}`) : undefined), `PR #${r.pr.number}`) : r.sha && r.repo ? link(github(r.repo, `/commit/${r.sha}`), r.sha.slice(0, 7)) : (r.branch ?? '');
+            return h(
+              'tr',
+              {},
+              h('td', {}, h('span.pill', { class: `ci-${o}` }, word.replace(/_/g, ' '))),
+              h('td', {}, link(r.url, r.workflow ?? r.path ?? r.id), r.title ? h('div.ci-sub', {}, r.title) : null),
+              h('td', {}, r.repo ?? ''),
+              h('td', {}, r.event ? triggerLabel(r.event) : ''),
+              h('td', {}, what, r.branch && r.pr ? h('div.ci-sub', {}, r.branch) : null),
+              h('td', {}, runTime(r) ? timeAgo(runTime(r)) : ''),
+              h('td', {}, r.durationMs !== undefined ? duration(r.durationMs) : o === 'running' ? '…' : ''),
+            );
+          }),
+        ),
       ),
     );
 
@@ -346,7 +350,6 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const depth = h('select.select', { 'aria-label': 'Review depth' }, h('option', { value: 'deep' }, 'Deep'), h('option', { value: 'shallow' }, 'Shallow')) as HTMLSelectElement;
     depth.value = w?.inputs.reviewDepth === 'shallow' ? 'shallow' : 'deep';
     const securityToggle = toggle({ label: 'Security review too', description: 'Factory’s security review runs alongside it', checked: w?.inputs.automaticSecurityReview === true });
-    securityToggle.classList.add('ci-security');
     const security = securityToggle.input;
     const modelList = h('datalist', { id: 'ci-models' }, ...MODEL_ALIASES.map((m) => h('option', { value: m })));
     const model = h('input.input', { type: 'text', 'aria-label': 'Model', list: 'ci-models', placeholder: 'Factory’s default', value: w?.model ?? '' }) as HTMLInputElement;
@@ -357,7 +360,8 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     const submit = h('button.btn.primary', { type: 'submit', form: 'ci-form' }, w ? 'Open a PR to change it' : 'Open a PR to add it') as HTMLButtonElement;
     const cancel = h('button.btn.ghost', { type: 'button', onclick: close }, 'Cancel');
 
-    const reviewOnly = h('div.ci-row', {}, field('Review depth', depth), securityToggle);
+    const depthField = field('Review depth', depth);
+    const reviewOnly = [depthField, securityToggle];
     const customOnly = field('What it does each time', prompt);
     const req = (): CiEditRequest => ({
       action: w ? 'edit' : 'create',
@@ -372,7 +376,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       ...(template === 'code-review' ? { depth: depth.value as 'deep' | 'shallow', ...(security.checked ? { security: true } : {}) } : { prompt: prompt.value }),
     });
     const sync = () => {
-      reviewOnly.classList.toggle('hidden', template !== 'code-review');
+      for (const e of reviewOnly) e.classList.toggle('hidden', template !== 'code-review');
       customOnly.classList.toggle('hidden', template !== 'custom');
       name.placeholder = template === 'code-review' ? 'Droid Code Review' : 'Issue triage';
       file.textContent = w?.path ?? (template === 'code-review' ? CI_REVIEW_PATH : customWorkflowPath(name.value.trim() || 'Droid job'));
@@ -394,12 +398,12 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
             kindRadio('custom', 'A Droid job of your own', 'Runs Droid with your prompt on the events or schedule you pick'),
           ),
       field('Name', name),
-      h('div.field', {}, h('label', {}, 'Runs on'), h('div.ci-events', {}, ...events.map((e) => e.label))),
-      h('div.ci-row', {}, field('Schedule (UTC)', cron), h('span')),
-      reviewOnly,
-      h('div.ci-row', {}, field('Model', model), field('Reasoning effort', effort)),
-      modelList,
       customOnly,
+      h('div.field', {}, h('label', {}, 'Runs on'), h('div.ci-events', {}, ...events.map((e) => e.label))),
+      h('div.ci-row', {}, field('Schedule (UTC)', cron), depthField),
+      h('div.ci-row', {}, field('Model', model), field('Reasoning effort', effort)),
+      securityToggle,
+      modelList,
       h('p.note.info', {}, 'Factory writes ', file, ` in ${w?.repo ?? 'the repository'} and opens a pull request with it. Nothing runs until it merges. Manual runs (workflow_dispatch) are always on.`),
     );
     el.addEventListener('submit', (e) => {
