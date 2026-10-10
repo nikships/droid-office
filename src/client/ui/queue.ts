@@ -3,6 +3,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { glyphText, h, openModal, timeAgo, STATUS_LABEL } from './dom';
 import { confirmDialog } from './prompt';
+import { promptExtras } from './prompt-box';
 import { promptImages } from './images';
 import { agentPicker, modelBadge } from './models';
 import { emptyState } from './kit';
@@ -54,9 +55,10 @@ export function openQueue(net: Net, actions: QueueActions) {
 
   const ta = h('textarea.input', { rows: 2, placeholder: 'Describe a task for the next free worker… (paste or drop pictures)', 'aria-label': 'New task' }) as HTMLTextAreaElement;
   const images = promptImages(ta);
+  const extras = promptExtras(ta);
   const models = agentPicker('queue-models', 'queue');
   const addBtn = h('button.btn.primary', { type: 'submit', title: 'Add it (Enter; Shift+Enter for a new line)' }, 'Add to queue', h('span.key', {}, '↵'));
-  const form = h('form.queue-add', {}, ta, images.element, models.element, addBtn) as HTMLFormElement;
+  const form = h('form.queue-add', {}, extras.element, images.element, models.element, addBtn) as HTMLFormElement;
   form.noValidate = true;
   let waiting = false;
   const submit = () => {
@@ -76,6 +78,7 @@ export function openQueue(net: Net, actions: QueueActions) {
       return;
     }
     const picked = images.take();
+    if (text) extras.sent(text);
     net.send({ t: 'queue.add', prompt: text, model: models.model(), effort: models.effort(), images: picked.length ? picked : undefined });
     ta.value = '';
   };
@@ -204,6 +207,7 @@ export function openQueue(net: Net, actions: QueueActions) {
       unsubs.forEach((u) => u());
       clearInterval(tick);
       images.discard();
+      extras.dispose();
     },
   });
   images.dropZone(modal.backdrop, form);

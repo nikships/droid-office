@@ -75,6 +75,24 @@ interface Typist {
   word: number;
 }
 
+export type AlertKind = 'needs_input' | 'done' | 'error';
+
+/** Short, and not the same shape: a rise, a major third, two low notes down. Square is quieter so it doesn't shout. */
+const ALERTS: Record<AlertKind, { freq: number; type: OscillatorType; at: number; len: number; gain: number }[]> = {
+  needs_input: [
+    { freq: 784, type: 'sine', at: 0, len: 0.09, gain: 0.22 },
+    { freq: 1175, type: 'sine', at: 0.1, len: 0.11, gain: 0.2 },
+  ],
+  done: [
+    { freq: 659, type: 'triangle', at: 0, len: 0.1, gain: 0.24 },
+    { freq: 880, type: 'triangle', at: 0.11, len: 0.14, gain: 0.22 },
+  ],
+  error: [
+    { freq: 392, type: 'square', at: 0, len: 0.08, gain: 0.08 },
+    { freq: 247, type: 'square', at: 0.1, len: 0.12, gain: 0.07 },
+  ],
+};
+
 export class OfficeSound {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -86,6 +104,8 @@ export class OfficeSound {
   private buf!: Buffers;
   private volume = 0.7;
   private muted = false;
+  /** Worker tones only. The office mute still silences them, because they share its volume. */
+  private alertsMuted = false;
   private typists = new Map<string, Typist>();
   private listener: Listener = { x: 0, y: 1.4, z: 0, fx: 0, fz: -1 };
   // The jukebox: from the cabinet, through a filter that muffles it from across the room, to your own volume.
@@ -118,6 +138,12 @@ export class OfficeSound {
     this.volume = Math.max(0, Math.min(1, volume));
     this.muted = muted;
     this.applyVolume();
+  }
+
+  /** Silences the worker tones (needs you, done, error) and leaves the room alone. */
+  setAlertsMuted(muted: boolean) {
+    this.alertsMuted = muted;
+    this.applyAlerts();
   }
 
   /** Output level (RMS) right now, for headless checks. */
@@ -176,6 +202,7 @@ export class OfficeSound {
     this.musicIn.connect(this.musicTone).connect(this.musicBus).connect(ctx.destination);
     this.musicBus.connect(this.musicMeter);
     this.applyVolume();
+    this.applyAlerts();
     this.applyMusicVolume();
     this.applyJukebox();
     this.applyVisibility();
@@ -187,6 +214,11 @@ export class OfficeSound {
     // Squared, so the slider feels even to the ear.
     const g = this.muted ? 0 : this.volume * this.volume;
     this.master.gain.setTargetAtTime(g, this.ctx.currentTime, 0.04);
+  }
+
+  private applyAlerts() {
+    if (!this.ctx) return;
+    this.alerts.gain.setTargetAtTime(this.alertsMuted ? 0 : 1, this.ctx.currentTime, 0.03);
   }
 
   private applyVisibility() {
@@ -1125,27 +1157,51 @@ export class OfficeSound {
 
   // ---- Alerts ----------------------------------------------------------------------------------
 
-  /** Two notes up when a worker is done, a three-note nudge when it needs input. */
-  ding(kind: 'done' | 'needs_input') {
+  /**
+   * A short tone, different for each reason: needs input rises, done is two notes up, an error
+   * falls. They stay audible in a background tab. The alert mute drops them; the office mute does
+   * too, since they share its volume.
+   */
+  ding(kind: AlertKind) {
     this.unlock();
+    if (!this.ctx || this.alertsMuted) return;
+    this.count(kind);
+    this.tone(kind, this.alerts);
+  }
+
+  /** The elevator arriving: the done tone, on the office volume, so the alert mute doesn't cover it. */
+  floorChime() {
+    this.unlock();
+    if (!this.ctx) return;
+    this.count('floor');
+    this.tone('done', this.master);
+  }
+
+  /** The three tones in order, so Settings can show that they differ. Nothing while they're muted. */
+  previewAlerts() {
+    if (this.alertsMuted) return;
+    this.ding('needs_input');
+    window.setTimeout(() => this.ding('done'), 320);
+    window.setTimeout(() => this.ding('error'), 640);
+  }
+
+  private tone(kind: AlertKind, dest: AudioNode) {
     const ctx = this.ctx;
     if (!ctx) return;
     if (ctx.state === 'suspended') void ctx.resume();
-    this.count(kind);
-    const notes = kind === 'done' ? [660, 880] : [880, 660, 880];
-    notes.forEach((f, i) => {
+    for (const n of ALERTS[kind]) {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = f;
-      const t0 = ctx.currentTime + i * 0.12;
+      o.type = n.type;
+      o.frequency.value = n.freq;
+      const t0 = ctx.currentTime + n.at;
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
-      o.connect(g).connect(this.alerts);
+      g.gain.exponentialRampToValueAtTime(n.gain, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + n.len);
+      o.connect(g).connect(dest);
       o.start(t0);
-      o.stop(t0 + 0.3);
-    });
+      o.stop(t0 + n.len + 0.02);
+    }
   }
 
   // ---- The jukebox ------------------------------------------------------------------------------

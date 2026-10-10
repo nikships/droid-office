@@ -43,6 +43,7 @@ import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
@@ -380,6 +381,7 @@ const smoke = new Smoke();
 scene.add(smoke.group);
 const sound = new OfficeSound();
 sound.setVolume(settings.volume, settings.muted);
+sound.setAlertsMuted(settings.alertsMuted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
 sound.onMusicError = (text) => toast(text, 'warn');
 // The jukebox on your floor: everyone there hears it from the same bar, and its lights say what's on.
@@ -512,6 +514,10 @@ interface WorkerView {
   deskId: string;
   status: string;
   acked: boolean;
+  /** The action last painted, so a new run of failures dings once. */
+  action?: string;
+  /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
+  heard: boolean;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -901,6 +907,7 @@ net.onMessage((msg) => {
       routeWorktreeMessage(msg);
       break;
     case 'toast': {
+      if (msg.level === 'error') sound.ding('error');
       const el = toast(msg.text, msg.level);
       const id = msg.workerId;
       // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
@@ -913,7 +920,10 @@ net.onMessage((msg) => {
     }
     case 'upgrade':
       if (msg.state.phase === 'restarting') showRestarting(msg.state, net);
-      if (msg.state.phase === 'failed' && upgradePhase === 'building') toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+      if (msg.state.phase === 'failed' && upgradePhase === 'building') {
+        toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+        sound.ding('error');
+      }
       upgradePhase = msg.state.phase;
       break;
     case 'gong':
@@ -967,13 +977,16 @@ function renderProject() {
 store.on('floors', renderProject);
 store.on('project', renderProject);
 
-/** The tab title counts the workers waiting on someone, on every floor, so you can see them from another tab. */
+/** The tab title counts workers waiting on someone, on every floor, while this tab is in the background. Focusing it clears the count. */
 function renderTitle() {
   const name = store.project?.name;
   const elsewhere = store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0);
   const waiting = [...store.workers.values()].filter(waitingOnSomeone).length + elsewhere;
-  document.title = `${waiting ? `(${waiting}) ` : ''}${name ? `${name} · ` : ''}Droid Office`;
+  document.title = officeTitle(name, waiting, document.hidden || !document.hasFocus());
 }
+window.addEventListener('visibilitychange', renderTitle);
+window.addEventListener('focus', renderTitle);
+window.addEventListener('blur', renderTitle);
 
 // ---- Floors & the elevator ----------------------------------------------------------------------
 /** In the car, facing out through the doors: where you are when you arrive on a floor. */
@@ -1199,7 +1212,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   }
   setTimeout(() => {
     lift().setOpen(true);
-    sound.ding('done');
+    sound.floorChime();
     player.enabled = !modalOpen();
   }, 450);
 }
@@ -1307,7 +1320,7 @@ function syncWorkers() {
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
-      v = { model, laptop, deskId: w.deskId, status: '', acked: true };
+      v = { model, laptop, deskId: w.deskId, status: '', acked: true, heard: false };
       workerViews.set(w.id, v);
     }
     if (v.status !== w.status || v.acked !== w.acked) {
@@ -1329,6 +1342,9 @@ function syncWorkers() {
       noOutline(v.model.root);
     }
     v.model.setAction(w.action);
+    if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
+    v.action = w.action;
+    v.heard = true;
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
@@ -3176,12 +3192,14 @@ function showSettings(pane?: SettingsPane) {
       Object.assign(settings, s);
       saveSettings(settings);
       sound.setVolume(settings.volume, settings.muted);
+      sound.setAlertsMuted(settings.alertsMuted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
       // The hint names what's in your hand; the hands swap props by themselves next frame.
       hintKey = 'stale';
     },
     editProfile,
-    () => sound.ding('done'),
+    () => sound.floorChime(),
+    () => sound.previewAlerts(),
     notifier,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,

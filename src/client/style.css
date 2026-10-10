@@ -661,6 +661,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .cloud-win .ft { min-height: 0; border-top: 0; }
 .cloud-prompt { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
 .cloud-prompt textarea { width: 100%; resize: vertical; }
+.cloud-prompt .prompt-field textarea { width: auto; }
 .cloud-actions { display: flex; align-items: center; gap: 8px; }
 .cloud-actions .grow { flex: 1; font: 400 11px/1.5 var(--font-mono); color: var(--text-secondary); }
 .term-team-label { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
@@ -1053,8 +1054,19 @@ a.when:hover { text-decoration: underline; }
 .gh-labeler footer .grow { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gh-labeler .gh-quiet a { color: var(--info); font-weight: 600; }
 
-/* Send a prompt to a worker (ui/ask.ts) */
+/* Send a prompt to a worker (ui/ask.ts). Chips and history (ui/prompt-box.ts) sit on every agent prompt box. */
 .modal.ask { width: min(660px, 100%); }
+.prompt-compose { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.prompt-field { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.prompt-field textarea { flex: 1 1 auto; min-width: 0; }
+.prompt-history { max-height: 220px; overflow: auto; }
+.prompt-history-empty { margin: 0; padding: var(--space-3); }
+.preset-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.preset-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto; gap: var(--space-2); align-items: start; }
+.preset-row textarea { min-height: var(--control-h-lg); resize: vertical; }
+@media (max-width: 720px) {
+  .preset-row { grid-template-columns: minmax(0, 1fr); }
+}
 .ask-to { gap: 6px; }
 .ask-to .btn { padding: 5px 10px; }
 .ask-to .btn small { font-size: 10px; opacity: .7; }
@@ -1296,6 +1308,8 @@ a.when:hover { text-decoration: underline; }
 /* The prompt gets its own row; the picker's pieces flow into one line under it, then its notes. */
 .queue-add { display: flex; gap: 8px 6px; align-items: center; flex-wrap: wrap; }
 .queue-add textarea { flex: 1 1 100%; min-height: 60px; }
+.queue-add .prompt-compose { flex: 1 1 100%; min-width: 0; }
+.queue-add .prompt-field textarea { flex: 1 1 auto; }
 .queue-add .model-choice { display: contents; }
 .queue-add label { margin: 0 0 0 8px; font-size: 10px; white-space: nowrap; }
 /* A zero basis keeps the row from wrapping: the pickers shrink first (down to a readable floor) and grow back to their natural width when there's room. */
