@@ -465,6 +465,8 @@ npm run package:mac  # builds release/Droid Office.app, a dmg and a zip; signs w
 
 `npm run package:mac` notarizes the app too when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set; `CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac -- -c.mac.identity=null` builds it unsigned. electron-builder's settings are in [`electron-builder.yml`](electron-builder.yml), and the icon and entitlements in [`build/`](build).
 
+A worktree the office cuts of this repository sets itself up from [`.droid-office.json`](.droid-office.json): it copies `android/local.properties` from the checkout when there is one and runs `npm ci`.
+
 **Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
 
 **Pre-commit hook.** `npm install` in a clone points git at [`.husky/`](.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't, like the packed release.

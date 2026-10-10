@@ -71,6 +71,8 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 
 `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
 
+`.droid-office.json` at the root is what Droid Office runs in a fresh worktree of this repository: `npm ci`, after copying an untracked `android/local.properties` from the main checkout. Update it when a fresh clone needs another step or local file.
+
 ## Conventions
 
 - `.droid-office/` is runtime state (config, workers, scrollback, queue, worktrees). Never commit it.
