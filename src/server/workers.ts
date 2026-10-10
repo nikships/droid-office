@@ -104,6 +104,11 @@ const HOOK_TRIES = 6;
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
 const SCREEN_CHECK_MS = 1000;
+/**
+ * How long a launch prompt waits for SessionStart before the input box on its screen is enough to
+ * type it in: well past a normal start, so it only matters when the hooks can't reach the office.
+ */
+const LAUNCH_PROMPT_FALLBACK_MS = 15_000;
 /** Tools that ask the person a question: droid's is AskUser. */
 const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
@@ -159,6 +164,8 @@ interface Worker {
   hookToken: string;
   /** Droid never reported SessionStart: it's stuck on a login or hooks screen. */
   bootBlocked?: boolean;
+  /** The first message for this run of its droid, typed in once droid can take it (see launch), and when the run started. */
+  launchPrompt?: { text: string; at: number };
   /**
    * Sessions of the subagents its droid started with the Task tool. Their hooks come with this
    * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
@@ -1192,16 +1199,27 @@ export class WorkerManager {
     const typed = text.replace(/\r\n?/g, '\n').trim();
     const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
-    // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
-    w.pty.write(`\x1b[200~${clean}\x1b[201~`);
-    const submit = queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r';
-    setTimeout(() => w.pty?.write(submit), 120);
+    this.typeIn(w, clean, queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r');
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;
+  }
+
+  /** Types a message into the agent's input box and submits it with `submit`. */
+  private typeIn(w: Worker, text: string, submit = '\r') {
+    // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
+    w.pty?.write(`\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => w.pty?.write(submit), 120);
+  }
+
+  /** Types in the message this run of its droid was started for, if it hasn't been yet. */
+  private sendLaunchPrompt(w: Worker) {
+    const pending = w.launchPrompt;
+    w.launchPrompt = undefined;
+    if (pending && w.pty) this.typeIn(w, pending.text);
   }
 
   /**
@@ -1402,6 +1420,7 @@ export class WorkerManager {
       w.bootBlocked = false;
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
+      this.sendLaunchPrompt(w);
     } else if (event === 'UserPromptSubmit') {
       w.bootBlocked = false;
       w.info.action = undefined;
@@ -1476,6 +1495,8 @@ export class WorkerManager {
   reconcile(now = Date.now()) {
     for (const w of this.workers.values()) {
       const { info } = w;
+      // No SessionStart came for it (the hook can't reach the office), but droid's input box is up.
+      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && readDroidScreen(screenRows(w.term)) === 'idle') this.sendLaunchPrompt(w);
       if (info.kind !== 'agent' || !w.pty || !w.term || w.bootBlocked || !info.sessionId || info.status === 'starting') {
         w.screenSeen = undefined;
         continue;
@@ -1631,9 +1652,10 @@ export class WorkerManager {
       // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
       args.unshift('--settings', this.droidSettings(info));
       if (resumeSessionId) args.push('--resume', resumeSessionId);
-      // `--` so a prompt like "- fix login" is never parsed as a CLI option.
-      if (prompt) args.push('--', prompt);
     }
+    // Typed in at SessionStart rather than passed as `droid -- <prompt>`: droid started with a
+    // prompt argument never opens /rewind-conversation for the rest of that run.
+    w.launchPrompt = !isShell && prompt ? { text: prompt, at: Date.now() } : undefined;
     w.hookToken = randomBytes(16).toString('hex');
     // A new process: whatever subagents and prompts the last one had went with it.
     w.subSessions.clear();
