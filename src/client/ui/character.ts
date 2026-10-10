@@ -32,7 +32,7 @@ class Preview {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.effect = new OutlineEffect(this.renderer, { defaultThickness: 0.0045, defaultColor: [0.17, 0.18, 0.26] });
+    this.effect = new OutlineEffect(this.renderer, { defaultThickness: 0.0025, defaultColor: [0.03, 0.032, 0.05] });
 
     // A neutral dark stage, so the character reads the way it does in the dark office.
     this.scene.add(new THREE.HemisphereLight('#ffffff', '#3a3f46', 1.5));
