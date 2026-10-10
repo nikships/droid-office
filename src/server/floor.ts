@@ -54,6 +54,8 @@ export interface FloorContext {
   connections(floor: Floor): number;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
+  /** ⚙️ Settings: a fresh worker starts from the latest of the default branch (see WorkerManager.freshMain). */
+  freshMain(): boolean;
   /** ⚙️ Settings → Subagents: how workers hire subagents. */
   subagents(): SubagentSettings;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
@@ -192,6 +194,9 @@ export class Floor {
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame }, true),
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+        checkout: (branch) => {
+          this.project.branch = branch;
+        },
       },
       ctx.capacity,
       this.board,
@@ -230,7 +235,12 @@ export class Floor {
         },
       },
     );
-    this.workers.holds = { desk: (id) => this.guests.deskTaken(id) || this.cloud.deskTaken(id), names: () => [...this.guests.names(), ...this.cloud.names()] };
+    this.workers.holds = {
+      desk: (id) => this.guests.deskTaken(id) || this.cloud.deskTaken(id),
+      names: () => [...this.guests.names(), ...this.cloud.names()],
+      inCheckout: () => this.guests.list().map((g) => g.name),
+    };
+    this.workers.freshMain = () => ctx.freshMain();
 
     // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
     const queued = this.workers;
@@ -245,7 +255,7 @@ export class Floor {
         spawn: (deskId, by, prompt, worktree, kind, model, effort, images) => queued.spawn(deskId, by, prompt, worktree, kind, model, effort, [], undefined, images),
         unstage: (ids) => queued.unstage(ids),
         kill: (id) => queued.kill(id),
-        fetchBase: () => queued.fetchBase(),
+        fetchBase: (checkout) => queued.fetchBase(checkout),
       },
       !!this.project.branch,
       {
@@ -276,13 +286,13 @@ export class Floor {
         get officeDefault() {
           return workers.officeDefault;
         },
-        hire: (deskId, by, prompt, worktree, c, lead) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead),
+        hire: (deskId, by, prompt, worktree, c, lead, from) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from),
         prompt: (id, text) => workers.prompt(id, text),
         resume: (id, text) => workers.resume(id, text),
         kill: (id) => workers.kill(id),
         tail: (id, lines) => workers.tail(id, lines),
         setTask: (id, task) => workers.setTask(id, task),
-        fetchBase: () => workers.fetchBase(),
+        fetchStart: (lead, from) => workers.fetchStart(lead, from),
       },
       {
         dataDir,
@@ -300,7 +310,16 @@ export class Floor {
       (workerId, repo) => {
         const w = this.workers.get(workerId);
         if (!w) return undefined;
-        if (!repo) return { name: w.name, cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir, rel: w.worktree?.path ?? '', worktreeBase: w.worktree?.base };
+        // Against the branch its worktree was cut from (which may not be the one the checkout is on), else the checkout's.
+        if (!repo)
+          return {
+            name: w.name,
+            cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir,
+            rel: w.worktree?.path ?? '',
+            worktreeBase: w.worktree?.base,
+            baseBranch: w.worktree?.from ?? this.project.branch ?? null,
+            prBaseFallback: this.project.branch ?? null,
+          };
         // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
         const r = w.repos?.find((x) => x.floor === repo);
         if (!r) return undefined;
@@ -311,6 +330,7 @@ export class Floor {
           rel: r.path,
           worktreeBase: r.base,
           baseBranch: r.from ?? null,
+          prBaseFallback: other?.project.branch ?? null,
           openPull: (branch) => (other ? openPull(other, branch) : undefined),
           refreshGitHub: () => void other?.board.refresh(),
         };

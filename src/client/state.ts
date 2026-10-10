@@ -6,6 +6,7 @@ import type {
   GhPull,
   GhState,
   LeaveOnMergeState,
+  FreshMainState,
   MachineState,
   NotifyState,
   ProjectInfo,
@@ -53,6 +54,7 @@ export type Topic =
   | 'jukebox'
   | 'sky'
   | 'leaveOnMerge'
+  | 'freshMain'
   | 'subagents'
   | 'cabinet'
   | 'cabinetFrame'
@@ -253,6 +255,8 @@ class Store {
   sky: SkyState | null = null;
   /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
   leaveOnMerge: LeaveOnMergeState = { on: false };
+  /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
+  freshMain: FreshMainState = { on: true };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
@@ -339,11 +343,12 @@ class Store {
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
+        this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -449,6 +454,10 @@ class Store {
       case 'leaveOnMerge':
         this.leaveOnMerge = msg.state;
         this.emit('leaveOnMerge');
+        break;
+      case 'freshMain':
+        this.freshMain = msg.state;
+        this.emit('freshMain');
         break;
       case 'subagents':
         this.subagents = msg.state;

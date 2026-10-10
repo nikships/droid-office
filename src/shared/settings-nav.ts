@@ -12,7 +12,7 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
     label: 'Factory',
     blurb: 'Connect the office to Factory with an API key: its cloud computers, Droid sessions and credits, CI automations and AutoWiki, on the office’s walls and in its windows.',
   },
-  { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on, how many run at once, when they go home, what the office tells them and how their worktrees are set up.' },
+  { id: 'workers', icon: '🤖', label: 'Workers', blurb: 'What workers start on and from, how many run at once, when they go home, what the office tells them and how their worktrees are set up.' },
   {
     id: 'subagents',
     icon: '🧭',
@@ -38,6 +38,7 @@ export const SETTINGS_CARDS = [
   { pane: 'building', title: 'Source hot reload' },
   { pane: 'factory', title: 'Factory API key' },
   { pane: 'workers', title: 'Default worker' },
+  { pane: 'workers', title: 'Where fresh workers start' },
   { pane: 'workers', title: 'Prompts' },
   { pane: 'workers', title: 'Worker limit' },
   { pane: 'workers', title: 'Workers whose pull request merged' },

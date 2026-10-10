@@ -706,6 +706,19 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
+/**
+ * Whether a fresh worker starts from the latest of the default branch (⚙️ Settings), for every floor:
+ * a worktree cut from origin's main whatever the checkout is on, and a worker without one in the
+ * checkout brought to the latest main when nobody else's work is in the way. Subagents start where
+ * their lead says either way. On by default.
+ */
+export interface FreshMainState {
+  on: boolean;
+  /** Who set it, and when. Unset for the default (on). */
+  by?: string;
+  at?: number;
+}
+
 /** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
   /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
@@ -892,6 +905,8 @@ export type ClientMsg =
   | { t: 'floor.remove'; floor: string }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
+  /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
+  | { t: 'freshMain.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
@@ -941,6 +956,7 @@ export type ServerMsg =
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
       leaveOnMerge: LeaveOnMergeState;
+      freshMain: FreshMainState;
       subagents: SubagentsState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
@@ -1004,6 +1020,7 @@ export type ServerMsg =
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
+  | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'prompts'; state: PromptsState }
   /** To whoever asked, and to everyone on the floor when it's changed. */
