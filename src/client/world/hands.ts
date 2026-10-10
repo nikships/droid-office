@@ -412,7 +412,7 @@ export class Hands {
     const group = new THREE.Group();
     // Sleeve runs from the wrist back past the camera, so its far end is always off screen.
     group.add(mesh(new THREE.CapsuleGeometry(0.058, 0.42, 6, 14).rotateX(Math.PI / 2), this.sleeve, 0, 0, 0.34, false));
-    group.add(mesh(new THREE.CylinderGeometry(0.06, 0.056, 0.05, 18).rotateX(Math.PI / 2), this.cuffMat, 0, 0, 0.078, false));
+    group.add(mesh(new THREE.CylinderGeometry(0.044, 0.04, 0.025, 18).rotateX(Math.PI / 2), this.cuffMat, 0, 0, 0.07, false));
     const glove = new Glove(side, { glove: this.glove, steel: this.cuffMat, pinwheel: this.pinwheel });
     group.add(glove.group);
     const base = new THREE.Vector3(side * 0.25, -0.185, -0.44);

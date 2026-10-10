@@ -393,11 +393,7 @@ export class Glove {
     const s = side;
     const palm = new THREE.Mesh(palmGeometry(), m.glove);
     this.group.add(palm);
-    // A graphite guard over the knuckles, and the pinwheel on the back of the hand, lying on it.
-    const guard = new THREE.Mesh(new THREE.CapsuleGeometry(0.0085, 0.056, 3, 8).rotateZ(Math.PI / 2), m.steel);
-    guard.position.set(0, backY(0, -0.034) - 0.002, -0.034);
-    guard.rotation.x = -0.25;
-    this.group.add(guard);
+    // The pinwheel on the back of the hand, lying on it.
     const badge = new THREE.Mesh(badgeGeometry(0.042, 0.008), m.pinwheel);
     badge.name = 'glove-pinwheel';
     this.group.add(badge);
