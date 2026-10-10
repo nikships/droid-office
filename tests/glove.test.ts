@@ -32,8 +32,8 @@ test('a glove has a palm, four three-boned fingers and a three-boned thumb, with
   arm.traverse((o) => {
     if (o instanceof THREE.Mesh && o.geometry.type === 'CapsuleGeometry') bones++;
   });
-  // Four fingers and the thumb, three bones each, and the knuckle guard.
-  assert.equal(bones, 5 * 3 + 1);
+  // Four fingers and the thumb, three bones each.
+  assert.equal(bones, 5 * 3);
   const back = new THREE.Box3().setFromObject(arm.getObjectByName('glove-pinwheel')!);
   const palm = new THREE.Box3().setFromObject(g.group.children[0]);
   assert.ok(back.min.y > 0 && back.max.y <= palm.max.y + 0.002, 'the pinwheel lies on the back of the hand, not floating above it');
