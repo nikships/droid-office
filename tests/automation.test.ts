@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARDS, DESK_BY_ID, deskSeat, MEETING_SEATS, STATIONS } from '../src/shared/layout.js';
+import { BOARDS, DESK_BY_ID, deskSeat, STATIONS } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import type { Interactable } from '../src/client/world/office.js';
 import { buildSnapshot, cameraPose, createAutomation, facingToward, freeSpotNear, listTargets, pitchToward, resolveTarget, runCommand, standFor, type AutomationHost, type RawState, type TargetContext } from '../src/client/automation.js';
 
-/** The spots a floor has, the way world/office.ts lays them out: desks, a kiosk, a meeting chair, a bean bag and the boards. */
+/** The spots a floor has, the way world/office.ts lays them out: desks, a kiosk, a bean bag and the boards. */
 function floorSpots(): Interactable[] {
   const desk = (id: string): Interactable => {
     const s = deskSeat(DESK_BY_ID.get(id)!, 1.25);
@@ -17,18 +17,15 @@ function floorSpots(): Interactable[] {
     return { kind, x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
   };
   const kiosk = STATIONS.find((s) => s.station === 'issues')!;
-  const chair = MEETING_SEATS[0];
   return [
     desk('desk-1'),
     desk('desk-2'),
     { kind: 'desk', deskId: 'beanbag-1', x: 15, z: -9.8, radius: 1.8, off: true },
     { kind: 'station', deskId: kiosk.id, x: kiosk.x, z: kiosk.z + 1, radius: 1.3 },
-    { kind: 'desk', deskId: chair.id, x: chair.x, z: chair.z, radius: 1 },
     board('issues'),
     board('pulls'),
     { kind: 'coffee', x: -15.7, z: 10.9, radius: 1.4 },
-    { kind: 'meeting', x: 13.7, z: 10.55, radius: 2.6 },
-    { kind: 'meeting', x: 13.7, z: 12, radius: 2.4 },
+    { kind: 'coffee', x: -15.7, z: 11, radius: 1.4 },
     { kind: 'seat', seatId: 'couch', x: 10, z: 0, radius: 1.5 },
   ];
 }
@@ -37,7 +34,7 @@ const worker = (over: Partial<WorkerInfo>): WorkerInfo => ({ id: 'w1', name: 'Ad
 
 function context(over: Partial<TargetContext> = {}): TargetContext {
   return {
-    workers: [worker({}), worker({ id: 'w2', name: 'Grace', deskId: 'meeting-1', status: 'working' })],
+    workers: [worker({})],
     spots: floorSpots(),
     floors: [
       { id: 'f1', name: 'droid-office' },
@@ -51,7 +48,7 @@ function context(over: Partial<TargetContext> = {}): TargetContext {
 test('list() names the desks, kiosks, boards, places and floors you can go to from here', () => {
   const list = listTargets(context());
   const ids = list.map((t) => t.id);
-  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'meeting-1', 'issues', 'pulls', 'coffee', 'meeting', 'f1', 'f2', ROOF]);
+  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'issues', 'pulls', 'coffee', 'f1', 'f2', ROOF]);
   assert.deepEqual(list[0], { id: 'desk-1', kind: 'desk', label: 'Desk 1', deskId: 'desk-1', worker: { id: 'w1', name: 'Ada', status: 'idle' } });
   assert.equal(list[1].worker, undefined, 'a free desk is listed without a worker');
   assert.equal(list.find((t) => t.id === 'station-issues')?.kind, 'kiosk');
@@ -59,7 +56,7 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   assert.equal(list.find((t) => t.id === 'coffee')?.kind, 'place');
   assert.ok(!ids.includes('beanbag-1'), 'a bean bag that is put away is nowhere to go');
   assert.ok(!ids.includes('couch'), 'seats are not named targets');
-  assert.equal(ids.filter((id) => id === 'meeting').length, 1, 'a place with several spots is listed once');
+  assert.equal(ids.filter((id) => id === 'coffee').length, 1, 'a place with several spots is listed once');
   assert.deepEqual(
     list.filter((t) => t.kind === 'floor').map((t) => [t.id, !!t.here]),
     [
@@ -68,9 +65,8 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
       [ROOF, false],
     ],
   );
-  // An empty meeting chair isn't listed; nor is a roof with no floors under it.
+  // A roof with no floors under it isn't listed.
   const empty = listTargets(context({ workers: [], floors: [] })).map((t) => t.id);
-  assert.ok(!empty.includes('meeting-1'));
   assert.ok(!empty.includes(ROOF));
 });
 
@@ -85,7 +81,6 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.equal(id('desk-2').spot?.deskId, 'desk-2', 'the desk carries the spot E uses there');
   assert.equal(id('w1').id, 'desk-1', 'a worker id goes to its desk');
   assert.equal(id('ada').id, 'desk-1', 'a worker name, any case');
-  assert.equal(id('Grace').id, 'meeting-1', 'a worker at the meeting table');
   assert.equal(id('desk 2').id, 'desk-2', 'a desk label');
   assert.equal(id('Issues agent').id, 'station-issues', "the board agent's name goes to its kiosk");
   assert.equal(id('issues').kind, 'board', 'the board, not its kiosk');
@@ -171,10 +166,6 @@ test('standing at a board or a place uses its spot, stepping out of anything in 
     freeSpotNear({ x: 0, z: 0 }, 0, 1, (x) => x < 2),
     null,
   );
-  const meeting = resolveTarget('Grace', context());
-  assert.ok(meeting.ok);
-  const chair = standFor(meeting.target, () => false)!;
-  assert.deepEqual(chair.face, { x: MEETING_SEATS[0].x, y: 0.9, z: MEETING_SEATS[0].z }, 'at the meeting table, face its chair');
   assert.equal(
     standFor({ id: 'f2', kind: 'floor', label: 'website' }, () => false),
     null,

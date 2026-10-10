@@ -58,7 +58,7 @@ collect it and its owned worktrees and branches are deleted.
 
 - The server stops the session and deletes its owned worktrees and branches,
   including uncommitted changes and unpublished commits. No cleanup choices.
-  Pre-existing branches and shared meeting worktrees retain their ownership protection.
+  Pre-existing branches retain their ownership protection.
 - When `worker.remove` arrives, clients route the worker to the
   medic sequence instead of the walk-out: two white-uniform paramedics
   walk in from the elevator with a stretcher, load the body (~4.8s, blood
@@ -73,7 +73,7 @@ collect it and its owned worktrees and branches are deleted.
   once and dismisses it, and the medics come without waiting out the 30 seconds.
 - Floor switches, disconnects, reloads and server restarts do not cancel deadlines.
 - Revival at or after the deadline is refused; collected bodies cannot be revived.
-- Weird positions (meeting table, beanbag, mid-arrival, upstairs floors):
+- Weird positions (beanbag, upstairs floors):
   fall to the floor the same way everywhere.
 - Upstairs floors: medics use the elevator, never the balcony parachute.
 

@@ -7,7 +7,6 @@ import type {
   GhState,
   LeaveOnMergeState,
   MachineState,
-  MeetingState,
   NotifyState,
   ProjectInfo,
   ProjectsDirState,
@@ -57,7 +56,6 @@ export type Topic =
   | 'subagents'
   | 'cabinet'
   | 'cabinetFrame'
-  | 'meeting'
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
@@ -247,8 +245,6 @@ class Store {
   jira: JiraFloorState = {};
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null = null;
-  /** The meeting room: the meeting at the table, and the ones before. */
-  meeting: MeetingState = { current: null, past: [] };
   /** The office's Slack / Discord webhook. */
   notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
@@ -314,7 +310,6 @@ class Store {
     this.issues = v.issues;
     this.pulls = v.pulls;
     this.queue = v.queue;
-    this.meeting = v.meeting;
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
@@ -323,7 +318,7 @@ class Store {
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -430,10 +425,6 @@ class Store {
       case 'queue':
         this.queue = msg.state;
         this.emit('queue');
-        break;
-      case 'meeting':
-        this.meeting = msg.state;
-        this.emit('meeting');
         break;
       case 'notify':
         this.notify = msg.state;

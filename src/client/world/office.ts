@@ -18,10 +18,10 @@ import {
   KIOSK,
   LADDER,
   LOFT,
-  MEETING_BOARD,
-  MEETING_ROOM,
-  MEETING_SEATS,
-  MEETING_TABLE,
+  GLASS_ROOM_BOARD,
+  GLASS_ROOM,
+  GLASS_ROOM_CHAIRS,
+  GLASS_ROOM_TABLE,
   PLANTS,
   SEATING_BY_ID,
   SLAB,
@@ -56,6 +56,7 @@ import { buildTower } from './tower';
 import { buildCoffeeMachine } from './coffee';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
+import { glassRoomTexture } from './glass-room';
 
 export interface Collider {
   minX: number;
@@ -69,28 +70,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind =
-  | 'desk'
-  | 'station'
-  | 'issues'
-  | 'pulls'
-  | 'services'
-  | 'queue'
-  | 'ci'
-  | 'coffee'
-  | 'decor'
-  | 'elevator'
-  | 'gong'
-  | 'jukebox'
-  | 'seat'
-  | 'cabinet'
-  | 'ladder'
-  | 'pole'
-  | 'meeting'
-  | 'bar'
-  | 'dj'
-  | 'bookshelf'
-  | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'services' | 'queue' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bar' | 'dj' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -109,7 +89,7 @@ export interface Interactable {
   off?: boolean;
 }
 
-/** A desk, a bean bag, a board agent's kiosk or a chair at the meeting table: somewhere a worker sits (or stands). */
+/** A desk, a bean bag or a board agent's kiosk: somewhere a worker sits (or stands). */
 export interface DeskView {
   def: DeskDef;
   group: THREE.Group;
@@ -142,9 +122,6 @@ export interface Office {
   /** The compute wall's two screens on the west wall: the office's machine, and the Droid Computers (world/factory-computers.ts). */
   machineScreen: THREE.Mesh;
   fleetScreen: THREE.Mesh;
-  /** The meeting room's board, showing the meeting's output as it's written, and the sign by its door. */
-  meetingBoard: THREE.Mesh;
-  meetingSign: THREE.Mesh;
   /** What's already on the walls (boards, the TV, windows…), so pictures don't hang over it. */
   fixtures(): WallRect[];
   elevator: Elevator;
@@ -1528,9 +1505,9 @@ export function buildOffice(): Office {
   group.add(buildCeiling(night));
 
   const bossScreen = buildLoft(group, colliders, interactables, looks);
-  // Under the loft: the meeting room.
-  const meeting = buildMeetingRoom(group, colliders, interactables, desks, doors, night);
-  fixture('south', MEETING_BOARD.x, MEETING_BOARD.y, MEETING_BOARD.width + 0.4, MEETING_BOARD.height + 0.4);
+  // Under the loft: the unused glass room.
+  buildGlassRoom(group, colliders, doors, night);
+  fixture('south', GLASS_ROOM_BOARD.x, GLASS_ROOM_BOARD.y, GLASS_ROOM_BOARD.width + 0.4, GLASS_ROOM_BOARD.height + 0.4);
 
   // The elevator to the other floors, against the north wall between the PR board and the gong.
   const elevator = buildElevator();
@@ -1612,8 +1589,6 @@ export function buildOffice(): Office {
     bossScreen,
     machineScreen,
     fleetScreen,
-    meetingBoard: meeting.board,
-    meetingSign: meeting.sign,
     fixtures: () => fixtures,
     elevator,
     gong,
@@ -1630,40 +1605,11 @@ export function buildOffice(): Office {
   };
 }
 
-/** A chair at the meeting table, with its laptop on the table in front of it. */
-function buildMeetingSeat(def: DeskDef, index: number): DeskView {
-  const group = new THREE.Group();
-  group.position.set(def.x, 0, def.z);
-  group.rotation.y = def.rotY;
-  const laptopAnchor = new THREE.Object3D();
-  laptopAnchor.position.set(0, MEETING_TABLE.height, 0);
-  laptopAnchor.scale.setScalar(1.536);
-  group.add(laptopAnchor);
-  const seatAnchor = new THREE.Object3D();
-  seatAnchor.position.set(0, 0.4, 0.85);
-  seatAnchor.rotation.y = Math.PI;
-  seatAnchor.scale.setScalar(0.82);
-  group.add(seatAnchor);
-  const ch = chair(PALETTE.chairs[index % PALETTE.chairs.length]);
-  ch.position.set(0, 0, 0.85);
-  group.add(ch);
-  // A merge's dance party: up on its chair rather than the table, where the laptops are close together.
-  const stage = new THREE.Object3D();
-  stage.position.set(0, 0.48, 0.85);
-  group.add(stage);
-  // Nobody is hired here from the floor, so there's no '+' over a free chair: a meeting fills them.
-  const vacancy = new THREE.Group();
-  group.add(vacancy);
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy };
-}
-
 /**
- * The meeting room under the loft: glass walls from the loft's posts round to the outside walls, a
- * sliding glass door facing the lounge, a long table with its chairs (MEETING_SEATS), a board on the
- * back wall for the meeting's output and a sign by the door for how it's going.
+ * Scenery under the loft: glass walls, a sliding door, a table, chairs and static screens.
  */
-function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactables: Interactable[], desks: Map<string, DeskView>, doors: Door[], night: NightParts): { board: THREE.Mesh; sign: THREE.Mesh } {
-  const R = MEETING_ROOM;
+function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[], night: NightParts): void {
+  const R = GLASS_ROOM;
   const H = R.height;
   const T = 0.1;
   const frameMat = toon('#727272');
@@ -1738,7 +1684,7 @@ function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactabl
 
   // The table, a dark slab with an orange line inlaid down its middle, on two steel pedestals, and its chairs.
   const slab = new THREE.Group();
-  const top = MEETING_TABLE;
+  const top = GLASS_ROOM_TABLE;
   slab.add(mesh(roundedBox(top.width, 0.06, top.depth, 0.02), toon('#808080'), 0, top.height - 0.03, 0));
   slab.add(mesh(box(top.width - 0.5, 0.004, 0.014), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, top.height + 0.001, 0, false));
   for (const sx of [-1, 1]) {
@@ -1749,41 +1695,29 @@ function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactabl
   table.position.set(top.x, 0, top.z);
   group.add(table);
   colliders.push({ minX: top.x - top.width / 2, maxX: top.x + top.width / 2, minZ: top.z - top.depth / 2, maxZ: top.z + top.depth / 2, top: top.height });
-  const talk: Interactable = { kind: 'meeting', x: top.x, z: top.z, radius: 2.6 };
-  interactables.push(talk);
-  table.userData.interact = talk;
-  MEETING_SEATS.forEach((def, i) => {
-    const view = buildMeetingSeat(def, i);
-    group.add(view.group);
-    desks.set(def.id, view);
-    const at = deskSeat(def, 1.2);
-    const it: Interactable = { kind: 'desk', deskId: def.id, x: at.x, z: at.z, radius: 1 };
-    interactables.push(it);
-    view.group.userData.interact = it;
+  GLASS_ROOM_CHAIRS.forEach((def, i) => {
+    const ch = chair(PALETTE.chairs[i % PALETTE.chairs.length]);
+    const at = deskSeat(def);
+    ch.position.set(at.x, 0, at.z);
+    ch.rotation.y = def.rotY;
+    group.add(ch);
   });
 
-  // The board on the back wall: the meeting's output file as it's being written.
-  const b = MEETING_BOARD;
+  // Static artwork on the back wall.
+  const b = GLASS_ROOM_BOARD;
   const { group: frame, face } = wallBoard(b.width, b.height, PALETTE.steel);
+  (face.material as THREE.MeshBasicMaterial).map = glassRoomTexture('board');
+  (face.material as THREE.MeshBasicMaterial).color.setScalar(0.62);
   frame.position.set(b.x, b.y, b.z);
   frame.rotation.y = Math.PI;
   group.add(frame);
-  const read: Interactable = { kind: 'meeting', x: b.x, z: b.z - 1.4, radius: 2.4 };
-  interactables.push(read);
-  frame.userData.interact = read;
-
-  // The panel on the glass beside the door, like a room-booking screen: what's on, the round, the
-  // tokens, and the summary once it's over. Beside the door rather than past it, so the board shows.
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  // A decorative panel on the glass beside the door.
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(0.62), map: glassRoomTexture('sign') }));
   sign.position.set((R.minX + R.door.x0) / 2 + 0.01, 1.45, R.minZ - T / 2 - 0.03);
   sign.rotation.y = Math.PI;
   group.add(sign);
   const plate = mesh(roundedBox(0.66, 1.03, 0.03, 0.01), toon(PALETTE.ink), sign.position.x, sign.position.y, R.minZ - T / 2 - 0.012, false);
   group.add(plate);
-  const door: Interactable = { kind: 'meeting', x: sign.position.x, z: R.minZ - 1.2, radius: 1.8 };
-  interactables.push(door);
-  sign.userData.interact = door;
-  plate.userData.interact = door;
 
   // Linear lights set in the loft's floor over the table: a hanging lamp would be in front of the board.
   const recessed = new THREE.Group();
@@ -1793,7 +1727,6 @@ function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactabl
     night.halos.push({ at: new THREE.Vector3(top.x + dx, H - 0.08, top.z), size: 0.9, color: '#fff1dc' });
   }
   group.add(mergeByMaterial(recessed));
-  return { board: face, sign };
 }
 
 /** The materials and textures a floor paints in its own colors. */

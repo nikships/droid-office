@@ -20,7 +20,7 @@ export interface HudAction {
   tone?: () => 'primary' | 'danger' | undefined;
 
   shown?: () => boolean;
-  /** Up on the top bar by itself while true, pinned or not: a meeting is on, an update is out. */
+  /** Up on the top bar by itself while true, pinned or not: an update is out. */
   status?: () => boolean;
   /** Its words on the top bar while `status` put it there; a pinned one is just its icon. */
   chip?: () => string;
@@ -136,7 +136,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
   function render() {
     const items: HTMLElement[] = actions.filter((a) => offered(a) && (pinned(a) || a.status?.())).map(dockButton);
     const workers = [...store.workers.values()];
-    // Hired onto desks, bean bags and the meeting room's table; the board agents at their kiosks don't count.
+    // Hired onto desks and bean bags; the board agents at their kiosks don't count.
     const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
     const waiting = workers.filter(waitingOnSomeone).length;
     const workersTitle = hired || waiting ? `${hired} worker${hired === 1 ? '' : 's'} on this floor${waiting ? `, ${waiting} waiting on someone` : ''}` : 'No workers on this floor yet';
@@ -288,7 +288,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
     },
     true,
   );
-  for (const t of ['workers', 'issues', 'pulls', 'services', 'queue', 'meeting', 'upgrade', 'floors', 'factory'] as Topic[]) store.on(t, render);
+  for (const t of ['workers', 'issues', 'pulls', 'services', 'queue', 'upgrade', 'floors', 'factory'] as Topic[]) store.on(t, render);
   applyPanels();
   render();
   return { refresh: render, toggleMenu };

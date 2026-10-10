@@ -51,7 +51,6 @@ test('the boards send what they always did on a GitHub floor', () => {
     'Work on GitHub issue #7: "Dog barks".\n\nRead it first with `gh issue view 7 --comments`. Create a new branch, implement the change, verify it, then open a pull request that closes #7.',
   );
   assert.equal(fillPrompt(PROMPTS['issue.ask'].text, issue), 'This is about GitHub issue #7 "Dog barks" (https://github.com/o/r/issues/7). Read it with `gh issue view 7 --comments`.');
-  assert.equal(fillPrompt(PROMPTS['issue.meeting'].text, issue), 'GitHub issue #7: “Dog barks”. Read it first with gh issue view 7 --comments.');
 
   const pull = pullPromptVars('github', GITHUB_PULL, 'o/r', 'o/r');
   assert.equal(
@@ -62,7 +61,6 @@ test('the boards send what they always did on a GitHub floor', () => {
     fillPrompt(PROMPTS['pull.ask'].text, pull),
     'This is about pull request #5 "Fix "{{title}}" the dog" (https://github.com/o/r/pull/5), branch `feat/dog` into `main`. Read it with `gh pr view 5 --comments` and see its changes with `gh pr diff 5`.',
   );
-  assert.equal(fillPrompt(PROMPTS['pull.panel'].text, pull), 'Review pull request #5: “Fix "{{title}}" the dog”.');
   const checkout =
     '1. Get onto its branch: `gh pr checkout 5`. If git says `feat/dog` is already checked out in another worktree, use `git fetch origin feat/dog && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:feat/dog`.';
   assert.equal(
@@ -100,7 +98,6 @@ test('the boards send what they always did on a GitLab floor', () => {
     'Work on GitLab issue #3: "Cat meows".\n\nRead it first with `glab issue view 3 --comments`. Create a new branch, implement the change, verify it, then open a merge request with `glab mr create` whose description says "Closes #3".',
   );
   assert.equal(fillPrompt(PROMPTS['issue.ask'].text, issue), 'This is about GitLab issue #3 "Cat meows" (https://gitlab.example.com/grp/sub/proj/-/issues/3). Read it with `glab issue view 3 --comments`.');
-  assert.equal(fillPrompt(PROMPTS['issue.meeting'].text, issue), 'GitLab issue #3: “Cat meows”. Read it first with glab issue view 3 --comments.');
 
   const pull = pullPromptVars('gitlab', GITLAB_PULL, 'grp/sub/proj', GITLAB_PROJECT);
   assert.equal(
@@ -111,7 +108,6 @@ test('the boards send what they always did on a GitLab floor', () => {
     fillPrompt(PROMPTS['pull.ask'].text, pull),
     'This is about merge request !9 "Fix the cat" (https://gitlab.example.com/grp/sub/proj/-/merge_requests/9), branch `feat/cat` into `develop`. Read it with `glab mr view 9 --comments` and see its changes with `glab mr diff 9`.',
   );
-  assert.equal(fillPrompt(PROMPTS['pull.panel'].text, pull), 'Review merge request !9: “Fix the cat”.');
   const checkout =
     '1. Get onto its branch: `glab mr checkout 9`. If git says `feat/cat` is already checked out in another worktree, use `git fetch origin feat/cat && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:feat/cat`.';
   assert.equal(

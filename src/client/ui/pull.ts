@@ -5,7 +5,6 @@ import { withToken } from '../token';
 import { deskChip, issuePrompt, issueVars, type BoardActions } from './boards';
 import { officePrompt } from './prompts';
 import { mergeCommand, pullPromptVars } from '../../shared/prompts';
-import { issueMeeting } from './meeting';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
@@ -385,11 +384,6 @@ function pullContext(it: GhPull) {
 
 function issueContext(it: GhIssue) {
   return officePrompt('issue.ask', issueVars(it));
-}
-
-/** What a Review panel about it starts out with. */
-export function reviewPanelPrompt(it: GhPull) {
-  return officePrompt('pull.panel', pullVars(it));
 }
 
 // ---- Merge dialog -------------------------------------------------------------------------------
@@ -831,20 +825,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     const w = workerForPull(store.workers.values(), it);
     footBtns.replaceChildren(
       ...actionGroups(
-        [
-          h('button.btn', { type: 'button', title: `Send a worker your own prompt about this ${fw.pr}`, onclick: () => actions.ask(pullContext(it), `Ask about ${pr}`) }, 'Ask a worker…'),
-          isOpen
-            ? h(
-                'button.btn',
-                {
-                  type: 'button',
-                  title: 'A few workers review it in the meeting room, each through its own lens, and the office posts one combined review',
-                  onclick: () => actions.meeting({ pattern: 'review', pr: it.number, title: `Review of ${pr}`, prompt: reviewPanelPrompt(it) }),
-                },
-                'Review panel…',
-              )
-            : null,
-        ],
+        [h('button.btn', { type: 'button', title: `Send a worker your own prompt about this ${fw.pr}`, onclick: () => actions.ask(pullContext(it), `Ask about ${pr}`) }, 'Ask a worker…')],
         [
           w ? h('button.btn', { type: 'button', onclick: () => actions.goToDesk(w.deskId) }, `Go to ${w.name}'s desk`) : null,
           isOpen ? h('button.btn', { type: 'button', onclick: () => actions.assign(reviewPrompt(it), `Review ${pr}`) }, 'Review') : null,
@@ -1306,10 +1287,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
         'div.gh-actions',
         {},
         ...actionGroups(
-          [
-            h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a worker…'),
-            h('button.btn', { type: 'button', title: 'Workers take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title)) }, 'Meeting…'),
-          ],
+          [h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a worker…')],
           [pickUp],
           [closeIssue, h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`) }, 'Hand to a worker')],
         ),

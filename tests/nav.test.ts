@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BALCONY, BALCONY_DOOR, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, EXIT_STAIRS, FLOOR, MEETING_ROOM, MEETING_SEATS, PARACHUTE, ROAD, SEATS, STATIONS } from '../src/shared/layout.js';
-import { walkable, wayHome, wayIn, wayToBalcony, type Pt } from '../src/shared/nav.js';
+import { BALCONY, BALCONY_DOOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GLASS_ROOM, PARACHUTE, ROAD, SEATS, STATIONS } from '../src/shared/layout.js';
+import { route, walkable, wayHome, wayToBalcony, type Pt } from '../src/shared/nav.js';
 
 test('a worker sent home walks round the furniture, out the exit door and off along the sidewalk', () => {
-  for (const seat of [...SEATS, ...STATIONS, ...MEETING_SEATS]) {
+  for (const seat of [...SEATS, ...STATIONS]) {
     const way = wayHome(seat);
     // It hops down right beside where it sat.
     assert.ok(Math.hypot(way[0][0] - seat.x, way[0][1] - seat.z) < 1.2, `${seat.id} hops down beside its seat`);
@@ -43,26 +43,19 @@ function clear(a: Pt, b: Pt, what: string) {
   }
 }
 
-test('a worker called to a meeting walks from the elevator, in through the meeting room door, to beside its chair', () => {
-  for (const seat of MEETING_SEATS) {
-    const way = wayIn(seat);
-    const [x0, z0] = way[0];
-    assert.ok(Math.abs(x0 - ELEVATOR.x) < 0.6 && z0 > ELEVATOR_FRONT && z0 < ELEVATOR_FRONT + 1.2, `${seat.id} steps out of the elevator`);
-    // It ends beside its chair, and gets there on open floor.
-    const [ex, ez] = way[way.length - 1];
-    assert.ok(Math.hypot(ex - seat.x, ez - seat.z) < 1.3, `${seat.id} ends beside its chair`);
-    for (let i = 1; i < way.length - 1; i++) clear(way[i - 1], way[i], seat.id);
-    // Into the room through its doorway, not the glass.
-    const crossing = way.findIndex(([, z], i) => i > 0 && way[i - 1][1] < MEETING_ROOM.minZ && z >= MEETING_ROOM.minZ);
-    assert.ok(crossing > 0, `${seat.id} goes into the room`);
-    const [[ax, az], [bx, bz]] = [way[crossing - 1], way[crossing]];
-    const x = ax + ((bx - ax) * (MEETING_ROOM.minZ - az)) / (bz - az);
-    assert.ok(x > MEETING_ROOM.door.x0 && x < MEETING_ROOM.door.x1, `${seat.id} goes in by the door (x ${x.toFixed(2)})`);
-  }
+test('the unused glass room remains walkable through its doorway', () => {
+  const way = route([8, 7], [10.75, 10]);
+  for (let i = 1; i < way.length; i++) clear(way[i - 1], way[i], 'player');
+  assert.deepEqual(way.at(-1), [10.75, 10]);
+  const crossing = way.findIndex(([, z], i) => i > 0 && way[i - 1][1] < GLASS_ROOM.minZ && z >= GLASS_ROOM.minZ);
+  assert.ok(crossing > 0);
+  const [[ax, az], [bx, bz]] = [way[crossing - 1], way[crossing]];
+  const x = ax + ((bx - ax) * (GLASS_ROOM.minZ - az)) / (bz - az);
+  assert.ok(x > GLASS_ROOM.door.x0 && x < GLASS_ROOM.door.x1);
 });
 
 test('upstairs, with no exit door, a worker sent home walks out onto the balcony to the railing', () => {
-  for (const seat of [...SEATS, ...STATIONS, ...MEETING_SEATS]) {
+  for (const seat of [...SEATS, ...STATIONS]) {
     const way = wayToBalcony(seat);
     assert.ok(Math.hypot(way[0][0] - seat.x, way[0][1] - seat.z) < 1.2, `${seat.id} hops down beside its seat`);
     const out = way.findIndex(([, z]) => z > FLOOR.maxZ);

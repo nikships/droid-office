@@ -107,7 +107,6 @@ data class WorkerInfo(
     val action: String? = null,
     val task: WorkerTask? = null,
     val lastInputAt: Long? = null,
-    val meeting: String? = null,
     val lead: String? = null,
     val workedMs: Long? = null,
     val workingSince: Long? = null,

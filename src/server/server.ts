@@ -33,7 +33,7 @@ import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { Arrival, ClientMsg, FloorInfo, FloorView, MeetingRequest, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { DESK_BY_ID, elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
@@ -572,7 +572,6 @@ export async function startServer(cfg: Config) {
     decor: floor?.decor.list() ?? [],
     services: servicesState(floor),
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
-    meeting: floor?.meetings.state() ?? { current: null, past: [] },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
     cabinet: { ...cabinetState(c), frame: c.frame ?? null },
@@ -1345,7 +1344,7 @@ export async function startServer(cfg: Config) {
             floor.workers.unstage(images);
             return warn(c, 'Every desk and bean bag on this floor is taken');
           }
-          const r = floor.workers.spawn(deskId, who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, undefined, repos, undefined, images);
+          const r = floor.workers.spawn(deskId, who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, model, effort, repos, undefined, images);
           floor.workers.unstage(images);
           const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
@@ -1422,7 +1421,7 @@ export async function startServer(cfg: Config) {
           const notes: string[] = [];
           for (const id of ids) {
             const info = floor.workers.get(id);
-            // Sent home meanwhile, or back already with one before it (the rest of a meeting's table).
+            // Sent home meanwhile, or back already with one before it.
             if (!info || (id !== w.wid && !info.lost)) continue;
             const r = await floor.workers.rebuild(id);
             if (r.error) warn(c, r.error);
@@ -1641,40 +1640,6 @@ export async function startServer(cfg: Config) {
       case 'queue.limit':
         floorOf(c)?.queue.setLimit(num(msg.maxWorkers));
         break;
-      case 'meeting.start': {
-        const floor = here();
-        if (!floor) break;
-        const count = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
-        const request: MeetingRequest = {
-          pattern: msg.pattern,
-          prompt: str(msg.prompt, 20000),
-          title: str(msg.title, 200) || undefined,
-          output: str(msg.output, 300) || undefined,
-          roles: Array.isArray(msg.roles) ? msg.roles.slice(0, 8).map((r) => str(r, 80)) : [],
-          parts: Array.isArray(msg.parts) ? msg.parts.slice(0, 200).map((p) => str(p, 500)) : undefined,
-          pr: count(msg.pr),
-          issue: count(msg.issue),
-          rounds: count(msg.rounds),
-          model: msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1),
-          effort: isAgentEffort(msg.effort) ? msg.effort : undefined,
-          images: imageIds(msg.images),
-        };
-        withFreshBase(c, floor, () => {
-          warn(c, floor.meetings.start(request, who));
-          floor.workers.unstage(request.images ?? []);
-        });
-        break;
-      }
-      case 'meeting.stop': {
-        const floor = here();
-        if (floor) warn(c, floor.meetings.stop(who));
-        break;
-      }
-      case 'meeting.clear': {
-        const floor = here();
-        if (floor) warn(c, floor.meetings.clear(who));
-        break;
-      }
       case 'notify.webhook': {
         const url = str(msg.url, 4096).trim();
         const err = webhook.set(url, who);

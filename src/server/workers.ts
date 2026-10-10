@@ -228,6 +228,8 @@ export class WorkerManager {
   /** Which connections have each worker's terminal open (workerId -> connection IDs). */
   private subscribers = new Map<string, Set<string>>();
   private statePath: string;
+  /** Workers saved at a seat that no longer exists: never run, kept in the file untouched. */
+  private retired: unknown[] = [];
   private droidSettingsPath: string;
   /** The Droid hook commands, reused for per-worker model overlays (see droidSettings). */
   private droidHooks: Record<string, unknown[]> = {};
@@ -422,9 +424,8 @@ export class WorkerManager {
   }
 
   /**
-   * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
-   * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
-   * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
+   * Hires a worker at a desk. `repos` are other floors' repositories a worker in its own worktree
+   * works in too (see makeWorkspace).
    * `lead` hires a subagent for that worker (see team.ts): it's told who hired it and how to report back.
    */
   spawn(
@@ -435,7 +436,6 @@ export class WorkerManager {
     kind: Exclude<WorkerKind, 'cloud'> = 'agent',
     model?: string,
     effort?: AgentEffort,
-    meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
     repos: RepoSource[] = [],
     lead?: string,
     /** Pictures staged for its first prompt (see stageImage), listed after it. */
@@ -453,15 +453,13 @@ export class WorkerManager {
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
     if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
-    if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
-    if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
-    if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
+    if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
     if (lead !== undefined) {
       const boss = this.workers.get(lead)?.info;
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
-      if (kind !== 'agent' || seat.station || seat.room || meeting) return 'A subagent is an agent at a desk or a bean bag';
+      if (kind !== 'agent' || seat.station) return 'A subagent is an agent at a desk or a bean bag';
     }
     const full = this.capacity?.full();
     if (full) return full;
@@ -469,7 +467,7 @@ export class WorkerManager {
     const agent = seat.station && STATION_AGENT[seat.station];
     const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
-    let wt: WorkerInfo['worktree'] = meeting?.worktree;
+    let wt: WorkerInfo['worktree'];
     let others: WorkerRepo[] | undefined;
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
@@ -506,12 +504,11 @@ export class WorkerManager {
       rows: 30,
       open: false,
       activity: shown && kind !== 'shell' ? truncate(shown, 80) : prompt ? truncate(prompt, 80) : undefined,
-      meeting: meeting?.id,
       ...(lead !== undefined ? { lead } : {}),
     };
     const w = newWorker(info);
-    if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
-    if (wt && !meeting) w.setupPlan = this.planSetup(id, wt, others);
+    if (info.worktree) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+    if (wt) w.setupPlan = this.planSetup(id, wt, others);
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
@@ -549,7 +546,7 @@ export class WorkerManager {
    */
   takeIn(guest: WorkerInfo, sessionId: string, by: string): WorkerInfo | string {
     const seat = DESK_BY_ID.get(guest.deskId);
-    if (!seat || seat.station || seat.room) return 'A guest is brought in at a desk or a bean bag';
+    if (!seat || seat.station) return 'A guest is brought in at a desk or a bean bag';
     if (this.deskOccupied(guest.deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     const full = this.capacity?.full();
     if (full) return full;
@@ -733,7 +730,7 @@ export class WorkerManager {
     if (!clean && !images?.length) return 'Empty prompt';
     const w = [...this.workers.values()].find((x) => x.info.deskId === deskId);
     if (!w) {
-      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, undefined, [], undefined, images);
+      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, [], undefined, images);
       return typeof info === 'string' ? info : { info, hired: true };
     }
     // Typed into the question it's asking, the prompt would answer it.
@@ -872,8 +869,7 @@ export class WorkerManager {
       this.emitUpdate(sub);
     }
     this.persist();
-    // A meeting's worktree is everyone at the table's: the meeting tidies it away once they've all gone.
-    if (!w.info.worktree || w.info.meeting) return {};
+    if (!w.info.worktree) return {};
     if (shot) return this.dismissWorktrees(w);
     // On the branch its work is on, should it have switched since it last came to rest.
     const wt = await this.current(w.info.worktree);
@@ -1012,13 +1008,12 @@ export class WorkerManager {
   /**
    * Keeps `worktree.branch` on the branch the worktree is actually on. Agents often make their own
    * (`git checkout -b fix-x`, because the task or the repo's instructions say to) and open the pull
-   * request from there, and the PR badge, O at the desk and sending it home go by it. A meeting's
-   * worktree stays the meeting's, and a worker across repositories keeps the branch it was given in
-   * each (see openPrs).
+   * request from there, and the PR badge, O at the desk and sending it home go by it. A worker across
+   * repositories keeps the branch it was given in each (see openPrs).
    */
   private async syncBranch(w: Worker): Promise<void> {
     const wt = w.info.worktree;
-    if (!wt || w.info.meeting || w.info.repos?.length) return;
+    if (!wt || w.info.repos?.length) return;
     const now = await this.current(wt);
     // Sent home meanwhile, or another look got there first.
     if (now === wt || this.workers.get(w.info.id) !== w || w.info.worktree !== wt) return;
@@ -1076,7 +1071,7 @@ export class WorkerManager {
   /**
    * Puts a lost worker's worktree back where it was (see Worktrees.restore) and starts it again,
    * carrying on its conversation; across repositories, each worktree that's gone and the workspace's
-   * brief. Everyone else who worked there (the rest of a meeting's table) gets back to work with it.
+   * brief.
    * Resolves to whether it `rebuilt` anything, with a note on where a branch came back from (or why
    * there was nothing to do), or to what went wrong.
    */
@@ -1087,8 +1082,7 @@ export class WorkerManager {
     if (!info.worktree) return { error: `${info.name} works in the main checkout` };
     if (w.rebuilding) return {};
     const folder = this.cwd(info);
-    // Whoever the folder was deleted from under: this worker, and the rest of its meeting's table.
-    const stranded = [...this.workers.values()].filter((o) => o.info.worktree && this.cwd(o.info) === folder && (o.info.lost || this.checkLost(o)));
+    const wasLost = !!info.lost || this.checkLost(w);
     const froms: string[] = [];
     if (!existsSync(folder)) {
       const across = !!info.repos?.length;
@@ -1116,8 +1110,8 @@ export class WorkerManager {
         w.rebuilding = false;
       }
     }
-    for (const o of stranded) if (!this.checkLost(o)) this.restartIn(o);
-    if (!stranded.length) {
+    if (wasLost && !this.checkLost(w)) this.restartIn(w);
+    if (!wasLost) {
       if (!w.pty) this.resume(id);
       return { note: `${info.name}'s worktree is already there` };
     }
@@ -1915,10 +1909,9 @@ export class WorkerManager {
     if (status !== 'needs_input') w.asking = undefined;
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
-    // Nobody is looking at the terminal right now -> raise the flag (the worker jumps). A worker at the
-    // meeting table that ends its part is waiting on the meeting, not on anyone, so it stays quiet.
+    // Nobody is looking at the terminal right now -> raise the flag (the worker jumps).
     if (status === 'done' || status === 'needs_input') {
-      w.info.acked = status === 'done' && (w.info.open || !!w.info.meeting);
+      w.info.acked = status === 'done' && w.info.open;
       w.info.waitingSince = Date.now();
     } else w.info.acked = true;
     this.emitUpdate(w);
@@ -2079,7 +2072,6 @@ process.stdin.on('end', () => {
       activity: info.activity,
       task: info.task,
       pr: info.pr,
-      meeting: info.meeting,
       lead: info.lead,
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
@@ -2088,7 +2080,7 @@ process.stdin.on('end', () => {
       midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked })),
     }));
     try {
-      writeFileSync(this.statePath, JSON.stringify(saved, null, 2), { mode: 0o600 });
+      writeFileSync(this.statePath, JSON.stringify([...saved, ...this.retired], null, 2), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }
@@ -2106,6 +2098,7 @@ process.stdin.on('end', () => {
         lastInput?: unknown;
       })[];
       for (const s of saved) {
+        if (s.id && typeof s.deskId === 'string' && !DESK_BY_ID.has(s.deskId)) this.retired.push(s);
         if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
         const shell = s.kind === 'shell';
         const info: WorkerInfo = {
@@ -2133,7 +2126,6 @@ process.stdin.on('end', () => {
           rows: 30,
           open: false,
           lastInputAt: legacyLastInputAt(s.lastInput),
-          meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
           ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
         };
         const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);

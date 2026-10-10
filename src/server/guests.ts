@@ -112,8 +112,8 @@ export function guestId(pid: number, lstart: string): string {
 }
 
 /**
- * Whether an agent's arguments say an office started it: every Droid Office worker, board agent and
- * meeting seat starts with `--settings <its floor>/.droid-office/droid-….json`, the office's hooks.
+ * Whether an agent's arguments say an office started it: every Droid Office worker and board agent
+ * starts with `--settings <its floor>/.droid-office/droid-….json`, the office's hooks.
  */
 export function officeLaunched(argv: string[] | undefined): boolean {
   if (!argv) return false;
@@ -288,7 +288,7 @@ export function attribute(procs: readonly AgentProcess[], workers: readonly { id
   const outside = new Map<string, OutsideProcess[]>();
   const guests: AgentProcess[] = [];
   for (const p of procs) {
-    // The innermost folder wins: a meeting's worktree inside a workspace, say.
+    // The innermost folder wins: a worker's worktree inside a workspace, say.
     let owner: { id: string; folder?: string } | undefined;
     for (const w of workers) if (w.folder && inside(w.folder, p.cwd) && (!owner || w.folder.length > (owner.folder?.length ?? 0))) owner = w;
     if (!owner) {

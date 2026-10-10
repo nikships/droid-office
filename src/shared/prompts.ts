@@ -1,6 +1,6 @@
 // Every prompt the office writes for a worker by itself: what Hand to a worker, Review and the
-// boards' other buttons send, what the queue adds to a task, the board agents' briefs, the meeting
-// room's parts and the sign writer's instructions. Each can be rewritten in Settings (kept by
+// boards' other buttons send, what the queue adds to a task, the board agents' briefs and the
+// sign writer's instructions. Each can be rewritten in Settings (kept by
 // server/prompts.ts, for the whole building); these are the defaults, which "Default" goes back to.
 // A {{name}} in one is filled in by the office when it's sent. One template serves GitHub and
 // GitLab floors: whatever differs between them ({{cli}}, {{pullName}}, {{ref}}, the commands) is a
@@ -10,7 +10,7 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'meetings' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -21,7 +21,6 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   worktrees: 'Worktree setup',
   stations: 'Board agents',
   subagents: '🧭 Team lead & subagents',
-  meetings: 'Meeting room',
   office: 'Worker signs',
 };
 
@@ -32,7 +31,7 @@ export interface PromptDef {
   used: string;
   /** Its placeholders, and what each one becomes. */
   vars: Record<string, string>;
-  /** Placeholders the office counts on being there (the file a meeting waits for, say). */
+  /** Placeholders the office counts on being there. */
   needs?: string[];
   /** It may be left empty, and then nothing is sent. */
   optional?: boolean;
@@ -213,9 +212,6 @@ const MERGE_VARS = {
   read: 'The command that shows it: gh pr view 12, or glab mr view 12 --comments',
   merge: 'The merge command for the method (and branch deletion) picked in the merge dialog',
 };
-const OUTPUT = "That file is the meeting's output.";
-const FILE_NOTE = 'The note this part is written to, which the meeting waits for';
-const OUTPUT_NOTE = "The meeting's output file, which ends it";
 const CHECKOUT =
   'Get onto its branch: `{{checkout}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
 
@@ -235,13 +231,6 @@ const DEFS = {
     vars: ISSUE_VARS,
     optional: true,
     text: 'This is about {{site}} issue #{{number}} "{{title}}" ({{url}}). Read it with `{{cli}} issue view {{number}} --comments`.',
-  },
-  'issue.meeting': {
-    group: 'issues',
-    label: 'Meeting about it',
-    used: 'What a meeting about an issue is about, to start with: the meeting form opens with it filled in.',
-    vars: ISSUE_VARS,
-    text: '{{site}} issue #{{number}}: “{{title}}”. Read it first with {{cli}} issue view {{number}} --comments.',
   },
 
   // --- Pull requests board ---
@@ -292,13 +281,6 @@ const DEFS = {
     optional: true,
     text: 'This is about {{pullName}} {{ref}} "{{title}}" ({{url}}), branch `{{branch}}` into `{{base}}`. Read it with `{{view}}` and see its changes with `{{diff}}`.',
   },
-  'pull.panel': {
-    group: 'pulls',
-    label: 'Review panel',
-    used: 'What a Review panel is about, to start with: the meeting form opens with it filled in.',
-    vars: PULL_VARS,
-    text: 'Review {{pullName}} {{ref}}: “{{title}}”.',
-  },
 
   // --- Task queue ---
   'queue.worktree': {
@@ -346,167 +328,6 @@ const DEFS = {
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
     text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',
-  },
-
-  // --- Meeting room ---
-  'meeting.brief': {
-    group: 'meetings',
-    label: 'Sitting down',
-    used: 'What every worker at the table is told when it sits down, ahead of its first part.',
-    vars: {
-      title: "The meeting's title",
-      role: 'Their role at the table',
-      pattern: 'The kind of meeting: Debate, Lead & team…',
-      others: 'The other roles at the table',
-      how: 'How the rounds of this kind of meeting go',
-      about: 'What the meeting is about, as it was called',
-      pullRequest: 'For a pull request: a line saying which and how to read it (empty otherwise)',
-      issue: 'For an issue: a line saying which and how to read it (empty otherwise)',
-      cwd: 'Their working directory',
-      notes: "The notes folder, where they read each other's parts",
-      output: "The output file, as it's named in the project",
-      outputPath: 'The output file, by its full path',
-      rounds: 'The round limit: "3 rounds"',
-      where: 'What they may and may not do in the checkout (commit, push, switch branches)',
-      ...FORGE_VARS,
-      ...PULL_WORDS,
-    },
-    text: [
-      '{{title}}',
-      "You're the {{role}} in a {{pattern}} meeting in Droid Office's meeting room, round the table with {{others}}. {{how}}",
-      'What the meeting is about:\n{{about}}',
-      '{{pullRequest}}',
-      '{{issue}}',
-      'How it runs: the office hands each of you your part of every round in a message like this one. Do just that part, write it to the file it names, and end your turn; the next round starts once every part of this one is written. Your working directory is {{cwd}}, and every file of the meeting is in it: the notes go in {{notes}}/, which is where you read what the others wrote. The meeting ends when {{output}} ({{outputPath}}) is written, and only the part that says so writes it. It has {{rounds}} at most, so keep your notes short: bullets over prose.',
-      '{{where}}',
-    ].join('\n\n'),
-  },
-  'meeting.wait': {
-    group: 'meetings',
-    label: 'No part in round 1',
-    used: 'Told (after sitting down) to a worker with nothing to do in the first round, like the team in Lead & team.',
-    vars: {},
-    text: "Round 1 has no part for you. Reply in one line that you're ready and end your turn; your part comes in a later message.",
-  },
-  'meeting.nudge': {
-    group: 'meetings',
-    label: 'Nudge',
-    used: 'Sent once to a worker that ended its turn without writing its part.',
-    vars: { file: 'The file the meeting is waiting on' },
-    needs: ['file'],
-    text: 'You ended your turn without writing {{file}}, which the meeting is waiting on. Write it now, then end your turn.',
-  },
-  'meeting.debate.propose': {
-    group: 'meetings',
-    label: 'Debate · propose',
-    used: 'Round 1 of a Debate, for everyone at the table.',
-    vars: { role: 'Their role', file: FILE_NOTE },
-    needs: ['file'],
-    text: "Propose your answer, from where you stand as the {{role}}: what you'd do, why, and what it costs. Write it to {{file}}, then end your turn.",
-  },
-  'meeting.debate.critique': {
-    group: 'meetings',
-    label: 'Debate · critique',
-    used: 'The rounds of a Debate between the first and the last, for everyone at the table.',
-    vars: { previousRound: 'The round before this one', theirNotes: "The others' notes from it", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Read the others' notes from round {{previousRound}}: {{theirNotes}}. Say where they're wrong or miss something, then give your revised proposal. Write it to {{file}}, then end your turn.",
-  },
-  'meeting.debate.decide': {
-    group: 'meetings',
-    label: 'Debate · decide',
-    used: 'The last round of a Debate, for the head of the table.',
-    vars: { notes: 'The notes folder', lastNotes: "The last round's notes", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read every note in {{notes}}/ (the last round's are {{lastNotes}}). Weigh the proposals and critiques, and write the decision to {{output}}: what was decided and why, the options that lost and why, and what's still open. ${OUTPUT}`,
-  },
-  'meeting.lead.plan': {
-    group: 'meetings',
-    label: 'Lead & team · plan',
-    used: 'Round 1 of Lead & team, for the lead.',
-    vars: { parts: 'How many parts: "2 parts"', team: 'The rest of the table, by role', exampleRole: "The first teammate's role", file: 'The plan, which the meeting waits for' },
-    needs: ['file'],
-    text: 'Read the task and the code it touches, and split the work into {{parts}}, one each for {{team}}. Write the plan to {{file}}: a section for each of them headed with their role (like "## {{exampleRole}}"), saying what to do and which files they own, so that no two of them touch the same file. Don\'t make the changes yourself. Then end your turn.',
-  },
-  'meeting.lead.part': {
-    group: 'meetings',
-    label: 'Lead & team · do a part',
-    used: 'Round 2 of Lead & team, for each teammate.',
-    vars: { plan: "The lead's plan", role: 'Their role, which heads their section of it', lead: "The lead's role", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Read {{plan}} and do your part, the section headed \"## {{role}}\". Change only the files it gives you, and don't commit. When you're done, write what you did and what the {{lead}} should know (what you couldn't do, how you checked it) to {{file}}, then end your turn.",
-  },
-  'meeting.lead.merge': {
-    group: 'meetings',
-    label: 'Lead & team · merge',
-    used: 'Round 3 of Lead & team, for the lead.',
-    vars: { reports: "The team's reports", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read the team's reports ({{reports}}) and look at their changes (git status, git diff). Fix whatever doesn't fit together and check that it works (build it, run the tests). Then write {{output}}: what was done, by whom, and how it was checked. ${OUTPUT} Don't commit.`,
-  },
-  'meeting.mapreduce.map': {
-    group: 'meetings',
-    label: 'Map-reduce · map',
-    used: 'Round 1 of Map-reduce, for each mapper.',
-    vars: { parts: 'Their parts, one "- " line each', file: FILE_NOTE },
-    needs: ['parts', 'file'],
-    text: 'Do the task for your parts, and only those:\n{{parts}}\nWrite what you found or did to {{file}}, a section per part, then end your turn.',
-  },
-  'meeting.mapreduce.reduce': {
-    group: 'meetings',
-    label: 'Map-reduce · reduce',
-    used: 'Round 2 of Map-reduce, for the head of the table.',
-    vars: { results: "The mappers' notes", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read the mappers' results ({{results}}) and combine them into {{output}}: one result that reads as a whole, not a pile of sections. ${OUTPUT}`,
-  },
-  'meeting.redblue.attack': {
-    group: 'meetings',
-    label: 'Red / blue · attack',
-    used: 'Every round of Red / blue, for the Red team. A note that says just NO FINDINGS ends the meeting early.',
-    vars: { previousFixes: "After round 1: a sentence (starting with a space) pointing at the Blue team's last fixes. Empty in round 1", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Attack the change the meeting is about like an adversary would: bugs, security holes, unhandled edge cases, broken error handling. Read the code; don't change it.{{previousFixes}} List each finding in {{file}} with its file:line, what goes wrong and how to make it happen, the most serious first. If you find nothing worth fixing, write just NO FINDINGS. Then end your turn.",
-  },
-  'meeting.redblue.fix': {
-    group: 'meetings',
-    label: 'Red / blue · fix',
-    used: 'Every round of Red / blue, for the Blue team.',
-    vars: { findings: "The Red team's findings", file: "The Blue team's note on what it did", lastRound: 'In the last round: a sentence (starting with a space) asking it to write the output too. Empty otherwise', output: OUTPUT_NOTE },
-    needs: ['file', 'lastRound'],
-    text: "Read the Red team's findings in {{findings}} and fix each one that's real, in the checkout (don't commit). For each, say in {{file}} what you did, or why it isn't a problem.{{lastRound}} Then end your turn.",
-  },
-  'meeting.redblue.writeup': {
-    group: 'meetings',
-    label: 'Red / blue · write it up',
-    used: 'Red / blue, once the Red team finds nothing more: for the Blue team.',
-    vars: { findings: "The Red team's last note", notes: 'The notes folder', output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `The Red team found nothing more in {{findings}}. Write {{output}}: every finding from every round ({{notes}}/), what was fixed and how, and what's still open. ${OUTPUT} Don't commit.`,
-  },
-  'meeting.review.review': {
-    group: 'meetings',
-    label: 'Review panel · review',
-    used: 'Round 1 of a Review panel, for each reviewer. A note that says just NO FINDINGS counts as nothing found.',
-    vars: {
-      number: 'The pull request number',
-      ref: 'Its number as written: #12, or !12 on a GitLab floor',
-      read: 'How to read it: gh pr view 12 and gh pr diff 12, or the glab mr commands on a GitLab floor',
-      role: 'Their lens: Security, Performance…',
-      file: FILE_NOTE,
-      ...PULL_WORDS,
-      ...FORGE_VARS,
-    },
-    needs: ['file'],
-    text: "Review {{pullName}} {{ref}} through your lens, {{role}}, and nothing else. Read it with {{read}}; don't check it out or change any files. Write your findings to {{file}}, one per bullet: the file:line, what's wrong and what to do about it, the most serious first. If you find nothing, write just NO FINDINGS. Then end your turn.",
-  },
-  'meeting.review.combine': {
-    group: 'meetings',
-    label: 'Review panel · combine',
-    used: 'Round 2 of a Review panel, for the head of the table. The office posts the file on the pull request.',
-    vars: { findings: "Every reviewer's notes", exampleRole: "A reviewer's lens, for the example tag", output: OUTPUT_NOTE, ...PULL_WORDS, ...FORGE_VARS },
-    needs: ['output'],
-    text: `Read every reviewer's findings ({{findings}}). Drop the duplicates, keeping the clearest wording, and write one combined review to {{output}} in Markdown: a short summary with your verdict first, then the findings, the most serious first, each tagged with the lens it came from in bold brackets like **[{{exampleRole}}]**, with its file:line. Don't post it: the office posts it on the {{pullName}} once the file is written. ${OUTPUT}`,
   },
 
   // --- Across repositories ---

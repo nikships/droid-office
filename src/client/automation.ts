@@ -40,7 +40,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   jukebox: 'Jukebox',
   cabinet: 'Arcade cabinet',
   ladder: 'Ladder',
-  meeting: 'Meeting room',
   bar: 'Sky Bar',
   dj: 'DJ booth',
   bookshelf: 'Bookshelf',
@@ -91,8 +90,6 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
     const desk = DESK_BY_ID.get(spot.deskId);
     if (!desk) continue;
     const w = byDesk.get(desk.id);
-    // An empty meeting chair isn't anywhere to go: a meeting seats its own workers there.
-    if (desk.room && !w) continue;
     seen.add(desk.id);
     out.push({ id: desk.id, kind: deskKind(desk), label: desk.label, deskId: desk.id, ...(w ? { worker: { id: w.id, name: w.name, status: w.status } } : {}) });
   }
@@ -149,7 +146,7 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
  */
 export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: number) => boolean, center?: Point3 | null): { at: Point3; face: Point3 } | null {
   const desk = t.deskId ? DESK_BY_ID.get(t.deskId) : undefined;
-  if (desk && !desk.room) {
+  if (desk) {
     // The same spot goToDesk and the N key stand you on (main.ts standAt).
     const s = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
     return { at: { x: s.x, y: 0, z: s.z }, face: center ?? { x: desk.x, y: 0.9, z: desk.z } };
@@ -159,7 +156,7 @@ export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: n
   const y = spot.y ?? 0;
   const at = freeSpotNear({ x: spot.x, z: spot.z }, y, Math.max(0.6, spot.radius - 0.2), blocked);
   if (!at) return null;
-  const face = desk ? { x: desk.x, y: y + 0.9, z: desk.z } : (center ?? { x: spot.x, y: y + 1.2, z: spot.z });
+  const face = center ?? { x: spot.x, y: y + 1.2, z: spot.z };
   return { at: { x: at.x, y, z: at.z }, face };
 }
 
