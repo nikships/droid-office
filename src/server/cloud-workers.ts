@@ -12,7 +12,7 @@ import { clockWork } from './workers.js';
 // where, what they're doing, and what the office remembers of their turns, kept in the floor's
 // .droid-office/cloud-workers.json so they're back at their desks after a restart. They are sent
 // with the same worker.update and worker.remove messages as the office's own workers, but never
-// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the queue, the team, the worker limit) ever sees one.
+// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the team, the worker limit) ever sees one.
 
 const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */

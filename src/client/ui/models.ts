@@ -127,7 +127,7 @@ export function modelBadge(model: string | undefined, effort: AgentEffort | unde
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-/** Remembers the last model/effort chosen at a picker's key (a desk, or the queue). */
+/** Remembers the last model/effort chosen at a picker's key (a desk, or a fixed key). */
 const choiceKey = (kind: 'model' | 'effort', key: string) => `droid-office.droid-${kind}.${key}`;
 
 function rememberedModel(key: string): string | undefined {
@@ -177,8 +177,8 @@ export interface AgentFields {
 
 /**
  * The model and effort a new worker runs on, from the Droid catalogue. `key` scopes what gets
- * remembered between hires — a desk id for the hire dialog, or a fixed key like "queue" for the
- * queue's add form — so a desk that always got Opus offers Opus again next time, without one hire
+ * remembered between hires — a desk id for the hire dialog, or a fixed key like "hire" when no
+ * desk is picked — so a desk that always got Opus offers Opus again next time, without one hire
  * changing another's.
  */
 export function agentPicker(id: string, key = id): AgentFields {

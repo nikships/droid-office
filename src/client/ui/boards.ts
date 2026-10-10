@@ -1,6 +1,6 @@
 import { columnCards } from '../../shared/board-filter';
 import { DESK_BY_ID } from '../../shared/layout';
-import type { AgentEffort, GhIssue, GhLabel, GhPull, WorkerInfo } from '../../shared/protocol';
+import type { GhIssue, GhLabel, GhPull, WorkerInfo } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store, words, workerForPull } from '../state';
 import { h, openModal, timeAgo } from './dom';
@@ -17,13 +17,11 @@ export interface BoardActions {
   ask(context: string, title: string): void;
   /** Walks you to the desk a pull request came from. */
   goToDesk(deskId: string): void;
-  /** Put an issue on the 📋 task queue; a worker is seated for it when there's room. */
-  queue(prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort): void;
-  /** Take the issue's card off the board, to carry to a desk or the queue. */
+  /** Take the issue's card off the board, to carry to a desk or a worker. */
   pickUp(issue: GhIssue): void;
 }
 
-/** The task a worker gets for an issue, from the board, a carried card or the queue (the 'issue.work' prompt). */
+/** The task a worker gets for an issue, from the board or a carried card (the 'issue.work' prompt). */
 export function issuePrompt(it: Pick<GhIssue, 'number' | 'title'> & { url?: string }): string {
   return officePrompt('issue.work', issueVars(it));
 }
@@ -46,7 +44,7 @@ const byUpdated = (a: { updatedAt: string }, b: { updatedAt: string }) => b.upda
 
 function issueColumns(items: GhIssue[]): Column<GhIssue>[] {
   const open = items.filter((i) => i.state === 'OPEN');
-  const inProgress = open.filter((i) => i.assignees.length > 0 || i.labels.some((l) => /progress|doing|wip|started/i.test(l.name)) || store.taskForIssue(i.number)?.status === 'running');
+  const inProgress = open.filter((i) => i.assignees.length > 0 || i.labels.some((l) => /progress|doing|wip|started/i.test(l.name)));
   const todo = open.filter((i) => !inProgress.includes(i));
   return [
     { key: 'open', title: 'Open', items: todo },
@@ -119,19 +117,6 @@ export function deskChip(w: WorkerInfo) {
   return workerChip(w, `Opened from ${w.name}'s desk (${w.worktree?.branch ?? 'its branch'})`);
 }
 
-/** Where an issue stands on the 📋 queue, for its card. */
-function queueChip(issue: number): Node | '' {
-  const t = store.taskForIssue(issue);
-  if (!t) return '';
-  if (t.status === 'queued') return h('span.qchip', { title: 'On the task queue' }, store.queue.tasks.find((x) => x.status === 'queued') === t ? 'up next' : 'queued');
-  if (t.status === 'running') {
-    const w = t.workerId ? store.workers.get(t.workerId) : undefined;
-    if (w) return workerChip(w, `${w.name} is working on this at ${DESK_BY_ID.get(w.deskId)?.label ?? 'a desk'}`);
-    return h('span.qchip.running', {}, t.workerName ?? 'a worker');
-  }
-  return t.pr ? h('span.qchip.done', {}, `${words().pr} ${words().ref(t.pr.number)}`) : '';
-}
-
 type Piece = Node | string;
 
 /** The pieces of a card's meta row that are there, as nodes. */
@@ -140,7 +125,7 @@ function pieces(xs: Piece[]): Node[] {
 }
 
 /**
- * A board card: its number, title, a row of chips (labels, desk, queue) and an aligned meta row
+ * A board card: its number, title, a row of chips (labels, desk) and an aligned meta row
  * that ends with how long ago it changed.
  */
 export function card(ref: Piece, title: string, chips: Piece[], meta: Piece[], when: string, onclick: () => void, onLabels?: () => void) {
@@ -354,7 +339,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
             card(
               `#${it.number}`,
               it.title,
-              [...labelChips(it.labels), queueChip(it.number)],
+              labelChips(it.labels),
               [
                 it.assignees.length ? h('span', { title: 'Assigned' }, `👤 ${it.assignees.join(', ')}`) : `by ${it.author}`,
                 it.comments ? h('span.card-comments', { title: `${it.comments} comment${it.comments === 1 ? '' : 's'}` }, `💬 ${it.comments}`) : '',
@@ -392,7 +377,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     if (caret && again instanceof HTMLInputElement) again.setSelectionRange(caret[0], caret[1]);
   };
 
-  const unsubs = [store.on(kind, render), store.on('queue', render)];
+  const unsubs = [store.on(kind, render)];
   if (kind === 'issues') unsubs.push(store.on('jiraBoard', render));
   // Which desk a PR came from can change (a worker sent home, a PR opened from a desk).
   if (kind === 'pulls') unsubs.push(store.on('workers', render));

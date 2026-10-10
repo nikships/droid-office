@@ -566,7 +566,7 @@ test('one scan hands each floor the processes in its checkout', async () => {
 
 const workerEvents: WorkerEvents = { update() {}, remove() {}, data() {}, screen() {}, toast() {} };
 
-test('the office’s hires and the queue treat a guest’s desk and name as taken, and know who works by hand in a worktree', (t) => {
+test('the office’s hires treat a guest’s desk and name as taken, and know who works by hand in a worktree', (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'office-guest-desks-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const data = path.join(root, '.droid-office');

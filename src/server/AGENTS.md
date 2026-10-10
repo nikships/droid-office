@@ -1,10 +1,10 @@
 # Server
 
 - Compiled by `tsconfig.server.json` (NodeNext, Node types, no DOM) into `dist/server`. Relative imports end in `.js`.
-- This process owns workers, PTYs, boards, the queue and floors. It does not import `src/client`.
+- This process owns workers, PTYs, boards, pipelines and floors. It does not import `src/client`.
 - Office options (CLI flags and their `DROID_OFFICE_*` / `PORT` environment equivalents) are parsed by `loadConfig` in `config.ts` into `Config`. Add a new option there and document it in `HELP` in the same file.
-- Two different `.droid-office/` directories exist. The office's own (next to where `droid-office` was started) holds `floors.json`, `jira.json`, `factory.json`, `prompts.json`, `leave-on-merge.json`, `fresh-main.json`, `subagents.json`, `devices.json` and `hot-reload.json`. Each floor's checkout has its own, with that floor's workers, scrollback, queue, decor, jukebox, team and guests. Write a key to the directory the guide names for it.
-- A change to how status hooks, the PTY host, worktrees, the queue, floors or those state files behave starts from the matching bullet in [docs/guide.md](../../docs/guide.md#how-it-works). Update that bullet in the same change.
+- Two different `.droid-office/` directories exist. The office's own (next to where `droid-office` was started) holds `floors.json`, `jira.json`, `factory.json`, `prompts.json`, `leave-on-merge.json`, `fresh-main.json`, `subagents.json`, `devices.json` and `hot-reload.json`. Each floor's checkout has its own, with that floor's workers, scrollback, decor, jukebox, team and guests. Write a key to the directory the guide names for it.
+- A change to how status hooks, the PTY host, worktrees, pipelines, floors or those state files behave starts from the matching bullet in [docs/guide.md](../../docs/guide.md#how-it-works). Update that bullet in the same change.
 
 ## PTY host
 

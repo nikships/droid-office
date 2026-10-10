@@ -1,6 +1,5 @@
 // Every prompt the office writes for a worker by itself: what Hand to a worker, Review and the
-// boards' other buttons send, what the queue adds to a task, the board agents' briefs and the
-// sign writer's instructions. Each can be rewritten in Settings (kept by
+// boards' other buttons send, the board agents' briefs and the sign writer's instructions. Each can be rewritten in Settings (kept by
 // server/prompts.ts, for the whole building); these are the defaults, which "Default" goes back to.
 // A {{name}} in one is filled in by the office when it's sent. One template serves GitHub and
 // GitLab floors: whatever differs between them ({{cli}}, {{pullName}}, {{ref}}, the commands) is a
@@ -10,14 +9,13 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'queue' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   issues: 'Issues board',
   pulls: 'Pull requests board',
   changes: '🌿 Changes window',
-  queue: 'Task queue',
   repos: '🗂️ Across repositories',
   worktrees: 'Worktree setup',
   stations: 'Board agents',
@@ -141,27 +139,16 @@ type BoardKind = Exclude<StationKind, 'lead'>;
 const BOARD: Record<BoardKind, string> = {
   issues: 'the 📌 Issues board',
   pulls: 'the 🔀 Pull Requests board',
-  queue: 'the 📋 task queue',
+  actions: 'the 🚀 Pipelines board',
 };
-
-/** How a board agent reaches the queue: the office-queue command, which the office puts on its PATH. */
-const QUEUE_API = `The task queue gives each task a fresh worker in its own git worktree, a few at a time; a task usually ends with a {{pullName}}. Use it with the office-queue command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself):
-- See it: office-queue list (each task's id, status, title, worker and {{pullName}})
-- Add a task: office-queue add --title "Short title" [--issue <number>], with the task's prompt on stdin in a quoted heredoc so nothing in it gets expanded. It prints the new task's id. With --issue the task is linked to that {{site}} issue, which is assigned when the task starts.
-  office-queue add --title "Fix the login redirect" <<'EOF'
-  …the full prompt…
-  EOF
-- Take a waiting task off: office-queue remove <id>`;
 
 /** What a board agent is told ahead of the first request typed to it. */
 function stationDefault(kind: BoardKind): string {
-  const queue = kind === 'queue';
   return [
     `You're the ${STATION_AGENT[kind].name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk by ${BOARD[kind]}, and whoever walks up types you a request. The first one is at the end of this message.`,
     '{{job}}',
-    `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. Work that needs code changed goes on the task queue, ${queue ? 'always' : 'unless the person asks you for something else'}.`,
-    QUEUE_API,
-    `${queue ? "When you've queued it, say in a few lines what you queued: each task's id and title." : "When you've done what was asked, say in a few lines what you did, with links."} Then wait: the next request may come from someone else.`,
+    "You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. You don't change code yourself. When a request needs code changed, say what needs doing and suggest who can do it: a worker at a desk (an issue's Hand to a worker button, or E at an empty desk), or the Team lead at the kiosk on the east wall for bigger jobs. Give them a brief they can paste: what to change and where, how to check it, and to open a {{pullName}}.",
+    "When you've done what was asked, say in a few lines what you did, with links. Then wait: the next request may come from someone else.",
     `The request:`,
   ].join('\n\n');
 }
@@ -253,7 +240,7 @@ const DEFS = {
   'issue.work': {
     group: 'issues',
     label: 'Hand to a worker',
-    used: 'The task a worker gets for an issue: Hand to a worker, Add to queue, and a card carried to a desk or the queue.',
+    used: 'The task a worker gets for an issue: Hand to a worker, and a card carried to a desk.',
     vars: { ...ISSUE_VARS, openPull: 'How to finish: open a pull request that closes it (on GitLab, a merge request with glab mr create that says "Closes #12")' },
     text: 'Work on {{site}} issue #{{number}}: "{{title}}".\n\nRead it first with `{{cli}} issue view {{number}} --comments`. Create a new branch, implement the change, verify it, then {{openPull}}.',
   },
@@ -345,20 +332,10 @@ const DEFS = {
     ].join('\n'),
   },
 
-  // --- Task queue ---
-  'queue.worktree': {
-    group: 'queue',
-    label: 'Worktree note',
-    used: 'Added after every task the queue starts in its own git worktree.',
-    vars: {},
-    optional: true,
-    text: "You're in your own git worktree, on a fresh branch made for this task. Commit there, push it, and open the pull request from it.",
-  },
-
   // --- Board agents ---
   'station.issues': station('issues'),
   'station.pulls': station('pulls'),
-  'station.queue': station('queue'),
+  'station.actions': station('actions'),
 
   // --- Team lead & subagents ---
   'station.lead': {

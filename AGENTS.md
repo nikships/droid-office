@@ -2,7 +2,7 @@
 
 A 3D office in the browser where its owner hires droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
-Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, queue, floors, state files).
+Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, pipelines, floors, state files).
 
 Planned work has written plans; follow them and keep them current when doing that work:
 
@@ -15,14 +15,13 @@ Planned work has written plans; follow them and keep them current when doing tha
 
 | Path | Contents |
 | --- | --- |
-| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, floors |
+| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards and pipelines, floors |
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
 | `bin/droid-office.js` | Published CLI entry; loads the built `dist/server/server/cli.js` |
-| `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle), `provision.sh` (machine setup it runs) and `factory-computer.sh` (a Factory Droid Computer's repository setup script) |
@@ -35,7 +34,7 @@ This file is the layer that applies everywhere. Each directory below has its own
 
 | Path | Read it before you |
 | --- | --- |
-| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, queue or floors |
+| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, pipelines or floors |
 | [`src/shared/AGENTS.md`](src/shared/AGENTS.md) | change a type or helper compiled into both server and client |
 | [`src/client/AGENTS.md`](src/client/AGENTS.md) | change the Vite app, or anything `ui/` and `world/` share |
 | [`src/client/ui/AGENTS.md`](src/client/ui/AGENTS.md) | change a DOM window or panel |
@@ -75,7 +74,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 
 ## Conventions
 
-- `.droid-office/` is runtime state (config, workers, scrollback, queue, worktrees). Never commit it.
+- `.droid-office/` is runtime state (config, workers, scrollback, worktrees). Never commit it.
 - The Mac app runs the office, its PTY host and the commands written for workers on the Electron binary (`process.execPath`) with `ELECTRON_RUN_AS_NODE=1`. A new script the office runs with `process.execPath` goes through `runAsNode` in `src/server/workers.ts`, and must stay a file on disk (the app has no asar archive).
 - `.env.example` lists every environment variable the office and the installers read. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.

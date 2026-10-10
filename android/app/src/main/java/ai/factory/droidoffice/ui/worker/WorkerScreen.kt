@@ -278,7 +278,7 @@ private fun Actions(w: WorkerInfo, onSendHome: () -> Unit) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
-    val pr = Workers.pr(w, data.pulls, data.queue.tasks)
+    val pr = Workers.pr(w, data.pulls)
     val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),

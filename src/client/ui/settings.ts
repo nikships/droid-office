@@ -269,7 +269,7 @@ export function openSettings(
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(now);
     agentNote.textContent =
-      'What a worker starts on when nobody picks one. The hire, queue and ask windows remember their own picks per desk.' +
+      'What a worker starts on when nobody picks one. The hire and ask windows remember their own picks per desk.' +
       (picked ? ` Set by ${picked.by} ${timeAgo(picked.at)}.` : ' It’s the agent the office was started with, on its own default model.');
   };
   paintAgent();
@@ -289,7 +289,7 @@ export function openSettings(
     const n = rewrittenPrompts();
     promptsOpen.textContent = 'Edit prompts…';
     const status = n ? `${n} of them rewritten.` : 'All as the office wrote them.';
-    promptsNote.textContent = `What the office tells workers for you: handoffs, reviews, board buttons, the queue’s task note, board agents and the sign writer. ${status}`;
+    promptsNote.textContent = `What the office tells workers for you: handoffs, reviews, board buttons, board agents and the sign writer. ${status}`;
   };
   paintPrompts();
 

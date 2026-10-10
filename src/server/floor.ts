@@ -13,7 +13,8 @@ import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
 import type { Board } from './forge.js';
 import { forgeOf, forgeWords, type Forge, type ForgeWords } from '../shared/floors.js';
-import { TaskQueue } from './queue.js';
+import { floorPipelines, type Pipelines } from './pipelines.js';
+import { stateWord } from '../shared/pipelines.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
 import { Docs } from './docs.js';
@@ -21,7 +22,7 @@ import { Jukebox } from './jukebox.js';
 import { FloorJira, type JiraOffice } from './jira.js';
 import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
-import { officePrompt, type PromptSource } from './prompts.js';
+import type { PromptSource } from './prompts.js';
 import { Team } from './team.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
@@ -77,6 +78,8 @@ const LANDED_DELAY_MS = 1500;
 /** Boards on a floor nobody is on, with nothing running, are asked GitHub or GitLab about this seldom. */
 const IDLE_REFRESH_MS = 10 * 60_000;
 const REFRESH_MS = 90_000;
+/** Pipelines are looked at again when someone walks in after this long. */
+const PIPELINES_STALE_MS = 20_000;
 
 /** What `git` says about a checkout: its name, branch and origin for the top bar. */
 export function projectInfo(dir: string, name: string, agentCmd: string, agentArgs: string[], forge: Forge = 'github'): ProjectInfo {
@@ -98,8 +101,8 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
 }
 
 /**
- * One floor of the building: a project's checkout with its own desks and workers, issues and PR
- * boards, task queue, pictures and jukebox, all kept in that checkout's .droid-office folder.
+ * One floor of the building: a project's checkout with its own desks and workers, issues, pipelines
+ * and PR boards, pictures and jukebox, all kept in that checkout's .droid-office folder.
  */
 export class Floor {
   readonly id: string;
@@ -110,7 +113,8 @@ export class Floor {
   readonly board: Board;
   /** The floor's Jira epic, as the issue board's Jira tab (see jira.ts). */
   readonly jira: FloorJira;
-  readonly queue: TaskQueue;
+  /** Its repository's GitHub Actions runs, or its GitLab project's pipelines (see pipelines.ts). */
+  readonly pipelines: Pipelines;
   readonly changes: Changes;
   readonly decor: Decor;
   readonly jukebox: Jukebox;
@@ -151,7 +155,6 @@ export class Floor {
     const onIssues = (state: Board['issues']) => ctx.emit(this, { t: 'gh.issues', state });
     const onPulls = (state: Board['pulls']) => {
       ctx.emit(this, { t: 'gh.pulls', state });
-      this.queue?.onPulls(state.items);
       if (state.loading || state.error) return;
       // A worker may have opened one from a branch it made itself, mid-turn or from a shell.
       void this.workers.syncBranches();
@@ -178,7 +181,6 @@ export class Floor {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
           // Still being built: the first updates come from waking the workers already at their desks.
-          this.queue?.onWorker(worker);
           this.team?.onWorker(worker);
           ctx.workerChanged(this, worker);
           // Its turn ended, or whoever had its terminal open closed it: it may be free to go now.
@@ -187,7 +189,6 @@ export class Floor {
         remove: (workerId) => {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId });
-          this.queue?.onWorkerGone(workerId);
           this.team?.onWorkerGone(workerId);
           ctx.workerChanged(this, workerId);
         },
@@ -242,39 +243,16 @@ export class Floor {
     };
     this.workers.freshMain = () => ctx.freshMain();
 
-    // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
-    const queued = this.workers;
-    this.queue = new TaskQueue(
-      dataDir,
-      {
-        get officeDefault() {
-          return queued.officeDefault;
-        },
-        list: () => queued.list(),
-        deskOccupied: (id) => queued.deskOccupied(id),
-        spawn: (deskId, by, prompt, worktree, kind, model, effort, images) => queued.spawn(deskId, by, prompt, worktree, kind, model, effort, [], undefined, images),
-        unstage: (ids) => queued.unstage(ids),
-        kill: (id) => queued.kill(id),
-        fetchBase: (checkout) => queued.fetchBase(checkout),
+    // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
+    this.pipelines = floorPipelines(def.dir, forge, def.repo, {
+      state: (state) => ctx.emit(this, { t: 'pipelines', state }),
+      finished: (run, ours) => {
+        if (run.state !== 'failure' && !(ours && run.state === 'success')) return;
+        const icon = run.state === 'failure' ? '❌' : '✅';
+        ctx.toast(this, `${icon} ${run.workflow} #${run.number} ${stateWord(run)} on ${run.branch}: ${run.title}`, run.state === 'failure' ? 'warn' : 'info');
       },
-      !!this.project.branch,
-      {
-        update: (state) => {
-          ctx.emit(this, { t: 'queue', state });
-          // A task's pull request may just have been linked (or merged).
-          this.sendLandedHome();
-        },
-        toast: (text, level) => ctx.toast(this, text, level),
-        claimIssue: (issue) => this.board.claim(issue),
-        refreshGitHub: () => void this.board.refresh(),
-        room: () => ctx.capacity.room(),
-        emptied: () => {
-          ctx.toast(this, '📋 The queue is empty: every task is done 🎉');
-          ctx.emit(this, { t: 'gong', why: 'queue' });
-        },
-        worktreeNote: () => officePrompt(ctx.prompts, 'queue.worktree'),
-      },
-    );
+    });
+    this.pipelines.start(() => this.ctx.connections(this) > 0);
 
     const workers = this.workers;
 
@@ -375,7 +353,7 @@ export class Floor {
       this.landedTimer = undefined;
       if (!this.ctx.leaveOnMerge()) return;
       const pullsOf = (id: string) => this.ctx.floor(id)?.board.pulls.items;
-      for (const landed of landedWorkers(this.workers.list(), this.board.pulls.items, this.queue.state().tasks, pullsOf)) {
+      for (const landed of landedWorkers(this.workers.list(), this.board.pulls.items, pullsOf)) {
         const { worker, head, heads } = landed;
         if (!worker.repos?.length) {
           this.goHome(worker, `${this.words.pr} ${this.words.ref(landed.pr)} merged`, head);
@@ -445,10 +423,11 @@ export class Floor {
   arrived() {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
     if (Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
+    if (Date.now() - this.pipelines.state.fetchedAt > PIPELINES_STALE_MS) void this.pipelines.refresh();
   }
 
   private active(): boolean {
-    return this.ctx.connections(this) > 0 || this.ctx.lent(this) || this.workers.list().some((w) => isBusy(w.status)) || this.queue.state().tasks.some((t) => t.status !== 'done');
+    return this.ctx.connections(this) > 0 || this.ctx.lent(this) || this.workers.list().some((w) => isBusy(w.status));
   }
 
   /** How this floor's new worktrees are set up, read from its checkout now (see worktree-setup.ts). */
@@ -484,7 +463,7 @@ export class Floor {
     clearInterval(this.timer);
     clearTimeout(this.landedTimer);
     this.board.stop();
-    this.queue.shutdown();
+    this.pipelines.stop();
     this.team.stop();
     this.guests.stop();
     this.changes.stop();

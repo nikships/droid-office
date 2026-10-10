@@ -6,7 +6,7 @@ account system, password, session cookie, or login page.
 
 ## Server and browser responsibilities
 
-The Node server owns worker processes, PTYs, queues, boards, floors,
+The Node server owns worker processes, PTYs, boards, pipelines, floors,
 and persisted state. Browser windows render that state and send actions.
 Each connection has its own floor and terminal subscriptions, not a user identity.
 Several windows or devices can watch the same PTY. Closing one leaves the others
@@ -38,7 +38,7 @@ See [the guide](guide.md#access) for details.
 
 Legacy `accounts.json` and `chat.jsonl` files remain untouched and unread.
 The office never migrates them into identities or serves their contents.
-Workers, queues, scrollback, pictures, and ordinary office configuration
+Workers, scrollback, pictures, and ordinary office configuration
 keep their current persistence formats.
 
 ## Regression checks
@@ -48,5 +48,5 @@ keep their current persistence formats.
   pairing link.
 - `tests/no-media.test.ts` rejects capture APIs, peer signaling, voice/share UI,
   chat, and teammate presence while preserving office sounds and the jukebox.
-- Worker, terminal, floor and queue suites cover the retained server
+- Worker, terminal, floor and pipeline suites cover the retained server
   workflows.

@@ -8,7 +8,6 @@ import { mergeCommand, pullPromptVars } from '../../shared/prompts';
 import { h, openModal, timeAgo, type Modal } from './dom';
 import { markdown, repoUrlOf } from './markdown';
 import { buildTree, looksGenerated, parseDiff, renderFileDiff, renderThread, repliesOf, Reviewed, STATUS_WORD, treeOrder, type DiffFile, type TreeDir } from './pulldiff';
-import { agentPicker } from './models';
 import { emptyState, field, toggle } from './kit';
 
 // The windows behind the board cards. A PR opens on its conversation (description, comments,
@@ -1258,20 +1257,12 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     detail.comments.push(c);
     render();
   });
-  // The queue section and the footer stay put and renderFrame only shows, hides and relabels them,
-  // so a board refresh never pulls focus out of the model picker.
+  // The footer stays put and renderFrame only shows and hides its buttons.
   const closeIssue = h('button.btn.danger', { type: 'button', title: `Close this issue on ${words().site}`, onclick: () => openClose('issue', it, net, load) }, 'Close issue…');
-  const queueModels = agentPicker(`issue-queue-models-${it.number}`);
-  const addIssueToQueue = () => {
-    modal.close();
-    actions.queue(issuePrompt(it), `#${it.number} ${it.title}`, it.number, queueModels.model(), queueModels.effort());
-  };
-  const queue = h('button.btn', { type: 'button', onclick: addIssueToQueue }) as HTMLButtonElement;
-  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk, a worker or the queue board, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
+  const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk or a worker, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
   const meta = h('div.gh-meta');
   const info = h('div.gh-side-info');
-  const queueSec = h('section.gh-side-sec.gh-queue', {}, h('div.eyebrow', {}, 'Task queue'), queueModels.element, queue);
-  conv.append(h('div.gh-detail', {}, h('div.gh-col', {}, thread, comment.el), h('aside.gh-side', {}, info, queueSec)));
+  conv.append(h('div.gh-detail', {}, h('div.gh-col', {}, thread, comment.el), h('aside.gh-side', {}, info)));
   const title = h('h3.gh-title', { title: it.title }, h('span.gh-ref', {}, `#${it.number}`), ' ', it.title);
   const el = h(
     'div.modal.xl.gh-window.issue',
@@ -1316,16 +1307,8 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     );
     pill.className = `pill ${isOpen ? 'done' : 'offline'}`;
     pill.textContent = isOpen ? 'open' : 'closed';
-    const task = store.taskForIssue(it.number);
-    const onQueue = !!task && task.status !== 'done';
     closeIssue.classList.toggle('hidden', !isOpen);
     pickUp.classList.toggle('hidden', !isOpen);
-    queueModels.element.classList.toggle('hidden', !isOpen || onQueue);
-    queue.classList.toggle('hidden', !isOpen);
-    queueSec.classList.toggle('hidden', !isOpen);
-    queue.disabled = onQueue;
-    queue.title = onQueue ? '' : 'A worker picks it up by itself when a desk is free and there is room under the worker limit';
-    queue.textContent = onQueue ? (task!.status === 'running' ? `${task!.workerName ?? 'A worker'} is on it` : 'On the queue') : 'Add to queue';
   };
   const render = () => {
     thread.replaceChildren(commentCard({ id: 'body', author: it.author, body: detail?.body ?? it.body, createdAt: it.createdAt, url: it.url }, itemUrl, 'opened this'));
@@ -1357,7 +1340,6 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
       it = detail ? { ...fresh, state: fresh.state === 'OPEN' ? detail.state : fresh.state } : fresh;
       renderFrame();
     }),
-    store.on('queue', renderFrame),
   ];
   const modal = openModal(el, {
     doing: `📋 reading issue #${it.number}`,

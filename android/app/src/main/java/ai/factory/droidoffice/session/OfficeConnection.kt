@@ -8,7 +8,6 @@ import ai.factory.droidoffice.core.GhPull
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.ProjectInfo
 import ai.factory.droidoffice.core.Protocol
-import ai.factory.droidoffice.core.QueueState
 import ai.factory.droidoffice.core.RaceResult
 import ai.factory.droidoffice.core.RouteKind
 import ai.factory.droidoffice.core.RouteRacer
@@ -76,7 +75,6 @@ data class OfficeData(
     val project: ProjectInfo? = null,
     val workers: Map<String, WorkerInfo> = emptyMap(),
     val pulls: List<GhPull> = emptyList(),
-    val queue: QueueState = QueueState(),
     val version: String? = null,
     /** A welcome has arrived since this office became the active one. */
     val synced: Boolean = false,
@@ -421,7 +419,6 @@ class OfficeConnection(
             is ServerMsg.TermSnapshot -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.TermData -> feeds[msg.workerId]?.push(msg.event)
             is ServerMsg.Toast -> _toasts.tryEmit(msg)
-            is ServerMsg.Queue -> _data.update { it.copy(queue = msg.state) }
             is ServerMsg.Pulls -> _data.update { it.copy(pulls = msg.state.items) }
             is ServerMsg.Worktree -> _worktrees.tryEmit(msg)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
@@ -438,7 +435,6 @@ class OfficeConnection(
                 project = view.project,
                 workers = view.workers.associateBy(WorkerInfo::id),
                 pulls = view.pulls.items,
-                queue = view.queue,
                 version = version ?: it.version,
                 synced = true,
             )

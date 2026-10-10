@@ -395,8 +395,8 @@ test('board agents are hired with the requested model and effort', async (t) => 
   });
   const workers = manager(f, updates);
   t.after(() => workers.shutdown());
-  assert.match(workers.station('station-queue', 'test', 'queue this', 'has a space') as string, /Droid model/i);
-  const r = workers.station('station-queue', 'test', 'queue this', 'custom:droidproxy:gpt-6-sol', 'low');
+  assert.match(workers.station('station-actions', 'test', 'run the release', 'has a space') as string, /Droid model/i);
+  const r = workers.station('station-actions', 'test', 'run the release', 'custom:droidproxy:gpt-6-sol', 'low');
   assert.equal(typeof r, 'object');
   if (typeof r === 'string') return;
   assert.equal(r.hired, true);
@@ -407,7 +407,7 @@ test('board agents are hired with the requested model and effort', async (t) => 
     (records) => records.some((x) => x.kind === 'droid' && x.args.includes('--settings')),
   );
   // An agent that's already there keeps its engine; the prompt just goes to its session.
-  const again = workers.station('station-queue', 'test', 'and this', 'glm-5.3-flash', 'max');
+  const again = workers.station('station-actions', 'test', 'and this', 'glm-5.3-flash', 'max');
   assert.equal(typeof again, 'object');
   if (typeof again === 'string') return;
   assert.equal(again.hired, false);
@@ -551,7 +551,8 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   const [first] = await waitFor(launches, (l) => l.length === 1);
   const initial = (await startedWith(f, workers, first, 'issues-session')) ?? '';
   assert.match(initial, /Issues agent/);
-  assert.match(initial, /office-queue add/);
+  assert.match(initial, /GitHub issues with the gh CLI/);
+  assert.doesNotMatch(initial, /office-queue|task queue/);
   assert.ok(initial.endsWith('File an issue about the dog'));
   const id = hired.info.id;
 
@@ -586,73 +587,35 @@ test('a board agent is hired with its brief on the first prompt, then prompted, 
   assert.equal(await startedWith(f, workers, second, 'issues-session'), 'Close the duplicates');
 });
 
-test('board agents get office-queue on their PATH, and the queue agent is told by its brief alone', async (t) => {
+test('an office-queue command an older office left behind is cleared away, and no board agent gets one', async (t) => {
   const f = fixture();
-  const updates: WorkerInfo[] = [];
   isolateAgentEnvironment(f, t);
-  const previousExit = process.env.FAKE_AGENT_EXIT_MS;
   const previousLog = process.env.FAKE_AGENT_LOG;
-  process.env.FAKE_AGENT_EXIT_MS = '1500';
   process.env.FAKE_AGENT_LOG = f.log;
   t.after(() => {
-    if (previousExit === undefined) delete process.env.FAKE_AGENT_EXIT_MS;
-    else process.env.FAKE_AGENT_EXIT_MS = previousExit;
     if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
     else process.env.FAKE_AGENT_LOG = previousLog;
     f.close();
   });
-  const workers = manager(f, updates);
-  t.after(() => workers.shutdown());
-  const launches = (id: string) => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined && r.env.workerId === id);
   const bin = path.join(f.data, 'bin');
-  const onPath = (r: Invocation) => (r.env.path ?? '').split(path.delimiter)[0] === bin;
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, 'office-queue'), '#!/bin/sh\n');
+  writeFileSync(path.join(bin, 'office-queue.cmd'), '@echo off\r\n');
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  assert.equal(existsSync(path.join(bin, 'office-queue')), false);
+  assert.equal(existsSync(path.join(bin, 'office-queue.cmd')), false);
+  accessSync(path.join(bin, 'team', 'office-workers'), constants.X_OK);
 
-  // The command is there, and runs the shipped script with the office's own node.
-  accessSync(path.join(bin, 'office-queue'), constants.X_OK);
-  assert.match(execFileSync(path.join(bin, 'office-queue'), ['--help'], { encoding: 'utf8' }), /office-queue add --title/);
-
-  const hired = workers.station('station-queue', 'Ada', 'Fix the typo in the README');
+  const hired = workers.station('station-actions', 'Ada', 'Kick off the release workflow');
   assert.equal(typeof hired, 'object');
   if (typeof hired === 'string') return;
-  const id = hired.info.id;
+  assert.equal(hired.info.name, 'Pipeline agent');
   const [first] = await waitFor(
-    () => launches(id),
+    () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined && r.env.workerId === hired.info.id),
     (l) => l.length === 1,
   );
-  // Its brief is what keeps it from doing the work itself; it keeps its tools.
-  assert.equal(first.args.includes('--disallowedTools'), false);
-  assert.ok((await startedWith(f, workers, first, 'queue-session'))?.endsWith('Fix the typo in the README'));
-  assert.ok(onPath(first), 'office-queue is first on its PATH');
-
-  // Woken up carrying on its session, the command is still there.
-  await waitFor(
-    () => workers.get(id)?.status,
-    (s) => s === 'exited',
-  );
-  workers.station('station-queue', 'Grace', 'Also bump the version');
-  const [, second] = await waitFor(
-    () => launches(id),
-    (l) => l.length === 2,
-  );
-  assert.ok(second.args.includes('--resume') && second.args.includes('queue-session'));
-  assert.equal(await startedWith(f, workers, second, 'queue-session'), 'Also bump the version');
-  assert.ok(onPath(second));
-
-  // The other board agents get the command too; a desk worker gets none of it.
-  const pulls = workers.station('station-pulls', 'Ada', 'Sum up the open PRs');
-  const desk = workers.spawn('desk-2', 'Ada', 'Fix login');
-  assert.ok(typeof pulls === 'object' && typeof desk === 'object');
-  if (typeof pulls !== 'object' || typeof desk !== 'object') return;
-  const [pullsLaunch] = await waitFor(
-    () => launches(pulls.info.id),
-    (l) => l.length === 1,
-  );
-  const [deskLaunch] = await waitFor(
-    () => launches(desk.id),
-    (l) => l.length === 1,
-  );
-  assert.ok(onPath(pullsLaunch));
-  assert.equal((deskLaunch.env.path ?? '').split(path.delimiter).includes(bin), false);
+  assert.equal((first.env.path ?? '').split(path.delimiter).includes(bin), false);
 });
 
 test('a Droid worker acts out its latest tool call, and puts its head in its hands when its tests keep failing', async (t) => {
@@ -1206,7 +1169,7 @@ test("the office's branch keeps a worker's commits once it has moved on: the dia
   assert.ok(!existsSync(a.cwd));
   assert.equal(tip(a.office), 'work at desk-1');
   assert.equal(tip('release'), 'init');
-  // Sent home with no choice (the queue recycling its desk, leave-on-merge): nothing goes.
+  // Sent home with no choice (leave-on-merge): nothing goes.
   const b = hire('desk-2', 'release');
   assert.equal((await workers.kill(b.w.id)).note, `Kept ${b.w.name}'s worktree and branch release — it has 1 unpushed commit`);
   assert.ok(existsSync(b.cwd));
@@ -1562,7 +1525,7 @@ test('a subagent sits down told who hired it and where it works; every agent get
   assert.match(brief, /office-workers report <<'EOF'/);
   assert.ok(brief.endsWith('Your task:\n\nFix the redirect'));
   for (const r of [leadLaunch, subLaunch]) assert.ok((r.env.path ?? '').split(path.delimiter).includes(bin), 'office-workers is on every agent’s PATH');
-  assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'office-queue stays with the board agents');
+  assert.equal((leadLaunch.env.path ?? '').split(path.delimiter).includes(path.join(f.data, 'bin')), false, 'nothing else is put in the data directory’s bin');
 
   // What its lead reads of it: the end of its terminal, as text (the brief typed into it, echoed).
   await waitFor(

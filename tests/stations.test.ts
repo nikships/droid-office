@@ -3,44 +3,53 @@ import assert from 'node:assert/strict';
 import { stationBrief } from '../src/server/stations.js';
 import type { StationKind } from '../src/shared/layout.js';
 
-const KINDS: StationKind[] = ['issues', 'pulls', 'queue'];
+const KINDS: StationKind[] = ['issues', 'pulls', 'actions'];
 
-test('every board agent reaches the queue with office-queue, not its own curl calls', () => {
+test('every board agent is briefed without a task queue, and ends where the request is typed in', () => {
   for (const kind of KINDS) {
-    const brief = stationBrief(kind);
-    assert.match(brief, /office-queue list/, kind);
-    assert.match(brief, /office-queue add --title "[^"]+"/, kind);
-    assert.match(brief, /<<'EOF'/, `${kind}: the prompt goes in a quoted heredoc`);
-    assert.match(brief, /office-queue remove <id>/, kind);
-    assert.doesNotMatch(brief, /curl|\/office\/queue|DROID_OFFICE_HOOK_TOKEN|Authorization/, kind);
-    // The request is typed in right after it.
-    assert.ok(brief.endsWith('The request:'), kind);
+    for (const forge of ['github', 'gitlab'] as const) {
+      const brief = stationBrief(kind, forge);
+      assert.doesNotMatch(brief, /office-queue|task queue|curl|DROID_OFFICE_HOOK_TOKEN|Authorization/, `${kind} on ${forge}`);
+      assert.match(brief, /You don't change code yourself/, kind);
+      assert.match(brief, /a worker at a desk/, kind);
+      assert.match(brief, /the Team lead/, kind);
+      assert.match(brief, /say in a few lines what you did, with links/, kind);
+      assert.ok(brief.endsWith('The request:'), kind);
+    }
   }
 });
 
-test('the queue agent only ever queues work, however small, and says what it queued', () => {
-  const brief = stationBrief('queue');
-  assert.match(brief, /Queue agent/);
-  assert.match(brief, /even a one-line fix/);
-  assert.match(brief, /even when someone asks you to do it yourself/);
-  assert.match(brief, /don't edit, create or delete files/);
-  assert.match(brief, /don't run builds, tests or installs/);
-  assert.match(brief, /don't write code/);
-  assert.match(brief, /goes on the task queue, always/);
-  assert.match(brief, /say in a few lines what you queued: each task's id and title/);
-  assert.doesNotMatch(brief, /unless the person asks you for something else/);
-});
-
-test('the issues and PR agents keep their jobs, and may still be asked for something else', () => {
+test('the issues and PR agents keep their jobs', () => {
   const issues = stationBrief('issues');
   assert.match(issues, /Issues agent/);
   assert.match(issues, /GitHub issues with the gh CLI/);
   const pulls = stationBrief('pulls');
   assert.match(pulls, /PR agent/);
   assert.match(pulls, /gh pr diff/);
-  for (const brief of [issues, pulls]) {
-    assert.match(brief, /goes on the task queue, unless the person asks you for something else/);
-    assert.match(brief, /say in a few lines what you did, with links/);
-    assert.doesNotMatch(brief, /one-line fix/);
-  }
+});
+
+test('the Pipeline agent runs, watches, re-runs and explains GitHub Actions with gh', () => {
+  const brief = stationBrief('actions');
+  assert.match(brief, /Pipeline agent/);
+  assert.match(brief, /🚀 Pipelines board/);
+  assert.match(brief, /gh run list/);
+  assert.match(brief, /gh run view <id> --log-failed/);
+  assert.match(brief, /gh workflow run <workflow> --ref <branch> -f <input>=<value>/);
+  assert.match(brief, /gh run watch <id> --exit-status/);
+  assert.match(brief, /gh run rerun <id> --failed/);
+  assert.match(brief, /gh run cancel <id>/);
+  assert.match(brief, /ask which before you start anything/);
+  assert.match(brief, /pull request/);
+});
+
+test('on a GitLab floor the Pipeline agent drives pipelines with glab', () => {
+  const brief = stationBrief('actions', 'gitlab');
+  assert.match(brief, /GitLab CI\/CD pipelines with the glab CLI/);
+  assert.match(brief, /glab ci list/);
+  assert.match(brief, /glab ci run --branch <branch>/);
+  assert.match(brief, /--variables <key>:<value>/);
+  assert.match(brief, /glab ci trace <job id>/);
+  assert.match(brief, /glab ci retry <job id>/);
+  assert.match(brief, /merge request/);
+  assert.doesNotMatch(brief, /\bgh (run|workflow)\b/);
 });

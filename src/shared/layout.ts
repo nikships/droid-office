@@ -78,24 +78,24 @@ export const BEANBAGS: DeskDef[] = (
 export const SEATS: DeskDef[] = [...DESKS, ...BEANBAGS];
 
 /**
- * The agents standing at kiosks: one by each of the Issues board, the PR board and the task queue, and
- * the Team lead, who hires subagents at the desks for whatever it's asked (see server/team.ts).
+ * The agents standing at kiosks: one by each of the Issues board, the PR board and the Pipelines board,
+ * and the Team lead, who hires subagents at the desks for whatever it's asked (see server/team.ts).
  */
-export type StationKind = 'issues' | 'pulls' | 'queue' | 'lead';
+export type StationKind = 'issues' | 'pulls' | 'actions' | 'lead';
 
 /**
  * The board agents: a worker standing behind a little kiosk just west of each of those boards (see
  * BOARDS), there for anyone to prompt about it, and the Team lead's on the east wall. (x, z) is the
  * kiosk. They face into the room, so the worker stands on the wall side of it: at rotY PI by the north
- * wall, at PI / 2 by the east one. Nobody hires them from the desks or the queue.
+ * wall, at PI / 2 by the east one. Nobody hires them from the desks.
  */
 export const STATIONS: DeskDef[] = [
   // Between the plant in the north-west corner and the Issues board.
   { id: 'station-issues', station: 'issues', x: -15.6, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Issues board' },
-  // Between the task queue and the PR board.
+  // Between the Pipelines board and the PR board.
   { id: 'station-pulls', station: 'pulls', x: 0, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'PR board' },
-  // Between the Issues board and the task queue.
-  { id: 'station-queue', station: 'queue', x: -7.8, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Task queue' },
+  // Between the Issues board and the Pipelines board.
+  { id: 'station-actions', station: 'actions', x: -7.8, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Pipelines board' },
   // On the east wall between the Services board and the TV, looking out over the desks it hires at.
   { id: 'station-lead', station: 'lead', x: FLOOR.maxX - 1.3, z: -4.2, rotY: Math.PI / 2, label: 'Team kiosk' },
 ];
@@ -105,7 +105,7 @@ export const KIOSK = { width: 0.8, depth: 0.5, height: 0.55, stand: 0.55 } as co
 export const STATION_AGENT: Record<StationKind, { name: string; color: string }> = {
   issues: { name: 'Issues agent', color: '#ef476f' },
   pulls: { name: 'PR agent', color: '#118ab2' },
-  queue: { name: 'Queue agent', color: '#06d6a0' },
+  actions: { name: 'Pipeline agent', color: '#06d6a0' },
   lead: { name: 'Team lead', color: '#ffd166' },
 };
 
@@ -176,7 +176,7 @@ export function beanbagsOut(taken: (id: string) => boolean): Set<string> {
  * home still packing up there (`packing`). Each shows that it's free, with a '+' over a seat and the
  * board agent waiting at a kiosk. It's worked out afresh from who's there rather than seat by seat as
  * workers come and go, so swapping one floor's workers for another's never leaves a place showing
- * free under someone (two floors can each have a Queue agent at the same kiosk).
+ * free under someone (two floors can each have a Pipeline agent at the same kiosk).
  */
 export function vacantSeats(workers: Iterable<{ deskId: string }>, packing: (id: string) => boolean = () => false): Set<string> {
   const taken = new Set<string>();
@@ -194,11 +194,11 @@ export function deskSeat(desk: Pick<DeskDef, 'x' | 'z' | 'rotY'>, offset = 0.85)
 
 /** Wall boards. `rotY` is the way the board faces (0 = +z, like the north-wall boards). */
 export const BOARDS = {
-  // Side by side along the north wall, the way work goes: an issue goes on the task queue (the
-  // whiteboard in the middle), and its worker's pull request comes out the other side. Each has its
-  // board agent's kiosk just west of it (see STATIONS).
+  // Side by side along the north wall, the way work goes: issues, the GitHub Actions runs or GitLab
+  // pipelines that build and check the code (the screen in the middle), and the pull requests they
+  // check. Each has its board agent's kiosk just west of it (see STATIONS).
   issues: { x: -11.7, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '01 TRIAGE' },
-  queue: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 TICKET TO CODE' },
+  actions: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 PIPELINES' },
   pulls: { x: 3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '03 CODE REVIEW' },
   // East wall, north of the lounge TV.
   services: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'SERVICES' },

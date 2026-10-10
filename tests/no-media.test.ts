@@ -97,8 +97,7 @@ test('the desktop keeps its audio: jukebox, office sounds, and their mute switch
 });
 
 test('no chat or teammate presence anywhere: protocol, server, stores or UI', () => {
-  // No peer or chat shapes on the wire, and no presence or chat messages. queue.move is a
-  // queued task moving up or down the queue, not a person, so it stays.
+  // No peer or chat shapes on the wire, and no presence or chat messages.
   assert.deepEqual(hits(/PeerInfo/), []);
   assert.deepEqual(hits(/ChatLine/), []);
   assert.deepEqual(hits(/\bt: '(move|doing|chat)'/), []);

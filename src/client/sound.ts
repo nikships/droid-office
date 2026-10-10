@@ -632,9 +632,8 @@ export class OfficeSound {
   // ---- The gong ----------------------------------------------------------------------------------
 
   /**
-   * The gong by the PR board rings: someone hit it, a pull request merged (a harder stroke), or the
-   * task queue emptied (three strokes, each bigger than the last). From where it hangs, so you hear
-   * which way it is.
+   * The gong by the PR board rings: someone hit it, or a pull request merged (a harder stroke). From
+   * where it hangs, so you hear which way it is.
    */
   gong(why: GongWhy) {
     this.unlock();
@@ -647,8 +646,7 @@ export class OfficeSound {
     const out = why === 'hit' ? this.panner(GONG_AT, 4, 0.6) : this.panner(GONG_AT, 8, 0.45);
     out.connect(why === 'hit' ? this.ambience : this.alerts);
     const t0 = ctx.currentTime + 0.03;
-    if (why === 'queue') [0.7, 0.85, 1.1].forEach((strength, i) => this.strike(out, t0 + i * 0.85, strength));
-    else this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
+    this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
   }
 
   /** One stroke of the mallet: a felt thump, the metal ringing, and a bright wash that blooms after. */

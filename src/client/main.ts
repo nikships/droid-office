@@ -58,7 +58,7 @@ import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
 import { Laptop } from './world/laptop';
-import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world/boards';
+import { BoardTexture, PipelinesBoardTexture, ServicesBoardTexture } from './world/boards';
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
@@ -93,7 +93,8 @@ import { openAsk } from './ui/ask';
 import { openServices, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
-import { openQueue } from './ui/queue';
+import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
+import { isLive, stateWord } from '../shared/pipelines';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
@@ -196,7 +197,7 @@ noOutline(office.group);
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
-  queue: { icon: '📋', offer: 'Ask me to queue work', does: 'I turn it into tasks for fresh workers', example: 'Queue every open bug issue, most important first' },
+  actions: { icon: '🚀', offer: 'Ask me about CI', does: 'I kick off pipelines, re-run failures and explain what broke', example: 'Kick off the release workflow on main and tell me when it’s done' },
   lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
 };
 /** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
@@ -247,9 +248,15 @@ store.on('workers', () => {
 const servicesTex = new ServicesBoardTexture();
 const renderServicesBoard = () => servicesTex.render(store.services.items, store.workers);
 mountBoard(office.boardMeshes.services, servicesTex.texture, renderServicesBoard, ['services', 'workers']);
-const queueTex = new QueueBoardTexture();
-const renderQueueBoard = () => queueTex.render(store.queue, store.workers);
-mountBoard(office.boardMeshes.queue, queueTex.texture, renderQueueBoard, ['queue', 'workers']);
+const pipelinesTex = new PipelinesBoardTexture();
+const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
+mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
+// Running runs' clocks and spinners move each second; the texture skips a redraw that would look the same.
+setInterval(() => {
+  if (store.pipelines.runs.some((r) => isLive(r.state))) renderPipelinesBoard();
+}, 1000);
+// Ages on finished runs tick by the minute.
+setInterval(renderPipelinesBoard, 60_000);
 // The compute wall on the west wall: this machine, and the Factory Droid Computers (world/factory-computers.ts).
 const computeWall = new ComputeWallTextures();
 const renderMachineBoard = () => {
@@ -321,7 +328,7 @@ void loadFonts().then(() => {
   renderIssuesBoard();
   renderPullsBoard();
   renderServicesBoard();
-  renderQueueBoard();
+  renderPipelinesBoard();
   computeWall.repaint();
   renderMachineBoard();
   renderCiBoard(true);
@@ -846,6 +853,7 @@ net.onMessage((msg) => {
   routeTerminalMessage(msg);
   routeChangesMessage(msg);
   routePullMessage(msg);
+  routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
   switch (msg.t) {
@@ -1431,7 +1439,7 @@ store.on('workers', syncWorkers);
 
 /** A worker's pull request for its bubble, named the way this floor's forge names it ("🎉 MR !12 merged"). */
 function prBadge(w: WorkerInfo): PrBadge | undefined {
-  const pr = workerPr(w, store.pulls.items, store.queue.tasks);
+  const pr = workerPr(w, store.pulls.items);
   if (!pr) return undefined;
   const { pr: kind, ref } = words();
   return { state: pr.state, label: `${pr.state === 'open' ? '🔀' : '🎉'} ${kind} ${ref(pr.number)} ${pr.state}` };
@@ -1444,7 +1452,6 @@ const paintPrs = () => {
   }
 };
 store.on('pulls', paintPrs);
-store.on('queue', paintPrs);
 
 // ---- Actions ------------------------------------------------------------------------------------
 function freeDesk(): string | null {
@@ -1605,8 +1612,8 @@ function killWorker(id: string) {
     : `This stops the ${session} at ${where} for everyone and frees the desk.`;
   confirmDialog(`Send ${w.name} home?`, body, 'Send home', () => net.send({ t: 'worker.kill', workerId: id }));
 }
-/** E at a board agent: type it a request. It's hired with it when nobody is there yet. */
-function askStation(deskId: string) {
+/** E at a board agent: type it a request, starting from `initial`. It's hired with it when nobody is there yet. */
+function askStation(deskId: string, initial?: string) {
   const kind = DESK_BY_ID.get(deskId)?.station;
   if (!kind) return;
   const w = store.workerAtDesk(deskId);
@@ -1630,6 +1637,7 @@ function askStation(deskId: string) {
     title: `${info.icon} Ask the ${name}`,
     subtitle,
     placeholder: `e.g. ${info.example}`,
+    initial,
     submitLabel: 'Send ✨',
     warning: w ? undefined : pressureNote(store.machine),
     modelOption: !w,
@@ -1866,8 +1874,11 @@ function openWorkerChanges(id: string, repo?: string) {
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
 
-function showQueue() {
-  openQueue(net, { openTerminal: openWorkerTerminal });
+/** The Pipeline agent's kiosk, by the board. */
+const PIPELINES_DESK = 'station-actions';
+/** The Pipelines window: on one run, or on its Run workflow form. */
+function showPipelines(open: PipelinesOpen = {}) {
+  openPipelines(net, { askAgent: (initial) => askStation(PIPELINES_DESK, initial) }, open);
 }
 
 // ---- The command palette (Ctrl+K, ⌘K on a Mac) ------------------------------------------------------
@@ -1935,7 +1946,6 @@ function paletteEntries(): PaletteEntry[] {
     open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
     walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
   });
-  out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a worker', keywords: ['backlog', 'tasks'], open: showQueue }));
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
@@ -1943,6 +1953,26 @@ function paletteEntries(): PaletteEntry[] {
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
+  out.push(
+    atSpot('actions', 'the Pipelines board', {
+      icon: '🚀',
+      kind: 'Board',
+      title: 'Pipelines board',
+      detail: store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions runs: running, waiting and recent',
+      keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
+      open: () => showPipelines(),
+    }),
+  );
+  out.push(
+    atSpot('actions', 'the Pipelines board', {
+      icon: '▶',
+      kind: 'Action',
+      title: store.project?.forge === 'gitlab' ? 'Run a pipeline' : 'Run a workflow',
+      detail: 'Start CI by hand on a branch',
+      keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
+      open: () => showPipelines({ run: true }),
+    }),
+  );
   out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
   if (store.factory.connection.connected) {
     out.push(
@@ -2091,7 +2121,6 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
 
 function boardActions() {
   return {
-    queue: (prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, model, effort }),
     assign: (prompt: string, title: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
     goToDesk,
@@ -2145,7 +2174,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
   else if (target.kind === 'services') openServices();
   else if (target.kind === 'computers') showComputers();
-  else if (target.kind === 'queue') showQueue();
+  else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
   else if (target.kind === 'ci') showCi();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
@@ -2186,7 +2215,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
+  toast(`✋ You took #${it.number} off the board: take it to an empty desk or a worker and press E`);
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -2199,8 +2228,7 @@ function putBack() {
 
 /**
  * E with a card in your hands: an empty desk hires a worker for the issue (with the prompt 🤖 Hand
- * to a worker uses), an agent at a desk gets it as its next prompt, the queue board queues it, and
- * the issues board takes it back (or swaps it for the `note` you point at there). False when it's none
+ * to a worker uses), an agent at a desk gets it as its next prompt, and the issues board takes it back (or swaps it for the `note` you point at there). False when it's none
  * of those, so E does what it always does there.
  */
 function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): boolean {
@@ -2210,15 +2238,6 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
     return true;
   }
   const prompt = issuePrompt({ number: card.issue, title: card.title });
-  if (it.kind === 'queue') {
-    if (onQueue(card.issue)) toast(`#${card.issue} is already on the queue`, 'warn');
-    else {
-      const { model, effort } = rememberedChoice('queue');
-      net.send({ t: 'queue.add', prompt, title: `#${card.issue} ${card.title}`, issue: card.issue, model, effort });
-      putDown();
-    }
-    return true;
-  }
   if (it.kind !== 'desk' || !it.deskId) return false;
   const w = store.workerAtDesk(it.deskId);
   const why = w ? cantTakeCard(w) : '';
@@ -2234,15 +2253,10 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
   return true;
 }
 
-/** The card left your hands for a desk or the queue (the office says who took it). */
+/** The card left your hands for a desk (the office says who took it). */
 function putDown() {
   setCarrying(null);
   sound.paper();
-}
-
-function onQueue(issue: number): boolean {
-  const t = store.taskForIssue(issue);
-  return !!t && t.status !== 'done';
 }
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
@@ -2366,7 +2380,7 @@ const floorArea = (a: Area) => (a.maxX - a.minX) * (a.maxZ - a.minZ);
 /** When the gong was last struck. The swing is part of the render pace (see render-pace.ts). */
 let gongStruckAt = 0;
 
-/** Someone hit the gong, a pull request merged (a dance party under a confetti rain), or the queue emptied (a party). */
+/** Someone hit the gong, or a pull request merged (a dance party under a confetti rain). */
 function gongRang(why: GongWhy, pr?: number) {
   gongStruckAt = performance.now();
   office.gong.strike(why === 'hit' ? 0.7 : 1);
@@ -2381,22 +2395,6 @@ function gongRang(why: GongWhy, pr?: number) {
     if (w && workerViews.has(w.id)) burstOver(w.deskId, 220);
     else confetti.burst(top.x, top.y, top.z, 220);
     danceParty();
-  } else if (why === 'queue') {
-    // Three strokes (sound.gong plays them): a burst at the gong, then every desk, then a cannon.
-    confetti.burst(top.x, top.y, top.z, 160);
-    setTimeout(() => {
-      gongStruckAt = performance.now();
-      office.gong.strike(0.85);
-      for (const [id, v] of workerViews) {
-        burstOver(v.deskId, 120);
-        if (!isAsleep(store.workers.get(id)?.status ?? 'offline')) v.model.cheer(4);
-      }
-    }, 850);
-    setTimeout(() => {
-      gongStruckAt = performance.now();
-      office.gong.strike(1.2);
-      confetti.burst(top.x, top.y, top.z, 450, 1.5);
-    }, 1700);
   }
 }
 
@@ -2506,9 +2504,13 @@ function hintFor(it: Interactable): Hint {
       const about = computeWall.view ? wallSummary(computeWall.view) : '';
       return { k: about, parts: [title('🖥️ Compute wall'), aside(about), key('E', 'Open the Computers')] };
     }
-    case 'queue': {
-      const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
-      return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
+    case 'actions': {
+      const p = store.pipelines;
+      const run = aimedRun !== undefined ? p.runs.find((r) => r.id === aimedRun) : undefined;
+      if (run) return { k: `run:${run.id}:${run.state}`, parts: [title(clip(`🚀 ${run.workflow} #${run.number} · ${run.title}`, 60)), aside(stateWord(run)), key('E', 'Open the run')] };
+      const live = p.runs.filter((r) => isLive(r.state)).length;
+      const about = p.error ? "can't read the runs" : live ? `${live} running or waiting` : p.runs.length ? 'all quiet' : '';
+      return { k: about, parts: [title(store.project?.forge === 'gitlab' ? '🚀 GitLab pipelines' : '🚀 GitHub Actions'), about ? aside(about) : '', key('E', 'Open')] };
     }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
@@ -2572,10 +2574,6 @@ function hintFor(it: Interactable): Hint {
 function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   const parts = (...mid: (HTMLElement | string)[]) => [h('span.title', {}, `🗂️ #${card.issue} in hand`), ...mid, key('Q', 'Put it back')];
   if (it?.kind === 'issues') return aimedNote ? { k: String(aimedNote.number), parts: parts(key('E', `Swap it for #${aimedNote.number}`)) } : { k: '', parts: parts(key('E', 'Pin it back up')) };
-  if (it?.kind === 'queue') {
-    const on = onQueue(card.issue);
-    return { k: String(on), parts: parts(on ? aside('already on the queue') : key('E', 'Put it on the queue')) };
-  }
   if (it?.kind === 'desk' && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
     if (!w) return { k: '', parts: parts(key('E', 'Hire a worker for it')) };
@@ -2587,7 +2585,7 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
     const rest = hintFor(it);
     return { k: rest.k, parts: parts(...rest.parts) };
   }
-  return { k: '', parts: parts(aside('take it to an empty desk, a worker or the 📋 queue')) };
+  return { k: '', parts: parts(aside('take it to an empty desk or a worker')) };
 }
 
 function casualtyHint(w: WorkerInfo, near: boolean): Hint {
@@ -3017,7 +3015,7 @@ const REACH: Record<InteractKind, number> = {
   issues: 9,
   pulls: 9,
   services: 9,
-  queue: 9,
+  actions: 9,
   ci: 9,
   computers: 9,
   decor: 9,
@@ -3081,8 +3079,16 @@ function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
   return true;
 }
 
+/** The run on the Pipelines board an aim lands on, or undefined. */
+function runUnder(aim: { it: Interactable; hit: THREE.Intersection } | null): number | undefined {
+  if (aim?.it.kind !== 'actions' || aim.hit.object !== office.boardMeshes.actions || !aim.hit.uv) return undefined;
+  return pipelinesTex.runAt(aim.hit.uv);
+}
+
 /** The note on the issues board under the crosshair, which E takes. */
 let aimedNote: GhIssue | null = null;
+/** The run on the Pipelines board under the crosshair, which E opens. */
+let aimedRun: number | undefined;
 /** The tab or Jira card on the issues board under the crosshair. */
 let aimedSpot: BoardSpot | null = null;
 
@@ -3120,7 +3126,15 @@ const waitingNow = () => waitingInOrder(store.workers.values());
 const hudActions: HudAction[] = [
   { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
-  { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
+  {
+    id: 'pipelines',
+    icon: '🚀',
+    label: 'Pipelines',
+    section: 'Open',
+    count: () => store.pipelines.runs.filter((r) => isLive(r.state)).length,
+    title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
+    run: () => showPipelines(),
+  },
   { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
   {
     id: 'ci',
@@ -3433,6 +3447,7 @@ function drawFrame(dt: number, t: number) {
   if (upTop && roof) roof.update(t, dt, { dark: sky.lampsOn });
   aimedNote = null;
   aimedSpot = null;
+  aimedRun = undefined;
   if (modalOpen() || hanger.active || climber.active) target = null;
   else {
     const aim = aimedAt(CROSSHAIR);
@@ -3440,10 +3455,12 @@ function drawFrame(dt: number, t: number) {
     if (aim?.near) {
       aimedNote = noteUnder(aim);
       aimedSpot = spotUnder(aim);
+      aimedRun = runUnder(aim);
     }
   }
   issuesTex.lift(aimedNote?.number ?? null);
   issuesTex.hover(aimedSpot);
+  pipelinesTex.hover(aimedRun ?? null);
   renderHint();
   renderCrosshair();
 

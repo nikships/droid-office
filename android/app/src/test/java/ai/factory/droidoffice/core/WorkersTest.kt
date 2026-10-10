@@ -77,12 +77,12 @@ class WorkersTest {
     fun anOpenPrWinsOverAMergedOne() {
         val worker = WorkerInfo(id = "x", worktree = WorktreeRef(branch = "droid/x"), pr = PrRef(3, "u3"))
         val pulls = listOf(GhPull(number = 3, state = "MERGED", url = "u3", headRefName = "droid/x"), GhPull(number = 9, state = "OPEN", url = "u9", headRefName = "droid/x"))
-        val (state, ref) = Workers.pr(worker, pulls, emptyList())!!
+        val (state, ref) = Workers.pr(worker, pulls)!!
         assertEquals(Workers.PrState.Open, state)
         assertEquals(9, ref.number)
-        assertEquals(Workers.PrState.Merged, Workers.pr(worker, pulls.take(1), emptyList())!!.first)
-        assertNull(Workers.pr(WorkerInfo(id = "y"), pulls, emptyList()))
-        assertEquals(Workers.PrState.Opening, Workers.pr(worker.copy(prOpening = true), pulls, emptyList())!!.first)
+        assertEquals(Workers.PrState.Merged, Workers.pr(worker, pulls.take(1))!!.first)
+        assertNull(Workers.pr(WorkerInfo(id = "y"), pulls))
+        assertEquals(Workers.PrState.Opening, Workers.pr(worker.copy(prOpening = true), pulls)!!.first)
     }
 
     @Test

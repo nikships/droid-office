@@ -576,7 +576,7 @@ export interface LeavingGuest {
 
 /**
  * A floor's guests (see the top of this file). Each sits at a desk or bean bag of its own, which the
- * office's hires and the queue then treat as taken. A guest is never in the WorkerManager: it isn't
+ * office's hires then treat as taken. A guest is never in the WorkerManager: it isn't
  * counted against the worker limit, handed tasks, prompted, sent home or pruned.
  */
 export class Guests {

@@ -251,8 +251,6 @@ export class WorkerManager {
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the office-queue command is, for the board agents' PATH (see writeOfficeCommand). */
-  private queueBin: string | undefined;
   /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
   private teamBin: string | undefined;
   /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
@@ -290,7 +288,9 @@ export class WorkerManager {
     this.statePath = path.join(dataDir, 'workers.json');
     this.droidSettingsPath = path.join(dataDir, 'droid-hooks.json');
     this.writeHookSettings();
-    this.queueBin = this.writeOfficeCommand('bin', 'office-queue', "Droid Office's task queue, for the board agents");
+    // The task queue's command, from before the queue was taken out.
+    rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
+    rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
     try {
       this.setupScript = writeSetupScript(dataDir);
@@ -1755,7 +1755,6 @@ export class WorkerManager {
 
     const shell = defaultShell();
     const isShell = info.kind === 'shell';
-    const station = DESK_BY_ID.get(info.deskId)?.station;
     const command = this.command(info);
     const commandPath = isShell ? undefined : this.agentPath;
     const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : [...this.agentArgs];
@@ -1780,9 +1779,8 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // A board agent reaches the queue with the office-queue command, and any agent its subagents with
-    // office-workers.
-    const bins = [station && this.queueBin, !isShell && this.teamBin].filter((d): d is string => !!d);
+    // Any agent runs its subagents with office-workers.
+    const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
@@ -2078,7 +2076,7 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes one of the office's agent commands (office-queue, office-workers) into `sub` of the data
+   * Writes one of the office's agent commands (office-workers) into `sub` of the data
    * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
    * every start, so after an upgrade it runs the new install's script.
    */
@@ -2205,7 +2203,7 @@ process.stdin.on('end', () => {
 // ---------------------------------------------------------------------------
 
 /** In the middle of a turn: working, or asking something (not stuck on a trust or login screen). */
-/** An agent at the issues, PR or queue kiosk, which works through the forge whatever branch the checkout is on. */
+/** An agent at the issues, PR or Pipelines kiosk, which works through the forge whatever branch the checkout is on. */
 function boardAgent(info: WorkerInfo): boolean {
   const station = DESK_BY_ID.get(info.deskId)?.station;
   return !!station && station !== 'lead';

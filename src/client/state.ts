@@ -12,8 +12,6 @@ import type {
   ProjectInfo,
   ProjectsDirState,
   PromptsState,
-  QueueState,
-  QueueTask,
   RepoChoice,
   ServerMsg,
   ServicesState,
@@ -34,6 +32,7 @@ import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
+import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
 import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
 
 export type Topic =
@@ -45,7 +44,7 @@ export type Topic =
   | 'upgrade'
   | 'services'
   | 'decor'
-  | 'queue'
+  | 'pipelines'
   | 'notify'
   | 'machine'
   | 'floors'
@@ -250,7 +249,8 @@ class Store {
   cabinet: CabinetState = { player: null, scores: [] };
   /** Your game on the cabinet as you last sent it; null while you're not playing. */
   cabinetFrame: CabinetFrame | null = null;
-  queue: QueueState = { tasks: [], maxWorkers: 0 };
+  /** The floor's GitHub Actions runs, or its GitLab pipelines. */
+  pipelines: PipelinesState = NO_PIPELINES;
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState = {};
   /** The Jira tab of the issue board; null on a floor without an epic. */
@@ -306,12 +306,6 @@ class Store {
     return teamOf(this.workers.values(), leadId);
   }
 
-  /** The queue task for an issue: the one on the queue if there is one, else the latest finished one. */
-  taskForIssue(issue: number): QueueTask | undefined {
-    const tasks = this.queue.tasks.filter((t) => t.issue === issue);
-    return tasks.find((t) => t.status !== 'done') ?? tasks[tasks.length - 1];
-  }
-
   /** Everything on the floor you just arrived on, in place of the last one's. */
   private enter(v: FloorView) {
     this.floor = v.floor;
@@ -321,7 +315,7 @@ class Store {
     this.screens.clear(); // fresh full frames follow
     this.issues = v.issues;
     this.pulls = v.pulls;
-    this.queue = v.queue;
+    this.pipelines = v.pipelines ?? NO_PIPELINES;
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
@@ -330,7 +324,7 @@ class Store {
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -435,9 +429,9 @@ class Store {
         if (Math.abs(this.jukebox.since - was) > 20) this.emit('jukebox');
         break;
       }
-      case 'queue':
-        this.queue = msg.state;
-        this.emit('queue');
+      case 'pipelines':
+        this.pipelines = msg.state;
+        this.emit('pipelines');
         break;
       case 'notify':
         this.notify = msg.state;
