@@ -87,5 +87,17 @@
     "triangles": 2848,
     "url": "/props/robot-arm.glb",
     "width": 0.62
+  },
+  "wand": {
+    "bytes": 240788,
+    "depth": 0.3422,
+    "height": 0.0202,
+    "materials": 5,
+    "tags": [
+      "hand"
+    ],
+    "triangles": 7014,
+    "url": "/props/wand.glb",
+    "width": 0.0202
   }
 }

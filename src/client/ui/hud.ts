@@ -85,7 +85,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const seven: HelpRow =
     sidearm === 'wand'
-      ? ['Magic wand', 'Draw or put it away; click to cast at the worker under the crosshair and it falls asleep. E wakes it; zap it again to send it home now. The .44 Magnum is in ⚙️ Settings → You', ['7']]
+      ? ['Droid wand', 'Draw or put it away; click to flick a spell at the worker under the crosshair and it falls asleep. E wakes it; zap it again to send it home now. The .44 Magnum is in ⚙️ Settings → You', ['7']]
       : ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']];
   const sections: [string, HelpRow[]][] = [
     [
@@ -131,7 +131,11 @@ export function openHelp(sidearm: Sidearm = 'wand') {
     [
       'Fun',
       [
-        ['Emote', `Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. With the ${sidearm === 'wand' ? 'wand' : 'Magnum'} drawn they are its tricks`, ['G', 'or', '1–6']],
+        [
+          'Emote',
+          `Hold G and point at one, or press 1–6: wave, thumbs up, clap, dance, point, facepalm. ${sidearm === 'wand' ? 'With the wand drawn they are its spells: Lumos, swish and flick, flare, twirl, run the build, Protego' : 'With the Magnum drawn they are its tricks'}`,
+          ['G', 'or', '1–6'],
+        ],
         seven,
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['Arcade cabinet', 'BLOCKFALL, in the lounge: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],

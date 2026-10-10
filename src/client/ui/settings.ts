@@ -14,7 +14,7 @@ import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
-  ['wand', '🪄', 'Magic wand', 'Sparkles put a worker to sleep on a glowing spell circle. No blood.'],
+  ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
   ['magnum', '🔫', '.44 Magnum', 'The original: a gunshot, blood, and paramedics for the body.'],
 ];
 

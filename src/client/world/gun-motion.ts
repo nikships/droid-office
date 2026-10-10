@@ -58,9 +58,9 @@ export const READY: Readonly<GunPose> = Object.freeze(rest(1));
 export const HOLSTERED: Readonly<GunPose> = Object.freeze(rest(0));
 
 /** How a key is reached from the one before it. */
-type Ease = 'linear' | 'in' | 'out' | 'inOut' | 'back' | 'snap';
+export type Ease = 'linear' | 'in' | 'out' | 'inOut' | 'back' | 'snap';
 /** [seconds into the move, value, how it gets there from the key before]. */
-type Key = readonly [number, number, Ease?];
+export type Key = readonly [number, number, Ease?];
 
 export interface GunMove {
   seconds: number;
@@ -519,7 +519,7 @@ export const GUN_MOVES: Record<GunMoveId, GunMove> = {
   },
 };
 
-function ease(kind: Ease, p: number): number {
+export function ease(kind: Ease, p: number): number {
   switch (kind) {
     case 'linear':
       return p;
@@ -538,7 +538,8 @@ function ease(kind: Ease, p: number): number {
   }
 }
 
-function sampleTrack(keys: readonly Key[], t: number): number {
+/** A track's value `t` seconds in. */
+export function sampleTrack(keys: readonly Key[], t: number): number {
   if (t <= keys[0][0]) return keys[0][1];
   for (let i = 1; i < keys.length; i++) {
     const [tb, vb, e = 'inOut'] = keys[i];

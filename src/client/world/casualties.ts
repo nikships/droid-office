@@ -132,8 +132,9 @@ const SPELL_STARS = 4;
 const STAR_Y = 0.55;
 
 /**
- * The spell circle: a soft violet glow on the floor in a bright rim, a mint ring of runes inside
- * it, and stars circling over the sleeper. It turns slowly while the spell holds (see step).
+ * The spell circle, the droid wand's colors: a dim orange glow on the floor in a bright orange
+ * rim, a white hairline ring with eight orange marks round it, and white sparks circling over the
+ * sleeper. It turns slowly while the spell holds (see step).
  */
 function spellCircle(): THREE.Group {
   spellGeo ??= {
@@ -144,7 +145,7 @@ function spellCircle(): THREE.Group {
     star: new THREE.OctahedronGeometry(0.07, 0),
   };
   const glow = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
-  spellMat ??= { disc: glow('#7b2ff7', 0.32), rim: glow('#c77dff', 0.9), inner: glow('#80ffdb', 0.75), rune: glow('#fff3b0', 0.9), star: glow('#ffe680', 1) };
+  spellMat ??= { disc: glow('#ee6018', 0.22), rim: glow('#ff8a4a', 0.9), inner: glow('#eeeeee', 0.7), rune: glow('#ee6018', 0.95), star: glow('#fff4ea', 1) };
   const g = spellGeo;
   const m = spellMat;
   const circle = new THREE.Group();

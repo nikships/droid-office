@@ -16,6 +16,7 @@ import { STREAM } from '../shared/jukebox';
 import { TunePlayer } from './music';
 import { DjPlayer } from './dnb';
 import type { GunCue } from './world/gun-motion';
+import type { WandCue } from './world/wand-motion';
 
 type Pos = { x: number; y: number; z: number };
 
@@ -880,10 +881,11 @@ export class OfficeSound {
   }
 
   /**
-   * The wand's moves (world/gun-motion.ts, the same moves as the gun's): twinkles on the way out
-   * and back, swishes for spins and catches, and glittering runs where the gun would click and ratchet.
+   * The wand's moves and spells (world/wand-motion.ts): a hum as the rotor spins up, a bright
+   * run on the way out, a falling one on the way back, air for every swing, chimes where the magic
+   * happens and a tick per lit segment of the build.
    */
-  wandCue(cue: GunCue) {
+  wandCue(cue: WandCue) {
     this.unlock();
     const ctx = this.ctx;
     if (!ctx) return;
@@ -892,37 +894,81 @@ export class OfficeSound {
     switch (cue) {
       case 'draw':
         this.count('wandDraw');
-        [1047, 1319, 1568].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 1.01, 0.2, 0.06));
         this.swish(t0, 0.18, 600, 2400, 0.12, 1.1);
+        [1047, 1319, 1568].forEach((f, i) => this.blip(this.ambience, t0 + 0.04 + i * 0.05, f, 1.01, 0.2, 0.05));
         break;
       case 'holster':
         this.count('wandHolster');
-        [1568, 1319, 1047].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 0.99, 0.18, 0.05));
+        this.swish(t0, 0.16, 2200, 700, 0.09, 1.1);
+        [1568, 1319, 1047].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 0.99, 0.18, 0.045));
+        this.blip(this.ambience, t0 + 0.12, 420, 0.4, 0.3, 0.05, 'triangle');
         break;
       case 'whoosh':
-      case 'swap':
-      case 'handle':
-      case 'blow':
-        // Not metal: the same air and cloth as the gun's.
-        this.gunCue(cue);
+        this.gunCue('whoosh');
+        break;
+      case 'boot':
+        // The rotor spinning up: a soft hum climbing an octave.
+        this.count('wandBoot');
+        this.blip(this.ambience, t0, 160, 2, 0.45, 0.06, 'sawtooth');
+        this.blip(this.ambience, t0, 320, 2, 0.45, 0.04, 'triangle');
+        break;
+      case 'ready':
+        this.count('wandReady');
+        this.blip(this.ambience, t0, 1760, 1, 0.12, 0.05);
+        this.blip(this.ambience, t0 + 0.07, 2637, 1, 0.18, 0.04);
+        break;
+      case 'charge':
+        // Gathering: a glittering run that climbs.
+        this.count('wandCharge');
+        for (let i = 0; i < 6; i++) this.blip(this.ambience, t0 + i * 0.04, 880 * 2 ** (i / 4), 1.01, 0.12, 0.03);
+        this.shimmer(this.ambience, t0, 0.3, 0.03);
+        break;
+      case 'release':
+        this.wandZap();
+        break;
+      case 'lumos':
+        // The tip catching light: a rising bell over a breath of glitter.
+        this.count('wandLumos');
+        this.blip(this.ambience, t0, 660, 2, 0.5, 0.08, 'triangle');
+        [1319, 1976].forEach((f, i) => this.blip(this.ambience, t0 + 0.08 + i * 0.08, f, 1, 0.6, 0.05));
+        this.shimmer(this.ambience, t0, 0.7, 0.04);
+        break;
+      case 'swish':
+        this.count('wandSwish');
+        this.swish(t0, 0.32, 500, 2800, 0.18, 1.6);
+        break;
+      case 'flick':
+        this.count('wandFlick');
+        this.swish(t0, 0.08, 2600, 5200, 0.16, 2.4);
+        this.blip(this.ambience, t0 + 0.03, 1568, 1.5, 0.25, 0.08);
+        this.shimmer(this.ambience, t0, 0.6, 0.05);
+        break;
+      case 'flare':
+        // Off the tip and climbing: a whistle rising an octave and a half.
+        this.count('wandFlare');
+        this.blip(this.ambience, t0, 900, 2.8, 0.7, 0.05);
+        this.swish(t0, 0.5, 800, 4200, 0.12, 3);
         break;
       case 'catch':
         this.count('wandCatch');
         this.play(pick(this.buf.steps), { gain: 0.35, rate: 2.1, when: t0 });
         break;
-      case 'cock':
-      case 'open':
-      case 'shut':
-        this.count('wandTwinkle');
-        this.blip(this.ambience, t0, rand(1800, 2600), 1.02, 0.15, 0.05);
+      case 'tick':
+        this.count('wandTick');
+        this.blip(this.ambience, t0, rand(2300, 2500), 1, 0.04, 0.035, 'square');
         break;
-      case 'ratchet':
-        // Charging up: a glittering run that climbs.
-        this.count('wandCharge');
-        for (let i = 0; i < 10; i++) this.blip(this.ambience, t0 + i * 0.09, 880 * 2 ** (i / 6), 1.01, 0.14, 0.035);
-        this.shimmer(this.ambience, t0, 1, 0.03);
+      case 'done':
+        // The build passing: a bright major arpeggio.
+        this.count('wandDone');
+        [1047, 1319, 1568, 2093].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.07, f, 1, 0.35, 0.06));
+        this.shimmer(this.ambience, t0 + 0.2, 0.6, 0.04);
         break;
-      case 'puff':
+      case 'shield':
+        // The ward going up: a low swell under a high ring.
+        this.count('wandShield');
+        this.blip(this.ambience, t0, 220, 1.5, 0.8, 0.08, 'triangle');
+        this.blip(this.ambience, t0 + 0.05, 1760, 0.98, 0.9, 0.04);
+        this.shimmer(this.ambience, t0, 0.9, 0.04);
         break;
     }
   }

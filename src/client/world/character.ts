@@ -8,8 +8,7 @@ import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
-import { type Muzzle, SPIN_AT, disposeGun, setCylinder } from './gun';
-import { type Sidearm, sidearmProp } from './wand';
+import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
@@ -569,7 +568,7 @@ export class Person {
    * A .44 Magnum or the wand in the right fist (see setGunPose): where the fist holds it, the pivot
    * it spins round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
-  private gun: { kind: Sidearm; mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
+  private gun: { mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
   private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
   constructor(name: string, color: string, look: Look) {
@@ -1048,11 +1047,11 @@ export class Person {
   }
 
   /**
-   * A .44 Magnum (or the wand) in the right fist, posed (see GunMotion: drawn, holstered,
+   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered,
    * mid-trick), or away in its holster (null). The arm swings up to aim as it draws.
    */
-  setGunPose(pose: Readonly<GunPose> | null, kind: Sidearm = 'magnum') {
-    if (this.gun && (!pose || this.gun.kind !== kind)) {
+  setGunPose(pose: Readonly<GunPose> | null) {
+    if (this.gun && !pose) {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
@@ -1074,14 +1073,15 @@ export class Person {
     const wrist = new THREE.Group();
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
-    const { prop, muzzle } = sidearmProp(kind);
+    const prop = magnum();
+    const muzzle = new Muzzle();
     prop.position.copy(SPIN_AT).negate();
     prop.add(muzzle.group);
     pivot.add(prop);
     wrist.add(pivot);
     mount.add(wrist);
     this.armL.add(mount);
-    this.gun = { kind, mount, wrist, pivot, prop, muzzle, pose };
+    this.gun = { mount, wrist, pivot, prop, muzzle, pose };
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
