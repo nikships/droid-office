@@ -4,6 +4,7 @@ import { promptImages } from './images';
 import { colorDot } from './kit';
 import { agentPicker, type AgentFields } from './models';
 import { pictureHint, repoPicker, sendHint, worktreeRow } from './prompt';
+import { promptExtras } from './prompt-box';
 
 // Send a prompt about an issue or PR to a worker: a new one at a free desk, or one already sitting
 // at a desk (it lands in their input box, queued if they're busy).
@@ -43,6 +44,7 @@ export function openAsk(opts: AskOptions) {
   const ta = h('textarea.input', { id: 'ask-prompt', rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images = promptImages(ta);
+  const extras = promptExtras(ta);
   let remembered = false;
   try {
     remembered = localStorage.getItem(WT_KEY) === '1';
@@ -84,7 +86,7 @@ export function openAsk(opts: AskOptions) {
       {},
       h('div.field', {}, h('label', {}, 'Send to'), choices),
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
-      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, ta, pictureHint(), images.element)),
+      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, extras.element, pictureHint(), images.element)),
       newOpts,
     ),
     h('footer', {}, sendHint(false), cancel, submit),
@@ -92,7 +94,12 @@ export function openAsk(opts: AskOptions) {
   form.noValidate = true;
   pick(to);
 
-  const modal = openModal(form, { onClose: () => images.discard() });
+  const modal = openModal(form, {
+    onClose: () => {
+      images.discard();
+      extras.dispose();
+    },
+  });
   images.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
   let waiting = false;
@@ -113,6 +120,7 @@ export function openAsk(opts: AskOptions) {
       return;
     }
     const picked = images.take();
+    if (text) extras.sent(text);
     modal.close();
     if (!to && opts.worktreeOption) {
       try {
