@@ -209,32 +209,6 @@ export function putDownGlass(g: THREE.Group) {
   g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
 }
 
-/** On a smoke break, one drag every this many seconds. */
-export const SMOKE_CYCLE = 6;
-/** When, in a smoke cycle, the smoke is blown out. */
-export const EXHALE_AT = 2.5;
-
-/** How far the cigarette hand is up at the mouth (0..1), `c` seconds into a smoke cycle. */
-export function dragCurve(c: number): number {
-  const ease = (x: number) => x * x * (3 - 2 * x);
-  if (c < 0.7) return ease(c / 0.7);
-  if (c < 1.7) return 1;
-  if (c < 2.3) return 1 - ease((c - 1.7) / 0.6);
-  return 0;
-}
-
-/** A cigarette, lit end toward +z, and the material of its glowing tip. */
-export function cigarette(): { group: THREE.Group; ember: THREE.MeshToonMaterial } {
-  const group = new THREE.Group();
-  group.add(mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.12, 8).rotateX(Math.PI / 2), toon('#fffaf3'), 0, 0, 0.01, false));
-  group.add(mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.045, 8).rotateX(Math.PI / 2), toon('#e9a03b'), 0, 0, -0.07, false));
-  const ember = toonUnique('#ff6a2b');
-  ember.emissive = new THREE.Color('#ff3b00');
-  ember.emissiveIntensity = 0.3;
-  group.add(mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.02, 8).rotateX(Math.PI / 2), ember, 0, 0, 0.078, false));
-  return { group, ember };
-}
-
 /**
  * An open cardboard box with someone's desk things in it: a plant, a photo, a mug, a rubber duck and
  * some papers. It stands on y = 0 with its front toward +z.
@@ -310,7 +284,6 @@ export function boxOfStuff(): THREE.Group {
 }
 
 const v1 = new THREE.Vector3();
-const v2 = new THREE.Vector3();
 const q1 = new THREE.Quaternion();
 /** Where a person's fist holds the gun's grip, at the end of the arm. */
 const PERSON_GUN_MOUNT = new THREE.Vector3(0, -0.38, 0);
@@ -542,13 +515,6 @@ export class Person {
   private book: OpenBook | null = null;
   private bookHolder = new THREE.Group();
   pose: Pose = 'stand';
-  private cig: THREE.Group;
-  private ember: THREE.MeshToonMaterial;
-  /** Seconds into a smoke break, or -1 when not on one. */
-  private smokeT = -1;
-  private wispIn = 0;
-  /** Where smoke comes off: the lit end (a wisp) or the mouth, blowing it out along `dir`. */
-  onSmoke: ((kind: 'wisp' | 'exhale', at: THREE.Vector3, dir: THREE.Vector3) => void) | null = null;
   /** The emote being played, how far into it (seconds), and its emoji over their head. */
   private emoting: { emote: Emote; t: number; pop: THREE.Sprite; size: THREE.Vector2 } | null = null;
   /** A thumb up and a pointing finger on the right hand, out only for those emotes. */
@@ -623,16 +589,6 @@ export class Person {
     this.mug.position.set(0, -0.38, 0);
     this.mug.visible = false;
     this.armR.add(this.mug);
-    // For smoke breaks: a cigarette sticking out of the right fist (the arm on -x, see reach), lit end
-    // pointing down at your side and up and away when it's at your mouth.
-    const cig = cigarette();
-    this.cig = cig.group;
-    this.ember = cig.ember;
-    const along = new THREE.Vector3(0, -0.9, -0.44).normalize();
-    this.cig.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), along);
-    this.cig.position.set(0, -0.38, 0).addScaledVector(along, 0.07);
-    this.cig.visible = false;
-    this.armL.add(this.cig);
     // Between the hands when both arms are out in front (see update), its front to whoever they walk up to.
     const holder = this.cardHolder;
     holder.position.set(0, 0.8, 0.36);
@@ -845,7 +801,7 @@ export class Person {
   }
 
   /**
-   * Poses the emote over whatever the arms were doing (walking, sitting, a drag on a cigarette),
+   * Poses the emote over whatever the arms were doing (walking, sitting),
    * `k` of the way. The dance's bounce and steps only happen with both feet on the floor (`still`).
    */
   private emoteStep(dt: number, still: number) {
@@ -911,44 +867,6 @@ export class Person {
     e.pop.position.y = 2.42 + this.emojiLift + Math.min(u, 1.5) * 0.12;
     e.pop.material.rotation = Math.sin(u * 7) * 0.12;
     e.pop.material.opacity = THREE.MathUtils.clamp((seconds - u) / 0.4, 0, 1);
-  }
-
-  get smoking(): boolean {
-    return this.smokeT >= 0;
-  }
-
-  /** Lights a cigarette (or puts it out): it's in their right hand, and they take a drag every few seconds. */
-  setSmoking(on: boolean) {
-    if (on === this.smoking) return;
-    this.smokeT = on ? 0 : -1;
-    this.cig.visible = on;
-  }
-
-  /** A drag: up to the mouth, hold while the tip glows, back down, then blow the smoke out. */
-  private smokeStep(dt: number, walking: boolean, airborne: boolean) {
-    const prev = this.smokeT % SMOKE_CYCLE;
-    this.smokeT += dt;
-    const c = this.smokeT % SMOKE_CYCLE;
-    const k = walking || airborne ? 0 : dragCurve(c);
-    if (!airborne) {
-      this.armL.rotation.x = THREE.MathUtils.lerp(-0.9, -2.6, k);
-      this.armL.rotation.z = THREE.MathUtils.lerp(0.15, 0.6, k);
-    }
-    const glow = k > 0.9 ? 1.4 : 0.3;
-    this.ember.emissiveIntensity += (glow - this.ember.emissiveIntensity) * Math.min(1, dt * 6);
-    if (!this.onSmoke) return;
-    this.wispIn -= dt;
-    const exhale = prev < EXHALE_AT && c >= EXHALE_AT;
-    if (this.wispIn > 0 && !exhale) return;
-    this.root.updateMatrixWorld(true);
-    if (this.wispIn <= 0) {
-      this.wispIn = 0.16 + Math.random() * 0.12;
-      this.onSmoke('wisp', this.cig.localToWorld(v1.set(0, 0, 0.09)), v2.set(0, 1, 0));
-    }
-    if (exhale) {
-      const dir = v2.set(0, 0.25, 1).applyQuaternion(this.root.quaternion).normalize();
-      this.onSmoke('exhale', this.head.localToWorld(v1.set(0, -0.1, 0.36)), dir);
-    }
   }
 
   /** Sits down with the hips `hips` above the feet, on a couch or a chair, or gets up (null). */
@@ -1152,11 +1070,10 @@ export class Person {
     this.sitK += ((this.hips === null ? 0 : 1) - this.sitK) * Math.min(1, dt * 10);
     const sit = this.sitK > 0.001 ? this.sitK : 0;
     if (sit) {
-      // Legs out over the edge of the seat, hands in the lap (a cigarette still comes up for a drag).
+      // Legs out over the edge of the seat, hands in the lap.
       for (const leg of [this.legL, this.legR]) leg.rotation.x = THREE.MathUtils.lerp(leg.rotation.x, -1.35, sit);
       for (const arm of [this.armL, this.armR]) arm.rotation.x = THREE.MathUtils.lerp(arm.rotation.x, -0.55, sit);
     }
-    if (this.smokeT >= 0) this.smokeStep(dt, moving, airborne);
     if (this.book) {
       // Both arms out in front, hands under the book's bottom corners.
       this.armL.rotation.set(-1.5, 0, 0.32);

@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import { randomLook } from '../shared/avatar';
 import {
-  BALCONY,
   BEANBAGS,
   COMPUTE_WALL,
   DESK_BY_ID,
@@ -401,15 +400,9 @@ const hands = new Hands(store.profile.color, me.skinColor);
 const caffeine = new Caffeine();
 /** No shaking the view for the coffee jitters when the system asks for less motion. */
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-// Cigarette smoke, from anyone on a smoke break.
+// Muzzle smoke, and the dust kicked up landing off a fire pole.
 const smoke = new Smoke();
 scene.add(smoke.group);
-const camLocal = new THREE.Vector3();
-// Yours comes off the cigarette in your hand and out in front of the camera.
-me.onSmoke = (kind) => {
-  if (kind === 'wisp') return smoke.wisp(camera.localToWorld(hands.cigTip(camLocal)));
-  smoke.exhale(camera.localToWorld(camLocal.set(0, -0.14, -0.3)), camera.getWorldDirection(camLocal).setY(0.1).normalize());
-};
 const sound = new OfficeSound();
 sound.setVolume(settings.volume, settings.muted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
@@ -2223,15 +2216,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'coffee') drinkCoffee();
-  else if (target.kind === 'smoke') {
-    if (smokeBreakUntil) {
-      setSmoking(false);
-      toast('You stub it out in the ashtray');
-    } else {
-      setSmoking(true);
-      toast('🚬 Smoke break');
-    }
-  } else if (target.kind === 'gong') hitGong();
+  else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'cabinet') cabinet.play();
   else if (target.kind === 'ladder') grabLadder();
   else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
@@ -2325,36 +2310,6 @@ function drinkCoffee() {
   if (jittery) toast('☕ One cup too many… you’ve got the jitters!', 'warn');
   else if (caffeine.cups > 1) toast('☕ Another cup: back to a full minute of buzz');
   else toast('☕ Fresh coffee! A minute of quicker feet and higher jumps');
-}
-
-// ---- Smoke breaks ------------------------------------------------------------------------------------
-/** When your smoke break ends by itself (performance.now()), or 0 when you're not on one. */
-let smokeBreakUntil = 0;
-const SMOKE_BREAK_MS = 90_000;
-
-function setSmoking(on: boolean) {
-  if (on === smokeBreakUntil > 0) return;
-  smokeBreakUntil = on ? performance.now() + SMOKE_BREAK_MS : 0;
-  me.setSmoking(on);
-  hands.setSmoking(on);
-}
-
-/** Out on the balcony (a little slack at the door), where smoking is allowed. */
-function onBalcony(): boolean {
-  const p = player.pos;
-  return p.y > -0.5 && p.y < 2 && p.x > BALCONY.minX - 0.5 && p.x < BALCONY.maxX + 0.5 && p.z > BALCONY.minZ - 0.8 && p.z < BALCONY.maxZ + 0.5;
-}
-
-/** Ends the break when the cigarette burns down, or when you take it back inside. */
-function checkSmokeBreak(now: number) {
-  if (!smokeBreakUntil) return;
-  if (!onBalcony()) {
-    setSmoking(false);
-    toast('🚭 No smoking inside, so you put it out');
-  } else if (now > smokeBreakUntil) {
-    setSmoking(false);
-    toast("That one's done. Back to work!");
-  }
 }
 
 // ---- Carrying an issue card ------------------------------------------------------------------------
@@ -2711,8 +2666,6 @@ function hintFor(it: Interactable): Hint {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
       return { k: String(buzzed), parts: [title('☕ Coffee machine'), key('E', buzzed ? 'Another cup' : 'Grab a cup')] };
     }
-    case 'smoke':
-      return { k: String(smokeBreakUntil > 0), parts: [title('🚬 Ashtray'), key('E', smokeBreakUntil ? 'Stub it out' : 'Take a smoke break')] };
     case 'gong':
       return { k: '', parts: [title('🎉 Merge gong'), aside('rings when a PR merges'), key('E', 'Bang it')] };
     case 'jukebox': {
@@ -3240,7 +3193,6 @@ const REACH: Record<InteractKind, number> = {
   computers: 9,
   tv: 10,
   decor: 9,
-  smoke: 3,
   elevator: 4.5,
   gong: 3.5,
   jukebox: 4,
@@ -3595,7 +3547,6 @@ function frame(ts?: number) {
     office.stack.update(dt, [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }], camera.position);
     office.jukebox.update(t, dt, sound.beat());
   }
-  checkSmokeBreak(now);
   smoke.update(dt, camera);
   confetti.update(dt);
   if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);

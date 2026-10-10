@@ -164,18 +164,6 @@ export const SHAPES = {
   rung: shape(all([1.25, 1.45]), 0, 0.85, 0.7),
   /** Round a fire pole, palm in. */
   pole: shape(all([1.25, 1.45]), 0, 0.85, 0.7, 1),
-  /** A cigarette between the first two fingers, the other two tucked in. */
-  cigarette: shape(
-    [
-      [0.18, 0.22],
-      [0.22, 0.26],
-      [1.1, 1.5],
-      [1.2, 1.5],
-    ],
-    0,
-    0.25,
-    0.25,
-  ),
 } as const satisfies Record<string, HandShape>;
 
 /** How a shape turns the thumb's root: [about y, x, z] for the right hand (the left mirrors y and z). */
@@ -393,8 +381,6 @@ export class Glove {
   readonly group = new THREE.Group();
   /** The middle of the index finger's middle bone: what the gun spins on. */
   readonly trigger = new THREE.Object3D();
-  /** Between the first two fingers at their middle joints, where a cigarette is held. */
-  readonly twoFingers = new THREE.Object3D();
   private fingers: Finger[] = [];
   private thumb: [THREE.Group, THREE.Group, THREE.Group];
   private target: HandShape = SHAPES.relaxed;
@@ -438,8 +424,6 @@ export class Glove {
     });
     this.fingers[0].joints[1].add(this.trigger);
     this.trigger.position.z = -FINGERS[0].bones[1] / 2;
-    this.fingers[0].joints[1].add(this.twoFingers);
-    this.twoFingers.position.set(s * (FINGERS[0].x - FINGERS[1].x) * 0.5, 0, -0.006);
     this.thumb = digit('glove-thumb', new THREE.Vector3(-s * THUMB.x, THUMB.y, THUMB.z), THUMB.bones, THUMB.r, 0.07);
 
     const t = this.target;

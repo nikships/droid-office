@@ -309,10 +309,8 @@ export const EXIT_STAIRS = {
 
 /** Glass doors out to the balcony, on the south wall. They slide apart into the wall on either side. */
 export const BALCONY_DOOR: Opening = { wall: 'south', u: -4, width: 3, y0: 0, y1: 2.5 };
-/** The smoking balcony, hanging over the garage entrance. */
+/** The balcony, hanging over the garage entrance. */
 export const BALCONY = { minX: -10.5, maxX: 2.5, minZ: FLOOR.maxZ + WALL_T, maxZ: FLOOR.maxZ + WALL_T + 3.4 } as const;
-/** The ashtray on the balcony, where a smoke break starts. */
-export const ASHTRAY = { x: -8.2, z: BALCONY.maxZ - 0.55 } as const;
 /**
  * Leaving a floor above the bottom one, with no exit door: out through the balcony doors to the
  * railing straight ahead (`jump`), up onto its top (`railTop` high), and over it by parachute. The

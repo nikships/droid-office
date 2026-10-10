@@ -108,7 +108,7 @@ interface Puff {
 const MAX = 160;
 const tmp = new THREE.Vector3();
 
-/** Cigarette smoke: soft grey puffs that drift up on the breeze, spread out and fade. */
+/** Soft grey puffs that drift up, spread out and fade: muzzle smoke, and the dust off a landing. */
 export class Smoke {
   readonly group = new THREE.Group();
   private live: Puff[] = [];
@@ -116,14 +116,14 @@ export class Smoke {
   private geo = new THREE.PlaneGeometry(1, 1);
   private tex = puffTexture();
 
-  /** A thin wisp curling up off a cigarette's lit end (or a muzzle), blown along `push` if it's given. */
+  /** A thin wisp, blown along `push` if it's given. */
   wisp(at: THREE.Vector3, push?: THREE.Vector3) {
     tmp.set((Math.random() - 0.5) * 0.06, 0.3 + Math.random() * 0.1, (Math.random() - 0.5) * 0.06);
     if (push) tmp.add(push);
     this.emit(at, tmp, 0.06, 0.4, 2.4, 0.5);
   }
 
-  /** A lungful blown out along `dir` (a unit vector). */
+  /** A burst of puffs along `dir` (a unit vector). */
   exhale(at: THREE.Vector3, dir: THREE.Vector3) {
     for (let i = 0; i < 8; i++) {
       const speed = 0.95 - i * 0.08;
