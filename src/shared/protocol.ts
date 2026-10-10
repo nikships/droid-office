@@ -890,7 +890,7 @@ export type ClientMsg =
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
-  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left in the Sessions window. */
+  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string }

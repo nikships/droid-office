@@ -1,7 +1,7 @@
 // Droid sessions: the account's recent sessions, the office's own workers' among them
 // (WorkerInfo.sessionId matches FactorySession.id), what each has cost, and the transcript's
-// messages. Read by src/server/factory/sessions.ts; drawn by the lounge TV (world/factory-tv.ts),
-// the Sessions window (ui/factory-sessions.ts) and the transcript (ui/factory-transcript.ts).
+// messages. Read by src/server/factory/sessions.ts; drawn by the lounge TV (world/factory-tv.ts)
+// and the transcript (ui/factory-transcript.ts).
 
 export type FactorySessionStatus = 'idle' | 'pending' | 'running';
 

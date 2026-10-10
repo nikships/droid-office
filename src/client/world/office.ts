@@ -77,7 +77,6 @@ export type InteractKind =
   | 'services'
   | 'queue'
   | 'ci'
-  | 'tv'
   | 'coffee'
   | 'decor'
   | 'elevator'
@@ -1385,9 +1384,6 @@ export function buildOffice(): Office {
   tvGroup.position.set(TV.x - 0.1, TV.y, TV.z);
   tvGroup.rotation.y = -Math.PI / 2;
   group.add(tvGroup);
-  const tv: Interactable = { kind: 'tv', x: TV.x - 4.5, z: TV.z, radius: 3.2 };
-  interactables.push(tv);
-  tvGroup.userData.interact = tv;
   fixture('east', TV.z, TV.y, TV.width + 0.3, TV.height + 0.3);
 
   // The compute wall between the exit door and the kitchen, facing the desks: two screens in one
