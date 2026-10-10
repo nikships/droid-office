@@ -134,6 +134,10 @@ test('GitHub’s runs and jobs come through in the office’s shapes', () => {
   assert.equal(r.path, '.github/workflows/release.yml');
   const bare = githubRun({ id: 1, status: 'queued', head_commit: { message: 'First line\nmore' } });
   assert.deepEqual([bare.workflow, bare.title, bare.state, bare.status, bare.actor, bare.path], ['Workflow', 'First line', 'pending', 'queued', undefined, undefined]);
+  // Started by hand, GitHub titles it with the workflow's name: the commit says more.
+  const byHand = (head_commit?: { message: string }) => githubRun({ id: 2, name: 'Release', display_title: 'Release', event: 'workflow_dispatch', head_commit }).title;
+  assert.equal(byHand({ message: 'feat: a board\n\nbody' }), 'feat: a board');
+  assert.equal(byHand(), 'Release');
 
   const j = githubJob({
     id: 7,

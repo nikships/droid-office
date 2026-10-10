@@ -203,11 +203,15 @@ type Json = Record<string, any>;
 
 /** A run as GitHub's REST API has it (GET /repos/{owner}/{repo}/actions/runs). */
 export function githubRun(r: Json): PipelineRun {
+  const workflow = String(r.name ?? 'Workflow');
+  const commit = typeof r.head_commit?.message === 'string' ? r.head_commit.message.split('\n')[0] : '';
+  // A run started by hand is titled with its workflow's name, which the row already shows.
+  const title = r.display_title && (r.display_title !== workflow || !commit) ? String(r.display_title) : commit;
   return {
     id: Number(r.id),
     number: Number(r.run_number ?? 0),
-    workflow: String(r.name ?? 'Workflow'),
-    title: String(r.display_title ?? r.head_commit?.message?.split('\n')[0] ?? ''),
+    workflow,
+    title,
     state: githubState(r.status, r.conclusion),
     status: String(r.conclusion && r.status === 'completed' ? r.conclusion : (r.status ?? '')),
     event: String(r.event ?? ''),
