@@ -79,7 +79,7 @@ import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openMo
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
-import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
+import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
@@ -874,6 +874,8 @@ net.onMessage((msg) => {
       if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
+      const following = changesLogFor();
+      if (following && following !== openId && store.workers.has(following)) net.send({ t: 'worker.attach', workerId: following });
       renderProject();
       hud.refresh();
       // Back from a restart on another version: this page's code is stale, so load the new one.
