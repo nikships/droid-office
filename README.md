@@ -28,9 +28,9 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 
 - **A desk for every agent.** Walk up, press **E**, pick a model, and a Droid worker sits down. Its live terminal opens on the laptop in front of it.
 - **One terminal, every window.** Open the same live session in a second browser tab; it keeps streaming in each, with full scrollback.
-- **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards, task queue and workers.
+- **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards and workers.
 - **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
-- **A task queue that works while you don't.** Queue tasks and walk away. Each one gets a fresh worker on its own git branch, and the PR shows up on the board when it's ready.
+- **CI on the wall.** The Pipelines board shows your GitHub Actions runs (or GitLab pipelines) as they run, wait and finish. Open a run to see its jobs and steps, re-run what failed, or kick off a workflow. Or just tell the Pipeline agent beside it to do it.
 - **A place worth being in.** A rooftop bar, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
 
 ## Why Droid Office

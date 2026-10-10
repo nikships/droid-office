@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
 import { DESK_BY_ID } from '../../shared/layout';
-import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, WorkerInfo } from '../../shared/protocol';
+import type { GhIssue, GhPull, GhState, ServiceInfo, WorkerInfo } from '../../shared/protocol';
+import type { Forge } from '../../shared/floors';
+import { pipelineGroups, type PipelinesState, type RunState } from '../../shared/pipelines';
+import { runRows } from './pipeline-rows';
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
@@ -638,18 +641,30 @@ export class ServicesBoardTexture {
   }
 }
 
-type QueueRow = { kind: 'running' | 'queued' | 'done' | 'failed'; issue?: number; text: string; side: string };
+const RUN_MARK: Record<RunState, [string, string]> = {
+  pending: ['\u25CB', MUTED],
+  running: ['', ORANGE],
+  success: ['\u2713', GREEN],
+  failure: ['\u2717', RED],
+  cancelled: ['\u2298', MUTED],
+  skipped: ['\u21B7', FAINT],
+};
 
 /**
- * The task queue: a wall display drawn like Factory's Mission Control terminal: a title row with the
- * pinwheel, a RUNNING bar of how many workers it keeps busy against how many it may, and a row per
- * task: what's being worked on, what's waiting, and the PRs that came out of it.
+ * The Pipelines board in the middle of the north wall: the floor's GitHub Actions runs or GitLab
+ * pipelines, drawn like a terminal: a window bar, the title with the pinwheel, a strip of how the
+ * last runs went, then a row per run (running ones first, with how far along their jobs are, then
+ * the queued ones, then the latest finished). Point at a row to open that run.
  */
-export class QueueBoardTexture {
+export class PipelinesBoardTexture {
   readonly texture: THREE.CanvasTexture;
   private canvas = document.createElement('canvas');
   private ctx: CanvasRenderingContext2D;
   private drawn = '';
+  /** The rows as they were last drawn, for pointing at. */
+  private rows: { id: number; y: number; h: number }[] = [];
+  private hovered: number | null = null;
+  private last: [PipelinesState, Forge, number] | null = null;
 
   constructor() {
     this.canvas.width = BOARD_W * SCREEN_SCALE;
@@ -661,41 +676,41 @@ export class QueueBoardTexture {
     this.texture.anisotropy = ANISOTROPY;
   }
 
-  render(state: QueueState, workers: Map<string, WorkerInfo>) {
-    const title = (t: QueueTask) => (t.issue !== undefined ? t.title.replace(new RegExp(`^#${t.issue}\\s*`), '') : t.title);
-    const running = state.tasks.filter((t) => t.status === 'running');
-    const queued = state.tasks.filter((t) => t.status === 'queued');
-    const done = state.tasks
-      .filter((t) => t.status === 'done')
-      .slice(-3)
-      .reverse();
-    const rows: QueueRow[] = [
-      ...running.map((t): QueueRow => {
-        const w = t.workerId ? workers.get(t.workerId) : undefined;
-        const st = { starting: 'starting', idle: 'ready', working: 'working', needs_input: 'needs input', done: 'done', exited: 'stopped', offline: 'asleep' }[w?.status ?? 'working'];
-        return { kind: 'running', issue: t.issue, text: title(t), side: `${t.workerName ?? 'a worker'} · ${st}` };
-      }),
-      ...queued.map((t, i): QueueRow => ({ kind: 'queued', issue: t.issue, text: title(t), side: i === 0 ? 'up next' : `${i + 1}${['th', 'st', 'nd', 'rd'][i + 1 <= 3 ? i + 1 : 0]} in line` })),
-      ...done.map(
-        (t): QueueRow => ({
-          kind: t.outcome === 'done' ? 'done' : 'failed',
-          issue: t.issue,
-          text: title(t),
-          side: t.pr ? `PR #${t.pr.number}${t.pr.state === 'MERGED' ? ' · merged' : ''}` : t.outcome === 'done' ? 'done' : t.outcome === 'failed' ? "didn't start" : t.outcome === 'killed' ? 'sent home' : 'stopped',
-        }),
-      ),
-    ];
-    const paused = state.maxWorkers === 0;
-    const summary = paused ? 'paused' : `${running.length} working · ${queued.length} waiting · up to ${state.maxWorkers} at once`;
-    const key = JSON.stringify([rows, summary]);
+  /** The run whose row is at a point on the board's face (its uv), or undefined. */
+  runAt(uv: THREE.Vector2): number | undefined {
+    const px = uv.x * BOARD_W;
+    const py = (1 - uv.y) * BOARD_H;
+    if (px < 24 || px > BOARD_W - 24) return undefined;
+    return this.rows.find((r) => py >= r.y && py < r.y + r.h)?.id;
+  }
+
+  /** Outlines the run being pointed at (null for none). */
+  hover(id: number | null) {
+    if (id === this.hovered) return;
+    this.hovered = id;
+    if (this.last) this.render(...this.last);
+  }
+
+  render(state: PipelinesState, forge: Forge, now = Date.now()) {
+    this.last = [state, forge, now];
+    const rows = runRows(state, now);
+    const shown = rows.slice(0, 6);
+    const groups = pipelineGroups(state.runs);
+    const finished = groups.recent.filter((r) => r.state === 'success' || r.state === 'failure').slice(0, 24);
+    const passed = finished.filter((r) => r.state === 'success').length;
+    const live = groups.running.length > 0;
+    // The spinner on a running row turns a step each second.
+    const phase = live ? Math.floor(now / 1000) % 8 : 0;
+    const key = JSON.stringify([shown, rows.length, finished.map((r) => r.state), state.error, state.fetchedAt > 0, forge, this.hovered, phase]);
     if (key === this.drawn) return;
     this.drawn = key;
+    this.rows = [];
     const g = this.ctx;
     const W = BOARD_W;
     const H = BOARD_H;
     backdrop(g);
 
-    // The terminal's window bar: three dots and its title, centered.
+    // The terminal's window bar: three dots and its command, centered.
     g.fillStyle = '#0c0c0c';
     g.fillRect(0, 0, W, 40);
     g.fillStyle = HAIR;
@@ -703,113 +718,168 @@ export class QueueBoardTexture {
     for (let i = 0; i < 3; i++) {
       g.beginPath();
       g.arc(30 + i * 22, 20, 6, 0, Math.PI * 2);
-      g.fillStyle = '#2a2a2a';
+      g.fillStyle = i === 0 && live ? ORANGE : '#2a2a2a';
       g.fill();
     }
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     mono(g, 500, 16, 0.06);
     g.fillStyle = FAINT;
-    g.fillText('droid -- mission control -- 02 ticket to code', W / 2, 21);
+    g.fillText(forge === 'gitlab' ? 'glab ci list -- 02 pipelines' : 'gh run list -- 02 pipelines', W / 2, 21);
 
-    // The title row: the pinwheel and the board's name in orange, how it stands on the right.
+    // The title row: the pinwheel and the forge's CI in orange, what's going on the right.
     g.textAlign = 'left';
     g.fillStyle = ORANGE;
     paintGlyph(g, 52, 78, 30);
     mono(g, 600, 30, 0.08);
-    g.fillText('TASK QUEUE', 80, 79);
+    g.fillText(forge === 'gitlab' ? 'GITLAB PIPELINES' : 'GITHUB ACTIONS', 80, 79);
+    const counts = [groups.running.length && `${groups.running.length} running`, groups.pending.length && `${groups.pending.length} waiting`].filter(Boolean).join('  \u00B7  ');
     g.textAlign = 'right';
     mono(g, 500, 20, 0.02);
-    g.fillStyle = MUTED;
-    g.fillText(summary, W - 36, 79);
+    g.fillStyle = live ? INK : MUTED;
+    g.fillText(counts || (state.runs.length ? 'all quiet' : ''), W - 36, 79);
 
-    // The RUNNING bar: how many it keeps busy of the most it may.
+    // How the latest runs went: a block each, oldest on the left, and how many passed.
     const barY = 120;
-    const live = running.length > 0;
-    const word = paused ? '|| PAUSED' : live ? '\u25CF RUNNING' : '\u25CB IDLE';
     g.textAlign = 'left';
-    mono(g, 600, 20, 0.1);
-    g.fillStyle = live && !paused ? ORANGE : MUTED;
-    g.fillText(word, 36, barY);
+    mono(g, 600, 18, 0.1);
+    g.fillStyle = live ? ORANGE : MUTED;
+    g.fillText(live ? '\u25CF RUNNING' : '\u25CB IDLE', 36, barY);
+    const rate = finished.length ? `${passed}/${finished.length} PASSED` : 'NO RUNS YET';
+    g.textAlign = 'right';
+    g.fillStyle = finished.length && passed === finished.length ? GREEN : finished.length ? INK : MUTED;
+    g.fillText(rate, W - 36, barY);
+    const rateW = g.measureText(rate).width;
     const bx = 36 + 170;
-    const bw = W - 36 - bx;
-    g.fillStyle = '#1a1a1a';
-    g.fillRect(bx, barY - 9, bw, 18);
-    const f = paused ? 0 : Math.min(1, running.length / Math.max(1, state.maxWorkers));
-    if (f > 0) {
-      g.fillStyle = ORANGE;
-      g.fillRect(bx, barY - 9, bw * f, 18);
+    const bw = W - 36 - rateW - 28 - bx;
+    const slots = 24;
+    const gap = 4;
+    const cell = (bw - gap * (slots - 1)) / slots;
+    for (let i = 0; i < slots; i++) {
+      const r = finished[slots - 1 - i];
+      g.fillStyle = !r ? '#161616' : r.state === 'success' ? GREEN : RED;
+      g.globalAlpha = r ? 0.85 : 1;
+      g.fillRect(bx + i * (cell + gap), barY - 9, cell, 18);
     }
-    // A tick per worker it may keep busy.
-    g.fillStyle = BG;
-    for (let i = 1; i < Math.min(state.maxWorkers, 24); i++) g.fillRect(bx + (bw * i) / state.maxWorkers - 1.5, barY - 9, 3, 18);
+    g.globalAlpha = 1;
     g.fillStyle = HAIR;
     g.fillRect(0, 150, W, 1.5);
     g.textBaseline = 'alphabetic';
 
-    if (!rows.length) {
+    if (!shown.length) {
+      const loading = state.loading && !state.fetchedAt;
       g.textAlign = 'center';
-      g.fillStyle = INK;
-      mono(g, 600, 40, 0.06);
-      g.fillText('Nothing queued', W / 2, (150 + H) / 2 - 6);
+      g.fillStyle = state.error ? ORANGE : INK;
+      mono(g, 600, state.error ? 30 : 40, 0.04);
+      const head = state.error ? "Can't read the runs" : loading ? 'Loading…' : 'No runs yet';
+      g.fillText(head, W / 2, (150 + H) / 2 - 10);
       g.fillStyle = MUTED;
       mono(g, 500, 22, 0.02);
-      g.fillText('Add issues from 01 TRIAGE, or press E here', W / 2, (150 + H) / 2 + 40);
+      const why = state.error ?? (loading ? '' : forge === 'gitlab' ? 'Pipelines from .gitlab-ci.yml show up here as they run' : 'Workflows in .github/workflows show up here as they run');
+      wrap(g, why.replace(/`/g, ''), W - 160, 2).forEach((line, i) => g.fillText(line, W / 2, (150 + H) / 2 + 36 + i * 30));
       g.textAlign = 'left';
       track(g, 0);
       this.texture.needsUpdate = true;
       return;
     }
-    // A section eyebrow, then the rows, as the terminal lists them.
-    mono(g, 600, 16, 0.14);
-    g.fillStyle = MUTED;
-    g.fillText('TASKS', 36, 182);
-    const listTop = 196;
-    const shown = rows.slice(0, 7);
-    const rowH = Math.min(56, (H - listTop - 30) / shown.length);
-    const fs = Math.round(rowH * 0.48);
-    const MARK: Record<QueueRow['kind'], [string, string]> = { running: ['\u25B8', ORANGE], queued: ['\u00B7', MUTED], done: ['\u2713', GREEN], failed: ['\u2717', RED] };
+
+    const listTop = 162;
+    const bottom = H - 26;
+    const rowH = Math.min(76, (bottom - listTop) / Math.max(shown.length, 4));
+    const fs = Math.round(rowH * 0.34);
+    const subPx = Math.round(fs * 0.68);
+    const sideX = W - 44;
     shown.forEach((r, i) => {
-      const y = listTop + i * rowH + rowH * 0.66;
-      if (r.kind === 'running') {
+      const y = listTop + i * rowH;
+      this.rows.push({ id: r.id, y, h: rowH });
+      const hot = r.id === this.hovered;
+      if (hot) {
+        g.fillStyle = PANEL_HOT;
+        g.fillRect(24, y + 3, W - 48, rowH - 6);
+        g.strokeStyle = ORANGE;
+        g.lineWidth = 2;
+        g.strokeRect(25, y + 4, W - 50, rowH - 8);
+      } else if (r.state === 'running') {
         g.fillStyle = 'rgba(238, 96, 24, .07)';
-        g.fillRect(24, listTop + i * rowH + 3, W - 48, rowH - 6);
+        g.fillRect(24, y + 3, W - 48, rowH - 6);
       }
-      const [mark, markColor] = MARK[r.kind];
-      mono(g, 700, fs, 0);
-      g.fillStyle = markColor;
-      g.fillText(mark, 40, y);
-      const sideFont = Math.round(fs * 0.74);
-      mono(g, 500, sideFont, 0.02);
+      if (r.state === 'failure' || r.state === 'running') {
+        g.fillStyle = r.state === 'failure' ? RED : ORANGE;
+        g.fillRect(24, y + 3, 4, rowH - 6);
+      }
+      const mid = y + rowH / 2;
+      const line1 = mid - rowH * 0.06;
+      const line2 = mid + rowH * 0.3;
+      // The mark: a turning arc while it runs, else the outcome.
+      const mx = 50;
+      if (r.state === 'running') {
+        const rad = fs * 0.42;
+        g.strokeStyle = 'rgba(238, 96, 24, .25)';
+        g.lineWidth = 3;
+        g.beginPath();
+        g.arc(mx, mid, rad, 0, Math.PI * 2);
+        g.stroke();
+        g.strokeStyle = ORANGE;
+        g.beginPath();
+        const a0 = (phase / 8) * Math.PI * 2 - Math.PI / 2;
+        g.arc(mx, mid, rad, a0, a0 + Math.PI * 0.6);
+        g.stroke();
+      } else {
+        const [mark, color] = RUN_MARK[r.state];
+        mono(g, 700, Math.round(fs * 1.05), 0);
+        g.fillStyle = color;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(mark, mx, mid + 1);
+        g.textAlign = 'left';
+        g.textBaseline = 'alphabetic';
+      }
+      // The right-hand column first, so the title knows how much room it has.
+      const done = r.state !== 'running' && r.state !== 'pending';
       g.textAlign = 'right';
-      const sideW = g.measureText(r.side).width;
-      g.fillStyle = r.kind === 'running' ? INK : MUTED;
-      g.fillText(r.side, W - 40, y);
+      mono(g, 600, Math.round(fs * 0.78), 0.04);
+      g.fillStyle = r.state === 'failure' ? RED : r.state === 'running' ? INK : r.state === 'success' ? GREEN : MUTED;
+      g.fillText(r.side, sideX, line1);
+      const sideW = Math.max(g.measureText(r.side).width, 150);
+      mono(g, 500, subPx, 0.02);
+      g.fillStyle = MUTED;
+      g.fillText(clip(g, r.sideSub, 230), sideX, line2);
       g.textAlign = 'left';
-      let x = 80;
-      mono(g, 600, fs, 0);
-      if (r.issue !== undefined) {
-        const num = `#${r.issue}`;
-        g.fillStyle = r.kind === 'done' || r.kind === 'failed' ? MUTED : ORANGE;
-        g.fillText(num, x, y);
-        x += g.measureText(num).width + fs * 0.6;
-      }
-      mono(g, 500, fs, 0);
-      g.fillStyle = r.kind === 'done' || r.kind === 'failed' ? MUTED : INK;
-      const room = W - 40 - sideW - 30 - x;
-      const text = clip(g, r.text, room);
-      g.fillText(text, x, y);
-      if (r.kind === 'done' || r.kind === 'failed') {
-        g.fillStyle = 'rgba(140, 140, 140, .6)';
-        g.fillRect(x, y - fs * 0.32, Math.min(g.measureText(text).width, room), 2);
+      const x0 = 84;
+      const room = sideX - sideW - 36 - x0;
+      mono(g, 600, fs, 0.02);
+      g.fillStyle = done ? MUTED : ORANGE;
+      const wf = clip(g, r.workflow, Math.min(260, room * 0.4));
+      g.fillText(wf, x0, line1);
+      let x = x0 + g.measureText(wf).width + fs * 0.4;
+      mono(g, 500, Math.round(fs * 0.8), 0);
+      g.fillStyle = FAINT;
+      g.fillText(r.number, x, line1);
+      x += g.measureText(r.number).width + fs * 0.6;
+      sans(g, 600, fs);
+      g.fillStyle = done ? '#bdbdbd' : INK;
+      g.fillText(clip(g, r.title, x0 + room - x), x, line1);
+      mono(g, 500, subPx, 0.02);
+      g.fillStyle = MUTED;
+      g.fillText(clip(g, r.sub, room), x0, line2);
+      // How far along a running one's jobs are, along the foot of its row.
+      if (r.progress !== undefined) {
+        const py = y + rowH - 6;
+        g.fillStyle = 'rgba(238, 96, 24, .18)';
+        g.fillRect(28, py, W - 52, 3);
+        g.fillStyle = ORANGE;
+        g.fillRect(28, py, (W - 52) * Math.max(0.02, r.progress), 3);
+      } else if (i < shown.length - 1) {
+        g.fillStyle = HAIR;
+        g.fillRect(36, y + rowH - 1, W - 72, 1);
       }
     });
     track(g, 0);
     if (rows.length > shown.length) {
       g.fillStyle = MUTED;
-      mono(g, 500, 18, 0.1);
+      mono(g, 500, 16, 0.1);
       g.textAlign = 'right';
-      g.fillText(`+${rows.length - shown.length} MORE`, W - 40, H - 14);
+      g.fillText(`+${rows.length - shown.length} MORE  \u00B7  E TO OPEN`, W - 40, H - 8);
       g.textAlign = 'left';
       track(g, 0);
     }

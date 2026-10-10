@@ -208,7 +208,7 @@ export class Team {
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with office-workers report --question`;
     }
     const station = DESK_BY_ID.get(w.deskId)?.station;
-    if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: put the work on the task queue with office-queue`;
+    if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: suggest the Team lead at the kiosk on the east wall for work that needs a team`;
     if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents)`;
     return undefined;
   }
@@ -301,7 +301,7 @@ export class Team {
     if (tooMany) return no(409, tooMany);
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: hire with --no-worktree");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
-    // Its worktree starts from what's on the forge now, as the queue's do.
+    // Its worktree starts from what's on the forge now.
     if (worktree) await this.workers.fetchBase?.();
     const still = this.workers.get(lead.id);
     if (!still) return no(410, "You've left the floor");

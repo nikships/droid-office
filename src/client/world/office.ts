@@ -70,7 +70,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'services' | 'queue' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bar' | 'dj' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'services' | 'actions' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bar' | 'dj' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -1094,7 +1094,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy };
 }
 
-const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', queue: '02 ASK ME', lead: '04 ASK ME' };
+const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', actions: '02 ASK ME', lead: '04 ASK ME' };
 
 /** The wall behind a kiosk: the one the agent stands with its back to. */
 export function kioskWall(def: DeskDef): WallId {
@@ -1328,8 +1328,8 @@ export function buildOffice(): Office {
     // Out from the wall, the way the board faces.
     const nx = Math.sin(b.rotY);
     const nz = Math.cos(b.rotY);
-    // Every board hangs in a black steel frame; the queue's, in the middle, is a shade lighter.
-    const { group: bg, face } = wallBoard(b.width, b.height, key === 'queue' ? PALETTE.steel : '#4f4f4f');
+    // Every board hangs in a black steel frame; the Pipelines board's, in the middle, is a shade lighter.
+    const { group: bg, face } = wallBoard(b.width, b.height, key === 'actions' ? PALETTE.steel : '#4f4f4f');
     bg.position.set(b.x + nx * 0.08, b.y, b.z + nz * 0.08);
     bg.rotation.y = b.rotY;
     group.add(bg);

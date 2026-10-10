@@ -48,7 +48,7 @@ Usage:
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
 office uses it where it is (it never clones or copies a repository). Workers,
-terminals, boards and the task queue on a floor all belong to that checkout.
+terminals and boards on a floor all belong to that checkout.
 
 The first time it starts in a terminal with no floors, it walks you through
 which folder your projects are in and which of them to open first.

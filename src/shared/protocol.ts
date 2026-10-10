@@ -8,6 +8,7 @@ import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
+import type { PipelineDetail, PipelinesState } from './pipelines.js';
 import type { PromptId } from './prompts.js';
 import type { WorktreeSetupState } from './worktree-setup.js';
 
@@ -50,7 +51,7 @@ export interface PromptsState {
   /** Prompts someone rewrote, by id; the rest are the defaults. */
   custom: Partial<Record<PromptId, { text: string; by: string; at: number }>>;
   /**
-   * What a worker starts on when whoever starts it picks no model (the Queue agent's tasks, say).
+   * What a worker starts on when whoever starts it picks no model (a board agent, say).
    * Unset: Droid's own default model.
    */
   agent?: AgentChoice & { by: string; at: number };
@@ -296,44 +297,6 @@ export interface GhPull {
   closes: number[];
 }
 
-export type TaskStatus = 'queued' | 'running' | 'done';
-
-/** A task on the 📋 queue whiteboard: a GitHub issue or free text, seated to a worker by itself. */
-export interface QueueTask {
-  id: string;
-  /** Droid model requested for this task, instead of Droid's own default. */
-  model?: string;
-  /** Reasoning effort requested for this task, when one was chosen. */
-  effort?: AgentEffort;
-  /** The GitHub issue it came from, when it did. */
-  issue?: number;
-  title: string;
-  prompt: string;
-  addedBy: string;
-  addedAt: number;
-  status: TaskStatus;
-  /** The worker seated for it (it may have gone home since). */
-  workerId?: string;
-  workerName?: string;
-  /** The worker's own branch, when it got a worktree. */
-  branch?: string;
-  startedAt?: number;
-  finishedAt?: number;
-  /** How it ended: the worker finished its turn, stopped or fell asleep, was sent home, or never started. */
-  outcome?: 'done' | 'exited' | 'killed' | 'failed';
-  error?: string;
-  /** The pull request that closes the issue, or was opened from the worker's branch. */
-  pr?: { number: number; url: string; state: string; title: string };
-  /** Ids of the pictures pasted into the task (see ClientMsg `images`), kept until it starts. */
-  images?: string[];
-}
-
-export interface QueueState {
-  tasks: QueueTask[];
-  /** How many workers the queue may keep busy at once; 0 pauses it. */
-  maxWorkers: number;
-}
-
 /** Where a team webhook posts: Slack and Discord get their own message format, anything else plain JSON. */
 export type WebhookKind = 'slack' | 'discord' | 'other';
 
@@ -481,8 +444,8 @@ export interface ProjectInfo {
 }
 
 /**
- * One floor of the building: a project in its own checkout, with its own desks, workers, boards
- * and queue. You go between them in the elevator.
+ * One floor of the building: a project in its own checkout, with its own desks, workers and
+ * boards. You go between them in the elevator.
  */
 export interface FloorInfo {
   id: string;
@@ -543,7 +506,8 @@ export interface FloorView {
   workers: WorkerInfo[];
   issues: GhState<GhIssue>;
   pulls: GhState<GhPull>;
-  queue: QueueState;
+  /** The repository's GitHub Actions runs, or the GitLab project's pipelines. */
+  pipelines: PipelinesState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
   services: ServicesState;
@@ -756,12 +720,12 @@ export interface SearchResults {
 }
 
 /** Why the gong rang. */
-export type GongWhy = 'hit' | 'merged' | 'queue';
+export type GongWhy = 'hit' | 'merged';
 
 export type ClientMsg =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
-   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
+   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress).
    * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
@@ -812,15 +776,19 @@ export type ClientMsg =
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh or glab account; answered with gh.labeled. */
   | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; add: string[]; remove: string[] }
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; model?: string; effort?: AgentEffort; images?: string[] }
-  | { t: 'queue.remove'; taskId: string }
-  /** Move a queued task up (-1) or down (+1) the queue. */
-  | { t: 'queue.move'; taskId: string; delta: number }
-  /** Put a finished task back on the queue. */
-  | { t: 'queue.retry'; taskId: string }
-  /** Forget the finished tasks. */
-  | { t: 'queue.clear' }
-  | { t: 'queue.limit'; maxWorkers: number }
+  /** Look at the floor's GitHub Actions runs or GitLab pipelines again now. */
+  | { t: 'pipelines.refresh' }
+  /** A run's jobs (and their steps, on GitHub); answered with `pipelines.detail`. */
+  | { t: 'pipelines.detail'; id: number }
+  /** Run a finished run again: only its failed jobs, or all of it. Answered with `pipelines.done`. */
+  | { t: 'pipelines.rerun'; id: number; failed: boolean }
+  /** Cancel a run that's waiting or running; answered with `pipelines.done`. */
+  | { t: 'pipelines.cancel'; id: number }
+  /**
+   * Start a workflow by hand on `ref` (GitHub's workflow_dispatch, with its `inputs`), or a new GitLab
+   * pipeline (`workflow` "pipeline", the inputs as its variables). Answered with `pipelines.done`.
+   */
+  | { t: 'pipelines.run'; workflow: string; ref: string; inputs?: Record<string, string> }
   /** Set the office's Slack / Discord webhook; '' removes it. */
   | { t: 'notify.webhook'; url: string }
   /** Post a test message through the webhook; the outcome comes back as a toast. */
@@ -969,8 +937,8 @@ export type ServerMsg =
   /** Sent to whoever commented: the comment as GitHub saved it, or why it wasn't. */
   | { t: 'gh.commented'; kind: 'issue' | 'pull'; number: number; comment?: GhComment; error?: string }
   /**
-   * The gong rings, for everyone on the floor: someone hit it, pull request `pr` merged (confetti
-   * over the desk it came from), or the last task on the queue just finished (a bigger party).
+   * The gong rings, for everyone on the floor: someone hit it, or pull request `pr` merged (confetti
+   * over the desk it came from).
    */
   | { t: 'gong'; why: GongWhy; by?: string; pr?: number }
   /** Someone on the roof blew the DJ's air horn (sent to everyone up there, them too). */
@@ -990,7 +958,12 @@ export type ServerMsg =
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }
-  | { t: 'queue'; state: QueueState }
+  /** The floor's GitHub Actions runs or GitLab pipelines changed: all of them, to everyone on it. */
+  | { t: 'pipelines'; state: PipelinesState }
+  /** To whoever asked: a run's jobs, or why they couldn't be read. */
+  | { t: 'pipelines.detail'; id: number; detail?: PipelineDetail; error?: string }
+  /** To whoever asked to start, re-run or cancel a run: done, or why not. */
+  | { t: 'pipelines.done'; action: 'run' | 'rerun' | 'cancel'; id?: number; error?: string }
   | { t: 'notify'; state: NotifyState }
   /** The office's Jira connection or this floor's epic changed. */
   | { t: 'jira'; state: JiraFloorState }

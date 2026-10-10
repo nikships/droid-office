@@ -6,8 +6,7 @@ import path from 'node:path';
 import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars } from '../src/shared/prompts.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import { stationBrief } from '../src/server/stations.js';
-import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentChoice, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
+import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
 function scratch(t: { after(fn: () => void): void }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-prompts-'));
@@ -149,25 +148,22 @@ test('a rewritten board prompt fills in the floor it is sent on', () => {
   );
 });
 
-test('the board agents are briefed as they always were on both forges', () => {
-  const brief = (kind: 'issues' | 'pulls' | 'queue', forge: 'github' | 'gitlab') => stationBrief(kind, forge);
+test('the board agents are briefed for their forge on both forges', () => {
   for (const forge of ['github', 'gitlab'] as const) {
     const [site, cli, pull] = forge === 'gitlab' ? ['GitLab', 'glab', 'merge request'] : ['GitHub', 'gh', 'pull request'];
-    for (const kind of ['issues', 'pulls', 'queue'] as const) {
-      const b = brief(kind, forge);
+    for (const kind of ['issues', 'pulls', 'actions'] as const) {
+      const b = stationBrief(kind, forge);
       assert.doesNotMatch(b, /\{\{/, `${forge} ${kind}`);
-      assert.match(b, new RegExp(`a task usually ends with a ${pull}\\. Use it`));
-      assert.match(b, new RegExp(`each task's id, status, title, worker and ${pull}\\)`));
-      assert.match(b, new RegExp(`linked to that ${site} issue, which is assigned`));
+      assert.doesNotMatch(b, /task queue|office-queue/, `${forge} ${kind}`);
+      assert.match(b, new RegExp(`to open a ${pull}\\.`), `${forge} ${kind}`);
       assert.ok(b.endsWith('The request:'));
     }
-    assert.match(brief('issues', forge), new RegExp(`${site} issues with the ${cli} CLI`));
+    assert.match(stationBrief('issues', forge), new RegExp(`${site} issues with the ${cli} CLI`));
   }
-  assert.match(brief('pulls', 'gitlab'), /merge requests with the glab CLI: sum them up and review them \(glab mr view --comments, glab mr diff, glab ci status\)/);
-  assert.match(brief('queue', 'gitlab'), /to open a merge request with glab mr create\), since/);
+  assert.match(stationBrief('pulls', 'gitlab'), /merge requests with the glab CLI: sum them up and review them \(glab mr view --comments, glab mr diff, glab ci status\)/);
   assert.equal(
-    brief('issues', 'github').split('\n\n')[1],
-    "You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them. To get an issue worked on, put it on the task queue with its number.",
+    stationBrief('issues', 'github').split('\n\n')[1],
+    "You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them.",
   );
 });
 
@@ -193,8 +189,8 @@ test('a rewritten prompt is kept, used, and put back to the default', (t) => {
 
   // Empty only where empty means "send nothing"; never too long, never an unknown prompt.
   assert.match(book.setPrompt('issue.work', '  ', 'Ada') ?? '', /can’t be empty/);
-  assert.equal(book.setPrompt('queue.worktree', '', 'Ada'), undefined);
-  assert.equal(book.text('queue.worktree'), '');
+  assert.equal(book.setPrompt('issue.ask', '', 'Ada'), undefined);
+  assert.equal(book.text('issue.ask'), '');
   assert.match(book.setPrompt('issue.work', 'x'.repeat(PROMPT_MAX + 1), 'Ada') ?? '', /at most/);
   assert.match(book.setPrompt('nope', 'x', 'Ada') ?? '', /Unknown prompt/);
   assert.match(book.setPrompt('constructor', 'x', 'Ada') ?? '', /Unknown prompt/);
@@ -230,74 +226,4 @@ test('a board agent is told its rewritten brief, with the floor filled in', () =
   assert.equal(stationBrief('pulls', 'github', source), 'You review pull requests with GitHub. The request:');
   assert.equal(stationBrief('pulls', 'gitlab', source), 'You review merge requests with GitLab. The request:');
   assert.equal(stationBrief('issues', 'gitlab', source), stationBrief('issues', 'gitlab'));
-});
-
-function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentChoice | undefined, note?: string, useWorktree = true) {
-  const dir = scratch(t);
-  const workers: WorkerInfo[] = [];
-  const manager: QueueWorkers = {
-    officeDefault,
-    list: () => workers,
-    deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, _worktree, kind, model, effort) {
-      const w: WorkerInfo = {
-        id: `w${workers.length}`,
-        deskId,
-        kind,
-        model,
-        effort,
-        prompt,
-        name: 'T',
-        color: '#fff',
-        status: 'working',
-        acked: false,
-        createdBy: by,
-        createdAt: Date.now(),
-        cols: 80,
-        rows: 24,
-        open: false,
-      };
-      workers.push(w);
-      return w;
-    },
-    kill: async () => ({}),
-  };
-  const queue = new TaskQueue(dir, manager, useWorktree, {
-    update() {},
-    toast() {},
-    claimIssue: async () => undefined,
-    refreshGitHub() {},
-    hiringPaused: () => undefined,
-    emptied() {},
-    ...(note !== undefined ? { worktreeNote: () => note } : {}),
-  });
-  t.after(() => queue.shutdown());
-  return { queue, workers };
-}
-
-test('a task nobody picked a worker for runs on the office default, model and effort included; one that did keeps its own', (t) => {
-  const { queue, workers } = queueFixture(t, { model: 'custom:droidproxy:gpt-6-sol', effort: 'low' });
-  assert.equal(queue.add('Fix the dog', 'Queue agent'), undefined);
-  assert.deepEqual([workers[0].model, workers[0].effort], ['custom:droidproxy:gpt-6-sol', 'low']);
-  assert.equal(queue.add('Fix the cat', 'Ada', undefined, undefined, 'glm-5.3-flash'), undefined);
-  assert.deepEqual([workers[1].model, workers[1].effort], ['glm-5.3-flash', undefined]);
-  // Without one set, it's Droid's own default model, as it always was.
-  const plain = queueFixture(t, undefined);
-  plain.queue.add('Fix it', 'Ada');
-  assert.deepEqual([plain.workers[0].model, plain.workers[0].effort], [undefined, undefined]);
-});
-
-test('the worktree note the queue adds is the old one by default, and can be rewritten or left off', (t) => {
-  const standard = queueFixture(t, undefined);
-  standard.queue.add('Fix it', 'Ada');
-  assert.equal(standard.workers[0].prompt, "Fix it\n\nYou're in your own git worktree, on a fresh branch made for this task. Commit there, push it, and open the pull request from it.");
-  const rewritten = queueFixture(t, undefined, 'Push to your branch.');
-  rewritten.queue.add('Fix it', 'Ada');
-  assert.equal(rewritten.workers[0].prompt, 'Fix it\n\nPush to your branch.');
-  const none = queueFixture(t, undefined, '');
-  none.queue.add('Fix it', 'Ada');
-  assert.equal(none.workers[0].prompt, 'Fix it');
-  const noGit = queueFixture(t, undefined, undefined, false);
-  noGit.queue.add('Fix it', 'Ada');
-  assert.equal(noGit.workers[0].prompt, 'Fix it');
 });

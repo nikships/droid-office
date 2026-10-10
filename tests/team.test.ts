@@ -174,7 +174,7 @@ test("hiring is refused when it shouldn't happen, with a reason the agent can ac
   await no('lead', { action: 'hire' }, 400, /needs a task/);
   await no('lead', { action: 'hire', task: 'x', effort: 'ludicrous' }, 400, /Effort is one of low, medium, high, xhigh, max/);
   await no('lead', { action: 'hire', task: 'x', worktree: true }, 400, /isn't a git checkout/);
-  await no('issues', { action: 'hire', task: 'x' }, 403, /Issues agent doesn't hire subagents: put the work on the task queue/);
+  await no('issues', { action: 'hire', task: 'x' }, 403, /Issues agent doesn't hire subagents: suggest the Team lead/);
   await no('shell', { action: 'hire', task: 'x' }, 403, /Only agents/);
   await no('lead', { action: 'nope' }, 400, /Unknown action/);
 

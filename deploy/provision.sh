@@ -87,7 +87,7 @@ echo "    at $(git -C /opt/droid-office log -1 --format='%h %s')"
 step "npm install (builds the office)"
 (cd /opt/droid-office && quiet npm install --no-audit --no-fund)
 
-# The office keeps its data (floors, workers, boards, the queue) in ~/droid-office and
+# The office keeps its data (floors, workers, boards) in ~/droid-office and
 # clones projects into ~/workspace/<owner>/<repo>. It starts with no project: its elevator
 # lists every repository the GitHub token can see, and cloning one makes it the first floor.
 OFFICE_HOME="$HOME/droid-office"

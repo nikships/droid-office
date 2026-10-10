@@ -130,7 +130,7 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
     const { response } = await dialog.showMessageBox({
       type: 'question',
       message: 'Where does your office live?',
-      detail: `Droid Office keeps its data (floors, workers, queue) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
+      detail: `Droid Office keeps its data (floors, workers, pictures) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
       buttons: [`Use ${fallback.replace(os.homedir(), '~')}`, 'Choose Folder…'],
       defaultId: 0,
       cancelId: 0,

@@ -35,7 +35,7 @@ import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.j
 import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
-import { DESK_BY_ID, elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
+import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
@@ -43,6 +43,7 @@ import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/dr
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
+import { NO_PIPELINES } from '../shared/pipelines.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -223,7 +224,7 @@ export async function startServer(cfg: Config) {
   };
   const toastAll = (text: string, level: ToastLevel = 'info') => broadcast({ t: 'toast', text, level });
 
-  // --- The building: a floor per project, each with its own workers, boards and queue -----------
+  // --- The building: a floor per project, each with its own workers and boards -----------------
   const building = new Building(cfg.dataDir, cfg.projectsDir);
   if (cfg.projects) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
@@ -281,7 +282,6 @@ export async function startServer(cfg: Config) {
     } catch {
       return send(res, 400, {});
     }
-    if (url.pathname === '/office/queue') return officeQueue(req, res, url);
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
@@ -299,43 +299,6 @@ export async function startServer(cfg: Config) {
     const ok = workers.handleHook(workerId, token, event, payload);
     send(res, ok ? 200 : 401, {});
   });
-  /**
-   * The task queue, for the board agents (see stations.ts, which tells them how): GET lists it, POST
-   * adds a task, DELETE with ?task= takes a waiting one off. The agent's own hook token says who's asking.
-   */
-  const officeQueue = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
-    const workerId = url.searchParams.get('worker') ?? '';
-    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-    const floor = workerFloor(workerId);
-    const agent = floor?.workers.authenticate(workerId, token);
-    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
-    if (!DESK_BY_ID.get(agent.deskId)?.station) return send(res, 403, { error: 'Only the agents standing by the boards can use the queue' });
-    const view = () => {
-      const q = floor.queue.state();
-      return {
-        maxWorkers: q.maxWorkers,
-        tasks: q.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, outcome: t.outcome, issue: t.issue, addedBy: t.addedBy, worker: t.workerName, branch: t.branch, pr: t.pr, error: t.error })),
-      };
-    };
-    if (req.method === 'GET') return send(res, 200, view());
-    if (req.method === 'DELETE') {
-      const err = floor.queue.remove(url.searchParams.get('task') ?? '');
-      return err ? send(res, 400, { error: err }) : send(res, 200, view());
-    }
-    if (req.method !== 'POST') return send(res, 405, { error: 'GET, POST or DELETE' });
-    let body: { prompt?: unknown; title?: unknown; issue?: unknown };
-    try {
-      body = JSON.parse(await readBody(req));
-    } catch {
-      return send(res, 400, { error: 'Send JSON: {"title": "…", "prompt": "…", "issue": 12}' });
-    }
-    const issue = Number.isInteger(body?.issue) && (body.issue as number) > 0 ? (body.issue as number) : undefined;
-    const err = floor.queue.add(str(body?.prompt, 20000), agent.name, str(body?.title, 200) || undefined, issue);
-    if (err) return send(res, 400, { error: err });
-    const task = floor.queue.state().tasks.at(-1)!;
-    toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue #${issue}` : `“${task.title}”`}`);
-    send(res, 200, { ok: true, task: { id: task.id, title: task.title, status: task.status } });
-  };
   /**
    * A lead's subagents, for the office-workers command (see team.ts): a POST with the action in its
    * JSON body. The worker's own hook token says who's asking, and so whose team it is.
@@ -443,14 +406,6 @@ export async function startServer(cfg: Config) {
     (state) => broadcast({ t: 'machine', state }),
   );
   machine.start();
-  /** Queues everywhere may be waiting for room under the worker limit: let them look again. */
-  const pumpQueues = (except?: Floor) => {
-    if (machine.limit === undefined) return;
-    // Not right now: whoever freed the seat (a queue making room for its next task) takes it first.
-    setImmediate(() => {
-      for (const f of floors.values()) if (f !== except) f.queue.pump();
-    });
-  };
 
   const floorContext: FloorContext = {
     agentCmd: cfg.agentCmd,
@@ -478,11 +433,9 @@ export async function startServer(cfg: Config) {
         if (c) sendTo(c, { t: 'changes', state });
       }
     },
-    workerChanged: (floor, w) => {
-      if (typeof w === 'string') {
-        webhook.onWorkerGone(w);
-        pumpQueues(floor);
-      } else webhook.onWorker(w);
+    workerChanged: (_floor, w) => {
+      if (typeof w === 'string') webhook.onWorkerGone(w);
+      else webhook.onWorker(w);
       machine.workersChanged();
       floorsChanged();
     },
@@ -568,7 +521,7 @@ export async function startServer(cfg: Config) {
     workers: floor?.everyone() ?? [],
     issues: floor?.board.issues ?? { items: [], fetchedAt: 0, loading: false },
     pulls: floor?.board.pulls ?? { items: [], fetchedAt: 0, loading: false },
-    queue: floor?.queue.state() ?? { tasks: [], maxWorkers: 0 },
+    pipelines: floor?.pipelines.state ?? NO_PIPELINES,
     decor: floor?.decor.list() ?? [],
     services: servicesState(floor),
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
@@ -1184,8 +1137,6 @@ export async function startServer(cfg: Config) {
     floors.delete(floor.id);
     floor.shutdown();
     floorsChanged();
-    // Its workers made room under the worker limit.
-    pumpQueues();
   };
 
   /** Off the floor (or the roof) `c` was on, to `at` on the next one, or into its elevator car. */
@@ -1206,10 +1157,9 @@ export async function startServer(cfg: Config) {
 
   /**
    * A worker took on issue `n` (an issue card dropped on its desk): assign it on GitHub or GitLab, which
-   * moves it to In progress on the board, and take it off the queue so nobody else is seated for it.
+   * moves it to In progress on the board.
    */
   const takeIssue = (c: Client, floor: Floor, n: number) => {
-    floor.queue.dropIssue(n);
     void floor.board.claim(n).then((err) => warn(c, err && `Couldn't assign issue #${n} on ${forgeWords(floor.board.forge).site}: ${err}`));
   };
 
@@ -1582,9 +1532,7 @@ export async function startServer(cfg: Config) {
           if (error) return;
           const w = forgeWords(floor.board.forge);
           if (kind === 'pull') return toastFloor(floor, `${who} closed ${w.pr} ${w.ref(n)} without merging`);
-          // Nobody should be seated for an issue that's closed.
-          const dropped = floor.queue.dropIssue(n);
-          toastFloor(floor, `${who} closed issue #${n}${reason === 'not planned' ? ' as not planned' : ''}${dropped ? ' and took it off the queue' : ''}`);
+          toastFloor(floor, `${who} closed issue #${n}${reason === 'not planned' ? ' as not planned' : ''}`);
         });
         break;
       }
@@ -1607,39 +1555,52 @@ export async function startServer(cfg: Config) {
         });
         break;
       }
-      case 'queue.add': {
+      case 'pipelines.refresh':
+        void here()?.pipelines.refresh();
+        break;
+      case 'pipelines.detail': {
+        const floor = here();
+        const id = num(msg.id);
+        if (!floor || !Number.isSafeInteger(id) || id <= 0) break;
+        void floor.pipelines.detail(id).then(
+          (detail) => sendTo(c, { t: 'pipelines.detail', id, detail }),
+          (err: Error) => sendTo(c, { t: 'pipelines.detail', id, error: err.message }),
+        );
+        break;
+      }
+      case 'pipelines.rerun':
+      case 'pipelines.cancel': {
+        const floor = here();
+        const id = num(msg.id);
+        if (!floor || !Number.isSafeInteger(id) || id <= 0) break;
+        const run = floor.pipelines.state.runs.find((r) => r.id === id);
+        const action = msg.t === 'pipelines.rerun' ? 'rerun' : 'cancel';
+        const failed = msg.t === 'pipelines.rerun' && 'failed' in msg && msg.failed === true;
+        void (action === 'rerun' ? floor.pipelines.rerun(id, failed) : floor.pipelines.cancel(id)).then((error) => {
+          sendTo(c, { t: 'pipelines.done', action, id, error });
+          if (error || !run) return;
+          const what = `${run.workflow} #${run.number}`;
+          toastFloor(floor, action === 'cancel' ? `⏹️ ${who} cancelled ${what} on ${run.branch}` : `🔁 ${who} re-ran ${failed ? `the failed jobs of ${what}` : what} on ${run.branch}`);
+        });
+        break;
+      }
+      case 'pipelines.run': {
         const floor = here();
         if (!floor) break;
-        const issue = Number.isInteger(msg.issue) && (msg.issue as number) > 0 ? (msg.issue as number) : undefined;
-        const model = msg.model === undefined ? undefined : str(msg.model, MODEL_MAX + 1);
-        const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const images = imageIds(msg.images);
-        const err = floor.queue.add(str(msg.prompt, 20000), who, str(msg.title, 200), issue, model, effort, images);
-        if (err) {
-          floor.workers.unstage(images);
-          warn(c, err);
-        } else toastFloor(floor, `📋 ${who} queued ${issue !== undefined ? `issue #${issue}` : 'a task'}`);
+        const workflow = str(msg.workflow, 200);
+        const ref = str(msg.ref, 255);
+        const inputs: Record<string, string> = {};
+        if (msg.inputs && typeof msg.inputs === 'object' && !Array.isArray(msg.inputs)) {
+          for (const [k, v] of Object.entries(msg.inputs).slice(0, 50)) if (typeof v === 'string' && /^[\w.-]{1,100}$/.test(k)) inputs[k] = v.slice(0, 2000);
+        }
+        void floor.pipelines.run(workflow, ref, inputs).then((error) => {
+          sendTo(c, { t: 'pipelines.done', action: 'run', error });
+          if (error) return;
+          const name = floor.pipelines.state.workflows.find((w) => w.id === workflow)?.name ?? workflow;
+          toastFloor(floor, `🚀 ${who} started ${name} on ${ref.trim() || floor.pipelines.state.defaultBranch}`);
+        });
         break;
       }
-      case 'queue.remove': {
-        const floor = here();
-        if (floor) warn(c, floor.queue.remove(str(msg.taskId, 32)));
-        break;
-      }
-      case 'queue.move':
-        floorOf(c)?.queue.move(str(msg.taskId, 32), num(msg.delta) < 0 ? -1 : 1);
-        break;
-      case 'queue.retry': {
-        const floor = here();
-        if (floor) warn(c, floor.queue.retry(str(msg.taskId, 32)));
-        break;
-      }
-      case 'queue.clear':
-        floorOf(c)?.queue.clear();
-        break;
-      case 'queue.limit':
-        floorOf(c)?.queue.setLimit(num(msg.maxWorkers));
-        break;
       case 'notify.webhook': {
         const url = str(msg.url, 4096).trim();
         const err = webhook.set(url, who);
@@ -1724,7 +1685,6 @@ export async function startServer(cfg: Config) {
         if (err) return warn(c, err);
         const now = machine.limit;
         toastAll(limit !== undefined ? `⚙️ ${who} set the worker limit to ${now}` : now === undefined ? `⚙️ ${who} took the worker limit off` : `⚙️ ${who} put the worker limit back to ${now} (--max-workers)`);
-        pumpQueues();
         break;
       }
       case 'jira.connect': {

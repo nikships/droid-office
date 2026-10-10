@@ -449,17 +449,17 @@ test('a worker across repositories goes home once its pull requests have merged 
   const web = [pull(3, 'MERGED', 'office/pip-1', 'h3')];
   const floors = (api: GhPull[] | undefined) => (id: string) => (id === 'api' ? api : undefined);
   // api's PR still open, or not on api's list (yet): it stays.
-  assert.deepEqual(landedWorkers([w], web, [], floors([pull(9, 'OPEN', 'office/pip-1')])), []);
-  assert.deepEqual(landedWorkers([w], web, [], floors([])), []);
-  assert.deepEqual(landedWorkers([w], web, [], floors(undefined)), []);
+  assert.deepEqual(landedWorkers([w], web, floors([pull(9, 'OPEN', 'office/pip-1')])), []);
+  assert.deepEqual(landedWorkers([w], web, floors([])), []);
+  assert.deepEqual(landedWorkers([w], web, floors(undefined)), []);
   // Both merged: it goes, with each merged head.
-  assert.deepEqual(landedWorkers([w], web, [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])), [{ worker: w, pr: 3, head: 'h3', heads: { api: 'h9' }, prs: ['web #3', 'api #9'] }]);
+  assert.deepEqual(landedWorkers([w], web, floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])), [{ worker: w, pr: 3, head: 'h3', heads: { api: 'h9' }, prs: ['web #3', 'api #9'] }]);
   // Only api had work: its PR merging is enough.
   const apiOnly = { ...w, repos: [{ ...w.repos![0] }] };
   assert.deepEqual(
-    landedWorkers([apiOnly], [], [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])).map((l) => l.prs),
+    landedWorkers([apiOnly], [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])).map((l) => l.prs),
     [['api #9']],
   );
   // web's own PR open: it stays.
-  assert.deepEqual(landedWorkers([w], [pull(3, 'OPEN', 'office/pip-1')], [], floors([pull(9, 'MERGED', 'office/pip-1')])), []);
+  assert.deepEqual(landedWorkers([w], [pull(3, 'OPEN', 'office/pip-1')], floors([pull(9, 'MERGED', 'office/pip-1')])), []);
 });

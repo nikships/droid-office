@@ -95,18 +95,10 @@ object Workers {
     enum class PrState { Open, Merged, Opening }
 
     /** Its pull request and where it stands: an open one wins over a merged one (see src/shared/status.ts). */
-    fun pr(w: WorkerInfo, pulls: List<GhPull>, tasks: List<QueueTask>): Pair<PrState, PrRef>? {
+    fun pr(w: WorkerInfo, pulls: List<GhPull>): Pair<PrState, PrRef>? {
         if (w.prOpening) return PrState.Opening to (w.pr ?: PrRef())
-        val mine = buildSet {
-            w.pr?.let { add(it.number) }
-            tasks.filter { it.workerId == w.id }.mapNotNull { it.pr?.number }.forEach(::add)
-        }
-        val seen = pulls.filter { it.number in mine || (w.worktree != null && w.worktree.branch == it.headRefName) }
+        val seen = pulls.filter { it.number == w.pr?.number || (w.worktree != null && w.worktree.branch == it.headRefName) }
             .map { Triple(it.number, it.state, it.url) }.toMutableList()
-        for (t in tasks) {
-            val p = t.pr ?: continue
-            if (t.workerId == w.id && seen.none { it.first == p.number }) seen += Triple(p.number, p.state, p.url)
-        }
         w.pr?.let { p -> if (seen.none { it.first == p.number }) seen += Triple(p.number, "OPEN", p.url) }
         seen.firstOrNull { it.second == "OPEN" || it.second == "DRAFT" }?.let { return PrState.Open to PrRef(it.first, it.third) }
         seen.firstOrNull { it.second == "MERGED" }?.let { return PrState.Merged to PrRef(it.first, it.third) }

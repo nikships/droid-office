@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { GhPull, LeaveOnMergeState, QueueTask, WorkerInfo } from '../shared/protocol.js';
+import type { GhPull, LeaveOnMergeState, WorkerInfo } from '../shared/protocol.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
 
@@ -72,12 +72,12 @@ export interface Landed {
  * A worker across repositories has pull requests on other floors too (`pullsOf` has their lists):
  * none of them may be open, or opened from its desk but missing from its floor's list.
  */
-export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], tasks: QueueTask[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
+export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
   const out: Landed[] = [];
   for (const w of workers) {
     if (w.downedUntil !== undefined || w.kind !== 'agent' || DESK_BY_ID.get(w.deskId)?.station) continue;
     if (isBusy(w.status) || w.prOpening || w.open) continue;
-    const pr = workerPr(w, pulls, tasks);
+    const pr = workerPr(w, pulls);
     if (w.repos?.length) {
       const landed = landedAcross(w, pr, pulls, pullsOf);
       if (landed) out.push(landed);

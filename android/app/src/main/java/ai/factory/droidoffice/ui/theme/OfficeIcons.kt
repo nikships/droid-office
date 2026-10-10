@@ -62,7 +62,6 @@ object OfficeIcons {
     val Moon = icon("Moon", "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z")
     val Layers = icon("Layers", "M12 3l9 5-9 5-9-5z", "M3 12.5l9 5 9-5", "M3 16.5l9 5 9-5")
     val ArrowUp = icon("ArrowUp", "M12 19.5V5", "M5.5 11.5L12 5l6.5 6.5")
-    val Queue = icon("Queue", "M4 6.5h11", "M4 12h11", "M4 17.5h7", "M18.5 14.5v6", "M15.5 17.5h6")
     val Door = icon("Door", "M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16", "M3.5 21h17", "M14.5 12h.01")
     val External = icon("External", "M14 4h6v6", "M20 4l-8.5 8.5", "M18 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5.5")
     val Copy = icon("Copy", "M9 9h10a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 21h-9.5A1.5 1.5 0 0 1 8 19.5V10a1 1 0 0 1 1-1z", "M16 9V5.5A1.5 1.5 0 0 0 14.5 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8")

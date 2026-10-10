@@ -112,7 +112,6 @@ object Tags {
         const val MODEL = "hire.model"
         const val WORKTREE = "hire.worktree"
         const val SUBMIT = "hire.submit"
-        const val QUEUE = "hire.queue"
         const val MODEL_SHEET = "hire.model_sheet"
 
         fun effort(wire: String) = "hire.effort/$wire"
