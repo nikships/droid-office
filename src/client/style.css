@@ -733,6 +733,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.desk-changes footer .grow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; font: 400 11px var(--font-mono); color: var(--text-secondary); }
 .modal.desk-changes footer .grow > * + *::before { content: '·'; margin-right: 6px; color: var(--text-tertiary); }
 .modal.desk-changes footer .grow > .spinner + *::before { content: none; }
+/* T: the worker's terminal in place of the diff, at the PTY's own size, so it scrolls when the window is smaller. */
+.changes-log { flex: 1; min-height: 0; overflow: auto; padding: var(--space-2) var(--space-1) var(--space-1) var(--space-3); background: #0a0a0a; }
 .pr-slot { display: inline-flex; }
 .pr-slot .btn { text-decoration: none; }
 @media (max-width: 800px) {
