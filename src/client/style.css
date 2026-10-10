@@ -661,6 +661,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .cloud-win .ft { min-height: 0; border-top: 0; }
 .cloud-prompt { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
 .cloud-prompt textarea { width: 100%; resize: vertical; }
+.cloud-prompt .prompt-field textarea { width: auto; }
 .cloud-actions { display: flex; align-items: center; gap: 8px; }
 .cloud-actions .grow { flex: 1; font: 400 11px/1.5 var(--font-mono); color: var(--text-secondary); }
 .term-team-label { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text-secondary); }
@@ -733,6 +734,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.desk-changes footer .grow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; font: 400 11px var(--font-mono); color: var(--text-secondary); }
 .modal.desk-changes footer .grow > * + *::before { content: '·'; margin-right: 6px; color: var(--text-tertiary); }
 .modal.desk-changes footer .grow > .spinner + *::before { content: none; }
+/* T: the worker's terminal in place of the diff, at the PTY's own size, so it scrolls when the window is smaller. */
+.changes-log { flex: 1; min-height: 0; overflow: auto; padding: var(--space-2) var(--space-1) var(--space-1) var(--space-3); background: #0a0a0a; }
 .pr-slot { display: inline-flex; }
 .pr-slot .btn { text-decoration: none; }
 @media (max-width: 800px) {
@@ -1051,8 +1054,19 @@ a.when:hover { text-decoration: underline; }
 .gh-labeler footer .grow { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gh-labeler .gh-quiet a { color: var(--info); font-weight: 600; }
 
-/* Send a prompt to a worker (ui/ask.ts) */
+/* Send a prompt to a worker (ui/ask.ts). Chips and history (ui/prompt-box.ts) sit on every agent prompt box. */
 .modal.ask { width: min(660px, 100%); }
+.prompt-compose { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.prompt-field { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.prompt-field textarea { flex: 1 1 auto; min-width: 0; }
+.prompt-history { max-height: 220px; overflow: auto; }
+.prompt-history-empty { margin: 0; padding: var(--space-3); }
+.preset-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.preset-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto; gap: var(--space-2); align-items: start; }
+.preset-row textarea { min-height: var(--control-h-lg); resize: vertical; }
+@media (max-width: 720px) {
+  .preset-row { grid-template-columns: minmax(0, 1fr); }
+}
 .ask-to { gap: 6px; }
 .ask-to .btn { padding: 5px 10px; }
 .ask-to .btn small { font-size: 10px; opacity: .7; }

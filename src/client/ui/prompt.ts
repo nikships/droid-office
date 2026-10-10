@@ -3,6 +3,7 @@ import { h, openModal } from './dom';
 import { promptImages, type PromptImages } from './images';
 import { choices as optionCards, groupRow, toggle, windowHeader } from './kit';
 import { agentPicker, type AgentFields } from './models';
+import { promptExtras } from './prompt-box';
 import type { CloudChoice, RunsOn } from './factory-cloud';
 
 export interface PromptOptions {
@@ -23,6 +24,11 @@ export interface PromptOptions {
   modelOption?: boolean;
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
   imagesOption?: boolean;
+  /**
+   * Chips and the prompt history. On unless this box is a shell command, a commit message, or a
+   * pull-request description (`recall: false`). Not tied to pictures.
+   */
+  recall?: boolean;
   /** The desk being hired at, so the model/effort choice remembered here is this desk's, not the whole office's. */
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
@@ -96,6 +102,7 @@ export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
+  const extras = opts.recall === false ? null : promptExtras(ta);
   const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
   const wtRow = opts.worktreeOption ? wt.row : null;
@@ -119,7 +126,7 @@ export function openPrompt(opts: PromptOptions) {
       'div.body.stack',
       {},
       opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null,
-      h('div.prompt-input', {}, ta, images ? pictureHint() : null, images?.element ?? null),
+      h('div.prompt-input', {}, extras?.element ?? ta, images ? pictureHint() : null, images?.element ?? null),
       rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null,
       failed,
     ),
@@ -127,7 +134,12 @@ export function openPrompt(opts: PromptOptions) {
   ) as HTMLFormElement;
   form.noValidate = true;
 
-  const modal = openModal(form, { onClose: () => images?.discard() });
+  const modal = openModal(form, {
+    onClose: () => {
+      images?.discard();
+      extras?.dispose();
+    },
+  });
   images?.dropZone(modal.backdrop, modal.el);
   cancel.addEventListener('click', () => modal.close());
   let waiting = false;
@@ -164,12 +176,14 @@ export function openPrompt(opts: PromptOptions) {
           failed.classList.remove('hidden');
           return;
         }
+        if (text) extras?.sent(text);
         images?.take();
         modal.close();
       });
       return;
     }
     const picked = images?.take() ?? [];
+    if (text) extras?.sent(text);
     modal.close();
     if (opts.worktreeOption) setWorktreePref(wtBox.checked);
     const worktree = !!opts.worktreeOption && wtBox.checked;

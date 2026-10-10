@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/hero.jpg" alt="A cutaway of the office building at night: five floors of desks with AI workers at glowing terminals, a glass elevator on the side, a fire pole through the floors and a rooftop bar" width="100%">
+<img src="docs/hero.jpg" alt="A cutaway of the office building at night: five floors of desks with AI workers at glowing terminals, a glass elevator on the side, a fire pole through the floors and a rooftop" width="100%">
 
 # Droid Office
 
@@ -31,7 +31,7 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 - **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards and workers.
 - **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
 - **CI on the wall.** The Pipelines board shows your GitHub Actions runs (or GitLab pipelines) as they run, wait and finish. Open a run to see its jobs and steps, re-run what failed, or kick off a workflow. Or just tell the Pipeline agent beside it to do it.
-- **A place worth being in.** A rooftop bar, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
+- **A place worth being in.** A rooftop over the city, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
 
 ## Why Droid Office
 
@@ -51,8 +51,6 @@ A dark, industrial look in Factory orange. Install it as an app from Chrome or E
 
 ### Always improving
 Every new feature that ships in the original project is brought over, adapted to this fork and its Droid and GitLab work. The latest additions: rewrite every prompt the office sends, set a default worker, edit and filter issues by label on the boards, keep workers running through upgrades, send workers home when their PR merges, and browse your project's docs at the office bookshelf.
-
-<img src="docs/rooftop.jpg" alt="The rooftop bar at night with a fire pit, a DJ robot, robots with drinks, looking over the city" width="100%">
 
 ## Get started in a minute
 

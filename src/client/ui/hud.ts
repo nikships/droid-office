@@ -95,7 +95,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ['Jump', '', ['Space']],
         ['Look around', 'Click to capture the mouse, Esc frees it', ['Mouse']],
         ['Next worker that needs you', 'Whoever has waited longest. Arrows at the screen’s edge point to the ones out of sight', ['N']],
-        ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the rooftop bar too', ['E']],
+        ['Change floors', 'Every project is a floor: step into the elevator on the north wall, or click the project name top left. It goes up to the roof too', ['E']],
       ],
     ],
     [
@@ -140,7 +140,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
         ['Arcade cabinet', 'BLOCKFALL, in the lounge: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
-        ['Rooftop bar', 'Up the elevator: a DJ and the city. E at the bar for a drink, at the DJ booth for the air horn', ['E']],
+        ['Rooftop', 'Up the elevator: an empty deck, and the city all around', ['E']],
       ],
     ],
   ];

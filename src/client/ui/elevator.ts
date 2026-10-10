@@ -130,14 +130,14 @@ export function openElevator(opts: ElevatorOptions): void {
     confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its checkout stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
   };
 
-  /** The roof, over every floor: the rooftop bar. */
+  /** The roof, over every floor. */
   const roofButton = () => {
     const here = store.floor === ROOF;
     const btn = h(
       'button.floor-btn',
       { type: 'button', class: here ? 'here' : '', disabled: here, title: here ? "You're up on the roof" : `Ride up to the ${ROOF_NAME.toLowerCase()}` },
-      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🍸'),
-      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'A DJ playing drum and bass, a bar, and the city all around')),
+      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🏙️'),
+      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'The city all around')),
       h('span.list-end', {}, here ? h('span.pill.floor-here', {}, 'You are here') : null),
     );
     btn.addEventListener('click', () => {

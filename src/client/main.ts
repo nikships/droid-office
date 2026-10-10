@@ -43,6 +43,7 @@ import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
@@ -51,11 +52,7 @@ import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
-import { DrunkVision } from './world/drunk';
-import { Booze, type Stage as Feeling } from './booze';
-import { djFrame, djTime } from './dnb';
-import { openBar } from './ui/bar';
-import { DRINK_BY_ID, ROOF, ROOF_NAME, type Drink } from '../shared/rooftop';
+import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import { Person, type PrBadge, Worker, type Stage } from './world/character';
 import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
@@ -83,7 +80,7 @@ import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openMo
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
-import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
+import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
@@ -341,7 +338,7 @@ void loadFonts().then(() => {
 // The boss's monitor upstairs: Minesweeper, from the boss's chair.
 const arcade = new Arcade(office.bossScreen);
 
-// ---- The rooftop bar ------------------------------------------------------------------------------
+// ---- The rooftop ---------------------------------------------------------------------------------
 /** Up on the roof: built the first time anyone goes up there. */
 let roof: Rooftop | null = null;
 function theRoof(): Rooftop {
@@ -367,11 +364,6 @@ function syncRoof() {
 store.on('floors', syncRoof);
 /** Where you are now: up on the roof (true), or on a floor of the office. */
 let upTop = false;
-/** How far into the DJ's set it is, on the office's clock, so everyone up there hears the same bar. */
-const djAt = () => djTime(store.officeNow());
-/** Drinks from the bar, and how they make the world look (see booze.ts, world/drunk.ts). */
-const booze = new Booze();
-const drunkVision = new DrunkVision(renderer);
 
 // ---- Networking & state -------------------------------------------------------------------------
 const net = new Net(() => store.profile, whereNow);
@@ -396,6 +388,7 @@ const smoke = new Smoke();
 scene.add(smoke.group);
 const sound = new OfficeSound();
 sound.setVolume(settings.volume, settings.muted);
+sound.setAlertsMuted(settings.alertsMuted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
 sound.onMusicError = (text) => toast(text, 'warn');
 // The jukebox on your floor: everyone there hears it from the same bar, and its lights say what's on.
@@ -528,6 +521,10 @@ interface WorkerView {
   deskId: string;
   status: string;
   acked: boolean;
+  /** The action last painted, so a new run of failures dings once. */
+  action?: string;
+  /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
+  heard: boolean;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -891,6 +888,8 @@ net.onMessage((msg) => {
       if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
+      const following = changesLogFor();
+      if (following && following !== openId && store.workers.has(following)) net.send({ t: 'worker.attach', workerId: following });
       renderProject();
       hud.refresh();
       // Back from a restart on another version: this page's code is stale, so load the new one.
@@ -916,6 +915,7 @@ net.onMessage((msg) => {
       routeWorktreeMessage(msg);
       break;
     case 'toast': {
+      if (msg.level === 'error') sound.ding('error');
       const el = toast(msg.text, msg.level);
       const id = msg.workerId;
       // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
@@ -928,16 +928,14 @@ net.onMessage((msg) => {
     }
     case 'upgrade':
       if (msg.state.phase === 'restarting') showRestarting(msg.state, net);
-      if (msg.state.phase === 'failed' && upgradePhase === 'building') toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+      if (msg.state.phase === 'failed' && upgradePhase === 'building') {
+        toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+        sound.ding('error');
+      }
       upgradePhase = msg.state.phase;
       break;
     case 'gong':
       gongRang(msg.why, msg.pr);
-      break;
-    case 'horn':
-      if (!upTop) break;
-      sound.horn();
-      if (msg.by !== store.profile.name) toast(`📯 ${msg.by} blew the air horn!`);
       break;
     case 'automation.run': {
       const { id } = msg;
@@ -966,8 +964,8 @@ function renderProject() {
   if (store.floor === ROOF) {
     const n = builtFloors().length;
     $('project-meta').classList.remove('lobby');
-    $('project-name').textContent = `🍸 ${ROOF_NAME}`;
-    $('project-meta').textContent = `🛗 on top of ${n} floor${n === 1 ? '' : 's'} · 🎧 drum & bass`;
+    $('project-name').textContent = `🏙️ ${ROOF_NAME}`;
+    $('project-meta').textContent = `🛗 on top of ${n} floor${n === 1 ? '' : 's'} · the city all around`;
     return;
   }
   if (!p) {
@@ -987,13 +985,16 @@ function renderProject() {
 store.on('floors', renderProject);
 store.on('project', renderProject);
 
-/** The tab title counts the workers waiting on someone, on every floor, so you can see them from another tab. */
+/** The tab title counts workers waiting on someone, on every floor, while this tab is in the background. Focusing it clears the count. */
 function renderTitle() {
   const name = store.project?.name;
   const elsewhere = store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0);
   const waiting = [...store.workers.values()].filter(waitingOnSomeone).length + elsewhere;
-  document.title = `${waiting ? `(${waiting}) ` : ''}${name ? `${name} · ` : ''}Droid Office`;
+  document.title = officeTitle(name, waiting, document.hidden || !document.hasFocus());
 }
+window.addEventListener('visibilitychange', renderTitle);
+window.addEventListener('focus', renderTitle);
+window.addEventListener('blur', renderTitle);
 
 // ---- Floors & the elevator ----------------------------------------------------------------------
 /** In the car, facing out through the doors: where you are when you arrive on a floor. */
@@ -1168,12 +1169,9 @@ function setPlace() {
   if (r) r.group.visible = up;
   player.colliders = up ? r!.colliders : office.colliders;
   sky.setRoof(up, roofDrop(roofFloors()));
-  sound.setDj(up ? djAt : null);
   // You can see the whole city from up there (and its clouds); from the top floors, as far as the haze.
   camera.far = up ? 700 : FAR;
   camera.updateProjectionMatrix();
-  // Drinks stay at the bar (what you've had comes down with you).
-  if (!up) booze.putDown();
   if (hanger.active) hanger.cancel();
   hintKey = 'stale';
 }
@@ -1222,7 +1220,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   }
   setTimeout(() => {
     lift().setOpen(true);
-    sound.ding('done');
+    sound.floorChime();
     player.enabled = !modalOpen();
   }, 450);
 }
@@ -1330,7 +1328,7 @@ function syncWorkers() {
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
-      v = { model, laptop, deskId: w.deskId, status: '', acked: true };
+      v = { model, laptop, deskId: w.deskId, status: '', acked: true, heard: false };
       workerViews.set(w.id, v);
     }
     if (v.status !== w.status || v.acked !== w.acked) {
@@ -1352,6 +1350,9 @@ function syncWorkers() {
       noOutline(v.model.root);
     }
     v.model.setAction(w.action);
+    if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
+    v.action = w.action;
+    v.heard = true;
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
@@ -1527,6 +1528,7 @@ function promptAtDesk(deskId: string) {
       title: `🐚 Run in ${w.name}`,
       placeholder: 'npm run dev',
       submitLabel: 'Run ▶',
+      recall: false,
       onSubmit: (text) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text }),
     });
   } else {
@@ -2183,85 +2185,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'cabinet') cabinet.play();
   else if (target.kind === 'ladder') grabLadder();
   else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
-  else if (target.kind === 'bar') showBar();
-  else if (target.kind === 'dj') blowHorn();
-}
-
-// ---- The rooftop bar ---------------------------------------------------------------------------------
-/** What the bartender says as they slide it over. */
-const CHEERS: Record<string, string> = {
-  beer: 'Cheers! 🍻',
-  wine: 'Salud!',
-  martini: 'Shaken, not stirred',
-  maitai: 'Aloha!',
-  shot: 'Salt, shot, lime… whoa',
-  mojito: 'Fresh and minty',
-  water: 'Good call. Stay hydrated',
-};
-
-/** E at the bar: the menu. */
-function showBar() {
-  openBar({ cutOff: booze.cutOff(performance.now() / 1000), order: orderDrink });
-}
-
-/** The bartender comes over and pours it (a water, if you've had enough), and slides it across to you. */
-function orderDrink(d: Drink) {
-  const r = roof;
-  if (!r || !upTop) return;
-  const cut = d.strength > 0 && booze.cutOff(performance.now() / 1000);
-  const drink = cut ? DRINK_BY_ID.get('water')! : d;
-  r.serve(player.pos.z);
-  sound.pour(r.pourAt);
-  if (cut) toast("🙅 The bartender slides you a water instead: you've had enough", 'warn');
-  setTimeout(() => {
-    if (!upTop) return;
-    booze.drink(drink, performance.now() / 1000);
-    reach();
-    hands.sip();
-    if (!cut) toast(`${drink.emoji} ${drink.name}. ${CHEERS[drink.id] ?? 'Enjoy!'}`);
-  }, 1500);
-}
-
-let lastHorn = 0;
-/** E at the DJ booth: the air horn, for everyone on the roof. */
-function blowHorn() {
-  const now = performance.now();
-  if (now - lastHorn < 1500) return;
-  lastHorn = now;
-  net.send({ t: 'horn' });
-}
-
-/** How it's going to your head, the last time it changed, and when the next hiccup comes. */
-let feeling: Feeling = 0;
-let nextHiccup = 0;
-let nextSip = 0;
-const FEELINGS = ['😌 You feel sober again', '🥴 You’re feeling a little tipsy', '🌀 Whoa… is the city spinning?', '🤪 You’re wasted. Maybe have some water'];
-
-/** Every frame: how drunk you are, the glass in your hand, hiccups and the odd sip. */
-function drinking(now: number) {
-  const secs = now / 1000;
-  const amount = booze.amount(secs);
-  player.drunk = reduceMotion.matches ? 0 : Math.min(1.3, amount);
-  const glass = booze.holding(secs);
-  me.holdDrink(glass);
-  hands.holdDrink(glass);
-  if (glass && now > nextSip) {
-    if (nextSip) hands.sip();
-    nextSip = now + 9000 + Math.random() * 9000;
-  }
-  const stage = booze.stage(secs);
-  if (stage !== feeling) {
-    if (stage > feeling || stage === 0) toast(FEELINGS[stage], stage >= 3 ? 'warn' : 'info');
-    feeling = stage;
-  }
-  if (amount > 0.5 && now > nextHiccup) {
-    if (nextHiccup) {
-      sound.hiccup();
-      if (!reduceMotion.matches) thud = Math.max(thud, 0.25);
-    }
-    nextHiccup = now + 5000 + Math.random() * 12000;
-  }
-  return amount;
 }
 
 /** A cup from the kitchen machine: a minute of quicker feet and higher jumps, and a mug in your hand. */
@@ -2363,13 +2286,12 @@ function freePlace(seat: SeatDef): SeatPlace | null {
   return best;
 }
 
-/** E at a seat: sit down on it. Sitting there already, get up (or play, or order, where the seat offers it). */
+/** E at a seat: sit down on it. Sitting there already, get up (or play, where the seat offers it). */
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
     if (seat.game) arcade.play();
-    else if (seat.bar) showBar();
     else standUp();
     return;
   }
@@ -2625,7 +2547,7 @@ function hintFor(it: Interactable): Hint {
       const seat = SEATING_BY_ID.get(it.seatId ?? '');
       if (!seat) return { k: '', parts: [] };
       if (player.seat?.seatId === seat.id) {
-        const use = seat.game ? 'Play Minesweeper' : seat.bar ? 'Order a drink' : '';
+        const use = seat.game ? 'Play Minesweeper' : '';
         return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
       }
       const full = !freePlace(seat);
@@ -2644,15 +2566,6 @@ function hintFor(it: Interactable): Hint {
       }
       const up = floorThere(1)?.name ?? 'upstairs';
       return { k: `landing|${up}`, parts: [title('🚒 Fire pole'), aside(`comes down from ${up}`), key('E', 'Twirl')] };
-    }
-    case 'bar': {
-      const cut = booze.cutOff(performance.now() / 1000);
-      return { k: String(cut), parts: [title('🍸 Sky Bar'), aside(cut ? "you've had enough" : 'drinks on the house'), key('E', cut ? 'Ask for water' : 'Order a drink')] };
-    }
-    case 'dj': {
-      const f = djFrame(djAt());
-      const what = f.part === 'drop' ? '🔥 the drop' : f.part === 'build' ? 'building up…' : f.part === 'breakdown' ? 'the breakdown' : 'mixing in the next track';
-      return { k: what, parts: [title('🎧 DJ Merge Conflict'), aside(`drum & bass · ${what}`), key('E', '📯 Air horn!')] };
     }
   }
 }
@@ -3113,8 +3026,6 @@ const REACH: Record<InteractKind, number> = {
   cabinet: 4,
   ladder: 3,
   pole: 4,
-  bar: 3.5,
-  dj: 6,
   bookshelf: 4,
 };
 const eye = new THREE.Vector3();
@@ -3239,7 +3150,7 @@ const hudActions: HudAction[] = [
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
   { id: 'autowiki', icon: '🏭', label: 'AutoWiki', section: 'Open', title: () => "Factory's wiki of this repository, on the bookshelf", run: () => showBookshelf('wiki') },
   { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
-  { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
+  { id: 'roof', icon: '🏙️', label: 'Rooftop', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof', run: () => ride(ROOF) },
   {
     id: 'decor',
     icon: '🖼️',
@@ -3296,12 +3207,14 @@ function showSettings(pane?: SettingsPane) {
       Object.assign(settings, s);
       saveSettings(settings);
       sound.setVolume(settings.volume, settings.muted);
+      sound.setAlertsMuted(settings.alertsMuted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
       // The hint names what's in your hand; the hands swap props by themselves next frame.
       hintKey = 'stale';
     },
     editProfile,
-    () => sound.ding('done'),
+    () => sound.floorChime(),
+    () => sound.previewAlerts(),
     notifier,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
@@ -3334,8 +3247,6 @@ resize();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
-/** Last frame went through the drunk vision. */
-let drunkVisionOn = false;
 
 const fpsEl = $('fps');
 let fpsFrames = 0;
@@ -3392,8 +3303,7 @@ function sceneMotion(): SceneMotion {
     arcade.animating ||
     cabinet.animating ||
     readingNow() ||
-    now < lookedUntil ||
-    (!reduceMotion.matches && booze.amount(secs) > 0.01);
+    now < lookedUntil;
   return {
     player: playerBusy,
     worker: workerMoving(),
@@ -3440,8 +3350,6 @@ function drawFrame(dt: number, t: number) {
   me.holdMug(mug);
   hands.holdMug(mug);
   renderCaffeine(caffeine, secs);
-  // Drinks from the rooftop bar: a glass in hand, and the world swaying.
-  const drunk = drinking(now);
   player.update(dt);
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
@@ -3536,12 +3444,7 @@ function drawFrame(dt: number, t: number) {
   if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);
   hanger.update();
   sky.update(dt, t, camera);
-  if (upTop && roof) {
-    // Everything up there moves to the DJ's set; strobes flash the whole roof as a drop lands.
-    const strobe = roof.update(t, dt, djFrame(djAt()), { dark: sky.lampsOn, motion: !reduceMotion.matches });
-    ambient.intensity += strobe * 1.5;
-    hemi.intensity += strobe * 0.8;
-  }
+  if (upTop && roof) roof.update(t, dt, { dark: sky.lampsOn });
   aimedNote = null;
   aimedSpot = null;
   aimedRun = undefined;
@@ -3561,11 +3464,6 @@ function drawFrame(dt: number, t: number) {
   renderHint();
   renderCrosshair();
 
-  // A few drinks in, the frame goes to the screen through the drunk vision (see world/drunk.ts).
-  const blurry = drunk > 0.01;
-  if (blurry) drunkVision.begin();
-  else if (drunkVisionOn) drunkVision.release();
-  drunkVisionOn = blurry;
   effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
@@ -3578,7 +3476,6 @@ function drawFrame(dt: number, t: number) {
     effect.render(hands.scene, hands.camera);
     sky.shading(true);
   }
-  if (blurry) drunkVision.end(drunk, t, !reduceMotion.matches);
   loading.drew();
 }
 
@@ -3750,8 +3647,6 @@ const automation = createAutomation({
 // Debug handle for quick checks from the console / headless screenshots.
 (window as any).__office = {
   roof: () => roof,
-  booze,
-  dj: () => djFrame(djAt()),
   store,
   player,
   caffeine,

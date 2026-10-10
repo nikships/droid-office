@@ -99,7 +99,7 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.match(fail(''), /needs a target/);
   assert.match(fail('nobody'), /No such target "nobody"/);
   assert.match(fail('beanbag-1'), /Bean bag 1 isn't somewhere to go/);
-  assert.match(fail('desk-1', context({ floor: ROOF, spots: [{ kind: 'bar', x: 0, z: 0, radius: 2 }] })), /up on the roof/);
+  assert.match(fail('desk-1', context({ floor: ROOF, spots: [{ kind: 'elevator', x: 0, z: 0, radius: 2 }] })), /up on the roof/);
   assert.match(fail('roof', context({ floors: [] })), /no roof yet/);
   const twins = context({ workers: [worker({}), worker({ id: 'w3', name: 'ada', deskId: 'desk-2' })] });
   assert.match(fail('Ada', twins), /could be Desk 1 \(desk-1\) or Desk 2 \(desk-2\): use the id/);
@@ -237,7 +237,7 @@ test('state() is a rounded JSON snapshot of where you are, what is open and who 
   assert.deepEqual(buildSnapshot(raw({ using: { kind: 'seat', seatId: 'couch', x: 0, z: 0, radius: 2 } })).using, { kind: 'seat', id: 'couch', label: 'seat' });
   assert.deepEqual(buildSnapshot(raw({ terminal: 'gone' })).terminal, { workerId: 'gone', name: 'gone' });
   const roof = buildSnapshot(raw({ floor: ROOF }));
-  assert.deepEqual(roof.floor, { id: ROOF, name: 'Rooftop bar' });
+  assert.deepEqual(roof.floor, { id: ROOF, name: 'Rooftop' });
   assert.equal(roof.onRoof, true);
   assert.equal(buildSnapshot(raw({ floor: null })).floor, null);
 });
@@ -254,7 +254,7 @@ function fakeOffice() {
     frames: 0,
     commands: [
       { id: 'issues', label: 'Issues', shown: true },
-      { id: 'roof', label: 'Rooftop bar', shown: true },
+      { id: 'roof', label: 'Rooftop', shown: true },
       { id: 'upgrade', label: 'Upgrade', shown: false },
       { id: 'decor', label: 'Hang a picture', shown: true, blocked: 'no walls up here' },
     ],

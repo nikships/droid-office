@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars } from '../src/shared/prompts.js';
+import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars } from '../src/shared/prompts.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import { stationBrief } from '../src/server/stations.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
@@ -36,6 +36,30 @@ test('every default only uses placeholders it says it has, and names the ones th
 
 test('the editor names no prompt with an emoji', () => {
   for (const id of PROMPT_IDS) assert.doesNotMatch(PROMPTS[id].label, /\p{Extended_Pictographic}/u, id);
+});
+
+test('Commit & open PR asks the worker to ship its checkout, from its task card, on either forge', () => {
+  const github = fillPrompt(PROMPTS['changes.ship'].text, shipPromptVars('github', { title: 'Fix Login Redirect', summary: 'Tracing why expired sessions still reach the dashboard', branch: 'office/pixel-1', base: 'main' }));
+  assert.equal(
+    github,
+    [
+      'Commit your work in your checkout and open a pull request for it.',
+      '',
+      'Your task, as the card above your desk sums it up: "Fix Login Redirect"',
+      '',
+      'Tracing why expired sessions still reach the dashboard',
+      '',
+      '1. Look over what is uncommitted (`git status`, `git diff`) and commit it on `office/pixel-1` with a message that says what changed and why. Leave out anything that should not be committed, like build output or secrets, and say what you left out.',
+      '2. Push `office/pixel-1` to origin.',
+      '3. Open a pull request against `main` with `gh`. Title it after the task, and say in the description what changed, why, and how you checked it.',
+      '4. Reply with its link.',
+    ].join('\n'),
+  );
+
+  // Across repositories, with a merge request already open and no summary: the empty line goes.
+  const gitlab = fillPrompt(PROMPTS['changes.ship'].text, shipPromptVars('gitlab', { title: 'Add Dark Mode', branch: 'office/nova-2', base: 'develop', folder: 'web', pr: 9 }));
+  assert.match(gitlab, /^Commit your work in the `web` folder of your workspace and open a merge request for it\.\n\nYour task, as the card above your desk sums it up: "Add Dark Mode"\n\n1\. /);
+  assert.match(gitlab, /3\. Merge request !9 is already open for `office\/nova-2`, so the push updates it\. If its description no longer says what the branch does, update it with `glab`\./);
 });
 
 // What the boards sent before their prompts could be rewritten, word for word, on each forge.

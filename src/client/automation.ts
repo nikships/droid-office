@@ -40,8 +40,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   jukebox: 'Jukebox',
   cabinet: 'Arcade cabinet',
   ladder: 'Ladder',
-  bar: 'Sky Bar',
-  dj: 'DJ booth',
   bookshelf: 'Bookshelf',
 };
 
@@ -107,7 +105,7 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
 /**
  * The target a `goTo` query names: an id from `list()` (a desk id, a board or place kind, a floor
  * id), a worker's id or name, a desk's label, a board agent's name or a floor's name. Case doesn't
- * matter past an exact id. 'roof' is the rooftop bar.
+ * matter past an exact id. 'roof' is the roof.
  */
 export function resolveTarget(query: string, ctx: TargetContext): { ok: true; target: ResolvedTarget } | { ok: false; error: string } {
   const q = typeof query === 'string' ? query.trim() : '';

@@ -33,6 +33,7 @@ import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
 import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
+import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
 
 export type Topic =
   | 'workers'
@@ -107,6 +108,10 @@ export interface Settings {
   musicMuted: boolean;
   /** Desktop notifications when a worker needs input or finishes while you're in another tab (once the browser allows them). */
   notify: boolean;
+  /** Worker tones (needs you, done, error) silenced on their own. Muting the office silences them too. */
+  alertsMuted: boolean;
+  /** One-tap prompts above an agent prompt box. An empty list means the owner cleared them. */
+  presets: PromptPreset[];
   /** Which panels show on screen. */
   hud: Record<HudPanel, boolean>;
   /** The ☰ menu's actions you pinned to the top bar, by id. */
@@ -179,7 +184,7 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand' };
+  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, presets: defaultPresets(), hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand' };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
@@ -187,6 +192,9 @@ export function loadSettings(): Settings {
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));
     if (typeof saved?.musicMuted === 'boolean') s.musicMuted = saved.musicMuted;
     if (typeof saved?.notify === 'boolean') s.notify = saved.notify;
+    if (typeof saved?.alertsMuted === 'boolean') s.alertsMuted = saved.alertsMuted;
+    // No `presets` key means the defaults, including for a settings file from before the chips existed. An array is the owner's, even empty.
+    if (saved && typeof saved === 'object' && 'presets' in saved) s.presets = normalizePresets(saved.presets);
     if (saved?.sidearm === 'wand' || saved?.sidearm === 'magnum') s.sidearm = saved.sidearm;
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
     // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
@@ -283,7 +291,7 @@ class Store {
     return this.floors.find((f) => f.id === this.floor);
   }
 
-  /** The office's clock (ms since 1970) as near as this page can tell, which the DJ on the roof keeps time by. */
+  /** The office's clock (ms since 1970) as near as this page can tell. */
   officeNow(): number {
     return this.clock ? performance.now() + this.clock.offset : Date.now();
   }

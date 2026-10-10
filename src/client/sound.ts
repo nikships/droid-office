@@ -1,8 +1,7 @@
 /**
  * Office sounds, synthesized with Web Audio so there are no audio files to ship: workers typing
  * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a worker
- * needs you. And the lounge jukebox, whose tunes are in music.ts, and up on the roof, the DJ's drum
- * and bass (dnb.ts).
+ * needs you. And the lounge jukebox, whose tunes are in music.ts.
  *
  * Everything here is triggered by something: there is no background hum, no weather, no random
  * room noise. Silence until something happens.
@@ -10,11 +9,10 @@
  * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
  * which has a volume of its own.
  */
-import { CABINET, DJ_BOOTH, FLOOR, GONG, JUKEBOX } from '../shared/layout';
+import { CABINET, FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
 import { TunePlayer } from './music';
-import { DjPlayer } from './dnb';
 import type { GunCue } from './world/gun-motion';
 import type { WandCue } from './world/wand-motion';
 
@@ -77,17 +75,39 @@ interface Typist {
   word: number;
 }
 
+export type AlertKind = 'needs_input' | 'done' | 'error';
+
+/** Short, and not the same shape: a rise, a major third, two low notes down. Square is quieter so it doesn't shout. */
+const ALERTS: Record<AlertKind, { freq: number; type: OscillatorType; at: number; len: number; gain: number }[]> = {
+  needs_input: [
+    { freq: 784, type: 'sine', at: 0, len: 0.09, gain: 0.22 },
+    { freq: 1175, type: 'sine', at: 0.1, len: 0.11, gain: 0.2 },
+  ],
+  done: [
+    { freq: 659, type: 'triangle', at: 0, len: 0.1, gain: 0.24 },
+    { freq: 880, type: 'triangle', at: 0.11, len: 0.14, gain: 0.22 },
+  ],
+  error: [
+    { freq: 392, type: 'square', at: 0, len: 0.08, gain: 0.08 },
+    { freq: 247, type: 'square', at: 0.1, len: 0.12, gain: 0.07 },
+  ],
+};
+
 export class OfficeSound {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   /** The room itself; it goes quiet while the tab is hidden. */
   private ambience!: GainNode;
-  /** Worker dings, which you still want to hear from another tab. */
+  /** The gong (other than a plain hit) and the siren. Still audible in a background tab. */
   private alerts!: GainNode;
+  /** Needs-you, done, and error. The alert mute is this bus alone, so it leaves the gong and the siren. */
+  private dings!: GainNode;
   private analyser!: AnalyserNode;
   private buf!: Buffers;
   private volume = 0.7;
   private muted = false;
+  /** Worker tones only. The office mute still silences them, because they share its volume. */
+  private alertsMuted = false;
   private typists = new Map<string, Typist>();
   private listener: Listener = { x: 0, y: 1.4, z: 0, fx: 0, fz: -1 };
   // The jukebox: from the cabinet, through a filter that muffles it from across the room, to your own volume.
@@ -102,12 +122,6 @@ export class OfficeSound {
   private tune: TunePlayer | null = null;
   private stream: HTMLAudioElement | null = null;
   private musicTimer = 0;
-  // The DJ on the roof, through the speakers by the booth, at your music volume.
-  private djIn!: PannerNode;
-  private dj: DjPlayer | null = null;
-  /** How far into the DJ's set it is (see djTime), while you're up there. */
-  private djClock: (() => number) | null = null;
-  private djTimer = 0;
   /** A stream that won't play here. */
   onMusicError?: (text: string) => void;
   /** How many of each sound have played, for quick checks from the console. */
@@ -126,6 +140,12 @@ export class OfficeSound {
     this.volume = Math.max(0, Math.min(1, volume));
     this.muted = muted;
     this.applyVolume();
+  }
+
+  /** Silences the worker tones (needs you, done, error) and leaves the room alone. */
+  setAlertsMuted(muted: boolean) {
+    this.alertsMuted = muted;
+    this.applyAlerts();
   }
 
   /** Output level (RMS) right now, for headless checks. */
@@ -174,6 +194,8 @@ export class OfficeSound {
     this.ambience.connect(this.master);
     this.alerts = ctx.createGain();
     this.alerts.connect(this.master);
+    this.dings = ctx.createGain();
+    this.dings.connect(this.master);
     // The jukebox skips the master (it has its own volume) and keeps playing while the tab is hidden.
     this.musicIn = this.panner(JUKEBOX, MUSIC_REF, MUSIC_ROLLOFF);
     this.musicTone = biquad(ctx, 'lowpass', 16000, 0.5);
@@ -183,14 +205,11 @@ export class OfficeSound {
     this.musicMeter.fftSize = 2048;
     this.musicIn.connect(this.musicTone).connect(this.musicBus).connect(ctx.destination);
     this.musicBus.connect(this.musicMeter);
-    // Loud enough to hear from anywhere on the roof, and loudest on the dance floor.
-    this.djIn = this.panner({ x: DJ_BOOTH.x, y: 2.2, z: DJ_BOOTH.z }, 7, 0.8);
-    this.djIn.connect(this.musicBus);
     this.applyVolume();
+    this.applyAlerts();
     this.applyMusicVolume();
     this.applyJukebox();
     this.applyVisibility();
-    this.applyDj();
     void ctx.resume();
   }
 
@@ -199,6 +218,11 @@ export class OfficeSound {
     // Squared, so the slider feels even to the ear.
     const g = this.muted ? 0 : this.volume * this.volume;
     this.master.gain.setTargetAtTime(g, this.ctx.currentTime, 0.04);
+  }
+
+  private applyAlerts() {
+    if (!this.ctx) return;
+    this.dings.gain.setTargetAtTime(this.alertsMuted ? 0 : 1, this.ctx.currentTime, 0.03);
   }
 
   private applyVisibility() {
@@ -1135,152 +1159,56 @@ export class OfficeSound {
 
   // ---- Alerts ----------------------------------------------------------------------------------
 
-  /** Two notes up when a worker is done, a three-note nudge when it needs input. */
-  ding(kind: 'done' | 'needs_input') {
+  /**
+   * A short tone, different for each reason: needs input rises, done is two notes up, an error
+   * falls. They stay audible in a background tab. The alert mute drops them; the office mute does
+   * too, since they share its volume.
+   */
+  ding(kind: AlertKind) {
+    this.unlock();
+    if (!this.ctx || this.alertsMuted) return;
+    this.count(kind);
+    this.tone(kind, this.dings);
+  }
+
+  /** The elevator arriving: the done tone, on the office volume, so the alert mute doesn't cover it. */
+  floorChime() {
+    this.unlock();
+    if (!this.ctx) return;
+    this.count('floor');
+    this.tone('done', this.master);
+  }
+
+  /** The three tones in order, on one clock, so they don't pile up. Nothing while they're muted. */
+  previewAlerts() {
     this.unlock();
     const ctx = this.ctx;
-    if (!ctx) return;
-    if (ctx.state === 'suspended') void ctx.resume();
-    this.count(kind);
-    const notes = kind === 'done' ? [660, 880] : [880, 660, 880];
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = f;
-      const t0 = ctx.currentTime + i * 0.12;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
-      o.connect(g).connect(this.alerts);
-      o.start(t0);
-      o.stop(t0 + 0.3);
+    if (!ctx || this.alertsMuted) return;
+    const t0 = ctx.currentTime;
+    (['needs_input', 'done', 'error'] as const).forEach((kind, i) => {
+      this.count(kind);
+      this.tone(kind, this.dings, t0 + i * 0.32);
     });
   }
 
-  // ---- The roof ---------------------------------------------------------------------------------
-
-  /** The DJ's set on the roof, `clock` saying how far into it it is (see djTime); null stops it. */
-  setDj(clock: (() => number) | null) {
-    const was = !!this.djClock;
-    this.djClock = clock;
-    if (was !== !!clock) this.applyDj();
-  }
-
-  private applyDj() {
+  private tone(kind: AlertKind, dest: AudioNode, at?: number) {
     const ctx = this.ctx;
     if (!ctx) return;
-    if (!this.djClock) {
-      this.dj?.stop();
-      this.dj = null;
-      clearInterval(this.djTimer);
-      return;
-    }
-    if (this.dj) return;
-    const dj = (this.dj = new DjPlayer(ctx, this.djIn));
-    this.count('dj');
-    // On a timer rather than every frame, so it carries on in a background tab.
-    const tick = () => {
-      if (this.djClock) dj.tick(this.djClock());
-    };
-    tick();
-    this.djTimer = window.setInterval(tick, 150);
-  }
-
-  /** Someone at the DJ booth blew the air horn. */
-  horn() {
-    if (!this.dj) return;
-    this.dj.horn();
-    this.count('horn');
-  }
-
-  /** A drink poured at the bar: ice into the glass, a splash, and a clink. */
-  pour(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('pour');
-    const out = this.panner(at, 1.2, 1);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.05;
-    // Ice cubes knocking in.
-    for (let i = 0; i < 3; i++) this.clink(out, t0 + i * rand(0.07, 0.12), rand(2200, 3200), 0.05);
-    // The pour: filtered noise that rises in pitch as the glass fills.
-    const pour = this.noise(this.buf.white);
-    const tone = biquad(ctx, 'bandpass', 700, 1.4);
-    tone.frequency.setValueAtTime(700, t0 + 0.35);
-    tone.frequency.linearRampToValueAtTime(1500, t0 + 1.15);
-    const g = ctx.createGain();
-    envelope(g.gain, t0 + 0.35, [
-      [0.06, 0.09],
-      [0.7, 0.08],
-      [0.85, 0],
-    ]);
-    const wobble = this.noise(this.buf.gurgle, true);
-    wobble.playbackRate.value = 4;
-    const amp = ctx.createGain();
-    amp.gain.value = 0.6;
-    wobble.connect(amp.gain);
-    pour.connect(tone).connect(amp).connect(g).connect(out);
-    pour.start(t0 + 0.35);
-    pour.stop(t0 + 1.3);
-    wobble.start(t0 + 0.35);
-    wobble.stop(t0 + 1.3);
-    // Slid across the bar to you.
-    this.clink(out, t0 + 1.45, 3900, 0.08);
-  }
-
-  /** A glass rings: a couple of high partials, gone in a moment. */
-  private clink(out: AudioNode, when: number, f: number, level: number) {
-    const ctx = this.ctx!;
-    for (const [mul, lvl] of [
-      [1, 1],
-      [2.76, 0.4],
-    ]) {
+    if (ctx.state === 'suspended') void ctx.resume();
+    const base = at ?? ctx.currentTime;
+    for (const n of ALERTS[kind]) {
       const o = ctx.createOscillator();
-      o.frequency.value = f * mul;
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(level * lvl, when + 0.003);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.25);
-      o.connect(g).connect(out);
-      o.start(when);
-      o.stop(when + 0.3);
+      o.type = n.type;
+      o.frequency.value = n.freq;
+      const t0 = base + n.at;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(n.gain, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + n.len);
+      o.connect(g).connect(dest);
+      o.start(t0);
+      o.stop(t0 + n.len + 0.02);
     }
-  }
-
-  /** Hic! One too many. */
-  hiccup() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('hiccup');
-    const t0 = ctx.currentTime + 0.02;
-    const o = ctx.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(260, t0);
-    o.frequency.exponentialRampToValueAtTime(420, t0 + 0.06);
-    const g = ctx.createGain();
-    envelope(g.gain, t0, [
-      [0.008, 0.12],
-      [0.05, 0.08],
-      [0.11, 0],
-    ]);
-    o.connect(biquad(ctx, 'bandpass', 1100, 2.5))
-      .connect(g)
-      .connect(this.ambience);
-    o.start(t0);
-    o.stop(t0 + 0.14);
-    // The catch in the throat, just before it.
-    const n = this.noise(this.buf.white);
-    const ng = ctx.createGain();
-    envelope(ng.gain, t0 - 0.015, [
-      [0.004, 0.08],
-      [0.02, 0],
-    ]);
-    n.connect(biquad(ctx, 'bandpass', 1800, 1))
-      .connect(ng)
-      .connect(this.ambience);
-    n.start(t0 - 0.015);
-    n.stop(t0 + 0.02);
   }
 
   // ---- The jukebox ------------------------------------------------------------------------------

@@ -1917,14 +1917,14 @@ export class WorkerManager {
     const check = () => {
       if (info.status !== 'starting' || w.pty !== proc) return;
       const left = w.settingUp ? BOOT_BLOCKED_MS : (w.setupDoneAt ?? 0) + BOOT_BLOCKED_MS - Date.now();
-      if (left > 0) return void setTimeout(check, Math.min(left, 3000));
+      if (left > 0) return void setTimeout(check, Math.min(left, 3000)).unref();
       if (info.kind === 'agent') {
         w.bootBlocked = true;
         info.activity = 'Waiting on Droid setup or hooks — open the terminal';
         this.setStatus(w, 'needs_input');
       } else this.setStatus(w, 'idle');
     };
-    setTimeout(check, BOOT_BLOCKED_MS);
+    setTimeout(check, BOOT_BLOCKED_MS).unref();
   }
 
   private startFailed(w: Worker, message: string) {

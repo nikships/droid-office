@@ -9,6 +9,7 @@ import { choices, field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
+import { presetEditor } from './prompt-box';
 import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
@@ -105,6 +106,7 @@ function subagentSettings(): SubagentSettings {
 /**
  * `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one.
  * `hireForSetup` opens the hire window with a task to write the repository's worktree setup.
+ * `previewAlerts` plays the three worker tones, so the mute can be checked by ear.
  */
 export function openSettings(
   net: Net,
@@ -112,6 +114,7 @@ export function openSettings(
   onChange: (s: Settings) => void,
   onCharacter: () => void,
   previewSound: () => void,
+  previewAlerts: () => void,
   notifier: DesktopNotifier,
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
@@ -150,6 +153,24 @@ export function openSettings(
   };
   const soundRow = volumeRow('Office sounds volume', 'volume', 'muted', previewSound);
   const musicRow = volumeRow('Jukebox volume', 'music', 'musicMuted');
+  const alertMute = h('button.btn.sm', { type: 'button' });
+  const alertPlay = h('button.btn.sm', { type: 'button' }, 'Play');
+  const alertRow = h('div.row', {}, alertMute, alertPlay);
+  const paintAlerts = () => {
+    alertMute.textContent = settings.alertsMuted ? 'Unmute' : 'Mute';
+    alertMute.setAttribute('aria-pressed', String(settings.alertsMuted));
+    alertMute.setAttribute('aria-label', settings.alertsMuted ? 'Unmute alert sounds' : 'Mute alert sounds');
+    alertMute.classList.toggle('danger', settings.alertsMuted);
+    alertPlay.toggleAttribute('disabled', settings.alertsMuted);
+  };
+  paintAlerts();
+  alertMute.addEventListener('click', () => {
+    settings = { ...settings, alertsMuted: !settings.alertsMuted };
+    onChange(settings);
+    paintAlerts();
+    if (!settings.alertsMuted) previewAlerts();
+  });
+  alertPlay.addEventListener('click', () => previewAlerts());
 
   // Desktop notifications: this browser's permission, then your own on/off.
   const notifyRow = h('div.row');
@@ -196,7 +217,7 @@ export function openSettings(
         ? 'This browser can’t show notifications from the office here. They need https or localhost (an SSH tunnel counts).'
         : perm === 'denied'
           ? 'Your browser blocks notifications from the office. Allow them in the site settings (the icon left of the address), then open this again.'
-          : 'When a worker needs input or finishes while you’re elsewhere, you get a notification; click it to jump to that worker’s terminal. The tab title counts the waiting workers either way.';
+          : 'When a worker needs input or finishes while you’re elsewhere, you get a notification; click it to jump to that worker’s terminal. The tab title counts the waiting workers while this tab is in the background.';
   };
   paintNotify();
 
@@ -734,7 +755,8 @@ export function openSettings(
     sound: [
       group(
         null,
-        card('Office sounds', { desc: desc('Workers typing, the coffee machine, thunder, and the ding when a worker is done.'), control: soundRow }),
+        card('Office sounds', { desc: desc('Workers typing, the coffee machine and thunder. Muting this silences the worker tones too.'), control: soundRow }),
+        card('Alert sounds', { desc: desc('A short tone when a worker needs you, finishes, or its tests fail. Mute them without silencing the rest of the office.'), control: alertRow }),
         card('Jukebox', { desc: desc('Louder near the jukebox. This slider is only your volume.'), control: musicRow }),
       ),
     ],
@@ -765,6 +787,15 @@ export function openSettings(
         card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
         card('Where fresh workers start', { desc: freshNote, control: freshRow }),
         card('Prompts', { desc: promptsNote, control: promptsOpen }),
+        card('Prompt chips', {
+          desc: desc('One tap fills a prompt box. Kept in this browser, not on the office.'),
+          below: [
+            presetEditor(settings.presets, (presets) => {
+              settings = { ...settings, presets };
+              onChange(settings);
+            }),
+          ],
+        }),
       ),
       group('Running', card('Worker limit', { desc: limitNote, control: limitRow }), card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow })),
       group('Worktrees', card('Worktree setup', { desc: setupNote, control: setupMode.row, below: [setupFail, setupForm, setupActions] })),

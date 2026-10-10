@@ -9,12 +9,13 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   issues: 'Issues board',
   pulls: 'Pull requests board',
+  changes: '🌿 Changes window',
   repos: '🗂️ Across repositories',
   worktrees: 'Worktree setup',
   stations: 'Board agents',
@@ -90,6 +91,38 @@ export function pullPromptVars(forge: Forge | undefined, it: PullForPrompt, repo
       : `\`gh pr view ${n} --comments\`, and the comments on lines of code with \`gh api repos/${repo}/pulls/${n}/comments\``,
     checks: lab ? `\`glab ci status --branch ${it.headRefName} --wait\`` : `\`gh pr checks ${n} --watch\``,
     project,
+  };
+}
+
+/** One checkout in the Changes window, for the prompt that asks its worker to commit it and open a pull request. */
+export interface ShipForPrompt {
+  /** What the pull request is about: the task card's name, or what you typed when it had none. */
+  title: string;
+  /** The task card's summary, or the rest of what you typed. */
+  summary?: string;
+  branch: string;
+  /** The branch the pull request targets. */
+  base: string;
+  /** The checkout's folder in a workspace across repositories; none when the worker works in it directly. */
+  folder?: string;
+  /** The pull request already open for the branch. */
+  pr?: number;
+}
+
+/** What the Changes window's Commit & open PR fills in on a floor. */
+export function shipPromptVars(forge: Forge | undefined, it: ShipForPrompt) {
+  const w = forgeWords(forge);
+  const vars = forgeVars(forge);
+  return {
+    ...vars,
+    title: it.title,
+    summary: it.summary ?? '',
+    branch: it.branch,
+    base: it.base,
+    where: it.folder ? `the \`${it.folder}\` folder of your workspace` : 'your checkout',
+    open: it.pr
+      ? `${vars.PullName} ${w.ref(it.pr)} is already open for \`${it.branch}\`, so the push updates it. If its description no longer says what the branch does, update it with \`${w.cli}\`.`
+      : `Open a ${w.pull} against \`${it.base}\` with \`${w.cli}\`. Title it after the task, and say in the description what changed, why, and how you checked it.`,
   };
 }
 
@@ -267,6 +300,36 @@ const DEFS = {
     vars: { ...PULL_VARS, ...READ_VARS },
     optional: true,
     text: 'This is about {{pullName}} {{ref}} "{{title}}" ({{url}}), branch `{{branch}}` into `{{base}}`. Read it with `{{view}}` and see its changes with `{{diff}}`.',
+  },
+
+  // --- Changes window ---
+  'changes.ship': {
+    group: 'changes',
+    label: 'Commit & open PR',
+    used: "What Commit & open PR in a desk's Changes window types to its worker, for the repository tab you are on.",
+    vars: {
+      title: "The task card's name, or the first line you typed when the worker had no card yet",
+      summary: "The task card's summary, or the rest of what you typed",
+      branch: 'The branch the checkout is on',
+      base: 'The branch the pull request targets',
+      where: 'Which checkout: "your checkout", or "the `web` folder of your workspace" for a worker across repositories',
+      open: 'How to finish: open a pull request against the base, or push to the one already open for the branch',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    needs: ['branch'],
+    text: [
+      'Commit your work in {{where}} and open a {{pullName}} for it.',
+      '',
+      'Your task, as the card above your desk sums it up: "{{title}}"',
+      '',
+      '{{summary}}',
+      '',
+      '1. Look over what is uncommitted (`git status`, `git diff`) and commit it on `{{branch}}` with a message that says what changed and why. Leave out anything that should not be committed, like build output or secrets, and say what you left out.',
+      '2. Push `{{branch}}` to origin.',
+      '3. {{open}}',
+      '4. Reply with its link.',
+    ].join('\n'),
   },
 
   // --- Board agents ---

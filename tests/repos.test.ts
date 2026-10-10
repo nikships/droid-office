@@ -39,6 +39,8 @@ function project(root: string, name: string): string {
 
 /** Records where it was started and whether git finds a repository there, then waits. */
 const fakeAgent = `#!/usr/bin/env node
+// The task namer runs droid exec and waits out its timeout on a process that doesn't exit.
+if (process.argv.includes('--output-format')) process.exit(1);
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 let top = null;

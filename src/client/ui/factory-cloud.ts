@@ -11,6 +11,7 @@ import { promptImages } from './images';
 import { colorDot, groupRow, toggle } from './kit';
 import { modelBadge } from './models';
 import { sendHint } from './prompt';
+import { promptExtras } from './prompt-box';
 
 // Cloud workers in the browser (src/server/factory/cloud.ts): the hire dialog's "Runs on" choice, the
 // window E opens at one's desk (its session on Factory and a prompt box), and sending one home.
@@ -194,9 +195,10 @@ export function openCloudWindow(net: Net, workerId: string) {
     : null;
   const ta = h('textarea.input', { rows: 3, placeholder: `Message ${info.name}…`, 'aria-label': `Message ${info.name}` }) as HTMLTextAreaElement;
   const images = promptImages(ta);
+  const extras = promptExtras(ta);
   const interrupt = h('button.btn', { type: 'button', title: 'Stop what it is doing now' }, '⏹ Interrupt');
   const send = h('button.btn.primary', { type: 'submit' }, 'Send');
-  const form = h('form.cloud-prompt', {}, ta, images.element, h('div.cloud-actions', {}, sendHint(true), interrupt, send)) as HTMLFormElement;
+  const form = h('form.cloud-prompt', {}, extras.element, images.element, h('div.cloud-actions', {}, sendHint(true), interrupt, send)) as HTMLFormElement;
   const el = h(
     'div.modal.term.cloud-win',
     { role: 'dialog', 'aria-label': `${info.name} on ${info.cloud.computerName}` },
@@ -227,6 +229,7 @@ export function openCloudWindow(net: Net, workerId: string) {
     if (images.busy()) return void images.settled().then(submit);
     if (!text && !images.ids().length) return ta.focus();
     const ids = images.take();
+    if (text) extras.sent(text);
     net.send({ t: 'worker.prompt', workerId, prompt: text, images: ids.length ? ids : undefined });
     ta.value = '';
     void transcript?.refresh();
@@ -265,6 +268,7 @@ export function openCloudWindow(net: Net, workerId: string) {
       unwatch();
       transcript?.dispose();
       images.discard();
+      extras.dispose();
       net.send({ t: 'worker.detach', workerId });
       if (current?.modal === modal) current = null;
     },
