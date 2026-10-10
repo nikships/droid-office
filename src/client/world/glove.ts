@@ -146,8 +146,6 @@ export const SHAPES = {
     0.5,
     1,
   ),
-  /** Palm in round a glass. */
-  glass: shape(all([0.95, 0.95]), 0.15, 0.6, 0.5, 1),
   /** A card or a book's corner between the thumb and fingers. */
   pinch: shape(
     [

@@ -13,7 +13,7 @@ export interface FloorMenuOptions {
   go(floorId: string): void;
   /** Open the elevator's panel, to add a project. */
   elevator(): void;
-  /** Up to the rooftop bar, by elevator. */
+  /** Up to the roof, by elevator. */
   roof(): void;
 }
 
@@ -94,8 +94,8 @@ export function toggleFloorMenu(anchor: HTMLElement, opts: FloorMenuOptions): vo
     const roof = h(
       'button.list-row.floor-item',
       { type: 'button', role: 'menuitem', class: onRoof ? 'here on' : '', disabled: onRoof, title: onRoof ? "You're up on the roof" : 'Take the elevator up to the roof' },
-      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🍸'),
-      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'A DJ, drinks and the city')),
+      h('span.list-icon.floor-no.roof', { 'aria-hidden': 'true' }, '🏙️'),
+      h('span.list-main', {}, h('span.list-title', {}, ROOF_NAME), h('span.list-meta', {}, 'The city all around')),
       h('span.list-end', {}, onRoof ? h('span.pill.floor-here', {}, 'Here') : null),
     );
     roof.addEventListener('click', () => {

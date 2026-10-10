@@ -87,8 +87,6 @@ interface Client {
   /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
   stale: Set<string>;
   lastGongAt: number;
-  /** When they last blew the DJ's air horn on the roof. */
-  lastHornAt: number;
   /** At the arcade cabinet on their floor, playing their own `game` (see Arcade); `frame` is it as it looks now. */
   playing: boolean;
   game?: string;
@@ -580,7 +578,7 @@ export async function startServer(cfg: Config) {
     jiraBoard: floor?.jira.board ?? null,
     cabinet: { ...cabinetState(c), frame: c.frame ?? null },
   });
-  /** The rooftop bar: nobody works up there, so it has none of a floor's things. */
+  /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (c: Client): FloorView => ({ ...floorView(undefined, c), floor: ROOF });
   const screensOf = (c: Client, floor: Floor | undefined) => {
     for (const { workerId, frame } of floor?.workers.fullScreens() ?? []) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
@@ -1070,7 +1068,6 @@ export async function startServer(cfg: Config) {
       attached: new Set(),
       stale: new Set(),
       lastGongAt: 0,
-      lastHornAt: 0,
       playing: false,
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
@@ -1151,7 +1148,7 @@ export async function startServer(cfg: Config) {
     floorsChanged();
   };
 
-  /** Up to the rooftop bar, by elevator. */
+  /** Up to the roof, by elevator. */
   const goToRoof = (c: Client) => {
     if (c.floor === ROOF) return;
     const left = leave(c);
@@ -1569,13 +1566,6 @@ export async function startServer(cfg: Config) {
         if (!floor || now - c.lastGongAt < 500) break;
         c.lastGongAt = now;
         toFloor(floor, { t: 'gong', why: 'hit', by: who });
-        break;
-      }
-      case 'horn': {
-        const now = Date.now();
-        if (c.floor !== ROOF || now - c.lastHornAt < 1500) break;
-        c.lastHornAt = now;
-        for (const o of clients.values()) if (o.floor === ROOF) sendTo(o, { t: 'horn', by: who });
         break;
       }
       case 'gh.close': {
