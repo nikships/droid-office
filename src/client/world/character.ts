@@ -1424,6 +1424,23 @@ export class Worker {
   private dead = false;
   /** Walking instead of standing, on its way out or while carried by the medics. */
   walking = false;
+  /** Full-rate motion, rather than a hop enabled but held still beside its finished task card. */
+  get animating(): boolean {
+    if (this.dead) return false;
+    return (
+      this.walking ||
+      this.stride > 0 ||
+      this.spawnT < 1 ||
+      !!this.dancing ||
+      !!this.leaving ||
+      this.cheerT > 0 ||
+      this.twirlT >= 0 ||
+      this.status === 'working' ||
+      this.status === 'needs_input' ||
+      this.acts.size > 1 ||
+      (this.bouncing && (!this.held || this.bounceT > 0))
+    );
+  }
   /** What its latest tool call was (see setAction), and what it's acting out right now. */
   private nextAction: WorkerAction | undefined;
   private action: WorkerAction | undefined;

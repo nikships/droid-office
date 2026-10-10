@@ -71,6 +71,8 @@ export class PlayerController {
   rig: ((dt: number) => void) | null = null;
   /** A click (not a drag) on the scene, at the crosshair. */
   onClick: (() => void) | null = null;
+  /** Pointer input actually changed the camera, not just a cursor hovering over the page. */
+  onLook: (() => void) | null = null;
   private keys = new Set<string>();
   private drag: { x: number; y: number; moved: number } | null = null;
   /** Set when this browser won't lock the pointer; looking around falls back to drag-to-look. */
@@ -293,8 +295,11 @@ export class PlayerController {
   }
 
   private look(dx: number, dy: number) {
+    const yaw = this.camYaw;
+    const pitch = this.lookPitch;
     this.camYaw -= dx;
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy, -1.45, 1.45);
+    if (this.camYaw !== yaw || this.lookPitch !== pitch) this.onLook?.();
   }
 
   /** Sits you down in `place`, facing the way it does, and you look out from it. */

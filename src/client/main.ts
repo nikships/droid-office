@@ -44,7 +44,8 @@ import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
-import { IDLE_FRAME_MS, advanceClock, frameDelta, gongRinging, renderPace, skyFalling, type RenderClock, type RenderPace, type SceneMotion } from './render-pace';
+import { gongRinging, renderPace, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
+import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
@@ -3316,7 +3317,6 @@ window.addEventListener('resize', () => {
 });
 resize();
 
-const timer = new THREE.Timer();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
@@ -3330,19 +3330,24 @@ let fpsSince = performance.now();
 let framesDrawn = 0;
 /** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
 let lookedUntil = 0;
-const renderClock: RenderClock = { mode: 'off', resume: false };
-let idleTimer = 0;
-let loopArmed = false;
+const renderLoop = new RenderLoop({
+  pace: currentPace,
+  draw: drawFrame,
+  animation: (callback) => renderer.setAnimationLoop(callback),
+  delay: (callback, ms) => window.setTimeout(callback, ms),
+  cancelDelay: (id) => window.clearTimeout(id),
+  now: () => performance.now(),
+  paused: () => {
+    fpsEl.textContent = '';
+    fpsFrames = 0;
+    fpsSince = performance.now();
+  },
+});
 
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
 function workerMoving(): boolean {
-  for (const [id, v] of workerViews) {
-    if (v.model.walking || v.model.bouncing) return true;
-    const status = store.workers.get(id)?.status;
-    // A turn plays a pose every frame (typing, reading, waiting on a test). needs_input and done hop, which is `bouncing`.
-    if (status === 'working') return true;
-  }
-  for (const a of idleAgents) if (a.model.walking || a.model.bouncing) return true;
+  for (const v of workerViews.values()) if (v.model.animating) return true;
+  for (const a of idleAgents) if (a.view.vacancy.visible && a.model.animating) return true;
   return departures.positions().length > 0 || casualties.active;
 }
 
@@ -3370,8 +3375,8 @@ function sceneMotion(): SceneMotion {
     !!gunMotion.doing ||
     !!wandMotion.doing ||
     !!me.emoteId ||
-    arcade.zoomed ||
-    cabinet.zoomed ||
+    arcade.animating ||
+    cabinet.animating ||
     readingNow() ||
     now < lookedUntil ||
     (!reduceMotion.matches && booze.amount(secs) > 0.01);
@@ -3400,7 +3405,7 @@ function currentPace(): RenderPace {
   });
 }
 
-function drawFrame(ts: number | undefined, resumed: boolean, pace: RenderPace) {
+function drawFrame(dt: number, t: number) {
   framesDrawn++;
   fpsFrames++;
   const fpsNow = performance.now();
@@ -3409,9 +3414,6 @@ function drawFrame(ts: number | undefined, resumed: boolean, pace: RenderPace) {
     fpsFrames = 0;
     fpsSince = fpsNow;
   }
-  timer.update(ts);
-  const dt = frameDelta(timer.getDelta(), pace, resumed);
-  const t = timer.getElapsed();
   const now = performance.now();
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
@@ -3563,36 +3565,9 @@ function drawFrame(ts: number | undefined, resumed: boolean, pace: RenderPace) {
   loading.drew();
 }
 
-function applyPlan(event: 'tick' | 'wake', ts?: number) {
-  const pace = currentPace();
-  const plan = advanceClock(renderClock, pace, event);
-  renderClock.mode = plan.clock.mode;
-  renderClock.resume = plan.clock.resume;
-  if (plan.schedule === 'stop' || plan.schedule === 'idle' || plan.schedule === 'raf') {
-    if (loopArmed && plan.schedule !== 'raf') {
-      renderer.setAnimationLoop(null);
-      loopArmed = false;
-    }
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-      idleTimer = 0;
-    }
-  }
-  if (plan.schedule === 'stop') fpsEl.textContent = '';
-  if (plan.draw) drawFrame(ts, plan.resumed, pace);
-  if (plan.schedule === 'raf' && !loopArmed) {
-    loopArmed = true;
-    renderer.setAnimationLoop((t) => applyPlan('tick', t));
-  } else if (plan.schedule === 'idle') {
-    idleTimer = window.setTimeout(() => applyPlan('tick', performance.now()), IDLE_FRAME_MS);
-  }
-}
-
 /** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
 function renderWake() {
-  // Already drawing every frame, and the window is showing: the next tick sees the change.
-  if (renderClock.mode === 'full' && document.visibilityState === 'visible') return;
-  applyPlan('wake');
+  renderLoop.wake();
 }
 
 /** The camera is being driven. Full rate starts before the player controller has stepped. */
@@ -3601,11 +3576,8 @@ function renderLook() {
   renderWake();
 }
 
-let loopStarted = false;
 function startLoop() {
-  if (loopStarted) return;
-  loopStarted = true;
-  if (renderClock.mode === 'off') applyPlan('tick', performance.now());
+  renderLoop.start();
 }
 
 // A background tab and a fully covered window both show up as visibilityState "hidden".
@@ -3628,10 +3600,7 @@ window.addEventListener(
   },
   { passive: true },
 );
-window.addEventListener('pointermove', () => {
-  if (modalOpen() || !player.mouseLook) return;
-  renderLook();
-});
+player.onLook = renderLook;
 
 // ---- Boot ------------------------------------------------------------------------------------------
 function boot() {
@@ -3778,6 +3747,7 @@ const automation = createAutomation({
   scene,
   net,
   renderer,
+  renderLoop,
   hands,
   me,
   settings,

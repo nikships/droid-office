@@ -40,6 +40,11 @@ export class ScreenZoom {
     return this.zoom > 0;
   }
 
+  /** Opening and closing move the camera; staying at the screen does not. */
+  moving(on: boolean): boolean {
+    return this.zoom !== (on ? 1 : 0);
+  }
+
   /** How big the screen is on the page, in CSS pixels, once the camera is up at it. */
   box(): { width: number; height: number } {
     const width = Math.min(innerWidth * FILL, innerHeight * FILL * this.aspect);
@@ -98,6 +103,10 @@ export class Arcade {
   /** Anywhere between your view and the monitor: your first-person hands would cover the screen. */
   get zoomed(): boolean {
     return this.view.zoomed;
+  }
+
+  get animating(): boolean {
+    return this.view.moving(!!this.modal);
   }
 
   play() {
