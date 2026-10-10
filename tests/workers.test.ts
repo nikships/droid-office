@@ -1705,3 +1705,88 @@ test('a queued prompt is submitted to an agent with Ctrl+Enter, a plain one with
   assert.ok(typed(records).includes('\x1b[200~Queue this\x1b[201~\x1b[13;5u\x1b[200~Now this'));
   assert.equal(workers.get(hired.id)?.activity, 'Now this');
 });
+
+test('fresh workers start from the latest main, the checkout moved only when nobody is in its way; subagents start where their lead is', async (t) => {
+  const f = carryOnFixture(t);
+  const forge = mkdtempSync(path.join(tmpdir(), 'office-fresh-forge-'));
+  t.after(() => rmSync(forge, { recursive: true, force: true }));
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const origin = path.join(forge, 'origin.git');
+  git(forge, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(f.root, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(f.root, 'a.txt'), 'a');
+  git(f.root, 'add', 'a.txt');
+  git(f.root, 'commit', '-qm', 'init');
+  git(f.root, 'remote', 'add', 'origin', origin);
+  git(f.root, 'push', '-q', '-u', 'origin', 'main');
+  const github = path.join(forge, 'github');
+  git(forge, 'clone', '-q', origin, github);
+  const merge = (file: string) => {
+    git(github, 'pull', '-q', '--ff-only');
+    writeFileSync(path.join(github, file), file);
+    git(github, 'add', '.');
+    git(github, 'commit', '-qm', file);
+    git(github, 'push', '-q', 'origin', 'main');
+    return git(github, 'rev-parse', 'HEAD');
+  };
+  git(f.root, 'checkout', '-q', '-b', 'feature');
+  const merged = merge('fix.txt');
+  const toasts: string[] = [];
+  const moved: string[] = [];
+  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text), checkout: (b) => moved.push(b) });
+  t.after(() => workers.shutdown());
+  // Off (or unset): the checkout's branch, as before, and nothing to fetch for a worker without a worktree.
+  assert.equal(workers.fetchBase(true), undefined);
+  workers.freshMain = () => true;
+  await workers.fetchBase(true);
+
+  // A worktree worker is cut from origin's main while the checkout stays on feature.
+  const lead = workers.spawn('desk-1', 'test', 'lead the team', true);
+  if (typeof lead === 'string') throw new Error(lead);
+  assert.equal(lead.worktree?.base, merged);
+  assert.equal(lead.worktree?.from, 'main');
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+
+  // One without a worktree: the clean checkout goes over to the latest main for it.
+  const direct = workers.spawn('desk-2', 'test', 'look around');
+  if (typeof direct === 'string') throw new Error(direct);
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+  assert.equal(git(f.root, 'rev-parse', 'HEAD'), merged);
+  assert.deepEqual(moved, ['main']);
+  assert.ok(toasts.includes(`🌿 Switched the checkout from feature to main for ${direct.name}`), toasts.join('\n'));
+  await waitFor(
+    () => launchesOf(f).filter((l) => l.env.workerId === direct.id),
+    (x) => x.length > 0,
+  );
+
+  // With that worker in the checkout, the next one doesn't move it from under it.
+  git(f.root, 'checkout', '-q', 'feature');
+  const second = workers.spawn('desk-3', 'test', 'and another');
+  if (typeof second === 'string') throw new Error(second);
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+  assert.ok(toasts.includes(`🌿 ${second.name} starts on feature as it is, not the latest main: ${direct.name} is working in it`), toasts.join('\n'));
+
+  // The lead's subagent starts from what the lead committed, on the lead's branch, not from main.
+  const leadDir = path.join(f.root, lead.worktree!.path);
+  writeFileSync(path.join(leadDir, 'plan.txt'), 'plan');
+  git(leadDir, 'add', 'plan.txt');
+  git(leadDir, 'commit', '-qm', 'plan');
+  const leadHead = git(leadDir, 'rev-parse', 'HEAD');
+  merge('later.txt');
+  await new Worktrees(f.root).fetch('main');
+  const sub = workers.spawn('desk-4', 'test', 'a piece of it', true, 'agent', undefined, undefined, [], lead.id);
+  if (typeof sub === 'string') throw new Error(sub);
+  assert.equal(sub.worktree?.base, leadHead);
+  assert.equal(sub.worktree?.from, lead.worktree?.branch);
+  // …or from what the lead names.
+  const picked = workers.spawn('desk-5', 'test', 'another piece', true, 'agent', undefined, undefined, [], lead.id, undefined, 'feature');
+  if (typeof picked === 'string') throw new Error(picked);
+  assert.equal(picked.worktree?.base, git(f.root, 'rev-parse', 'feature'));
+  assert.equal(picked.worktree?.from, 'feature');
+  assert.match(String(workers.spawn('desk-6', 'test', 'x', true, 'agent', undefined, undefined, [], lead.id, undefined, 'nope')), /no branch, tag or commit called nope/);
+  assert.match(String(workers.spawn('desk-6', 'test', 'x', false, 'agent', undefined, undefined, [], lead.id, undefined, 'feature')), /Only a subagent in its own worktree/);
+  // A subagent without a worktree never moves the checkout either.
+  const quiet = workers.spawn('desk-6', 'test', 'read only', false, 'agent', undefined, undefined, [], lead.id);
+  if (typeof quiet === 'string') throw new Error(quiet);
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+});

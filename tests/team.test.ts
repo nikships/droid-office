@@ -14,7 +14,7 @@ function worker(over: Partial<WorkerInfo> & { id: string; deskId: string }): Wor
 class Fake implements TeamWorkers {
   ws = new Map<string, WorkerInfo>();
   officeDefault: AgentChoice | undefined = undefined;
-  hired: { deskId: string; by: string; prompt: string; worktree: boolean; choice: Partial<AgentChoice>; lead: string }[] = [];
+  hired: { deskId: string; by: string; prompt: string; worktree: boolean; choice: Partial<AgentChoice>; lead: string; from?: string }[] = [];
   prompts: [string, string][] = [];
   resumed: [string, string | undefined][] = [];
   killed: string[] = [];
@@ -35,9 +35,9 @@ class Fake implements TeamWorkers {
   deskOccupied(deskId: string) {
     return this.list().some((w) => w.deskId === deskId);
   }
-  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string) {
+  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string) {
     if (this.refuse) return this.refuse;
-    this.hired.push({ deskId, by, prompt, worktree, choice, lead });
+    this.hired.push({ deskId, by, prompt, worktree, choice, lead, ...(from ? { from } : {}) });
     const id = `sub${++this.n}`;
     return this.add(
       worker({
@@ -128,7 +128,8 @@ test('a lead hires a subagent at the free desk nearest it, in its own worktree, 
   assert.deepEqual(r.fake.get('sub1')?.task, { name: 'Fix login', summary: 'Fix the login redirect and test it' });
   assert.equal(res.body.worker.name, 'Pixel');
   assert.equal(res.body.worker.desk, 'Desk 3');
-  assert.deepEqual(res.body.worker.worktree, { path: path.join('/proj', '.droid-office/worktrees/sub1'), branch: 'office/sub1' });
+  // Without a branch to name, where it started is the commit.
+  assert.deepEqual(res.body.worker.worktree, { path: path.join('/proj', '.droid-office/worktrees/sub1'), branch: 'office/sub1', from: 'abc' });
   assert.deepEqual(r.toasts, ['🧭 Nibble hired Pixel at Desk 3: Fix login']);
 
   // The lead's own picks win; what it leaves out comes from the setting.
@@ -148,6 +149,26 @@ test('a lead hires a subagent at the free desk nearest it, in its own worktree, 
     r.fake.hired.map((h) => h.deskId),
     ['desk-3', 'desk-2', 'desk-4', 'desk-9'],
   );
+});
+
+test('a lead picks the branch its subagent starts from, and only for a worktree', async (t) => {
+  const r = rig(t);
+  const res = await r.call('lead', { action: 'hire', task: 'a', from: ' origin/main ' });
+  assert.equal(res.status, 200);
+  assert.equal(r.fake.hired[0].from, 'origin/main');
+  assert.equal(r.fake.fetched, 1, 'fetched first, so origin/main is what the forge has now');
+  // Left out, it starts where the lead is: nothing is passed on.
+  await r.call('lead', { action: 'hire', task: 'b' });
+  assert.equal(r.fake.hired[1].from, undefined);
+  const no = async (body: Record<string, unknown>, why: RegExp) => {
+    const out = await r.call('lead', { action: 'hire', task: 'x', ...body });
+    assert.equal(out.status, 400, JSON.stringify(body));
+    assert.match(out.body.error, why);
+  };
+  await no({ from: 'main', worktree: false }, /--from is where a subagent’s own worktree starts/);
+  await no({ from: '--upload-pack=evil' }, /--from takes a branch, tag or commit/);
+  await no({ from: 'two words' }, /--from takes a branch, tag or commit/);
+  assert.equal(r.fake.hired.length, 2);
 });
 
 test('with no Subagents setting, what the lead leaves out comes from the office default', async (t) => {

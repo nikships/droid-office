@@ -337,6 +337,40 @@ export function openSettings(
   };
   paintLeave();
 
+  // Where a fresh worker starts: the latest main, or the branch the checkout is on. For everyone.
+  const freshRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Where fresh workers start' });
+  const freshNote = desc();
+  const paintFresh = () => {
+    const { on, by, at } = store.freshMain;
+    freshRow.replaceChildren(
+      ...(
+        [
+          [true, 'Latest main'],
+          [false, 'Checkout’s branch'],
+        ] as const
+      ).map(([value, label]) =>
+        h(
+          'button.btn',
+          {
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(on === value),
+            class: on === value ? 'on' : '',
+            onclick: () => {
+              if (store.freshMain.on !== value) net.send({ t: 'freshMain.set', on: value });
+            },
+          },
+          label,
+        ),
+      ),
+    );
+    const now = on
+      ? 'A new worktree is cut from the latest main on origin, whatever the checkout is on. A worker without one gets the checkout switched to the latest main first, unless someone else is working there or it has uncommitted changes on another branch: then it starts as the checkout is, and a toast says why. Subagents start where their lead says.'
+      : 'A new worktree is cut from the latest of the branch the checkout is on, and the checkout is never moved for a worker.';
+    freshNote.textContent = `${now}${by ? ` Set by ${by}${at ? ` ${timeAgo(at)}` : ``}.` : ``}`;
+  };
+  paintFresh();
+
   // How new worktrees on this floor are made ready: the repository's own setup, the detected one, or the floor's.
   const setupNote = desc();
   const setupFail = h('p.note.bad', { role: 'alert' });
@@ -726,7 +760,12 @@ export function openSettings(
     ],
     factory: [group('Connection', card('Factory API key', factoryKey.key)), factoryKey.reach],
     workers: [
-      group('New workers', card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }), card('Prompts', { desc: promptsNote, control: promptsOpen })),
+      group(
+        'New workers',
+        card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
+        card('Where fresh workers start', { desc: freshNote, control: freshRow }),
+        card('Prompts', { desc: promptsNote, control: promptsOpen }),
+      ),
       group('Running', card('Worker limit', { desc: limitNote, control: limitRow }), card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow })),
       group('Worktrees', card('Worktree setup', { desc: setupNote, control: setupMode.row, below: [setupFail, setupForm, setupActions] })),
     ],
@@ -801,6 +840,7 @@ export function openSettings(
   const el = h('div.modal.xl.settings', { role: 'dialog', 'aria-label': 'Settings' }, h('header', {}, h('h2', {}, 'Settings'), close), h('div.split.settings-body', {}, nav, ...bodies.values()));
   const offNotify = store.on('notify', paintHook);
   const offLeave = store.on('leaveOnMerge', paintLeave);
+  const offFresh = store.on('freshMain', paintFresh);
   const offLimit = [store.on('machine', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir)];
   const offJira = [store.on('jira', paintJira), offSetup];
@@ -811,6 +851,7 @@ export function openSettings(
       wide.removeEventListener('change', orient);
       offNotify();
       offLeave();
+      offFresh();
       offLimit.forEach((off) => off());
       offDir.forEach((off) => off());
       offJira.forEach((off) => off());

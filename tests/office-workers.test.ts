@@ -41,6 +41,7 @@ test('says what is wrong with a bad command line', () => {
   bad(['hire', '--title'], /--title needs a value/);
   bad(['hire', '--worktree', '--no-worktree'], /Pick --worktree or --no-worktree/);
   bad(['hire', '--no-worktree=yes'], /takes no value/);
+  bad(['hire', '--from', 'main', '--no-worktree'], /--from is where a subagent's worktree starts/);
   bad(['hire', '--provider', 'droid'], /Unknown option for hire: --provider/);
   bad(['hire', '--effort', 'huge'], /--effort is one of low, medium, high, xhigh, max/);
   bad(['read'], /read takes the subagent's name, e\.g\. office-workers read Pixel/);
@@ -63,6 +64,7 @@ test('builds the /office/workers requests, with the text from stdin', () => {
     worktree: true,
   });
   assert.deepEqual(body(['hire', '--no-worktree', '--task', 'Look around']), { action: 'hire', task: 'Look around', worktree: false });
+  assert.deepEqual(body(['hire', '--from', 'origin/main', '--task', 'Start over']), { action: 'hire', task: 'Start over', from: 'origin/main' });
   assert.deepEqual(body(['wait']), { action: 'events' });
   assert.deepEqual(body(['wait', 'Pixel']), { action: 'events', workers: ['Pixel'] });
   assert.deepEqual(body(['read', 'Pixel', '--lines', '30']), { action: 'read', worker: 'Pixel', lines: 30 });

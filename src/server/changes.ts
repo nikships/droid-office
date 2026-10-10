@@ -29,9 +29,9 @@ export interface ChangesTarget {
   /** The commit its worktree branched from, when it has one. */
   worktreeBase?: string;
   /**
-   * For another floor's repository a worker works in (see WorkerInfo.repos): the branch diffs are
-   * taken against and PRs target, instead of the one the office was opened on (null: none), where
-   * that repository's open pull requests are, and how to refresh its boards.
+   * The branch diffs are taken against and PRs target, instead of the one the office was opened on
+   * (null: none): the one its worktree was cut from. For another floor's repository a worker works in
+   * (see WorkerInfo.repos), also where that repository's open pull requests are, and how to refresh its boards.
    */
   baseBranch?: string | null;
   openPull?(branch: string): { number: number; url: string } | undefined;

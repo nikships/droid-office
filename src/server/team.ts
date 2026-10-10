@@ -19,8 +19,11 @@ export interface TeamWorkers {
   get(id: string): WorkerInfo | undefined;
   deskOccupied(deskId: string): boolean;
   readonly officeDefault: AgentChoice | undefined;
-  /** Hires `lead`'s subagent at `deskId`; returns it, or why not. */
-  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string): WorkerInfo | string;
+  /**
+   * Hires `lead`'s subagent at `deskId`; returns it, or why not. Its worktree starts from `from` (a
+   * branch, tag or commit), else where its lead is.
+   */
+  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string): WorkerInfo | string;
   prompt(id: string, text: string): string | undefined;
   resume(id: string, prompt?: string): string | undefined;
   kill(id: string): Promise<{ note?: string; error?: string }>;
@@ -67,8 +70,8 @@ export interface TeamMember {
   desk: string;
   model?: string;
   effort?: string;
-  /** Its own worktree, by its full path. */
-  worktree?: { path: string; branch: string };
+  /** Its own worktree, by its full path, and the branch (or commit) it started from. */
+  worktree?: { path: string; branch: string; from?: string };
   activity?: string;
   task?: string;
   pr?: { number: number; url: string };
@@ -85,6 +88,7 @@ export interface TeamReply {
 
 const TASK_MAX = 20_000;
 const TITLE_MAX = 80;
+const FROM_MAX = 200;
 const READ_DEFAULT = 80;
 const READ_MAX = 400;
 /** How many events the floor keeps, all leads together. */
@@ -249,7 +253,7 @@ export class Team {
       desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
-      ...(w.worktree ? { worktree: { path: path.join(this.opts.dir, w.worktree.path), branch: w.worktree.branch } } : {}),
+      ...(w.worktree ? { worktree: { path: path.join(this.opts.dir, w.worktree.path), branch: w.worktree.branch, from: w.worktree.from ?? w.worktree.base?.slice(0, 7) } } : {}),
       ...(w.activity ? { activity: w.activity } : {}),
       ...(w.task ? { task: w.task.name } : {}),
       ...(w.pr ? { pr: w.pr } : {}),
@@ -301,7 +305,12 @@ export class Team {
     if (tooMany) return no(409, tooMany);
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: hire with --no-worktree");
     const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
-    // Its worktree starts from what's on the forge now, as the queue's do.
+    const from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
+    if (from !== undefined) {
+      if (!worktree) return no(400, '--from is where a subagent’s own worktree starts: hire it with a worktree, or leave --from out');
+      if (from.length > FROM_MAX || !/^[^-\s][^\s]*$/.test(from)) return no(400, `--from takes a branch, tag or commit (got ${clip(from, 40)})`);
+    }
+    // Fetched, so `--from origin/main` is what's on the forge now. Without --from it starts where the lead is.
     if (worktree) await this.workers.fetchBase?.();
     const still = this.workers.get(lead.id);
     if (!still) return no(410, "You've left the floor");
@@ -310,7 +319,7 @@ export class Team {
     const at = DESK_BY_ID.get(still.deskId);
     const seat = at && nearestFreeSeat(at.x, at.z, (id) => this.workers.deskOccupied(id));
     if (!seat) return no(409, 'Every desk and bean bag on this floor is taken: dismiss a subagent you are done with, or ask the person to send someone home');
-    const info = this.workers.hire(seat.id, still.name, task, worktree, choice, still.id);
+    const info = this.workers.hire(seat.id, still.name, task, worktree, choice, still.id, from);
     if (typeof info === 'string') return no(409, info);
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });

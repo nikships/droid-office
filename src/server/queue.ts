@@ -18,8 +18,11 @@ export interface QueueWorkers {
   unstage?(ids: readonly string[]): void;
   /** Resolves with a line about what became of the worker's worktree. */
   kill(id: string): Promise<{ note?: string; error?: string }>;
-  /** Fetches what a new worktree starts from; undefined when there's nothing to wait for (see Worktrees.fetch). */
-  fetchBase?(): Promise<void> | undefined;
+  /**
+   * Fetches what a new worker starts from; with `checkout`, for one in the project's checkout. Undefined
+   * when there's nothing to wait for (see WorkerManager.fetchBase).
+   */
+  fetchBase?(checkout?: boolean): Promise<void> | undefined;
 }
 
 export interface QueueEvents {
@@ -318,9 +321,9 @@ export class TaskQueue {
       if (room < 0) break;
       const free = room > 0 ? this.freeDesk() : undefined;
       if (!free && !this.recyclable()) break;
-      // Its worktree starts from what's on the forge now, PRs merged since included: fetch that first,
-      // and come back to seat it once it's in. Nothing is sent home until the fetch has resolved.
-      const fetching = this.useWorktree ? this.workers.fetchBase?.() : undefined;
+      // It starts from what's on the forge now, PRs merged since included: fetch that first, and come
+      // back to seat it once it's in. Nothing is sent home until the fetch has resolved.
+      const fetching = this.workers.fetchBase?.(!this.useWorktree);
       if (fetching) {
         void fetching.then(() => this.pump());
         break;

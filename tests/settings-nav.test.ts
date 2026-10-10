@@ -29,6 +29,7 @@ test('every setting is in a category', () => {
     ['Source hot reload', 'building'],
     ['Factory API key', 'factory'],
     ['Default worker', 'workers'],
+    ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
