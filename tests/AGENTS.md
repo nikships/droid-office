@@ -1,6 +1,6 @@
 # Tests
 
-- Flat files named `tests/<name>.test.ts`. `npm test` is `node --import tsx --test tests/*.test.ts`. A file in a subdirectory never runs.
+- Flat files named `tests/<name>.test.ts`. `npm test` is `node --import tsx --test --test-timeout=120000 tests/*.test.ts`; a test still running after two minutes fails by name. A file in a subdirectory never runs.
 - `node:test` and `node:assert/strict`. Import the source by its `.js` path (`../src/server/workers.js`, `../src/client/world/gun.js`); tsx resolves it. A client module that touches `window`, `document` or WebGL at import time cannot be loaded this way.
 - One file: `node --import tsx --test tests/<name>.test.ts`.
 - `npm run test:coverage` (Node 22.8+) is what CI runs. The line and function floors are the `--test-coverage-lines` and `--test-coverage-functions` flags in the `package.json` script. `tests/**` is excluded from that denominator. When a change to `src/` or `bin/` drops either number, add coverage until the command passes. Lower a floor only to the number the suite actually holds, in the same change.

@@ -65,6 +65,7 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     outputs:
@@ -91,6 +92,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       # Electron is only for the Mac app, which the mac job builds.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -163,6 +165,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.mac == 'true'
     runs-on: macos-26
+    timeout-minutes: 45
     env:
       # Signed and notarized only for a release; a pull request's build skips both.
       PUBLISHING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
@@ -271,6 +274,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: android
@@ -338,6 +342,7 @@ jobs:
     needs: [release, mac, android]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
