@@ -2,7 +2,7 @@
 
 A 3D office in the browser where its owner hires droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
-Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files).
+Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, queue, floors, state files).
 
 Planned work has written plans; follow them and keep them current when doing that work:
 
@@ -15,7 +15,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 
 | Path | Contents |
 | --- | --- |
-| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, meetings, floors |
+| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, floors |
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
@@ -35,7 +35,7 @@ This file is the layer that applies everywhere. Each directory below has its own
 
 | Path | Read it before you |
 | --- | --- |
-| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, queue, meetings or floors |
+| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, queue or floors |
 | [`src/shared/AGENTS.md`](src/shared/AGENTS.md) | change a type or helper compiled into both server and client |
 | [`src/client/AGENTS.md`](src/client/AGENTS.md) | change the Vite app, or anything `ui/` and `world/` share |
 | [`src/client/ui/AGENTS.md`](src/client/ui/AGENTS.md) | change a DOM window or panel |

@@ -166,7 +166,6 @@ test("hiring is refused when it shouldn't happen, with a reason the agent can ac
   const r = rig(t, { git: false }, { maxPerLead: 1 });
   r.fake.add(worker({ id: 'issues', deskId: 'station-issues', name: 'Issues agent' }));
   r.fake.add(worker({ id: 'shell', deskId: 'desk-8', kind: 'shell', name: 'Shell 🐚' }));
-  r.fake.add(worker({ id: 'meet', deskId: 'meeting-1', meeting: 'm1' }));
   const no = async (caller: string, body: Record<string, unknown>, status: number, why: RegExp) => {
     const res = await r.call(caller, body);
     assert.equal(res.status, status, `${caller} ${JSON.stringify(body)}`);
@@ -177,7 +176,6 @@ test("hiring is refused when it shouldn't happen, with a reason the agent can ac
   await no('lead', { action: 'hire', task: 'x', worktree: true }, 400, /isn't a git checkout/);
   await no('issues', { action: 'hire', task: 'x' }, 403, /Issues agent doesn't hire subagents: put the work on the task queue/);
   await no('shell', { action: 'hire', task: 'x' }, 403, /Only agents/);
-  await no('meet', { action: 'hire', task: 'x' }, 403, /meeting table/);
   await no('lead', { action: 'nope' }, 400, /Unknown action/);
 
   // No git: no worktree, without being asked.

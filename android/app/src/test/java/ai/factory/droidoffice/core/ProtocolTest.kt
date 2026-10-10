@@ -85,7 +85,7 @@ class ProtocolTest {
 
     @Test
     fun skipsWhatItDoesntKnow() {
-        assertEquals(ServerMsg.Ignored("meeting.update"), Protocol.decode("""{"t":"meeting.update","x":1}"""))
+        assertEquals(ServerMsg.Ignored("future.update"), Protocol.decode("""{"t":"future.update","x":1}"""))
         assertNull(Protocol.decode("not json"))
         assertNull(Protocol.decode("""{"no":"type"}"""))
         // A known type with a broken body is skipped, not thrown.

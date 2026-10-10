@@ -1422,7 +1422,7 @@ export class Worker {
   private leaving: { box: THREE.Group; boxT: number; stride: number } | null = null;
   /** Shot: light out, face slack, flat where it fell while its session keeps running (see die). */
   private dead = false;
-  /** On its way out (sent home) or in (called to a meeting): it waddles along instead of standing. */
+  /** Walking instead of standing, on its way out or while carried by the medics. */
   walking = false;
   /** What its latest tool call was (see setAction), and what it's acting out right now. */
   private nextAction: WorkerAction | undefined;
@@ -1818,7 +1818,7 @@ export class Worker {
     this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + (hopping ? this.body.position.y : 0);
-    // Walking in to a meeting: the same waddle as on the way out, without the box.
+    // Walking uses the same waddle as on the way out, without the box.
     if (this.walking || this.stride) {
       this.stride = this.walking ? this.stride + dt * 9 : 0;
       const s = Math.sin(this.stride);

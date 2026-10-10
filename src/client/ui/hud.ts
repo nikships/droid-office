@@ -53,7 +53,7 @@ export function renderWorkers(onOpen: (id: string) => void) {
     );
   }
   if (!workers.length) ul.append(h('li.empty', {}, 'Walk up to a desk and press E to hire one'));
-  // The count is the workers hired onto desks and bean bags (and a meeting's table): the board agents
+  // The count is the workers hired onto desks and bean bags: the board agents
   // standing at the Issues, PR and queue kiosks are listed but aren't counted.
   const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
   $('worker-count').textContent = hired ? String(hired) : '';
@@ -101,7 +101,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
     [
       'Use things',
       [
-        ['Use what you look at', 'Hire a worker, open its terminal, read a board, call a meeting, play the jukebox, sit down (walk off to get up)', ['Click', 'or', 'E']],
+        ['Use what you look at', 'Hire a worker, open its terminal, read a board, play the jukebox, sit down (walk off to get up)', ['Click', 'or', 'E']],
         ['Ask a board agent', 'One stands at the issues board, the PR board and the task queue. E there and type what you want; O opens its terminal, X sends it home', ['E']],
         ['Put back an issue card', 'Pick one up with E on the issues board or in an issue, then E at an empty desk, a worker or the queue', ['Q']],
         ['Hang a picture', 'From the web, on a wall. E at a picture moves, edits or takes it down', ['F']],

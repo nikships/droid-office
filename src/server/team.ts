@@ -207,7 +207,6 @@ export class Team {
       const boss = this.workers.get(w.lead)?.name ?? 'your lead';
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with office-workers report --question`;
     }
-    if (w.meeting) return "Workers at the meeting table don't hire subagents";
     const station = DESK_BY_ID.get(w.deskId)?.station;
     if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: put the work on the task queue with office-queue`;
     if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents)`;

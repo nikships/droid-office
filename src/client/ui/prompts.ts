@@ -21,7 +21,7 @@ const norm = (text: string) => text.replace(/\r\n?/g, '\n').trim();
 
 /**
  * The office's prompts, to read and rewrite: what the boards' buttons send workers, the queue's
- * worktree note, the board agents' briefs, the meeting room's parts and the sign writer's
+ * worktree note, the board agents' briefs and the sign writer's
  * instructions. A list down the side, grouped by where they're used; the one picked, with its
  * placeholders, on the right.
  */

@@ -493,6 +493,29 @@ test('a saved worker comes back with a valid model, without an invalid one', (t)
   assert.equal(workers.get('kept-bad')?.model, undefined);
 });
 
+test('workers at removed seats are not resumed and their saved work is preserved', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const retired = {
+    id: 'retired',
+    kind: 'agent',
+    deskId: 'meeting-1',
+    name: 'Retired',
+    sessionId: 'saved-session',
+    worktree: { path: '.droid-office/worktrees/old-room', branch: 'office/old-room', base: 'main' },
+  };
+  const state = path.join(f.data, 'workers.json');
+  writeFileSync(state, JSON.stringify([retired]));
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  await workers.start();
+  assert.deepEqual(workers.list(), []);
+  assert.equal(workers.spawn('meeting-1', 'test'), 'Unknown desk');
+  assert.deepEqual(f.read(), [], 'no agent starts at a removed seat');
+  workers.shutdown();
+  assert.deepEqual(JSON.parse(readFileSync(state, 'utf8')), [retired]);
+});
+
 test('a board agent is hired with its brief on the first prompt, then prompted, woken and asked to prove who it is', async (t) => {
   const f = fixture();
   const updates: WorkerInfo[] = [];
@@ -1513,16 +1536,16 @@ test('a subagent sits down told who hired it and where it works; every agent get
   assert.ok(typeof lead === 'object');
   if (typeof lead !== 'object') return;
   assert.equal(lead.lead, undefined);
-  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'agent', undefined, undefined, undefined, [], 'nobody') as string, /lead has left/);
-  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'shell', undefined, undefined, undefined, [], lead.id) as string, /an agent at a desk/);
-  assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, undefined, [], lead.id) as string, /an agent at a desk/);
+  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'agent', undefined, undefined, [], 'nobody') as string, /lead has left/);
+  assert.match(workers.spawn('desk-3', lead.name, 'x', false, 'shell', undefined, undefined, [], lead.id) as string, /an agent at a desk/);
+  assert.match(workers.spawn('station-lead', lead.name, 'x', false, 'agent', undefined, undefined, [], lead.id) as string, /an agent at a desk/);
 
-  const sub = workers.spawn('desk-3', lead.name, 'Fix the redirect', false, 'agent', undefined, undefined, undefined, [], lead.id);
+  const sub = workers.spawn('desk-3', lead.name, 'Fix the redirect', false, 'agent', undefined, undefined, [], lead.id);
   assert.ok(typeof sub === 'object');
   if (typeof sub !== 'object') return;
   assert.equal(sub.lead, lead.id);
   assert.equal(sub.prompt, 'Fix the redirect', 'its card shows the task alone');
-  assert.match(workers.spawn('desk-4', sub.name, 'x', false, 'agent', undefined, undefined, undefined, [], sub.id) as string, /can't hire subagents of its own/);
+  assert.match(workers.spawn('desk-4', sub.name, 'x', false, 'agent', undefined, undefined, [], sub.id) as string, /can't hire subagents of its own/);
 
   const [leadLaunch] = await waitFor(
     () => launches(lead.id),
@@ -1593,7 +1616,7 @@ test('pictures staged for a prompt are listed, numbered, after a new worker’s 
   assert.ok(a && b);
 
   // Hired with a prompt and two pictures: its card shows the prompt alone, the agent is given the list too.
-  const hired = workers.spawn('desk-2', 'test', 'What is wrong here?', false, 'agent', undefined, undefined, undefined, [], undefined, [a, b]);
+  const hired = workers.spawn('desk-2', 'test', 'What is wrong here?', false, 'agent', undefined, undefined, [], undefined, [a, b]);
   assert.equal(typeof hired, 'object');
   if (typeof hired === 'string') return;
   assert.equal(hired.prompt, 'What is wrong here?');

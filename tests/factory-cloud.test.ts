@@ -16,7 +16,7 @@ import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
 const KEY = 'fk-test-cloud-1234';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const DESK = DESKS.filter((d) => !d.station && !d.room && !d.beanbag);
+const DESK = DESKS.filter((d) => !d.station && !d.beanbag);
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('not really a picture')]);
 const tick = () => new Promise((r) => setTimeout(r, 15));
 

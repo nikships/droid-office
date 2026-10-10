@@ -12,8 +12,7 @@ import { clockWork } from './workers.js';
 // where, what they're doing, and what the office remembers of their turns, kept in the floor's
 // .droid-office/cloud-workers.json so they're back at their desks after a restart. They are sent
 // with the same worker.update and worker.remove messages as the office's own workers, but never
-// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the queue, the team, meetings,
-// the worker limit) ever sees one.
+// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the queue, the team, the worker limit) ever sees one.
 
 const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
@@ -104,7 +103,6 @@ export class CloudWorkers {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (seat.station) return 'A board agent always works on this machine';
-    if (seat.room) return 'Only a meeting seats workers at the meeting table';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     return undefined;
   }

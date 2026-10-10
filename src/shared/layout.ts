@@ -17,8 +17,6 @@ export interface DeskDef {
   beanbag?: boolean;
   /** A board agent's kiosk instead of a desk (see STATIONS): the worker stands behind it. */
   station?: StationKind;
-  /** A chair at the meeting room's table (see MEETING_SEATS): only a meeting seats a worker here. */
-  room?: boolean;
 }
 
 const DESK_WIDTH = 2.2;
@@ -117,32 +115,28 @@ export const LOFT = { minX: 9, maxX: FLOOR.maxX, minZ: 8, maxZ: FLOOR.maxZ, y: 3
 export const STAIRS = { fromX: 3, toX: LOFT.minX, minZ: 11.2, maxZ: FLOOR.maxZ, steps: 15 } as const;
 
 /**
- * The meeting room: glass walls round the space under the boss office, from the loft's posts to the
- * outside walls, with a long table in the middle. Workers called to a meeting sit round it (see
- * MEETING_SEATS and server/meetings.ts). The glass stops under the loft's floor; the door is in the
- * north wall, facing the lounge.
+ * The unused glass room under the boss office. Its furnishings are scenery, not worker seats.
+ * The glass stops under the loft's floor; the door faces the lounge.
  */
-export const MEETING_ROOM = { minX: LOFT.minX + 0.15, maxX: FLOOR.maxX, minZ: LOFT.minZ + 0.15, maxZ: FLOOR.maxZ, height: LOFT.y - 0.25, door: { x0: 10, x1: 11.4 } } as const;
-export const MEETING_TABLE = { x: 13.7, z: 10.55, width: 3.6, depth: 1.2, height: 0.76 } as const;
+export const GLASS_ROOM = { minX: LOFT.minX + 0.15, maxX: FLOOR.maxX, minZ: LOFT.minZ + 0.15, maxZ: FLOOR.maxZ, height: LOFT.y - 0.25, door: { x0: 10, x1: 11.4 } } as const;
+export const GLASS_ROOM_TABLE = { x: 13.7, z: 10.55, width: 3.6, depth: 1.2, height: 0.76 } as const;
 /**
- * The chairs round the meeting table, in the order a meeting fills them: the head of the table at its
- * west end (whoever leads or writes the meeting up), then two down each side. (x, z) is where the
- * laptop sits on the table; the chair is out from it the way a desk's is (deskSeat).
+ * Decorative chairs round the table. (x, z) is the table edge; the chair is offset by deskSeat.
  */
-export const MEETING_SEATS: DeskDef[] = (
+export const GLASS_ROOM_CHAIRS: readonly Pick<DeskDef, 'x' | 'z' | 'rotY'>[] = (
   [
-    [MEETING_TABLE.x - MEETING_TABLE.width / 2 + 0.35, MEETING_TABLE.z, -Math.PI / 2],
-    [MEETING_TABLE.x - 0.6, MEETING_TABLE.z - MEETING_TABLE.depth / 2 + 0.35, Math.PI],
-    [MEETING_TABLE.x - 0.6, MEETING_TABLE.z + MEETING_TABLE.depth / 2 - 0.35, 0],
-    [MEETING_TABLE.x + 1.1, MEETING_TABLE.z - MEETING_TABLE.depth / 2 + 0.35, Math.PI],
-    [MEETING_TABLE.x + 1.1, MEETING_TABLE.z + MEETING_TABLE.depth / 2 - 0.35, 0],
+    [GLASS_ROOM_TABLE.x - GLASS_ROOM_TABLE.width / 2 + 0.35, GLASS_ROOM_TABLE.z, -Math.PI / 2],
+    [GLASS_ROOM_TABLE.x - 0.6, GLASS_ROOM_TABLE.z - GLASS_ROOM_TABLE.depth / 2 + 0.35, Math.PI],
+    [GLASS_ROOM_TABLE.x - 0.6, GLASS_ROOM_TABLE.z + GLASS_ROOM_TABLE.depth / 2 - 0.35, 0],
+    [GLASS_ROOM_TABLE.x + 1.1, GLASS_ROOM_TABLE.z - GLASS_ROOM_TABLE.depth / 2 + 0.35, Math.PI],
+    [GLASS_ROOM_TABLE.x + 1.1, GLASS_ROOM_TABLE.z + GLASS_ROOM_TABLE.depth / 2 - 0.35, 0],
   ] as const
-).map(([x, z, rotY], i) => ({ id: `meeting-${i + 1}`, x, z, rotY, label: i === 0 ? 'Head of the table' : `Meeting chair ${i + 1}`, room: true }));
-/** The board on the meeting room's back (south) wall that shows the meeting's output file as it's written. */
-export const MEETING_BOARD = { x: MEETING_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
+).map(([x, z, rotY]) => ({ x, z, rotY }));
+/** The decorative screen on the room's back (south) wall. */
+export const GLASS_ROOM_BOARD = { x: GLASS_ROOM_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
 
-/** Any place a worker can be by id: the seats, the board agents' kiosks and the meeting room's chairs. */
-export const DESK_BY_ID = new Map([...SEATS, ...STATIONS, ...MEETING_SEATS].map((d) => [d.id, d]));
+/** Any place a worker can be by id: the seats and the board agents' kiosks. */
+export const DESK_BY_ID = new Map([...SEATS, ...STATIONS].map((d) => [d.id, d]));
 
 /** The seat a new worker takes when nobody picks one: the first free desk, else the first free bean bag. */
 export function nextFreeSeat(taken: (id: string) => boolean): DeskDef | undefined {
@@ -191,7 +185,7 @@ export function vacantSeats(workers: Iterable<{ deskId: string }>, packing: (id:
 }
 
 /** Where the worker (and the interacting player) stands relative to the desk. */
-export function deskSeat(desk: DeskDef, offset = 0.85): { x: number; z: number } {
+export function deskSeat(desk: Pick<DeskDef, 'x' | 'z' | 'rotY'>, offset = 0.85): { x: number; z: number } {
   return {
     x: desk.x + Math.sin(desk.rotY) * offset,
     z: desk.z + Math.cos(desk.rotY) * offset,

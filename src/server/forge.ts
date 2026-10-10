@@ -37,8 +37,6 @@ export interface Board extends PullHost {
   pullDiff(n: number): Promise<string>;
   issueDetail(n: number): Promise<GhIssueDetail>;
   comment(kind: 'issue' | 'pull', n: number, body: string): Promise<{ comment?: GhComment; error?: string }>;
-  /** Posts a comment-only review read from `file`. Resolves to its URL. */
-  review(n: number, file: string): Promise<string>;
   merge(n: number, method: GhMergeMethod, deleteBranch: boolean, auto: boolean): Promise<string | undefined>;
   close(kind: 'issue' | 'pull', n: number, opts: { comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }): Promise<string | undefined>;
   claim(issue: number): Promise<string | undefined>;

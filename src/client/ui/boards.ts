@@ -6,7 +6,6 @@ import { store, words, workerForPull } from '../state';
 import { h, openModal, timeAgo } from './dom';
 import { emptyState } from './kit';
 import { labelChip, openIssue, openLabels, openPull } from './pull';
-import type { MeetingPreset } from './meeting';
 import { renderJiraBoard } from './jira';
 import { officePrompt } from './prompts';
 import { issuePromptVars } from '../../shared/prompts';
@@ -22,8 +21,6 @@ export interface BoardActions {
   queue(prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort): void;
   /** Take the issue's card off the board, to carry to a desk or the queue. */
   pickUp(issue: GhIssue): void;
-  /** Call a meeting about it: the meeting room's form, filled in. */
-  meeting(preset: MeetingPreset): void;
 }
 
 /** The task a worker gets for an issue, from the board, a carried card or the queue (the 'issue.work' prompt). */
