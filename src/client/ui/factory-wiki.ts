@@ -470,7 +470,8 @@ export function mountWikiTab(root: HTMLElement, deps: WikiTabDeps): WikiTab {
     if (mine !== opening || disposed || run !== runId) return;
     current = p;
     rememberPage(floor, p.path);
-    const body = p.content.trim() ? markdownFile(p.content) : h('div.md', {}, h('p.none', {}, 'This page is empty.'));
+    const text = p.content.replace(/\r\n?/g, '\n').replace(/^\uFEFF?---\n[\s\S]*?\n---[ \t]*(?:\n|$)/, '');
+    const body = text.trim() ? markdownFile(text) : h('div.md', {}, h('p.none', {}, 'This page is empty.'));
     wire(body, p);
     page.replaceChildren(body);
     const dir = p.path.includes('/') ? p.path.slice(0, p.path.lastIndexOf('/') + 1) : '';

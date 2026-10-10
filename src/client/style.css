@@ -1189,8 +1189,12 @@ a.when:hover { text-decoration: underline; }
 .wk-job-who { font: 400 11px var(--font-mono); color: var(--text-secondary); }
 .wk-lines { margin: 0; max-height: 9.5em; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 400 11px/1.5 var(--font-mono); color: var(--text-secondary); background: var(--surface-raised); border-radius: var(--radius); padding: 6px 8px; }
 .wk-lines.bad { color: var(--danger, #ef4444); max-height: 16em; }
-.wk-node.section .bs-title { font-weight: 700; }
-.wk-node .bs-title { font-weight: 500; }
+.wk-node { padding-left: calc(var(--space-2) + var(--depth, 0) * var(--space-4)); }
+.wk-node .list-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-node.section .list-title { font-weight: 600; }
+.wk-hit .list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-page .md pre { max-width: 100%; }
+.bs-page .md h1, .bs-page .md h2, .bs-page .md h3, .bs-page .md h4 { overflow-wrap: break-word; }
 .wk-hit .wk-snippet { font-size: 12px; line-height: 1.45; color: var(--text-secondary); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .wk-hit mark { background: var(--warning); color: var(--text-inverse); border-radius: 1px; padding: 0 1px; }
 .wk-diagram { font: 500 10.5px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); margin: 16px 0 -10px; }
