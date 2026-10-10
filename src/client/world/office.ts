@@ -121,10 +121,8 @@ export interface DeskView {
   /** Where the worker gets up to dance when a pull request merges: its feet, and the way it faces. */
   stage: THREE.Object3D;
   chair: THREE.Group;
-  /** Shown while nobody is there: the "+" over a free seat, or the board agent waiting to be asked. */
+  /** Shown while nobody is there: empty at a free seat, or the board agent waiting to be asked. */
   vacancy: THREE.Group;
-  /** How high the vacancy marker floats. */
-  vacancyY: number;
 }
 
 export interface Office {
@@ -1062,21 +1060,10 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   ch.position.set(0, 0, 0.9);
   group.add(ch);
 
-  const vacancyY = height + 0.55;
-  const vacancy = vacancyMarker(vacancyY);
+  const vacancy = new THREE.Group();
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY };
-}
-
-/** The floating orange "+" over an empty seat: a thin cross, like the corner ticks on the work cells. */
-function vacancyMarker(y: number): THREE.Group {
-  const vacancy = new THREE.Group();
-  const plusMat = toon('#ee6018', { emissive: '#7a2a06' });
-  vacancy.add(mesh(box(0.28, 0.045, 0.045), plusMat, 0, 0, 0, false));
-  vacancy.add(mesh(box(0.045, 0.28, 0.045), plusMat, 0, 0, 0, false));
-  vacancy.position.set(0, y, 0);
-  return vacancy;
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy };
 }
 
 /** Bean bags in charcoal canvas, a shade apart from one to the next. */
@@ -1125,11 +1112,10 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  const vacancyY = 1.25;
-  const vacancy = vacancyMarker(vacancyY);
+  const vacancy = new THREE.Group();
   group.add(vacancy);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy, vacancyY };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: bag, vacancy };
 }
 
 const KIOSK_SIGN: Record<StationKind, string> = { issues: '01 ASK ME', pulls: '03 ASK ME', queue: '02 ASK ME', lead: '04 ASK ME' };
@@ -1189,7 +1175,7 @@ function buildKiosk(def: DeskDef): DeskView {
   stage.rotation.y = Math.PI;
   group.add(stage);
 
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy, vacancyY: 0 };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: new THREE.Group(), vacancy };
 }
 
 /** A framed board on a wall; the face gets a canvas texture (cork, chalk or whiteboard). */
@@ -1614,12 +1600,6 @@ export function buildOffice(): Office {
       d.open = want > d.open ? Math.min(1, d.open + dt * 2.5) : Math.max(0, d.open - dt * 1.6);
       d.show(d.open);
     }
-    for (const d of desks.values()) {
-      // A board agent waiting to be asked stands still (its own idle bob is in Worker.update).
-      if (!d.vacancy.visible || !d.group.visible || d.def.station) continue;
-      d.vacancy.position.y = d.vacancyY + Math.sin(t * 2 + d.def.x) * 0.06;
-      d.vacancy.rotation.y = t * 1.2;
-    }
     elevator.update(dt);
     gong.update(dt);
     for (const d of dressing) d.update(t, dt);
@@ -1678,7 +1658,7 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
   // Nobody is hired here from the floor, so there's no '+' over a free chair: a meeting fills them.
   const vacancy = new THREE.Group();
   group.add(vacancy);
-  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy, vacancyY: 0 };
+  return { def, group, laptopAnchor, seatAnchor, stage, chair: ch, vacancy };
 }
 
 /**
