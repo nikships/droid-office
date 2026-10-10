@@ -97,6 +97,11 @@ export class Cabinet {
     return this.view.zoomed;
   }
 
+  /** BLOCKFALL still needs every step while playing, but a paused game and settled camera do not. */
+  get animating(): boolean {
+    return this.view.moving(!!this.modal) || (this.mode === 'play' && this.game?.state === 'play');
+  }
+
   /** Your game's score, while you've left it paused here. */
   get leftAt(): number | null {
     return this.game && !this.game.over && this.mode !== 'play' ? this.game.score : null;

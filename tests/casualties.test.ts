@@ -117,7 +117,9 @@ test('the Magnum still leaves a blood pool, face slack', () => {
 
 test('one shot drops it out of its chair with a thud, and it bleeds out where it lands', () => {
   const { seat, lands, casualties, model, frames } = rig();
+  assert.equal(casualties.active, false);
   assert.equal(casualties.shoot('w1', model, seat), true);
+  assert.equal(casualties.active, true);
   assert.equal(casualties.shoot('w1', model, seat), false, 'no second scene for the same worker');
   assert.equal(casualties.phaseOf('w1'), 'fall');
   assert.equal(casualties.dying('w1'), true);
@@ -140,6 +142,7 @@ test('revive stands it back up in its seat with nothing disposed', () => {
   frames(10);
   assert.equal(casualties.revive('w1'), true, 'mid-fall too');
   assert.equal(casualties.revive('w1'), false, 'nothing left to revive');
+  assert.equal(casualties.active, false);
   assert.equal(model.dead, false);
   assert.equal(model.disposed, false);
   assert.equal(model.root.parent, seat);

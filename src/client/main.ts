@@ -44,6 +44,8 @@ import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
+import { gongRinging, renderPace, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
+import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
@@ -938,6 +940,8 @@ net.onMessage((msg) => {
       break;
     }
   }
+  // The terminal canvas updates on its own. Everything else can change the picture, so draw promptly.
+  if (msg.t !== 'term.data' && msg.t !== 'term.snapshot') renderWake();
 });
 
 function renderUpgrade() {
@@ -2437,8 +2441,12 @@ function ceilingOver(x: number, z: number): number {
 const CONFETTI_DENSITY = 3.5;
 const floorArea = (a: Area) => (a.maxX - a.minX) * (a.maxZ - a.minZ);
 
+/** When the gong was last struck. The swing is part of the render pace (see render-pace.ts). */
+let gongStruckAt = 0;
+
 /** Someone hit the gong, a pull request merged (a dance party under a confetti rain), or the queue emptied (a party). */
 function gongRang(why: GongWhy, pr?: number) {
+  gongStruckAt = performance.now();
   office.gong.strike(why === 'hit' ? 0.7 : 1);
   sound.gong(why);
   const top = office.gong.top;
@@ -2455,6 +2463,7 @@ function gongRang(why: GongWhy, pr?: number) {
     // Three strokes (sound.gong plays them): a burst at the gong, then every desk, then a cannon.
     confetti.burst(top.x, top.y, top.z, 160);
     setTimeout(() => {
+      gongStruckAt = performance.now();
       office.gong.strike(0.85);
       for (const [id, v] of workerViews) {
         burstOver(v.deskId, 120);
@@ -2462,6 +2471,7 @@ function gongRang(why: GongWhy, pr?: number) {
       }
     }, 850);
     setTimeout(() => {
+      gongStruckAt = performance.now();
       office.gong.strike(1.2);
       confetti.burst(top.x, top.y, top.z, 450, 1.5);
     }, 1700);
@@ -3301,10 +3311,12 @@ function resize() {
   camera.updateProjectionMatrix();
   hands.setAspect(w / hgt);
 }
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => {
+  resize();
+  renderWake();
+});
 resize();
 
-const timer = new THREE.Timer();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
@@ -3316,8 +3328,84 @@ let fpsFrames = 0;
 let fpsSince = performance.now();
 /** Frames drawn since the page loaded, so automation commands can wait for the scene to catch up. */
 let framesDrawn = 0;
+/** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
+let lookedUntil = 0;
+const renderLoop = new RenderLoop({
+  pace: currentPace,
+  draw: drawFrame,
+  animation: (callback) => renderer.setAnimationLoop(callback),
+  delay: (callback, ms) => window.setTimeout(callback, ms),
+  cancelDelay: (id) => window.clearTimeout(id),
+  now: () => performance.now(),
+  paused: () => {
+    fpsEl.textContent = '';
+    fpsFrames = 0;
+    fpsSince = performance.now();
+  },
+});
 
-function frame(ts?: number) {
+/** A worker walking, hopping, mid-turn, leaving, or being carried out. */
+function workerMoving(): boolean {
+  for (const v of workerViews.values()) if (v.model.animating) return true;
+  for (const a of idleAgents) if (a.view.vacancy.visible && a.model.animating) return true;
+  return departures.positions().length > 0 || casualties.active;
+}
+
+/** Traffic is the thing you're looking at, not just the street outside the windows. */
+function trafficInView(): boolean {
+  if (upTop) return true;
+  const { x, y, z } = player.pos;
+  if (y < -0.4) return true;
+  return x < FLOOR.minX || x > FLOOR.maxX || z < FLOOR.minZ || z > FLOOR.maxZ;
+}
+
+/** What the pace decision needs. Hidden covers a background tab and, on macOS, a fully covered window. */
+function sceneMotion(): SceneMotion {
+  const now = performance.now();
+  const secs = now / 1000;
+  const playerBusy =
+    player.moving ||
+    !player.grounded ||
+    player.vy !== 0 ||
+    player.jitter > 0 ||
+    thud > 0 ||
+    climber.active ||
+    hanger.active ||
+    !!errand ||
+    !!gunMotion.doing ||
+    !!wandMotion.doing ||
+    !!me.emoteId ||
+    arcade.animating ||
+    cabinet.animating ||
+    readingNow() ||
+    now < lookedUntil ||
+    (!reduceMotion.matches && booze.amount(secs) > 0.01);
+  return {
+    player: playerBusy,
+    worker: workerMoving(),
+    confetti: confetti.count > 0,
+    gong: gongRinging(now, gongStruckAt),
+    coffee: caffeine.jitter(secs) > 0,
+    smoke: smoke.group.children.length > 0 || puffs.length > 0,
+    cars: trafficInView(),
+    elevator: !!trip,
+    // Cards snap on and off the board. One carried while you walk is the player moving.
+    boardCard: false,
+    sky: skyFalling(sky.rain, sky.snow),
+  };
+}
+
+function currentPace(): RenderPace {
+  return renderPace({
+    hidden: document.visibilityState !== 'visible',
+    // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
+    // it is also false when this window is visible beside another one.
+    covered: false,
+    motion: sceneMotion(),
+  });
+}
+
+function drawFrame(dt: number, t: number) {
   framesDrawn++;
   fpsFrames++;
   const fpsNow = performance.now();
@@ -3326,9 +3414,6 @@ function frame(ts?: number) {
     fpsFrames = 0;
     fpsSince = fpsNow;
   }
-  timer.update(ts);
-  const dt = Math.min(timer.getDelta(), 0.1);
-  const t = timer.getElapsed();
   const now = performance.now();
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
@@ -3480,12 +3565,42 @@ function frame(ts?: number) {
   loading.drew();
 }
 
-let loopStarted = false;
-function startLoop() {
-  if (loopStarted) return;
-  loopStarted = true;
-  renderer.setAnimationLoop(frame);
+/** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
+function renderWake() {
+  renderLoop.wake();
 }
+
+/** The camera is being driven. Full rate starts before the player controller has stepped. */
+function renderLook() {
+  lookedUntil = performance.now() + 200;
+  renderWake();
+}
+
+function startLoop() {
+  renderLoop.start();
+}
+
+// A background tab and a fully covered window both show up as visibilityState "hidden".
+document.addEventListener('visibilitychange', () => renderWake());
+window.addEventListener('pageshow', () => renderWake());
+// Typing in a window is the terminal's canvas, not the 3D scene.
+window.addEventListener('keydown', () => {
+  if (modalOpen() || isTyping()) return;
+  renderLook();
+});
+window.addEventListener('pointerdown', () => {
+  if (modalOpen()) return;
+  renderLook();
+});
+window.addEventListener(
+  'wheel',
+  () => {
+    if (modalOpen()) return;
+    renderLook();
+  },
+  { passive: true },
+);
+player.onLook = renderLook;
 
 // ---- Boot ------------------------------------------------------------------------------------------
 function boot() {
@@ -3546,6 +3661,7 @@ function setCamera(pose: CameraPose) {
   player.lookPitch = pose.lookPitch;
   player.facing = pose.camYaw + Math.PI;
   player.updateCamera();
+  renderWake();
 }
 
 const automation = createAutomation({
@@ -3588,16 +3704,26 @@ const automation = createAutomation({
     player.pos.set(at.x, at.y, at.z);
     player.vy = 0;
     aimAt(face);
+    renderWake();
   },
-  aim: aimAt,
-  walk: (at, label, done) => walkThen(at, label, () => {}, undefined, done),
+  aim: (face) => {
+    aimAt(face);
+    renderWake();
+  },
+  walk: (at, label, done) => {
+    walkThen(at, label, () => {}, undefined, done);
+    renderWake();
+  },
   near: () => mySeat() ?? pickTarget(),
   // No note or tab on the issues board: whatever the crosshair happens to be over, E opens the board.
   use: (spot, key) => use(spot, key, null, null),
   commands: () => hudActions.map((a) => ({ id: a.id, label: actionLabel(a), shown: actionOffered(a), blocked: a.blocked?.() })),
   run: (id) => hudActions.find((a) => a.id === id)?.run(),
   closeAll: closeAllModals,
-  ride,
+  ride: (floor) => {
+    ride(floor);
+    renderWake();
+  },
   setCamera,
   frames: () => framesDrawn,
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -3621,6 +3747,7 @@ const automation = createAutomation({
   scene,
   net,
   renderer,
+  renderLoop,
   hands,
   me,
   settings,
