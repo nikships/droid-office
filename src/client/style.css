@@ -1356,8 +1356,14 @@ a.when:hover { text-decoration: underline; }
 .floor-item .floor-text { display: flex; flex-direction: column; min-width: 0; }
 .floor-item .floor-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .floor-item .floor-sub { font: 400 11px var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.floor-item .floor-stats { display: flex; gap: 6px; font-size: 12px; white-space: nowrap; }
-.floor-item .floor-stats .waiting { color: var(--danger); }
+.floor-stats { display: flex; align-items: center; gap: var(--space-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.floor-stat { display: inline-flex; align-items: center; gap: var(--space-1); }
+.floor-stat b { font-weight: 500; color: var(--text); }
+.floor-stat-label { color: var(--text-secondary); }
+.floor-item .floor-stats { font-size: 12px; }
+.floor-stats .waiting, .floor-stats .waiting b, .floor-stats .waiting .floor-stat-label { color: var(--danger); }
+.floor-no { background: var(--floor-trim, var(--surface-raised)); }
+.floor-no.roof { background: var(--surface-raised); }
 /* Sliding down a fire pole: streaks of speed round the edge of the screen. */
 #whoosh { position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255, 255, 255, .55) 0deg 1.2deg, transparent 1.2deg 9deg); -webkit-mask: radial-gradient(circle at 50% 50%, transparent 38%, #000 78%); mask: radial-gradient(circle at 50% 50%, transparent 38%, #000 78%); }
 #fade.quick { transition-duration: .16s; }
@@ -1369,20 +1375,18 @@ a.when:hover { text-decoration: underline; }
 .modal.elevator { width: min(640px, 100%); }
 .elevator .intro { margin: 0 0 12px; font-weight: 500; }
 .elevator .floors { display: grid; gap: 8px; }
-.elevator .floor-btn { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 9px 12px; font: inherit; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease); }
-.elevator .floor-btn:hover:not(:disabled) { background: var(--surface-hover); }
-.elevator .floor-btn:disabled { cursor: default; }
-.elevator .floor-btn.here { border-color: var(--accent); background: var(--accent-muted); }
-.elevator .floor-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
-.elevator .floor-off { padding: 0 12px; font-size: 14px; }
+.elevator .floor-btn { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; min-width: 0; width: 100%; text-align: left; padding: 0; font: inherit; color: var(--text); background: none; border: 0; cursor: pointer; }
+.elevator .floor-btn:disabled { cursor: default; color: var(--text); }
+.elevator .floor-row { display: grid; grid-template-columns: minmax(0, 1fr) var(--control-h); gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
+.elevator .floor-off, .elevator .floor-off-slot { width: var(--control-h); height: var(--control-h); }
+.elevator .floor-off { display: grid; place-items: center; padding: 0; font-size: 14px; }
 .elevator .floor-off:hover { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, .08); }
-.elevator .floor-no { width: 30px; height: 30px; border-radius: var(--radius); display: grid; place-items: center; font: 600 14px var(--font-mono); color: #fff; }
+.elevator .floor-no { width: 32px; height: 32px; border-radius: var(--radius); display: grid; place-items: center; font: 600 14px var(--font-mono); color: #fff; }
 .elevator .floor-text { display: flex; flex-direction: column; min-width: 0; }
 .elevator .floor-name { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
 .elevator .here-tag { font: 500 10px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--accent); }
 .elevator .floor-sub { font: 400 11px var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.elevator .floor-stats { font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.elevator .floor-stats .waiting { color: var(--danger); }
+.elevator .floor-stats { font-size: var(--text-small); }
 .elevator .add { margin-top: 16px; }
 .elevator .add h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text); }
 .elevator .repo-search { display: flex; gap: 8px; }
