@@ -558,10 +558,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .setting { flex: none; padding: 12px 14px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .setting-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .setting-head h4 { margin: 0; font: 600 13px/1.3 var(--font-sans); }
-.scope { margin-left: auto; padding: 1px 7px; font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); color: var(--text-secondary); cursor: default; }
-.scope.you { color: var(--info); border-color: rgba(90, 169, 230, .45); }
-.scope.floor { color: var(--success); border-color: rgba(60, 207, 145, .45); }
-.scope.office { color: var(--accent); border-color: rgba(238, 96, 24, .45); }
 @media (max-width: 720px) {
   .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }

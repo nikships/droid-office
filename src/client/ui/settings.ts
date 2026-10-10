@@ -2,7 +2,7 @@ import type { Net } from '../net';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
-import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
+import { SETTINGS_PANES, settingsPaneAfter, type SettingsCardTitle, type SettingsPane } from '../../shared/settings-nav';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { choices, field, toggle as kitToggle } from './kit';
@@ -29,21 +29,12 @@ interface RowParts {
   below?: Node[];
 }
 
-/** One setting as a row: its name with who it's for and a description on the left, whatever sets it on the right. */
-const setting = (title: string, scope: SettingsScope | null, { desc, control, below = [] }: RowParts) =>
-  h(
-    'div.group-row',
-    { class: below.length ? 'block' : '' },
-    h('div.group-label', {}, h('b', {}, h('span', {}, title), scope && h('span.scope', { class: scope, title: SETTINGS_SCOPE[scope][1] }, SETTINGS_SCOPE[scope][0])), desc),
-    control ? h('div.setting-control', {}, control) : null,
-    ...below,
-  );
+/** One setting as a row: its name and a description on the left, whatever sets it on the right. */
+const setting = (title: string, { desc, control, below = [] }: RowParts) =>
+  h('div.group-row', { class: below.length ? 'block' : '' }, h('div.group-label', {}, h('b', {}, title), desc), control ? h('div.setting-control', {}, control) : null, ...below);
 
-/** A card from SETTINGS_CARDS, so a setting can't show up without a category and a scope. */
-const card = (title: SettingsCardTitle, parts: RowParts) => {
-  const meta = SETTINGS_CARDS.find((c) => c.title === title)!;
-  return setting(title, meta.scope, parts);
-};
+/** A card from SETTINGS_CARDS, so a setting can't show up without a category. */
+const card = (title: SettingsCardTitle, parts: RowParts) => setting(title, parts);
 
 /** Rows under an eyebrow, in one bordered block. */
 const group = (title: string | null, ...rows: Node[]) => h('div.settings-group', {}, title ? h('h4.group-title', {}, title) : null, h('div.group', {}, ...rows));
@@ -603,7 +594,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       group(
         null,
         card('Office sounds', { desc: desc('Workers typing, the coffee machine, thunder, and the ding when a worker is done.'), control: soundRow }),
-        card('Jukebox', { desc: desc('Everyone on the floor hears the same song, louder near the jukebox; this slider is only your volume.'), control: musicRow }),
+        card('Jukebox', { desc: desc('Louder near the jukebox. This slider is only your volume.'), control: musicRow }),
       ),
     ],
     notify: [
@@ -616,11 +607,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
             group(
               'Outside',
               card('Outside', {
-                desc: desc(
-                  outside.live
-                    ? 'Everyone sees the same sky: the office’s clock and the live weather where it is.'
-                    : 'Everyone sees the same sky: the office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.',
-                ),
+                desc: desc(outside.live ? 'The office’s clock, and the live weather where it is.' : 'The office’s clock, and weather that comes and goes. Start the office with --city to use a real city’s forecast.'),
                 control: outsideNow(outside.now),
               }),
             ),
@@ -639,8 +626,8 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       group(
         'Hiring',
         card('Subagents', { desc: subNote, control: subOn.el }),
-        setting('Who can hire', null, { desc: desc('The Team lead can always hire; desk workers too, when allowed.'), control: subWho.row }),
-        setting('Subagent prompts', null, { desc: desc('What the office tells the Team lead and its subagents.'), control: subPrompts }),
+        setting('Who can hire', { desc: desc('The Team lead can always hire; desk workers too, when allowed.'), control: subWho.row }),
+        setting('Subagent prompts', { desc: desc('What the office tells the Team lead and its subagents.'), control: subPrompts }),
       ),
       group(
         'How they work',

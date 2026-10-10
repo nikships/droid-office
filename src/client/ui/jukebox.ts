@@ -21,7 +21,7 @@ export function openJukebox(net: Net, openVolume: () => void) {
   const el = h(
     'div.modal.jukebox',
     { role: 'dialog', 'aria-label': 'Jukebox' },
-    h('header', {}, h('div.titles', {}, h('h2', {}, 'Jukebox'), h('p.sub', {}, 'Everyone on this floor hears the same song.')), close),
+    h('header', {}, h('div.titles', {}, h('h2', {}, 'Jukebox'), h('p.sub', {}, 'Pick a tune, or paste a stream.')), close),
     h(
       'div.body.stack.loose',
       {},

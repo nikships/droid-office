@@ -1,9 +1,6 @@
 /** The categories down the side of Settings. */
 export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'factory' | 'workers' | 'subagents' | 'phone';
 
-/** Who a setting is for. */
-export type SettingsScope = 'you' | 'floor' | 'office';
-
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and what you hold.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
@@ -26,39 +23,32 @@ export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; bl
   { id: 'phone', icon: '📱', label: 'Phone', blurb: 'Droid Office for Android: hire workers, watch their terminals and prompt them from your phone, on your Wi-Fi or over Tailscale.' },
 ];
 
-/** The badge by a setting's name, and what it means. */
-export const SETTINGS_SCOPE: Record<SettingsScope, readonly [label: string, title: string]> = {
-  you: ['Just you', 'Only for you, kept in this browser'],
-  floor: ['This floor', 'The same for everyone on this floor'],
-  office: ['Everyone', 'The same for everyone in the building'],
-};
-
-/** Which category each setting lives in, and who it's for. The page is built from these titles. */
+/** Which category each setting lives in. The page is built from these titles. */
 export const SETTINGS_CARDS = [
-  { pane: 'you', title: 'Your character', scope: null },
-  { pane: 'you', title: 'What 7 puts in your hand', scope: 'you' },
-  { pane: 'sound', title: 'Office sounds', scope: 'you' },
-  { pane: 'sound', title: 'Jukebox', scope: 'you' },
-  { pane: 'notify', title: 'Desktop notifications', scope: 'you' },
-  { pane: 'notify', title: 'Channel notifications (Slack / Discord)', scope: 'office' },
-  { pane: 'building', title: 'Outside', scope: 'office' },
-  { pane: 'building', title: 'Jira', scope: 'office' },
-  { pane: 'building', title: "This floor's Jira epic", scope: 'floor' },
-  { pane: 'building', title: 'Workspace folder', scope: 'office' },
-  { pane: 'building', title: 'Source hot reload', scope: 'office' },
-  { pane: 'factory', title: 'Factory API key', scope: 'office' },
-  { pane: 'workers', title: 'Default worker', scope: 'office' },
-  { pane: 'workers', title: 'Prompts', scope: 'office' },
-  { pane: 'workers', title: 'Worker limit', scope: 'office' },
-  { pane: 'workers', title: 'Workers whose pull request merged', scope: 'office' },
-  { pane: 'subagents', title: 'Subagents', scope: 'office' },
-  { pane: 'subagents', title: 'Subagent worker', scope: 'office' },
-  { pane: 'subagents', title: 'Team size', scope: 'office' },
-  { pane: 'subagents', title: 'Where subagents work', scope: 'office' },
-  { pane: 'subagents', title: 'Waking the lead', scope: 'office' },
-  { pane: 'subagents', title: 'Droid skill', scope: 'office' },
-  { pane: 'phone', title: 'Droid Office for Android', scope: 'office' },
-] as const satisfies readonly { pane: SettingsPane; title: string; scope: SettingsScope | null }[];
+  { pane: 'you', title: 'Your character' },
+  { pane: 'you', title: 'What 7 puts in your hand' },
+  { pane: 'sound', title: 'Office sounds' },
+  { pane: 'sound', title: 'Jukebox' },
+  { pane: 'notify', title: 'Desktop notifications' },
+  { pane: 'notify', title: 'Channel notifications (Slack / Discord)' },
+  { pane: 'building', title: 'Outside' },
+  { pane: 'building', title: 'Jira' },
+  { pane: 'building', title: "This floor's Jira epic" },
+  { pane: 'building', title: 'Workspace folder' },
+  { pane: 'building', title: 'Source hot reload' },
+  { pane: 'factory', title: 'Factory API key' },
+  { pane: 'workers', title: 'Default worker' },
+  { pane: 'workers', title: 'Prompts' },
+  { pane: 'workers', title: 'Worker limit' },
+  { pane: 'workers', title: 'Workers whose pull request merged' },
+  { pane: 'subagents', title: 'Subagents' },
+  { pane: 'subagents', title: 'Subagent worker' },
+  { pane: 'subagents', title: 'Team size' },
+  { pane: 'subagents', title: 'Where subagents work' },
+  { pane: 'subagents', title: 'Waking the lead' },
+  { pane: 'subagents', title: 'Droid skill' },
+  { pane: 'phone', title: 'Droid Office for Android' },
+] as const satisfies readonly { pane: SettingsPane; title: string }[];
 
 export type SettingsCardTitle = (typeof SETTINGS_CARDS)[number]['title'];
 
