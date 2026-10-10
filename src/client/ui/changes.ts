@@ -346,6 +346,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
           initial: taskText() || (s.subject ?? ''),
           placeholder: 'Title',
           submitLabel: `Open ${words().pr} ↗`,
+          recall: false,
           onSubmit: (text) => {
             const [first, ...rest] = text.split('\n');
             net.send({ t: 'changes.pr', workerId, title: first.trim(), body: rest.join('\n').trim(), repo });
@@ -439,6 +440,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       initial: taskText(),
       placeholder: 'What changed, and why',
       submitLabel: 'Commit',
+      recall: false,
       onSubmit: (text) => net.send({ t: 'changes.commit', workerId, message: text, repo }),
     });
   });

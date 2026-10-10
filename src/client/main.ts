@@ -1521,6 +1521,7 @@ function promptAtDesk(deskId: string) {
       title: `🐚 Run in ${w.name}`,
       placeholder: 'npm run dev',
       submitLabel: 'Run ▶',
+      recall: false,
       onSubmit: (text) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text }),
     });
   } else {

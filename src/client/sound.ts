@@ -98,8 +98,10 @@ export class OfficeSound {
   private master!: GainNode;
   /** The room itself; it goes quiet while the tab is hidden. */
   private ambience!: GainNode;
-  /** Worker dings, which you still want to hear from another tab. */
+  /** The gong (other than a plain hit) and the siren. Still audible in a background tab. */
   private alerts!: GainNode;
+  /** Needs-you, done, and error. The alert mute is this bus alone, so it leaves the gong and the siren. */
+  private dings!: GainNode;
   private analyser!: AnalyserNode;
   private buf!: Buffers;
   private volume = 0.7;
@@ -192,6 +194,8 @@ export class OfficeSound {
     this.ambience.connect(this.master);
     this.alerts = ctx.createGain();
     this.alerts.connect(this.master);
+    this.dings = ctx.createGain();
+    this.dings.connect(this.master);
     // The jukebox skips the master (it has its own volume) and keeps playing while the tab is hidden.
     this.musicIn = this.panner(JUKEBOX, MUSIC_REF, MUSIC_ROLLOFF);
     this.musicTone = biquad(ctx, 'lowpass', 16000, 0.5);
@@ -218,7 +222,7 @@ export class OfficeSound {
 
   private applyAlerts() {
     if (!this.ctx) return;
-    this.alerts.gain.setTargetAtTime(this.alertsMuted ? 0 : 1, this.ctx.currentTime, 0.03);
+    this.dings.gain.setTargetAtTime(this.alertsMuted ? 0 : 1, this.ctx.currentTime, 0.03);
   }
 
   private applyVisibility() {
@@ -1166,7 +1170,7 @@ export class OfficeSound {
     this.unlock();
     if (!this.ctx || this.alertsMuted) return;
     this.count(kind);
-    this.tone(kind, this.alerts);
+    this.tone(kind, this.dings);
   }
 
   /** The elevator arriving: the done tone, on the office volume, so the alert mute doesn't cover it. */
@@ -1177,24 +1181,29 @@ export class OfficeSound {
     this.tone('done', this.master);
   }
 
-  /** The three tones in order, so Settings can show that they differ. Nothing while they're muted. */
+  /** The three tones in order, on one clock, so they don't pile up. Nothing while they're muted. */
   previewAlerts() {
-    if (this.alertsMuted) return;
-    this.ding('needs_input');
-    window.setTimeout(() => this.ding('done'), 320);
-    window.setTimeout(() => this.ding('error'), 640);
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx || this.alertsMuted) return;
+    const t0 = ctx.currentTime;
+    (['needs_input', 'done', 'error'] as const).forEach((kind, i) => {
+      this.count(kind);
+      this.tone(kind, this.dings, t0 + i * 0.32);
+    });
   }
 
-  private tone(kind: AlertKind, dest: AudioNode) {
+  private tone(kind: AlertKind, dest: AudioNode, at?: number) {
     const ctx = this.ctx;
     if (!ctx) return;
     if (ctx.state === 'suspended') void ctx.resume();
+    const base = at ?? ctx.currentTime;
     for (const n of ALERTS[kind]) {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.type = n.type;
       o.frequency.value = n.freq;
-      const t0 = ctx.currentTime + n.at;
+      const t0 = base + n.at;
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(n.gain, t0 + 0.012);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + n.len);

@@ -24,6 +24,11 @@ export interface PromptOptions {
   modelOption?: boolean;
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
   imagesOption?: boolean;
+  /**
+   * Chips and the prompt history. On unless this box is a shell command, a commit message, or a
+   * pull-request description (`recall: false`). Not tied to pictures.
+   */
+  recall?: boolean;
   /** The desk being hired at, so the model/effort choice remembered here is this desk's, not the whole office's. */
   deskId?: string;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
@@ -97,8 +102,7 @@ export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
-  // Shell commands, commit messages and pull-request text aren't prompts, so they don't get chips or history.
-  const extras = opts.imagesOption ? promptExtras(ta) : null;
+  const extras = opts.recall === false ? null : promptExtras(ta);
   const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
   const wtRow = opts.worktreeOption ? wt.row : null;

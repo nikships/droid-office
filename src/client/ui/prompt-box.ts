@@ -73,6 +73,8 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
   };
 
   const openList = () => {
+    // A cloud window or the queue stays open, so the list is whatever was saved since, not the copy from when the box opened.
+    history = loadPromptHistory();
     paintList();
     historyPanel.classList.remove('hidden');
     historyBtn.setAttribute('aria-expanded', 'true');
@@ -111,9 +113,13 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
       if (e.key === 'ArrowUp' && !onFirst) return;
       if (e.key === 'ArrowDown' && (cursor < 0 || !onLast)) return;
     }
+    // Starting a walk from what you're typing: pick up prompts another box saved. Mid-walk stays put, so the cursor doesn't jump.
+    if (cursor < 0) {
+      history = loadPromptHistory();
+      draft = ta.value;
+    }
     if (!history.length) return;
     e.preventDefault();
-    if (cursor < 0) draft = ta.value;
     const next = recallPrompt(history, cursor, e.key === 'ArrowUp' ? 'up' : 'down', draft);
     cursor = next.index;
     setText(next.text);
