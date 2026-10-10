@@ -282,6 +282,11 @@ export class Casualties {
     private hooks: CasualtyHooks,
   ) {}
 
+  /** A fall, a body on the floor, or the medics carrying one. The picture is still playing it out. */
+  get active(): boolean {
+    return this.all.size > 0;
+  }
+
   /** Whether `id` is down on the floor and can still be revived. */
   dying(id: string): boolean {
     const c = this.all.get(id);
