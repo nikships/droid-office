@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue } from '../../shared/protocol';
-import type { Drink } from '../../shared/rooftop';
 import { OpenBook } from './book';
 import { HeldCard } from './card';
-import { REACH_TIME, coffeeMug, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
+import { REACH_TIME, coffeeMug, emoteEnvelope, reachCurve } from './character';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { Glove, gunHand, type HandShape, SHAPES, WAND_GRIP_AT, WAND_GRIP_AXIS } from './glove';
@@ -114,8 +113,6 @@ export class Hands {
   private reachT = -1;
   private mug: THREE.Group;
   private wantsMug = false;
-  /** A drink from the rooftop bar, held where the mug goes (and in its place). */
-  private glass: { id: string; group: THREE.Group } | null = null;
   /** An issue card off the board, held low in front of you in both hands. */
   private holder = new THREE.Group();
   private card: HeldCard;
@@ -269,25 +266,7 @@ export class Hands {
   holdMug(on: boolean) {
     this.wantsMug = on;
     const full = this.card.held || !!this.book;
-    this.mug.visible = on && !full && !this.glass;
-    if (this.glass) this.glass.group.visible = !full;
-  }
-
-  /** A drink from the rooftop bar in the left hand, or none (null). */
-  holdDrink(d: Drink | null) {
-    if ((d?.id ?? null) === (this.glass?.id ?? null)) return;
-    if (this.glass) {
-      putDownGlass(this.glass.group);
-      this.glass = null;
-    }
-    if (d) {
-      const group = drinkGlass(d);
-      group.position.set(0.09, -0.035, -0.03);
-      group.quaternion.setFromEuler(this.left.baseRot).invert();
-      this.left.group.add(group);
-      this.glass = { id: d.id, group };
-    }
-    this.holdMug(this.wantsMug);
+    this.mug.visible = on && !full;
   }
 
   /** An issue card in both hands, or none (null). The mug waits while the hands are full. */
@@ -561,11 +540,10 @@ export class Hands {
     const both = this.bothShape();
     if (both) return both;
     const g = this.gun;
-    if (g && g.pose.left > 0.25 && !this.wantsMug && !this.glass) return SHAPES.cylinder;
+    if (g && g.pose.left > 0.25 && !this.wantsMug) return SHAPES.cylinder;
     const id = this.emoting?.emote.id;
     if (id === 'clap') return SHAPES.flat;
     if (id === 'dance') return SHAPES.fist;
-    if (this.glass?.group.visible) return SHAPES.glass;
     if (this.mug.visible) return SHAPES.mug;
     return SHAPES.relaxed;
   }
@@ -606,7 +584,7 @@ export class Hands {
     }
     g.pivot.rotation.set(p.spin, p.turn, p.tilt);
     setCylinder(g.prop, p.crane, p.cylinder);
-    const free = !this.wantsMug && !this.glass;
+    const free = !this.wantsMug;
     if (free) l.position.y -= 0.2 * p.out;
     // The left hand in at the cylinder as it swings out: in the gun's own frame, the palm flat on
     // its far side, the fingers along it toward the muzzle and the thumb up, sweeping round it
@@ -674,7 +652,7 @@ export class Hands {
     r.updateMatrixWorld(true);
     w.twirl.rotation.y = p.twirl;
     // The left hand drops away out of view while the right one works.
-    if (!this.wantsMug && !this.glass) l.position.y -= 0.2 * p.out;
+    if (!this.wantsMug) l.position.y -= 0.2 * p.out;
     w.item.update(dt, { spin: p.spin, glow: p.glow, charge: p.charge, lumos: this.lumosK });
   }
 

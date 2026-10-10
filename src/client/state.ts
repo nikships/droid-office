@@ -283,7 +283,7 @@ class Store {
     return this.floors.find((f) => f.id === this.floor);
   }
 
-  /** The office's clock (ms since 1970) as near as this page can tell, which the DJ on the roof keeps time by. */
+  /** The office's clock (ms since 1970) as near as this page can tell. */
   officeNow(): number {
     return this.clock ? performance.now() + this.clock.offset : Date.now();
   }

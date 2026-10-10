@@ -46,10 +46,9 @@ test('a kiosk shows its idle agent again only once the hired one sent home has g
   assert.ok(!vacantSeats([{ deskId: 'station-queue' }], (id) => packing.has(id)).has('station-queue'));
 });
 
-test("you can only sit where you are: the roof's seats up on the roof, the office's on a floor", () => {
+test('you can only sit on a floor seat while you are on a floor', () => {
   assert.ok(seatHere('couch:1', false));
-  assert.ok(seatHere('roof-stool-1:0', true));
   assert.equal(seatHere('couch:1', true), undefined, 'no office couch from the roof');
-  assert.equal(seatHere('roof-stool-1:0', false), undefined, 'no bar stool from a project floor');
+  assert.equal(seatHere('roof-stool-1:0', true), undefined, 'nothing to sit on up on the roof');
   assert.equal(seatHere('couch:9', false), undefined, 'no such place on the couch');
 });

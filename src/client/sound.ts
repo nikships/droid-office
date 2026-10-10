@@ -1,8 +1,7 @@
 /**
  * Office sounds, synthesized with Web Audio so there are no audio files to ship: workers typing
  * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a worker
- * needs you. And the lounge jukebox, whose tunes are in music.ts, and up on the roof, the DJ's drum
- * and bass (dnb.ts).
+ * needs you. And the lounge jukebox, whose tunes are in music.ts.
  *
  * Everything here is triggered by something: there is no background hum, no weather, no random
  * room noise. Silence until something happens.
@@ -10,11 +9,10 @@
  * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
  * which has a volume of its own.
  */
-import { CABINET, DJ_BOOTH, FLOOR, GONG, JUKEBOX } from '../shared/layout';
+import { CABINET, FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
 import { TunePlayer } from './music';
-import { DjPlayer } from './dnb';
 import type { GunCue } from './world/gun-motion';
 import type { WandCue } from './world/wand-motion';
 
@@ -102,12 +100,6 @@ export class OfficeSound {
   private tune: TunePlayer | null = null;
   private stream: HTMLAudioElement | null = null;
   private musicTimer = 0;
-  // The DJ on the roof, through the speakers by the booth, at your music volume.
-  private djIn!: PannerNode;
-  private dj: DjPlayer | null = null;
-  /** How far into the DJ's set it is (see djTime), while you're up there. */
-  private djClock: (() => number) | null = null;
-  private djTimer = 0;
   /** A stream that won't play here. */
   onMusicError?: (text: string) => void;
   /** How many of each sound have played, for quick checks from the console. */
@@ -183,14 +175,10 @@ export class OfficeSound {
     this.musicMeter.fftSize = 2048;
     this.musicIn.connect(this.musicTone).connect(this.musicBus).connect(ctx.destination);
     this.musicBus.connect(this.musicMeter);
-    // Loud enough to hear from anywhere on the roof, and loudest on the dance floor.
-    this.djIn = this.panner({ x: DJ_BOOTH.x, y: 2.2, z: DJ_BOOTH.z }, 7, 0.8);
-    this.djIn.connect(this.musicBus);
     this.applyVolume();
     this.applyMusicVolume();
     this.applyJukebox();
     this.applyVisibility();
-    this.applyDj();
     void ctx.resume();
   }
 
@@ -1158,131 +1146,6 @@ export class OfficeSound {
       o.start(t0);
       o.stop(t0 + 0.3);
     });
-  }
-
-  // ---- The roof ---------------------------------------------------------------------------------
-
-  /** The DJ's set on the roof, `clock` saying how far into it it is (see djTime); null stops it. */
-  setDj(clock: (() => number) | null) {
-    const was = !!this.djClock;
-    this.djClock = clock;
-    if (was !== !!clock) this.applyDj();
-  }
-
-  private applyDj() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    if (!this.djClock) {
-      this.dj?.stop();
-      this.dj = null;
-      clearInterval(this.djTimer);
-      return;
-    }
-    if (this.dj) return;
-    const dj = (this.dj = new DjPlayer(ctx, this.djIn));
-    this.count('dj');
-    // On a timer rather than every frame, so it carries on in a background tab.
-    const tick = () => {
-      if (this.djClock) dj.tick(this.djClock());
-    };
-    tick();
-    this.djTimer = window.setInterval(tick, 150);
-  }
-
-  /** Someone at the DJ booth blew the air horn. */
-  horn() {
-    if (!this.dj) return;
-    this.dj.horn();
-    this.count('horn');
-  }
-
-  /** A drink poured at the bar: ice into the glass, a splash, and a clink. */
-  pour(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('pour');
-    const out = this.panner(at, 1.2, 1);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.05;
-    // Ice cubes knocking in.
-    for (let i = 0; i < 3; i++) this.clink(out, t0 + i * rand(0.07, 0.12), rand(2200, 3200), 0.05);
-    // The pour: filtered noise that rises in pitch as the glass fills.
-    const pour = this.noise(this.buf.white);
-    const tone = biquad(ctx, 'bandpass', 700, 1.4);
-    tone.frequency.setValueAtTime(700, t0 + 0.35);
-    tone.frequency.linearRampToValueAtTime(1500, t0 + 1.15);
-    const g = ctx.createGain();
-    envelope(g.gain, t0 + 0.35, [
-      [0.06, 0.09],
-      [0.7, 0.08],
-      [0.85, 0],
-    ]);
-    const wobble = this.noise(this.buf.gurgle, true);
-    wobble.playbackRate.value = 4;
-    const amp = ctx.createGain();
-    amp.gain.value = 0.6;
-    wobble.connect(amp.gain);
-    pour.connect(tone).connect(amp).connect(g).connect(out);
-    pour.start(t0 + 0.35);
-    pour.stop(t0 + 1.3);
-    wobble.start(t0 + 0.35);
-    wobble.stop(t0 + 1.3);
-    // Slid across the bar to you.
-    this.clink(out, t0 + 1.45, 3900, 0.08);
-  }
-
-  /** A glass rings: a couple of high partials, gone in a moment. */
-  private clink(out: AudioNode, when: number, f: number, level: number) {
-    const ctx = this.ctx!;
-    for (const [mul, lvl] of [
-      [1, 1],
-      [2.76, 0.4],
-    ]) {
-      const o = ctx.createOscillator();
-      o.frequency.value = f * mul;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(level * lvl, when + 0.003);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.25);
-      o.connect(g).connect(out);
-      o.start(when);
-      o.stop(when + 0.3);
-    }
-  }
-
-  /** Hic! One too many. */
-  hiccup() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('hiccup');
-    const t0 = ctx.currentTime + 0.02;
-    const o = ctx.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(260, t0);
-    o.frequency.exponentialRampToValueAtTime(420, t0 + 0.06);
-    const g = ctx.createGain();
-    envelope(g.gain, t0, [
-      [0.008, 0.12],
-      [0.05, 0.08],
-      [0.11, 0],
-    ]);
-    o.connect(biquad(ctx, 'bandpass', 1100, 2.5))
-      .connect(g)
-      .connect(this.ambience);
-    o.start(t0);
-    o.stop(t0 + 0.14);
-    // The catch in the throat, just before it.
-    const n = this.noise(this.buf.white);
-    const ng = ctx.createGain();
-    envelope(ng.gain, t0 - 0.015, [
-      [0.004, 0.08],
-      [0.02, 0],
-    ]);
-    n.connect(biquad(ctx, 'bandpass', 1800, 1))
-      .connect(ng)
-      .connect(this.ambience);
-    n.start(t0 - 0.015);
-    n.stop(t0 + 0.02);
   }
 
   // ---- The jukebox ------------------------------------------------------------------------------

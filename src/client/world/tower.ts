@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { BALCONY, BALCONY_DOOR, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, FLOOR, ROOF_BAR, SLAB, STAGE, STOREY, WALL_HEIGHT, WALL_T, WINDOWS, type Opening, type Side } from '../../shared/layout';
+import { BALCONY, BALCONY_DOOR, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, FLOOR, SLAB, STOREY, WALL_HEIGHT, WALL_T, WINDOWS, type Opening, type Side } from '../../shared/layout';
 import { glyphGeometry } from './glyph3d';
 import type { Collider } from './office';
 import { bulb, type NightParts } from './outside';
@@ -10,7 +10,7 @@ import { mergeByMaterial, mesh, toon, toonUnique } from './toon';
 
 // The rest of the building, from outside: a floor per project, stacked into a tower. Only the floor
 // you're on is really there; the others are its outside (walls, windows, a balcony off each, a
-// parapet round the top and the rooftop bar over it, roughly), rebuilt whenever floors come and go or
+// parapet round the top and the roof over it, roughly), rebuilt whenever floors come and go or
 // you change floors. Up on the roof it's every floor, under your feet.
 //
 // The building is Factory's software factory: black standing-seam cladding (the floor you're on gets
@@ -398,25 +398,16 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     parts.add(onFace(g, 'west', EXIT_DOOR.u));
   };
 
-  // The rooftop bar, as it looks from down below (world/rooftop.ts has the real one).
+  // The roof, as it looks from down below (world/rooftop.ts has the real one).
   const curb = toon('#161616');
   const steel = toon('#3a3a3a');
   const steelDark = toon('#2a2a2a');
   const beacon = bulb(night, '#ee6018', 0.6);
-  const stage = toon('#101010');
   const black = toon('#0a0a0a');
-  const led = bulb(night, '#1c1c1c', 0.35);
-  const truss = toon('#3a3a3a');
-  const barBody = toon('#161616');
-  const counter = toon('#cfcfcf');
-  const shelf = toon('#101010');
-  const pergola = toon('#1c1c1c');
-  const parasol = toon('#141414');
 
   /**
-   * The rooftop bar on the roof, `y` up, roughly: a curb round the edge with glass on it and a steel
-   * rail along the top, the elevator's housing, the DJ's stage with the LED wall behind it and the
-   * rig over it, the bar and its back bar under a pergola, the parasols along the south edge, and the stack.
+   * The roof, `y` up, roughly: a curb round the edge with glass on it and a steel rail along the top,
+   * the elevator's housing, and the stack.
    */
   const roofTop = (parts: THREE.Group, y: number) => {
     const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y0: number, z: number) => parts.add(mesh(new THREE.BoxGeometry(w, h, d), mat, x, y0 + h / 2, z, false));
@@ -444,40 +435,6 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     box(ELEVATOR.width, WALL_HEIGHT, ELEVATOR_FRONT - B.minZ, steelDark, ELEVATOR.x, y, hz);
     box(ELEVATOR.width + 0.3, 0.3, ELEVATOR_FRONT - B.minZ + 0.2, black, ELEVATOR.x, y + WALL_HEIGHT, hz + 0.05);
     parts.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, y + WALL_HEIGHT + 0.38, hz, false));
-
-    // The stage, the LED wall behind the DJ, and the rig: a truss tower either side and a beam across.
-    const sw = STAGE.maxX - STAGE.minX;
-    const scx = (STAGE.minX + STAGE.maxX) / 2;
-    box(sw, STAGE.height, STAGE.maxZ - STAGE.minZ, stage, scx, y, (STAGE.minZ + STAGE.maxZ) / 2);
-    box(8.3, 4.3, 0.25, black, scx, y + STAGE.height + 0.2, STAGE.minZ + 0.06);
-    parts.add(mesh(new THREE.PlaneGeometry(8, 4), led, scx, y + STAGE.height + 2.35, STAGE.minZ + 0.2, false));
-    const rigZ = STAGE.maxZ - 0.15;
-    const rigTop = 5.6;
-    for (const x of [STAGE.minX + 0.2, STAGE.maxX - 0.2]) box(0.34, rigTop - STAGE.height, 0.34, truss, x, y + STAGE.height, rigZ);
-    box(sw - 0.4, 0.34, 0.34, truss, scx, y + rigTop - 0.34, rigZ);
-
-    // The bar along the east side, the shelves of bottles behind it, and the pergola over both.
-    const blen = ROOF_BAR.maxZ - ROOF_BAR.minZ;
-    const bz = (ROOF_BAR.minZ + ROOF_BAR.maxZ) / 2;
-    const front = ROOF_BAR.x - ROOF_BAR.depth / 2;
-    box(ROOF_BAR.depth, ROOF_BAR.height - 0.06, blen, barBody, ROOF_BAR.x, y, bz);
-    box(ROOF_BAR.depth + 0.2, 0.06, blen + 0.2, counter, ROOF_BAR.x - 0.05, y + ROOF_BAR.height - 0.06, bz);
-    box(0.6, 2.4, blen - 0.6, shelf, FLOOR.maxX - 0.35, y, bz);
-    const p0 = { x: front - 0.9, z: ROOF_BAR.minZ - 0.8 };
-    const p1 = { x: FLOOR.maxX - 0.1, z: ROOF_BAR.maxZ + 0.8 };
-    const roofY = 3.3;
-    for (const x of [p0.x, p1.x]) {
-      for (const z of [p0.z, p1.z]) box(0.16, roofY, 0.16, pergola, x, y, z);
-      box(0.16, 0.22, p1.z - p0.z + 0.3, pergola, x, y + roofY - 0.11, (p0.z + p1.z) / 2);
-    }
-    for (let z = p0.z; z <= p1.z + 0.01; z += 0.55) box(p1.x - p0.x + 0.4, 0.08, 0.1, pergola, (p0.x + p1.x) / 2, y + roofY + 0.11, z);
-
-    // Parasols along the south edge, over the sun loungers.
-    for (const x of [-0.8, 2]) {
-      const z = FLOOR.maxZ - 1.1;
-      box(0.06, 2.6, 0.06, steel, x, y, z);
-      parts.add(mesh(new THREE.ConeGeometry(1.5, 0.4, 12), parasol, x, y + 2.6, z, false));
-    }
 
     // The stack, and its steam and beacon (which move, so they aren't merged).
     const stack = buildStack(night);
@@ -533,7 +490,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
         parts.add(back);
       }
     }
-    // On top, a parapet, and the rooftop bar over it; but up on the roof, it's the roof's own.
+    // On top, a parapet, and the roof over it; but up on the roof, it's the roof's own.
     const moving = new THREE.Group();
     if (index < count) {
       const top = (count - 1 - index) * STOREY + WALL_HEIGHT;
