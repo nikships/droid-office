@@ -29,6 +29,27 @@ export interface WorktreeRef {
   made?: string;
 }
 
+/** Where a new worktree starts (see Worktrees.create). */
+export type WorktreeStart =
+  /** The latest of origin's default branch, whatever the project's checkout is on. */
+  | 'main'
+  /** The latest of the branch the project's checkout is on. */
+  | 'checkout'
+  /** A commit someone picked (a lead's HEAD, say), and the branch it's on, which its pull request targets. */
+  | { commit: string; branch?: string };
+
+/** What Worktrees.freshen did to the project's checkout. */
+export interface Freshened {
+  /** It was on this other branch, and is on the default branch now. */
+  switchedFrom?: string;
+  /** It isn't on the latest of the default branch, and why. */
+  kept?: string;
+  /** The branch it's on afterwards. */
+  branch?: string;
+  /** The default branch it was brought to (or meant to be). */
+  main?: string;
+}
+
 export interface WorktreeOwnership {
   branch: string;
   existing: string[];
@@ -46,8 +67,9 @@ export interface ListedWorktree {
 export class Worktrees {
   /** The project dir with symlinks resolved, so it compares with the paths git prints. */
   private readonly root: string;
-  private fetchedAt = 0;
-  private fetching?: Promise<void>;
+  /** When each branch was last fetched, and the fetches under way, by branch. */
+  private fetchedAt = new Map<string, number>();
+  private fetching = new Map<string, Promise<void>>();
   /** The last fetch's error, so the office's log says it once rather than on every hire. */
   private fetchError?: string;
 
@@ -56,18 +78,17 @@ export class Worktrees {
   }
 
   /**
-   * A new branch and worktree, from the latest of the branch the project is on (see startPoint).
-   * `from` is that branch, which the worker's pull request targets; `note` says when commits the
-   * project has were left out. Returns what went wrong as a string. Does not move the project's checkout.
+   * A new branch and worktree, from where `start` says (see startOf). `from` is the branch it was
+   * cut from, which the worker's pull request targets; `note` says when commits the project has were
+   * left out. Returns what went wrong as a string. Does not move the project's checkout.
    *
    * For a worker across repositories, `sub` puts it in the folder of that name in the workspace
    * `slug`, which is in `root` (the worker's own floor, when that isn't this project). The path it
    * returns is relative to `root`.
    */
-  create(slug: string, sub?: string, root = this.dir): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
+  create(slug: string, sub?: string, root = this.dir, start: WorktreeStart = 'checkout'): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
     try {
-      const from = this.currentBranch();
-      const { base, note } = this.startPoint(from);
+      const { base, from, note } = this.startOf(start);
       const rel = path.join(WORKTREES_DIR, slug, sub ?? '');
       const branch = `${BRANCH_PREFIX}${slug}`;
       this.gitSync(['worktree', 'add', '-b', branch, path.resolve(root, rel), base]);
@@ -77,20 +98,55 @@ export class Worktrees {
     }
   }
 
+  /** The branch a worktree made from `start` is cut from: the default branch for 'main' (the checkout's when there's none). */
+  private branchFor(start: 'main' | 'checkout'): string | undefined {
+    return start === 'main' ? (this.defaultBranch() ?? this.currentBranch()) : this.currentBranch();
+  }
+
+  private startOf(start: WorktreeStart): { base: string; from?: string; note?: string } {
+    if (typeof start === 'object') return { base: start.commit, from: start.branch };
+    const from = this.branchFor(start);
+    return { from, ...this.startPoint(from) };
+  }
+
   /**
-   * Brings origin's copy of the branch the project is on up to date, so the next worktree starts from
-   * what's on the forge now (a pull request merged since, say) rather than from a checkout nobody pulled.
-   * Resolves either way: offline, or with no origin, worktrees start from what's here. Undefined when
-   * there's nothing to wait for (a fetch this recent, or no branch to fetch). Never checks out or clones.
+   * Brings origin's copy of the branch a worktree made from `start` is cut from up to date, so it
+   * starts from what's on the forge now (a pull request merged since, say) rather than from a checkout
+   * nobody pulled. Resolves either way: offline, or with no origin, worktrees start from what's here.
+   * Undefined when there's nothing to wait for (a fetch this recent, or no branch to fetch). Never
+   * checks out or clones.
    */
-  fetch(): Promise<void> | undefined {
-    if (this.fetching) return this.fetching;
-    if (Date.now() - this.fetchedAt < FETCH_FRESH_MS) return undefined;
-    const from = this.currentBranch();
-    if (!from || !this.hasOrigin()) return undefined;
+  fetch(start: 'main' | 'checkout' = 'checkout'): Promise<void> | undefined {
+    const from = this.branchFor(start);
+    if (!from) return undefined;
+    return this.fetchBranch(from);
+  }
+
+  /** Refreshes an explicitly picked origin branch, without moving a local branch, tag or commit. */
+  fetchRef(ref: string, cwd = this.dir): Promise<void> | undefined {
+    if (ref === 'HEAD') return undefined;
+    const prefix = ['origin/', 'refs/remotes/origin/'].find((p) => ref.startsWith(p));
+    if (!prefix) {
+      const at = this.resolve(ref, cwd);
+      if (at && (!at.branch || this.commitOf(`refs/heads/${ref}`))) return undefined;
+    }
+    const from = prefix ? ref.slice(prefix.length) : ref;
+    if (prefix && from === 'HEAD') return this.fetch('main');
+    try {
+      this.gitSync(['check-ref-format', `refs/heads/${from}`]);
+    } catch {
+      return undefined;
+    }
+    return this.fetchBranch(from);
+  }
+
+  private fetchBranch(from: string): Promise<void> | undefined {
+    const under = this.fetching.get(from);
+    if (under) return under;
+    if (Date.now() - (this.fetchedAt.get(from) ?? 0) < FETCH_FRESH_MS || !this.hasOrigin()) return undefined;
     // Never stop to ask for a password: there's nobody at the office's terminal to type it.
     const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    this.fetching = execFileP('git', ['fetch', '--quiet', '--no-tags', 'origin', from], { cwd: this.dir, env, timeout: FETCH_TIMEOUT_MS })
+    const fetching = execFileP('git', ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${from}:refs/remotes/origin/${from}`], { cwd: this.dir, env, timeout: FETCH_TIMEOUT_MS })
       .then(
         () => {
           this.fetchError = undefined;
@@ -101,15 +157,136 @@ export class Worktrees {
             String((err as { stderr?: string }).stderr ?? '')
               .split('\n')
               .find((l) => /^(fatal|error):/.test(l)) ?? gitError(err);
-          if (why !== this.fetchError) console.warn(`droid-office: couldn't fetch origin/${from} in ${this.dir}, so new worktrees start from what's here: ${why}`);
+          if (why !== this.fetchError) console.warn(`droid-office: couldn't fetch origin/${from} in ${this.dir}, so new workers start from what's here: ${why}`);
           this.fetchError = why;
         },
       )
       .then(() => {
-        this.fetchedAt = Date.now();
-        this.fetching = undefined;
+        this.fetchedAt.set(from, Date.now());
+        this.fetching.delete(from);
       });
-    return this.fetching;
+    this.fetching.set(from, fetching);
+    return fetching;
+  }
+
+  /**
+   * origin's default branch (what origin/HEAD points at), else main or master, on origin or here.
+   * Undefined when the project has none of those.
+   */
+  defaultBranch(): string | undefined {
+    try {
+      const head = this.gitSync(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+      if (head.startsWith('origin/') && head.length > 'origin/'.length) return head.slice('origin/'.length);
+    } catch {
+      // origin/HEAD is only set by a clone (or `git remote set-head`)
+    }
+    return ['main', 'master'].find((b) => this.commitOf(`refs/remotes/origin/${b}`) || this.commitOf(`refs/heads/${b}`));
+  }
+
+  /**
+   * A branch, tag or commit as a worktree's start, read in `cwd` (a lead's worktree, whose HEAD is
+   * its own): the commit, and the branch when it names one (`origin/x` and a branch only on origin
+   * count, as x). Undefined when there's no such thing.
+   */
+  resolve(ref: string, cwd = this.dir): { commit: string; branch?: string } | undefined {
+    const at = (r: string) => {
+      try {
+        return this.gitSync(['rev-parse', '--verify', '--quiet', `${r}^{commit}`], cwd);
+      } catch {
+        return undefined;
+      }
+    };
+    if (ref === 'HEAD') {
+      const commit = at('HEAD');
+      if (!commit) return undefined;
+      const b = this.gitSync(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+      return { commit, ...(b && b !== 'HEAD' ? { branch: b } : {}) };
+    }
+    const candidates: [string, string | undefined][] = [
+      [`refs/heads/${ref}`, ref],
+      [`refs/remotes/${ref}`, ref.startsWith('origin/') ? ref.slice('origin/'.length) : undefined],
+      [`refs/remotes/origin/${ref}`, ref],
+      [ref, undefined],
+    ];
+    for (const [r, branch] of candidates) {
+      const commit = at(r);
+      if (commit) return { commit, ...(branch ? { branch } : {}) };
+    }
+    return undefined;
+  }
+
+  /**
+   * Brings the project's checkout to the latest of the default branch, for a worker about to start in
+   * it: switches over from another branch, then fast-forwards to origin's copy (fetched beforehand,
+   * see fetch). Leaves it as it is, and says why, whenever that could get in someone's way: `busy`
+   * names whoever else is working in it, and uncommitted changes on another branch, a merge or rebase
+   * under way, a detached HEAD, commits on the default branch that origin doesn't have, or anything
+   * git refuses (an untracked file in the way, say) keep it too. Never stashes, resets or discards.
+   */
+  freshen(busy: string[] = []): Freshened {
+    const main = this.defaultBranch();
+    if (!main) return {};
+    const current = this.currentBranch();
+    const latest = this.commitOf(`refs/remotes/origin/${main}`);
+    const head = this.commitOf('HEAD');
+    if (current === main && (!latest || (head && this.isAncestor(latest, head)))) return { branch: main, main };
+    const kept = (why: string, branch = current): Freshened => ({ kept: why, main, ...(branch ? { branch } : {}) });
+    if (busy.length) {
+      const who = busy.length === 1 ? busy[0] : `${busy.slice(0, -1).join(', ')} and ${busy[busy.length - 1]}`;
+      return kept(`${who} ${busy.length === 1 ? 'is' : 'are'} working in it`);
+    }
+    if (this.midOperation()) return kept('a merge, rebase or cherry-pick is under way there');
+    if (!current) return kept("it isn't on a branch");
+    const local = this.commitOf(`refs/heads/${main}`);
+    // The local branch can simply move up to origin's: nothing on it would be left behind.
+    const behind = !!latest && (!local || this.isAncestor(local, latest));
+    let switchedFrom: string | undefined;
+    if (current !== main) {
+      const dirty = this.gitSync(['status', '--porcelain', '--untracked-files=no']).split('\n').filter(Boolean).length;
+      if (dirty) return kept(`it has ${dirty} uncommitted change${dirty === 1 ? '' : 's'} on ${current}`);
+      try {
+        // One checkout straight to where it ends up, so git refusing leaves everything as it was.
+        if (behind && local) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', '-C', main, `refs/remotes/origin/${main}`]);
+        else if (behind) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', '--create', main, '--track', `origin/${main}`]);
+        else if (local) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', main]);
+        else return kept(`it has no ${main} branch`);
+      } catch (err) {
+        return kept(`git wouldn't switch it to ${main}: ${gitRefusal(err)}`);
+      }
+      switchedFrom = current;
+    }
+    const done: Freshened = { main, branch: main, ...(switchedFrom ? { switchedFrom } : {}) };
+    const now = this.commitOf('HEAD');
+    if (!latest || !now || this.isAncestor(latest, now)) return done;
+    if (!this.isAncestor(now, latest)) {
+      const n = Number(this.gitSync(['rev-list', '--count', now, '--not', latest]));
+      return { ...done, kept: `${main} here has ${n} commit${n === 1 ? '' : 's'} that origin doesn't have, so it wasn't brought up to origin/${main}` };
+    }
+    try {
+      this.gitSync(['merge', '--ff-only', '--quiet', '--no-overwrite-ignore', `refs/remotes/origin/${main}`]);
+    } catch (err) {
+      return { ...done, kept: `git wouldn't bring ${main} up to origin/${main}: ${gitRefusal(err)}` };
+    }
+    return done;
+  }
+
+  /** A merge, rebase, cherry-pick, revert or bisect is under way in the project's checkout. */
+  private midOperation(): boolean {
+    return ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG'].some((p) => {
+      try {
+        return existsSync(path.resolve(this.dir, this.gitSync(['rev-parse', '--git-path', p])));
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private commitOf(ref: string): string | undefined {
+    try {
+      return this.gitSync(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    } catch {
+      return undefined;
+    }
   }
 
   private hasOrigin(): boolean {
@@ -121,23 +298,21 @@ export class Worktrees {
   }
 
   /**
-   * Where a worktree starts: origin's copy of `from`, which its pull request goes to, so it has every
-   * PR merged there even if nobody pulled them into the project. HEAD instead when it already has all
-   * of that (it's ahead with commits not pushed yet), or when origin doesn't have the branch.
+   * Where a worktree cut from `from` starts: origin's copy of it, which its pull request goes to, so
+   * it has every PR merged there even if nobody pulled them into the project. The project's own copy
+   * instead when it already has all of that (it's ahead with commits not pushed yet), or when origin
+   * doesn't have the branch; HEAD when neither has it.
    */
   private startPoint(from: string | undefined): { base: string; note?: string } {
     const head = this.gitSync(['rev-parse', 'HEAD']);
     if (!from) return { base: head };
-    let remote: string;
-    try {
-      remote = this.gitSync(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${from}^{commit}`]);
-    } catch {
-      return { base: head };
-    }
-    if (this.isAncestor(remote, head)) return { base: head };
-    if (this.isAncestor(head, remote)) return { base: remote };
+    const local = from === this.currentBranch() ? head : this.commitOf(`refs/heads/${from}`);
+    const remote = this.commitOf(`refs/remotes/origin/${from}`);
+    if (!remote) return { base: local ?? head };
+    if (!local || this.isAncestor(local, remote)) return { base: remote };
+    if (this.isAncestor(remote, local)) return { base: local };
     // Both moved on: the PR goes to origin's, so start there and say what's left behind.
-    const n = Number(this.gitSync(['rev-list', '--count', head, '--not', remote]));
+    const n = Number(this.gitSync(['rev-list', '--count', local, '--not', remote]));
     return { base: remote, note: `starts from origin/${from}, without the ${n} commit${n === 1 ? '' : 's'} on ${from} that origin doesn't have` };
   }
 
@@ -167,6 +342,20 @@ export class Worktrees {
     } catch {
       return undefined;
     }
+  }
+
+  /** The first candidate that exists on origin, excluding the PR's head branch. */
+  async pushedBranch(candidates: (string | undefined)[], not: string): Promise<string | undefined> {
+    for (const c of candidates) {
+      if (!c || c === not) continue;
+      try {
+        await this.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${c}`]);
+        return c;
+      } catch {
+        // not on the remote (or never fetched)
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -485,6 +674,22 @@ export function gitError(err: unknown): string {
       .filter(Boolean)
       .pop() ?? 'git failed'
   );
+}
+
+/**
+ * Why git refused a checkout or merge, and the files it named: its last line is only "Aborting".
+ */
+function gitRefusal(err: unknown): string {
+  const lines = String((err as { stderr?: string }).stderr ?? '').split('\n');
+  const i = lines.findIndex((l) => /^(error|fatal):/.test(l));
+  if (i < 0) return gitError(err);
+  const why = lines[i].replace(/^(error|fatal):\s*/, '').replace(/:$/, '');
+  const files = lines
+    .slice(i + 1)
+    .filter((l) => l.startsWith('\t'))
+    .map((l) => l.trim());
+  if (!files.length) return why;
+  return `${why}: ${files.slice(0, 3).join(', ')}${files.length > 3 ? ` and ${files.length - 3} more` : ''}`;
 }
 
 function real(p: string): string {

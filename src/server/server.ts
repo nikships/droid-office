@@ -28,6 +28,7 @@ import { Building, type FloorDef } from './building.js';
 import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
+import { FreshMain } from './saved-switch.js';
 import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
@@ -349,6 +350,8 @@ export async function startServer(cfg: Config) {
   sky.start();
   // Whether a worker whose pull request merged goes home by itself, on every floor (⚙️ Settings).
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
+  // Whether a fresh worker starts from the latest of the default branch, on every floor (⚙️ Settings).
+  const freshMain = new FreshMain(cfg.dataDir, (state) => broadcast({ t: 'freshMain', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
   // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
@@ -445,6 +448,7 @@ export async function startServer(cfg: Config) {
       return n;
     },
     leaveOnMerge: () => leaveOnMerge.on,
+    freshMain: () => freshMain.on,
     subagents: () => subagents.settings,
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
@@ -1040,6 +1044,7 @@ export async function startServer(cfg: Config) {
       machine: machine.state(),
       sky: sky.state,
       leaveOnMerge: leaveOnMerge.state(),
+      freshMain: freshMain.state(),
       subagents: subagents.state(),
       prompts: prompts.state(),
       factory: factory.state(),
@@ -1171,11 +1176,11 @@ export async function startServer(cfg: Config) {
   /**
    * Runs `go` once a worktree made on `floor` would start from what's on the forge now (see
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
-   * are still there.
+   * are still there. With `checkout`, for a worker in the floor's checkout instead.
    */
-  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void) => {
+  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, checkout = false) => {
     const all = Array.isArray(floor) ? floor : [floor];
-    const fetching = all.map((f) => f.workers.fetchBase()).filter((p): p is Promise<void> => p !== undefined);
+    const fetching = all.map((f) => f.workers.fetchBase(checkout)).filter((p): p is Promise<void> => p !== undefined);
     if (!fetching.length) return go();
     void Promise.all(fetching).then(() => {
       if (c.ws.readyState !== WebSocket.OPEN || all.some((f) => floors.get(f.id) !== f)) return;
@@ -1302,9 +1307,11 @@ export async function startServer(cfg: Config) {
           else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
         };
-        // Every project it gets a worktree of starts from what's on the forge now.
+        // Every project it gets a worktree of starts from what's on the forge now, and so does an
+        // agent in the checkout (see WorkerManager.fetchBase).
         const fresh = [floor, ...repos.map((x) => floors.get(x.floor)!)];
         if (msg.worktree === true) withFreshBase(c, fresh, hire);
+        else if (kind === 'agent') withFreshBase(c, floor, hire, true);
         else hire();
         break;
       }
@@ -1618,6 +1625,13 @@ export async function startServer(cfg: Config) {
         toastAll(on ? `🏠 ${who} set workers to go home by themselves once their pull request merges` : `🪑 ${who} set workers whose pull request merged to stay until they're sent home`);
         // The ones already merged go now.
         if (on) for (const f of floors.values()) f.sendLandedHome();
+        break;
+      }
+      case 'freshMain.set': {
+        const on = msg.on === true;
+        if (on === freshMain.on) break;
+        freshMain.set(on, who);
+        toastAll(on ? `🌿 ${who} set fresh workers to start from the latest main` : `🌿 ${who} set fresh workers to start from the branch the checkout is on`);
         break;
       }
       case 'subagents.set': {

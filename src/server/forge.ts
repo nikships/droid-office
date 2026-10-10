@@ -21,8 +21,8 @@ export interface PullHost {
 
 /**
  * A floor's issue and pull request boards, backed by its repository's host: GitHub through `gh`
- * (github.ts) or GitLab through `glab` (gitlab.ts). Both speak the same shapes, so the boards, the
- * PR window and the queue don't care which one it is.
+ * (github.ts) or GitLab through `glab` (gitlab.ts). Both speak the same shapes, so the boards and the
+ * PR window don't care which one it is.
  */
 export interface Board extends PullHost {
   readonly forge: Forge;

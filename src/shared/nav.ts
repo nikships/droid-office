@@ -343,7 +343,7 @@ function wayTo(seat: DeskDef, door: Pt): Pt[] {
       : seat.station
         ? [deskPoint(seat, side * 0.95, KIOSK.stand), deskPoint(seat, side * 0.95, -1)]
         : [deskPoint(seat, side * 0.7, 0.95), deskPoint(seat, side * 0.7, 1.75)];
-    // A bean bag or a kiosk can stand with one side up against something (the elevator, by the queue).
+    // A bean bag or a kiosk can stand with one side up against something (the elevator, by the Pipelines board).
     const blocked = !!(seat.beanbag || seat.station) && !walkable(down[0], down[1]);
     const pts = [down, ...route(back, door)];
     return { pts, cost: (blocked ? 1000 : 0) + pathLength(pts) };

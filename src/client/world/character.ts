@@ -1369,10 +1369,10 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 const HOP = 0.5;
 
 /** Task cards are drawn this much smaller than other labels: at full size one is wider than the desk under it. */
-const CARD_SCALE = 0.75;
+const CARD_SCALE = 0.55;
 /** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
 export const FADE_NEAR = 1.4;
-export const FADE_FAR = 3.2;
+export const FADE_FAR = 6.4;
 
 /** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
 export function labelFade(d: number): number {
@@ -1424,6 +1424,23 @@ export class Worker {
   private dead = false;
   /** Walking instead of standing, on its way out or while carried by the medics. */
   walking = false;
+  /** Full-rate motion, rather than a hop enabled but held still beside its finished task card. */
+  get animating(): boolean {
+    if (this.dead) return false;
+    return (
+      this.walking ||
+      this.stride > 0 ||
+      this.spawnT < 1 ||
+      !!this.dancing ||
+      !!this.leaving ||
+      this.cheerT > 0 ||
+      this.twirlT >= 0 ||
+      this.status === 'working' ||
+      this.status === 'needs_input' ||
+      this.acts.size > 1 ||
+      (this.bouncing && (!this.held || this.bounceT > 0))
+    );
+  }
   /** What its latest tool call was (see setAction), and what it's acting out right now. */
   private nextAction: WorkerAction | undefined;
   private action: WorkerAction | undefined;

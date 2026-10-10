@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const USAGE = `Usage:
   office-workers whoami                         who you are here, and whether you can hire
-  office-workers hire --title "…" [--model <id>] [--effort <e>] [--no-worktree] <<'EOF'
+  office-workers hire --title "…" [--model <id>] [--effort <e>] [--from <ref>] [--no-worktree] <<'EOF'
   …the subagent's brief…                        hires a subagent at the free desk nearest you
   EOF
   office-workers list                           your subagents and what they last reported
@@ -45,8 +45,12 @@ COMMANDS
         --model <id>     an id from droid's model list. Default: what ⚙️ Settings → Subagents
                          picks, else the office's default worker.
         --effort <e>     low, medium, high, xhigh or max.
+        --from <ref>     the branch, tag or commit its worktree starts from (origin/main for the
+                         latest main). Default: where you are, your HEAD, so it has what you've
+                         committed. Uncommitted changes don't go with it: commit what it needs first.
         --no-worktree    work in the project's main checkout instead of a fresh worktree: only for
-                         read-only work, or when it has to see your uncommitted changes.
+                         read-only work, or when it has to see your uncommitted changes. The office
+                         never switches that checkout's branch for a subagent.
 
   office-workers list
       Your subagents: status, desk, model, worktree, what each is doing, and what it last reported.
@@ -114,7 +118,7 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const OPTIONS = {
   whoami: {},
   list: {},
-  hire: { '--title': true, '--model': true, '--effort': true, '--worktree': false, '--no-worktree': false, '--task': true },
+  hire: { '--title': true, '--model': true, '--effort': true, '--from': true, '--worktree': false, '--no-worktree': false, '--task': true },
   wait: { '--all': false, '--timeout': true },
   read: { '--lines': true },
   send: { '--message': true },
@@ -162,6 +166,7 @@ export function parseArgs(argv) {
   if (names.length < least) throw new UsageError(`${cmd} takes the subagent's name, e.g. office-workers ${cmd} Pixel`);
   if (names.length > most) throw new UsageError(most ? `${cmd} takes one subagent's name (got ${names.join(' ')})` : `Unexpected argument: ${names[0]}${cmd === 'hire' ? ' (quote the title, and give the brief on stdin)' : ''}`);
   if (opts['--worktree'] && opts['--no-worktree']) throw new UsageError('Pick --worktree or --no-worktree, not both');
+  if (opts['--from'] !== undefined && opts['--no-worktree']) throw new UsageError("--from is where a subagent's worktree starts: it doesn't go with --no-worktree");
   if (typeof opts['--effort'] === 'string' && !EFFORTS.includes(opts['--effort'])) throw new UsageError(`--effort is one of ${EFFORTS.join(', ')} (got ${opts['--effort']})`);
   for (const [flag, max] of [
     ['--timeout', WAIT_MAX_S],
@@ -213,6 +218,7 @@ export function buildBody(cmd, text) {
         ...(typeof o['--title'] === 'string' && o['--title'].trim() ? { title: o['--title'].trim() } : {}),
         ...(typeof o['--model'] === 'string' && o['--model'].trim() ? { model: o['--model'].trim() } : {}),
         ...(typeof o['--effort'] === 'string' ? { effort: o['--effort'] } : {}),
+        ...(typeof o['--from'] === 'string' && o['--from'].trim() ? { from: o['--from'].trim() } : {}),
         ...(o['--no-worktree'] ? { worktree: false } : o['--worktree'] ? { worktree: true } : {}),
       };
     }
@@ -283,7 +289,7 @@ export function formatMember(m, now = Date.now()) {
   const lines = [`${m.name} (${m.id}) · ${m.status}${m.settled ? '' : ' …'} · ${m.desk}${engine ? ` · ${engine}` : ''}`];
   if (m.task) lines.push(`  task: ${m.task}`);
   if (m.activity) lines.push(`  doing: ${m.activity}`);
-  if (m.worktree) lines.push(`  worktree: ${m.worktree.path} on ${m.worktree.branch}`);
+  if (m.worktree) lines.push(`  worktree: ${m.worktree.path} on ${m.worktree.branch}${m.worktree.from ? `, from ${m.worktree.from}` : ''}`);
   else lines.push('  in the main checkout');
   if (m.pr) lines.push(`  pull request #${m.pr.number}: ${m.pr.url}`);
   if (m.report) lines.push(`  last ${m.report.question ? 'question' : 'report'} (${ago(m.report.at, now)}):`, indent(m.report.text));

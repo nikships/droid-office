@@ -1,54 +1,15 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import type { GhPull, LeaveOnMergeState, WorkerInfo } from '../shared/protocol.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
+import { SavedSwitch } from './saved-switch.js';
 
 /**
  * Whether a worker whose pull request merged goes home by itself, picked in ⚙️ Settings by anyone
  * and kept in .droid-office/leave-on-merge.json. The same on every floor; off until someone turns it on.
  */
-export class LeaveOnMerge {
-  private saved?: Required<LeaveOnMergeState>;
-  private path: string;
-
-  constructor(
-    dataDir: string,
-    private onState: (state: LeaveOnMergeState) => void,
-  ) {
-    this.path = path.join(dataDir, 'leave-on-merge.json');
-    this.restore();
-  }
-
-  get on(): boolean {
-    return this.saved?.on ?? false;
-  }
-
-  state(): LeaveOnMergeState {
-    return this.saved ? { ...this.saved } : { on: false };
-  }
-
-  set(on: boolean, by: string) {
-    this.saved = { on, by, at: Date.now() };
-    this.persist();
-    this.onState(this.state());
-  }
-
-  private restore() {
-    try {
-      const s = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<LeaveOnMergeState>;
-      if (typeof s.on === 'boolean') this.saved = { on: s.on, by: typeof s.by === 'string' ? s.by : 'someone', at: typeof s.at === 'number' ? s.at : 0 };
-    } catch {
-      // never set: workers wait to be sent home
-    }
-  }
-
-  private persist() {
-    try {
-      writeFileSync(this.path, JSON.stringify(this.saved ?? {}, null, 2), { mode: 0o600 });
-    } catch {
-      // disk issues shouldn't take the office down
-    }
+export class LeaveOnMerge extends SavedSwitch {
+  constructor(dataDir: string, onState: (state: LeaveOnMergeState) => void) {
+    super(dataDir, 'leave-on-merge.json', false, onState);
   }
 }
 

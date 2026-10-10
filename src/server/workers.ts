@@ -11,7 +11,7 @@ import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
+import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
@@ -221,6 +221,8 @@ export interface WorkerEvents {
   screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
+  /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
+  checkout?(branch: string): void;
 }
 
 export class WorkerManager {
@@ -238,7 +240,13 @@ export class WorkerManager {
   private agentPath: string | null = null;
 
   /** Desks and names taken by the floor's guests (see guests.ts), which the office's hires leave alone. */
-  holds?: { desk(deskId: string): boolean; names(): Iterable<string> };
+  holds?: { desk(deskId: string): boolean; names(): Iterable<string>; inCheckout?(): string[] };
+  /**
+   * ⚙️ Settings → Workers: a fresh worker starts from the latest of the default branch, its worktree
+   * cut from origin's and the checkout brought there for one without (see freshen). Off, or unset:
+   * from the branch the checkout is on, which is left alone.
+   */
+  freshMain?: () => boolean;
 
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
@@ -356,11 +364,23 @@ export class WorkerManager {
   }
 
   /**
-   * Fetches the branch the project is on, so a worktree made next starts from what's on the forge now
-   * (see Worktrees.fetch). Undefined when there's nothing to wait for.
+   * Fetches the branch a fresh worker starts from (the default branch, or the one the project is on;
+   * see freshMain), so it starts from what's on the forge now (see Worktrees.fetch). With `checkout`,
+   * for one hired into the project's checkout, which is only moved when freshMain is on. Undefined
+   * when there's nothing to wait for.
    */
-  fetchBase(): Promise<void> | undefined {
-    return this.trees.fetch();
+  fetchBase(checkout = false): Promise<void> | undefined {
+    const fresh = this.freshMain?.() ?? false;
+    if (checkout && !fresh) return undefined;
+    return this.trees.fetch(fresh ? 'main' : 'checkout');
+  }
+
+  /** Fetches the origin branch a lead explicitly picked, independently of freshMain. */
+  fetchStart(lead: string, from: string): Promise<void> | undefined {
+    const boss = this.workers.get(lead)?.info;
+    if (!boss) return undefined;
+    const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
+    return this.trees.fetchRef(from, existsSync(cwd) ? cwd : this.dir);
   }
 
   get resolvedAgent(): string | null {
@@ -427,6 +447,8 @@ export class WorkerManager {
    * Hires a worker at a desk. `repos` are other floors' repositories a worker in its own worktree
    * works in too (see makeWorkspace).
    * `lead` hires a subagent for that worker (see team.ts): it's told who hired it and how to report back.
+   * A subagent's worktree starts where its lead is, or from `from` (a branch, tag or commit) when the
+   * lead names one; nobody else's freshMain applies to it, and its checkout is never moved for it.
    */
   spawn(
     deskId: string,
@@ -440,6 +462,7 @@ export class WorkerManager {
     lead?: string,
     /** Pictures staged for its first prompt (see stageImage), listed after it. */
     images?: readonly string[],
+    from?: string,
   ): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
@@ -455,11 +478,19 @@ export class WorkerManager {
     if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
+    const fresh = this.freshMain?.() ?? false;
+    let start: WorktreeStart = fresh ? 'main' : 'checkout';
+    if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (lead !== undefined) {
       const boss = this.workers.get(lead)?.info;
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
       if (kind !== 'agent' || seat.station) return 'A subagent is an agent at a desk or a bean bag';
+      if (worktree) {
+        const at = this.leadStart(boss, from);
+        if (typeof at === 'string') return at;
+        start = at;
+      }
     }
     const full = this.capacity?.full();
     if (full) return full;
@@ -469,9 +500,10 @@ export class WorkerManager {
     const id = randomBytes(6).toString('hex');
     let wt: WorkerInfo['worktree'];
     let others: WorkerRepo[] | undefined;
+    if (!worktree && fresh && kind === 'agent' && !seat.station && lead === undefined) this.freshenCheckout(name);
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
-      const made = repos.length ? this.makeWorkspace(slug, repos) : this.trees.create(slug);
+      const made = repos.length ? this.makeWorkspace(slug, repos, start) : this.trees.create(slug, undefined, this.dir, start);
       if (typeof made === 'string') return made;
       if ('repos' in made) {
         ({ worktree: wt, repos: others } = made);
@@ -514,6 +546,33 @@ export class WorkerManager {
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
+  }
+
+  /**
+   * Where a subagent's worktree starts: `from` when its lead names it, else where the lead is (its
+   * own worktree's HEAD, or the checkout's for a lead in the checkout), so what the lead has
+   * committed is there. Says why not when `from` is nothing git knows.
+   */
+  private leadStart(lead: WorkerInfo, from: string | undefined): WorktreeStart | string {
+    const cwd = lead.worktree ? path.join(this.dir, lead.worktree.path) : this.dir;
+    const at = this.trees.resolve(from ?? 'HEAD', existsSync(cwd) ? cwd : this.dir);
+    if (at) return at;
+    return from === undefined ? `${lead.name}'s checkout has no commit to start from` : `There's no branch, tag or commit called ${from} here`;
+  }
+
+  /**
+   * A fresh worker without a worktree starts in the project's checkout: it's brought to the latest
+   * of the default branch first, unless someone else is working there or it holds work that a branch
+   * switch would get in the way of (see Worktrees.freshen). Toasts what happened when it's news.
+   */
+  private freshenCheckout(name: string) {
+    const others = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info)).map((w) => w.info.name);
+    const r = this.trees.freshen([...others, ...(this.holds?.inCheckout?.() ?? [])]);
+    if (r.switchedFrom) {
+      this.events.checkout?.(r.branch ?? r.main ?? '');
+      this.events.toast(`🌿 Switched the checkout from ${r.switchedFrom} to ${r.main} for ${name}`, 'info');
+    }
+    if (r.kept) this.events.toast(`🌿 ${name} starts on ${r.branch ?? 'the checkout'} as it is, not the latest ${r.main}: ${r.kept}`, 'info');
   }
 
   /**
@@ -595,7 +654,7 @@ export class WorkerManager {
     if (!lead) return prompt;
     const wt = w.info.worktree;
     const where = wt
-      ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task: commit your work there.`
+      ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task from ${wt.from ?? wt.base.slice(0, 7)}: commit your work there.`
       : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
     return `${officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge) })}\n\n${prompt}`;
   }
@@ -629,7 +688,7 @@ export class WorkerManager {
    * (the 'worker.repos' prompt, as AGENTS.md). All or nothing: when one repository
    * can't have its worktree, the ones already made are taken out again.
    */
-  private makeWorkspace(slug: string, repos: RepoSource[]): { worktree: NonNullable<WorkerInfo['worktree']>; repos: WorkerRepo[]; notes: string[] } | string {
+  private makeWorkspace(slug: string, repos: RepoSource[], start: WorktreeStart = 'checkout'): { worktree: NonNullable<WorkerInfo['worktree']>; repos: WorkerRepo[]; notes: string[] } | string {
     // A branch can only be checked out once per repository, and two floors can be checkouts of the same one.
     const seen = new Map<string, string>();
     const own = this.trees.commonDir();
@@ -652,7 +711,7 @@ export class WorkerManager {
       })();
       return why;
     };
-    const first = this.trees.create(slug, names[0]);
+    const first = this.trees.create(slug, names[0], this.dir, start);
     if (typeof first === 'string') return fail(first);
     const { note, ...primary } = first;
     const notes = note ? [`${names[0]} ${note}`] : [];
@@ -660,7 +719,8 @@ export class WorkerManager {
     const others: WorkerRepo[] = [];
     for (const [i, r] of repos.entries()) {
       const trees = new Worktrees(r.dir);
-      const wt = trees.create(slug, names[i + 1], this.dir);
+      // A commit names this repository's history alone: the others start from their own branch.
+      const wt = trees.create(slug, names[i + 1], this.dir, typeof start === 'object' ? 'checkout' : start);
       if (typeof wt === 'string') return fail(`${r.name}: ${wt}`);
       if (wt.note) notes.push(`${names[i + 1]} ${wt.note}`);
       made.push({ trees, ref: { ...wt, path: path.relative(r.dir, path.join(this.dir, wt.path)) } });
@@ -1382,16 +1442,7 @@ export class WorkerManager {
 
   /** The first of these branches that exists on origin (of `dir`'s repository), for a PR base. None: the forge picks the default branch. */
   private async pushedBranch(candidates: (string | undefined)[], not: string, dir = this.dir): Promise<string | undefined> {
-    for (const c of candidates) {
-      if (!c || c === not) continue;
-      try {
-        await run('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${c}`], dir);
-        return c;
-      } catch {
-        // not on the remote (or never fetched)
-      }
-    }
-    return undefined;
+    return new Worktrees(dir).pushedBranch(candidates, not);
   }
 
   resize(id: string, cols: number, rows: number) {
@@ -2152,6 +2203,12 @@ process.stdin.on('end', () => {
 // ---------------------------------------------------------------------------
 
 /** In the middle of a turn: working, or asking something (not stuck on a trust or login screen). */
+/** An agent at the issues, PR or Pipelines kiosk, which works through the forge whatever branch the checkout is on. */
+function boardAgent(info: WorkerInfo): boolean {
+  const station = DESK_BY_ID.get(info.deskId)?.station;
+  return !!station && station !== 'lead';
+}
+
 function midTurn({ info, bootBlocked }: Pick<Worker, 'info' | 'bootBlocked'>): boolean {
   return info.kind === 'agent' && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
 }
