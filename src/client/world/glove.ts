@@ -113,6 +113,26 @@ export const SHAPES = {
     1,
     [0.816, 0.641, 0.481],
   ),
+  /**
+   * Round the droid wand's grip (WAND_GRIP_AXIS): its axis across the palm under the knuckles,
+   * slanted forward on the thumb side so the shaft comes out between the thumb and the index
+   * finger and the pommel out past the little finger. Each finger wraps until it meets the grip,
+   * the index furthest round toward the shaft; the thumb closes under it from the other side.
+   * Fitted to the grip (tests/wand.test.ts checks every bone touches it without passing through).
+   */
+  wand: shape(
+    [
+      [0.65, 1.475],
+      [1.225, 1.5],
+      [1.6, 1.275],
+      [1.675, 0.85],
+    ],
+    0,
+    0.5,
+    0.8,
+    1,
+    [0, 0, -0.2],
+  ),
   /** Palm in, two fingers through a mug's handle, the thumb on top of it. */
   mug: shape(
     [
@@ -300,6 +320,14 @@ const LAST = 0.65;
  * with the trigger.
  */
 export const GRIP_AT = new THREE.Vector3(-0.037, -0.0385, -0.032);
+
+/**
+ * The droid wand's grip in the right glove's own frame (palm down, before its roll), closed round
+ * by SHAPES.wand: a point on its axis under the middle of the palm, and the way the shaft runs
+ * out of the fist (toward the thumb, slanted 32° forward). The left glove mirrors x.
+ */
+export const WAND_GRIP_AT = new THREE.Vector3(0, -0.031, -0.03);
+export const WAND_GRIP_AXIS = new THREE.Vector3(-Math.cos((32 * Math.PI) / 180), 0, -Math.sin((32 * Math.PI) / 180));
 const spun = new THREE.Vector3();
 const onGun = new THREE.Vector3();
 const between = new THREE.Vector3();

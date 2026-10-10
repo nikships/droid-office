@@ -1,17 +1,22 @@
 import type { Net } from '../net';
-import { store, type Settings } from '../state';
+import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings, type WebhookKind } from '../../shared/protocol';
 import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsCardTitle, type SettingsPane, type SettingsScope } from '../../shared/settings-nav';
 import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
-import { field, toggle as kitToggle } from './kit';
+import { choices, field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
+
+const SIDEARMS: [Sidearm, string, string, string][] = [
+  ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
+  ['magnum', '🔫', '.44 Magnum', 'The original: a gunshot, blood, and paramedics for the body.'],
+];
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };
 
@@ -570,13 +575,30 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   void pairedPhones().then(paintPhones);
   phoneOpen.addEventListener('click', () => openPhone(paintPhones));
 
+  const sidearm = choices(
+    'sidearm',
+    SIDEARMS.map(([value, icon, title, description]) => ({ value, icon, title, description })),
+    settings.sidearm,
+    (value) => {
+      settings = { ...settings, sidearm: value as Sidearm };
+      onChange(settings);
+    },
+    { rows: true },
+  );
+
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
   const sourceReload = hotReloadSettings();
   const factoryKey = factoryKeySettings(net);
   const panes: Record<SettingsPane, Node[]> = {
-    you: [group(null, card('Your character', { desc: desc('How you look and the name above your head.'), control: character }))],
+    you: [
+      group(
+        null,
+        card('Your character', { desc: desc('How you look and the name above your head.'), control: character }),
+        card('What 7 puts in your hand', { desc: desc('Either way a hit worker waits 30 seconds for E, then goes home and its worktree and branch are deleted.'), below: [sidearm] }),
+      ),
+    ],
     sound: [
       group(
         null,

@@ -71,6 +71,8 @@ import { TeamLines, type TeamLink } from './world/team-lines';
 import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
+import { type Sidearm, SPELL_CONFETTI, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
+import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -166,12 +168,14 @@ office.group.add(teamLines.group);
 
 // The MacBook GLBs load after the scene exists; each laptop swaps its procedural
 // stand-in for them the first frame they are cached (see world/laptop.ts). A gun drawn before
-// magnum.glb lands stays empty until it does (see world/gun.ts).
+// magnum.glb lands stays empty until it does (see world/gun.ts), and so does a wand before wand.glb (world/wand.ts).
 void loadPropManifest()
   .then(() => preloadProps(Object.keys(propManifest())))
   .then(() => {
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
+    const wand = propScene('wand');
+    if (wand) setWandModel(wand);
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
@@ -553,24 +557,44 @@ const departures = new Departures(
 );
 // Workers called to a meeting, walking in from the elevator to the meeting table.
 const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
-// Workers shot with the .44 Magnum: shared downed state, then revival or a medic pickup.
+// Workers shot with the .44 Magnum or put to sleep by the wand: shared downed state, then revival or a medic pickup.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
   spawnMedic: (name) => {
     const m = new Person(name, '#f2f4f6', randomLook());
     noOutline(m.root);
     return m;
   },
-  onLand: (at) => sound.thud(at),
+  onLand: (at, look) => (look === 'spell' ? sound.doze(at) : sound.thud(at)),
   onSiren: (at) => sound.siren(at),
 });
-/** The gun in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
+/** What `7` puts in your hand (Settings → You): the wand unless you opted into the Magnum. */
+const wandOut = () => settings.sidearm === 'wand';
+/** The words for what `7` does, by what's in your hand. Only the look and the words differ; what happens to the worker is the same. */
+const arms = () =>
+  wandOut()
+    ? { name: '🪄 Droid wand', fire: 'Cast', away: 'Put away', downed: '💤', isDown: 'is under a spell', revive: 'Wake up', reviveVerb: 'wake it', body: '', again: 'Zap it again to send it home now', target: 'to enchant' }
+    : { name: '🔫 .44 Magnum', fire: 'Fire', away: 'Holster', downed: '🩹', isDown: 'is down', revive: 'Revive', reviveVerb: 'revive', body: "'s body", again: 'Shoot again to finish it now', target: 'to shoot' };
+/** The gun (or the wand) in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
 let gunOut = false;
+/** Which one is out (or on its way away): settings.sidearm when it was drawn. */
+let drawnArm: Sidearm = settings.sidearm;
 /** The gun's draw, holster and tricks, played on your hands and your character alike. */
 const gunMotion = new GunMotion();
+/** The wand's draw, casts and spells, played on your hands. */
+const wandMotion = new WandMotion();
+/** Lumos: the wand's emitter lit, throwing light round you until you put it out (1 again) or away. */
+let lumos = false;
+/** The light Lumos (and a spell leaving the tip) throws on the room, following the tip. */
+const wandLight = new THREE.PointLight('#ffc49a', 0, 7, 1.6);
+wandLight.visible = false;
+scene.add(wandLight);
+/** The tip's trail of light through the air. */
+const tipTrail = new TipTrail();
+scene.add(tipTrail.points);
 /** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
 const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
-/** `7`: the .44 Magnum out of its holster, or back in. Mash it and each press cancels the last, like a yy. */
+/** `7`: the wand (or the .44 Magnum) out, or back away. Mash it and each press cancels the last, like a yy. */
 function toggleGun() {
   if (gunOut) {
     holsterGun();
@@ -580,30 +604,63 @@ function toggleGun() {
   if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
   if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
+  // Drawing one while the other is still on its way away: that one goes at once.
+  if (drawnArm !== settings.sidearm) stowArms();
+  drawnArm = settings.sidearm;
   gunOut = true;
-  gunMotion.draw();
+  if (drawnArm === 'wand') wandMotion.draw();
+  else gunMotion.draw();
   hintKey = 'stale';
 }
 
-/** The gun back in its holster: with a spin, or `quiet`ly straight away when your hands are needed. */
+/** Both straight away, no move: what's in your hand is gone this frame. */
+function stowArms() {
+  gunMotion.stow();
+  wandMotion.stow();
+  setLumos(false);
+}
+
+/** The gun back in its holster (the wand put away): with a move, or `quiet`ly straight away when your hands are needed. */
 function holsterGun(quiet = false) {
   // Even on its way back in: something else wants your hands now.
-  if (quiet) gunMotion.stow();
+  if (quiet) stowArms();
   if (!gunOut) return;
   gunOut = false;
-  if (!quiet) gunMotion.holster();
+  if (!quiet) {
+    if (drawnArm === 'wand') wandMotion.holster();
+    else gunMotion.holster();
+    setLumos(false);
+  }
   hintKey = 'stale';
 }
 
-/** 1–6 with the gun out: a trick in place of an emote. As many as you like, each from the top. */
+/** 1–6 with the gun out: a trick in place of an emote; with the wand, a spell. As many as you like, each from the top. */
 function gunTrick(id: GunTrickId) {
   if (!gunMotion.trick(id)) return;
+  hintKey = 'stale';
+}
+function wandSpell(id: WandSpellId) {
+  if (!wandMotion.spell(id)) return;
+  hintKey = 'stale';
+}
+
+/** Lumos on or off: the tip lights, and so does the room round you. */
+function setLumos(on: boolean) {
+  if (on === lumos) return;
+  lumos = on;
+  hands.setLumos(on);
   hintKey = 'stale';
 }
 
 /** The gun's muzzle in the world, or null with it away. */
 function muzzleAt(out: THREE.Vector3): THREE.Vector3 | null {
   const tip = hands.muzzleTip(out);
+  return tip && camera.localToWorld(tip);
+}
+
+/** The wand's tip in the world, or null with it away. */
+function wandTipAt(out: THREE.Vector3): THREE.Vector3 | null {
+  const tip = hands.wandTip(out);
   return tip && camera.localToWorld(tip);
 }
 
@@ -622,9 +679,64 @@ function gunCues(cues: readonly GunCue[]) {
 }
 const muzzleWorld = new THREE.Vector3();
 const blowDir = new THREE.Vector3();
+const tipWorld = new THREE.Vector3();
+const tipDir = new THREE.Vector3();
 
-/** A click with the gun out: fire at what's under the crosshair. */
+/** What the wand's move just did: its sounds, and each spell's magic. */
+function wandCues(cues: readonly WandCue[]) {
+  for (const cue of cues) {
+    sound.wandCue(cue);
+    const tip = wandTipAt(tipWorld);
+    switch (cue) {
+      case 'release':
+        if (tip) castBolt(tip);
+        break;
+      case 'lumos':
+        setLumos(!lumos);
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 14, speed: 0.5, size: 0.012, seconds: 0.7, lift: 0.2 }));
+        break;
+      case 'flick':
+        // Swish and flick: sparks lifting off the tip and floating up, light as a feather.
+        if (tip) {
+          addEffect(new Sparkles(tip, camera.getWorldDirection(blowDir), { colors: SPELL_TIP, count: 26, speed: 0.9, size: 0.016, seconds: 1.6, lift: 1.6 }));
+          addEffect(new SpellImpact(tip.clone().addScaledVector(blowDir, 0.25), blowDir.clone().negate(), false));
+        }
+        break;
+      case 'spark':
+        // A sparkler's spit: sparks flung every way that fall away as they fade.
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 7, speed: 1.3, size: 0.011, seconds: 0.55, lift: -2.2 }));
+        break;
+      case 'confetti':
+        if (tip) {
+          const out = camera.getWorldDirection(blowDir).addScaledVector(UP, 0.35).normalize();
+          confetti.spray(tip.clone().addScaledVector(out, 0.08), out, 90, SPELL_CONFETTI);
+          addEffect(new Sparkles(tip, out, { colors: SPELL_TIP, count: 16, speed: 1.6, size: 0.014, seconds: 0.5, lift: 0.2 }));
+        }
+        break;
+      case 'shield':
+        hands.ward();
+        break;
+      case 'done':
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 10, speed: 0.4, size: 0.01, seconds: 0.6, lift: 0.3 }));
+        break;
+    }
+  }
+  if (cues.length) hintKey = 'stale';
+}
+
+/** A spark, puff, spray or streak in the scene until it has faded. */
+function addEffect(effect: (typeof puffs)[number]) {
+  scene.add(effect.group);
+  puffs.push(effect);
+}
+
+/** A click with the gun (or the wand) out: fire at what's under the crosshair, or flick the wand at it. */
 function fireGun() {
+  if (drawnArm === 'wand') {
+    // The bolt leaves on the flick's release cue, a tenth of a second on (see wandCues).
+    if (wandMotion.cast()) hintKey = 'stale';
+    return;
+  }
   gunMotion.fire();
   hands.fireGun();
   me.fire();
@@ -634,61 +746,89 @@ function fireGun() {
   // Smoke curling off the muzzle.
   const tip = muzzleAt(new THREE.Vector3());
   if (tip) {
+    const at = tip.clone();
     for (let i = 0; i < 2; i++) {
-      tip.x += (Math.random() - 0.5) * 0.05;
-      tip.y += Math.random() * 0.04;
-      tip.z += (Math.random() - 0.5) * 0.05;
-      smoke.wisp(tip);
+      at.x += (Math.random() - 0.5) * 0.05;
+      at.y += Math.random() * 0.04;
+      at.z += (Math.random() - 0.5) * 0.05;
+      smoke.wisp(at);
     }
   }
   raycaster.setFromCamera(CROSSHAIR, camera);
-  resolveGunShot();
-}
-
-function resolveGunShot() {
-  if (upTop) return;
-  const byRoot = new Map<THREE.Object3D, string>();
-  for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
-  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
-  const result = gunHit(raycaster, office.group, byRoot);
-  const direction = raycaster.ray.direction.clone();
-  landShot(result, direction);
+  const result = aimedShot();
+  landShot(result, raycaster.ray.direction.clone());
 }
 
 /**
- * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
- * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
- * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. Shooting it again while it's down confirms the kill. No menu opens anywhere.
+ * The flick's release: a bolt from the tip to whatever is under the crosshair now, landing when it
+ * gets there (BOLT_SPEED), where it does what a shot does (landShot). A miss off into the distance
+ * just flies out of sight.
+ */
+function castBolt(tip: THREE.Vector3) {
+  if (upTop) return;
+  raycaster.setFromCamera(CROSSHAIR, camera);
+  const result = aimedShot();
+  const direction = raycaster.ray.direction.clone();
+  const to = result?.hit.point.clone() ?? raycaster.ray.at(40, new THREE.Vector3());
+  addEffect(new SpellBolt(tip, to, () => result && landShot(result, direction)));
+  addEffect(new Sparkles(tip, direction, { colors: SPELL_TIP, count: 9, speed: 0.6, size: 0.012, seconds: 0.45, lift: 0.2 }));
+  // A spell barely nudges the camera.
+  if (!reduceMotion.matches) thud = Math.max(thud, 0.08);
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** What a shot along `raycaster` would strike first: a worker, something else solid, or nothing. */
+function aimedShot(): ReturnType<typeof gunHit> {
+  if (upTop) return null;
+  const byRoot = new Map<THREE.Object3D, string>();
+  for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
+  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
+  return gunHit(raycaster, office.group, byRoot);
+}
+
+/** Where a shot strikes something that isn't a worker: dust and a crack, or a spell's mark fizzling out. */
+function missAt(hit: THREE.Intersection) {
+  const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
+  if (wandOut()) {
+    addEffect(new SpellImpact(hit.point, normal, false));
+    sound.fizzle(hit.point);
+    return;
+  }
+  addEffect(new Puff(hit.point, normal));
+  sound.impact(hit.point);
+}
+
+/**
+ * What a bullet (or a spell) does where it lands. Anything solid in front blocks it, and a miss
+ * cracks into it with dust (a spell leaves its mark and fizzles). A worker sprays blood back out of
+ * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
+ * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
+ * floor sees it go down, its session still running. Shooting it again while it's down confirms the
+ * kill. No menu opens anywhere.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
-    if (!hit) return;
-    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
-    const puff = new Puff(hit.point, normal);
-    scene.add(puff.group);
-    puffs.push(puff);
-    sound.impact(hit.point);
+    if (hit) missAt(hit);
     return;
   }
   // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
-    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
-    const puff = new Puff(hit.point, normal);
-    scene.add(puff.group);
-    puffs.push(puff);
-    sound.impact(hit.point);
-    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk to shoot` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
+    missAt(hit);
+    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk ${arms().target}` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
     return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
-  const spray = new BloodSpray(hit.point, out, direction);
-  scene.add(spray.group);
-  puffs.push(spray);
-  sound.hit(hit.point);
+  if (wandOut()) {
+    addEffect(new SpellImpact(hit.point, out, true));
+    sound.spellHit(hit.point);
+  } else {
+    addEffect(new BloodSpray(hit.point, out, direction));
+    sound.hit(hit.point);
+  }
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
@@ -1247,7 +1387,7 @@ function syncWorkers() {
     v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
       arrivals.forget(v.model);
-      casualties.shoot(w.id, v.model, desk.seatAnchor);
+      casualties.shoot(w.id, v.model, desk.seatAnchor, wandOut() ? 'spell' : 'blood');
     } else if (casualties.revive(w.id)) v.model.cheer(0.8);
   }
   for (const [id, v] of workerViews) {
@@ -1466,6 +1606,7 @@ function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.downedUntil !== undefined) {
+    if (wandOut()) return toast(`Walk up to ${w.name} and press E to wake it, or zap it again to send it home now — otherwise the medics carry it off and delete its worktree and branch`, 'warn');
     const revive = `Walk up to ${w.name} and press E to revive, or shoot it again to finish it now — otherwise`;
     return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
   }
@@ -2032,7 +2173,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if ((target.kind === 'desk' || target.kind === 'station') && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
     if (w?.downedUntil !== undefined) {
-      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}'s body to revive`, 'info');
+      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}${arms().body} to ${arms().reviveVerb}`, 'info');
       return;
     }
   }
@@ -2301,7 +2442,7 @@ function onQueue(issue: number): boolean {
 
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
-  if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
+  if (w.downedUntil !== undefined) return `Walk up to ${w.name}${arms().body} and press E to ${arms().reviveVerb} first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
   if (w.guest) return guestKeyNote(w, 'P');
   if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
@@ -2668,12 +2809,13 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
 
 function casualtyHint(w: WorkerInfo, near: boolean): Hint {
   const seconds = Math.max(0, Math.ceil((w.downedUntil! - store.officeNow()) / 1000));
+  const a = arms();
   return {
-    k: `downed|${w.id}|${seconds}|${near}|${gunOut}`,
+    k: `downed|${w.id}|${seconds}|${near}|${gunOut}|${settings.sidearm}`,
     parts: [
-      h('span.title', {}, `🩹 ${w.name} is down`),
-      seconds ? (near ? key('E', 'Revive') : aside('Walk up to the body to revive')) : aside('Medics on their way'),
-      ...(seconds && gunOut ? [aside('Shoot again to finish it now')] : []),
+      h('span.title', {}, `${a.downed} ${w.name} ${a.isDown}`),
+      seconds ? (near ? key('E', a.revive) : aside(`Walk up to ${a.body ? 'the body' : 'it'} to ${a.reviveVerb}`)) : aside('Medics on their way'),
+      ...(seconds && gunOut ? [aside(a.again)] : []),
       aside(`${seconds}s · then worktree + branch deleted`),
     ],
   };
@@ -2795,13 +2937,24 @@ function stationHint(deskId: string): Hint {
   };
 }
 
-/** The gun out: fire it, or put it back. */
+/** The spells on 1–6 as the hint and the wheel name them: Lumos is Nox while it's lit. */
+function wandSpells() {
+  return WAND_SPELLS.map((x) => (x.id === 'lumos' && lumos ? { ...x, emoji: '🌑', label: 'Nox' } : x));
+}
+/** The tricks (with the gun) or spells (with the wand) on 1–6, in key order. */
+const armMoves = (): readonly { id: string; emoji: string; label: string }[] => (drawnArm === 'wand' ? wandSpells() : GUN_TRICKS);
+
+/** The gun (or the wand) out: fire it, or put it back. */
 function renderGunHint(el: HTMLElement) {
-  const doing = GUN_TRICKS.find((x) => x.id === gunMotion.doing);
-  const k = `gun|${doing?.id ?? ''}`;
+  const wand = drawnArm === 'wand';
+  const now = wand ? wandMotion.doing : gunMotion.doing;
+  const doing = now === 'cast' ? { id: 'cast', emoji: '✨', label: 'Casting' } : armMoves().find((x) => x.id === now);
+  const k = `gun|${doing?.id ?? ''}|${drawnArm}|${lumos}`;
   if (k === hintKey) return;
   hintKey = k;
-  el.replaceChildren(h('span.title', {}, doing ? `${doing.emoji} ${doing.label}` : '🔫 .44 Magnum'), key('Click', 'Fire'), key('1–6', 'Tricks'), key('7', 'Holster'));
+  const a = arms();
+  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? `${a.name} · 💡 Lumos` : a.name;
+  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
   el.classList.remove('hidden');
 }
 /** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
@@ -2881,13 +3034,14 @@ function emote(id: EmoteId) {
 }
 /** Number `i` on the keys (0 for 1) and round the wheel: a trick with the gun out, else an emote. */
 function emoteOrTrick(i: number) {
+  if (gunOut && drawnArm === 'wand') return wandSpell(WAND_SPELLS[i].id);
   if (gunOut) return gunTrick(GUN_TRICKS[i].id);
   emote(EMOTES[i].id);
 }
 const emoteWheel = new EmoteWheel(
   emoteOrTrick,
   (open) => (player.mouseLook = !open),
-  () => (gunOut ? { title: 'Trick', items: GUN_TRICKS } : { title: 'Emote', items: EMOTES }),
+  () => (gunOut ? { title: drawnArm === 'wand' ? 'Spell' : 'Trick', items: [...armMoves()] } : { title: 'Emote', items: EMOTES }),
 );
 $('hud').append(emoteWheel.el);
 
@@ -2949,7 +3103,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  // 7 draws and holsters the .44 Magnum (1–6 are emotes).
+  // 7 draws and holsters the wand or the .44 Magnum (1–6 are emotes).
   if (e.code === 'Digit7' || e.code === 'Numpad7') {
     if (!e.repeat) toggleGun();
     return;
@@ -2976,7 +3130,7 @@ function officeKey(e: KeyboardEvent): boolean {
       hud.toggleMenu();
       return true;
     case 'KeyH':
-      openHelp();
+      openHelp(settings.sidearm);
       return true;
     case 'KeyF':
       startHanging();
@@ -3239,7 +3393,7 @@ const hudActions: HudAction[] = [
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
-  { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
+  { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
     id: 'upgrade',
     icon: '⬆️',
@@ -3284,6 +3438,8 @@ function showSettings(pane?: SettingsPane) {
       saveSettings(settings);
       sound.setVolume(settings.volume, settings.muted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
+      // The hint names what's in your hand; the hands swap props by themselves next frame.
+      hintKey = 'stale';
     },
     editProfile,
     () => sound.ding('done'),
@@ -3364,12 +3520,33 @@ function frame(ts?: number) {
   me.root.rotation.y = player.facing;
   const grip = climber.grip;
   me.setGrip(grip);
+  // Switched in Settings with one drawn: the other comes out in its place.
+  if (gunOut && drawnArm !== settings.sidearm) {
+    holsterGun(true);
+    toggleGun();
+  }
   const gunCuesNow = gunMotion.update(dt);
+  const wandCuesNow = wandMotion.update(dt);
   me.setGunPose(gunMotion.pose);
   hands.setGunPose(gunMotion.pose);
+  hands.setWandPose(wandMotion.pose);
   me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip, player.speedBoost);
   hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   gunCues(gunCuesNow);
+  wandCues(wandCuesNow);
+  // The wand's light on the room (Lumos, and the flash of a spell leaving it), and the trail its tip draws.
+  const wandPose = wandMotion.pose;
+  const tipNow = wandPose ? wandTipAt(tipWorld) : null;
+  tipTrail.emit(tipWorld, tipNow && wandPose ? wandPose.trail : 0);
+  tipTrail.update(dt);
+  const wandGlow = 2.4 * hands.lumos + 1.6 * (wandPose?.glow ?? 0);
+  wandLight.visible = !!tipNow && wandGlow > 0.02;
+  if (tipNow) {
+    // A touch ahead of the tip, so it lights what's in front of you rather than the shaft's own shadow side.
+    hands.wandDir(tipDir);
+    wandLight.position.copy(tipNow).add(tipDir.transformDirection(camera.matrixWorld).multiplyScalar(0.12));
+    wandLight.intensity = wandGlow;
+  }
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
   const fov = 55 + rush * 16;
@@ -3560,7 +3737,8 @@ const automation = createAutomation({
     carrying: carrying?.issue ?? null,
     hanging: hanger.active,
     gun: gunOut,
-    gunMove: gunMotion.doing,
+    gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
+    sidearm: settings.sidearm,
   }),
   busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder or a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
@@ -3624,8 +3802,11 @@ const automation = createAutomation({
   emoteWheel,
   emote,
   gunMotion,
+  wandMotion,
   toggleGun,
   gunTrick,
+  wandSpell,
+  lumos: () => lumos,
 };
 (window as any).__sound = sound;
 (window as any).__notify = notifier;

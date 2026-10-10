@@ -7,8 +7,10 @@ import { HeldCard } from './card';
 import { REACH_TIME, SMOKE_CYCLE, cigarette, coffeeMug, dragCurve, drinkGlass, emoteEnvelope, putDownGlass, reachCurve } from './character';
 import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
-import { Glove, gunHand, type HandShape, SHAPES } from './glove';
+import { Glove, gunHand, type HandShape, SHAPES, WAND_GRIP_AT, WAND_GRIP_AXIS } from './glove';
 import { mesh, toonUnique } from './toon';
+import { Wand, Ward } from './wand';
+import type { WandPose } from './wand-motion';
 
 export interface HandsInput {
   yaw: number;
@@ -45,6 +47,45 @@ const scale = new THREE.Vector3();
 const palmAt = new THREE.Matrix4();
 /** From the cylinder's axis to the middle of the left glove pressed flat on it: its radius and half the palm's thickness. */
 const CYLINDER_PALM = 0.024 + 0.0235;
+
+/**
+ * The wand at the ready, in camera space, raised the way a wizard holds one: the fist low on the
+ * right with the thumb on top and the knuckles in a line up and down, the wand standing up out of
+ * it and leaning forward (the grip's slant in SHAPES.wand) and a little in toward the middle, and
+ * the forearm running back toward you. `grip` is where the grip sits, `dir` the way the wand
+ * points, `palm` the way the palm faces (in toward the middle: it keeps the knuckles up and down
+ * whichever way the wand points), and `spin` how far the wand is turned on its own axis in the
+ * fist (so its progress bar faces you).
+ */
+export const WAND_HOLD = {
+  grip: new THREE.Vector3(0.2, -0.2, -0.5),
+  dir: new THREE.Vector3(-0.14, 0.84, -0.52).normalize(),
+  palm: new THREE.Vector3(-1, 0, -0.12).normalize(),
+  spin: 0.35 + Math.PI,
+};
+/**
+ * How much of the wand's pitch the wrist takes, bending the fist toward the little finger (or the
+ * thumb) so the forearm hardly moves, and how far a wrist bends each way, in radians.
+ */
+const WRIST = 0.9;
+const WRIST_FORWARD = 0.7;
+const WRIST_BACK = 0.35;
+/** The wrist in the arm's frame: where the glove bends from. */
+const WRIST_AT = new THREE.Vector3(0, 0, 0.05);
+const wristTurned = new THREE.Vector3();
+/** How Lumos's light comes up and goes out, per second. */
+const LUMOS_RATE = 5;
+const aimDir = new THREE.Vector3();
+const palmDir = new THREE.Vector3();
+const palmInArm = new THREE.Vector3();
+const wandAxis = new THREE.Vector3();
+const gripInArm = new THREE.Vector3();
+const basisA = new THREE.Matrix4();
+const basisB = new THREE.Matrix4();
+const turnQ = new THREE.Quaternion();
+const sideAxis = new THREE.Vector3();
+const upAxis = new THREE.Vector3(0, 1, 0);
+const camX = new THREE.Vector3(1, 0, 0);
 
 interface Arm {
   group: THREE.Group;
@@ -109,6 +150,16 @@ export class Hands {
    * gone over from the fist onto the trigger finger (the pose's `finger`, eased).
    */
   private gun: { mount: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose>; onFinger: number } | null = null;
+  /**
+   * The droid wand in the right fist (see setWandPose): its mount on the glove round the grip, the
+   * pivot it twirls on in the fingers, the wand, and the pose it's in.
+   */
+  private wand: { mount: THREE.Group; twirl: THREE.Group; item: Wand; pose: Readonly<WandPose> } | null = null;
+  /** Lumos: wanted on, and how far it has come up (0 … 1). */
+  private lumosOn = false;
+  private lumosK = 0;
+  /** Protego's wards in front of your eyes, until each has faded. */
+  private wards: Ward[] = [];
 
   constructor(shirt: string, skin: string) {
     this.shirt = shirt;
@@ -164,6 +215,37 @@ export class Hands {
   cigTip(out: THREE.Vector3): THREE.Vector3 {
     this.right.group.updateMatrixWorld(true);
     return this.cig.localToWorld(out.set(0, 0, 0.09));
+  }
+
+  /** Where the wand's tip is, in camera space, or null with the wand away. */
+  wandTip(out: THREE.Vector3): THREE.Vector3 | null {
+    if (!this.wand) return null;
+    this.right.group.updateMatrixWorld(true);
+    return this.wand.item.tip.getWorldPosition(out);
+  }
+
+  /** Which way the wand points, in camera space, or null with it away. */
+  wandDir(out: THREE.Vector3): THREE.Vector3 | null {
+    if (!this.wand) return null;
+    this.right.group.updateMatrixWorld(true);
+    return out.set(0, 0, 1).transformDirection(this.wand.item.group.matrixWorld);
+  }
+
+  /** Lumos: the emitter lit bright enough to see by, or out. */
+  setLumos(on: boolean) {
+    this.lumosOn = on;
+  }
+
+  /** How far Lumos has come up, 0 (out) … 1 (lit). */
+  get lumos(): number {
+    return this.lumosK;
+  }
+
+  /** Protego: a ward flares up in front of your eyes. */
+  ward() {
+    const w = new Ward();
+    this.scene.add(w.group);
+    this.wards.push(w);
   }
 
   /** Where the gun's muzzle is, in camera space, or null with the gun holstered. */
@@ -278,13 +360,12 @@ export class Hands {
    * in its holster (null). The left hand keeps what it holds.
    */
   setGunPose(pose: Readonly<GunPose> | null) {
-    if (!pose) {
-      if (!this.gun) return;
+    if (this.gun && !pose) {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
-      return;
     }
+    if (!pose) return;
     if (this.gun) {
       this.gun.pose = pose;
       return;
@@ -297,13 +378,54 @@ export class Hands {
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
     const prop = magnum();
-    prop.position.copy(SPIN_AT).negate();
     const muzzle = new Muzzle();
+    prop.position.copy(SPIN_AT).negate();
     prop.add(muzzle.group);
     pivot.add(prop);
     mount.add(pivot);
     this.right.group.add(mount);
     this.gun = { mount, pivot, prop, muzzle, pose, onFinger: pose.finger };
+  }
+
+  /**
+   * The droid wand in the right fist, posed (see WandMotion: drawn, put away, casting, mid-spell),
+   * or away (null). It sits on the glove itself, round the grip SHAPES.wand closes on, so it turns
+   * with the hand. Putting it away puts Lumos out.
+   */
+  setWandPose(pose: Readonly<WandPose> | null) {
+    if (this.wand && !pose) {
+      this.wand.item.dispose();
+      this.wand.mount.removeFromParent();
+      this.wand = null;
+      this.right.glove.group.rotation.y = 0;
+      this.right.glove.group.position.set(0, 0, 0);
+      this.lumosOn = false;
+      this.lumosK = 0;
+    }
+    if (!pose) return;
+    if (this.wand) {
+      this.wand.pose = pose;
+      return;
+    }
+    const glove = this.right.glove;
+    glove.shape(SHAPES.wand, true);
+    // The wand's +Z down the grip's axis and out past the thumb, its +Y (the progress bar) toward
+    // the back of the hand, then turned on its axis so the bar faces you.
+    const mount = new THREE.Group();
+    mount.name = 'wand-mount';
+    mount.position.copy(WAND_GRIP_AT);
+    const z = WAND_GRIP_AXIS.clone().normalize();
+    const y = new THREE.Vector3(0, 1, 0);
+    const x = new THREE.Vector3().crossVectors(y, z).normalize();
+    mount.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+    // Twirled end over end in the fingers: round the palm's normal, through the grip.
+    const twirl = new THREE.Group();
+    const item = new Wand();
+    item.group.rotation.z = WAND_HOLD.spin;
+    twirl.add(item.group);
+    mount.add(twirl);
+    glove.group.add(mount);
+    this.wand = { mount, twirl, item, pose };
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
@@ -426,11 +548,17 @@ export class Hands {
     this.right.glove.update(dt);
     this.left.glove.update(dt);
     if (this.gun) this.gunStep(dt, r, l);
+    if (this.wand) this.wandStep(dt, r, l);
+    for (let i = this.wards.length - 1; i >= 0; i--) {
+      if (this.wards[i].update(dt)) continue;
+      this.wards[i].dispose();
+      this.wards.splice(i, 1);
+    }
     // A drag: the cigarette hand comes up to your mouth, just under the camera, and back down.
     if (this.smokeT >= 0) {
       this.smokeT += dt;
       // Not mid-aim: the hand holding the gun stays on the crosshair.
-      const d = s.walking || s.airborne || this.gun ? 0 : dragCurve(this.smokeT % SMOKE_CYCLE);
+      const d = s.walking || s.airborne || this.gun || this.wand ? 0 : dragCurve(this.smokeT % SMOKE_CYCLE);
       r.position.x -= 0.2 * d;
       r.position.y += 0.02 * d;
       r.position.z += 0.3 * d;
@@ -444,6 +572,7 @@ export class Hands {
   private rightShape(reach: number): HandShape {
     const g = this.gun;
     if (g) return gunHand(g.onFinger);
+    if (this.wand) return SHAPES.wand;
     const both = this.bothShape();
     if (both) return both;
     switch (this.emoting?.emote.id) {
@@ -535,6 +664,57 @@ export class Hands {
     g.muzzle.update(dt);
   }
 
+  /**
+   * The wand's pose on the hands already placed for this frame. At the ready the fist is low on
+   * the right, thumb up, with the wand raised out of it (WAND_HOLD); the pose's pitch and yaw
+   * swing the wand (most of the pitch in the wrist, so the forearm stays down), its roll turns the
+   * fist round the wand, and put away (`out` 0) the hand is down off the bottom of the view with
+   * the tip dropped. The arm is turned so the wand runs where it points and the palm faces in.
+   */
+  private wandStep(dt: number, r: THREE.Group, l: THREE.Group) {
+    const w = this.wand!;
+    const p = w.pose;
+    const down = 1 - p.out;
+    const glove = this.right.glove;
+    glove.shape(SHAPES.wand, true);
+    // The wrist bent toward the little finger as the wand tips forward (back toward the thumb as it
+    // tips back), round the palm's normal: after the roll, so in the glove's own frame.
+    glove.group.rotation.order = 'ZYX';
+    glove.group.rotation.y = THREE.MathUtils.clamp(p.pitch * WRIST, -WRIST_FORWARD, WRIST_BACK);
+    glove.group.updateMatrix();
+    wristTurned.copy(WRIST_AT).applyQuaternion(glove.group.quaternion);
+    glove.group.position.copy(WRIST_AT).sub(wristTurned);
+    // Lumos comes up and goes out over a fifth of a second.
+    this.lumosK += ((this.lumosOn ? 1 : 0) - this.lumosK) * Math.min(1, dt * LUMOS_RATE);
+    // Where the grip goes, and where it aims from there: the ready, moved by the pose.
+    const sway = r.position.clone().sub(this.right.base);
+    const grip = lift.copy(WAND_HOLD.grip).add(sway);
+    grip.x += p.x + 0.06 * down;
+    grip.y += p.y - 0.42 * down;
+    grip.z += p.z + 0.12 * down;
+    aimDir.copy(WAND_HOLD.dir);
+    aimDir.applyAxisAngle(camX, p.pitch - 1.1 * down);
+    sideAxis.copy(upAxis);
+    aimDir.applyAxisAngle(sideAxis, p.yaw);
+    palmDir.copy(WAND_HOLD.palm).applyAxisAngle(sideAxis, p.yaw);
+    // Roll: the fist turned round the wand's line, clockwise as you see it.
+    palmDir.applyAxisAngle(aimDir, -p.roll);
+    // In the arm's frame: the wand's axis out of the fist and the way the palm faces, square to it.
+    glove.group.updateMatrix();
+    wandAxis.copy(WAND_GRIP_AXIS).applyQuaternion(glove.group.quaternion).normalize();
+    palmInArm.set(0, -1, 0).applyQuaternion(glove.group.quaternion);
+    turnQ.setFromRotationMatrix(frame(basisA, wandAxis, palmInArm)).invert();
+    r.quaternion.setFromRotationMatrix(frame(basisB, aimDir, palmDir)).multiply(turnQ);
+    // Then the arm placed so the grip lands where it goes.
+    gripInArm.copy(WAND_GRIP_AT).applyMatrix4(glove.group.matrix).applyQuaternion(r.quaternion);
+    r.position.copy(grip).sub(gripInArm);
+    r.updateMatrixWorld(true);
+    w.twirl.rotation.y = p.twirl;
+    // The left hand drops away out of view while the right one works.
+    if (!this.wantsMug && !this.glass) l.position.y -= 0.2 * p.out;
+    w.item.update(dt, { spin: p.spin, glow: p.glow, charge: p.charge, lumos: this.lumosK });
+  }
+
   /** Moves the hands (already placed for this frame) through the emote. */
   private emoteStep(dt: number, l: THREE.Group) {
     const e = this.emoting!;
@@ -601,4 +781,15 @@ export class Hands {
         break;
     }
   }
+}
+
+/**
+ * A rotation whose x axis is `a` and whose y axis is `b` made square to it: two of these turn one
+ * pair of directions onto another.
+ */
+function frame(out: THREE.Matrix4, a: THREE.Vector3, b: THREE.Vector3): THREE.Matrix4 {
+  const x = a.clone().normalize();
+  const y = b.clone().addScaledVector(x, -b.dot(x)).normalize();
+  const z = new THREE.Vector3().crossVectors(x, y);
+  return out.makeBasis(x, y, z);
 }

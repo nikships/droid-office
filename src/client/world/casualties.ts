@@ -4,11 +4,12 @@ import { nearestWalkable, route, type Pt } from '../../shared/nav';
 import type { MedicPose } from './character';
 
 /**
- * Workers shot with the .44 Magnum. The server owns their revival deadlines; this class renders
- * the shared downed state and the medic pickup after dismissal.
+ * Workers shot with the .44 Magnum, or put to sleep by the wand. The server owns their revival
+ * deadlines; this class renders the shared downed state and the medic pickup after dismissal.
  *
  * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
- * pool spreads under it while its session keeps running (see shoot). Pressing E nearby
+ * pool spreads under it while its session keeps running (see shoot). A spell (CasualtyLook) puts
+ * it to sleep on a glowing spell circle instead, eyes shut, stars circling. Pressing E nearby
  * stands it back up in its seat with its session untouched, or expiry calls in two
  * paramedics with a stretcher (see confirm): they walk in from the elevator, lower and open the scoop
  * stretcher, support and settle the body, close the bed and lift together, then carry it back to the elevator and fade, and the laptop shuts and
@@ -21,6 +22,8 @@ import type { MedicPose } from './character';
 export const FALL_TIME = 0.75;
 /** Seconds for the blood pool to spread to full size under the body. */
 export const BLEED_TIME = 6;
+/** Seconds for the spell circle to open to full size: a spell takes hold at once, blood takes its time. */
+export const SPELL_TIME = 1.2;
 /** How wide the blood pool gets, in meters. */
 export const POOL_R = 0.9;
 /** Seconds lowering, stabilizing, loading and lifting together. */
@@ -53,12 +56,18 @@ const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
 /** Falling, bled out waiting for revival, medics on the way, loading, carrying out, gone. */
 export type CasualtyPhase = 'fall' | 'bled' | 'fetch' | 'load' | 'carry' | 'fade';
 
+/**
+ * How a downed worker looks: shot with the Magnum (a blood pool, face slack) or hit by the wand
+ * (asleep on a glowing spell circle with stars circling over it). The lifecycle is the same.
+ */
+export type CasualtyLook = 'blood' | 'spell';
+
 /** What a casualty needs of a worker's model (see world/character.ts Worker). */
 export interface CasualtyModel {
   readonly root: THREE.Group;
   update(dt: number, t: number): void;
-  /** Light out, face slack, bubble gone. */
-  die(): void;
+  /** Light out, face slack (or eyes shut, `asleep`), bubble gone. */
+  die(asleep?: boolean): void;
   /** Back on its feet: light and bubble as its status says. */
   revive(): void;
   dispose(): void;
@@ -84,8 +93,8 @@ export interface CasualtyLaptop {
 export interface CasualtyHooks {
   /** A paramedic in whites, by name. */
   spawnMedic(name: string): Medic;
-  /** The thud as the body lands, and the siren sting as the medics come in. */
-  onLand(at: THREE.Vector3): void;
+  /** The thud as the body lands (or it dozes off, for a spell), and the siren sting as the medics come in. */
+  onLand(at: THREE.Vector3, look: CasualtyLook): void;
   onSiren(at: THREE.Vector3): void;
 }
 
@@ -114,6 +123,57 @@ function bloodPool(): THREE.Group {
   pool.add(lobe);
   pool.scale.setScalar(0.05);
   return pool;
+}
+
+let spellGeo: { disc: THREE.CircleGeometry; rim: THREE.RingGeometry; inner: THREE.RingGeometry; rune: THREE.CircleGeometry; star: THREE.OctahedronGeometry } | null = null;
+let spellMat: { disc: THREE.MeshBasicMaterial; rim: THREE.MeshBasicMaterial; inner: THREE.MeshBasicMaterial; rune: THREE.MeshBasicMaterial; star: THREE.MeshBasicMaterial } | null = null;
+/** How many stars circle over a sleeping worker, and how high (in units of the circle's radius). */
+const SPELL_STARS = 4;
+const STAR_Y = 0.55;
+
+/**
+ * The spell circle, the droid wand's colors: a dim orange glow on the floor in a bright orange
+ * rim, a white hairline ring with eight orange marks round it, and white sparks circling over the
+ * sleeper. It turns slowly while the spell holds (see step).
+ */
+function spellCircle(): THREE.Group {
+  spellGeo ??= {
+    disc: new THREE.CircleGeometry(1, 40),
+    rim: new THREE.RingGeometry(0.88, 1, 48),
+    inner: new THREE.RingGeometry(0.56, 0.61, 40),
+    rune: new THREE.CircleGeometry(0.07, 4),
+    star: new THREE.OctahedronGeometry(0.07, 0),
+  };
+  const glow = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+  spellMat ??= { disc: glow('#ee6018', 0.22), rim: glow('#ff8a4a', 0.9), inner: glow('#eeeeee', 0.7), rune: glow('#ee6018', 0.95), star: glow('#fff4ea', 1) };
+  const g = spellGeo;
+  const m = spellMat;
+  const circle = new THREE.Group();
+  circle.name = 'spell-circle';
+  const flat = (geo: THREE.BufferGeometry, mat: THREE.Material, y: number) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = y;
+    circle.add(mesh);
+    return mesh;
+  };
+  flat(g.disc, m.disc, 0);
+  flat(g.rim, m.rim, 0.001);
+  flat(g.inner, m.inner, 0.001);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    flat(g.rune, m.rune, 0.002).position.set(Math.cos(a) * 0.74, 0.002, Math.sin(a) * 0.74);
+  }
+  for (let i = 0; i < SPELL_STARS; i++) {
+    const star = new THREE.Mesh(g.star, m.star);
+    star.name = 'spell-star';
+    const a = (i / SPELL_STARS) * Math.PI * 2;
+    star.position.set(Math.cos(a) * 0.4, STAR_Y, Math.sin(a) * 0.4);
+    star.userData.phase = a;
+    circle.add(star);
+  }
+  circle.scale.setScalar(0.05);
+  return circle;
 }
 
 /** A split scoop bed with padded head support and handles the medics can actually hold. */
@@ -176,6 +236,7 @@ interface Team {
 
 interface Casualty {
   model: CasualtyModel;
+  look: CasualtyLook;
   /** The seat anchor it fell out of (and goes back to on Revive). */
   seat: THREE.Object3D;
   scale: number;
@@ -247,14 +308,20 @@ export class Casualties {
     return this.all.get(id)?.phase ?? null;
   }
 
+  /** How `id` went down, if it has a scene running. */
+  lookOf(id: string): CasualtyLook | null {
+    return this.all.get(id)?.look ?? null;
+  }
+
   /**
    * Shoots the worker: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
-   * out under a spreading pool. False when it already has a scene running.
+   * out under a spreading pool. A `spell` puts it to sleep there instead, on a spreading spell
+   * circle. False when it already has a scene running.
    */
-  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D): boolean {
+  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D, look: CasualtyLook = 'blood'): boolean {
     if (this.all.has(id)) return false;
     // Off the desk first if it was up there dancing: it falls out of its seat.
-    model.die();
+    model.die(look === 'spell');
     const from = model.root.getWorldPosition(new THREE.Vector3());
     const quat = model.root.getWorldQuaternion(new THREE.Quaternion());
     const yaw = new THREE.Euler().setFromQuaternion(quat, 'YXZ').y;
@@ -273,7 +340,7 @@ export class Casualties {
     if (!Number.isFinite(top)) top = this.ground(from.x, from.z, from.y);
     if (!Number.isFinite(top)) top = from.y + FEET;
     floor.y = top - FEET;
-    const pool = bloodPool();
+    const pool = look === 'spell' ? spellCircle() : bloodPool();
     // On top of whatever is underfoot, not at the body's origin (feet are FEET above it, and the
     // rugs under the desks stand 0.021 proud of the floorboards).
     pool.position.set(floor.x, floor.y + FEET + 0.03, floor.z);
@@ -281,6 +348,7 @@ export class Casualties {
     this.parent.add(pool);
     this.all.set(id, {
       model,
+      look,
       seat,
       scale: local,
       phase: 'fall',
@@ -433,8 +501,9 @@ export class Casualties {
         return;
       }
       case 'bled':
-        c.bleed = Math.min(1, c.bleed + dt / BLEED_TIME);
+        c.bleed = Math.min(1, c.bleed + dt / (c.look === 'spell' ? SPELL_TIME : BLEED_TIME));
         c.pool.scale.setScalar(Math.max(0.05, POOL_R * easeOut(c.bleed)));
+        if (c.look === 'spell') this.twinkle(c, dt);
         return;
       case 'fetch': {
         const team = c.team!;
@@ -510,7 +579,18 @@ export class Casualties {
     c.model.root.rotation.set(c.tip, c.yaw + c.lean + c.side * 0.9, c.lean * 0.6 + c.side * 0.35);
     c.phase = 'bled';
     c.t = 0;
-    this.hooks.onLand(c.floor);
+    this.hooks.onLand(c.floor, c.look);
+  }
+
+  /** The spell circle turning slowly, its stars bobbing as they circle. */
+  private twinkle(c: Casualty, dt: number) {
+    c.pool.rotation.y += dt * 0.7;
+    for (const star of c.pool.children) {
+      if (star.name !== 'spell-star') continue;
+      const phase = star.userData.phase as number;
+      star.position.y = STAR_Y + Math.sin(c.t * 2.4 + phase) * 0.06;
+      star.rotation.y += dt * 3;
+    }
   }
 
   /** Slows for corners and arrival, turns before stepping, and accelerates without a lurch. */

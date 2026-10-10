@@ -565,8 +565,8 @@ export class Person {
   /** Holding on to the ladder or a fire pole (see setGrip). */
   private grip: 'ladder' | 'pole' | null = null;
   /**
-   * A .44 Magnum in the right fist (see setGunPose): where the fist holds it, the pivot it spins
-   * round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
+   * A .44 Magnum or the wand in the right fist (see setGunPose): where the fist holds it, the pivot
+   * it spins round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
   private gun: { mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
   private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
@@ -1047,19 +1047,20 @@ export class Person {
   }
 
   /**
-   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered, mid-trick), or away in
-   * its holster (null). The arm swings up to aim as it draws.
+   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered,
+   * mid-trick), or away in its holster (null). The arm swings up to aim as it draws.
    */
   setGunPose(pose: Readonly<GunPose> | null) {
-    if (!pose) {
-      if (!this.gun) return;
+    if (this.gun && !pose) {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
-      this.armL.rotation.set(0, 0, 0);
-      this.finger.visible = this.emoting?.emote.id === 'point';
-      return;
+      if (!pose) {
+        this.armL.rotation.set(0, 0, 0);
+        this.finger.visible = this.emoting?.emote.id === 'point';
+      }
     }
+    if (!pose) return;
     if (this.gun) {
       this.gun.pose = pose;
       return;
@@ -1073,8 +1074,8 @@ export class Person {
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
     const prop = magnum();
-    prop.position.copy(SPIN_AT).negate();
     const muzzle = new Muzzle();
+    prop.position.copy(SPIN_AT).negate();
     prop.add(muzzle.group);
     pivot.add(prop);
     wrist.add(pivot);
@@ -1472,6 +1473,8 @@ export class Worker {
   private name = '';
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
+  /** Down from the wand rather than the gun: eyes shut, asleep (see die). */
+  private asleep = false;
   status: WorkerStatus = 'starting';
   bouncing = false;
   /** You're close enough to read its card: it lands the hop it's in and stands still until you walk away. */
@@ -1728,10 +1731,14 @@ export class Worker {
     this.root.add(this.bubble);
   }
 
-  /** Shot: its light goes out, its face goes slack and its bubble goes away. Its session runs on. */
-  die() {
+  /**
+   * Shot: its light goes out, its face goes slack and its bubble goes away. Its session runs on.
+   * `asleep` (hit by the wand) shuts its eyes instead, fast asleep.
+   */
+  die(asleep = false) {
     if (this.dead) return;
     this.dead = true;
+    this.asleep = asleep;
     this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
@@ -1921,6 +1928,10 @@ export class Worker {
 
   /** Shot: flat where it fell, lids heavy, light out. Only the name tag stays up. */
   private flatline(dt: number) {
+    if (this.asleep) {
+      for (const e of this.eyes) e.scale.y = 0.08;
+      return;
+    }
     this.blinkAt -= dt;
     if (this.blinkAt < 0) this.blinkAt = 4 + Math.random() * 4;
     const shut = this.blinkAt < 0.4;

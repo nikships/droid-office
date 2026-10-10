@@ -5,7 +5,7 @@ export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'factory' |
 export type SettingsScope = 'you' | 'floor' | 'office';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
-  { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look and how you see the office.' },
+  { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and what you hold.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The sky, Jira, where the elevator looks for projects, and local source reload.' },
@@ -36,6 +36,7 @@ export const SETTINGS_SCOPE: Record<SettingsScope, readonly [label: string, titl
 /** Which category each setting lives in, and who it's for. The page is built from these titles. */
 export const SETTINGS_CARDS = [
   { pane: 'you', title: 'Your character', scope: null },
+  { pane: 'you', title: 'What 7 puts in your hand', scope: 'you' },
   { pane: 'sound', title: 'Office sounds', scope: 'you' },
   { pane: 'sound', title: 'Jukebox', scope: 'you' },
   { pane: 'notify', title: 'Desktop notifications', scope: 'you' },
