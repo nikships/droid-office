@@ -1789,4 +1789,16 @@ test('fresh workers start from the latest main, the checkout moved only when nob
   const quiet = workers.spawn('desk-6', 'test', 'read only', false, 'agent', undefined, undefined, [], lead.id);
   if (typeof quiet === 'string') throw new Error(quiet);
   assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+  // An explicit remote branch ignores the office's default setting, and is fetched before cutting.
+  workers.freshMain = () => false;
+  const remoteHead = merge('remote-only.txt');
+  git(github, 'push', '-q', 'origin', 'main:remote-start');
+  assert.equal(await workers.fetchStart('missing-lead', 'origin/main'), undefined);
+  assert.equal(workers.fetchStart(lead.id, 'HEAD'), undefined);
+  await workers.fetchStart(lead.id, 'origin/remote-start');
+  const remote = workers.spawn('desk-7', 'test', 'start from the remote', true, 'agent', undefined, undefined, [], lead.id, undefined, 'origin/remote-start');
+  if (typeof remote === 'string') throw new Error(remote);
+  assert.equal(remote.worktree?.base, remoteHead);
+  assert.equal(remote.worktree?.from, 'remote-start');
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
 });

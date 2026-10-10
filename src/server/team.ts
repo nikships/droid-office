@@ -29,7 +29,7 @@ export interface TeamWorkers {
   kill(id: string): Promise<{ note?: string; error?: string }>;
   tail(id: string, lines: number): string | undefined;
   setTask(id: string, task: WorkerTask): void;
-  fetchBase?(): Promise<void> | undefined;
+  fetchStart?(lead: string, from: string): Promise<void> | undefined;
 }
 
 export interface TeamOptions {
@@ -311,7 +311,7 @@ export class Team {
       if (from.length > FROM_MAX || !/^[^-\s][^\s]*$/.test(from)) return no(400, `--from takes a branch, tag or commit (got ${clip(from, 40)})`);
     }
     // Fetched, so `--from origin/main` is what's on the forge now. Without --from it starts where the lead is.
-    if (worktree) await this.workers.fetchBase?.();
+    if (worktree && from !== undefined) await this.workers.fetchStart?.(lead.id, from);
     const still = this.workers.get(lead.id);
     if (!still) return no(410, "You've left the floor");
     const after = full();

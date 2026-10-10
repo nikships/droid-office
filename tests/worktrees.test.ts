@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Changes } from '../src/server/changes.js';
 import { Worktrees } from '../src/server/worktrees.js';
+import { githubPulls } from '../src/server/github.js';
+import type { ChangesState } from '../src/shared/protocol.js';
 
 /**
  * A project cloned from a bare origin, plus a second clone standing in for the forge: whatever it
@@ -321,3 +323,109 @@ test('freshening waits out a merge under way', (t) => {
   const r = new Worktrees(f.dir).freshen();
   assert.match(r.kept ?? '', /merge, rebase or cherry-pick is under way/);
 });
+
+for (const mode of ['switch', 'create', 'merge', 'local'] as const) {
+  test(`freshening preserves ignored files during ${mode}`, async (t) => {
+    const f = fixture(t);
+    const merged = f.merge('config.txt');
+    const trees = new Worktrees(f.dir);
+    await trees.fetch('main');
+    if (mode !== 'merge') f.git('switch', '-q', '-c', 'feature');
+    if (mode === 'create') f.git('branch', '-D', 'main');
+    if (mode === 'local') {
+      f.git('branch', '-f', 'main', merged);
+      f.git('remote', 'remove', 'origin');
+    }
+    writeFileSync(path.join(f.dir, '.git', 'info', 'exclude'), '/config.txt\n');
+    writeFileSync(path.join(f.dir, 'config.txt'), 'local configuration');
+    const before = f.git('rev-parse', 'HEAD');
+    const branch = f.git('rev-parse', '--abbrev-ref', 'HEAD');
+    const result = trees.freshen();
+    assert.match(result.kept ?? '', /config\.txt/);
+    assert.equal(result.switchedFrom, undefined);
+    assert.equal(readFileSync(path.join(f.dir, 'config.txt'), 'utf8'), 'local configuration');
+    assert.equal(f.git('rev-parse', 'HEAD'), before);
+    assert.equal(f.git('rev-parse', '--abbrev-ref', 'HEAD'), branch);
+  });
+}
+
+test('an explicit origin ref fetches that branch, including one outside a single-branch clone', async (t) => {
+  const f = fixture(t);
+  f.git('switch', '-q', '-c', 'feature');
+  const stale = f.git('rev-parse', 'origin/main');
+  const merged = f.merge('latest-main.txt');
+  const trees = new Worktrees(f.dir);
+  await trees.fetchRef('origin/main');
+  assert.equal(trees.resolve('origin/main')?.commit, merged);
+  assert.notEqual(merged, stale);
+  assert.equal(f.git('rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+  assert.equal(trees.fetchRef('origin/main'), undefined, 'a burst shares the fetched branch');
+  // Simulate a clone whose configured refspec would not update this remote-tracking branch.
+  f.git('config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  f.git('push', '-q', 'origin', 'main:only-origin');
+  assert.equal(trees.resolve('only-origin'), undefined);
+  const fetching = trees.fetchRef('only-origin');
+  assert.ok(fetching);
+  assert.equal(trees.fetchRef('origin/only-origin'), fetching);
+  await fetching;
+  assert.equal(trees.resolve('only-origin')?.commit, f.git('rev-parse', 'main'));
+  assert.equal(f.git('rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+});
+
+test('explicit local branches, tags, commits and a lead’s HEAD need no fetch', (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  const lead = trees.create('local-lead');
+  assert.ok(typeof lead !== 'string');
+  const cwd = path.join(f.dir, lead.path);
+  const head = f.git('rev-parse', 'HEAD');
+  f.git('tag', 'v1');
+  for (const ref of ['HEAD', 'main', lead.branch, 'v1', head, `${head}~0`, 'two words']) assert.equal(trees.fetchRef(ref, cwd), undefined, ref);
+});
+
+for (const published of [false, true]) {
+  test(`the Changes PR ${published ? 'targets a published lead' : 'falls back from an unpublished lead'}, without changing its diff base`, async (t) => {
+    const f = fixture(t);
+    const trees = new Worktrees(f.dir);
+    const lead = trees.create('pr-lead');
+    assert.ok(typeof lead !== 'string');
+    const leadDir = path.join(f.dir, lead.path);
+    writeFileSync(path.join(leadDir, 'plan.txt'), 'plan');
+    f.git('-C', leadDir, 'add', 'plan.txt');
+    f.git('-C', leadDir, 'commit', '-qm', 'plan');
+    if (published) f.git('-C', leadDir, 'push', '-q', 'origin', lead.branch);
+    const sub = trees.create('pr-sub', undefined, f.dir, trees.resolve('HEAD', leadDir)!);
+    assert.ok(typeof sub !== 'string');
+    const cwd = path.join(f.dir, sub.path);
+    writeFileSync(path.join(cwd, 'work.txt'), 'work');
+    f.git('-C', cwd, 'add', 'work.txt');
+    f.git('-C', cwd, 'commit', '-qm', 'work');
+    const target = { name: 'Sub', cwd, rel: sub.path, worktreeBase: sub.base, baseBranch: sub.from, prBaseFallback: 'unpublished-checkout' };
+    const bases: (string | undefined)[] = [];
+    const changes = new Changes(
+      'unpublished-checkout',
+      () => target,
+      () => undefined,
+      { state() {}, toast() {}, refreshGitHub() {} },
+      {
+        ...githubPulls,
+        createPull: async (_cwd, _head, base) => {
+          assert.ok(f.git('ls-remote', '--heads', 'origin', `refs/heads/${base}`), 'the PR base exists on origin');
+          bases.push(base);
+          return { number: 1, url: 'https://example.invalid/pull/1' };
+        },
+      },
+    );
+    t.after(() => changes.stop());
+    const state = await (changes as unknown as { compute(w: { workerId: string }, t: typeof target): Promise<ChangesState> }).compute({ workerId: 'sub' }, target);
+    assert.equal(state.error, undefined);
+    assert.deepEqual(
+      state.files.map((f) => f.path),
+      ['work.txt'],
+    );
+    assert.equal(state.ahead, 1);
+    assert.equal(state.prBase, published ? lead.branch : 'main');
+    assert.equal(await changes.pullRequest('sub', 'Subtask', 'A task', 'test'), undefined);
+    assert.deepEqual(bases, [published ? lead.branch : 'main']);
+  });
+}

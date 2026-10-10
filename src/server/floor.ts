@@ -292,7 +292,7 @@ export class Floor {
         kill: (id) => workers.kill(id),
         tail: (id, lines) => workers.tail(id, lines),
         setTask: (id, task) => workers.setTask(id, task),
-        fetchBase: () => workers.fetchBase(),
+        fetchStart: (lead, from) => workers.fetchStart(lead, from),
       },
       {
         dataDir,
@@ -311,7 +311,15 @@ export class Floor {
         const w = this.workers.get(workerId);
         if (!w) return undefined;
         // Against the branch its worktree was cut from (which may not be the one the checkout is on), else the checkout's.
-        if (!repo) return { name: w.name, cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir, rel: w.worktree?.path ?? '', worktreeBase: w.worktree?.base, baseBranch: w.worktree?.from ?? this.project.branch ?? null };
+        if (!repo)
+          return {
+            name: w.name,
+            cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir,
+            rel: w.worktree?.path ?? '',
+            worktreeBase: w.worktree?.base,
+            baseBranch: w.worktree?.from ?? this.project.branch ?? null,
+            prBaseFallback: this.project.branch ?? null,
+          };
         // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
         const r = w.repos?.find((x) => x.floor === repo);
         if (!r) return undefined;
@@ -322,6 +330,7 @@ export class Floor {
           rel: r.path,
           worktreeBase: r.base,
           baseBranch: r.from ?? null,
+          prBaseFallback: other?.project.branch ?? null,
           openPull: (branch) => (other ? openPull(other, branch) : undefined),
           refreshGitHub: () => void other?.board.refresh(),
         };

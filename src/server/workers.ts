@@ -375,6 +375,14 @@ export class WorkerManager {
     return this.trees.fetch(fresh ? 'main' : 'checkout');
   }
 
+  /** Fetches the origin branch a lead explicitly picked, independently of freshMain. */
+  fetchStart(lead: string, from: string): Promise<void> | undefined {
+    const boss = this.workers.get(lead)?.info;
+    if (!boss) return undefined;
+    const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
+    return this.trees.fetchRef(from, existsSync(cwd) ? cwd : this.dir);
+  }
+
   get resolvedAgent(): string | null {
     return this.agentPath;
   }
@@ -1434,16 +1442,7 @@ export class WorkerManager {
 
   /** The first of these branches that exists on origin (of `dir`'s repository), for a PR base. None: the forge picks the default branch. */
   private async pushedBranch(candidates: (string | undefined)[], not: string, dir = this.dir): Promise<string | undefined> {
-    for (const c of candidates) {
-      if (!c || c === not) continue;
-      try {
-        await run('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${c}`], dir);
-        return c;
-      } catch {
-        // not on the remote (or never fetched)
-      }
-    }
-    return undefined;
+    return new Worktrees(dir).pushedBranch(candidates, not);
   }
 
   resize(id: string, cols: number, rows: number) {

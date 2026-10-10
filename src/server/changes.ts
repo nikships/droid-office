@@ -5,6 +5,7 @@ import type { ImageResult } from './decor.js';
 import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesState } from '../shared/protocol.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
+import { Worktrees } from './worktrees.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
@@ -34,6 +35,8 @@ export interface ChangesTarget {
    * (see WorkerInfo.repos), also where that repository's open pull requests are, and how to refresh its boards.
    */
   baseBranch?: string | null;
+  /** The checkout's branch, tried as a PR base when the diff's branch hasn't been pushed. */
+  prBaseFallback?: string | null;
   openPull?(branch: string): { number: number; url: string } | undefined;
   refreshGitHub?(): void;
 }
@@ -447,7 +450,9 @@ export class Changes {
     }
     // With two refs, git takes the merge base with a merge of them both: the newer one's, as a rule.
     const commit = (refs.length && (await gitMaybe(['merge-base', 'HEAD', ...refs], t.cwd))) || head;
-    const prBase = onBranch && baseBranch && branch !== baseBranch ? baseBranch : undefined;
+    const trees = new Worktrees(t.cwd);
+    const fallback = t.prBaseFallback === undefined ? this.baseBranch : (t.prBaseFallback ?? undefined);
+    const prBase = onBranch && branch !== baseBranch ? await trees.pushedBranch([baseBranch, fallback, trees.defaultBranch()], branch) : undefined;
     return { commit, label, branch: onBranch ? branch : undefined, prBase };
   }
 

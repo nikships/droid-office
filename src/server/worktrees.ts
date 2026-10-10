@@ -119,12 +119,34 @@ export class Worktrees {
   fetch(start: 'main' | 'checkout' = 'checkout'): Promise<void> | undefined {
     const from = this.branchFor(start);
     if (!from) return undefined;
+    return this.fetchBranch(from);
+  }
+
+  /** Refreshes an explicitly picked origin branch, without moving a local branch, tag or commit. */
+  fetchRef(ref: string, cwd = this.dir): Promise<void> | undefined {
+    if (ref === 'HEAD') return undefined;
+    const prefix = ['origin/', 'refs/remotes/origin/'].find((p) => ref.startsWith(p));
+    if (!prefix) {
+      const at = this.resolve(ref, cwd);
+      if (at && (!at.branch || this.commitOf(`refs/heads/${ref}`))) return undefined;
+    }
+    const from = prefix ? ref.slice(prefix.length) : ref;
+    if (prefix && from === 'HEAD') return this.fetch('main');
+    try {
+      this.gitSync(['check-ref-format', `refs/heads/${from}`]);
+    } catch {
+      return undefined;
+    }
+    return this.fetchBranch(from);
+  }
+
+  private fetchBranch(from: string): Promise<void> | undefined {
     const under = this.fetching.get(from);
     if (under) return under;
     if (Date.now() - (this.fetchedAt.get(from) ?? 0) < FETCH_FRESH_MS || !this.hasOrigin()) return undefined;
     // Never stop to ask for a password: there's nobody at the office's terminal to type it.
     const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    const fetching = execFileP('git', ['fetch', '--quiet', '--no-tags', 'origin', from], { cwd: this.dir, env, timeout: FETCH_TIMEOUT_MS })
+    const fetching = execFileP('git', ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${from}:refs/remotes/origin/${from}`], { cwd: this.dir, env, timeout: FETCH_TIMEOUT_MS })
       .then(
         () => {
           this.fetchError = undefined;
@@ -224,9 +246,9 @@ export class Worktrees {
       if (dirty) return kept(`it has ${dirty} uncommitted change${dirty === 1 ? '' : 's'} on ${current}`);
       try {
         // One checkout straight to where it ends up, so git refusing leaves everything as it was.
-        if (behind && local) this.gitSync(['switch', '--quiet', '-C', main, `refs/remotes/origin/${main}`]);
-        else if (behind) this.gitSync(['switch', '--quiet', '--create', main, '--track', `origin/${main}`]);
-        else if (local) this.gitSync(['switch', '--quiet', main]);
+        if (behind && local) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', '-C', main, `refs/remotes/origin/${main}`]);
+        else if (behind) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', '--create', main, '--track', `origin/${main}`]);
+        else if (local) this.gitSync(['switch', '--quiet', '--no-overwrite-ignore', main]);
         else return kept(`it has no ${main} branch`);
       } catch (err) {
         return kept(`git wouldn't switch it to ${main}: ${gitRefusal(err)}`);
@@ -241,7 +263,7 @@ export class Worktrees {
       return { ...done, kept: `${main} here has ${n} commit${n === 1 ? '' : 's'} that origin doesn't have, so it wasn't brought up to origin/${main}` };
     }
     try {
-      this.gitSync(['merge', '--ff-only', '--quiet', `refs/remotes/origin/${main}`]);
+      this.gitSync(['merge', '--ff-only', '--quiet', '--no-overwrite-ignore', `refs/remotes/origin/${main}`]);
     } catch (err) {
       return { ...done, kept: `git wouldn't bring ${main} up to origin/${main}: ${gitRefusal(err)}` };
     }
@@ -320,6 +342,20 @@ export class Worktrees {
     } catch {
       return undefined;
     }
+  }
+
+  /** The first candidate that exists on origin, excluding the PR's head branch. */
+  async pushedBranch(candidates: (string | undefined)[], not: string): Promise<string | undefined> {
+    for (const c of candidates) {
+      if (!c || c === not) continue;
+      try {
+        await this.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${c}`]);
+        return c;
+      } catch {
+        // not on the remote (or never fetched)
+      }
+    }
+    return undefined;
   }
 
   /**
