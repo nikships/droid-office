@@ -5,7 +5,7 @@ import { mergeByMaterial, mesh, toon } from './toon';
 import { ANISOTROPY, TILE_SCALE, fitScale } from './texture-quality';
 import { buildTower } from './tower';
 
-// The city around the rooftop bar: the building's own floors going down to the street (as the tower
+// The city around the roof: the building's own floors going down to the street (as the tower
 // looks from outside, world/tower.ts), a grid of streets with cars running along them, parks, and
 // blocks of buildings out to the haze, most of them lower than the roof so you look out over them,
 // with a skyline of towers further off. At night their windows light up, the street lamps come on

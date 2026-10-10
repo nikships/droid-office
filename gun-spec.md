@@ -19,8 +19,7 @@ collect it and its owned worktrees and branches are deleted.
 
 - `7` toggles the gun on and off. Both draw and holster get an animation
   and a sound (slide click out, soft click away).
-- The gun lives in the right hand. The left hand keeps its mug, drink,
-  or smoke.
+- The gun lives in the right hand. The left hand keeps its mug.
 - Blocked with a "hands full" toast while carrying an issue card, book,
   or basketball, and while climbing or hanging a picture.
 - While drawn, the crosshair turns red and the hint bar reads

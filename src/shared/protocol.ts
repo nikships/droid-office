@@ -819,8 +819,6 @@ export type ClientMsg =
   | { t: 'gh.comment'; kind: 'issue' | 'pull'; number: number; body: string }
   /** Hit the office gong (E at the gong); everyone on the floor hears it. */
   | { t: 'gong' }
-  /** Blow the DJ's air horn on the roof; everyone up there hears it. */
-  | { t: 'horn' }
   /** Close an issue, or a pull request without merging it; the answer comes back as gh.closed. */
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh or glab account; answered with gh.labeled. */
@@ -989,8 +987,6 @@ export type ServerMsg =
    * over the desk it came from), or the last task on the queue just finished (a bigger party).
    */
   | { t: 'gong'; why: GongWhy; by?: string; pr?: number }
-  /** Someone on the roof blew the DJ's air horn (sent to everyone up there, them too). */
-  | { t: 'horn'; by: string }
   /** Sent to whoever asked to close it. */
   | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; error?: string }
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */

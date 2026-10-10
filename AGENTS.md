@@ -103,4 +103,4 @@ npm run test:coverage
 
 CI then packs the release and starts it through `install.sh` (steps "Pack the release" and "Install it with install.sh and start it"). When changing `install.sh`, the `files` or `bin` fields of `package.json`, or server startup, also run those steps locally as the workflow writes them.
 
-CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters.
+CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.

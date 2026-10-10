@@ -8,8 +8,10 @@ name: Release
 #
 # The Android app (android/) is built and tested alongside, and its APK is attached to the release.
 #
-# Pull requests get the same build, tests, a real install of the packed release through install.sh,
-# an unsigned build of the Mac app and the Android APK, but publish nothing.
+# Pull requests get the same build, tests and a real install of the packed release through
+# install.sh, but publish nothing. A pull request builds the unsigned Mac app only when it touches
+# what the app packages or runs on Electron's Node, and the Android APK only when it touches
+# android/ (the changes job); a push to main or a manual run always builds and releases all three.
 
 on:
   push:
@@ -61,6 +63,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      mac: ${{ steps.paths.outputs.mac }}
+      android: ${{ steps.paths.outputs.android }}
+    steps:
+      - name: Find the platforms this change can affect
+        id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR" ]; then
+            echo 'mac=true' >> "$GITHUB_OUTPUT"
+            echo 'android=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+          printf '%s\n' "$files"
+          touches() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
+          # The client is only static files to the app; the node job builds and serves it.
+          echo "mac=$(touches '^(src/(desktop|server|shared)/|bin/|build/|electron-builder\.yml$|package(-lock)?\.json$|tsconfig[^/]*\.json$|\.github/workflows/release\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "android=$(touches '^(android/|\.github/workflows/release\.yml$)')" >> "$GITHUB_OUTPUT"
+
   release:
     runs-on: ubuntu-latest
     env:
@@ -132,6 +160,8 @@ jobs:
           if-no-files-found: error
 
   mac:
+    needs: changes
+    if: needs.changes.outputs.mac == 'true'
     runs-on: macos-26
     env:
       # Signed and notarized only for a release; a pull request's build skips both.
@@ -238,6 +268,8 @@ jobs:
             release/latest-mac.yml
 
   android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
