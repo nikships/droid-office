@@ -156,7 +156,12 @@ export function openComputers(opts: { settings: () => void; id?: string }) {
           'li.list-row',
           { role: 'option', tabindex: 0, 'aria-selected': String(on), class: on ? 'on' : '', title: `Open ${c.name}` },
           h('span.list-icon', { title: c.managed ? 'Factory runs it' : 'Your own machine, connected to Factory' }, c.managed ? '☁️' : '💻'),
-          h('span.list-main', {}, h('span.list-title', {}, c.name, s.here === c.id ? h('span.cmp-tag.here', { title: 'This is the machine the office runs on' }, 'This machine') : null), h('span.list-meta', { title: meta }, meta)),
+          h(
+            'span.list-main',
+            {},
+            h('span.list-title', { title: c.name }, c.name),
+            h('span.list-meta', { title: meta }, s.here === c.id ? h('span.cmp-here', { title: 'This is the machine the office runs on' }, 'This machine · ') : null, meta),
+          ),
           h('span.list-end', {}, pill(phase)),
         );
         onPick(li, () => go({ kind: 'detail', id: c.id }));
@@ -490,13 +495,13 @@ function detail(id: string, go: (v: View) => void): Section {
     titleEl.title = c.name;
     badges.replaceChildren(pill(phase), providerTag(c), s.here === c.id ? h('span.cmp-tag.here', {}, 'This machine') : '');
     idEl.textContent = c.id;
-    const fact = (k: string, v: string | Node) => [h('div.cmp-fact', {}, h('dt', {}, k), h('dd', {}, v))];
+    const fact = (k: string, v: string | Node, cls = '') => [h('div.cmp-fact', { class: cls }, h('dt', {}, k), h('dd', {}, v))];
     facts.replaceChildren(
       ...fact('Status', phase === 'asleep' ? `Asleep${latest ? ` · last seen ${timeAgo(latest.at)}` : ''}` : phase === 'waking' ? 'Waking up' : String(c.status)),
       ...fact('Provider', c.managed ? `${c.providerType} (managed by Factory)` : 'BYOM (your own machine)'),
       ...fact('Created', c.createdAt ? `${new Date(c.createdAt).toLocaleString()} (${timeAgo(c.createdAt)})` : '—'),
       ...fact('Remote user', c.remoteUser ?? '—'),
-      ...fact('Repositories', c.repos?.length ? h('span', {}, ...c.repos.map((r) => h('code', {}, r))) : '—'),
+      ...fact('Repositories', c.repos?.length ? h('span.cmp-codes', {}, ...c.repos.map((r) => h('code', { title: r }, r))) : '—', 'wide'),
       ...(latest ? fact('Size', `${latest.cpuCount} CPU · ${fmtGb(latest.memTotal)} memory · ${fmtGb(latest.diskTotal)} disk`) : []),
     );
     wake.classList.toggle('hidden', !c.managed);
@@ -684,7 +689,7 @@ function newForm(go: (v: View) => void): Section {
     out,
     'primary',
   );
-  const modeTabs = h('div.seg', { role: 'group', 'aria-label': 'How many' }, one, several);
+  const modeTabs = h('div.seg', { role: 'group', 'aria-label': 'One computer or several' }, one, several);
   const cancel = h('button.btn.ghost', { type: 'button', onclick: () => go({ kind: 'list' }) }, 'Cancel');
   const setMode = (b: boolean) => {
     bulk = b;
@@ -715,7 +720,7 @@ function newForm(go: (v: View) => void): Section {
           h('div.eyebrow', {}, 'New Droid Computer'),
           h('p.cmp-lede', {}, 'A managed Droid Computer: Factory runs it in the cloud, clones the repositories you pick and installs their dependencies. It sleeps when idle and wakes when it’s used.'),
         ),
-        h('div.stack', {}, field('How many', modeTabs), single, multi, h('div.cmp-fields', {}, field('Provider', provider)), autoDepsToggle),
+        h('div.stack', {}, field('Computers', modeTabs), single, multi, h('div.cmp-fields', {}, field('Provider', provider)), autoDepsToggle),
         h('div.field', {}, h('label', {}, 'Repositories'), filter, repoList, chosen),
         out,
       ),
