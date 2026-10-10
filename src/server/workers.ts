@@ -31,6 +31,7 @@ import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
+import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -109,6 +110,10 @@ const SCREEN_CHECK_MS = 1000;
  * type it in: well past a normal start, so it only matters when the hooks can't reach the office.
  */
 const LAUNCH_PROMPT_FALLBACK_MS = 15_000;
+/** How long a new terminal waits for SessionStart (after its worktree setup, if any) before it looks stuck on a login. */
+const BOOT_BLOCKED_MS = 12_000;
+/** The most of a failed worktree setup's output its worker is told. */
+const SETUP_OUTPUT_MAX = 3000;
 /** Tools that ask the person a question: droid's is AskUser. */
 const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
@@ -202,6 +207,11 @@ interface Worker {
   downedTimer?: NodeJS.Timeout;
   /** Branches present at hire time, per repository; never included in gun dismissal. */
   worktreeOwnership?: Record<string, WorktreeOwnership>;
+  /** The plan its first terminal runs before the agent, to make its new worktree ready (see worktree-setup.ts). */
+  setupPlan?: string;
+  /** Its terminal is running that plan; when it finished, so the agent gets its own time to start after it. */
+  settingUp?: boolean;
+  setupDoneAt?: number;
 }
 
 export interface WorkerEvents {
@@ -235,6 +245,8 @@ export class WorkerManager {
   private queueBin: string | undefined;
   /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
   private teamBin: string | undefined;
+  /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
+  private setupScript: string | undefined;
   private screenTimer: NodeJS.Timeout;
   /** The office is shutting down: workers exiting now are being stopped, not failing to resume. */
   private closing = false;
@@ -270,6 +282,11 @@ export class WorkerManager {
     this.writeHookSettings();
     this.queueBin = this.writeOfficeCommand('bin', 'office-queue', "Droid Office's task queue, for the board agents");
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
+    try {
+      this.setupScript = writeSetupScript(dataDir);
+    } catch {
+      // without it, new worktrees just aren't set up
+    }
     this.agentPath = resolveCommand(agentCmd);
     this.namer = new TaskNamer(
       this.agentPath,
@@ -494,11 +511,30 @@ export class WorkerManager {
     };
     const w = newWorker(info);
     if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+    if (wt && !meeting) w.setupPlan = this.planSetup(id, wt, others);
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
+  }
+
+  /**
+   * The plan that makes a new worker's worktrees ready (each repository's own, across repositories),
+   * written for its terminal to run; nothing when no step has anything to do.
+   */
+  private planSetup(id: string, wt: Worktree, others: WorkerRepo[] | undefined): string | undefined {
+    if (!this.setupScript) return undefined;
+    try {
+      const many = !!others?.length;
+      const steps = [
+        setupStep(this.dir, path.join(this.dir, wt.path), this.dataDir, many ? path.basename(wt.path) : undefined),
+        ...(others ?? []).map((r) => setupStep(r.dir, path.join(this.dir, r.path), path.join(r.dir, '.droid-office'), r.name)),
+      ].filter((s): s is SetupStep => !!s);
+      return steps.length ? writePlan(this.dataDir, id, steps) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Why nobody can be hired anywhere in the office right now (its worker limit), if so. */
@@ -1386,10 +1422,12 @@ export class WorkerManager {
   /** Droid lifecycle hook callback: what a worker is doing, from its hooks. */
   handleHook(workerId: string, token: string, event: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
-    if (!w?.pty || w.info.kind !== 'agent' || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || !safeEq(token, w.hookToken)) return false;
     if (!payload || typeof payload !== 'object') return false;
     const report = payload as Record<string, unknown>;
-    if (report.hook_event_name !== event || typeof report.session_id !== 'string' || !report.session_id) return false;
+    if (report.hook_event_name !== event) return false;
+    if (event === 'WorktreeSetup') return this.setupHook(w, report);
+    if (w.info.kind !== 'agent' || typeof report.session_id !== 'string' || !report.session_id) return false;
     if (!['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop'].includes(event)) return false;
     const session = report.session_id;
     const caller = typeof report.calling_session_id === 'string' && report.calling_session_id ? report.calling_session_id : undefined;
@@ -1409,6 +1447,33 @@ export class WorkerManager {
     return true;
   }
 
+  /** The setup script in a new worktree's terminal (see worktree-setup.ts) started, or finished. */
+  private setupHook(w: Worker, report: Record<string, unknown>): boolean {
+    const { info } = w;
+    if (!w.settingUp) return false;
+    if (report.phase === 'start') {
+      const commands = Array.isArray(report.commands) ? report.commands.filter((c): c is string => typeof c === 'string') : [];
+      if (commands.length && info.kind === 'agent' && info.status === 'starting') info.activity = truncate(`Setting up its worktree: ${commands.join(' · ')}`, 80);
+    } else if (report.phase === 'done') {
+      w.settingUp = false;
+      w.setupDoneAt = Date.now();
+      if (info.activity?.startsWith('Setting up its worktree')) info.activity = undefined;
+      const failed = (Array.isArray(report.failed) ? report.failed : []).filter((f): f is { command: string; code: number; label?: string; output?: string } => !!f && typeof f.command === 'string');
+      if (failed.length) {
+        const what = failed.map((f) => `${f.label ? `${f.label}: ` : ''}\`${f.command}\` (exit ${f.code})`).join(', ');
+        const output = failed
+          .map((f) => (typeof f.output === 'string' ? f.output.slice(-SETUP_OUTPUT_MAX) : ''))
+          .filter(Boolean)
+          .join('\n\n');
+        // The agent can't see what ran before it, and Droid clears the terminal when it starts: it's told with its first message.
+        if (w.launchPrompt) w.launchPrompt.text = `${setupFailedNote(what, output)}\n\n${w.launchPrompt.text}`;
+        this.events.toast(`🌿 ${info.name}'s worktree setup failed: ${what}.${w.launchPrompt ? ` ${info.name}'s first message says so, with the error.` : ''}`, 'warn', info.id);
+      }
+    } else return false;
+    this.emitUpdate(w);
+    return true;
+  }
+
   /** A hook from the worker's own session. */
   private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
     const session = report.session_id as string;
@@ -1418,6 +1483,7 @@ export class WorkerManager {
       w.subSessions.clear();
       w.lastTool.clear();
       w.bootBlocked = false;
+      w.settingUp = false;
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
       this.sendLaunchPrompt(w);
@@ -1684,9 +1750,18 @@ export class WorkerManager {
     if (info.repos?.length) env.GIT_CEILING_DIRECTORIES = [path.dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     // The host keeps its own copy of the screen for the next office: it starts with the same history.
     const where = { cwd, env, cols: info.cols, rows: info.rows, prelude };
+    // Only a new worktree's first terminal: a resume finds it ready.
+    const plan = resumeSessionId ? undefined : w.setupPlan;
+    w.setupPlan = undefined;
     let proc: Pty;
     try {
-      if (isShell) {
+      if (plan && this.setupScript) {
+        const file = isShell ? shell : (commandPath ?? command);
+        const line = setupLine({ node: process.execPath, script: this.setupScript, plan, file, quoteFile: isShell || !!commandPath, args, cmd: WIN && !process.env.SHELL });
+        w.settingUp = true;
+        if (!isShell) info.activity = 'Setting up its worktree';
+        proc = this.host.spawn({ file: shell, args: shellRun(line), ...where });
+      } else if (isShell) {
         proc = this.host.spawn({ file: shell, args, ...where });
       } else if (commandPath) {
         proc = this.host.spawn({ file: commandPath, args, ...where });
@@ -1794,15 +1869,19 @@ export class WorkerManager {
       void this.syncBranch(w);
     });
     // SessionStart fires as soon as Droid can take input. Still silent after a while means it is
-    // blocked on a human: login, first-run onboarding, hook setup. Flag it so it jumps.
-    setTimeout(() => {
+    // blocked on a human: login, first-run onboarding, hook setup. Flag it so it jumps. A worktree
+    // still being set up isn't Droid yet: the wait starts once that's done.
+    const check = () => {
       if (info.status !== 'starting' || w.pty !== proc) return;
+      const left = w.settingUp ? BOOT_BLOCKED_MS : (w.setupDoneAt ?? 0) + BOOT_BLOCKED_MS - Date.now();
+      if (left > 0) return void setTimeout(check, Math.min(left, 3000));
       if (info.kind === 'agent') {
         w.bootBlocked = true;
         info.activity = 'Waiting on Droid setup or hooks — open the terminal';
         this.setStatus(w, 'needs_input');
       } else this.setStatus(w, 'idle');
-    }, 12000);
+    };
+    setTimeout(check, BOOT_BLOCKED_MS);
   }
 
   private startFailed(w: Worker, message: string) {
@@ -2215,6 +2294,25 @@ export function defaultShell(): string {
   return process.env.SHELL || (WIN ? process.env.COMSPEC || 'cmd.exe' : '/bin/bash');
 }
 
+/**
+ * The command line a new worktree's first terminal runs: the setup script (see worktree-setup.ts)
+ * with the office's own node, then the agent (or the shell) in its place. `quoteFile` says `file` is
+ * a path; otherwise it's a command for the shell to find. `cmd` writes it for cmd.exe.
+ */
+export function setupLine(o: { node: string; script: string; plan: string; file: string; quoteFile: boolean; args: string[]; cmd: boolean; asNode?: { sh: string; cmd: string } }): string {
+  const node = o.asNode ?? runAsNode();
+  const q = o.cmd ? cmdq : shq;
+  const setup = `${q(o.node)} ${q(o.script)} ${q(o.plan)}`;
+  const run = [o.quoteFile ? q(o.file) : o.file, ...o.args.map(q)].join(' ');
+  return o.cmd ? `${node.cmd}${setup} & ${run}` : `${node.sh}${setup}; exec ${run}`;
+}
+
+/** What a worker whose worktree setup failed is told ahead of its first message, with the end of what the command printed. */
+export function setupFailedNote(what: string, output = ''): string {
+  const note = `Note from Droid Office: setting up your new worktree failed (${what}), so its dependencies may be missing. Run the setup again yourself if your task needs them.`;
+  return output.trim() ? `${note} The end of its output:\n\n\`\`\`\n${output.trim()}\n\`\`\`` : note;
+}
+
 /** How to have the default shell run one command line. */
 function shellRun(line: string): string[] {
   return WIN && !process.env.SHELL ? ['/d', '/s', '/c', line] : ['-l', '-i', '-c', line];
@@ -2396,6 +2494,11 @@ function clamp(v: number, lo: number, hi: number) {
 
 function shq(s: string) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** One argument for cmd.exe. */
+function cmdq(s: string) {
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function safeEq(a: string, b: string) {

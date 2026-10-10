@@ -4,7 +4,7 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CARRY_ON_PROMPT, WorkerManager, type WorkerEvents } from '../src/server/workers.js';
+import { CARRY_ON_PROMPT, WorkerManager, setupFailedNote, type WorkerEvents } from '../src/server/workers.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
 import { PROMPTS } from '../src/shared/prompts.js';
@@ -1044,6 +1044,47 @@ test('stopping the office on purpose (Ctrl+C) leaves nothing to carry on', async
   )[1];
   assert.ok(resumed.args.includes('stopped'));
   assert.equal(await startedWith(f, after, resumed, 'stopped'), undefined);
+});
+
+test("a new worktree is set up in the worker's terminal before its agent starts, and a failed setup is passed on to it", async (t) => {
+  const f = carryOnFixture(t);
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
+  git(f.root, 'init', '-q', '-b', 'main');
+  const mark = `require('fs').writeFileSync('set-up.txt', process.env.DROID_OFFICE_ROOT_PATH)`;
+  writeFileSync(path.join(f.root, '.droid-office.json'), JSON.stringify({ worktree: { setup: `"${process.execPath}" -e "${mark}"` } }));
+  writeFileSync(path.join(f.root, '.gitignore'), '.env\ndata/\nbin/\nhome/\nconfig/\n*.jsonl\n');
+  git(f.root, 'add', '.droid-office.json', '.gitignore');
+  git(f.root, 'commit', '-qm', 'init');
+  writeFileSync(path.join(f.root, '.env'), 'SECRET=1');
+  const toasts: string[] = [];
+  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
+  t.after(() => workers.shutdown());
+  const worker = workers.spawn('desk-1', 'test', 'build the thing', true);
+  assert.notEqual(typeof worker, 'string');
+  if (typeof worker === 'string') return;
+  const cwd = path.join(f.root, worker.worktree!.path);
+  assert.equal(workers.get(worker.id)?.activity, 'Setting up its worktree');
+  const launch = (
+    await waitFor(
+      () => launchesOf(f),
+      (x) => x.length > 0,
+      8000,
+    )
+  )[0];
+  // The agent came after the setup: the worktree has its .env and what the command wrote.
+  assert.equal(readFileSync(path.join(cwd, '.env'), 'utf8'), 'SECRET=1');
+  assert.equal(readFileSync(path.join(cwd, 'set-up.txt'), 'utf8'), f.root);
+  const setupHook = (body: Record<string, unknown>) => workers.handleHook(worker.id, launch.env.hookToken!, 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', ...body });
+  assert.equal(workers.handleHook(worker.id, 'wrong', 'WorktreeSetup', { hook_event_name: 'WorktreeSetup', phase: 'start' }), false);
+  assert.equal(setupHook({ phase: 'later' }), false);
+  assert.equal(setupHook({ phase: 'start', commands: ['npm ci'] }), true);
+  assert.equal(workers.get(worker.id)?.activity, 'Setting up its worktree: npm ci');
+  assert.equal(setupHook({ phase: 'done', failed: [{ command: 'npm ci', code: 1, output: 'npm ERR! no lockfile' }] }), true);
+  assert.equal(workers.get(worker.id)?.activity, undefined);
+  assert.match(toasts.at(-1)!, /worktree setup failed: `npm ci` \(exit 1\)\. \w+'s first message says so, with the error\./);
+  // Once it's done, it's done: a second report changes nothing.
+  assert.equal(setupHook({ phase: 'done', failed: [] }), false);
+  assert.equal(await startedWith(f, workers, launch, 'set-up'), `${setupFailedNote('`npm ci` (exit 1)', 'npm ERR! no lockfile')}\n\nbuild the thing`);
 });
 
 test('a worktree worker that makes its own branch is followed there: O finds the PR it opened, and sending it home tidies both branches', async (t) => {

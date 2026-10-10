@@ -32,6 +32,7 @@ test('every setting is in a category', () => {
     ['Prompts', 'workers'],
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
+    ['Worktree setup', 'workers'],
     ['Subagents', 'subagents'],
     ['Subagent worker', 'subagents'],
     ['Team size', 'subagents'],

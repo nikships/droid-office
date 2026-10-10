@@ -10,7 +10,7 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'stations' | 'subagents' | 'meetings' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'meetings' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -18,6 +18,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   pulls: 'Pull requests board',
   queue: 'Task queue',
   repos: '🗂️ Across repositories',
+  worktrees: 'Worktree setup',
   stations: 'Board agents',
   subagents: '🧭 Team lead & subagents',
   meetings: 'Meeting room',
@@ -528,6 +529,37 @@ const DEFS = {
       "- cd into a project's folder before running git or its tools, read its own instructions (AGENTS.md, README) before changing it, and install its dependencies there when you need them.",
       '- When the task spans projects, keep them working together and test them together. Commit in each project you change.',
       "- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}'s; in the other projects' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.",
+    ].join('\n'),
+  },
+
+  // --- Worktree setup ---
+  'worktree.setup': {
+    group: 'worktrees',
+    label: 'Set up with a worker',
+    used: 'What the hire window opens with from Settings → Workers → Worktree setup → Have a worker set it up: a worker writes the repository’s setup file and opens a pull request with it.',
+    vars: {
+      file: 'The setup file at the repository root: .droid-office.json',
+      include: 'The file of extra patterns to copy that other tools read too: .worktreeinclude',
+      now: 'What a new worktree on the floor gets today, in words',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    needs: ['file'],
+    text: [
+      'Set this repository up so that Droid Office can make a fresh git worktree of it ready for a worker by itself, then open a {{pullName}} with the change.',
+      '',
+      "When Droid Office makes a worktree for a worker, it reads `{{file}}` at the worktree's root. It copies the untracked files in the main checkout that match `worktree.copy` (gitignore patterns, plus any in `{{include}}`) into the new worktree, then runs `worktree.setup` there in the worker's terminal before the agent starts. The command runs with sh on macOS and Linux and cmd on Windows, with DROID_OFFICE_ROOT_PATH set to the main checkout and DROID_OFFICE_WORKTREE_PATH to the new worktree. Without the file, a new worktree {{now}}.",
+      '',
+      '1. Work out what a fresh clone of this project needs before its build, tests and dev server work: dependency installs for every package manager and workspace in it (lockfile-exact where the tool allows, like `npm ci`, `pnpm install --frozen-lockfile` or `uv sync`), code generation, git submodules. Read the README, AGENTS.md, CI workflows, Makefiles and package scripts. Leave out anything slow and optional, anything that needs secrets or a running service, and anything that writes outside the worktree.',
+      '2. Find the untracked local files a worktree needs from the main checkout, like `.env` files or local config: check .gitignore and what the code reads. Write them as patterns anchored at the root, like `/.env`. Never commit their contents.',
+      '3. Write `{{file}}` at the repository root (or fix the one that is there):',
+      '```json',
+      '{ "worktree": { "setup": "npm ci", "copy": ["/.env"] } }',
+      '```',
+      'Keep `setup` to one command line, steps joined with `&&`. When it needs more than that, add a script to the repository (like `scripts/worktree-setup.sh`) and run it from `setup`.',
+      '4. Test it from scratch in your own worktree: delete what the setup creates (like node_modules or .venv), run the command, then check that the project builds and its tests run. Fix it until they do.',
+      '5. If the README or AGENTS.md documents how to set the project up, mention the file there in a sentence.',
+      '6. Commit, push your branch and open a {{pullName}} with `{{cli}}` saying what the setup runs and roughly how long it takes.',
     ].join('\n'),
   },
 

@@ -33,6 +33,7 @@ import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
+import type { WorktreeSetupState } from '../shared/worktree-setup';
 
 export type Topic =
   | 'workers'
@@ -60,7 +61,8 @@ export type Topic =
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
-  | 'factory';
+  | 'factory'
+  | 'worktreeSetup';
 
 export interface Profile {
   name: string;
@@ -261,6 +263,8 @@ class Store {
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
   factory: FactoryState = emptyFactoryState();
+  /** How new worktrees on this floor are set up, once Settings asked (see worktreeSetup.get); null before, or on another floor. */
+  worktreeSetup: WorktreeSetupState | null = null;
   private subs = new Map<Topic, Set<() => void>>();
 
   on(topic: Topic, fn: () => void) {
@@ -318,7 +322,8 @@ class Store {
     this.cabinet = { player: v.cabinet.player, scores: v.cabinet.scores };
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard'] as Topic[]) this.emit(t);
+    this.worktreeSetup = null;
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -465,6 +470,11 @@ class Store {
       case 'factory':
         this.factory = msg.state;
         this.emit('factory');
+        break;
+      case 'worktreeSetup':
+        if (msg.state.floor !== this.floor) break;
+        this.worktreeSetup = msg.state;
+        this.emit('worktreeSetup');
         break;
     }
   }

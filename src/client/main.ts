@@ -103,6 +103,9 @@ import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
+import { officePrompt } from './ui/prompts';
+import { forgeVars } from '../shared/prompts';
+import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 import { openPhone } from './ui/phone';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
@@ -1583,6 +1586,27 @@ function hireAtDesk(deskId: string) {
     runsOn: runsOnPicker(),
     onCloud: (text, o) => hireCloud(deskId, text, o),
     onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
+  });
+}
+
+/** The hire window at the nearest free desk, with a task to write this repository's worktree setup and open a pull request. */
+function hireForWorktreeSetup() {
+  const desk = nearestFreeDesk();
+  if (!desk) return toast('Every desk on this floor is taken — send a worker home first', 'warn');
+  if (officeIsFull()) return;
+  const now = store.worktreeSetup ? describeSetup(store.worktreeSetup.resolved) : 'runs what the office detects from its lockfiles';
+  openPrompt({
+    title: `🌿 Set up worktrees at ${desk.label}`,
+    subtitle: 'A worker writes this repository’s worktree setup, tests it, and opens a pull request with it. Pick its model, edit the task if you like, then hire.',
+    warning: pressureNote(store.machine),
+    initial: officePrompt('worktree.setup', { file: SETUP_FILE, include: INCLUDE_FILE, now, ...forgeVars(store.project?.forge) }),
+    submitLabel: 'Hire & start',
+    modelOption: true,
+    worktreeOption: true,
+    worktreeChecked: true,
+    imagesOption: true,
+    deskId: desk.id,
+    onSubmit: (text, o) => hire(desk.id, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
   });
 }
 
@@ -3353,6 +3377,7 @@ function showSettings(pane?: SettingsPane) {
     notifier,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
+    hireForWorktreeSetup,
   );
 }
 

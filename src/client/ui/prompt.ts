@@ -17,6 +17,8 @@ export interface PromptOptions {
   allowEmpty?: boolean;
   /** Offer the "own git worktree" option (only when hiring a new worker). */
   worktreeOption?: boolean;
+  /** Start with that option on (or off) instead of as the last hire left it. */
+  worktreeChecked?: boolean;
   /** Offer the model and effort pickers (only when hiring a new worker). */
   modelOption?: boolean;
   /** Take pictures pasted or dropped into the prompt: for a prompt that goes to an agent. */
@@ -94,7 +96,7 @@ export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta) : null;
-  const wt = worktreeRow('wt-toggle', worktreePref());
+  const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
   const wtRow = opts.worktreeOption ? wt.row : null;
   const repos = repoPicker(opts.worktreeOption ? opts.repoOptions : undefined, wtBox);

@@ -66,6 +66,8 @@ const CLEANUPS = new Set(['keep', 'worktree', 'all']);
 
 /** The longest model id Droid takes, so an overlong one fails validation instead of being clipped. */
 const MODEL_MAX = DROID_MODEL_MAX;
+/** The longest worktree setup command a floor can be given in Settings. */
+const SETUP_MAX = 2000;
 
 type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 
@@ -1722,6 +1724,32 @@ export async function startServer(cfg: Config) {
         const err = prompts.setAgent(choice, who);
         if (err) return warn(c, err);
         toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to Droid’s own default`);
+        break;
+      }
+      case 'worktreeSetup.get': {
+        const floor = here();
+        if (floor) sendTo(c, { t: 'worktreeSetup', state: floor.worktreeSetup() });
+        break;
+      }
+      case 'worktreeSetup.set': {
+        const floor = here();
+        if (!floor) break;
+        if (!floor.project.branch) return warn(c, "This floor's project isn't a git checkout, so its workers have no worktrees to set up");
+        const s = msg.setup;
+        if (s !== null && (!s || typeof s !== 'object' || typeof s.setup !== 'string' || !Array.isArray(s.copy))) return;
+        const setup = s && {
+          setup: str(s.setup, SETUP_MAX).trim(),
+          copy: s.copy
+            .slice(0, 50)
+            .map((p) => str(p, 300).trim())
+            .filter(Boolean),
+        };
+        try {
+          toFloor(floor, { t: 'worktreeSetup', state: floor.setWorktreeSetup(setup, who) });
+        } catch (err) {
+          return warn(c, `Could not save the worktree setup: ${(err as Error).message}`);
+        }
+        toastFloor(floor, setup ? `🌿 ${who} set how this floor's new worktrees are set up` : `🌿 ${who} put this floor's worktree setup back to the repository's`);
         break;
       }
       case 'machine.limit': {

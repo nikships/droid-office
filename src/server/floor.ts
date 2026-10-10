@@ -26,6 +26,8 @@ import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { Team } from './team.js';
 import type { SubagentSettings } from '../shared/protocol.js';
+import type { WorktreeSetupState } from '../shared/worktree-setup.js';
+import { setupState, writeOverride } from './worktree-setup.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
@@ -456,6 +458,17 @@ export class Floor {
 
   private active(): boolean {
     return this.ctx.connections(this) > 0 || this.ctx.lent(this) || this.workers.list().some((w) => isBusy(w.status)) || this.queue.state().tasks.some((t) => t.status !== 'done') || this.meetings.state().current?.status === 'running';
+  }
+
+  /** How this floor's new worktrees are set up, read from its checkout now (see worktree-setup.ts). */
+  worktreeSetup(): WorktreeSetupState {
+    return setupState(this.id, this.dir, path.join(this.dir, '.droid-office'), !!this.project.branch);
+  }
+
+  /** The floor's own worktree setup, set in ⚙️ Settings; null goes back to the repository's or the detected one. */
+  setWorktreeSetup(setup: { setup: string; copy: string[] } | null, by: string): WorktreeSetupState {
+    writeOverride(path.join(this.dir, '.droid-office'), setup && { ...setup, by, at: Date.now() });
+    return this.worktreeSetup();
   }
 
   info(): FloorInfo {

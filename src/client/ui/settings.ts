@@ -12,6 +12,7 @@ import { hotReloadSettings } from './hot-reload';
 import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
+import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -101,8 +102,21 @@ function subagentSettings(): SubagentSettings {
   return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}) };
 }
 
-/** `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one. */
-export function openSettings(net: Net, settings: Settings, onChange: (s: Settings) => void, onCharacter: () => void, previewSound: () => void, notifier: DesktopNotifier, outside?: { now: string; live: boolean }, first?: SettingsPane) {
+/**
+ * `outside` describes the sky over the office (see describeSky), once the server has said. `first` opens on that category instead of the last one.
+ * `hireForSetup` opens the hire window with a task to write the repository's worktree setup.
+ */
+export function openSettings(
+  net: Net,
+  settings: Settings,
+  onChange: (s: Settings) => void,
+  onCharacter: () => void,
+  previewSound: () => void,
+  notifier: DesktopNotifier,
+  outside?: { now: string; live: boolean },
+  first?: SettingsPane,
+  hireForSetup?: () => void,
+) {
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
     const slider = h('input', { type: 'range', min: 0, max: 100, step: 1, 'aria-label': label });
@@ -322,6 +336,99 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     leaveNote.textContent = `${now}${by ? ` Set by ${by}${at ? ` ${timeAgo(at)}` : ``}.` : ``}`;
   };
   paintLeave();
+
+  // How new worktrees on this floor are made ready: the repository's own setup, the detected one, or the floor's.
+  const setupNote = desc();
+  const setupFail = h('p.note.bad', { role: 'alert' });
+  const setupCmd = h('input.input', { type: 'text', placeholder: 'npm ci', 'aria-label': 'Setup command', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const setupCopy = h('textarea.input', { rows: 3, placeholder: '/.env\n/.env.local', 'aria-label': 'Files to copy', spellcheck: 'false' }) as HTMLTextAreaElement;
+  const setupSave = h('button.btn.sm.primary', { type: 'button' }, 'Save');
+  const setupCancel = h('button.btn.sm.ghost', { type: 'button' }, 'Cancel');
+  const setupForm = h(
+    'div.stack.tight',
+    {},
+    field('Setup command', setupCmd, 'One command line, run in the new worktree in the worker’s terminal before the agent starts. Empty runs nothing.'),
+    field('Files to copy', setupCopy, 'Gitignore patterns of untracked files in the checkout to copy into the new worktree, one per line. Empty copies nothing.'),
+    h('div.row', {}, setupSave, setupCancel),
+  );
+  const setupHire = h('button.btn.sm', { type: 'button' }, 'Have a worker set it up…');
+  const setupActions = h('div.row.wrap', {}, setupHire);
+  /** Set here is picked but not saved yet. */
+  let setupDraft = false;
+  const setupMode = radios(
+    'Where the worktree setup comes from',
+    [
+      [false, 'Automatic'],
+      [true, 'Set for this floor'],
+    ] as const,
+    () => setupDraft || !!store.worktreeSetup?.override,
+    (own) => {
+      const st = store.worktreeSetup;
+      if (!own) {
+        setupDraft = false;
+        if (st?.override) net.send({ t: 'worktreeSetup.set', setup: null });
+        return paintSetup();
+      }
+      setupDraft = true;
+      setupCmd.value = st?.resolved.setup ?? '';
+      setupCopy.value = (st?.resolved.copy ?? []).join('\n');
+      paintSetup();
+      setupCmd.focus();
+    },
+  );
+  const paintSetup = () => {
+    const st = store.worktreeSetup;
+    const git = !!st?.git;
+    setupMode.paint();
+    setupMode.row.classList.toggle('hidden', !git);
+    setupActions.classList.toggle('hidden', !git || !hireForSetup);
+    const own = !!st?.override;
+    setupForm.classList.toggle('hidden', !git || !(setupDraft || own));
+    setupCancel.classList.toggle('hidden', !setupDraft || own);
+    const repoError = st?.repo && 'error' in st.repo ? st.repo.error : undefined;
+    setupFail.classList.toggle('hidden', !repoError);
+    setupFail.textContent = repoError ? `${repoError}. New worktrees go by the lockfiles until it’s fixed.` : '';
+    if (!st) {
+      setupNote.textContent = store.floor ? 'Reading this floor’s checkout…' : 'Take the elevator to a floor to set up its worktrees.';
+      return;
+    }
+    if (!git) {
+      setupNote.textContent = 'This floor’s project isn’t a git checkout, so its workers don’t get worktrees.';
+      return;
+    }
+    const r = st.resolved;
+    const from =
+      r.setupFrom === 'office'
+        ? `Set for this floor${st.override?.by ? ` by ${st.override.by}` : ''}${st.override?.at ? ` ${timeAgo(st.override.at)}` : ''}, in place of the repository’s.`
+        : r.setupFrom === 'repo' || r.copyFrom === 'repo'
+          ? `From ${SETUP_FILE}${st.include ? ` and ${INCLUDE_FILE}` : ''} in the repository.`
+          : r.setupFrom === 'detected'
+            ? `Detected from its lockfiles. Commit a ${SETUP_FILE} to say exactly what runs, or have a worker write one.`
+            : `Nothing to install was detected. Commit a ${SETUP_FILE} to say what runs, or have a worker write one.`;
+    setupNote.textContent = `A new worktree on this floor ${describeSetup(r, (c) => `“${c}”`)}. ${from} The setup shows in the worker’s terminal; the agent starts once it’s done, even if it fails.`;
+  };
+  paintSetup();
+  setupSave.addEventListener('click', () => {
+    setupDraft = false;
+    net.send({ t: 'worktreeSetup.set', setup: { setup: setupCmd.value.trim(), copy: parsePatterns(setupCopy.value) } });
+  });
+  setupCancel.addEventListener('click', () => {
+    setupDraft = false;
+    paintSetup();
+  });
+  setupHire.addEventListener('click', () => {
+    modal.close();
+    hireForSetup?.();
+  });
+  net.send({ t: 'worktreeSetup.get' });
+  const offWorktreeSetup = [
+    store.on('worktreeSetup', paintSetup),
+    store.on('floor', () => {
+      setupDraft = false;
+      paintSetup();
+      if (store.floor) net.send({ t: 'worktreeSetup.get' });
+    }),
+  ];
 
   // Where the elevator looks for existing git projects on the office's machine.
   const dirInput = h('input.input', { type: 'text', placeholder: '~/Workspace', 'aria-label': 'Workspace folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
@@ -621,6 +728,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
     workers: [
       group('New workers', card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }), card('Prompts', { desc: promptsNote, control: promptsOpen })),
       group('Running', card('Worker limit', { desc: limitNote, control: limitRow }), card('Workers whose pull request merged', { desc: leaveNote, control: leaveRow })),
+      group('Worktrees', card('Worktree setup', { desc: setupNote, control: setupMode.row, below: [setupFail, setupForm, setupActions] })),
     ],
     subagents: [
       group(
@@ -707,6 +815,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       offDir.forEach((off) => off());
       offJira.forEach((off) => off());
       offPrompts.forEach((off) => off());
+      offWorktreeSetup.forEach((off) => off());
       sourceReload.dispose();
       factoryKey.dispose();
     },

@@ -9,6 +9,7 @@ import type { CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PromptId } from './prompts.js';
+import type { WorktreeSetupState } from './worktree-setup.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -1030,6 +1031,10 @@ export type ClientMsg =
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
+  /** How new worktrees on the floor you're on are set up (⚙️ Settings → Workers); answered with `worktreeSetup`. */
+  | { t: 'worktreeSetup.get' }
+  /** The floor's own worktree setup, in place of the repository's or the detected one; null goes back to those. */
+  | { t: 'worktreeSetup.set'; setup: { setup: string; copy: string[] } | null }
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   | { t: 'ping'; at: number };
@@ -1133,6 +1138,8 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'prompts'; state: PromptsState }
+  /** To whoever asked, and to everyone on the floor when it's changed. */
+  | { t: 'worktreeSetup'; state: WorktreeSetupState }
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
   | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }
