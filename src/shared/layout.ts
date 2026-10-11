@@ -217,6 +217,12 @@ export const TV = { x: FLOOR.maxX - 0.1, y: 2.2, z: 0, width: 6.4, height: 3.6 }
  * Computer. Its bottom clears the Droid Computer rack under it; its north edge clears the door's EXIT sign.
  */
 export const COMPUTE_WALL = { x: FLOOR.minX, y: 2.45, z: 10.15, width: 4.8, height: 2.6, machineWidth: 1.7, gap: 0.1 } as const;
+/** Where along the west wall the compute wall's Droid Computers screen is centered (its right-hand part, seen from the room). */
+const FLEET_Z = COMPUTE_WALL.z - (COMPUTE_WALL.width - (COMPUTE_WALL.width - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap)) / 2;
+/** The Droid Computer rack (world/factory-props.ts): a low plinth against the west wall, under the compute wall's Droid Computers screen. */
+export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: FLEET_Z - 1.15, maxZ: FLEET_Z + 1.15, top: 0.62 } as const;
+/** The fenced robot cell (world/factory-props.ts): an arm between two conveyors, out on the open floor between the desks and the elevator. */
+export const ROBOT_CELL = { x: 5, z: -6, width: 3, depth: 2.5, top: 1.6 } as const;
 /** The lounge jukebox, against the east wall south of the TV, facing into the room. `y` is its speaker. */
 export const JUKEBOX = { x: FLOOR.maxX - 0.42, y: 0.75, z: 5.4, width: 1.3, depth: 0.72, height: 1.85 } as const;
 /** The arcade cabinet, against the east wall between the jukebox and the loft, facing into the room. `width` runs along the wall. */

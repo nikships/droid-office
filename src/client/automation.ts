@@ -324,6 +324,8 @@ export interface AutomationHost {
   near(): Interactable | null;
   /** Presses `key` at `spot`, as if you were facing it. */
   use(spot: Interactable, key: AutomationKey): void;
+  /** E on the ladder: gets off it the way the key does. Null once you're getting off, else why you can't. */
+  letGo(): string | null;
   commands(): CommandInfo[];
   run(id: string): void;
   closeAll(): void;
@@ -457,6 +459,18 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
 
   async function interact(key: AutomationKey = 'E'): Promise<Snapshot> {
     if (!AUTOMATION_KEYS.includes(key)) throw new Error(`interact takes one of ${AUTOMATION_KEYS.join(' ')}, not "${key}"`);
+    const r = host.raw();
+    // On the ladder E is the one key that does anything: it gets you off, as the keyboard's does.
+    if (key === 'E' && r.player.climbing && !r.riding) {
+      const why = host.letGo();
+      if (why) throw new Error(`Can't get off now: ${why}`);
+      const off = () => {
+        const p = host.raw().player;
+        return !p.climbing && p.y <= 0.01;
+      };
+      if (!(await until(off, 5000))) throw new Error('Still on the ladder after 5s');
+      return settle();
+    }
     const busy = host.busy();
     if (busy) throw new Error(`Can't use anything now: ${busy}`);
     const spot = using();
