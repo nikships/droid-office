@@ -246,6 +246,8 @@ export class Floor {
           ctx.emit(this, { t: 'worker.remove', workerId });
           ctx.workerChanged(this, workerId);
         },
+        // Not droppable: unlike a PTY's, this screen is only sent again once its transcript moves.
+        screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame, full: true }),
       },
     );
     this.workers.holds = {
