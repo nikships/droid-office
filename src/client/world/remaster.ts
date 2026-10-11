@@ -58,8 +58,12 @@ uniform sampler2D tAO;
 uniform sampler2D tShafts;
 uniform float shafts;
 uniform float aoBlend;
-uniform sampler2D tBloom;
-uniform float bloom;
+uniform sampler2D tBloom0;
+uniform sampler2D tBloom1;
+uniform sampler2D tBloom2;
+uniform sampler2D tBloom3;
+uniform sampler2D tBloom4;
+uniform float bloomW[5];
 uniform float exposure;
 uniform vec3 balance;
 uniform float contrast;
@@ -100,7 +104,11 @@ void main() {
   }
   vec3 c = texture2D( tColor, vUv ).rgb;
   if ( aoBlend > 0.0 ) c *= mix( 1.0, texture2D( tAO, vUv ).r, aoBlend );
-  if ( bloom > 0.0 ) c += texture2D( tBloom, vUv ).rgb;
+  if ( bloomW[0] > 0.0 ) c += bloomW[0] * texture2D( tBloom0, vUv ).rgb;
+  if ( bloomW[1] > 0.0 ) c += bloomW[1] * texture2D( tBloom1, vUv ).rgb;
+  if ( bloomW[2] > 0.0 ) c += bloomW[2] * texture2D( tBloom2, vUv ).rgb;
+  if ( bloomW[3] > 0.0 ) c += bloomW[3] * texture2D( tBloom3, vUv ).rgb;
+  if ( bloomW[4] > 0.0 ) c += bloomW[4] * texture2D( tBloom4, vUv ).rgb;
   if ( shafts > 0.0 ) c += texture2D( tShafts, vUv ).rgb * shafts;
   c *= exposure * balance;
   // Contrast around middle grey, in log space, so highlights are treated the same in SDR and HDR.
@@ -332,7 +340,6 @@ export class Remaster {
   private aoSize = '';
   private lastDraw = 0;
   private giGlow = -1;
-  private readonly bloomTints = Array.from({ length: 5 }, () => new THREE.Vector3(1, 1, 1));
   private liveDue = 0;
   private readonly grade = shader(GRADE, {
     tColor: { value: null },
@@ -341,8 +348,12 @@ export class Remaster {
     tShafts: { value: null },
     shafts: { value: 0 },
     aoBlend: { value: 0 },
-    tBloom: { value: null },
-    bloom: { value: 0 },
+    tBloom0: { value: null },
+    tBloom1: { value: null },
+    tBloom2: { value: null },
+    tBloom3: { value: null },
+    tBloom4: { value: null },
+    bloomW: { value: [0, 0, 0, 0, 0] },
     exposure: { value: 1 },
     balance: { value: new THREE.Vector3(1, 1, 1) },
     contrast: { value: 1 },
@@ -570,7 +581,7 @@ export class Remaster {
     const color = sceneRT;
     const ao = s.ao && !!this.gtao;
     if (ao) this.gtao!.render(r, sceneRT, sceneRT, 0, false);
-    const bloom = s.bloom && this.bloom ? this.drawBloom(this.bloom, color.texture) : null;
+    const bloomLevels = s.bloom && this.bloom ? this.drawBloom(this.bloom, color.texture) : 0;
 
     const near = camera.near;
     const far = camera.far;
@@ -584,8 +595,7 @@ export class Remaster {
     g.tShafts.value = this.shaftsRT!.texture;
     g.shafts.value = shafts;
     g.aoBlend.value = ao ? s.aoBlend : 0;
-    g.tBloom.value = bloom;
-    g.bloom.value = bloom ? 1 : 0;
+    this.bloomWeights(g, bloomLevels);
     g.exposure.value = s.exposure * (this.peak > 1 ? s.paperWhite : 1);
     g.balance.value.set(...whiteBalance(s.temperature, s.tint));
     g.contrast.value = s.contrast;
@@ -597,18 +607,24 @@ export class Remaster {
     g.cameraNear.value = near;
     g.cameraFar.value = far;
     const [a, b] = this.ldr!;
-    this.blit(this.grade, a);
+    const smaa = (s.aa === 'smaa' || s.aa === 'msaa-smaa') && this.smaa;
+    const fxaa = s.aa === 'fxaa' && this.fxaa;
+    // The present pass would only copy (no sharpening, no resize, no dither on a float16 canvas): the last pass draws
+    // straight to the canvas instead. Each pass dropped is worth about a millisecond on Apple GPUs at 120 Hz.
+    const direct = s.sharpen === 0 && this.hdr.active && render.width === this.outputSize.x && render.height === this.outputSize.y;
+    this.blit(this.grade, direct && !smaa && !fxaa ? null : a);
 
     let out = a;
-    if ((s.aa === 'smaa' || s.aa === 'msaa-smaa') && this.smaa) {
-      this.smaa.renderToScreen = false;
-      this.smaa.render(r, b, a, 0, false);
+    if (smaa) {
+      smaa.renderToScreen = direct;
+      smaa.render(r, b, a, 0, false);
       out = b;
-    } else if (s.aa === 'fxaa' && this.fxaa) {
-      this.fxaa.renderToScreen = false;
-      this.fxaa.render(r, b, a, 0, false);
+    } else if (fxaa) {
+      fxaa.renderToScreen = direct;
+      fxaa.render(r, b, a, 0, false);
       out = b;
     }
+    if (direct) return;
 
     const p = this.present.uniforms;
     p.tColor.value = out.texture;
@@ -620,11 +636,12 @@ export class Remaster {
   }
 
   /**
-   * UnrealBloomPass's own steps (bright pass, blurred mips, composite) without its last one, which adds the glow back
-   * into the scene target (4× MSAA float, which would be resolved again). The grade pass adds the glow instead. Only `bloomLevels` of its five blur levels are drawn: on Apple
-   * GPUs each small level past the second costs about 1.3 ms of GPU time, however few pixels it has. Returns the glow.
+   * UnrealBloomPass's bright pass and blurred mips, without its composite and its blend back into the scene target:
+   * the grade pass samples the mips itself (see bloomWeights), which saves two passes. Only `bloomLevels` of its five
+   * blur levels are drawn: on Apple GPUs each small level past the second costs about 1.3 ms of GPU time, however few
+   * pixels it has. Returns how many levels were drawn.
    */
-  private drawBloom(pass: UnrealBloomPass, input: THREE.Texture): THREE.Texture {
+  private drawBloom(pass: UnrealBloomPass, input: THREE.Texture): number {
     const s = this.settings;
     const levels = Math.max(1, Math.min(pass.nMips, Math.round(s.bloomLevels)));
     const high = pass.highPassUniforms as Record<string, THREE.IUniform>;
@@ -642,14 +659,18 @@ export class Remaster {
       this.blit(blur, pass.renderTargetsVertical[i]);
       from = pass.renderTargetsVertical[i];
     }
-    const c = pass.compositeMaterial.uniforms;
-    c.bloomStrength.value = s.bloomStrength;
-    c.bloomRadius.value = s.bloomRadius;
-    // The levels not drawn this frame hold stale light: a black tint leaves them out of the sum.
-    for (let i = 0; i < pass.nMips; i++) this.bloomTints[i].setScalar(i < levels ? 1 : 0);
-    c.bloomTintColors.value = this.bloomTints;
-    this.blit(pass.compositeMaterial, pass.renderTargetsHorizontal[0]);
-    return pass.renderTargetsHorizontal[0].texture;
+    return levels;
+  }
+
+  /** The grade pass's share of each bloom level: UnrealBloomPass's composite weights, 0 for levels not drawn this frame. */
+  private bloomWeights(g: Record<string, THREE.IUniform>, levels: number) {
+    const s = this.settings;
+    const w = g.bloomW.value as number[];
+    for (let i = 0; i < 5; i++) {
+      const factor = 1 - i * 0.2;
+      w[i] = i < levels ? s.bloomStrength * THREE.MathUtils.lerp(factor, 1.2 - factor, s.bloomRadius) : 0;
+      g[`tBloom${i}`].value = i < levels && this.bloom ? this.bloom.renderTargetsVertical[i].texture : null;
+    }
   }
 
   /** The moon's rays into shaftsRT. False when the moon is behind you or off screen. */

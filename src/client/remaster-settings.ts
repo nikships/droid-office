@@ -507,6 +507,44 @@ export const REMASTER_PRESETS: RemasterPreset[] = [
       bloomLevels: 5,
     },
   },
+  {
+    id: 'nik',
+    label: 'Nik',
+    hint: 'Tuned for a 16" M5 Pro MacBook Pro at 3456×2168 and 120 Hz: native resolution, SMAA, HDR and bloom, the classic colors, and warmer screen light in place of GI and AO.',
+    // Measured full screen on that machine: a steady 120 FPS in every spot tried, about 3 ms of GPU a frame. GI's
+    // per-pixel probe lookups and AO each cost more than the HDR copy leaves room for at that size, and MSAA on the
+    // float target does too. Linear keeps the dark room as the classic renderer draws it; Neutral's toe takes the grey
+    // out of it, which only GI's extra light makes up for.
+    values: {
+      enabled: true,
+      renderScale: 1,
+      aa: 'smaa',
+      sharpen: 0.25,
+      hdr: true,
+      hdrPeak: 4,
+      toneMap: 'linear',
+      bloom: true,
+      bloomStrength: 0.45,
+      bloomRadius: 0.4,
+      bloomThreshold: 1,
+      bloomLevels: 3,
+      ao: false,
+      gi: false,
+      giRolling: false,
+      shafts: false,
+      saturation: 1.05,
+      vibrance: 0.15,
+      contrast: 1.06,
+      screenLight: 1.4,
+      lampLight: 1.2,
+      emissive: 1.6,
+      screenGlow: 2,
+      shadowMapSize: '4096',
+      shadowFilter: 'pcf',
+      shadowSoftness: 1.5,
+      outlines: true,
+    },
+  },
 ];
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
