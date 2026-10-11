@@ -89,13 +89,13 @@ private const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
-fun Composer(w: WorkerInfo) {
+fun Composer(w: WorkerInfo, draft: String? = null) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    var text by rememberSaveable(w.id) { mutableStateOf("") }
+    var text by rememberSaveable(w.id) { mutableStateOf(draft.orEmpty()) }
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
     var sending by remember { mutableStateOf(false) }
     val uploading = images.any { it.id == null }

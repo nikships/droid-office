@@ -17,12 +17,41 @@ object Tags {
         const val HOME = "screen.home"
         const val WORKER = "screen.worker"
         const val OFFICES = "screen.offices"
+        const val ASKS = "screen.asks"
+        const val ME = "screen.me"
     }
 
     object App {
         const val BANNER = "app.banner"
         const val BANNER_DISMISS = "app.banner.dismiss"
         const val SNACKBAR = "app.snackbar"
+    }
+
+    /** The bottom tabs. */
+    object Tab {
+        const val BAR = "tab.bar"
+        const val ASKS = "tab.asks"
+        const val OFFICE = "tab.office"
+        const val ME = "tab.me"
+    }
+
+    object Asks {
+        const val COUNT = "asks.count"
+        const val CARD = "asks.card"
+        const val WORKER = "asks.card.worker"
+        const val CONTEXT = "asks.card.context"
+        const val QUESTION = "asks.card.question"
+        const val OWN_ANSWER = "asks.card.own_answer"
+        const val OWN_ANSWER_SEND = "asks.card.own_answer.send"
+        const val OPEN_THREAD = "asks.card.open_thread"
+        const val WAITING = "asks.card.waiting"
+        const val SENDING = "asks.sending"
+        const val SENDING_CANCEL = "asks.sending.cancel"
+        const val ANSWERED = "asks.answered"
+        const val EMPTY = "asks.empty"
+        const val EMPTY_HIRE = "asks.empty.hire"
+        fun option(number: Int) = "asks.card.option/$number"
+        fun next(id: String) = "asks.next/$id"
     }
 
     object Update {
@@ -149,6 +178,12 @@ object Tags {
 
         /** A numbered menu choice above the terminal, by the number the menu shows. */
         fun choice(number: Int) = "worker.choice/$number"
+        const val VIEW_THREAD = "worker.view.thread"
+        const val VIEW_TTY = "worker.view.tty"
+        const val THREAD = "worker.thread"
+        const val THREAD_PROMPT = "worker.thread.prompt"
+        const val THREAD_ACTIVITY = "worker.thread.activity"
+        const val LIVE_LINE = "worker.live_line"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')
@@ -173,6 +208,7 @@ object Tags {
         const val NOTIFY_NEEDS_INPUT = "settings.notify_needs_input"
         const val NOTIFY_DONE = "settings.notify_done"
         const val HAPTICS = "settings.haptics"
+        const val ANSWER_DELAY = "settings.answer_delay"
         const val FORGET_DIALOG = "forget.dialog"
         const val FORGET_CONFIRM = "forget.confirm"
         const val FORGET_CANCEL = "forget.cancel"

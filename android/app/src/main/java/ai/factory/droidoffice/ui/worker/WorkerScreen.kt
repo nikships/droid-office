@@ -122,7 +122,7 @@ private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
 )
 
 @Composable
-fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false) {
+fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false, draft: String? = null) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val data by connection.data.collectAsStateWithLifecycle()
@@ -169,7 +169,10 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         Offline(link.phase)
         val live = !worker.state.asleep
         val screen = screens[workerId]
-        NeedsYou(worker, screen, live && link.phase == Phase.Connected)
+        // Droid workers open on the thread; a shell, a cloud worker or one sent here to type an answer opens on its terminal.
+        var tty by rememberSaveable(workerId) { mutableStateOf(worker.isShell || worker.isCloud || draft != null) }
+        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { tty = it }
+        if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
@@ -196,7 +199,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 if (restore == null || connection.send(ClientMsg.termResize(workerId, restore.cols, restore.rows))) sizing.release()
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
+        if (!tty) Thread(
+            worker, screen, live && link.phase == Phase.Connected,
+            Modifier.weight(1f).fillMaxWidth(),
+            onType = { tty = true },
+        ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
@@ -210,10 +217,10 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             DisposableEffect(lift) { onDispose { lift.value = null } }
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
-                if (!worker.isCloud) {
+                if (!worker.isCloud && tty) {
                     QuickKeys(workerId, phone) { phoneChoice = !phone }
                 }
-                Composer(worker)
+                Composer(worker, draft)
             }
         }
         if (sendingHome) SendHomeDialog(worker, onDismiss = { sendingHome = false }, onSent = {

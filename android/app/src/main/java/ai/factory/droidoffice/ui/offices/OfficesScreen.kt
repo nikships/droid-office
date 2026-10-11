@@ -1,5 +1,9 @@
 package ai.factory.droidoffice.ui.offices
 
+import androidx.compose.foundation.layout.only
+
+import androidx.compose.foundation.layout.WindowInsetsSides
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -71,7 +75,7 @@ import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.launch
 
 @Composable
-fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> Unit) {
+fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> Unit, embedded: Boolean = false) {
     val graph = LocalGraph.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val link by graph.connection.link.collectAsStateWithLifecycle()
@@ -87,10 +91,16 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
 
     fun askToNotify() = notify.ask()
 
-    Column(Modifier.fillMaxSize().tagged(Tags.Screen.OFFICES).background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Offices.BACK)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Offices", style = MaterialTheme.typography.headlineSmall)
+    // As the Me tab it sits above the tab bar, which takes the bottom inset.
+    val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal) else WindowInsets.safeDrawing
+    Column(Modifier.fillMaxSize().tagged(if (embedded) Tags.Screen.ME else Tags.Screen.OFFICES).background(Palette.Bg).windowInsetsPadding(insets)) {
+        if (embedded) {
+            Text("Me", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp))
+        } else {
+            Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Offices.BACK)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Text("Offices", style = MaterialTheme.typography.headlineSmall)
+            }
         }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp),
@@ -144,13 +154,23 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                         if (on && !canNotify) askToNotify()
                     }
                     HorizontalDivider(color = Palette.Border)
-                    Toggle(OfficeIcons.Bell, "When a worker needs you", "A question or a permission prompt, with a reply right in the notification.", store.settings.notifyNeedsInput, Tags.Offices.NOTIFY_NEEDS_INPUT) { on ->
+                    Toggle(OfficeIcons.Bell, "When a worker needs you", "A question, with its first choices and a reply right in the notification.", store.settings.notifyNeedsInput, Tags.Offices.NOTIFY_NEEDS_INPUT) { on ->
                         settings { it.copy(notifyNeedsInput = on) }
                     }
                     HorizontalDivider(color = Palette.Border)
                     Toggle(OfficeIcons.Sparkle, "When a worker finishes", "Its turn is done and the result is waiting.", store.settings.notifyDone, Tags.Offices.NOTIFY_DONE) { on ->
                         settings { it.copy(notifyDone = on) }
                     }
+                }
+
+                Eyebrow("Answers", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
+                Column(Modifier.fillMaxWidth().panel()) {
+                    Toggle(
+                        OfficeIcons.Bell, "Wait before sending",
+                        "Answers from Asks wait 3 seconds with Cancel before they go. Keys typed into a terminal can't be taken back.",
+                        store.settings.answerDelay,
+                        Tags.Offices.ANSWER_DELAY,
+                    ) { on -> settings { it.copy(answerDelay = on) } }
                 }
 
                 Eyebrow("Feel", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
