@@ -4,7 +4,7 @@ The **🧑‍🎨 Whiteboard** replaces the Services board. It is one shared sur
 
 There is no "send feedback" step, no queue and no delivery receipts. The board is shared state. Either side changes it at any time, and either side reads all of it at any time.
 
-Status: **planned**. This is the requirements and plan document. Keep it current while the work is done, the way [factory.md](factory.md) was kept.
+Status: **implemented**. This was the requirements and plan document, kept current while the work was done, the way [factory.md](factory.md) was kept.
 
 ## The owner's decisions
 
@@ -240,10 +240,10 @@ In one change, before the Whiteboard takes the slot:
 1. Remove Services (above). Lint, typecheck and tests pass.
 2. The shared model and reducer, with thorough tests: operations, atomic batches, anchors, per-piece stamps and per-card read points, state paths and merge, limits.
 3. The server store, the agent route, `office-whiteboard`, links and assets, and the skill. Test them end to end against a real server, including crashes between writes and retried operation ids. (Done, with the window's sync module, the render routes against `NoRenderer`, the Settings toggle and Ping a worker.)
-4. The window: the grid, the sandbox and bridge, forms and state, Use and Mark up, comments, stickies, pictures, reattach, canvas cards, owner HTML, live updates, offline queueing, the selection, Ping a worker.
+4. The window: the grid, the sandbox and bridge, forms and state, Use and Mark up, comments, stickies, pictures, reattach, canvas cards, owner HTML, live updates, offline queueing, the selection, Ping a worker. (Done, in `src/client/ui/whiteboard*.ts`.)
 5. The renderer: install, queue and cache, tiles, PNGs for agents, thumbnails. (Done, with the runtime isolation test.)
 6. The wall: the grid and artifact views, the selection, **E** to open, the automation API kind (`whiteboard`). (Done, in `src/client/world/whiteboard-wall.ts`.)
-7. `docs/guide.md`: a feature bullet, a "How it works" bullet, and the whiteboard folder in its State bullet. Also `.env.example` if a variable is added, and the full CI checks from the root `AGENTS.md`.
+7. `docs/guide.md`: a feature bullet, a "How it works" bullet, and the whiteboard folder in its State bullet. Also `.env.example` if a variable is added, and the full CI checks from the root `AGENTS.md`. (Done; the README has a line too.)
 
 ## Acceptance checks
 
@@ -263,7 +263,7 @@ The work is done when each of these passes, by test where it can be automated an
 
 ## Risks and open questions
 
-- **Chromium on every install:** about 150 MB more on disk, and its system libraries on Linux. Check that the installers stay fast and that an install with no network still starts the office (the board then says renders are unavailable).
+- **Chromium on every install:** the headless shell build, about 100 MB to download and 200 MB on disk, and its system libraries on Linux. Check that the installers stay fast and that an install with no network still starts the office (the board then says renders are unavailable).
 - **The Mac app and a downloaded browser:** check that a Chromium the signed app downloads at runtime launches cleanly under Gatekeeper, with no quarantine prompt.
 - **Anchoring quality:** agents rewrite whole artifacts often. Measure how often marks detach on real rewrites, and tune the matching of selectors and text quotes.
 - **Sandbox and network:** an artifact with network access can send out anything it shows. It cannot reach the office's token or other cards. Say this plainly in the skill and the guide.

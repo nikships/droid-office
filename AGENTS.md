@@ -10,7 +10,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | --- | --- |
 | The single-owner shape (why there is no multiplayer, accounts, voice, chat or presence) | [docs/single-owner.md](docs/single-owner.md) (implemented) |
 | Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (implemented) |
-| The Whiteboard: the agent and owner board that replaces the Services board, and removing Services | [docs/whiteboard.md](docs/whiteboard.md) (planned) |
+| The Whiteboard: the agent and owner board that replaces the Services board, and removing Services | [docs/whiteboard.md](docs/whiteboard.md) (implemented) |
 
 ## Repository map
 
