@@ -8,7 +8,7 @@
 // comes from that frame's contentWindow with that nonce: its writes and actions apply to this card.
 
 import type { WhiteboardRenderInfo } from '../../shared/protocol';
-import { actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
+import { actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
 import {
   CANONICAL_WIDTH,
   MAX_ASSET_BYTES,
@@ -98,6 +98,12 @@ interface Slot {
   layout?: { width: number; height: number; scrollX: number; scrollY: number };
   restore?: Point;
   loadedAt: number;
+  /** What has focus in the frame, as it last said. */
+  focus?: FocusedField | null;
+  /** When the owner last typed (or composed) in it: the unsaved value or the composition changed. */
+  typedAt: number;
+  /** Focus to put back once the frame is ready, when it was swapped in before it was. */
+  sendFocus?: FocusedField;
 }
 
 interface Located {
@@ -110,7 +116,8 @@ interface Located {
 type Saved = { fit: boolean; zoom: number; a?: number; b?: number };
 
 const VIEW_KEY = 'droid-office.wb-view';
-const IDLE_RELOAD_MS = 250;
+/** The pause in typing a content reload waits for: the SDK saves a field after the same second. */
+const TYPING_IDLE_MS = 1000;
 const LOCATE_DEBOUNCE_MS = 150;
 const RESOLVE_SETTLE_MS = 800;
 const VIEW_DEBOUNCE_MS = 900;
@@ -426,7 +433,7 @@ export class Surface {
       title: this.card.title,
       src: url,
     });
-    const slot: Slot = { iframe, nonce, contentRev: this.card.stamps.content?.rev ?? 0, ready: false, loadedAt: performance.now() };
+    const slot: Slot = { iframe, nonce, contentRev: this.card.stamps.content?.rev ?? 0, ready: false, loadedAt: performance.now(), typedAt: 0 };
     if (!this.slot) {
       this.slot = slot;
       this.showPlaceholder('Loading…');
@@ -449,11 +456,11 @@ export class Surface {
       this.incoming = null;
     }
     if (this.reloadWait) return;
-    if (!this.inFrame()) return this.load();
-    // The SDK writes a field when its owner pauses (or leaves it): that write, or focus leaving the frame, is the moment.
+    if (!this.typing()) return this.load();
+    // The frame reports what's focused, with any unsaved value: a second without typing (when the SDK saves the field), or focus leaving the frame, is the moment.
     const poll = window.setInterval(() => {
-      if (!this.inFrame()) this.reloadNow();
-    }, 400);
+      if (!this.typing()) this.reloadNow();
+    }, 200);
     this.reloadWait = { poll };
     this.showBanner('This card changed. It reloads when you stop typing.', [h('button.btn.sm', { type: 'button', onclick: () => this.reloadNow() }, 'Reload now')]);
   }
@@ -465,9 +472,12 @@ export class Surface {
     if (!this.disposed) this.load();
   }
 
-  /** Focus is in the frame: the owner may be typing in one of its fields. */
-  private inFrame(): boolean {
-    return !!this.slot && document.activeElement === this.slot.iframe;
+  /** The owner is typing in a field of the frame: an IME composition is open, or they typed in the last second and it isn't saved. */
+  private typing(): boolean {
+    const s = this.slot;
+    if (!s || document.activeElement !== s.iframe || !s.focus) return false;
+    if (s.focus.composing) return true;
+    return s.focus.value !== undefined && performance.now() - s.typedAt < TYPING_IDLE_MS;
   }
 
   private swapIn(slot: Slot) {
@@ -478,9 +488,27 @@ export class Surface {
     this.slot = slot;
     slot.iframe.classList.remove('incoming');
     old?.iframe.remove();
-    if (hadFocus) slot.iframe.focus({ preventScroll: true });
+    if (hadFocus) {
+      slot.iframe.focus({ preventScroll: true });
+      if (old?.focus) this.refocus(slot, old.focus);
+    }
     if (slot.layout) this.onLayout(slot, slot.layout);
     this.scheduleLocate();
+  }
+
+  /** Puts focus back where it was in the frame a reload replaced, with anything typed there since it was last saved. */
+  private refocus(slot: Slot, f: FocusedField) {
+    if (f.key !== undefined && f.value !== undefined) {
+      const fields = this.frameState.fields;
+      const saved = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields[f.key] : undefined;
+      if (!jsonEqual(saved, f.value)) {
+        const op = writeOp(this.card.id, { op: 'set', path: ['fields', f.key], value: f.value });
+        this.frameState = this.stateWith(op);
+        void this.host.apply([op], 'Saving the form');
+      }
+    }
+    if (slot.ready) this.post(slot, { type: 'focus', field: f });
+    else slot.sendFocus = f;
   }
 
   private frameSize(iframe: HTMLIFrameElement) {
@@ -503,6 +531,18 @@ export class Surface {
         slot.ready = true;
         this.post(slot, { type: 'init', card: { id: this.card.id, title: this.card.title, author: this.card.author }, state: this.card.state, rendering: false, mode: this.mode, width: CANONICAL_WIDTH });
         if (slot === this.slot) this.frameState = this.card.state;
+        if (slot.sendFocus) {
+          this.post(slot, { type: 'focus', field: slot.sendFocus });
+          slot.sendFocus = undefined;
+        }
+        break;
+      case 'focus':
+        if (msg.field?.value !== slot.focus?.value || msg.field?.composing !== slot.focus?.composing) slot.typedAt = performance.now();
+        slot.focus = msg.field;
+        break;
+      case 'escape':
+        // Esc in the frame, as if it had been pressed in the office: the window stack's own handling runs.
+        if (slot === this.slot) slot.iframe.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
         break;
       case 'layout': {
         const first = !slot.layout;
@@ -522,7 +562,6 @@ export class Surface {
       }
       case 'write':
         if (slot !== this.slot) break;
-        if (this.reloadWait) setTimeout(() => this.reloadWait && this.reloadNow(), IDLE_RELOAD_MS);
         this.frameState = this.stateWith(writeOp(this.card.id, msg.write));
         this.host.apply([writeOp(this.card.id, msg.write)], 'Saving the form');
         break;

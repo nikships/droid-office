@@ -40,7 +40,7 @@ import {
   type OpError,
   type PieceRef,
 } from '../src/shared/whiteboard.js';
-import { BRIDGE_CHANNEL, actionOp, nonceFromHash, parseFrameMsg, parseHostMsg, wrap, writeOp } from '../src/shared/whiteboard-bridge.js';
+import { BRIDGE_CHANNEL, MAX_FOCUS_VALUE, actionOp, nonceFromHash, parseFrameMsg, parseHostMsg, wrap, writeOp } from '../src/shared/whiteboard-bridge.js';
 
 const PIXEL: Author = { kind: 'worker', id: 'a1b2c3d4e5f6', name: 'Pixel', color: '#ff8800' };
 const NIBBLE: Author = { kind: 'worker', id: '0f9e8d7c6b5a', name: 'Nibble', color: '#00aaff' };
@@ -772,6 +772,32 @@ test('the bridge takes only messages on its channel with the load’s nonce', ()
   assert.deepEqual(parseHostMsg(wrap({ type: 'mode', mode: 'markup' }, nonce), nonce), { type: 'mode', mode: 'markup' });
   assert.deepEqual(parseHostMsg(wrap({ type: 'scrollTo', x: 0, y: 100 }, nonce), nonce), { type: 'scrollTo', x: 0, y: 100 });
   assert.equal(parseHostMsg(wrap({ type: 'mode', mode: 'markup' }, nonce), 'wrong-nonce-0000000000'), undefined);
+
+  // Focus: a field by its key (or another element by its path), its caret, its unsaved value; only keys it knows.
+  const typing = { key: 'email', index: 0, start: 3, end: 5, direction: 'backward' as const, value: 'hello', composing: false };
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'focus', field: typing }, nonce), nonce), { type: 'focus', field: typing });
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'focus', field: null }, nonce), nonce), { type: 'focus', field: null });
+  assert.deepEqual(parseFrameMsg({ ...wrap({ type: 'focus', field: { selector: 'body > button:nth-of-type(1)' } }, nonce), extra: 1 }, nonce), { type: 'focus', field: { selector: 'body > button:nth-of-type(1)' } });
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'focus', field: { key: 'a', sneaky: 'x' } as never }, nonce), nonce), { type: 'focus', field: { key: 'a' } });
+  for (const bad of [
+    {},
+    { key: 'a', selector: 'b' },
+    { key: '' },
+    { key: 'a', index: -1 },
+    { key: 'a', start: 1.5 },
+    { key: 'a', direction: 'up' },
+    { key: 'a', value: 7 },
+    { key: 'a', value: 'x'.repeat(MAX_FOCUS_VALUE + 1) },
+    { key: 'a', composing: 'yes' },
+    'email',
+  ]) {
+    assert.equal(parseFrameMsg(wrap({ type: 'focus', field: bad as never }, nonce), nonce), undefined, JSON.stringify(bad).slice(0, 60));
+  }
+  assert.deepEqual(parseHostMsg(wrap({ type: 'focus', field: { key: 'email', start: 3, end: 3 } }, nonce), nonce), { type: 'focus', field: { key: 'email', start: 3, end: 3 } });
+  assert.equal(parseHostMsg(wrap({ type: 'focus', field: null as never }, nonce), nonce), undefined, 'the host always names what to focus');
+  // Esc, passed on from the frame.
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'escape' }, nonce), nonce), { type: 'escape' });
+  assert.equal(parseFrameMsg(wrap({ type: 'escape' }, nonce), 'another-load-nonce-000'), undefined);
 });
 
 test('a frame’s writes and actions become state operations on its own card', () => {

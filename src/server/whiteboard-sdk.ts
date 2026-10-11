@@ -6,7 +6,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '1';
+export const SDK_VERSION = '2';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -205,6 +205,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       unmark();
     }
     write({ op: 'set', path: [FIELDS, key], value: value });
+    reportFocus();
   }
   function idle() {
     if (!focus) return;
@@ -291,6 +292,76 @@ export const SDK_SCRIPT = String.raw`(function () {
     });
   }
 
+  // ---- Focus, reported so a content reload can put it back (and the host can tell when typing stops) ----
+
+  function focusOf(el) {
+    if (!el || el === document.body || el === document.documentElement || ours(el)) return null;
+    var f;
+    if (isField(el)) {
+      var key = keyOf(el);
+      f = { key: key, index: Math.max(0, named(key).indexOf(el)) };
+      if (focus && focus.el === el) {
+        if (focus.composing) f.composing = true;
+        else if (focus.dirty && typed(el)) f.value = String(el.value);
+      }
+    } else if (el.isContentEditable || el.tabIndex >= 0) f = { selector: cssPath(el) };
+    else return null;
+    try {
+      if (typeof el.selectionStart === 'number') {
+        f.start = el.selectionStart;
+        f.end = el.selectionEnd;
+        if (el.selectionDirection) f.direction = el.selectionDirection;
+      }
+    } catch (err) {
+      // a field type without a caret (email, number)
+    }
+    return f;
+  }
+  var focusTimer = 0;
+  var lastFocus = 'null';
+  function reportFocus() {
+    if (focusTimer) return;
+    focusTimer = setTimeout(function () {
+      focusTimer = 0;
+      if (rendering || !started) return;
+      var f = focusOf(document.activeElement);
+      var s = JSON.stringify(f);
+      if (s === lastFocus) return;
+      lastFocus = s;
+      post({ type: 'focus', field: f });
+    }, 0);
+  }
+  ['focusin', 'focusout', 'input', 'keyup', 'mouseup', 'select', 'selectionchange', 'compositionstart', 'compositionend'].forEach(function (ev) {
+    document.addEventListener(ev, reportFocus, true);
+  });
+  function restoreFocus(f) {
+    var el = null;
+    if (typeof f.key === 'string') {
+      var els = named(f.key);
+      el = els[Math.min(f.index || 0, els.length - 1)] || null;
+    } else if (typeof f.selector === 'string') {
+      try { el = document.querySelector(f.selector); } catch (err) { el = null; }
+    }
+    if (!el || typeof el.focus !== 'function') return;
+    // What the owner typed after the last save; the host has written it into state already.
+    if (typeof f.value === 'string' && isField(el) && typed(el)) el.value = f.value;
+    el.focus({ preventScroll: true });
+    if (typeof f.start === 'number') {
+      try { el.setSelectionRange(f.start, typeof f.end === 'number' ? f.end : f.start, f.direction || 'none'); } catch (err) {
+        // a field type without a caret
+      }
+    }
+  }
+
+  // Esc in the frame never reaches the office's own key handling (another origin), so it's passed on:
+  // only once the artifact has had its turn, and never while an IME composition is open.
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229 || (focus && focus.composing)) return;
+    setTimeout(function () {
+      if (!e.defaultPrevented && !rendering) post({ type: 'escape' });
+    }, 0);
+  });
+
   // ---- Buttons and forms ----
 
   function dataOf(el) {
@@ -363,6 +434,16 @@ export const SDK_SCRIPT = String.raw`(function () {
     parts.unshift('body');
     return parts.join(' > ');
   }
+  // An anchor names its element by data-wb-id, else by CSS path, and keeps a quote of its text (its first
+  // 80 characters, or what an agent gave) to check and find it again: an agent rewrites whole pages, so
+  // the path may now lead somewhere else, and the quote decides.
+  var QUOTE = 80;
+  /** Text-free inline elements (a <b> in a sentence) are a poor thing to pin to: the box they sit in is used. */
+  function blockOf(el) {
+    var INLINE = { A: 1, ABBR: 1, B: 1, BDI: 1, BDO: 1, CITE: 1, CODE: 1, DFN: 1, EM: 1, I: 1, KBD: 1, MARK: 1, Q: 1, S: 1, SAMP: 1, SMALL: 1, SPAN: 1, STRONG: 1, SUB: 1, SUP: 1, TIME: 1, U: 1, VAR: 1 };
+    while (el && el.parentElement && el.parentElement !== document.body && INLINE[el.tagName] && getComputedStyle(el).display === 'inline') el = el.parentElement;
+    return el;
+  }
   function anchorAt(p) {
     var size = pageSize();
     if (p.x < 0 || p.y < 0 || p.x > size.w || p.y > size.h) return null;
@@ -370,41 +451,123 @@ export const SDK_SCRIPT = String.raw`(function () {
     var point = { x: p.x, y: p.y };
     if (!el || el === document.body || el === document.documentElement) return { kind: 'point', point: point };
     var withId = el.closest('[data-wb-id]');
-    var target = withId || el;
+    var target = withId || blockOf(el);
     var r = pageRect(target);
     var a = { kind: 'element', offset: { x: p.x - r.x, y: p.y - r.y }, point: point };
     if (withId) a.wbId = withId.getAttribute('data-wb-id');
-    else {
-      a.selector = cssPath(target);
-      var q = norm(target.textContent).slice(0, 80);
-      if (q) a.quote = q;
-    }
+    else a.selector = cssPath(target);
+    var q = textOf(target).slice(0, QUOTE);
+    if (q) a.quote = q;
     return a;
   }
-  function byQuote(quote) {
-    var best = null;
+  function textOf(el) { return norm(el.textContent); }
+  function tagOf(selector) {
+    var m = /([a-z][a-z0-9-]*)(?::nth-of-type\(\d+\))?\s*$/i.exec(selector || '');
+    return m ? m[1].toUpperCase() : '';
+  }
+  /**
+   * A text's words for comparing, lowercased and without the punctuation round them. A leading "2." or
+   * "3)" goes (sections get renumbered), and so does a quote's last word when it was cut off mid-word.
+   */
+  function words(s, cut) {
+    var raw = s.toLowerCase().split(' ');
+    if (raw.length > 1 && /^\(?\d{1,3}[.)]$/.test(raw[0])) raw.shift();
+    if (cut && raw.length > 1) raw.pop();
+    return raw.map(function (w) { return w.replace(/^[("'\u201c\u2018[]+|[)"'\u201d\u2019\].,;:!?]+$/g, ''); }).filter(Boolean);
+  }
+  function lcs(a, b) {
+    var prev = [];
+    for (var j = 0; j <= b.length; j++) prev.push(0);
+    for (var i = 0; i < a.length; i++) {
+      var cur = [0];
+      for (var k = 0; k < b.length; k++) cur.push(a[i] === b[k] ? prev[k] + 1 : Math.max(prev[k + 1], cur[k]));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  /** A word that tells siblings written from one template apart: a number, a price, a date, a one-letter label. */
+  function telling(w) { return /\d/.test(w) || (w.length === 1 && w !== 'a' && w !== 'i'); }
+  /**
+   * Whether an element's text is the quoted one, edited: the quote's words survive at its start, in
+   * order (all of them for a quote of under four words, else nearly all), and none of its telling words
+   * is gone. A heading or a sentence an agent reworded passes; "Option B" for "Option A" doesn't.
+   */
+  function edited(q, text) {
+    var qw = words(q, q.length >= QUOTE);
+    if (!qw.length) return false;
+    var tw = words(text.slice(0, q.length * 2 + 40), false);
+    var have = {};
+    tw.forEach(function (w) { have[w] = 1; });
+    if (qw.some(function (w) { return telling(w) && !have[w]; })) return false;
+    var kept = lcs(qw, tw.slice(0, qw.length + 6)) / qw.length;
+    return qw.length < 4 ? kept === 1 : kept >= EDITED;
+  }
+  var EDITED = 0.85;
+  /** A quote this short ("Approve", "Q3") is in too many places to be found by unless an element says just that. */
+  var SHORT = 12;
+  function holds(text, q, anywhere) {
+    if (q.length < SHORT) return anywhere ? text === q : text.indexOf(q) === 0;
+    return text.indexOf(q) >= 0;
+  }
+  function candidates() {
+    var out = [];
     var all = document.body ? document.body.getElementsByTagName('*') : [];
     for (var i = 0; i < all.length && i < 20000; i++) {
-      if (ours(all[i]) || all[i].tagName === 'SCRIPT' || all[i].tagName === 'STYLE') continue;
-      if (norm(all[i].textContent).indexOf(quote) >= 0) best = all[i];
+      var el = all[i];
+      if (ours(el) || el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'TEMPLATE') continue;
+      out.push(el);
     }
+    return out;
+  }
+  function distance(el, a) {
+    var r = pageRect(el);
+    var off = a.offset || { x: 0, y: 0 };
+    return Math.abs(r.x + off.x - a.point.x) + Math.abs(r.y + off.y - a.point.y);
+  }
+  /** Of the elements that hold the quote: the anchor's tag if any has it, then the least other text (the element, not a wrapper round it), then the nearest to where the mark was. */
+  function pick(pool, a, tag) {
+    var same = pool.filter(function (el) { return el.tagName === tag; });
+    var best = null;
+    var bestLen = Infinity;
+    var bestDist = Infinity;
+    (same.length ? same : pool).forEach(function (el) {
+      var len = textOf(el).length;
+      var d = distance(el, a);
+      if (len < bestLen || (len === bestLen && d < bestDist)) {
+        best = el;
+        bestLen = len;
+        bestDist = d;
+      }
+    });
     return best;
   }
+  /**
+   * The element an anchor is on now, else null (detached). In order: its data-wb-id; the element at its
+   * CSS path if that still holds its quote; any element that holds the quote (the path now leads to
+   * another, or the page was wrapped or reordered); the element at its path if its text is the quote,
+   * edited; the one element of its tag anywhere whose text is the quote, edited. Never a guess: a
+   * mark on nothing is shown detached, a mark on the wrong element misleads.
+   */
   function find(a) {
     if (a.wbId) {
       var w = document.querySelector('[data-wb-id="' + CSS.escape(a.wbId) + '"]');
       if (w) return w;
     }
     var q = a.quote ? norm(a.quote) : '';
+    var tag = tagOf(a.selector);
+    var s = null;
     if (a.selector) {
-      try {
-        var s = document.querySelector(a.selector);
-        if (s && (!q || norm(s.textContent).indexOf(q.slice(0, 40)) >= 0)) return s;
-      } catch (err) {
-        // a selector this page can't parse
-      }
+      try { s = document.querySelector(a.selector); } catch (err) { s = null; }
+      if (s && (!q || holds(textOf(s), q, false))) return s;
     }
-    return q ? byQuote(q) : null;
+    if (!q) return null;
+    var all = candidates();
+    var holding = all.filter(function (el) { return holds(textOf(el), q, true); });
+    if (holding.length) return pick(holding, a, tag);
+    if (s && edited(q, textOf(s))) return s;
+    if (!tag) return null;
+    var alike = all.filter(function (el) { return el.tagName === tag && edited(q, textOf(el)); });
+    return alike.length === 1 ? alike[0] : null;
   }
   function locate(item) {
     var a = item.anchor;
@@ -463,6 +626,7 @@ export const SDK_SCRIPT = String.raw`(function () {
         fire('ready', api);
       }
       layout();
+      reportFocus();
     } else if (d.type === 'state') {
       if (!isObj(d.state)) return;
       var was = state;
@@ -483,6 +647,8 @@ export const SDK_SCRIPT = String.raw`(function () {
       fire('mode', mode);
     } else if (d.type === 'scrollTo') {
       if (num(d.x) && num(d.y)) window.scrollTo(d.x, d.y);
+    } else if (d.type === 'focus') {
+      if (isObj(d.field) && !rendering) restoreFocus(d.field);
     }
   });
 

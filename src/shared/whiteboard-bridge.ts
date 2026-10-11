@@ -30,6 +30,23 @@ export interface BridgeCard {
 /** A state write from the artifact (its JavaScript API, or a form field under `state.fields`). */
 export type StateWrite = { op: 'set'; path: string[]; value: Json } | { op: 'merge'; path: string[]; value: StateObject } | { op: 'del'; path: string[] };
 
+/**
+ * What has focus in the frame, so a content reload can put it back: a form field by its `state.fields`
+ * key (and which of the elements with that key), or another focusable element by CSS path; its caret;
+ * and, while the owner has typed into it since it was last saved, what they typed and whether an IME
+ * composition is open.
+ */
+export interface FocusedField {
+  key?: string;
+  index?: number;
+  selector?: string;
+  start?: number;
+  end?: number;
+  direction?: 'forward' | 'backward' | 'none';
+  value?: string;
+  composing?: boolean;
+}
+
 /** Host to frame. */
 export type HostMsg =
   /** The card, its state, whether this is a render, the mode, and the layout width the host shows it at. */
@@ -42,7 +59,13 @@ export type HostMsg =
   | { type: 'locate'; req: number; anchors: { id: string; anchor: Anchor }[] }
   | { type: 'mode'; mode: BridgeMode }
   /** Restores a scroll position, when the frame scrolls itself. */
-  | { type: 'scrollTo'; x: number; y: number };
+  | { type: 'scrollTo'; x: number; y: number }
+  /**
+   * After a content reload, focuses what had focus in the frame it replaced (its value and caret too).
+   * Sent when the new frame is swapped in and focused, not with `init`: the new frame loads hidden
+   * behind the old one, and focusing it then would take keys the owner is still typing into the old one.
+   */
+  | { type: 'focus'; field: FocusedField };
 
 /** Frame to host. */
 export type FrameMsg =
@@ -55,7 +78,15 @@ export type FrameMsg =
   /** The answer to `locate`: each anchor's page point, or detached when it can't be placed. */
   | { type: 'positions'; req: number; positions: { id: string; point: Point | null; detached: boolean }[] }
   /** The page's laid-out size and scroll, sent on load and whenever either changes. */
-  | { type: 'layout'; width: number; height: number; scrollX: number; scrollY: number };
+  | { type: 'layout'; width: number; height: number; scrollX: number; scrollY: number }
+  /** What has focus in the frame now, sent whenever it, its caret or its unsaved value changes; null when nothing does. */
+  | { type: 'focus'; field: FocusedField | null }
+  /**
+   * The owner pressed Esc in the frame, which the office's own key handling can't see across origins:
+   * the host treats it as Esc in the office. Not sent during an IME composition, or when the artifact
+   * handled the key itself (preventDefault, or stopped it before it reached the window).
+   */
+  | { type: 'escape' };
 
 export type Wrapped<T> = T & { channel: typeof BRIDGE_CHANNEL; nonce: string };
 
@@ -94,6 +125,10 @@ export function parseHostMsg(data: unknown, nonce: string): HostMsg | undefined 
       return isMode(d.mode) ? { type: 'mode', mode: d.mode } : undefined;
     case 'scrollTo':
       return isNum(d.x) && isNum(d.y) ? { type: 'scrollTo', x: d.x, y: d.y } : undefined;
+    case 'focus': {
+      const field = focusedField(d.field);
+      return field ? { type: 'focus', field } : undefined;
+    }
     default:
       return undefined;
   }
@@ -131,6 +166,13 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
       return { type: 'positions', req: d.req, positions: d.positions };
     case 'layout':
       return isNum(d.width) && isNum(d.height) && isNum(d.scrollX) && isNum(d.scrollY) ? { type: 'layout', width: d.width, height: d.height, scrollX: d.scrollX, scrollY: d.scrollY } : undefined;
+    case 'focus': {
+      if (d.field === null) return { type: 'focus', field: null };
+      const field = focusedField(d.field);
+      return field ? { type: 'focus', field } : undefined;
+    }
+    case 'escape':
+      return { type: 'escape' };
     default:
       return undefined;
   }
@@ -145,6 +187,28 @@ export function writeOp(card: string, write: StateWrite): Op {
 
 export function actionOp(card: string, name: string, data?: Json): Op {
   return data === undefined ? { op: 'state.action', card, name } : { op: 'state.action', card, name, data };
+}
+
+/** The longest unsaved value a focus report carries: a field's value goes into state, so the state limit applies when it's saved. */
+export const MAX_FOCUS_VALUE = 100_000;
+
+/** A FocusedField from untrusted data, with only the keys it knows; undefined when it names nothing or a key is the wrong shape. */
+function focusedField(v: unknown): FocusedField | undefined {
+  if (!isObject(v)) return undefined;
+  const str = (s: unknown, max: number) => typeof s === 'string' && s !== '' && s.length <= max;
+  const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
+  const hasKey = v.key !== undefined;
+  const hasSel = v.selector !== undefined;
+  if (hasKey === hasSel || (hasKey && !str(v.key, 500)) || (hasSel && !str(v.selector, 2000))) return undefined;
+  if (v.index !== undefined && !count(v.index)) return undefined;
+  if (v.start !== undefined && !count(v.start)) return undefined;
+  if (v.end !== undefined && !count(v.end)) return undefined;
+  if (v.direction !== undefined && v.direction !== 'forward' && v.direction !== 'backward' && v.direction !== 'none') return undefined;
+  if (v.value !== undefined && !(typeof v.value === 'string' && v.value.length <= MAX_FOCUS_VALUE)) return undefined;
+  if (v.composing !== undefined && typeof v.composing !== 'boolean') return undefined;
+  const f: FocusedField = hasKey ? { key: v.key } : { selector: v.selector };
+  for (const k of ['index', 'start', 'end', 'direction', 'value', 'composing'] as const) if (v[k] !== undefined) (f as Record<string, unknown>)[k] = v[k];
+  return f;
 }
 
 function onBridge(data: unknown, nonce: string): boolean {
