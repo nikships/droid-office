@@ -31,6 +31,7 @@ import { FreshMain } from './saved-switch.js';
 import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
+import { readGpuStats } from './gpu-stats.js';
 import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
@@ -900,6 +901,12 @@ export async function startServer(cfg: Config) {
           return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
         }
         return send(res, 405, { error: 'Method not allowed' });
+      }
+      // The Mac's GPU load for the performance overlay. Only a page on this machine draws on this GPU.
+      if (p === '/api/gpu' && req.method === 'GET') {
+        if (!ownPage(req)) return send(res, 200, { stats: null, reason: 'not on the office’s machine' });
+        const stats = await readGpuStats();
+        return send(res, 200, stats ? { stats } : { stats: null, reason: process.platform === 'darwin' ? 'ioreg failed' : 'macOS only' });
       }
       if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });

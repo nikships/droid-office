@@ -126,6 +126,10 @@ import { GAME, scoreText } from '../shared/cabinet';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
+import { Upscaler } from './world/upscaler';
+import { GpuTimer } from './gpu-timer';
+import { gpuBusy, statsText } from './graphics';
+import { withToken } from './token';
 
 // Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
 const loading = loadingScreen(() => () => {});
@@ -3235,6 +3239,7 @@ function showSettings(pane?: SettingsPane) {
       sound.setVolume(settings.volume, settings.muted);
       sound.setAlertsMuted(settings.alertsMuted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
+      applyGraphics();
       // The hint names what's in your hand; the hands swap props by themselves next frame.
       hintKey = 'stale';
     },
@@ -3277,6 +3282,32 @@ const workerPos = new THREE.Vector3();
 const fpsEl = $('fps');
 let fpsFrames = 0;
 let fpsSince = performance.now();
+const upscaler = new Upscaler(renderer);
+const gpuTimer = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
+/** The Mac's whole-GPU load from the office's server, when this page runs on the office's own Mac. */
+let systemGpu: number | null = null;
+let systemGpuPoll = 0;
+async function pollSystemGpu() {
+  try {
+    const res = await fetch(withToken('/api/gpu'), { credentials: 'same-origin', cache: 'no-store' });
+    const body = (await res.json()) as { stats: { device: number } | null };
+    systemGpu = body.stats ? body.stats.device : null;
+  } catch {
+    systemGpu = null;
+  }
+}
+/** Graphics settings to the renderer and the overlay. The counter's text still updates while hidden: recording rigs read it. */
+function applyGraphics() {
+  upscaler.configure(settings.graphics);
+  fpsEl.classList.toggle('hidden', !settings.graphics.stats);
+  window.clearInterval(systemGpuPoll);
+  systemGpu = null;
+  if (settings.graphics.stats) {
+    void pollSystemGpu();
+    systemGpuPoll = window.setInterval(() => document.visibilityState === 'visible' && void pollSystemGpu(), 1000);
+  }
+}
+applyGraphics();
 /** Frames drawn since the page loaded, so automation commands can wait for the scene to catch up. */
 let framesDrawn = 0;
 /** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
@@ -3370,7 +3401,23 @@ function drawFrame(dt: number, t: number) {
   fpsFrames++;
   const fpsNow = performance.now();
   if (fpsNow - fpsSince >= 500) {
-    fpsEl.textContent = `${Math.round((fpsFrames * 1000) / (fpsNow - fpsSince))} FPS`;
+    const windowMs = fpsNow - fpsSince;
+    const fps = (fpsFrames * 1000) / windowMs;
+    if (settings.graphics.stats) {
+      const gpuMs = gpuTimer.take();
+      const { render, output } = upscaler.sizes();
+      fpsEl.textContent = statsText({
+        fps,
+        frameMs: windowMs / fpsFrames,
+        gpu: gpuMs === null ? null : { ms: gpuMs, busy: gpuBusy(gpuMs * fpsFrames, windowMs) },
+        gpuNote: gpuTimer.supported ? 'timing…' : 'timing unavailable in this browser',
+        system: systemGpu,
+        render,
+        output,
+        scale: settings.graphics.scale,
+        taa: settings.graphics.taa,
+      });
+    } else fpsEl.textContent = `${Math.round(fps)} FPS`;
     fpsFrames = 0;
     fpsSince = fpsNow;
   }
@@ -3500,7 +3547,9 @@ function drawFrame(dt: number, t: number) {
   renderHint();
   renderCrosshair();
 
-  effect.render(scene, camera);
+  const timing = settings.graphics.stats;
+  if (timing) gpuTimer.begin();
+  upscaler.draw(camera, () => effect.render(scene, camera));
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
   if (!arcade.zoomed && !cabinet.zoomed) {
@@ -3512,6 +3561,7 @@ function drawFrame(dt: number, t: number) {
     effect.render(hands.scene, hands.camera);
     sky.shading(true);
   }
+  if (timing) gpuTimer.end();
   loading.drew();
 }
 
@@ -3707,6 +3757,8 @@ const automation = createAutomation({
   net,
   renderer,
   renderLoop,
+  upscaler,
+  gpuTimer,
   hands,
   me,
   settings,

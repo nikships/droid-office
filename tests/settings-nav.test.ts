@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS_CARDS, SETTINGS_PANES, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
 
-test('settings has the eight categories, in order', () => {
+test('settings has the nine categories, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound', 'Notifications', 'Building', 'Factory', 'Workers', 'Subagents', 'Phone'],
+    ['You', 'Sound', 'Graphics', 'Notifications', 'Building', 'Factory', 'Workers', 'Subagents', 'Phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'notify', 'building', 'factory', 'workers', 'subagents', 'phone'],
+    ['you', 'sound', 'graphics', 'notify', 'building', 'factory', 'workers', 'subagents', 'phone'],
   );
 });
 
@@ -21,6 +21,10 @@ test('every setting is in a category', () => {
     ['Office sounds', 'sound'],
     ['Alert sounds', 'sound'],
     ['Jukebox', 'sound'],
+    ['Render resolution', 'graphics'],
+    ['Temporal anti-aliasing', 'graphics'],
+    ['Sharpening', 'graphics'],
+    ['Performance overlay', 'graphics'],
     ['Desktop notifications', 'notify'],
     ['Channel notifications (Slack / Discord)', 'notify'],
     ['Outside', 'building'],
@@ -64,6 +68,8 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('building', 'ArrowUp'), 'notify');
   assert.equal(settingsPaneAfter('building', 'ArrowDown'), 'factory');
   assert.equal(settingsPaneAfter('factory', 'ArrowDown'), 'workers');
+  assert.equal(settingsPaneAfter('sound', 'ArrowDown'), 'graphics');
+  assert.equal(settingsPaneAfter('graphics', 'ArrowDown'), 'notify');
   assert.equal(settingsPaneAfter('sound', 'Home'), 'you');
   assert.equal(settingsPaneAfter('sound', 'End'), 'phone');
   assert.equal(settingsPaneAfter('you', 'Enter'), null);
