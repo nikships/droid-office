@@ -15,6 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
+import { FPS_CAPS, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type FpsCap, type GraphicsSettings, type ShadowMode } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -766,6 +767,81 @@ export function openSettings(
     { rows: true },
   );
 
+  // Graphics: how this browser draws the office.
+  const graphicsSet = (g: Partial<GraphicsSettings>) => {
+    settings = { ...settings, graphics: { ...settings.graphics, ...g } };
+    onChange(settings);
+    paintGraphics();
+  };
+  const percentSlider = (label: string, min: number, step: number, pick: (v: number) => void) => {
+    const slider = h('input', { type: 'range', min, max: 100, step, 'aria-label': label });
+    const pct = h('span.vol-pct');
+    slider.addEventListener('input', () => pick(Number(slider.value) / 100));
+    return { slider, pct, row: h('div.volume', {}, slider, pct) };
+  };
+  const scale = percentSlider('Render resolution', RENDER_SCALE_MIN * 100, RENDER_SCALE_STEP * 100, (v) => graphicsSet({ scale: normalizeScale(v) }));
+  const sharpen = percentSlider('Sharpening', 0, 5, (v) => graphicsSet({ sharpen: v }));
+  const scaleNote = desc();
+  const sharpenNote = desc();
+  const taa = toggle(
+    'Temporal anti-aliasing',
+    () => settings.graphics.taa,
+    (on) => graphicsSet({ taa: on }),
+  );
+  const shadows = radios<ShadowMode>(
+    'Shadows',
+    [
+      ['live', 'Live'],
+      ['smart', 'Smart'],
+      ['off', 'Off'],
+    ],
+    () => settings.graphics.shadows,
+    (mode) => graphicsSet({ shadows: mode }),
+  );
+  const shadowsNote = desc();
+  const fpsCap = radios<FpsCap>(
+    'Frame rate limit',
+    FPS_CAPS.map((fps) => [fps, `${fps} FPS`] as const),
+    () => settings.graphics.fpsCap,
+    (fps) => graphicsSet({ fpsCap: fps }),
+  );
+  const stats = toggle(
+    'Performance overlay',
+    () => settings.graphics.stats,
+    (on) => graphicsSet({ stats: on }),
+  );
+  const paintGraphics = () => {
+    const g = settings.graphics;
+    for (const [s, v] of [
+      [scale, g.scale],
+      [sharpen, g.sharpen],
+    ] as const) {
+      const p = Math.round(v * 100);
+      s.slider.value = String(p);
+      s.slider.style.setProperty('--fill', `${((p - Number(s.slider.min)) / (100 - Number(s.slider.min))) * 100}%`);
+      s.pct.textContent = `${p}%`;
+    }
+    taa.paint();
+    shadows.paint();
+    fpsCap.paint();
+    stats.paint();
+    shadowsNote.textContent = {
+      live: 'The moon’s shadow map is redrawn every frame, whatever moves.',
+      smart: 'The moon’s shadow map is redrawn only on frames where something that casts a shadow moved, came or went. Shadows look the same as Live; a still office skips most of their cost.',
+      off: 'No shadows. Saves about as much as Smart in a still office, and also while workers walk about.',
+    }[g.shadows];
+    const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
+    scaleNote.textContent =
+      g.scale >= 1
+        ? 'The office draws every pixel of your screen. Lower it to draw fewer and upscale them: the GPU does less work for each frame.'
+        : `The office draws ${Math.round(g.scale * g.scale * 100)}% of your screen’s pixels and upscales them${upscaling}.`;
+    const native = g.scale >= 1 && !g.taa;
+    sharpen.row.classList.toggle('muted', native);
+    sharpen.slider.toggleAttribute('disabled', native);
+    sharpenNote.textContent = native ? 'Only applies to an upscaled or TAA image. At 100% without TAA the office draws straight to the screen.' : 'Contrast-adaptive sharpening on the final image, to win back what upscaling and TAA soften.';
+  };
+  paintGraphics();
+
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
@@ -785,6 +861,36 @@ export function openSettings(
         card('Office sounds', { desc: desc('Workers typing, the coffee machine and thunder. Muting this silences the worker tones too.'), control: soundRow }),
         card('Alert sounds', { desc: desc('A short tone when a worker needs you, finishes, or its tests fail. Mute them without silencing the rest of the office.'), control: alertRow }),
         card('Jukebox', { desc: desc('Louder near the jukebox. This slider is only your volume.'), control: musicRow }),
+      ),
+    ],
+    graphics: [
+      group(
+        'Resolution',
+        card('Render resolution', { desc: scaleNote, control: scale.row }),
+        card('Temporal anti-aliasing', {
+          desc: desc('Moves each frame by a fraction of a pixel and blends it into the frames before, following the camera. Smooths edges and recovers detail below 100%; something moving fast can smear a little. Off, edges use 4× MSAA.'),
+          control: taa.el,
+        }),
+        card('Sharpening', { desc: sharpenNote, control: sharpen.row }),
+      ),
+      group(
+        'Frame rate',
+        card('Frame rate limit', {
+          desc: desc(
+            'The most frames a second the office draws while something moves. 40, 60 and 120 each fit a 120 Hz display evenly. A lower limit costs the GPU less; a 60 Hz display shows at most 60. A still office still drops to a few frames a second.',
+          ),
+          control: fpsCap.row,
+        }),
+      ),
+      group('Lighting', card('Shadows', { desc: shadowsNote, control: shadows.row })),
+      group(
+        'Diagnostics',
+        card('Performance overlay', {
+          desc: desc(
+            'Bottom right: frames per second and the frame rate limit, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), the render resolution, and how often the shadow map was redrawn.',
+          ),
+          control: stats.el,
+        }),
       ),
     ],
     notify: [

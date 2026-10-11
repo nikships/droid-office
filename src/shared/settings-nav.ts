@@ -1,9 +1,10 @@
 /** The categories down the side of Settings. */
-export type SettingsPane = 'you' | 'sound' | 'notify' | 'building' | 'factory' | 'workers' | 'subagents' | 'phone';
+export type SettingsPane = 'you' | 'sound' | 'graphics' | 'notify' | 'building' | 'factory' | 'workers' | 'subagents' | 'phone';
 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and what you hold.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
+  { id: 'graphics', icon: '🖥️', label: 'Graphics', blurb: 'How sharp the office draws, how many frames a second, how its shadows are kept, how much of your GPU that takes, and the readout that shows it.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The sky, Jira, where the elevator looks for projects, and local source reload.' },
   {
@@ -30,6 +31,12 @@ export const SETTINGS_CARDS = [
   { pane: 'sound', title: 'Office sounds' },
   { pane: 'sound', title: 'Alert sounds' },
   { pane: 'sound', title: 'Jukebox' },
+  { pane: 'graphics', title: 'Render resolution' },
+  { pane: 'graphics', title: 'Temporal anti-aliasing' },
+  { pane: 'graphics', title: 'Sharpening' },
+  { pane: 'graphics', title: 'Frame rate limit' },
+  { pane: 'graphics', title: 'Shadows' },
+  { pane: 'graphics', title: 'Performance overlay' },
   { pane: 'notify', title: 'Desktop notifications' },
   { pane: 'notify', title: 'Channel notifications (Slack / Discord)' },
   { pane: 'building', title: 'Outside' },
