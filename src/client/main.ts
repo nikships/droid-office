@@ -42,7 +42,7 @@ import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } f
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
-import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
@@ -832,8 +832,10 @@ let firstWelcome = true;
 let bootVersion = '';
 let upgradePhase = '';
 
+connectWhiteboard((msg) => net.send(msg));
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
+  store.whiteboard.status(up);
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.

@@ -206,11 +206,11 @@ A toggle in ⚙️ Settings turns the skill on and off, like the subagents skill
 ## Shape of the code
 
 - `src/shared/whiteboard.ts`: the types (board, card, piece, mark, thread, anchor, state, selection), the operations, and one pure `applyOps(board, ops, actor, rev)` reducer that the server and the client both use, with the limits and the `changed` logic.
-- `src/server/whiteboard.ts`: the per-floor store in the floor checkout's `.droid-office/whiteboard/` (`board.json`, `cards/<id>/`), crash-safe writes, read points, the selection, links and watchers, assets, limits and pruning.
+- `src/server/whiteboard.ts`: the per-floor store in the floor checkout's `.droid-office/whiteboard/` (`board.json` with the operation record, `key` for the HMAC card and epoch capabilities, and content-addressed `blobs/<sha256>`), crash-safe writes (blobs, then a temp file, then a rename), epochs, leases and pinned snapshots, the agents' `{ load }` content and `card.linkTo` / `card.unlink`, links and watchers, the card route's responses, limits and pruning, and the `WhiteboardRenderer` interface the renderer plugs into (`NoRenderer` until then). `whiteboard-assets.ts` reads pages, packages and pictures from disk; `whiteboard-sdk.ts` is the script injected into every page; `whiteboard-agent.ts` answers `office-whiteboard`; `whiteboard-skill.ts` writes the `droid-office-whiteboard` skill (state in the office's `whiteboard-skill.json`).
 - `src/server/whiteboard-render.ts`: the renderer, its install, queue and cache.
-- `src/server/server.ts`: an `/office/whiteboard` route for agents (hook token, like `/office/workers`), the card and asset routes, the render routes for the window, and the WebSocket messages.
-- `src/shared/protocol.ts`: `ServerMsg` `whiteboard` (board state, patches and acknowledgements) and `ClientMsg` `whiteboard.apply` and `whiteboard.ping`. Every reader and handler is updated in the same change.
-- `src/client/ui/whiteboard.ts` (the window), the sandbox bridge and its injected script, `src/client/net.ts` (queue and resend), and `src/client/world/boards.ts` (`WhiteboardTexture`, replacing `ServicesBoardTexture`).
+- `src/server/server.ts`: an `/office/whiteboard` route for agents (hook token, like `/office/workers`), the card route `/whiteboard/c/<cap>/<path>`, `/api/whiteboard/file` and `/api/whiteboard/blob` for the window, the render routes (`/api/whiteboard/render`, `/api/whiteboard/render/status`), the WebSocket messages and Ping a worker.
+- `src/shared/protocol.ts`: `ServerMsg` `whiteboard` (snapshots, patches, acknowledgements and rejections) and `whiteboardSkill`, and `ClientMsg` `whiteboard.apply`, `whiteboard.sync`, `whiteboard.ping` and `whiteboardSkill.set`. Every reader and handler is updated in the same change. `src/shared/whiteboard-ping.ts` says whether a worker can be pinged.
+- `src/client/whiteboard-sync.ts` (the window's board: optimistic batches, the queue while offline, resends in each batch's epoch, drafts of expired batches), `src/client/ui/whiteboard.ts` (the window), the sandbox bridge, and `src/client/world/boards.ts` (`WhiteboardTexture`, replacing `ServicesBoardTexture`).
 - `bin/office-whiteboard.js`, written onto every worker's PATH the way `writeOfficeCommand` writes `office-workers`.
 
 ## Removing Services
@@ -235,7 +235,7 @@ In one change, before the Whiteboard takes the slot:
 
 1. Remove Services (above). Lint, typecheck and tests pass.
 2. The shared model and reducer, with thorough tests: operations, atomic batches, anchors, per-piece stamps and per-card read points, state paths and merge, limits.
-3. The server store, the agent route, `office-whiteboard`, links and assets, and the skill. Test them end to end against a real server, including crashes between writes and retried operation ids.
+3. The server store, the agent route, `office-whiteboard`, links and assets, and the skill. Test them end to end against a real server, including crashes between writes and retried operation ids. (Done, with the window's sync module, the render routes against `NoRenderer`, the Settings toggle and Ping a worker.)
 4. The window: the grid, the sandbox and bridge, forms and state, Use and Mark up, comments, stickies, pictures, reattach, canvas cards, owner HTML, live updates, offline queueing, the selection, Ping a worker.
 5. The renderer: install, queue and cache, tiles, PNGs for agents, thumbnails.
 6. The wall: the grid and artifact views, the selection, **E** to open, the automation API kind (`whiteboard`).

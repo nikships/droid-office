@@ -291,6 +291,8 @@ export class WorkerManager {
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
+    // In the same folder, so it's on every agent's PATH with office-workers.
+    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
@@ -1778,7 +1780,7 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // Any agent runs its subagents with office-workers.
+    // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
     const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
       // Windows spells it Path.
@@ -2077,7 +2079,7 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes one of the office's agent commands (office-workers) into `sub` of the data
+   * Writes one of the office's agent commands (office-workers, office-whiteboard) into `sub` of the data
    * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
    * every start, so after an upgrade it runs the new install's script.
    */

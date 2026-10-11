@@ -11,6 +11,8 @@ import type { JukeboxState } from './jukebox.js';
 import type { PipelineDetail, PipelinesState } from './pipelines.js';
 import type { PromptId } from './prompts.js';
 import type { WorktreeSetupState } from './worktree-setup.js';
+import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
+import type { PingHow } from './whiteboard-ping.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -702,6 +704,26 @@ export interface SubagentsState extends SubagentSettings {
   skillError?: string;
 }
 
+/**
+ * The droid-office-whiteboard skill (⚙️ Settings → Droid), which tells Droid workers how to use the
+ * Whiteboard with office-whiteboard: on or off for the whole office, who set it, and where it is.
+ */
+export interface WhiteboardSkillState {
+  on: boolean;
+  by?: string;
+  at?: number;
+  /** The skill's SKILL.md, when it's installed. */
+  skillPath?: string;
+  /** Why the skill couldn't be written or taken away. */
+  skillError?: string;
+}
+
+/** Whether the office can render Whiteboard cards to images, and why not when it can't. */
+export interface WhiteboardRendererStatus {
+  available: boolean;
+  reason?: string;
+}
+
 /** A line of a worker's terminal that matched a search. */
 export interface TerminalHit {
   workerId: string;
@@ -873,6 +895,17 @@ export type ClientMsg =
   | { t: 'worktreeSetup.get' }
   /** The floor's own worktree setup, in place of the repository's or the detected one; null goes back to those. */
   | { t: 'worktreeSetup.set'; setup: { setup: string; copy: string[] } | null }
+  /**
+   * A batch for a floor's Whiteboard, numbered in this connection's epoch for that floor (from its
+   * `whiteboard` snapshot). Answered with an `ack` or a `rejected` update, after the commit.
+   */
+  | { t: 'whiteboard.apply'; floor: string; envelope: OpEnvelope }
+  /** Send this connection a fresh snapshot of a floor's Whiteboard, with its epoch for that floor. */
+  | { t: 'whiteboard.sync'; floor: string }
+  /** Type the Whiteboard line into a worker's terminal (see shared/whiteboard-ping.ts); answered with `whiteboard.pinged`. */
+  | { t: 'whiteboard.ping'; worker: string }
+  /** Install the droid-office-whiteboard skill (true), or take it away. */
+  | { t: 'whiteboardSkill.set'; on: boolean }
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   | { t: 'ping'; at: number };
@@ -912,6 +945,7 @@ export type ServerMsg =
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
       subagents: SubagentsState;
+      whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
@@ -978,6 +1012,25 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
+  | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
+  /**
+   * A floor's Whiteboard (see shared/whiteboard.ts and server/whiteboard.ts). A `snapshot` comes after
+   * `welcome` and `floor.enter` and for `whiteboard.sync`; a `patch` goes to everyone on the floor for
+   * every committed batch; `ack` and `rejected` go to the connection that sent the batch. `origin` on
+   * a patch names the batch it came from, so its sender can drop it from what it still has pending.
+   * `caps` are card capabilities (the whole map on a snapshot, new cards' on a patch) for the card URLs
+   * `/whiteboard/c/<cap>/<path>`. `renderer` comes with a snapshot.
+   */
+  | {
+      t: 'whiteboard';
+      floor: string;
+      update: WhiteboardUpdate;
+      origin?: { epoch: string; seq: number };
+      caps?: Record<string, string>;
+      renderer?: WhiteboardRendererStatus;
+    }
+  /** To whoever pinged: the line went in (`how`), or why it didn't. */
+  | { t: 'whiteboard.pinged'; worker: string; ok: boolean; how?: PingHow; error?: string }
   | { t: 'prompts'; state: PromptsState }
   /** To whoever asked, and to everyone on the floor when it's changed. */
   | { t: 'worktreeSetup'; state: WorktreeSetupState }
