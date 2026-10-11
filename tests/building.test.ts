@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Building, type FloorDef } from '../src/server/building.js';
+import { MAX_FLOORS } from '../src/shared/floors.js';
 import { suggestedFolder } from '../src/server/config.js';
 
 function office(t: { after(fn: () => void): void }) {
@@ -231,4 +232,265 @@ test('a home folder that was already added by hand is the home floor', (t) => {
   assert.ok(building.isHome('web'));
   assert.match(building.remove('web') as string, /always in the building/);
   assert.deepEqual(saved(dataDir), ['api', 'web', 'docs']);
+});
+
+/** One checkout, a symlink to it inside the workspace, another checkout, and a symlink that points outside. */
+function linked(t: { after(fn: () => void): void }) {
+  const root = mkdtempSync(path.join(tmpdir(), 'droid-office-alias-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = path.join(root, 'office', '.droid-office');
+  mkdirSync(dataDir, { recursive: true });
+  const work = path.join(root, 'repos');
+  const real = path.join(work, 'acme', 'api');
+  mkdirSync(real, { recursive: true });
+  execFileSync('git', ['init', '-q', real]);
+  const alias = path.join(work, 'api-link');
+  symlinkSync(real, alias);
+  const other = path.join(work, 'acme', 'web');
+  mkdirSync(other, { recursive: true });
+  execFileSync('git', ['init', '-q', other]);
+  const outside = path.join(root, 'elsewhere', 'secret');
+  mkdirSync(outside, { recursive: true });
+  execFileSync('git', ['init', '-q', outside]);
+  const outsideLink = path.join(work, 'escape');
+  symlinkSync(outside, outsideLink);
+  const decor = path.join(real, '.droid-office', 'decor.json');
+  mkdirSync(path.dirname(decor), { recursive: true });
+  const pictures = '[{"id":"pic"}]';
+  writeFileSync(decor, pictures);
+  return { root, dataDir, work, real, alias, other, outsideLink, decor, pictures };
+}
+
+test('a symlink to a checkout that already has a floor is that floor, and the saved path stays', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  const building = new Building(dataDir, work);
+  const first = building.add(real, 'Sam');
+  assert.equal(typeof first, 'object', String(first));
+  assert.equal((first as FloorDef).dir, real);
+  assert.match(building.add(alias, 'Sam') as string, /already has a floor/);
+  assert.deepEqual(
+    building.list().map((d) => d.dir),
+    [real],
+  );
+  assert.equal(readFileSync(decor, 'utf8'), pictures, 'the checkout’s pictures are left alone');
+});
+
+test('adding the real checkout after its symlink alias is the same floor, stored as the alias path', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  const building = new Building(dataDir, work);
+  const first = building.add(alias, 'Sam');
+  assert.equal(typeof first, 'object', String(first));
+  assert.equal((first as FloorDef).dir, alias, 'the path as given is what is saved');
+  assert.match(building.add(real, 'Sam') as string, /already has a floor/);
+  assert.deepEqual(
+    building.list().map((d) => d.dir),
+    [alias],
+  );
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+});
+
+test('two different checkouts are still two floors', (t) => {
+  const { dataDir, work, real, other } = linked(t);
+  const building = new Building(dataDir, work);
+  assert.equal(typeof building.add(real, 'Sam'), 'object');
+  assert.equal(typeof building.add(other, 'Sam'), 'object');
+  assert.deepEqual(
+    building.list().map((d) => d.dir),
+    [real, other],
+  );
+});
+
+test('a symlink in the workspace folder that points outside it is still refused', (t) => {
+  const { dataDir, work, outsideLink } = linked(t);
+  const building = new Building(dataDir, work);
+  assert.match(building.add(outsideLink, 'Sam') as string, /isn't in the workspace folder/);
+  assert.equal(building.list().length, 0);
+  assert.equal(existsSync(path.join(dataDir, 'floors.json')), false);
+});
+
+test('an alias already saved stays in floors.json and is not opened as a second floor', (t) => {
+  const { dataDir, work, real, alias, other, decor, pictures } = linked(t);
+  const file = path.join(dataDir, 'floors.json');
+  const defs: FloorDef[] = [
+    { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 },
+    { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 },
+  ];
+  writeFileSync(file, JSON.stringify(defs));
+  const before = readFileSync(file, 'utf8');
+
+  const building = new Building(dataDir, work);
+  assert.deepEqual(
+    building.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.equal(readFileSync(file, 'utf8'), before, 'loading does not rewrite the saved alias away');
+  assert.match(building.add(alias, 'Sam') as string, /already has a floor/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+
+  // A restart still opens one floor and still keeps both saved paths.
+  const restarted = new Building(dataDir, work);
+  assert.deepEqual(
+    restarted.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.equal(readFileSync(file, 'utf8'), before);
+  assert.equal(typeof restarted.add(other, 'Sam'), 'object');
+  assert.deepEqual(
+    restarted.list().map((d) => d.id),
+    ['api', 'web'],
+  );
+  const onDisk = JSON.parse(readFileSync(file, 'utf8')) as FloorDef[];
+  assert.deepEqual(
+    onDisk.map((d) => d.id),
+    ['api', 'api-link', 'web'],
+  );
+  assert.equal(onDisk.find((d) => d.id === 'api')?.dir, real);
+  assert.equal(onDisk.find((d) => d.id === 'api-link')?.dir, alias);
+
+  assert.equal(typeof restarted.remove('api', 'Sam'), 'object');
+  assert.deepEqual(
+    restarted.list().map((d) => d.id),
+    ['web'],
+  );
+  assert.deepEqual(saved(dataDir), ['web']);
+  assert.equal(readFileSync(decor, 'utf8'), pictures, 'taking the floor off does not touch the checkout');
+  // The server does not open a replacement. A restart must not find the alias and start one.
+  const after = new Building(dataDir, work);
+  assert.deepEqual(
+    after.list().map((d) => d.id),
+    ['web'],
+  );
+  const back = after.add(alias, 'Sam');
+  assert.equal(typeof back, 'object', String(back));
+  assert.equal((back as FloorDef).dir, alias);
+  assert.match(after.add(real, 'Sam') as string, /already has a floor/);
+  assert.deepEqual(
+    after.list().map((d) => d.dir),
+    [other, alias],
+  );
+});
+
+test('starting in a symlink of a floor already there uses that floor', (t) => {
+  const { dataDir, work, real, alias } = linked(t);
+  const added = new Building(dataDir, work).add(real, 'Sam');
+  assert.equal(typeof added, 'object', String(added));
+  const again = new Building(dataDir, work);
+  const local = again.ensureLocal(alias, 'the office');
+  assert.equal(local?.id, (added as FloorDef).id);
+  assert.equal(local?.dir, real);
+  assert.ok(local && again.isLocal(local.id));
+  assert.deepEqual(
+    again.list().map((d) => d.dir),
+    [real],
+  );
+});
+
+test('taking off the open floor drops its saved aliases and stays off through either path', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  const second = path.join(work, 'api-link-2');
+  symlinkSync(real, second);
+  writeFileSync(
+    path.join(dataDir, 'floors.json'),
+    JSON.stringify([
+      { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 },
+      { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 },
+      { id: 'api-link-2', name: 'api-link-2', dir: second, palette: 2, addedBy: 'Sam', addedAt: 3 },
+    ]),
+  );
+  const building = new Building(dataDir, work);
+  assert.equal(building.ensureLocal(real, 'the office')?.id, 'api');
+  assert.deepEqual(
+    building.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.equal(typeof building.remove('api', 'Sam'), 'object');
+  assert.equal(building.list().length, 0);
+  assert.deepEqual(saved(dataDir), []);
+  assert.ok(existsSync(real));
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+
+  const again = new Building(dataDir, work);
+  assert.equal(again.ensureLocal(alias, 'the office'), undefined);
+  assert.equal(again.ensureLocal(second, 'the office'), undefined);
+  assert.equal(again.list().length, 0);
+  assert.deepEqual(saved(dataDir), []);
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+});
+
+test('removing a suppressed alias drops only that row', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  writeFileSync(
+    path.join(dataDir, 'floors.json'),
+    JSON.stringify([
+      { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 },
+      { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 },
+    ]),
+  );
+  const building = new Building(dataDir, work);
+  assert.equal(typeof building.remove('api-link', 'Sam'), 'object');
+  assert.deepEqual(
+    building.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.deepEqual(saved(dataDir), ['api']);
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+  assert.deepEqual(
+    new Building(dataDir, work).list().map((d) => d.id),
+    ['api'],
+  );
+});
+
+test('a saved alias does not fill the building', (t) => {
+  const { dataDir, work, real, alias, other } = linked(t);
+  const extra = path.join(work, 'acme', 'extra');
+  mkdirSync(extra, { recursive: true });
+  execFileSync('git', ['init', '-q', extra]);
+  const fillers: FloorDef[] = Array.from({ length: MAX_FLOORS - 1 }, (_, i) => {
+    const id = `slot-${i}`;
+    return { id, name: id, dir: path.join(work, 'filled', id), palette: 0, addedBy: 'Sam', addedAt: 1 };
+  });
+  fillers[0] = { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 };
+  writeFileSync(path.join(dataDir, 'floors.json'), JSON.stringify([...fillers, { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 }]));
+  const building = new Building(dataDir, work);
+  assert.equal(building.list().length, MAX_FLOORS - 1);
+  assert.equal(
+    building.list().some((d) => d.id === 'api-link'),
+    false,
+  );
+  assert.equal(typeof building.add(other, 'Sam'), 'object', 'the alias does not consume the last slot');
+  assert.equal(building.list().length, MAX_FLOORS);
+  assert.match(building.add(extra, 'Sam') as string, /full/);
+  assert.equal(
+    building.list().some((d) => d.id === 'api-link'),
+    false,
+  );
+});
+
+test('a checkout taken off stays off when the office is started through a symlink to it', (t) => {
+  const { dataDir, work, real, alias } = linked(t);
+  const building = new Building(dataDir, work);
+  const local = building.ensureLocal(real, 'the office');
+  assert.ok(local);
+  assert.equal(typeof building.remove(local.id, 'Sam'), 'object');
+  const again = new Building(dataDir, work);
+  assert.equal(again.ensureLocal(alias, 'the office'), undefined);
+  assert.equal(again.list().length, 0);
+  assert.ok(existsSync(path.join(dataDir, 'local-floor.json')));
+});
+
+test('the home floor is the same directory when it was saved through another path', (t) => {
+  const { root, dataDir, work } = linked(t);
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  const link = path.join(root, 'home-link');
+  symlinkSync(home, link);
+  writeFileSync(path.join(dataDir, 'floors.json'), JSON.stringify([{ id: 'home', name: 'Home', dir: link, palette: 0, addedBy: 'Sam', addedAt: 1 }]));
+  const building = new Building(dataDir, work);
+  assert.equal(building.ensureHome(home)?.id, 'home');
+  assert.equal(building.list().length, 1);
+  assert.equal(building.list()[0].dir, link);
+  assert.ok(building.isHome('home'));
+  assert.equal(building.hasProjects(), false);
+  assert.match(building.remove('home') as string, /always in the building/);
+  assert.deepEqual(saved(dataDir), ['home']);
 });

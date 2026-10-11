@@ -113,24 +113,36 @@ export class Building {
   }
 
   list(): FloorDef[] {
-    return this.defs;
+    // One open floor per checkout. An alias saved next to the real path stays in floors.json until
+    // that floor is taken off, so loading does not delete it, but it is not a second floor: two of
+    // them would share that checkout's .droid-office and overwrite each other's pictures.
+    const seen = new Set<string>();
+    const active: FloorDef[] = [];
+    for (const def of this.defs) {
+      const key = checkoutKey(def.dir);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      active.push(def);
+    }
+    return active;
   }
 
   /**
    * Makes the checkout the office was started in a floor, if it isn't one yet: `droid-office <dir>`
-   * has always meant that project. Once someone takes it off the building it stays off (the office
-   * still keeps its own data in it), until its repository is added again from the elevator.
+   * has always meant that project. A symlink to a checkout that already has a floor is that floor,
+   * and the path already saved is left as it was. Once someone takes it off the building it stays
+   * off (the office still keeps its own data in it), until its repository is added again from the elevator.
    */
   ensureLocal(dir: string, by: string): FloorDef | undefined {
     const abs = path.resolve(dir);
-    const known = this.defs.find((d) => path.resolve(d.dir) === abs);
+    const known = this.knownCheckout(abs);
     this.local = { dir: abs, repo: known?.repo ?? originRepo(abs) };
     if (known) {
       this.localId = known.id;
       if (this.localOff) this.setLocalOff(undefined);
       return known;
     }
-    if (this.localOff && path.resolve(this.localOff.dir) === abs) return undefined;
+    if (this.localOff && checkoutKey(this.localOff.dir) === checkoutKey(abs)) return undefined;
     // Named after its folder, as the office always called it.
     const def = this.newDef(path.basename(abs), this.local.repo, abs, by);
     this.defs.unshift(def);
@@ -142,15 +154,15 @@ export class Building {
   /**
    * Makes sure the home folder is a floor. It is added once, after the floors there already are
    * so none of them change number, and it can't be taken off (see remove). A home folder that is
-   * already a floor, added by hand, counts as it. Returns the floor, or undefined when the
-   * building is full.
+   * already a floor, added by hand or through another path to the same directory, counts as it.
+   * Returns the floor, or undefined when the building is full.
    */
   ensureHome(home = os.homedir()): FloorDef | undefined {
     const dir = path.resolve(home);
     this.homeDir = dir;
-    const known = this.defs.find((d) => path.resolve(d.dir) === dir);
+    const known = this.knownCheckout(dir);
     if (known) return known;
-    if (this.defs.length >= MAX_FLOORS) {
+    if (this.list().length >= MAX_FLOORS) {
       console.error(`droid-office: the building is full (${MAX_FLOORS} floors), so the home floor (${tildify(dir)}) can't be added`);
       return undefined;
     }
@@ -163,7 +175,7 @@ export class Building {
   /** The home folder's floor, which is always there. */
   isHome(id: string): boolean {
     const def = this.defs.find((d) => d.id === id);
-    return !!def && path.resolve(def.dir) === this.homeDir;
+    return !!def && checkoutKey(def.dir) === checkoutKey(this.homeDir);
   }
 
   /** Whether any floor is a project the owner added, rather than just the home floor. */
@@ -178,14 +190,19 @@ export class Building {
 
   /**
    * Takes a floor off the building. Its checkout stays where it is, with its workers and
-   * pictures in its .droid-office folder: adding the checkout again moves back in. Returns the
-   * floor, or why it can't.
+   * pictures in its .droid-office folder: adding the checkout again moves back in. An alias saved
+   * for that same checkout comes off with the open floor, so a restart does not open a floor the
+   * office never started. Returns the floor, or why it can't.
    */
   remove(id: string, by = '?'): FloorDef | string {
     const def = this.defs.find((d) => d.id === id);
     if (!def) return 'No such floor';
     if (this.isHome(id)) return `${def.name} is the home floor: it's always in the building`;
-    this.defs = this.defs.filter((d) => d !== def);
+    const opened = this.list().some((d) => d.id === id);
+    const key = checkoutKey(def.dir);
+    // The server only starts the open floor. Its aliases go with it. A suppressed alias removed by
+    // id drops only that row, and the open floor stays.
+    this.defs = this.defs.filter((d) => (opened ? checkoutKey(d.dir) !== key : d.id !== id));
     if (this.isLocal(id)) {
       this.localId = undefined;
       this.setLocalOff({ dir: def.dir, by, at: Date.now() });
@@ -197,7 +214,8 @@ export class Building {
   /**
    * Makes a checkout that already exists a floor, where it is: nothing is cloned, copied or moved.
    * `input` is the checkout's full path, which has to be in the workspace folder (or be the
-   * checkout the office was started in). Returns the floor, or why there's none.
+   * checkout the office was started in). A symlink to a checkout that already has a floor is that
+   * floor: the path already saved is left as it was. Returns the floor, or why there's none.
    */
   add(input: string, by: string): FloorDef | string {
     const text = input.trim();
@@ -208,21 +226,31 @@ export class Building {
     const shown = tildify(dir);
     if (!existsSync(dir)) return `${shown} doesn't exist`;
     if (!existsSync(path.join(dir, '.git'))) return `${shown} isn't a git checkout`;
+    // The started-in checkout can be put back by the path it was saved as, even outside the workspace.
+    // Any other path, including a symlink, still has to land inside the workspace after resolving it.
     const back = this.localOff && path.resolve(this.localOff.dir) === dir;
     if (!back && !within(realPath(dir), realPath(this.projectsDir))) return `${shown} isn't in the workspace folder (${tildify(this.projectsDir)}). Pick another workspace folder in ⚙️ Settings`;
-    const known = this.defs.find((d) => path.resolve(d.dir) === dir);
+    const known = this.knownCheckout(dir);
     if (known) return `${shown} already has a floor (${known.name})`;
-    if (this.defs.length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    // A saved alias is not a second floor, so it does not fill the building.
+    if (this.list().length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
     const repo = originRepo(dir);
-    // The office's own checkout, taken off before: it moves back in where it is.
+    // The path as given is what is saved, not its real path, so a later start still finds it as written.
     const def = this.newDef(repo?.split('/').pop() ?? path.basename(dir), repo, dir, by);
     this.defs.push(def);
-    if (back) {
+    // The office's own checkout, taken off before: it moves back in where it is, including through an alias the workspace allows.
+    if (this.localOff && checkoutKey(this.localOff.dir) === checkoutKey(dir)) {
       this.localId = def.id;
       this.setLocalOff(undefined);
     }
     this.save();
     return def;
+  }
+
+  /** The floor for this checkout, following symlinks, if one is already saved. */
+  private knownCheckout(dir: string): FloorDef | undefined {
+    const key = checkoutKey(dir);
+    return this.defs.find((d) => checkoutKey(d.dir) === key);
   }
 
   /** The checkouts in the workspace folder that could become floors, most recently active first. */
@@ -348,6 +376,11 @@ function realPath(p: string): string {
   } catch {
     return p;
   }
+}
+
+/** The real directory a checkout path names, so a symlink alias is the same checkout as its target. */
+function checkoutKey(dir: string): string {
+  return realPath(path.resolve(dir));
 }
 
 /** The repository a remote URL points at, on GitHub or on a GitLab instance. */
