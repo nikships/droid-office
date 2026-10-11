@@ -2,7 +2,7 @@
 // (prompt-recall.ts). The box itself stays the caller's textarea.
 
 import { loadSettings } from '../state';
-import { clip, h } from './dom';
+import { claimEscape, clip, h } from './dom';
 import { PROMPT_LABEL_MAX, PROMPT_PRESET_MAX, PROMPT_TEXT_MAX, defaultPresets, loadPromptHistory, normalizePresets, recallPrompt, rememberPrompt, savePromptHistory, type PromptPreset } from '../prompt-recall';
 
 let historySeq = 0;
@@ -128,25 +128,23 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
 
   const compose = h('div.prompt-compose', {}, chips, h('div.prompt-field', {}, ta, historyBtn), historyPanel);
 
-  const onKey = (e: KeyboardEvent) => {
-    if (!compose.isConnected) return dispose();
-    if (e.key !== 'Escape' || historyPanel.classList.contains('hidden')) return;
-    e.preventDefault();
-    e.stopPropagation();
+  // The dialog's own Esc handler asks before closing, so Esc dismisses the list and leaves the box and its draft open.
+  const releaseEscape = claimEscape(compose, () => {
+    if (historyPanel.classList.contains('hidden')) return false;
     closeList();
-  };
+    ta.focus();
+    return true;
+  });
   const onDoc = (e: Event) => {
     if (!compose.isConnected) return dispose();
     if (historyPanel.classList.contains('hidden')) return;
     if (e.target instanceof Node && compose.contains(e.target)) return;
     closeList();
   };
-  // Registered before the dialog's own Esc handler, so Esc closes the list and leaves the box open.
-  window.addEventListener('keydown', onKey, true);
   document.addEventListener('pointerdown', onDoc, true);
 
   const dispose = () => {
-    window.removeEventListener('keydown', onKey, true);
+    releaseEscape();
     document.removeEventListener('pointerdown', onDoc, true);
   };
 
