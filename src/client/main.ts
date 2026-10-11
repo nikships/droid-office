@@ -3618,7 +3618,7 @@ const automation = createAutomation({
     gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
     sidearm: settings.sidearm,
   }),
-  busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder or a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
+  busy: () => (trip ? 'riding to another floor' : climber.grip === 'ladder' ? 'on the ladder: interact("E") gets off it' : climber.active ? 'on a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
   centerOf,
   place: (at, face) => {
@@ -3643,6 +3643,11 @@ const automation = createAutomation({
   near: () => mySeat() ?? pickTarget(),
   // No note or tab on the issues board: whatever the crosshair happens to be over, E opens the board.
   use: (spot, key) => use(spot, key, null, null),
+  letGo: () => {
+    const why = climber.letGo();
+    renderWake();
+    return why;
+  },
   commands: () => hudActions.map((a) => ({ id: a.id, label: actionLabel(a), shown: actionOffered(a), blocked: a.blocked?.() })),
   run: (id) => hudActions.find((a) => a.id === id)?.run(),
   closeAll: closeAllModals,

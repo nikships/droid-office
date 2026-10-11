@@ -73,6 +73,24 @@ test('climbing back down to the floor steps off onto it', (t) => {
   assert.deepEqual(dones, [{ how: 'ladder', landed: true }]);
 });
 
+test('E right after grabbing the ladder at the floor steps off it, and says why when it cannot let go', (t) => {
+  const { player, climber, dones, frames } = rig(t, {});
+  assert.equal(climber.letGo(), 'not on the ladder');
+  player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
+  climber.grabLadder();
+  frames(5);
+  assert.equal(climber.letGo(), null);
+  // Already stepping off: a second E changes nothing.
+  assert.equal(climber.letGo(), null);
+  for (let i = 0; i < 120 && climber.active; i++) player.update(1 / 60);
+  assert.equal(climber.active, false);
+  assert.equal(player.pos.y, 0);
+  assert.ok(player.pos.x > LADDER.x + 0.3, `back in the room at x=${player.pos.x}`);
+  assert.deepEqual(dones, [{ how: 'ladder', landed: true }]);
+  climber.twirl(POLES[0]);
+  assert.match(climber.letGo() ?? '', /fire pole/);
+});
+
 test('the ladder carries you through the hatch to the floor above', (t) => {
   const { player, climber, travels, frames, key } = rig(t, { up: 'upstairs' });
   player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
@@ -83,7 +101,7 @@ test('the ladder carries you through the hatch to the floor above', (t) => {
   assert.equal(travels[0].way, 1);
   assert.equal(travels[0].how, 'ladder');
   // Between floors E does nothing (nothing to land on yet).
-  climber.letGo();
+  assert.match(climber.letGo() ?? '', /another floor/);
   assert.equal(climber.active, true);
   // The far side arrives: up through its hatch, then off onto its floor.
   key('keyup', 'KeyW');

@@ -146,19 +146,23 @@ export class Climber {
     this.hooks.sound('twirl');
   }
 
-  /** E on the ladder: off it at the floor, or let go and drop from wherever you are. */
-  letGo() {
+  /** E on the ladder: off it at the floor, or let go and drop from wherever you are. Says why not when it can't. */
+  letGo(): string | null {
     const s = this.state;
-    if (s?.kind !== 'ladder' || s.waiting || s.auto || s.off) return;
+    if (!s) return 'not on the ladder';
+    if (s.kind !== 'ladder') return 'on a fire pole, which lets go by itself at the bottom';
+    if (s.off) return null;
+    if (s.waiting || s.auto) return 'climbing through the hatch to another floor';
     const p = this.player;
-    if (p.pos.y < -0.05) return; // down the hatch: nothing to land on but the next floor
+    if (p.pos.y < -0.05) return 'down the hatch, with nothing to land on but the next floor';
     if (p.pos.y < 0.4) {
       this.stepOff(s);
-      return;
+      return null;
     }
     // Drop off it: a little way out from the wall, and down you go.
     p.pos.x = LADDER.x + 0.3;
     this.release('ladder', false);
+    return null;
   }
 
   /** Now on the floor you were going to: carry on the rest of the way. */

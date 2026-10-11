@@ -249,6 +249,7 @@ function fakeOffice() {
     raw: raw(),
     busy: null as string | null,
     near: null as Interactable | null,
+    cantLetGo: null as string | null,
     walk: 'arrived' as 'arrived' | 'cancelled' | 'stuck' | 'never',
     rideTo: null as string | null,
     frames: 0,
@@ -277,6 +278,13 @@ function fakeOffice() {
       setTimeout(() => done(s.walk as 'arrived'), 5);
     },
     near: () => s.near,
+    letGo: () => {
+      log.push('letGo');
+      if (s.cantLetGo) return s.cantLetGo;
+      // Stepping off takes a few frames, then you're back on the floor.
+      setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, climbing: false, y: 0 } }), 15);
+      return null;
+    },
     use: (spot, key) => {
       log.push(`use ${spot.deskId ?? spot.kind} ${key}`);
       if (spot.deskId === 'desk-1' && key === 'E') s.raw = { ...s.raw, terminal: 'w1', modals: [{ label: 'Ada terminal' }] };
@@ -362,6 +370,36 @@ test('ride and goTo a floor resolve once the doors open there, and reject a trip
   s.rideTo = null;
   await assert.rejects(office.ride('f1'), /Can't ride now: on the ladder/);
   assert.deepEqual(log, ['ride f2', 'ride f1', `ride ${ROOF}`]);
+});
+
+test('E on the ladder gets off it like the key does; every other move waits until you are off', async () => {
+  const { s, log, office } = fakeOffice();
+  s.near = { kind: 'ladder', x: -17, z: 0, radius: 1.4 };
+  const onLadder = () => {
+    s.raw = { ...s.raw, player: { ...s.raw.player, climbing: true, y: 0 } };
+    s.busy = 'on the ladder: interact("E") gets off it';
+  };
+  onLadder();
+  // Nothing else is in reach up the ladder: those keys, a goTo and a ride all still wait.
+  await assert.rejects(office.interact('P'), /Can't use anything now: on the ladder/);
+  await assert.rejects(office.goTo('desk-1'), /Can't go to Desk 1 now: on the ladder/);
+  await assert.rejects(office.ride('website'), /Can't ride now: on the ladder/);
+  const off = await office.interact('E');
+  assert.equal(off.player.climbing, false);
+  assert.equal(off.player.y, 0);
+  assert.deepEqual(log, ['letGo'], 'E let go of the ladder rather than using what is near');
+  // Once off, the same E is about what's near again: the ladder, to grab it.
+  s.busy = null;
+  await office.interact('E');
+  assert.equal(log.at(-1), 'use ladder E');
+  // Halfway through the hatch to another floor there's nothing to step off onto yet.
+  onLadder();
+  s.cantLetGo = 'climbing through the hatch to another floor';
+  await assert.rejects(office.interact('E'), /Can't get off now: climbing through the hatch/);
+  // Riding between floors on the ladder, E waits like everything else.
+  s.raw = { ...s.raw, riding: true };
+  s.busy = 'riding to another floor';
+  await assert.rejects(office.interact('E'), /Can't use anything now: riding/);
 });
 
 test('open runs a ☰ command by id, closeAll shuts every window, camera picks a preset', async () => {

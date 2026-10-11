@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { BEANBAGS, COMPUTE_WALL, DESK_SIZE, DESKS, EXIT_DOOR, FLOOR, STATIONS, WALL_HEIGHT, WINDOWS } from '../src/shared/layout';
+import { BEANBAGS, COMPUTE_WALL, DESK_SIZE, DESKS, DROID_RACK, EXIT_DOOR, FLOOR, ROBOT_CELL, STATIONS, WALL_HEIGHT, WINDOWS } from '../src/shared/layout';
 import type { DressingKit } from '../src/client/world/factory-floor';
-import { DROID_RACK, placeFactoryProps, ROBOT_CELL } from '../src/client/world/factory-props';
+import { placeFactoryProps } from '../src/client/world/factory-props';
 import type { Collider } from '../src/client/world/office';
 
 function kit() {
