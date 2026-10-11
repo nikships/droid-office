@@ -17,7 +17,9 @@ import type {
   SkyState,
   SubagentsState,
   UpgradeState,
+  WhiteboardSkillState,
   WorkerInfo,
+  ClientMsg,
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
 import type { ScreenState } from './world/laptop';
@@ -33,6 +35,7 @@ import { teamOf } from '../shared/team';
 import type { WorktreeSetupState } from '../shared/worktree-setup';
 import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
 import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
+import { WhiteboardSync } from './whiteboard-sync';
 
 export type Topic =
   | 'workers'
@@ -60,7 +63,9 @@ export type Topic =
   | 'jira'
   | 'jiraBoard'
   | 'factory'
-  | 'worktreeSetup';
+  | 'worktreeSetup'
+  | 'whiteboard'
+  | 'whiteboardSkill';
 
 export interface Profile {
   name: string;
@@ -217,6 +222,12 @@ export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: numbe
   return undefined;
 }
 
+/** How the Whiteboard's batches reach the server: Net.send, once main.ts has a connection (see connectWhiteboard). */
+let whiteboardSend: (msg: ClientMsg) => boolean = () => false;
+export function connectWhiteboard(send: (msg: ClientMsg) => boolean) {
+  whiteboardSend = send;
+}
+
 class Store {
   /** This connection's transport id; never shown, never a player. */
   connection = '';
@@ -264,6 +275,10 @@ class Store {
   freshMain: FreshMainState = { on: true };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
+  /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
+  whiteboardSkill: WhiteboardSkillState = { on: true };
+  /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
+  readonly whiteboard = new WhiteboardSync((msg) => whiteboardSend(msg));
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
@@ -328,7 +343,14 @@ class Store {
     this.jukebox = { ...j, since: this.clock ? j.startedAt - this.clock.offset : performance.now() - j.elapsed };
   }
 
+  constructor() {
+    this.whiteboard.subscribe((floor) => {
+      if (floor === this.floor) this.emit('whiteboard');
+    });
+  }
+
   apply(msg: ServerMsg) {
+    this.whiteboard.handle(msg);
     switch (msg.t) {
       case 'welcome':
         this.connection = msg.connection;
@@ -343,10 +365,11 @@ class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
+        this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -456,6 +479,10 @@ class Store {
       case 'subagents':
         this.subagents = msg.state;
         this.emit('subagents');
+        break;
+      case 'whiteboardSkill':
+        this.whiteboardSkill = msg.state;
+        this.emit('whiteboardSkill');
         break;
       case 'prompts':
         this.prompts = msg.state;

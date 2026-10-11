@@ -44,6 +44,12 @@ import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
 import { NO_PIPELINES } from '../shared/pipelines.js';
+import { MAX_ASSET_BYTES, OWNER_AUTHOR, parseEnvelope } from '../shared/whiteboard.js';
+import { pingEligibility } from '../shared/whiteboard-ping.js';
+import { CARD_ROUTE, cardResponse, renderStatus, type CardResponse } from './whiteboard.js';
+import { handleAgent } from './whiteboard-agent.js';
+import { WhiteboardSkill } from './whiteboard-skill.js';
+import { officePrompt } from './prompts.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -97,6 +103,8 @@ interface Client {
   device?: string;
   /** Terminals this phone resized, put back when it disconnects (see phone-sizes.ts). */
   phoneSizes?: PhoneSizes;
+  /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
+  boards: Map<string, string>;
 }
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
@@ -281,6 +289,7 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/workers') return officeWorkers(req, res, url);
+    if (url.pathname === '/office/whiteboard') return officeWhiteboard(req, res, url);
     if (req.method !== 'POST' || url.pathname !== '/hooks/droid') return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -321,6 +330,28 @@ export async function startServer(cfg: Config) {
       send(res, 500, { error: (err as Error).message });
     }
   };
+  /** The floor's Whiteboard, for the office-whiteboard command (see whiteboard-agent.ts). */
+  const officeWhiteboard = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
+    const workerId = url.searchParams.get('worker') ?? '';
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const floor = workerFloor(workerId);
+    const agent = floor?.workers.authenticate(workerId, token);
+    if (!floor || !agent) return send(res, 401, { error: 'Send your own DROID_OFFICE_WORKER_ID as ?worker= and DROID_OFFICE_HOOK_TOKEN as the bearer token' });
+    if (agent.kind === 'shell') return send(res, 403, { error: 'A plain shell has no place on the Whiteboard: only agents do' });
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST, with the action in a JSON body' });
+    let body: unknown;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024 * 1024));
+    } catch {
+      return send(res, 400, { error: 'Send JSON: {"action": "read"}' });
+    }
+    try {
+      const r = await handleAgent(floor.whiteboard, agent, { id: floor.id, name: floor.def.name }, body);
+      send(res, r.status, r.body);
+    } catch (err) {
+      send(res, 500, { error: `The board couldn't be changed: ${(err as Error).message}. Nothing was applied; try again.` });
+    }
+  };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');
@@ -354,6 +385,9 @@ export async function startServer(cfg: Config) {
   // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
   const subagents = new Subagents(cfg.dataDir, (state) => broadcast({ t: 'subagents', state }), cfg.skillsDir);
   subagents.syncSkill();
+  // The Droid skill that tells workers how to use the Whiteboard (Settings).
+  const whiteboardSkill = new WhiteboardSkill(cfg.dataDir, (state) => broadcast({ t: 'whiteboardSkill', state }), cfg.skillsDir);
+  whiteboardSkill.syncSkill();
 
   // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
@@ -678,6 +712,91 @@ export async function startServer(cfg: Config) {
     return { q, terminals: shown.hits, more: shown.more };
   };
 
+  /** `/whiteboard/c/<cap>/<path>`: whichever floor's store the capability belongs to answers, or nobody does. */
+  const serveCard = (req: http.IncomingMessage, res: http.ServerResponse, rest: string) => {
+    const slash = rest.indexOf('/');
+    const cap = slash < 0 ? rest : rest.slice(0, slash);
+    let rel: string;
+    try {
+      rel =
+        slash < 0
+          ? ''
+          : rest
+              .slice(slash + 1)
+              .split('/')
+              .map(decodeURIComponent)
+              .join('/');
+    } catch {
+      rel = '\0';
+    }
+    const opts = { method: req.method, ifNoneMatch: req.headers['if-none-match'] };
+    let out: CardResponse | undefined;
+    if (/^[ks][A-Za-z0-9_-]{20,80}$/.test(cap)) for (const f of floors.values()) if ((out = f.whiteboard.serve(cap, rel, opts))) break;
+    out ??= cardResponse(undefined, rel, () => undefined, opts);
+    res.writeHead(out.status, out.headers);
+    res.end(out.body);
+  };
+  /** The window's Whiteboard routes besides the WebSocket: renders, a card's files by hash, uploads. */
+  const whiteboardRequest = async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, floor: Floor | undefined, own: boolean) => {
+    if (!floor) return send(res, 404, { error: 'No such floor' });
+    const store = floor.whiteboard;
+    const cardId = str(url.searchParams.get('card'), 64);
+    const card = store.board.cards.find((x) => x.id === cardId);
+    if (p === '/api/whiteboard/render/status' && req.method === 'GET') return send(res, 200, renderStatus(store.renderer, card, cardId));
+    if (p === '/api/whiteboard/render' && req.method === 'GET') {
+      const status = store.renderer.status();
+      if (!status.available) return send(res, 503, status);
+      const image = store.renderer.latest(cardId).image;
+      if (!image) return send(res, 404, { error: 'This card has no image yet', status: renderStatus(store.renderer, card, cardId) });
+      const thumb = url.searchParams.get('size') === 'thumb';
+      const tile = Math.max(0, Math.floor(Number(url.searchParams.get('tile')) || 0));
+      const body = thumb ? (image.thumb ?? image.tiles[0]) : image.tiles[tile];
+      if (!body) return send(res, 404, { error: `This image has ${image.tiles.length} tiles` });
+      const current = !!card && renderStatus(store.renderer, card, cardId).image?.current;
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-length': String(body.length),
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'x-whiteboard-rev': String(image.rev),
+        'x-whiteboard-rendered-at': String(image.at),
+        'x-whiteboard-age-ms': String(Math.max(0, Date.now() - image.at)),
+        'x-whiteboard-current': current ? '1' : '0',
+        'x-whiteboard-tiles': String(image.tiles.length),
+      });
+      return res.end(body);
+    }
+    if (p === '/api/whiteboard/file' && req.method === 'GET') {
+      const got = store.cardFile(cardId, str(url.searchParams.get('hash'), 64));
+      if (!got) return send(res, 404, { error: 'This card holds no such file' });
+      res.writeHead(200, {
+        'content-type': got.ref.mime,
+        'content-length': String(got.body.length),
+        // Content-addressed: the bytes for a hash never change.
+        'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        'cross-origin-resource-policy': 'same-origin',
+      });
+      return res.end(got.body);
+    }
+    if (p === '/api/whiteboard/blob') {
+      if (req.method !== 'POST') return send(res, 405, { error: 'POST the file' }, { allow: 'POST' });
+      if (!own) return send(res, 403, { error: 'Forbidden' });
+      const mime = str(url.searchParams.get('mime') || req.headers['content-type'], 128) || 'application/octet-stream';
+      const tooBig = `That file is too big for the Whiteboard (${MAX_ASSET_BYTES / 1024 / 1024} MB a file at most)`;
+      if (Number(req.headers['content-length']) > MAX_ASSET_BYTES) return send(res, 413, { error: tooBig });
+      let body: Buffer;
+      try {
+        body = await readBytes(req, MAX_ASSET_BYTES);
+      } catch (err) {
+        return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
+      }
+      return send(res, 200, store.stage(body, mime));
+    }
+    return send(res, 404, { error: 'Not found' });
+  };
+
   const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     try {
       let url: URL;
@@ -711,6 +830,9 @@ export async function startServer(cfg: Config) {
         res.writeHead(404).end();
         return;
       }
+      // A Whiteboard card's files (see whiteboard.ts): the capability in the path is the only credential,
+      // so the sandboxed frame and its relative assets load without the LAN token.
+      if (url.pathname.startsWith(CARD_ROUTE)) return serveCard(req, res, url.pathname.slice(CARD_ROUTE.length));
       // A phone pairing: it scanned this start's QR code, so it has the LAN token (or it's on this
       // machine). A device token doesn't pair another device. A web page's cross-origin POST is refused.
       if (p === '/api/mobile/pair' && req.method === 'POST') {
@@ -906,6 +1028,7 @@ export async function startServer(cfg: Config) {
         }
         return send(res, 404, { error: 'Not found' });
       }
+      if (p.startsWith('/api/whiteboard/')) return whiteboardRequest(req, res, p, url, floor, ownRequest());
       if (p === '/api/search' && req.method === 'GET') return send(res, 200, search(url.searchParams.get('q') ?? '', floor));
       if (p.startsWith('/api/gh/') && req.method === 'GET') {
         // What the issue and PR windows show beyond the board cards (see github.ts and gitlab.ts).
@@ -994,6 +1117,7 @@ export async function startServer(cfg: Config) {
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
       ...(device ? { device, phoneSizes: new PhoneSizes() } : {}),
+      boards: new Map(),
     };
     clients.set(id, client);
     ws.on('pong', () => (client.isAlive = true));
@@ -1012,11 +1136,13 @@ export async function startServer(cfg: Config) {
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
       subagents: subagents.state(),
+      whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
       ...(onRoof ? roofView(client) : floorView(floor, client)),
     });
     screensOf(client, floor);
+    if (floor) sendBoard(client, floor);
     floorsChanged();
     if (floor) {
       floor.arrived();
@@ -1051,6 +1177,60 @@ export async function startServer(cfg: Config) {
     ws.on('error', () => ws.terminate());
   };
 
+  /**
+   * A floor's whole Whiteboard for `c`, with the epoch this connection numbers its batches for that
+   * floor in (the same one each time, so a resync's resends are still recognised), every card's
+   * capability, and whether cards can be rendered.
+   */
+  const sendBoard = (c: Client, floor: Floor) => {
+    const store = floor.whiteboard;
+    let epoch = c.boards.get(floor.id);
+    if (!epoch) {
+      epoch = store.issueEpoch();
+      c.boards.set(floor.id, epoch);
+    }
+    sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'snapshot', board: store.board, epoch }, caps: store.allCaps(), renderer: store.renderer.status() });
+  };
+  /** The owner's batch from the window, answered to `c` once it's committed (or why it wasn't). */
+  const applyBoard = (c: Client, floorId: string, raw: unknown) => {
+    const floor = floors.get(floorId);
+    if (!floor) return warn(c, 'That floor is no longer in the building');
+    const env = parseEnvelope(raw);
+    if (typeof env === 'string') return warn(c, `The Whiteboard change was malformed: ${env}`);
+    let out: ReturnType<typeof floor.whiteboard.apply>;
+    try {
+      out = floor.whiteboard.apply(env, OWNER_AUTHOR, 'window');
+    } catch (err) {
+      // Not committed: the window keeps it pending and sends it again after its next resync.
+      console.error(`droid-office: the ${floor.def.name} Whiteboard couldn't be saved: ${(err as Error).message}`);
+      return warn(c, `The Whiteboard couldn't be saved: ${(err as Error).message}`);
+    }
+    const head = { epoch: env.epoch, seq: env.seq };
+    if (out.kind === 'ack') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'ack', ...head, rev: out.rev } });
+    else if (out.reason === 'expired') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'expired' } });
+    else sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'invalid', error: out.error } });
+  };
+  /** Ping a worker: the Whiteboard line typed into its terminal, as its status allows (see whiteboard-ping.ts). */
+  const pingWorker = (c: Client, id: string) => {
+    const pinged = (ok: boolean, rest: { how?: 'type' | 'resume' | 'queue'; error?: string }) => sendTo(c, { t: 'whiteboard.pinged', worker: id, ok, ...rest });
+    let floor: Floor | undefined;
+    let info: ReturnType<Floor['everyone']>[number] | undefined;
+    for (const f of floors.values()) {
+      info = f.everyone().find((w) => w.id === id);
+      if (info) {
+        floor = f;
+        break;
+      }
+    }
+    if (!floor || !info) return pinged(false, { error: 'That worker is no longer in the office' });
+    const can = pingEligibility(info);
+    if (!can.ok) return pinged(false, { error: can.reason });
+    const text = officePrompt(prompts, 'whiteboard.ping', { floor: floor.def.name });
+    const err = can.how === 'resume' ? floor.workers.resume(id, text) : floor.workers.prompt(id, text, [], can.how === 'queue');
+    if (err) return pinged(false, { error: `${info.name}: ${err}` });
+    pinged(true, { how: can.how });
+  };
+
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
 
@@ -1065,6 +1245,7 @@ export async function startServer(cfg: Config) {
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor, c) });
     screensOf(c, floor);
+    sendBoard(c, floor);
     floor.arrived();
     floor.workers.wakeAll();
     floorsChanged();
@@ -1219,6 +1400,7 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'floor.added', dir, floor: floor.id });
         // Its Droid workers find out how to hire subagents from the skill: put it back if it went missing.
         if (subagents.syncSkill()) broadcast({ t: 'subagents', state: subagents.state() });
+        if (whiteboardSkill.syncSkill()) broadcast({ t: 'whiteboardSkill', state: whiteboardSkill.state() });
         break;
       }
       case 'floor.remove': {
@@ -1602,6 +1784,26 @@ export async function startServer(cfg: Config) {
         else toastAll(`🧭 ${who} changed the Subagents settings`);
         break;
       }
+      case 'whiteboardSkill.set': {
+        if (typeof msg.on !== 'boolean') return;
+        whiteboardSkill.set(msg.on, who);
+        const state = whiteboardSkill.state();
+        if (state.skillError) warn(c, state.skillError);
+        else toastAll(msg.on ? `🧑‍🎨 ${who} turned the Whiteboard skill on` : `🧑‍🎨 ${who} turned the Whiteboard skill off`);
+        break;
+      }
+      case 'whiteboard.apply':
+        applyBoard(c, str(msg.floor, 64), msg.envelope);
+        break;
+      case 'whiteboard.sync': {
+        const floor = floors.get(str(msg.floor, 64));
+        if (floor) sendBoard(c, floor);
+        else warn(c, 'That floor is no longer in the building');
+        break;
+      }
+      case 'whiteboard.ping':
+        pingWorker(c, str(msg.worker, 32));
+        break;
       case 'prompts.set': {
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
         const was = !!prompts.state().custom[msg.id];

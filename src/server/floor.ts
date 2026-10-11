@@ -28,6 +28,8 @@ import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
+import { WhiteboardStore, type WhiteboardRenderer } from './whiteboard.js';
+import { boardReaders } from './whiteboard-agent.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
@@ -68,6 +70,8 @@ export interface FloorContext {
   pullsChanged(floor: Floor): void;
   /** Whether a worker on another floor works in this floor's project too. */
   lent(floor: Floor): boolean;
+  /** What renders Whiteboard cards to images, shared by every floor; none is the office without one. */
+  renderer?: WhiteboardRenderer;
 }
 
 /** The open pull request on a floor's board whose head is `branch`. */
@@ -129,6 +133,8 @@ export class Floor {
   readonly guests: Guests;
   /** Workers whose Droid session runs on a Factory computer, not on this machine (see cloud-workers.ts). */
   readonly cloud: CloudWorkers;
+  /** The floor's Whiteboard, in its checkout's .droid-office/whiteboard (see whiteboard.ts). */
+  readonly whiteboard: WhiteboardStore;
   /** Settles once the workers whose terminals outlived the last office are picked back up, and the rest woken. */
   readonly ready: Promise<void>;
   private timer: NodeJS.Timeout;
@@ -193,6 +199,8 @@ export class Floor {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId });
           this.team?.onWorkerGone(workerId);
+          // A dismissed worker's read points would hold the board's tombstones for good.
+          this.whiteboard?.forgetReader(workerId);
           ctx.workerChanged(this, workerId);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
@@ -328,7 +336,15 @@ export class Floor {
 
     this.decor = new Decor(dataDir);
     this.jukebox = new Jukebox(dataDir);
+    this.whiteboard = new WhiteboardStore(def.dir, {
+      readers: () => boardReaders(this.workers.list()),
+      renderer: ctx.renderer,
+      onPatch: (patch, { origin, caps }) => ctx.emit(this, { t: 'whiteboard', floor: this.id, update: { kind: 'patch', patch }, ...(origin ? { origin } : {}), ...(Object.keys(caps).length ? { caps } : {}) }),
+    });
     this.ready = this.workers.start();
+    // Pruning counts the workers' read points, so it waits for the workers to be back.
+    const startBoard = () => this.whiteboard.start();
+    void this.ready.then(startBoard, startBoard);
 
     void this.board.refresh();
     void this.jira.refresh();
@@ -471,6 +487,7 @@ export class Floor {
     this.team.stop();
     this.guests.stop();
     this.changes.stop();
+    this.whiteboard.stop();
     this.workers.shutdown(keep);
   }
 }

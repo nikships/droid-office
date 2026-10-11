@@ -9,7 +9,7 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'whiteboard' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -20,6 +20,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   worktrees: 'Worktree setup',
   stations: 'Board agents',
   subagents: '🧭 Team lead & subagents',
+  whiteboard: '🧑‍🎨 Whiteboard',
   office: 'Worker signs',
 };
 
@@ -369,6 +370,15 @@ const DEFS = {
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
     text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',
+  },
+
+  // --- Whiteboard ---
+  'whiteboard.ping': {
+    group: 'whiteboard',
+    label: 'Ping a worker',
+    used: "Typed into a worker's terminal by the Whiteboard window's Ping a worker button: queued behind its turn when it's working, and waking it when it's asleep.",
+    vars: { floor: "The floor's name" },
+    text: 'The owner updated the Whiteboard. Run `office-whiteboard read` and look at what changed.',
   },
 
   // --- Across repositories ---

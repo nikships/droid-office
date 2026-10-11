@@ -695,6 +695,25 @@ export function openSettings(
     (skill) => subSet({ skill }),
   );
   const subSkillNote = desc();
+  // The Whiteboard's skill, for the whole office.
+  const boardSkill = toggle(
+    'Whiteboard skill installed',
+    () => store.whiteboardSkill.on,
+    (on) => net.send({ t: 'whiteboardSkill.set', on }),
+  );
+  const boardSkillNote = desc();
+  const paintBoardSkill = () => {
+    const s = store.whiteboardSkill;
+    boardSkill.paint();
+    boardSkillNote.textContent =
+      (s.skillError
+        ? s.skillError
+        : s.on
+          ? `Droid workers learn to push cards to the floor's Whiteboard and read your marks from the droid-office-whiteboard skill${s.skillPath ? ` at ${s.skillPath}` : ''}. It only applies in office sessions.`
+          : 'The droid-office-whiteboard skill is not in ~/.factory/skills. Every agent still has office-whiteboard on its PATH: point it there and it reads office-whiteboard help.') +
+      (s.by && s.at ? ` Set by ${s.by} ${timeAgo(s.at)}.` : '');
+  };
+  paintBoardSkill();
 
   const paintSubagents = () => {
     const s = store.subagents;
@@ -823,7 +842,7 @@ export function openSettings(
         card('Where subagents work', { desc: subTreeNote, control: subTree.row }),
         card('Waking the lead', { desc: subWakeNote, control: subWake.row }),
       ),
-      group('Droid', card('Droid skill', { desc: subSkillNote, control: subSkill.el })),
+      group('Droid', card('Droid skill', { desc: subSkillNote, control: subSkill.el }), card('Whiteboard skill', { desc: boardSkillNote, control: boardSkill.el })),
     ],
     phone: [group(null, card('Droid Office for Android', { desc: h('span.stack.tight', {}, phoneNote, phoneStatus), control: phoneOpen }))],
   };
@@ -884,7 +903,7 @@ export function openSettings(
   const offLimit = [store.on('machine', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir)];
   const offJira = [store.on('jira', paintJira), offSetup];
-  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts), store.on('prompts', paintSubagents), store.on('subagents', paintSubagents)];
+  const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts), store.on('prompts', paintSubagents), store.on('subagents', paintSubagents), store.on('whiteboardSkill', paintBoardSkill)];
   const modal = openModal(el, {
     doing: '⚙️ in settings',
     onClose: () => {
