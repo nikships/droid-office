@@ -195,7 +195,7 @@ interface Worker {
   /** Bumped by /clear: a new conversation, so a new task. */
   taskEpoch: number;
   /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
-  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number };
+  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; launchPrompt?: { text: string; at: number } };
   /** Its process went away mid-turn with the office or the terminal host: its next start carries on (CARRY_ON_PROMPT). */
   interrupted?: boolean;
   /** Output since its scrollback was last saved to disk. */
@@ -1309,7 +1309,10 @@ export class WorkerManager {
   private sendLaunchPrompt(w: Worker) {
     const pending = w.launchPrompt;
     w.launchPrompt = undefined;
-    if (pending && w.pty) this.typeIn(w, pending.text);
+    if (!pending) return;
+    if (w.pty) this.typeIn(w, pending.text);
+    // Saved at once, so an office restarting now doesn't type it in a second time.
+    this.persist();
   }
 
   /**
@@ -1511,7 +1514,10 @@ export class WorkerManager {
           .filter(Boolean)
           .join('\n\n');
         // The agent can't see what ran before it, and Droid clears the terminal when it starts: it's told with its first message.
-        if (w.launchPrompt) w.launchPrompt.text = `${setupFailedNote(what, output)}\n\n${w.launchPrompt.text}`;
+        if (w.launchPrompt) {
+          w.launchPrompt.text = `${setupFailedNote(what, output)}\n\n${w.launchPrompt.text}`;
+          this.persist();
+        }
         this.events.toast(`🌿 ${info.name}'s worktree setup failed: ${what}.${w.launchPrompt ? ` ${info.name}'s first message says so, with the error.` : ''}`, 'warn', info.id);
       }
     } else return false;
@@ -1828,6 +1834,8 @@ export class WorkerManager {
     const { info } = w;
     // It kept working through the restart: nothing to carry on.
     w.interrupted = false;
+    // Its droid hadn't taken its first message yet: SessionStart (or the screen fallback) still types it in.
+    w.launchPrompt = saved.launchPrompt;
     info.cols = adopted.cols;
     info.rows = adopted.rows;
     const term = this.newTerm(w);
@@ -2101,7 +2109,7 @@ process.stdin.on('end', () => {
   }
 
   private persist() {
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership }) => ({
+    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt }) => ({
       id: info.id,
       kind: info.kind,
       model: info.model,
@@ -2124,7 +2132,8 @@ process.stdin.on('end', () => {
       lead: info.lead,
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
-      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince } : undefined,
+      // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
+      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt } : undefined,
       // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
       midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked })),
     }));
@@ -2182,7 +2191,14 @@ process.stdin.on('end', () => {
         w.screenDirty = false;
         if (typeof s.pty?.id === 'string') {
           const status: WorkerStatus = RUNNING.has(s.pty.status) ? s.pty.status : 'idle';
-          w.saved = { ptyId: s.pty.id, status, acked: s.pty.acked !== false, waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined };
+          const launch = s.pty.launchPrompt;
+          w.saved = {
+            ptyId: s.pty.id,
+            status,
+            acked: s.pty.acked !== false,
+            waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined,
+            launchPrompt: typeof launch?.text === 'string' && launch.text && typeof launch.at === 'number' ? { text: launch.text, at: launch.at } : undefined,
+          };
         }
         // Mid-turn as the office went down: cut off, unless its terminal is picked back up still
         // running (adopt). An office from before midTurn only said so for a terminal in the host.

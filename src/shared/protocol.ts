@@ -227,7 +227,7 @@ export interface WorktreeState {
   dirty: number;
   /** Commits on its branch since it was made. */
   ahead: number;
-  /** Commits only its branch has: on no remote, and not in the office's own checkout. */
+  /** Commits only its branch (or its worktree's detached HEAD) has: on no remote, and not in the office's own checkout. */
   unpushed: number;
   /** Set when git couldn't tell, e.g. the branch is gone. */
   error?: string;

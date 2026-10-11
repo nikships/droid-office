@@ -22,18 +22,21 @@ const LIVE_ROWS = 8;
 const ASKING = /inspect approval details|ESC stop agent/i;
 /** The spinner line of a turn: "Thinking...", "Streaming...", "Executing...". */
 const BUSY = /Press ESC to stop/i;
-/** The footer under the input box, shown only when no dialog covers it. */
+/** The footer under the input box, shown only when no dialog covers it (a dialog's key hints are its last row instead). */
 const AT_REST = /\? for help/;
 
 /** What the bottom of the screen shows; undefined for anything else (a menu, a login, another program). */
 export function readDroidScreen(rows: readonly string[]): DroidScreen | undefined {
-  const live = rows
-    .filter((r) => r.trim())
-    .slice(-LIVE_ROWS)
-    .join('\n');
-  if (ASKING.test(live)) return 'asking';
-  if (BUSY.test(live)) return 'busy';
-  if (AT_REST.test(live)) return 'idle';
+  const live = rows.filter((r) => r.trim()).slice(-LIVE_ROWS);
+  const last = (re: RegExp) => {
+    for (let i = live.length - 1; i >= 0; i--) if (re.test(live[i])) return i;
+    return -1;
+  };
+  const footer = last(AT_REST);
+  // A dialog's key hints take the footer's place; above the footer they're a reply or the input box quoting them.
+  if (last(ASKING) > footer) return 'asking';
+  if (last(BUSY) >= 0) return 'busy';
+  if (footer >= 0) return 'idle';
   return undefined;
 }
 

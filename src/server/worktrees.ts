@@ -494,9 +494,13 @@ export class Worktrees {
         ));
       // The office's own branch, when the worker has moved to another, holds its work too.
       const made = wt.made && wt.made !== wt.branch && (await this.hasBranch(wt.made)) ? [wt.made] : [];
+      // The worktree's own HEAD, which a detached checkout (`git checkout --detach`, a rebase) moves
+      // past every branch: those commits go with the folder.
+      const head = exists ? await this.git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], abs).catch(() => '') : '';
+      const tips = [wt.branch, ...made, ...(head ? [head] : [])];
       // On no remote and not in the project's own checkout either: what deleting the branch would lose.
-      state.unpushed = Number(await this.git(['rev-list', '--count', wt.branch, ...made, '--not', 'HEAD', '--remotes', ...(known ? [landed] : [])]));
-      state.ahead = Number(await this.git(['rev-list', '--count', wt.branch, ...made, '--not', wt.base ?? 'HEAD']).catch(() => state.unpushed));
+      state.unpushed = Number(await this.git(['rev-list', '--count', ...tips, '--not', 'HEAD', '--remotes', ...(known ? [landed] : [])]));
+      state.ahead = Number(await this.git(['rev-list', '--count', ...tips, '--not', wt.base ?? 'HEAD']).catch(() => state.unpushed));
     } catch (err) {
       state.error = gitError(err);
     }
