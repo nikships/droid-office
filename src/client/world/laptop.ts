@@ -223,6 +223,8 @@ function pinwheelDecal(): THREE.Mesh {
 
 export class Laptop {
   readonly root = new THREE.Group();
+  /** The current terminal display, including after the MacBook GLB replaces the stand-in. */
+  screen: THREE.Mesh;
   private canvas = document.createElement('canvas');
   private ctx: CanvasRenderingContext2D;
   private texture: THREE.CanvasTexture;
@@ -266,6 +268,7 @@ export class Laptop {
     lidShell.rotation.x = Math.PI / 2;
     this.lidModel.add(lidShell);
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), this.screenMat);
+    this.screen = screen;
     screen.position.set(0, 0.25, 0.014);
     this.lidModel.add(screen);
     this.lidModel.add(pinwheelDecal());
@@ -338,6 +341,7 @@ export class Laptop {
     const display = this.lidModel.getObjectByName('Display') as THREE.Mesh | undefined;
     if (!display?.isMesh) return;
     display.material = this.screenMat;
+    this.screen = display;
     // The GLB's plane (0.72 x 0.46, centred at y 0.253, z 0.013) sits recessed in a bezel frame.
     // Stretch it to nearly the lid's full 0.78 x 0.5 and float it just in front of the frame.
     const sx = SCREEN_W / 0.72;
