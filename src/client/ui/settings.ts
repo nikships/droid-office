@@ -806,13 +806,15 @@ export function openSettings(
     }
     taa.paint();
     stats.paint();
+    const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
     scaleNote.textContent =
       g.scale >= 1
         ? 'The office draws every pixel of your screen. Lower it to draw fewer and upscale them: the GPU does less work for each frame.'
-        : `The office draws ${Math.round(g.scale * g.scale * 100)}% of your screen’s pixels and upscales them${g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses'}.`;
-    sharpen.row.classList.toggle('muted', g.scale >= 1 && !g.taa);
-    sharpenNote.textContent =
-      g.scale >= 1 && !g.taa ? 'Only applies to an upscaled or TAA image. At 100% without TAA the office draws straight to the screen.' : 'Contrast-adaptive sharpening on the final image, to win back what upscaling and TAA soften.';
+        : `The office draws ${Math.round(g.scale * g.scale * 100)}% of your screen’s pixels and upscales them${upscaling}.`;
+    const native = g.scale >= 1 && !g.taa;
+    sharpen.row.classList.toggle('muted', native);
+    sharpen.slider.toggleAttribute('disabled', native);
+    sharpenNote.textContent = native ? 'Only applies to an upscaled or TAA image. At 100% without TAA the office draws straight to the screen.' : 'Contrast-adaptive sharpening on the final image, to win back what upscaling and TAA soften.';
   };
   paintGraphics();
 

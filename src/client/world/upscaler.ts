@@ -222,10 +222,15 @@ export class Upscaler {
       camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
     }
     this.renderer.setRenderTarget(target);
-    drawScene();
-    if (taa) {
-      camera.projectionMatrix.copy(this.savedProjection);
-      camera.projectionMatrixInverse.copy(this.savedProjectionInverse);
+    try {
+      drawScene();
+    } finally {
+      // A throw mid-draw must not leave the camera jittered or the canvas unbound for everything after it.
+      if (taa) {
+        camera.projectionMatrix.copy(this.savedProjection);
+        camera.projectionMatrixInverse.copy(this.savedProjectionInverse);
+      }
+      this.renderer.setRenderTarget(null);
     }
 
     let shown = target.texture;
@@ -267,8 +272,8 @@ export class Upscaler {
   }
 
   private ensureTargets(render: { width: number; height: number }, output: { width: number; height: number }): THREE.WebGLRenderTarget {
-    const stale = this.target && (this.target.width !== render.width || this.target.height !== render.height);
-    const historyStale = this.history && (this.history[0].width !== output.width || this.history[0].height !== output.height);
+    const stale = !!this.target && (this.target.width !== render.width || this.target.height !== render.height);
+    const historyStale = !!this.history && (this.history[0].width !== output.width || this.history[0].height !== output.height);
     if (stale || historyStale) this.disposeTargets();
     if (!this.target) {
       const taa = this.settings.taa;

@@ -3290,8 +3290,9 @@ let systemGpuPoll = 0;
 async function pollSystemGpu() {
   try {
     const res = await fetch(withToken('/api/gpu'), { credentials: 'same-origin', cache: 'no-store' });
-    const body = (await res.json()) as { stats: { device: number } | null };
-    systemGpu = body.stats ? body.stats.device : null;
+    const body = res.ok ? ((await res.json()) as { stats?: { device?: unknown } | null }) : null;
+    const device = body?.stats?.device;
+    systemGpu = typeof device === 'number' && Number.isFinite(device) ? device : null;
   } catch {
     systemGpu = null;
   }
@@ -3409,6 +3410,7 @@ function drawFrame(dt: number, t: number) {
       fpsEl.textContent = statsText({
         fps,
         frameMs: windowMs / fpsFrames,
+        // Frames skipped while queries were in flight count at the timed frames' average.
         gpu: gpuMs === null ? null : { ms: gpuMs, busy: gpuBusy(gpuMs * fpsFrames, windowMs) },
         gpuNote: gpuTimer.supported ? 'timing…' : 'timing unavailable in this browser',
         system: systemGpu,

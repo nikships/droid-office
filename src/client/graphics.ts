@@ -88,7 +88,8 @@ export function statsText(s: {
   if (s.gpu) lines.push(`GPU ${s.gpu.ms.toFixed(2)} ms/frame · ${Math.round(s.gpu.busy * 100)}% busy`);
   else if (s.gpuNote) lines.push(`GPU ${s.gpuNote}`);
   if (s.system !== null) lines.push(`Mac GPU ${Math.round(s.system)}%`);
-  const mode = s.taa ? (s.scale < 1 ? 'TAAU' : 'TAA') : s.scale < 1 ? 'bilinear' : 'MSAA';
+  const upscaled = s.scale < 1;
+  const mode = s.taa ? `TAA${upscaled ? 'U' : ''}` : upscaled ? 'bilinear' : 'MSAA';
   lines.push(`${Math.round(s.scale * 100)}% ${s.render.width}×${s.render.height}${s.scale < 1 ? ` → ${s.output.width}×${s.output.height}` : ''} · ${mode}`);
   return lines.join('\n');
 }
