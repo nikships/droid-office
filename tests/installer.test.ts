@@ -57,7 +57,8 @@ function fixture(t: TestContext) {
 function tools(root: string) {
   const dir = path.join(root, 'tools');
   mkdirSync(dir);
-  for (const tool of ['node', 'npm', 'bash', 'uname', 'curl', 'tar', 'git', 'mkdir', 'mktemp', 'cp', 'touch', 'mv', 'rm', 'sed', 'cat', 'grep', 'chmod', 'ps', 'lsof']) {
+  // GNU tar invokes gzip through PATH; macOS tar decompresses internally.
+  for (const tool of ['node', 'npm', 'bash', 'uname', 'curl', 'tar', 'gzip', 'git', 'mkdir', 'mktemp', 'cp', 'touch', 'mv', 'rm', 'sed', 'cat', 'grep', 'chmod', 'ps', 'lsof']) {
     const result = spawnSync('sh', ['-c', 'command -v "$1"', 'sh', tool], { encoding: 'utf8' });
     if (result.status === 0) symlinkSync(result.stdout.trim(), path.join(dir, tool));
   }
@@ -94,6 +95,7 @@ test('cleanup works without pgrep and defers when process inspection fails', { s
   const previous = f.oldRelease();
   const toolDir = tools(f.root);
   assert.ok(!existsSync(path.join(toolDir, 'pgrep')));
+  assert.ok(existsSync(path.join(toolDir, 'gzip')), 'GNU tar needs gzip on the restricted PATH');
   const ps = path.join(toolDir, 'ps');
   const realPs = execFileSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).trim();
   rmSync(ps);
