@@ -130,29 +130,6 @@ export class FactoryApi {
     throw new FactoryError(said ? `${said} (${status})` : `Factory answered ${status}.`, status, t, d);
   }
 
-  /**
-   * This API for one poll or route: once `stale()` says the connection it began on has changed, no
-   * call made through it settles, one already on its way included. A feature that swallows a failed
-   * read and carries on with what it read before then would publish the old connection's data, so
-   * nothing comes back at all; the registry stops waiting for it.
-   */
-  scoped(stale: () => boolean): FactoryApi {
-    const view = Object.create(this) as FactoryApi;
-    const never = new Promise<never>(() => {});
-    view.request = async <T>(method: Method, path: string, opts?: RequestOptions): Promise<T> => {
-      if (stale()) return never;
-      let answer: T;
-      try {
-        answer = await this.request<T>(method, path, opts);
-      } catch (err) {
-        if (stale()) return never;
-        throw err;
-      }
-      return stale() ? never : answer;
-    };
-    return view;
-  }
-
   get<T>(path: string, query?: Query, opts: Omit<RequestOptions, 'query' | 'body'> = {}): Promise<T> {
     return this.request<T>('GET', path, { ...opts, query });
   }

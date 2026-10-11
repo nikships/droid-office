@@ -309,98 +309,75 @@ test('after a restart, a session shows the credits the ledger kept until its own
   assert.equal(after.state().office.cw.credits, 8400);
 });
 
-test('another account’s key while a poll or a route is on its way: nothing the old key read reaches the new account or its ledger', async (t) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'factory-key-switch-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ledger = path.join(dir, 'factory-credits.json');
-  const old = { sessionId: 'old-1', title: 'Old account private task', status: 'idle', createdAt: T0 - 5000, updatedAt: T0 - 1000, messageCount: 2 };
-  const fresh = { sessionId: 'new-1', title: 'New account task', status: 'idle', createdAt: T0 - 5000, updatedAt: T0 - 1000, messageCount: 2 };
-  /** Answers the old key holds back until the test lets them go. */
-  const held = new Map<string, (r: Response) => void>();
-  const all: ((r: Response) => void)[] = [];
-  const hold = (key: string) =>
-    new Promise<Response>((resolve) => {
-      held.set(key, resolve);
-      all.push(resolve);
-    });
-  // Each one's timeout would keep the test running for a minute.
-  t.after(() => {
-    for (const r of all) r(json(200, {}));
+for (const when of ['list', 'detail', 'recheck'] as const) {
+  test(`an in-flight ${when} read finishes before the next poll; only key replacement clears its ledger`, async (t) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'factory-key-switch-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const ledger = path.join(dir, 'factory-credits.json');
+    const old = { sessionId: 'old-1', title: 'Old task', status: 'idle', createdAt: T0 - 5000, updatedAt: T0 - 1000 };
+    const fresh = { ...old, sessionId: 'new-1', title: 'New task' };
+    let release!: (r: Response) => void;
+    let started!: () => void;
+    const reading = new Promise<void>((r) => (started = r));
+    const held = new Promise<Response>((r) => (release = r));
+    t.after(() => release(json(200, {})));
+    const oldApi = new FactoryApi('fk-test-old-1111', (async (input) => {
+      const p = new URL(String(input)).pathname;
+      if (p === (when === 'list' ? '/api/v0/sessions' : '/api/v0/sessions/old-1')) {
+        started();
+        return held;
+      }
+      if (p === '/api/v0/sessions') return json(200, { sessions: [old] });
+      if (p === '/api/v0/sessions/old-1') return json(200, { ...old, factoryCredits: 123 });
+      return json(404, {});
+    }) as typeof fetch);
+    let newPolls = 0;
+    const newApi = new FactoryApi(when === 'recheck' ? 'fk-test-old-1111' : 'fk-test-new-2222', (async (input) => {
+      const p = new URL(String(input)).pathname;
+      if (p === '/api/v0/sessions') {
+        newPolls++;
+        return json(200, { sessions: [fresh] });
+      }
+      if (p === '/api/v0/sessions/new-1') return json(200, { ...fresh, factoryCredits: 7 });
+      return json(404, {});
+    }) as typeof fetch);
+    let current: FactoryApi | undefined = oldApi;
+    const link: FactoryLink = { connection: () => ({ connected: true, capabilities: [] }), client: () => current, rejected: () => {} };
+    const reg = new FactoryRegistry({ link, broadcast: () => {}, toast: () => {}, now: () => T0 });
+    t.after(() => reg.stop());
+    const sessions = reg.register((h) => new SessionsFeature(h, { dataDir: dir, now: () => T0 })) as SessionsFeature;
+    sessions.ledger.observe('kept', 11, T0, 'Earlier task');
+    sessions.ledger.save();
+    const polling = reg.tick();
+    await reading;
+    if (when === 'recheck') {
+      current = undefined;
+      reg.connectionChanged();
+      current = newApi;
+      reg.connectionChanged();
+    } else {
+      current = newApi;
+      reg.keyReplaced();
+      assert.deepEqual(sessions.state().items, []);
+    }
+    await reg.tick();
+    assert.equal(newPolls, 0, 'the old poll still holds its running slot');
+    release(json(200, when === 'list' ? { sessions: [old] } : { ...old, factoryCredits: 123 }));
+    await polling;
+    const savedBeforeNextPoll = existsSync(ledger);
+    await reg.tick();
+    assert.equal(newPolls, 1);
+    assert.deepEqual(
+      sessions.state().items.map((s) => s.id),
+      ['new-1'],
+    );
+    const expected = when === 'recheck' ? ['kept', 'old-1', 'new-1'] : ['new-1'];
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(ledger, 'utf8')).seen), expected, 'the new list must not hide lasting old-account ledger entries');
+    assert.equal(savedBeforeNextPoll, when === 'recheck', 'replacement clears the old poll’s saved ledger before polling again');
+    assert.equal(sessions.state().credits.today, when === 'recheck' ? 141 : 7);
+    assert.equal(new CreditLedger(ledger, () => T0).summary().today, when === 'recheck' ? 141 : 7, 'the saved totals survive a restart');
   });
-  const oldApi = new FactoryApi('fk-test-old-1111', (async (input) => {
-    const p = new URL(String(input)).pathname;
-    if (p === '/api/v0/sessions') return hold('list');
-    if (p === '/api/v0/sessions/old-1') return hold('detail');
-    return json(404, {});
-  }) as typeof fetch);
-  const newApi = new FactoryApi('fk-test-new-2222', (async (input) => {
-    const p = new URL(String(input)).pathname;
-    if (p === '/api/v0/sessions') return json(200, { sessions: [fresh], pagination: { hasMore: false } });
-    if (p === '/api/v0/sessions/new-1') return json(200, { ...fresh, factoryCredits: 7 });
-    return json(404, {});
-  }) as typeof fetch);
-  let current = oldApi;
-  let account = 'old';
-  const link: FactoryLink = { connection: () => ({ connected: true, capabilities: [], account: { id: account, name: account } }), client: () => current, rejected: () => {} };
-  const reg = new FactoryRegistry({ link, broadcast: () => {}, toast: () => {}, now: () => T0 });
-  t.after(() => reg.stop());
-  const sessions = reg.register((h) => new SessionsFeature(h, { dataDir: dir, now: () => T0 })) as SessionsFeature;
-  const replace = () => {
-    current = current === oldApi ? newApi : oldApi;
-    account = account === 'old' ? 'new' : 'old';
-    reg.keyReplaced();
-  };
-  const ids = () => sessions.state().items.map((s) => s.id);
-  const tick = () => new Promise((r) => setTimeout(r, 5));
-
-  const seen = () => (existsSync(ledger) ? Object.keys(JSON.parse(readFileSync(ledger, 'utf8')).seen) : []);
-
-  // The list is on its way when the key changes: the new account's poll starts at once.
-  reg.connectionChanged();
-  const first = reg.tick();
-  await tick();
-  assert.ok(held.has('list'));
-  replace();
-  await first;
-  await tick();
-  assert.deepEqual(ids(), ['new-1']);
-  held.get('list')!(json(200, { sessions: [old], pagination: { hasMore: false } }));
-  await tick();
-  assert.deepEqual(ids(), ['new-1'], 'the old account’s list never shows');
-  assert.deepEqual(seen(), ['new-1']);
-
-  // The list landed and a session's credits are on their way when the key changes.
-  held.clear();
-  replace();
-  await tick();
-  held.get('list')!(json(200, { sessions: [old], pagination: { hasMore: false } }));
-  await tick();
-  assert.deepEqual(ids(), ['old-1'], 'the old account’s own poll shows its list');
-  assert.ok(held.has('detail'));
-  replace();
-  await tick();
-  assert.deepEqual(ids(), ['new-1']);
-  held.get('detail')!(json(200, { ...old, factoryCredits: 123 }));
-  await tick();
-  assert.deepEqual(ids(), ['new-1'], 'its late credits don’t bring it back');
-  assert.equal(sessions.state().credits.today, 7);
-  assert.deepEqual(seen(), ['new-1'], 'nor are they written to the new account’s ledger');
-
-  // A route the old key answers late gets a 409, and leaves the ledger alone.
-  held.clear();
-  replace();
-  held.clear();
-  const read = reg.http('GET', '/sessions/old-1', new URLSearchParams(), async () => '', { trusted: true });
-  await tick();
-  assert.ok(held.has('detail'));
-  replace();
-  const answer = await read;
-  assert.equal(answer.status, 409);
-  assert.match(String((answer.body as { error: string }).error), /changed while that was on its way/);
-  held.get('detail')!(json(200, { ...old, factoryCredits: 999 }));
-  await tick();
-  assert.equal(sessions.ledger.last('old-1'), undefined);
-});
+}
 
 test('routes: list older, create with a first message, detail, settings, delete, messages, send, interrupt and children', async () => {
   let now = T0;

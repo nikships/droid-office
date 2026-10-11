@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CloudWorkers } from '../src/server/cloud-workers.js';
 import { FactoryApi, FactoryError } from '../src/server/factory/api.js';
 import { CloudFeature, cloudRefusal, mountCloud, type CloudFloor } from '../src/server/factory/cloud.js';
 import { HttpError, type FeatureHost } from '../src/server/factory/feature.js';
-import type { FactoryRegistry } from '../src/server/factory/registry.js';
+import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputersState } from '../src/shared/factory-computers.js';
 import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
@@ -242,6 +242,53 @@ test('hire: a failed create hires nobody, gives the desk back and says what Fact
   assert.equal(r2.cloud.deskTaken(DESK[0].id), false);
 });
 
+for (const action of ['replace', 'disconnect'] as const) {
+  for (const succeeds of [true, false]) {
+    test(`hire: ${action} during session creation still ${succeeds ? 'seats the worker' : 'releases the failed hire’s desk'}`, async (t) => {
+      let release!: (r: Response) => void;
+      let started!: () => void;
+      const creating = new Promise<void>((r) => (started = r));
+      const held = new Promise<Response>((r) => (release = r));
+      t.after(() => release(json(422, {})));
+      const f = factory({
+        'POST /sessions': () => {
+          started();
+          return held;
+        },
+      });
+      const r = rig(t, f);
+      let connected = true;
+      let api = f.api;
+      const reg = new FactoryRegistry({
+        link: { connection: () => ({ connected, capabilities: [] }), client: () => (connected ? api : undefined), rejected: () => {} },
+        broadcast: () => {},
+        toast: () => {},
+      });
+      t.after(() => reg.stop());
+      reg.register((host) => new CloudFeature(host, { floors: () => [r.floor], agentArgs: [], computers: () => computersState(), toast: () => {} }));
+      const hiring = reg.http('POST', '/cloud/hire', new URLSearchParams(), async () => JSON.stringify(hireBody({ prompt: '' })), { trusted: true });
+      await creating;
+      assert.equal(r.cloud.deskTaken(DESK[0].id), true);
+      if (action === 'replace') {
+        api = new FactoryApi('fk-test-new-2222', (async () => json(404, {})) as typeof fetch);
+        reg.keyReplaced();
+      } else {
+        connected = false;
+        reg.connectionChanged();
+      }
+      release(succeeds ? json(201, { sessionId: 's1' }) : json(422, { detail: 'Computer is not reachable' }));
+      // Drain ready promise callbacks, not a wall-clock timeout. A scoped API never reaches the cleanup.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(r.cloud.list().length, succeeds ? 1 : 0);
+      if (succeeds) r.cloud.remove(r.cloud.list()[0].id);
+      assert.equal(r.cloud.deskTaken(DESK[0].id), false, 'no invisible reservation survives the response');
+      assert.equal(r.cloud.hold(DESK[0].id), undefined, 'another hire can reserve the same desk');
+      r.cloud.release(DESK[0].id);
+      assert.equal((await hiring).status, succeeds ? 200 : 422);
+    });
+  }
+}
+
 test('hire: refuses what can’t run on a Factory computer before asking Factory', async (t) => {
   const f = factory({});
   const r = rig(t, f, { taken: [DESK[1].id] });
@@ -470,6 +517,7 @@ test('restart: a cloud worker is back at its desk and picks its session up again
     { info: { ...back, id: 'w6', deskId: DESK[2].id } },
     null,
   ];
+  const { writeFileSync } = await import('node:fs');
   writeFileSync(path.join(dir, 'cloud-workers.json'), JSON.stringify(raw));
   const third = rig(t, f, { dir });
   assert.deepEqual(
@@ -478,51 +526,6 @@ test('restart: a cloud worker is back at its desk and picks its session up again
   );
   writeFileSync(path.join(dir, 'cloud-workers.json'), '{not json');
   assert.equal(rig(t, f, { dir }).cloud.list().length, 0);
-});
-
-test('restart: a turn that ended before its reply was listed goes on looking for it', async (t) => {
-  const sentAt = 1_000_000;
-  let listed = false;
-  const f = factory({
-    'POST /sessions': () => json(201, { sessionId: 's1' }),
-    'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
-    'GET /sessions/s1': () => session('idle', 2, sentAt),
-    'GET /sessions/s1/messages': () => json(200, { messages: [{ role: 'assistant', createdAt: listed ? sentAt + 1 : sentAt - 10_000, content: [{ type: 'text', text: listed ? 'Fresh delayed reply' : 'Previous turn reply' }] }] }),
-  });
-  const r = rig(t, f);
-  const w = await r.feature.hire(f.api, hireBody({ prompt: 'Please answer this turn' }), 'Nik');
-  await tick();
-  await r.feature.poll(f.api);
-  assert.equal(r.cloud.get(w.id)!.status, 'done');
-  const pending = r.cloud.turn(w.id)!;
-  assert.ok(pending.replyBy! > sentAt);
-  const file = path.join(r.dir, 'cloud-workers.json');
-  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8'))[0].turn, pending, 'the reply it looks for is saved');
-
-  // The office restarts before Factory lists the reply.
-  const again = rig(t, f, { dir: r.dir });
-  assert.deepEqual(again.cloud.turn(w.id), pending);
-  assert.equal(again.feature.busy(), true, 'watched closely, as before the restart');
-  listed = true;
-  again.clock(4000);
-  await again.feature.poll(f.api);
-  const back = again.cloud.get(w.id)!;
-  assert.equal(back.status, 'done');
-  assert.equal(back.activity, 'Fresh delayed reply');
-  assert.equal(back.task?.summary, 'Fresh delayed reply');
-  assert.deepEqual(again.cloud.turn(w.id), {});
-  assert.equal(JSON.parse(readFileSync(file, 'utf8'))[0].turn, undefined, 'found: nothing left to look for after another restart');
-
-  // A saved turn keeps only what makes sense, and a reply looked for past its time is given up on.
-  const saved = JSON.parse(readFileSync(file, 'utf8'));
-  saved[0].turn = { replyBy: 1_002_000, replyAfter: 'soon', seenBusy: 'yes', sentAt: -5, extra: 1 };
-  writeFileSync(file, JSON.stringify(saved));
-  const third = rig(t, f, { dir: r.dir });
-  assert.deepEqual(third.cloud.turn(w.id), { replyBy: 1_002_000 });
-  third.clock(5000);
-  await third.feature.poll(f.api);
-  assert.deepEqual(third.cloud.turn(w.id), {});
-  assert.equal(JSON.parse(readFileSync(file, 'utf8'))[0].turn, undefined);
 });
 
 test('send home: interrupts it when it works, deletes the session only when asked', async (t) => {

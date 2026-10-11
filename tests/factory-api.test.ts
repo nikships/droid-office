@@ -189,35 +189,6 @@ test('the typed reads hit the right paths', async () => {
   );
 });
 
-test('a scoped API answers as usual until its connection changes, then nothing it sent or sends settles', async () => {
-  let release!: (r: Response) => void;
-  const { fn, calls } = fakeFetch((call) => (call.url.pathname.endsWith('/slow') ? new Promise<Response>((r) => (release = r)) : call.url.pathname.endsWith('/bad') ? json(500, {}) : json(200, { ok: true })));
-  const api = new FactoryApi(KEY, fn, 'https://factory.test');
-  let stale = false;
-  const scoped = api.scoped(() => stale);
-  assert.deepEqual(await scoped.get('/fine'), { ok: true });
-  await assert.rejects(
-    () => scoped.get('/bad'),
-    (e: FactoryError) => e.status === 500,
-  );
-  const outcomes: string[] = [];
-  const watch = (p: Promise<unknown>, name: string) =>
-    p.then(
-      () => outcomes.push(`${name} answered`),
-      () => outcomes.push(`${name} failed`),
-    );
-  watch(scoped.get('/slow'), 'slow');
-  const failing = scoped.get('/bad');
-  stale = true;
-  watch(failing, 'bad');
-  release(json(200, { ok: true }));
-  watch(scoped.post('/later', {}), 'later');
-  await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(outcomes, [], 'an answer or failure that lands after the change, and a call made after it, never settle');
-  assert.equal(calls.filter((c) => c.url.pathname.endsWith('/later')).length, 0, 'a call after the change never goes out');
-  assert.deepEqual(await api.get('/fine'), { ok: true }, 'the API itself is untouched');
-});
-
 test('the fingerprint is the fk- prefix and the last four', () => {
   assert.equal(fingerprint(KEY), 'fk-…cdef');
   assert.equal(fingerprint('  sk-other-1234  '), '…1234');

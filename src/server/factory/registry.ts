@@ -73,10 +73,10 @@ export class FactoryRegistry {
   private watchers = new Map<FactoryFeatureId, Set<string>>();
   private timer?: ReturnType<typeof setInterval>;
   private flushTimer?: ReturnType<typeof setTimeout>;
-  /** Bumped on every connection change: a poll or route in flight then is abandoned, and gets no more answers (FactoryApi.scoped). */
+  /** Bumped on every connection change, so a poll that was in flight then is thrown away. */
   private generation = 0;
-  /** Ends the wait of every poll and route in flight, when the generation moves on. */
-  private abandon = new Set<() => void>();
+  /** Bumped only when another key replaces the last one, not when the same key is checked again. */
+  private replaced = 0;
   private wasActive = false;
   private wasConnected = false;
   /** sameness() of the last broadcast, and when it went out. */
@@ -167,7 +167,7 @@ export class FactoryRegistry {
     const fresh = active && !this.wasActive;
     if (this.wasConnected && !conn.connected) for (const run of this.runs.values()) run.feature.reset();
     if (fresh || !active) {
-      this.nextGeneration();
+      this.generation++;
       const now = this.now();
       let i = 0;
       for (const run of this.runs.values()) {
@@ -180,30 +180,9 @@ export class FactoryRegistry {
     if (fresh) void this.tick();
   }
 
-  /** Abandons everything in flight: what it reads belongs to the connection before. */
-  private nextGeneration() {
-    this.generation++;
-    for (const run of this.runs.values()) run.running = false;
-    for (const end of this.abandon) end();
-    this.abandon.clear();
-  }
-
-  /** What `work` resolves to, or undefined as soon as the connection changes while it runs. */
-  private async whileCurrent<T>(work: Promise<T>): Promise<{ value: T } | undefined> {
-    let end!: () => void;
-    const moved = new Promise<undefined>((resolve) => {
-      end = () => resolve(undefined);
-    });
-    this.abandon.add(end);
-    try {
-      return await Promise.race([work.then((value) => ({ value })), moved]);
-    } finally {
-      this.abandon.delete(end);
-    }
-  }
-
   /** Another key replaced the last one: every feature forgets the old account's data and starts over. */
   keyReplaced() {
+    this.replaced++;
     for (const run of this.runs.values()) run.feature.reset();
     this.wasActive = false;
     this.connectionChanged();
@@ -258,29 +237,24 @@ export class FactoryRegistry {
 
   private async poll(run: Run, api: FactoryApi) {
     const generation = this.generation;
-    const stale = () => generation !== this.generation;
+    const replaced = this.replaced;
     run.running = true;
     run.forced = false;
-    let failed = false;
     let error: unknown;
-    const scoped = api.scoped(stale);
-    const polled = (async () => run.feature.poll(scoped))().catch((err: unknown) => {
-      failed = true;
+    try {
+      await run.feature.poll(api);
+    } catch (err) {
       error = err;
-    });
-    // The connection changed while it ran: it's abandoned (nextGeneration), and the old
-    // connection's answers never reach the feature, whichever account comes next.
-    if (!(await this.whileCurrent(polled)) || stale()) {
-      // What it set after a wait of its own (not a call to Factory) is undone if nothing replaced the connection.
-      void polled.then(() => {
-        if (!this.opts.link.connection().connected) run.feature.reset();
-      });
-      return;
     }
     run.running = false;
+    if (generation !== this.generation) {
+      // The connection changed while it ran: what it read belongs to the old one.
+      if (!this.opts.link.connection().connected || replaced !== this.replaced) run.feature.reset();
+      return;
+    }
     const now = this.now();
     run.lastAt = now;
-    if (!failed) {
+    if (error === undefined) {
       run.failures = 0;
       run.backoffUntil = 0;
     } else {
@@ -337,38 +311,31 @@ export class FactoryRegistry {
       if (!api) throw keyRejected(conn.rejected ?? 'it answered 401');
       let parsed: unknown;
       let read = false;
-      const generation = this.generation;
-      const scoped = api.scoped(() => generation !== this.generation);
-      const handled = (async () =>
-        route.handle({
-          method,
-          path,
-          params,
-          query,
-          api: scoped,
-          by: opts.by || 'Someone',
-          json: async <T>() => {
-            if (!read) {
-              read = true;
-              let text: string;
-              try {
-                text = await body(bodyMax);
-              } catch {
-                throw new HttpError(413, 'That request is too big');
-              }
-              try {
-                parsed = text.trim() ? JSON.parse(text) : {};
-              } catch {
-                throw badRequest('Send JSON');
-              }
+      const answer = await route.handle({
+        method,
+        path,
+        params,
+        query,
+        api,
+        by: opts.by || 'Someone',
+        json: async <T>() => {
+          if (!read) {
+            read = true;
+            let text: string;
+            try {
+              text = await body(bodyMax);
+            } catch {
+              throw new HttpError(413, 'That request is too big');
             }
-            return parsed as T;
-          },
-        }))();
-      const done = await this.whileCurrent(handled);
-      // Its key was replaced, rejected or forgotten on the way: no answer from the old one gets through.
-      if (!done) throw new HttpError(409, 'The office’s Factory connection changed while that was on its way. Try again.');
-      const answer = done.value;
+            try {
+              parsed = text.trim() ? JSON.parse(text) : {};
+            } catch {
+              throw badRequest('Send JSON');
+            }
+          }
+          return parsed as T;
+        },
+      });
       if (answer instanceof FactoryDownload) return { status: 200, body: {}, download: answer };
       return { status: 200, body: answer ?? {} };
     } catch (err) {
