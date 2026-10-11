@@ -34,6 +34,7 @@ import {
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
+import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
@@ -2086,8 +2087,8 @@ function paletteEntries(): PaletteEntry[] {
       atSpot('ci', 'the CI automations board', {
         icon: '🤖',
         kind: 'Action',
-        title: 'Add Droid code review to a repository',
-        detail: 'Factory opens a pull request with the workflow',
+        title: 'Add Droid code review',
+        detail: 'Factory opens a pull request in this floor’s repository',
         keywords: ['factory', 'ci', 'github actions', 'workflow'],
         open: () => showCi(true),
       }),
@@ -2579,7 +2580,7 @@ function hintFor(it: Interactable): Hint {
       return board('🔀 Pull request board');
     case 'ci': {
       const ci = store.factory.ci;
-      const n = ci.workflows.length;
+      const n = ciForFloor(ci, floorGithubRepo()).workflows.length;
       const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
       return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
     }
@@ -3231,8 +3232,8 @@ const hudActions: HudAction[] = [
     label: 'CI automations',
     section: 'Open',
     shown: () => store.factory.connection.connected,
-    count: () => store.factory.ci.workflows.length,
-    title: () => 'Droid in GitHub Actions, from Factory',
+    count: () => ciForFloor(store.factory.ci, floorGithubRepo()).workflows.length,
+    title: () => 'Droid in GitHub Actions for this floor’s repository',
     run: () => showCi(),
   },
   {

@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { capabilityOf, type FactoryConnection } from '../../shared/factory';
-import { CI_KIND_LABEL, ciOutcome, ciTotals, groupCi, runTime, triggerLabel, type CiOutcome, type CiRepoGroup, type FactoryCiState } from '../../shared/factory-ci';
+import { CI_KIND_LABEL, ciForFloor, ciOutcome, ciTotals, groupCi, runTime, triggerLabel, type CiOutcome, type CiRepoGroup, type FactoryCiState } from '../../shared/factory-ci';
 import { BOARDS } from '../../shared/layout';
 import { MONO } from '../fonts';
 import { ANISOTROPY } from './texture-quality';
 import { paintGlyph, track } from './toon';
 
-// The CI automations board on the north wall past the gong: which repositories have Droid running in
-// GitHub Actions (code review, security review, scheduled jobs), how their latest runs went, and the
-// totals. The machine monitor's Factory look: near-black, mono, letter-spaced labels, the orange accent.
+// The CI automations board on the north wall past the gong: Droid running in GitHub Actions for this
+// floor's repository only (code review, security review, scheduled jobs), how its latest runs went,
+// and the totals. Other repositories Factory scanned stay off it. The machine monitor's Factory look:
+// near-black, mono, letter-spaced labels, the orange accent.
 
 const MUTED = '#8c8c8c';
 const DIM = '#5a5a5a';
@@ -46,15 +47,21 @@ export interface CiBoardInput {
   now: number;
 }
 
-/** What the board says instead of the repositories, when it can't show them. */
+/** This floor's slice of the account-wide scan. Other repositories never reach the board. */
+function boardCi(i: CiBoardInput): FactoryCiState {
+  return ciForFloor(i.ci, i.floorRepo);
+}
+
+/** What the board says instead of the repository, when it can't show it. */
 export function ciBoardEmpty(i: CiBoardInput): { title: string; sub: string; tone: string } | undefined {
   const c = i.connection;
   if (!c.connected) return { title: 'CONNECT FACTORY', sub: 'TO SEE DROID IN YOUR CI · ⚙️ SETTINGS → FACTORY', tone: MUTED };
   if (c.rejected) return { title: 'FACTORY TURNED THE KEY DOWN', sub: 'CHECK IT AGAIN IN ⚙️ SETTINGS → FACTORY', tone: RED };
   if (capabilityOf(c, 'ci')?.status === 'denied') return { title: 'NO ACCESS TO CI AUTOMATIONS', sub: capabilityOf(c, 'ci')?.reason?.toUpperCase() ?? 'THE KEY CAN’T READ THEM', tone: AMBER };
-  if (!i.ci.fetchedAt) return { title: 'READING FACTORY…', sub: 'THE DROID WORKFLOWS IN YOUR REPOSITORIES', tone: MUTED };
+  if (!i.ci.fetchedAt) return { title: 'READING FACTORY…', sub: 'THE DROID WORKFLOWS IN THIS FLOOR’S REPOSITORY', tone: MUTED };
   if (i.ci.github === false) return { title: 'GITHUB ISN’T CONNECTED TO FACTORY', sub: 'CONNECT IT IN FACTORY’S SETTINGS → INTEGRATIONS', tone: AMBER };
-  if (!i.ci.workflows.length) return { title: 'NO DROID WORKFLOWS YET', sub: i.floorRepo ? `ADD DROID CODE REVIEW TO ${i.floorRepo.toUpperCase()} · E` : 'PRESS E TO ADD DROID CODE REVIEW TO A REPOSITORY', tone: ORANGE };
+  if (!i.floorRepo) return { title: 'NO GITHUB REPOSITORY', sub: 'THIS FLOOR’S CHECKOUT HAS NO GITHUB ORIGIN', tone: MUTED };
+  if (!boardCi(i).workflows.length) return { title: 'NO DROID WORKFLOWS YET', sub: `ADD DROID CODE REVIEW TO ${i.floorRepo.toUpperCase()} · E`, tone: ORANGE };
   return undefined;
 }
 
@@ -65,14 +72,15 @@ function headerStatus(i: CiBoardInput): [string, string] {
   if (!i.ci.fetchedAt) return ['…', MUTED];
   if (i.ci.github === false) return ['GITHUB NOT CONNECTED', AMBER];
   if (i.ci.error) return ['OUT OF DATE', AMBER];
-  const t = ciTotals(i.ci, i.now);
+  const t = ciTotals(boardCi(i), i.now);
   if (t.running) return [`${t.running} RUNNING`, AMBER];
   return ['GITHUB CONNECTED', GREEN];
 }
 
 /** Everything the board shows, as a string: it's redrawn only when this changes. */
 export function ciBoardKey(i: CiBoardInput): string {
-  const groups = groupCi(i.ci, i.floorRepo);
+  const ci = boardCi(i);
+  const groups = groupCi(ci, i.floorRepo);
   return JSON.stringify([
     i.connection.connected,
     i.connection.rejected,
@@ -81,7 +89,7 @@ export function ciBoardKey(i: CiBoardInput): string {
     i.ci.github,
     i.ci.error,
     i.floorRepo,
-    ciTotals(i.ci, i.now),
+    ciTotals(ci, i.now),
     i.ci.scannedAt && ago(i.ci.scannedAt, i.now),
     groups.map((g) => [g.repo, g.here, g.jobs.length, g.workflows.map((w) => [w.workflow.path, w.kind, w.workflow.triggers, w.workflow.cron, w.latest && [ciOutcome(w.latest), ago(runTime(w.latest), i.now)]])]),
   ]);
@@ -116,7 +124,7 @@ export class CiBoardTexture {
     this.header(i, W);
     const empty = ciBoardEmpty(i);
     if (empty) this.empty(empty, W);
-    else this.rows(groupCi(i.ci, i.floorRepo), i.now, W);
+    else this.rows(groupCi(boardCi(i), i.floorRepo), i.now, W);
     this.footer(i, W, H);
     this.texture.needsUpdate = true;
   }
@@ -324,7 +332,7 @@ export class CiBoardTexture {
     g.fillStyle = HAIR;
     g.fillRect(36, FOOT_TOP, W - 72, 2);
     const connected = i.connection.connected && !i.connection.rejected && !!i.ci.fetchedAt;
-    const t = ciTotals(i.ci, i.now);
+    const t = ciTotals(boardCi(i), i.now);
     const cells: [string, string, string][] = connected
       ? [
           ['WORKFLOWS', String(t.workflows), INK],

@@ -19,6 +19,7 @@ import {
   ciTotals,
   customWorkflowPath,
   emptyCi,
+  ciForFloor,
   groupCi,
   isCron,
   isGithubRepo,
@@ -434,6 +435,20 @@ test('CI grouping: this floor first whatever the case, each workflow with its la
   assert.deepEqual(ciTotals({ workflows, runs }, T0), { workflows: 3, repos: 2, week: 2, passed: 1, failed: 1, running: 0 });
   assert.equal(ciTotals({ workflows, runs }, T0 + WEEK_MS).week, 0);
   assert.deepEqual(groupCi(emptyCi()), []);
+
+  const here = ciForFloor({ workflows, runs, jobs }, 'NikShips/Droid-Office');
+  assert.deepEqual(
+    here.workflows.map((w) => w.repo),
+    ['NikShips/Droid-Office'],
+    'another repository’s workflows stay off this floor',
+  );
+  assert.deepEqual(here.runs, [], 'and its runs');
+  assert.equal(here.jobs.length, 1);
+  assert.deepEqual(
+    groupCi(here, 'nikships/droid-office').map((g) => g.repo),
+    ['nikships/droid-office'],
+  );
+  assert.deepEqual(ciForFloor({ workflows, runs, jobs }, undefined), { workflows: [], runs: [], jobs: [] }, 'no GitHub origin shows nothing, not everyone else');
 });
 
 test('CI words: what a workflow is, how a run went, and its triggers', () => {
@@ -471,14 +486,20 @@ test('CI board: what it says with nothing to show, and redrawing only when that 
   const read: FactoryCiState = { ...emptyCi(), fetchedAt: T0, github: true };
   assert.match(ciBoardEmpty({ ...connected, ci: { ...read, github: false } })?.title ?? '', /GITHUB ISN’T CONNECTED/);
   assert.match(ciBoardEmpty({ ...connected, ci: read, floorRepo: 'o/r' })?.sub ?? '', /ADD DROID CODE REVIEW TO O\/R/);
-  const full = { ...connected, ci: { ...read, workflows: [workflowOf(REVIEW)!], scannedAt: T0 - 90_000 } };
-  assert.equal(ciBoardEmpty(full), undefined);
+  assert.match(ciBoardEmpty({ ...connected, ci: read })?.title ?? '', /NO GITHUB REPOSITORY/);
+  const full = { ...connected, ci: { ...read, workflows: [workflowOf(REVIEW)!, workflowOf(SECURITY)!], scannedAt: T0 - 90_000 }, floorRepo: 'nikships/droidproxy' };
+  assert.equal(ciBoardEmpty(full), undefined, 'this floor’s own workflow is enough to draw the row');
+  assert.match(ciBoardEmpty({ ...full, ci: { ...full.ci, workflows: [workflowOf(REVIEW)!] }, floorRepo: 'nikships/droid-office' })?.sub ?? '', /DROID-OFFICE/, 'another repository’s workflow does not fill this floor');
+  assert.match(ciBoardEmpty({ ...full, floorRepo: undefined })?.title ?? '', /NO GITHUB REPOSITORY/);
 
   const key = ciBoardKey(full);
   assert.equal(ciBoardKey({ ...full, ci: { ...full.ci, fetchedAt: T0 + 5 } }), key, 'a poll that changed nothing redraws nothing');
   assert.equal(ciBoardKey({ ...full, now: T0 + 20_000 }), key, 'within the same minute');
   assert.notEqual(ciBoardKey({ ...full, now: T0 + 60_000 }), key, 'the scan age ticks over');
-  assert.notEqual(ciBoardKey({ ...full, floorRepo: 'nikships/droidproxy' }), key);
+  assert.notEqual(ciBoardKey({ ...full, floorRepo: 'NikShips/Droid-Office' }), key);
+  assert.equal(ciBoardKey({ ...full, ci: { ...full.ci, workflows: [workflowOf(REVIEW)!] } }), key, 'dropping another repository’s workflow redraws nothing');
+  const elsewhere = workflowOf({ ...REVIEW, repoFullName: 'nikships/foundry', workflowName: 'Foundry review' })!;
+  assert.equal(ciBoardKey({ ...full, ci: { ...full.ci, workflows: [...full.ci.workflows, elsewhere] } }), key, 'a workflow in another repository does not redraw this floor');
   assert.equal(ago(T0 - 30_000, T0), 'NOW');
   assert.equal(ago(T0 - 5 * 60_000, T0), '5M');
   assert.equal(ago(T0 - 3 * HOUR, T0), '3H');

@@ -272,9 +272,27 @@ export interface CiRepoGroup {
 }
 
 /**
+ * This floor's workflows, runs and workflow pull requests only. `floorRepo` is `owner/repo`, matched
+ * whatever the case. Anything in another repository is left out, and a floor with no GitHub
+ * repository gets nothing: the board and its window never list the rest of the account.
+ */
+export function ciForFloor<T extends Pick<FactoryCiState, 'workflows' | 'runs' | 'jobs'>>(state: T, floorRepo?: string): T {
+  if (!floorRepo) return { ...state, workflows: [], runs: [], jobs: [] };
+  const here = repoKey(floorRepo);
+  const same = (repo: string | undefined) => !!repo && repoKey(repo) === here;
+  return {
+    ...state,
+    workflows: state.workflows.filter((w) => same(w.repo)),
+    runs: state.runs.filter((r) => same(r.repo)),
+    jobs: state.jobs.filter((j) => same(j.repo)),
+  };
+}
+
+/**
  * The workflows by repository: this floor's first (`floorRepo`, `owner/repo`, matched whatever the
  * case), then the rest by name. A repository with only runs or workflow PRs gets a group too, and
- * this floor's repository always has one, so there's somewhere to add the first workflow.
+ * this floor's repository always has one, so there's somewhere to add the first workflow. The board
+ * and its window pass `ciForFloor` first, so a group here is this floor's repository and no other.
  */
 export function groupCi(state: Pick<FactoryCiState, 'workflows' | 'runs' | 'jobs'>, floorRepo?: string): CiRepoGroup[] {
   const groups = new Map<string, CiRepoGroup>();
