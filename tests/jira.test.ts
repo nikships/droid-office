@@ -248,6 +248,75 @@ test('the board backs off when Jira rate limits it', async () => {
   assert.equal(boards.at(-1)?.error, undefined);
 });
 
+test('a read on its way when the office disconnects or connects another site never lands on the new board', async () => {
+  const OLD = '11111111-1111-4111-8111-111111111111';
+  const NEW = '22222222-2222-4222-8222-222222222222';
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const card = (key: string) => ({ key, fields: { summary: key, parent: { key: 'EDP-168' } } });
+  /** The old site's next epic search, or ticket read, waits for the test. */
+  let hold: 'search' | 'issue' | undefined;
+  let release!: (r: Response) => void;
+  let started!: () => void;
+  const impl = (async (input: string | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/_edge/tenant_info') return json({ cloudId: url.hostname.startsWith('old.') ? OLD : NEW });
+    if (url.pathname.endsWith('/myself')) return json({ displayName: 'Owner' });
+    const old = url.pathname.includes(OLD);
+    const held = () =>
+      new Promise<Response>((resolve) => {
+        hold = undefined;
+        release = resolve;
+        started();
+      });
+    if (url.pathname.endsWith('/issue/EDP-168')) return json(EPIC);
+    if (url.pathname.endsWith('/comment')) return json({ comments: [] });
+    if (url.pathname.endsWith('/issue/EDP-1')) return old && hold === 'issue' ? held() : json(card('EDP-1'));
+    if (url.pathname.endsWith('/search/jql')) {
+      if (JSON.parse(String(init?.body)).jql === CHECK_JQL) return json({ issues: [], isLast: true });
+      if (old && hold === 'search') return held();
+      return json({ issues: [card(old ? 'EDP-1' : 'EDP-2')], isLast: true });
+    }
+    return new Response('{}', { status: 404 });
+  }) as typeof fetch;
+  const waitFor = (what: 'search' | 'issue') => {
+    hold = what;
+    return new Promise<void>((r) => (started = r));
+  };
+  const keys = (floor: FloorJira) => floor.board?.items.map((i) => i.url) ?? null;
+  for (const action of ['disconnect', 'reconnect'] as const) {
+    const office = new JiraOffice(tmp(), impl);
+    assert.equal(await office.connect('old', 'owner@example.com', TOKEN, 'Owner'), undefined);
+    const boards: (JiraBoardState | null)[] = [];
+    const floor = new FloorJira(tmp(), office, { state: () => {}, board: (b) => boards.push(b) });
+    assert.ok('epic' in (await floor.setEpic('EDP-168', 'Owner')));
+    const searched = waitFor('search');
+    const pending = floor.refresh(true);
+    await searched;
+    if (action === 'disconnect') office.disconnect();
+    else assert.equal(await office.connect('new', 'owner@example.com', TOKEN, 'Owner'), undefined);
+    await floor.connectionChanged();
+    const expected = action === 'disconnect' ? null : ['https://new.atlassian.net/browse/EDP-2'];
+    assert.deepEqual(keys(floor), expected);
+    const count = boards.length;
+    release(json({ issues: [card('EDP-1')], isLast: true }));
+    await pending;
+    assert.deepEqual(keys(floor), expected, `${action}: the old site's tickets stay gone`);
+    assert.equal(boards.length, count, 'and nothing about them goes out');
+  }
+
+  // A ticket's window open on the old site when another one connects says so, rather than show the old ticket.
+  const office = new JiraOffice(tmp(), impl);
+  await office.connect('old', 'owner@example.com', TOKEN, 'Owner');
+  const floor = new FloorJira(tmp(), office, { state: () => {}, board: () => {} });
+  await floor.setEpic('EDP-168', 'Owner');
+  const read = waitFor('issue');
+  const detail = floor.detail('EDP-1');
+  await read;
+  await office.connect('new', 'owner@example.com', TOKEN, 'Owner');
+  release(json(card('EDP-1')));
+  await assert.rejects(detail, (e: JiraError) => e.status === 409 && /connection changed/.test(e.message));
+});
+
 test("a ticket's window shows its description and comments, only for the epic's tickets", async () => {
   const { floor } = await connected({
     'GET /rest/api/3/issue/EDP-168': () => EPIC,

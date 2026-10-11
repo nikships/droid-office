@@ -7,7 +7,7 @@ import { CloudWorkers } from '../src/server/cloud-workers.js';
 import { FactoryApi, FactoryError } from '../src/server/factory/api.js';
 import { CloudFeature, cloudRefusal, mountCloud, type CloudFloor } from '../src/server/factory/cloud.js';
 import { HttpError, type FeatureHost } from '../src/server/factory/feature.js';
-import type { FactoryRegistry } from '../src/server/factory/registry.js';
+import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputersState } from '../src/shared/factory-computers.js';
 import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
@@ -241,6 +241,53 @@ test('hire: a failed create hires nobody, gives the desk back and says what Fact
   await assert.rejects(r2.feature.hire(g.api, hireBody(), 'Nik'), (err: Error) => err instanceof HttpError && err.status === 502);
   assert.equal(r2.cloud.deskTaken(DESK[0].id), false);
 });
+
+for (const action of ['replace', 'disconnect'] as const) {
+  for (const succeeds of [true, false]) {
+    test(`hire: ${action} during session creation still ${succeeds ? 'seats the worker' : 'releases the failed hire’s desk'}`, async (t) => {
+      let release!: (r: Response) => void;
+      let started!: () => void;
+      const creating = new Promise<void>((r) => (started = r));
+      const held = new Promise<Response>((r) => (release = r));
+      t.after(() => release(json(422, {})));
+      const f = factory({
+        'POST /sessions': () => {
+          started();
+          return held;
+        },
+      });
+      const r = rig(t, f);
+      let connected = true;
+      let api = f.api;
+      const reg = new FactoryRegistry({
+        link: { connection: () => ({ connected, capabilities: [] }), client: () => (connected ? api : undefined), rejected: () => {} },
+        broadcast: () => {},
+        toast: () => {},
+      });
+      t.after(() => reg.stop());
+      reg.register((host) => new CloudFeature(host, { floors: () => [r.floor], agentArgs: [], computers: () => computersState(), toast: () => {} }));
+      const hiring = reg.http('POST', '/cloud/hire', new URLSearchParams(), async () => JSON.stringify(hireBody({ prompt: '' })), { trusted: true });
+      await creating;
+      assert.equal(r.cloud.deskTaken(DESK[0].id), true);
+      if (action === 'replace') {
+        api = new FactoryApi('fk-test-new-2222', (async () => json(404, {})) as typeof fetch);
+        reg.keyReplaced();
+      } else {
+        connected = false;
+        reg.connectionChanged();
+      }
+      release(succeeds ? json(201, { sessionId: 's1' }) : json(422, { detail: 'Computer is not reachable' }));
+      // Drain ready promise callbacks, not a wall-clock timeout. A scoped API never reaches the cleanup.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(r.cloud.list().length, succeeds ? 1 : 0);
+      if (succeeds) r.cloud.remove(r.cloud.list()[0].id);
+      assert.equal(r.cloud.deskTaken(DESK[0].id), false, 'no invisible reservation survives the response');
+      assert.equal(r.cloud.hold(DESK[0].id), undefined, 'another hire can reserve the same desk');
+      r.cloud.release(DESK[0].id);
+      assert.equal((await hiring).status, succeeds ? 200 : 422);
+    });
+  }
+}
 
 test('hire: refuses what can’t run on a Factory computer before asking Factory', async (t) => {
   const f = factory({});
