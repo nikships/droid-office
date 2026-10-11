@@ -113,9 +113,9 @@ export class Building {
   }
 
   list(): FloorDef[] {
-    // One open floor per checkout. An alias saved next to the real path stays in floors.json, so
-    // nothing already written is deleted, but it is not a second floor: two of them would share
-    // that checkout's .droid-office and overwrite each other's pictures.
+    // One open floor per checkout. An alias saved next to the real path stays in floors.json until
+    // that floor is taken off, so loading does not delete it, but it is not a second floor: two of
+    // them would share that checkout's .droid-office and overwrite each other's pictures.
     const seen = new Set<string>();
     const active: FloorDef[] = [];
     for (const def of this.defs) {
@@ -162,7 +162,7 @@ export class Building {
     this.homeDir = dir;
     const known = this.knownCheckout(dir);
     if (known) return known;
-    if (this.defs.length >= MAX_FLOORS) {
+    if (this.list().length >= MAX_FLOORS) {
       console.error(`droid-office: the building is full (${MAX_FLOORS} floors), so the home floor (${tildify(dir)}) can't be added`);
       return undefined;
     }
@@ -190,14 +190,19 @@ export class Building {
 
   /**
    * Takes a floor off the building. Its checkout stays where it is, with its workers and
-   * pictures in its .droid-office folder: adding the checkout again moves back in. Returns the
-   * floor, or why it can't.
+   * pictures in its .droid-office folder: adding the checkout again moves back in. An alias saved
+   * for that same checkout comes off with the open floor, so a restart does not open a floor the
+   * office never started. Returns the floor, or why it can't.
    */
   remove(id: string, by = '?'): FloorDef | string {
     const def = this.defs.find((d) => d.id === id);
     if (!def) return 'No such floor';
     if (this.isHome(id)) return `${def.name} is the home floor: it's always in the building`;
-    this.defs = this.defs.filter((d) => d !== def);
+    const opened = this.list().some((d) => d.id === id);
+    const key = checkoutKey(def.dir);
+    // The server only starts the open floor. Its aliases go with it. A suppressed alias removed by
+    // id drops only that row, and the open floor stays.
+    this.defs = this.defs.filter((d) => (opened ? checkoutKey(d.dir) !== key : d.id !== id));
     if (this.isLocal(id)) {
       this.localId = undefined;
       this.setLocalOff({ dir: def.dir, by, at: Date.now() });
@@ -227,7 +232,8 @@ export class Building {
     if (!back && !within(realPath(dir), realPath(this.projectsDir))) return `${shown} isn't in the workspace folder (${tildify(this.projectsDir)}). Pick another workspace folder in ⚙️ Settings`;
     const known = this.knownCheckout(dir);
     if (known) return `${shown} already has a floor (${known.name})`;
-    if (this.defs.length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    // A saved alias is not a second floor, so it does not fill the building.
+    if (this.list().length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
     const repo = originRepo(dir);
     // The path as given is what is saved, not its real path, so a later start still finds it as written.
     const def = this.newDef(repo?.split('/').pop() ?? path.basename(dir), repo, dir, by);

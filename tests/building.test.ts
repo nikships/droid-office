@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Building, type FloorDef } from '../src/server/building.js';
+import { MAX_FLOORS } from '../src/shared/floors.js';
 import { suggestedFolder } from '../src/server/config.js';
 
 function office(t: { after(fn: () => void): void }) {
@@ -349,10 +350,24 @@ test('an alias already saved stays in floors.json and is not opened as a second 
   assert.equal(typeof restarted.remove('api', 'Sam'), 'object');
   assert.deepEqual(
     restarted.list().map((d) => d.id),
-    ['api-link', 'web'],
+    ['web'],
   );
-  assert.deepEqual(saved(dataDir), ['api-link', 'web']);
-  assert.equal(readFileSync(decor, 'utf8'), pictures, 'taking one saved path off does not touch the checkout');
+  assert.deepEqual(saved(dataDir), ['web']);
+  assert.equal(readFileSync(decor, 'utf8'), pictures, 'taking the floor off does not touch the checkout');
+  // The server does not open a replacement. A restart must not find the alias and start one.
+  const after = new Building(dataDir, work);
+  assert.deepEqual(
+    after.list().map((d) => d.id),
+    ['web'],
+  );
+  const back = after.add(alias, 'Sam');
+  assert.equal(typeof back, 'object', String(back));
+  assert.equal((back as FloorDef).dir, alias);
+  assert.match(after.add(real, 'Sam') as string, /already has a floor/);
+  assert.deepEqual(
+    after.list().map((d) => d.dir),
+    [other, alias],
+  );
 });
 
 test('starting in a symlink of a floor already there uses that floor', (t) => {
@@ -367,6 +382,87 @@ test('starting in a symlink of a floor already there uses that floor', (t) => {
   assert.deepEqual(
     again.list().map((d) => d.dir),
     [real],
+  );
+});
+
+test('taking off the open floor drops its saved aliases and stays off through either path', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  const second = path.join(work, 'api-link-2');
+  symlinkSync(real, second);
+  writeFileSync(
+    path.join(dataDir, 'floors.json'),
+    JSON.stringify([
+      { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 },
+      { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 },
+      { id: 'api-link-2', name: 'api-link-2', dir: second, palette: 2, addedBy: 'Sam', addedAt: 3 },
+    ]),
+  );
+  const building = new Building(dataDir, work);
+  assert.equal(building.ensureLocal(real, 'the office')?.id, 'api');
+  assert.deepEqual(
+    building.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.equal(typeof building.remove('api', 'Sam'), 'object');
+  assert.equal(building.list().length, 0);
+  assert.deepEqual(saved(dataDir), []);
+  assert.ok(existsSync(real));
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+
+  const again = new Building(dataDir, work);
+  assert.equal(again.ensureLocal(alias, 'the office'), undefined);
+  assert.equal(again.ensureLocal(second, 'the office'), undefined);
+  assert.equal(again.list().length, 0);
+  assert.deepEqual(saved(dataDir), []);
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+});
+
+test('removing a suppressed alias drops only that row', (t) => {
+  const { dataDir, work, real, alias, decor, pictures } = linked(t);
+  writeFileSync(
+    path.join(dataDir, 'floors.json'),
+    JSON.stringify([
+      { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 },
+      { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 },
+    ]),
+  );
+  const building = new Building(dataDir, work);
+  assert.equal(typeof building.remove('api-link', 'Sam'), 'object');
+  assert.deepEqual(
+    building.list().map((d) => d.id),
+    ['api'],
+  );
+  assert.deepEqual(saved(dataDir), ['api']);
+  assert.equal(readFileSync(decor, 'utf8'), pictures);
+  assert.deepEqual(
+    new Building(dataDir, work).list().map((d) => d.id),
+    ['api'],
+  );
+});
+
+test('a saved alias does not fill the building', (t) => {
+  const { dataDir, work, real, alias, other } = linked(t);
+  const extra = path.join(work, 'acme', 'extra');
+  mkdirSync(extra, { recursive: true });
+  execFileSync('git', ['init', '-q', extra]);
+  const fillers: FloorDef[] = Array.from({ length: MAX_FLOORS - 1 }, (_, i) => {
+    const id = `slot-${i}`;
+    return { id, name: id, dir: path.join(work, 'filled', id), palette: 0, addedBy: 'Sam', addedAt: 1 };
+  });
+  fillers[0] = { id: 'api', name: 'api', dir: real, palette: 0, addedBy: 'Sam', addedAt: 1 };
+  writeFileSync(path.join(dataDir, 'floors.json'), JSON.stringify([...fillers, { id: 'api-link', name: 'api-link', dir: alias, palette: 1, addedBy: 'Sam', addedAt: 2 }]));
+  const building = new Building(dataDir, work);
+  assert.equal(building.list().length, MAX_FLOORS - 1);
+  assert.equal(
+    building.list().some((d) => d.id === 'api-link'),
+    false,
+  );
+  assert.equal(typeof building.add(other, 'Sam'), 'object', 'the alias does not consume the last slot');
+  assert.equal(building.list().length, MAX_FLOORS);
+  assert.match(building.add(extra, 'Sam') as string, /full/);
+  assert.equal(
+    building.list().some((d) => d.id === 'api-link'),
+    false,
   );
 });
 
