@@ -23,7 +23,7 @@ class ProtocolTest {
            {"id":"w2","kind":"shell","deskId":"desk-2","name":"Bolt","color":"#3ccf91","status":"exited","createdBy":"📱 Pixel","createdAt":11,"cols":80,"rows":24,"open":false}
          ],
          "pulls":{"items":[{"number":7,"title":"t","state":"OPEN","isDraft":false,"url":"https://x/7","headRefName":"droid/atlas","checks":"pass"}],"loading":false},
-         "queue":{"tasks":[],"maxWorkers":3}}
+         "pipelines":{"runs":[],"workflows":[],"fetchedAt":0,"loading":false}}
     """.trimIndent()
 
     @Test
@@ -40,7 +40,6 @@ class ProtocolTest {
         assertTrue(bolt.isShell)
         assertTrue(bolt.state.asleep)
         assertEquals(7, m.view.pulls.items.single().number)
-        assertEquals(3, m.view.queue.maxWorkers)
     }
 
     @Test
@@ -75,8 +74,19 @@ class ProtocolTest {
     }
 
     @Test
+    fun readsTheTerminalStream() {
+        assertEquals(
+            ServerMsg.TermSnapshot("w1", TermEvent.Snapshot("\u001b[1mhi\u001b[?1006h", 120, 40)),
+            Protocol.decode("""{"t":"term.snapshot","workerId":"w1","data":"\u001b[1mhi\u001b[?1006h","cols":120,"rows":40}"""),
+        )
+        assertEquals(ServerMsg.TermData("w1", TermEvent.Data("more")), Protocol.decode("""{"t":"term.data","workerId":"w1","data":"more"}"""))
+    }
+
+    @Test
     fun skipsWhatItDoesntKnow() {
-        assertEquals(ServerMsg.Ignored("meeting.update"), Protocol.decode("""{"t":"meeting.update","x":1}"""))
+        assertEquals(ServerMsg.Ignored("future.update"), Protocol.decode("""{"t":"future.update","x":1}"""))
+        // An office from before the Pipelines board still sends its task queue.
+        assertEquals(ServerMsg.Ignored("queue"), Protocol.decode("""{"t":"queue","state":{"tasks":[],"maxWorkers":3}}"""))
         assertNull(Protocol.decode("not json"))
         assertNull(Protocol.decode("""{"no":"type"}"""))
         // A known type with a broken body is skipped, not thrown.

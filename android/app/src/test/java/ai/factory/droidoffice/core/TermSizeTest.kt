@@ -1,53 +1,12 @@
 package ai.factory.droidoffice.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TermSizeTest {
-    @Test
-    fun aPhoneGridFitsAtReadableCellDimensions() {
-        val size = TermSize.fit(360f, 600f, 7.5f, 14f)!!
-        assertEquals(TermSize(47, 42), size)
-        assertTrue((size.cols + 0.5f) * 7.5f <= 360f)
-        assertTrue(size.rows * 14f <= 600f)
-    }
-
-    @Test
-    fun fractionalCellsAreRoundedDownWithHalfACellSpare() {
-        assertEquals(TermSize(39, 20), TermSize.fit(400f, 309f, 10f, 15f))
-        assertEquals(TermSize(40, 20), TermSize.fit(405f, 309f, 10f, 15f))
-    }
-
-    @Test
-    fun keyboardAndRotationChangeTheActualGrid() {
-        assertEquals(TermSize(47, 20), TermSize.fit(360f, 280f, 7.5f, 14f))
-        assertEquals(TermSize(95, 20), TermSize.fit(720f, 280f, 7.5f, 14f))
-    }
-
-    @Test
-    fun densityDoesNotChangeTheGridButLargerTextDoes() {
-        assertEquals(TermSize.fit(360f, 600f, 7.5f, 14f), TermSize.fit(720f, 1200f, 15f, 28f))
-        assertEquals(TermSize(23, 21), TermSize.fit(360f, 600f, 15f, 28f))
-    }
-
-    @Test
-    fun theGridUsesTheServersBounds() {
-        assertEquals(TermSize(20, 5), TermSize.fit(1f, 1f, 10f, 15f))
-        assertEquals(TermSize(400, 200), TermSize.fit(10000f, 10000f, 1f, 1f))
-    }
-
-    @Test
-    fun anUnmeasuredOrInvalidViewportDoesNotResize() {
-        for (bad in listOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) {
-            assertNull(TermSize.fit(bad, 600f, 7.5f, 14f))
-            assertNull(TermSize.fit(360f, bad, 7.5f, 14f))
-            assertNull(TermSize.fit(360f, 600f, bad, 14f))
-            assertNull(TermSize.fit(360f, 600f, 7.5f, bad))
-        }
-    }
-
     private val desktop = TermSize(120, 40)
     private val phone = TermSize(47, 42)
     private val keyboard = TermSize(47, 20)
@@ -146,5 +105,43 @@ class TermSizeTest {
         sizing.sent(keyboard)
         assertEquals(desktop, sizing.restore(phone))
         assertEquals(desktop, PhoneSizing(sizing.original, sizing.sentSizes).restore(phone))
+    }
+
+    @Test
+    fun theDesktopTypingTakesTheSizeBack() {
+        val sizing = PhoneSizing()
+        sizing.request(desktop, phone)
+        sizing.sent(phone)
+        // Still at the desktop's size while the resize is on its way: not taken over.
+        assertFalse(sizing.takenOver(desktop))
+        assertFalse(sizing.takenOver(phone))
+        assertFalse(sizing.takenOver(keyboard.also { sizing.sent(it) }))
+        assertTrue(sizing.takenOver(TermSize(100, 30)))
+        // The desktop's window at the size it had before counts too, once the phone's size had landed.
+        assertTrue(sizing.takenOver(desktop))
+    }
+
+    @Test
+    fun nothingIsTakenOverBeforeThePhoneResizesOrAfterItLetsGo() {
+        val sizing = PhoneSizing()
+        assertFalse(sizing.takenOver(desktop))
+        sizing.request(desktop, phone)
+        sizing.sent(phone)
+        sizing.takenOver(phone)
+        sizing.release()
+        assertFalse(sizing.takenOver(TermSize(100, 30)))
+    }
+
+    @Test
+    fun theOfficeRestoringTheSizeWhileThePhoneWasAwayIsNotATakeover() {
+        val sizing = PhoneSizing()
+        sizing.request(desktop, phone)
+        sizing.sent(phone)
+        sizing.takenOver(phone)
+        sizing.disconnected()
+        assertFalse(sizing.takenOver(desktop))
+        assertEquals(phone, sizing.request(desktop, phone))
+        // Someone else's size seen on the way back still is.
+        assertTrue(sizing.takenOver(TermSize(100, 30)))
     }
 }

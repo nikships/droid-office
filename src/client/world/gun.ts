@@ -19,12 +19,17 @@ const DRUM_AT = new THREE.Vector3(0, 0.047, 0.03);
 /** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
 const CRANE_AT = new THREE.Vector2(0.008, 0.012);
 
-/** The closest rendered solid struck by a bullet; only registered workers can be targets. */
-export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
+/** The closest rendered solid struck by a bullet or spell, including registered laptop screens. */
+export function gunHit(
+  ray: THREE.Raycaster,
+  office: THREE.Object3D,
+  workers: ReadonlyMap<THREE.Object3D, string>,
+  screens: ReadonlyMap<THREE.Object3D, string> = new Map(),
+): { hit: THREE.Intersection; workerId: string | null; laptopWorkerId: string | null } | null {
   // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
   // would throw before any worker could react. Only rendered meshes can absorb a bullet.
   const solids = new Set<THREE.Mesh>();
-  for (const root of [office, ...workers.keys()])
+  for (const root of [office, ...workers.keys(), ...screens.keys()])
     root.traverseVisible((object) => {
       if (object instanceof THREE.Mesh) solids.add(object);
     });
@@ -39,7 +44,7 @@ export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: Re
       if (!object.visible) shown = false;
       workerId ??= workers.get(object) ?? null;
     }
-    if (shown) return { hit, workerId };
+    if (shown) return { hit, workerId, laptopWorkerId: screens.get(hit.object) ?? null };
   }
   return null;
 }
@@ -223,10 +228,15 @@ export class Muzzle {
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
 
-  constructor(private flash: FlashLight = ROOM_FLASH) {
-    this.group.position.copy(MUZZLE_AT);
+  /** `at` is where the flash sits on the prop, `colors` its white-hot core and the star round it. */
+  constructor(
+    private flash: FlashLight = ROOM_FLASH,
+    at: THREE.Vector3 = MUZZLE_AT,
+    colors: { core: string; star: string } = { core: '#fff6d8', star: '#ffb347' },
+  ) {
+    this.group.position.copy(at);
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive('#fff6d8', 0));
+    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), additive(colors.core, 0));
     this.group.add(this.core);
     this.star = [];
     for (const [w, l] of [
@@ -234,7 +244,7 @@ export class Muzzle {
       [0.05, 0.22],
       [0.09, 0.12],
     ]) {
-      const blade = new THREE.Mesh(new THREE.PlaneGeometry(w, l), additive('#ffb347', 0));
+      const blade = new THREE.Mesh(new THREE.PlaneGeometry(w, l), additive(colors.star, 0));
       if (this.star.length === 1) blade.rotation.z = Math.PI / 2;
       if (this.star.length === 2) blade.rotation.y = Math.PI / 2;
       // Along the barrel, half of it past the muzzle.

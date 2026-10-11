@@ -15,7 +15,7 @@ export const AUTOMATION_KEYS = ['E', 'P', 'R', 'X', 'B', 'C', 'O'] as const;
 export type AutomationKey = (typeof AUTOMATION_KEYS)[number];
 
 /** Fixed camera angles, relative to the way you face, so screenshots line up between runs. */
-export const CAMERA_PRESETS = ['first', 'third', 'close', 'wide'] as const;
+export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
@@ -23,30 +23,24 @@ export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'rid
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
-const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'services', 'queue', 'ci', 'computers']);
+const BOARD_KINDS = new Set<InteractKind>(['issues', 'pulls', 'actions', 'ci', 'whiteboard', 'computers']);
 /** Interactables that aren't a place to go to by name: there are many of them, or they move. */
 const UNNAMED_KINDS = new Set<InteractKind>(['desk', 'station', 'seat', 'decor', 'pole']);
 
 const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   issues: 'Issues board',
   pulls: 'Pull request board',
-  services: 'Services board',
-  queue: 'Task queue board',
+  actions: 'Pipelines board',
   ci: 'CI automations board',
+  whiteboard: 'Whiteboard',
   computers: 'Compute wall',
-  tv: 'Office TV',
   coffee: 'Coffee machine',
-  smoke: 'Ashtray on the balcony',
   elevator: 'Elevator',
   gong: 'Merge gong',
   jukebox: 'Jukebox',
   cabinet: 'Arcade cabinet',
   ladder: 'Ladder',
-  meeting: 'Meeting room',
-  bar: 'Sky Bar',
-  dj: 'DJ booth',
   bookshelf: 'Bookshelf',
-  golf: 'Golf tee',
 };
 
 export type TargetKind = 'desk' | 'kiosk' | 'board' | 'place' | 'floor';
@@ -94,8 +88,6 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
     const desk = DESK_BY_ID.get(spot.deskId);
     if (!desk) continue;
     const w = byDesk.get(desk.id);
-    // An empty meeting chair isn't anywhere to go: a meeting seats its own workers there.
-    if (desk.room && !w) continue;
     seen.add(desk.id);
     out.push({ id: desk.id, kind: deskKind(desk), label: desk.label, deskId: desk.id, ...(w ? { worker: { id: w.id, name: w.name, status: w.status } } : {}) });
   }
@@ -113,7 +105,7 @@ export function listTargets(ctx: TargetContext): TargetInfo[] {
 /**
  * The target a `goTo` query names: an id from `list()` (a desk id, a board or place kind, a floor
  * id), a worker's id or name, a desk's label, a board agent's name or a floor's name. Case doesn't
- * matter past an exact id. 'roof' is the rooftop bar.
+ * matter past an exact id. 'roof' is the roof.
  */
 export function resolveTarget(query: string, ctx: TargetContext): { ok: true; target: ResolvedTarget } | { ok: false; error: string } {
   const q = typeof query === 'string' ? query.trim() : '';
@@ -152,7 +144,7 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
  */
 export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: number) => boolean, center?: Point3 | null): { at: Point3; face: Point3 } | null {
   const desk = t.deskId ? DESK_BY_ID.get(t.deskId) : undefined;
-  if (desk && !desk.room) {
+  if (desk) {
     // The same spot goToDesk and the N key stand you on (main.ts standAt).
     const s = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
     return { at: { x: s.x, y: 0, z: s.z }, face: center ?? { x: desk.x, y: 0.9, z: desk.z } };
@@ -162,7 +154,7 @@ export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: n
   const y = spot.y ?? 0;
   const at = freeSpotNear({ x: spot.x, z: spot.z }, y, Math.max(0.6, spot.radius - 0.2), blocked);
   if (!at) return null;
-  const face = desk ? { x: desk.x, y: y + 0.9, z: desk.z } : (center ?? { x: spot.x, y: y + 1.2, z: spot.z });
+  const face = center ?? { x: spot.x, y: y + 1.2, z: spot.z };
   return { at: { x: at.x, y, z: at.z }, face };
 }
 
@@ -192,26 +184,13 @@ export function pitchToward(eye: Point3, to: Point3): number {
 }
 
 export interface CameraPose {
-  view: 'first' | 'third';
   camYaw: number;
-  lookPitch?: number;
-  camPitch?: number;
-  camDist?: number;
+  lookPitch: number;
 }
 
-/** A preset's camera for someone facing `facing`: third person sits behind you (see PlayerController.updateCamera). */
-export function cameraPose(preset: CameraPreset, facing: number): CameraPose {
-  const camYaw = facing - Math.PI;
-  switch (preset) {
-    case 'first':
-      return { view: 'first', camYaw, lookPitch: -0.08 };
-    case 'third':
-      return { view: 'third', camYaw, camPitch: 0.42, camDist: 7.5 };
-    case 'close':
-      return { view: 'third', camYaw, camPitch: 0.3, camDist: 3.5 };
-    case 'wide':
-      return { view: 'third', camYaw, camPitch: 1, camDist: 14 };
-  }
+/** A preset's camera for someone facing `facing`: looking straight ahead, level. */
+export function cameraPose(_preset: CameraPreset, facing: number): CameraPose {
+  return { camYaw: facing - Math.PI, lookPitch: -0.08 };
 }
 
 /** What main.ts knows at the moment of a snapshot, before rounding and naming. */
@@ -220,7 +199,7 @@ export interface RawState {
   floors: Pick<FloorInfo, 'id' | 'name' | 'waiting'>[];
   /** On the way to another floor (the elevator, the ladder, a pole). */
   riding: boolean;
-  player: { x: number; y: number; z: number; facing: number; lookPitch: number; view: 'first' | 'third'; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
+  player: { x: number; y: number; z: number; facing: number; lookPitch: number; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
   camera: { x: number; y: number; z: number };
   /** What E would use where you stand. */
   using: Interactable | null;
@@ -230,10 +209,11 @@ export interface RawState {
   workers: WorkerInfo[];
   carrying: number | null;
   hanging: boolean;
-  golfing: boolean;
   gun: boolean;
   /** What the gun is doing: drawing, holstering, a trick (world/gun-motion.ts), or null at the ready or away. */
   gunMove: string | null;
+  /** What `7` puts in your hand (Settings → You). */
+  sidearm: 'wand' | 'magnum';
 }
 
 export interface Snapshot {
@@ -246,16 +226,15 @@ export interface Snapshot {
     z: number;
     facing: number;
     lookPitch: number;
-    view: 'first' | 'third';
     seat: string | null;
     controls: boolean;
     walking: boolean;
     climbing: boolean;
     carrying: number | null;
     hanging: boolean;
-    golfing: boolean;
     gun: boolean;
     gunMove: string | null;
+    sidearm: 'wand' | 'magnum';
   };
   camera: { x: number; y: number; z: number };
   /** What E would use where you stand: the target id goTo takes, or the kind of thing it is. */
@@ -288,16 +267,15 @@ export function buildSnapshot(raw: RawState): Snapshot {
       z: r2(p.z),
       facing: angle(p.facing),
       lookPitch: r2(p.lookPitch),
-      view: p.view,
       seat: p.seat,
       controls: p.enabled,
       walking: p.walking,
       climbing: p.climbing,
       carrying: raw.carrying,
       hanging: raw.hanging,
-      golfing: raw.golfing,
       gun: raw.gun,
       gunMove: raw.gunMove,
+      sidearm: raw.sidearm,
     },
     camera: { x: r2(raw.camera.x), y: r2(raw.camera.y), z: r2(raw.camera.z) },
     using: u ? { kind: u.kind, id: usingId, label: (u.deskId && DESK_BY_ID.get(u.deskId)?.label) || PLACE_LABEL[u.kind] || u.kind } : null,
@@ -342,10 +320,12 @@ export interface AutomationHost {
   aim(face: Point3): void;
   /** Walks you to `at` the way the palette's Shift+Enter does; `done` says how it ended. */
   walk(at: Point3, label: string, done: (why: 'arrived' | 'cancelled' | 'stuck') => void): void;
-  /** What E would use where you stand, by distance (what third person picks). */
+  /** What E would use where you stand, by distance (no crosshair involved). */
   near(): Interactable | null;
   /** Presses `key` at `spot`, as if you were facing it. */
   use(spot: Interactable, key: AutomationKey): void;
+  /** E on the ladder: gets off it the way the key does. Null once you're getting off, else why you can't. */
+  letGo(): string | null;
   commands(): CommandInfo[];
   run(id: string): void;
   closeAll(): void;
@@ -479,6 +459,18 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
 
   async function interact(key: AutomationKey = 'E'): Promise<Snapshot> {
     if (!AUTOMATION_KEYS.includes(key)) throw new Error(`interact takes one of ${AUTOMATION_KEYS.join(' ')}, not "${key}"`);
+    const r = host.raw();
+    // On the ladder E is the one key that does anything: it gets you off, as the keyboard's does.
+    if (key === 'E' && r.player.climbing && !r.riding) {
+      const why = host.letGo();
+      if (why) throw new Error(`Can't get off now: ${why}`);
+      const off = () => {
+        const p = host.raw().player;
+        return !p.climbing && p.y <= 0.01;
+      };
+      if (!(await until(off, 5000))) throw new Error('Still on the ladder after 5s');
+      return settle();
+    }
     const busy = host.busy();
     if (busy) throw new Error(`Can't use anything now: ${busy}`);
     const spot = using();

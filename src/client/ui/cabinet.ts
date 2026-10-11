@@ -6,7 +6,7 @@ import type { WorkerInfo } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, toast, type Modal } from './dom';
-import { ScreenZoom } from './arcade';
+import { ScreenZoom, arcadeBar, stopButton } from './arcade';
 import { Blocks, H, W, paintScreen, type ScreenView } from './blocks';
 
 /** What the cabinet makes a noise about: a piece landing, lines clearing (how many), the game ending. */
@@ -97,6 +97,11 @@ export class Cabinet {
     return this.view.zoomed;
   }
 
+  /** BLOCKFALL still needs every step while playing, but a paused game and settled camera do not. */
+  get animating(): boolean {
+    return this.view.moving(!!this.modal) || (this.mode === 'play' && this.game?.state === 'play');
+  }
+
   /** Your game's score, while you've left it paused here. */
   get leftAt(): number | null {
     return this.game && !this.game.over && this.mode !== 'play' ? this.game.score : null;
@@ -176,10 +181,17 @@ export class Cabinet {
   private open() {
     this.mode = 'play';
     const board = h('canvas', { 'aria-label': GAME });
-    const stop = h('button.btn', { type: 'button' }, '✕ Stop playing');
-    const tip = '← → move · ↑ turn · ↓ faster · Space drop · C hold · P pause';
+    const stop = stopButton();
+    const tips: [string[], string][] = [
+      [['←', '→'], 'move'],
+      [['↑'], 'turn'],
+      [['↓'], 'faster'],
+      [['Space'], 'drop'],
+      [['C'], 'hold'],
+      [['P'], 'pause'],
+    ];
     const call = h('div.cabinet-call.hidden', { role: 'status' });
-    const box = h('div.arcade.cabinet', { role: 'dialog', 'aria-label': GAME }, h('div.arcade-screen', {}, board), call, h('div.arcade-bar', {}, h('span', {}, GAME), h('span.tip', {}, tip), stop));
+    const box = h('div.arcade.cabinet', { role: 'dialog', 'aria-label': GAME }, h('div.arcade-screen', {}, board), call, arcadeBar(GAME, tips, stop));
 
     const fit = () => {
       const { width, height } = this.view.box();
@@ -295,14 +307,14 @@ export class Cabinet {
     const w = this.waiting;
     el.classList.toggle('hidden', !w);
     if (!w) return el.replaceChildren();
-    const go = h('button.btn.primary', { type: 'button' }, 'Open its terminal');
-    const back = h('button.btn', { type: 'button' }, 'Carry on');
+    const go = h('button.btn.sm.primary', { type: 'button' }, 'Open its terminal');
+    const back = h('button.btn.sm.ghost', { type: 'button' }, 'Carry on');
     go.addEventListener('click', () => {
       this.modal?.close();
       this.opts.openTerminal(w.id);
     });
     back.addEventListener('click', () => this.resume());
-    el.replaceChildren(h('span', {}, `🙋 ${w.name} needs input${deskOf(w)}`), go, back);
+    el.replaceChildren(h('span.cabinet-call-icon', { 'aria-hidden': 'true' }, '🙋'), h('span.cabinet-call-text', {}, `${w.name} needs input${deskOf(w)}`), back, go);
   }
 
   /** Nobody's game on the screen, just the high scores. */

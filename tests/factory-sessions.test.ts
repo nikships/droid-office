@@ -309,6 +309,76 @@ test('after a restart, a session shows the credits the ledger kept until its own
   assert.equal(after.state().office.cw.credits, 8400);
 });
 
+for (const when of ['list', 'detail', 'recheck'] as const) {
+  test(`an in-flight ${when} read finishes before the next poll; only key replacement clears its ledger`, async (t) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'factory-key-switch-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const ledger = path.join(dir, 'factory-credits.json');
+    const old = { sessionId: 'old-1', title: 'Old task', status: 'idle', createdAt: T0 - 5000, updatedAt: T0 - 1000 };
+    const fresh = { ...old, sessionId: 'new-1', title: 'New task' };
+    let release!: (r: Response) => void;
+    let started!: () => void;
+    const reading = new Promise<void>((r) => (started = r));
+    const held = new Promise<Response>((r) => (release = r));
+    t.after(() => release(json(200, {})));
+    const oldApi = new FactoryApi('fk-test-old-1111', (async (input) => {
+      const p = new URL(String(input)).pathname;
+      if (p === (when === 'list' ? '/api/v0/sessions' : '/api/v0/sessions/old-1')) {
+        started();
+        return held;
+      }
+      if (p === '/api/v0/sessions') return json(200, { sessions: [old] });
+      if (p === '/api/v0/sessions/old-1') return json(200, { ...old, factoryCredits: 123 });
+      return json(404, {});
+    }) as typeof fetch);
+    let newPolls = 0;
+    const newApi = new FactoryApi(when === 'recheck' ? 'fk-test-old-1111' : 'fk-test-new-2222', (async (input) => {
+      const p = new URL(String(input)).pathname;
+      if (p === '/api/v0/sessions') {
+        newPolls++;
+        return json(200, { sessions: [fresh] });
+      }
+      if (p === '/api/v0/sessions/new-1') return json(200, { ...fresh, factoryCredits: 7 });
+      return json(404, {});
+    }) as typeof fetch);
+    let current: FactoryApi | undefined = oldApi;
+    const link: FactoryLink = { connection: () => ({ connected: true, capabilities: [] }), client: () => current, rejected: () => {} };
+    const reg = new FactoryRegistry({ link, broadcast: () => {}, toast: () => {}, now: () => T0 });
+    t.after(() => reg.stop());
+    const sessions = reg.register((h) => new SessionsFeature(h, { dataDir: dir, now: () => T0 })) as SessionsFeature;
+    sessions.ledger.observe('kept', 11, T0, 'Earlier task');
+    sessions.ledger.save();
+    const polling = reg.tick();
+    await reading;
+    if (when === 'recheck') {
+      current = undefined;
+      reg.connectionChanged();
+      current = newApi;
+      reg.connectionChanged();
+    } else {
+      current = newApi;
+      reg.keyReplaced();
+      assert.deepEqual(sessions.state().items, []);
+    }
+    await reg.tick();
+    assert.equal(newPolls, 0, 'the old poll still holds its running slot');
+    release(json(200, when === 'list' ? { sessions: [old] } : { ...old, factoryCredits: 123 }));
+    await polling;
+    const savedBeforeNextPoll = existsSync(ledger);
+    await reg.tick();
+    assert.equal(newPolls, 1);
+    assert.deepEqual(
+      sessions.state().items.map((s) => s.id),
+      ['new-1'],
+    );
+    const expected = when === 'recheck' ? ['kept', 'old-1', 'new-1'] : ['new-1'];
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(ledger, 'utf8')).seen), expected, 'the new list must not hide lasting old-account ledger entries');
+    assert.equal(savedBeforeNextPoll, when === 'recheck', 'replacement clears the old poll’s saved ledger before polling again');
+    assert.equal(sessions.state().credits.today, when === 'recheck' ? 141 : 7);
+    assert.equal(new CreditLedger(ledger, () => T0).summary().today, when === 'recheck' ? 141 : 7, 'the saved totals survive a restart');
+  });
+}
+
 test('routes: list older, create with a first message, detail, settings, delete, messages, send, interrupt and children', async () => {
   let now = T0;
   const created = {

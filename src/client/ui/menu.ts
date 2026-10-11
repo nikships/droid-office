@@ -20,7 +20,7 @@ export interface HudAction {
   tone?: () => 'primary' | 'danger' | undefined;
 
   shown?: () => boolean;
-  /** Up on the top bar by itself while true, pinned or not: a meeting is on, an update is out. */
+  /** Up on the top bar by itself while true, pinned or not: an update is out. */
   status?: () => boolean;
   /** Its words on the top bar while `status` put it there; a pinned one is just its icon. */
   chip?: () => string;
@@ -136,7 +136,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
   function render() {
     const items: HTMLElement[] = actions.filter((a) => offered(a) && (pinned(a) || a.status?.())).map(dockButton);
     const workers = [...store.workers.values()];
-    // Hired onto desks, bean bags and the meeting room's table; the board agents at their kiosks don't count.
+    // Hired onto desks and bean bags; the board agents at their kiosks don't count.
     const hired = workers.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length;
     const waiting = workers.filter(waitingOnSomeone).length;
     const workersTitle = hired || waiting ? `${hired} worker${hired === 1 ? '' : 's'} on this floor${waiting ? `, ${waiting} waiting on someone` : ''}` : 'No workers on this floor yet';
@@ -178,7 +178,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
         h('span.mi-icon', {}, iconOf(a)),
         h('span.mi-label', {}, labelOf(a)),
         badge(a.count?.()),
-        a.key ? h('kbd.mi-key', {}, a.key) : null,
+        a.key ? h('kbd.key.mi-key', {}, a.key) : null,
       );
       const pin = h('button.menu-pin', { type: 'button' });
       pin.innerHTML = PIN_SVG;
@@ -195,7 +195,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
       return h('div.menu-row', {}, item, pin);
     };
     const toggle = (p: (typeof PANELS)[number]) => {
-      const item = h('button.menu-item.menu-toggle', { type: 'button', role: 'menuitemcheckbox' }, h('span.mi-icon', {}, p.icon), h('span.mi-label', {}, p.label, h('small', {}, p.what)), h('span.switch', { 'aria-hidden': 'true' }));
+      const item = h('button.menu-item.menu-toggle', { type: 'button', role: 'menuitemcheckbox' }, h('span.mi-icon', {}, p.icon), h('span.mi-label', {}, p.label, h('small', {}, p.what)), h('span.track', { 'aria-hidden': 'true' }));
       const paint = () => item.setAttribute('aria-checked', String(settings.hud[p.id]));
       paint();
       item.addEventListener('click', () => {
@@ -205,14 +205,15 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
       return item;
     };
     // Numbered eyebrows, the way the sidebar's panels have them: the index in orange.
-    const section = (no: string, name: string, rows: HTMLElement[]) => (rows.length ? [h('div.menu-sec', {}, h('span.no', {}, no), name), ...rows] : []);
+    const section = (no: string, name: string, rows: HTMLElement[]) =>
+      rows.length ? h('div.menu-group', { role: 'group', 'aria-label': name }, h('div.menu-sec.eyebrow', { 'aria-hidden': 'true' }, h('span.no', {}, no), name), ...rows) : null;
     const rows = (s: HudAction['section']) => actions.filter((a) => a.section === s && offered(a)).map(row);
     const el = h(
       'div.hud-menu',
       { role: 'menu', 'aria-label': 'Menu' },
-      h('div.menu-col', {}, ...section('01', 'Open', rows('Open')), ...section('02', 'Together', rows('Together'))),
-      h('div.menu-col', {}, ...section('03', 'Show on screen', PANELS.map(toggle)), ...section('04', 'Office', rows('Office'))),
-      h('p.menu-foot', {}, 'Pin what you use most to keep it on the top bar. ', h('kbd', {}, 'Tab'), ' opens and closes this menu.'),
+      h('div.menu-col', {}, section('01', 'Open', rows('Open')), section('02', 'Together', rows('Together'))),
+      h('div.menu-col', {}, section('03', 'Show on screen', PANELS.map(toggle)), section('04', 'Office', rows('Office'))),
+      h('div.menu-foot', {}, h('span', {}, 'Pin what you use most to the top bar'), h('span.menu-foot-key', {}, h('span.key', {}, 'Tab'), 'opens and closes')),
     );
     // On the window, so the keys work wherever focus is while the menu is up.
     const onKey = (e: KeyboardEvent) => menuKey(el, e);
@@ -287,7 +288,7 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
     },
     true,
   );
-  for (const t of ['workers', 'issues', 'pulls', 'services', 'queue', 'meeting', 'upgrade', 'floors', 'factory'] as Topic[]) store.on(t, render);
+  for (const t of ['workers', 'issues', 'pulls', 'pipelines', 'upgrade', 'floors', 'factory', 'whiteboard'] as Topic[]) store.on(t, render);
   applyPanels();
   render();
   return { refresh: render, toggleMenu };

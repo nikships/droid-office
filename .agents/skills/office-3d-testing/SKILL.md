@@ -60,20 +60,20 @@ EOF
 | Command | Use |
 | --- | --- |
 | `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `queue`, `services`, `coffee`, `elevator`, `meeting`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `golf`, `smoke`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
+| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
 | `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal |
-| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `queue`, `services`, `meeting`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
+| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Elevator to a floor id or name, or `roof` |
-| `office.camera(preset)` | `first`, `third`, `close` or `wide`, a fixed pose so screenshots compare between runs |
-| `office.state()` | Floor, position, facing, view, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors` |
+| `office.camera(preset)` | `first`, a fixed level pose looking straight ahead, so screenshots compare between runs |
+| `office.state()` | Floor, position, facing, seat, `using` (what E would use), `modals` (open windows by label), `terminal`, `workers`, `floors` |
 
 Assert on `state()` JSON. Use screenshots for what JSON cannot show (a mesh, a layout, a color):
 
 ```bash
-agent-browser eval "office.camera('wide').then(() => 'ok')"
-agent-browser screenshot /tmp/office-wide.png
+agent-browser eval "office.camera('first').then(() => 'ok')"
+agent-browser screenshot /tmp/office-first.png
 ```
 
 ### Without a browser driver
@@ -85,6 +85,17 @@ curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: applicati
   -d '{"cmd":"goTo","args":["desk-3"],"timeout":30000}'
 # 200 {"ok":true,"value":{…state…}} · 422 {"ok":false,"error":"…"} · 409 no tab open · 504 no answer in time
 ```
+
+### Input the API doesn't cover
+
+Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells, and the arcade's keys. To test those, load the movement rig from [`office-choreography`](../office-choreography/SKILL.md) into the test tab. Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
+
+```bash
+AGENT_BROWSER_SESSION=office-test .agents/skills/office-choreography/scripts/run.sh \
+  "(async()=>{ await office.goTo('elevator'); await __walkTo(8.3,-3); await __walkTo(6.8,-0.7); __tap('KeyE','e'); await __sleep(6000); return office.state().floor.id })()"
+```
+
+For video proof of a fix (a PR, a bug repro), record the same steps with [`office-video-capture`](../office-video-capture/SKILL.md)'s `rec.sh`.
 
 ## 4. Pitfalls
 

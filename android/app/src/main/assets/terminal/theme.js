@@ -1,0 +1,23 @@
+// The office's terminal colours (TERM_THEME in src/client/world/laptop.ts); a test keeps them equal.
+export const THEME = {
+  background: '#0a0a0a',
+  foreground: '#eeeeee',
+  cursor: '#ee6018',
+  selectionBackground: '#2a2a2a',
+  black: '#282a36',
+  red: '#ff5c7a',
+  green: '#7cf29a',
+  yellow: '#ffd166',
+  blue: '#6cb6ff',
+  magenta: '#d69cff',
+  cyan: '#72ddf7',
+  white: '#e6e6f0',
+  brightBlack: '#6c7086',
+  brightRed: '#ff8fa3',
+  brightGreen: '#a6f4b8',
+  brightYellow: '#ffe29a',
+  brightBlue: '#9ccfff',
+  brightMagenta: '#e5c1ff',
+  brightCyan: '#a5ecfb',
+  brightWhite: '#ffffff',
+};

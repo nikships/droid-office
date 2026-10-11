@@ -25,6 +25,16 @@ export interface DroidModelOption {
   defaultReasoningEffort?: AgentEffort;
   /** The efforts the model takes, when droid says (empty: none the office can pin); the fixed list otherwise. */
   supportedReasoningEfforts?: AgentEffort[];
+  provider?: string;
+  /** Droid's credit multiplier: what a token costs against the base rate. */
+  tokenMultiplier?: number;
+  noImages?: boolean;
+  promo?: string;
+}
+
+/** A credit multiplier as droid's picker says it: ×0.06, ×1.6, ×4. */
+export function multiplierLabel(n: number): string {
+  return `×${Number(n.toFixed(3))}`;
 }
 
 /** The catalogue's groups, in the order the server sends them: your own models, Factory's, then the old ones. */
@@ -40,7 +50,7 @@ export function droidModelGroups(models: DroidModelOption[]): { label: string; m
 const MODEL_MAX = 256;
 
 /** The catalogue of Droid models, as /api/agents/droid/models answers it. */
-interface Catalogue {
+export interface Catalogue {
   models: DroidModelOption[];
   defaultModel?: string;
   defaultReasoningEffort?: AgentEffort;
@@ -69,7 +79,7 @@ function fetchCatalogue(): Promise<Catalogue> {
       const models = Array.isArray(body.models)
         ? body.models.flatMap((m): DroidModelOption[] => {
             if (!m || typeof m !== 'object') return [];
-            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts } = m as Record<string, unknown>;
+            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts, provider, tokenMultiplier, noImages, promo } = m as Record<string, unknown>;
             if (typeof id !== 'string' || !id || id.length > MODEL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(id)) return [];
             return [
               {
@@ -79,6 +89,10 @@ function fetchCatalogue(): Promise<Catalogue> {
                 ...(legacy === true ? { legacy: true } : {}),
                 ...(defaultReasoningEffort ? { defaultReasoningEffort: asEffort(defaultReasoningEffort) } : {}),
                 ...(supportedReasoningEfforts ? { supportedReasoningEfforts: asEfforts(supportedReasoningEfforts) } : {}),
+                ...(typeof provider === 'string' && provider ? { provider } : {}),
+                ...(typeof tokenMultiplier === 'number' && Number.isFinite(tokenMultiplier) ? { tokenMultiplier } : {}),
+                ...(noImages === true ? { noImages: true } : {}),
+                ...(typeof promo === 'string' && promo ? { promo } : {}),
               },
             ];
           })
@@ -95,6 +109,11 @@ function fetchCatalogue(): Promise<Catalogue> {
       request = null;
     });
   return request;
+}
+
+/** Every model droid lists, with its default, cached for a minute. */
+export function droidCatalogue(): Promise<Catalogue> {
+  return fetchCatalogue();
 }
 
 /** Droid's own models (Factory's, not the owner's BYOK ones), for a session on a Factory computer. */
@@ -127,7 +146,7 @@ export function modelBadge(model: string | undefined, effort: AgentEffort | unde
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-/** Remembers the last model/effort chosen at a picker's key (a desk, or the queue). */
+/** Remembers the last model/effort chosen at a picker's key (a desk, or a fixed key). */
 const choiceKey = (kind: 'model' | 'effort', key: string) => `droid-office.droid-${kind}.${key}`;
 
 function rememberedModel(key: string): string | undefined {
@@ -177,8 +196,8 @@ export interface AgentFields {
 
 /**
  * The model and effort a new worker runs on, from the Droid catalogue. `key` scopes what gets
- * remembered between hires — a desk id for the hire dialog, or a fixed key like "queue" for the
- * queue's add form — so a desk that always got Opus offers Opus again next time, without one hire
+ * remembered between hires — a desk id for the hire dialog, or a fixed key like "hire" when no
+ * desk is picked — so a desk that always got Opus offers Opus again next time, without one hire
  * changing another's.
  */
 export function agentPicker(id: string, key = id): AgentFields {
@@ -195,8 +214,8 @@ export function agentFields(id: string, initial: AgentChoice): AgentFields {
  * the office's default worker from the server, so its picker has to name that one, not Droid's.
  */
 function buildFields(id: string, key: string | undefined, initialModel: string | undefined, initialEffort: AgentEffort | undefined, fallback: () => AgentChoice): AgentFields {
-  const modelSelect = h('select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
-  const effortSelect = h('select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
+  const modelSelect = h('select.select.model-select', { id, 'aria-label': 'Droid model' }) as HTMLSelectElement;
+  const effortSelect = h('select.select.effort-select', { id: `${id}-effort`, 'aria-label': 'Reasoning effort' }) as HTMLSelectElement;
   const hint = h('small.model-hint', {}, 'Loading Droid models…');
   const remember = (kind: 'model' | 'effort', value: string) => {
     if (key === undefined) return;
@@ -268,7 +287,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   });
   fill();
   return {
-    element: h('div.model-choice', {}, h('label', { for: id }, 'Model'), modelSelect, h('label', { for: `${id}-effort` }, 'Effort'), effortSelect, hint),
+    element: h('div.model-choice', {}, h('label.model-label', { for: id }, 'Model'), modelSelect, h('label.effort-label', { for: `${id}-effort` }, 'Effort'), effortSelect, hint),
     model: () => modelSelect.value || undefined,
     effort: () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined),
     set: (choice) => {

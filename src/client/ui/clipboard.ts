@@ -19,7 +19,7 @@ export async function copy(text: string): Promise<boolean> {
     return true;
   } catch {
     // Not a secure context: fall back to a hidden textarea.
-    const ta = h('textarea', { style: 'position:fixed;opacity:0' });
+    const ta = h('textarea.clipboard-proxy', { 'aria-hidden': 'true' });
     ta.value = text;
     document.body.append(ta);
     ta.select();

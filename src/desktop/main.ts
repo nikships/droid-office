@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import { downloadBrowser } from './browser.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
@@ -32,7 +33,16 @@ let quitting = false;
 /** Set while the app itself replaces the page, which the office's "Leave the office?" guard mustn't stop. */
 let replacing = false;
 
-const updates = new Updates({ log: path.join(logDir, 'updates.log'), beforeInstall: () => stopOffice(true) });
+const updates = new Updates({
+  log: path.join(logDir, 'updates.log'),
+  // Squirrel closes the windows before app.quit's before-quit, so the "Leave the office?" guard
+  // has to know now that the app is quitting.
+  beforeInstall: () => {
+    quitting = true;
+    return stopOffice(true);
+  },
+  parent: () => (win && !win.isDestroyed() ? win : undefined),
+});
 
 function page(title: string, detail = ''): string {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
@@ -130,7 +140,7 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
     const { response } = await dialog.showMessageBox({
       type: 'question',
       message: 'Where does your office live?',
-      detail: `Droid Office keeps its data (floors, workers, queue) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
+      detail: `Droid Office keeps its data (floors, workers, pictures) in a folder. Pick a folder an office already ran in to carry on with it, such as the checkout you ran \`npm start\` in. You can change this later from Office → Change Office Folder….`,
       buttons: [`Use ${fallback.replace(os.homedir(), '~')}`, 'Choose Folder…'],
       defaultId: 0,
       cancelId: 0,
@@ -298,6 +308,8 @@ if (!app.requestSingleInstanceLock()) {
       saveSettings(settingsFile, settings);
     }
     await openOffice();
+    mkdirSync(logDir, { recursive: true });
+    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
     updates.start();
   });
 }

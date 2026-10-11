@@ -34,6 +34,7 @@ export interface Spot {
   ok: boolean;
 }
 
+const CENTER = new THREE.Vector2(0, 0);
 const SIZE_KEY = 'droid-office.picture-size';
 function lastSize(): number {
   try {
@@ -45,8 +46,7 @@ function lastSize(): number {
 }
 
 /**
- * Hanging pictures: pick an image, then aim at a wall (the crosshair in first person, the mouse in
- * third) and click. Also looking at one closer, moving, editing and taking it down.
+ * Hanging pictures: pick an image, then aim the crosshair at a wall and click. Also looking at one closer, moving, editing and taking it down.
  */
 export class Hanger {
   readonly ghost = new Ghost();
@@ -54,7 +54,6 @@ export class Hanger {
   onChange: () => void = () => {};
   private cur: Hanging | null = null;
   private at: Spot | null = null;
-  private mouse = new THREE.Vector2();
   private raycaster = new THREE.Raycaster();
   /** A moved picture stays hidden until the office confirms where it went. */
   private revealTimer = 0;
@@ -67,10 +66,6 @@ export class Hanger {
     private office: Office,
     private gallery: Gallery,
   ) {
-    canvas.addEventListener('pointermove', (e) => {
-      const r = canvas.getBoundingClientRect();
-      this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    });
     // The wheel sizes the picture instead of zooming the camera. On window, in the capture phase,
     // so it runs before the player's own wheel handler on the canvas.
     window.addEventListener(
@@ -85,7 +80,7 @@ export class Hanger {
     );
     // Esc frees the mouse before the page ever sees the key; treat that as cancel too.
     document.addEventListener('pointerlockchange', () => {
-      if (this.cur && this.player.view === 'first' && !this.player.locked) this.cancel();
+      if (this.cur && !this.player.locked) this.cancel();
     });
     store.on('decor', () => {
       const moving = this.cur?.moving;
@@ -165,11 +160,10 @@ export class Hanger {
     this.cur.size = Math.max(w, h);
   }
 
-  /** Hangs the picture where you aim. `ndc` is where you clicked, in third person. */
-  place(ndc?: THREE.Vector2) {
+  /** Hangs the picture where you aim. */
+  place() {
     const cur = this.cur;
     if (!cur) return;
-    if (ndc && this.player.view === 'third') this.mouse.copy(ndc);
     this.update();
     const at = this.at;
     if (!at) return hintToast('Aim at a wall to hang it there');
@@ -199,7 +193,7 @@ export class Hanger {
   update() {
     const cur = this.cur;
     if (!cur) return;
-    this.raycaster.setFromCamera(this.player.view === 'first' ? new THREE.Vector2(0, 0) : this.mouse, this.camera);
+    this.raycaster.setFromCamera(CENTER, this.camera);
     const hit = aimAtWall(this.raycaster.ray);
     const { w, h } = pictureSize(cur.size, cur.shape);
     const on = hit && clampToWall(hit.wall, hit.u, hit.y, w, h);

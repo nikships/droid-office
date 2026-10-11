@@ -8,5 +8,6 @@ The three.js scene. DOM windows are `../ui`.
 - The mesh and the collider for one solid come from the same record in `layout.ts` or the prop manifest.
 - Lit solids use `toon()` or `toonUnique()` from `toon.ts`. Screens, sprites, glass and decals use `MeshBasicMaterial`. Convert a loaded GLB's `MeshStandardMaterial` at load, the way `factory-props.ts` and `laptop.ts` do.
 - GLBs in `public/props/` come from `tools/props/generate.py`. Regenerate there, then run `node tools/props/verify.mjs`.
+- The droid wand (`wand.glb`, `wand.ts`) points +z from its grip at the origin. Its moves and spells are `wand-motion.ts`, separate from the magnum's `gun-motion.ts`. A change to its grip, `SHAPES.wand`, `WAND_GRIP_AT`/`WAND_GRIP_AXIS` in `glove.ts` or `WAND_HOLD` in `hands.ts` keeps `tests/wand.test.ts` passing (fingers on the grip, none through it, aimed under the crosshair).
 - The first-person glove must not pass through `magnum.glb` in any gun move. A change to the magnum's grip, the glove's `SHAPES` or the gun mount in `hands.ts` keeps `tests/gun-grip.test.ts` passing; move the hand, not the tolerance.
 - This tree stays importable from `node --import tsx` with no `window`, `document` or WebGL context created at import time. `gun.ts` says so at the top; keep it true for anything `tests/` loads.

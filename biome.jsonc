@@ -6,8 +6,9 @@
     "useIgnoreFile": true
   },
   "files": {
-    // The Draco decoder wrapper is vendored from three.js; linting its output is noise.
-    "includes": ["**", "!!**/dist", "!**/*.json", "!**/*.jsonc", "!**/*.css", "!**/*.html", "!**/*.svg", "!**/public/props/draco/draco_wasm_wrapper.js"]
+    // The Draco decoder wrapper is vendored from three.js, and the Android terminal page's vendor/
+    // is xterm.js copied from node_modules (tools/android-terminal.mjs); linting their output is noise.
+    "includes": ["**", "!!**/dist", "!**/*.json", "!**/*.jsonc", "!**/*.css", "!**/*.html", "!**/*.svg", "!**/public/props/draco/draco_wasm_wrapper.js", "!android/app/src/main/assets/terminal/vendor"]
   },
   "formatter": {
     "enabled": true,

@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<!-- Example: the Oct 2026 Droid Office launch video (46 s, 1920x1080). Asset paths are relative to its project; generated attributes are elided. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("assets/fonts/Geist-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: "Geist Mono";
+        src: url("assets/fonts/GeistMono-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #070403;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #070403;
+        font-family: "Geist", sans-serif;
+        color: #f6efe8;
+      }
+      .layer {
+        position: absolute;
+        inset: 0;
+      }
+      .cam {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      .full {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        object-fit: cover;
+      }
+      .mono {
+        font-family: "Geist Mono", monospace;
+      }
+      .o {
+        color: #ff6a1f;
+      }
+
+      /* backgrounds */
+      .bg-grid {
+        background-image:
+          linear-gradient(rgba(238, 96, 24, 0.13) 2px, transparent 2px),
+          linear-gradient(90deg, rgba(238, 96, 24, 0.13) 2px, transparent 2px);
+        background-size: 96px 96px;
+      }
+      .glow {
+        position: absolute;
+        width: 1400px;
+        height: 1400px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(238, 96, 24, 0.34) 0%, rgba(238, 96, 24, 0) 62%);
+      }
+
+      /* intro terminal windows */
+      .win {
+        position: absolute;
+        width: 620px;
+        height: 460px;
+        border: 2px solid #3a2a20;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #0d0907;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+      }
+      .win .bar {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 14px;
+        background: #1a120d;
+        font-family: "Geist Mono", monospace;
+        font-size: 20px;
+        color: #c9bdb3;
+      }
+      .win .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #4a3a30;
+      }
+      .win .name {
+        margin-left: 10px;
+      }
+      .win .state {
+        margin-left: auto;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #e33b2e;
+      }
+      .win .view {
+        position: absolute;
+        left: 0;
+        top: 36px;
+        width: 620px;
+        height: 424px;
+        overflow: hidden;
+      }
+      .win video {
+        position: absolute;
+        left: -186px;
+        top: -66px;
+        width: 992px;
+        height: 558px;
+      }
+      #intro-hud {
+        position: absolute;
+        left: 70px;
+        top: 56px;
+        display: flex;
+        gap: 18px;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 22px;
+        background: rgba(10, 6, 4, 0.92);
+        border: 2px solid #4a3426;
+        border-radius: 10px;
+        font-family: "Geist Mono", monospace;
+        font-size: 30px;
+        letter-spacing: 0.06em;
+        color: #f6efe8;
+      }
+      .chip b {
+        color: #ff6a1f;
+        font-weight: 700;
+      }
+      #intro-head {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #intro-head .plate {
+        padding: 40px 70px;
+        background: rgba(7, 4, 3, 0.9);
+        border: 3px solid #ff6a1f;
+        border-radius: 18px;
+        font-size: 150px;
+        font-weight: 850;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      /* footage overlays */
+      .scrim-bl {
+        background: radial-gradient(
+          ellipse 1300px 760px at 0% 100%,
+          rgba(5, 3, 2, 0.88) 0%,
+          rgba(5, 3, 2, 0.55) 45%,
+          rgba(5, 3, 2, 0) 75%
+        );
+      }
+      .vignette {
+        background: radial-gradient(
+          ellipse 1250px 800px at 50% 50%,
+          rgba(0, 0, 0, 0) 55%,
+          rgba(0, 0, 0, 0.5) 100%
+        );
+      }
+      .cap {
+        position: absolute;
+        left: 80px;
+        bottom: 80px;
+        max-width: 1500px;
+        padding: 30px 44px 34px;
+        background: rgba(7, 4, 3, 0.84);
+        border: 2px solid #3a2a20;
+        border-radius: 18px;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-family: "Geist Mono", monospace;
+        font-size: 30px;
+        letter-spacing: 0.14em;
+        color: #ffb48a;
+        margin-bottom: 18px;
+      }
+      .eyebrow .n {
+        color: #070403;
+        background: #ff6a1f;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 700;
+      }
+      .big {
+        font-size: 132px;
+        font-weight: 850;
+        letter-spacing: -0.045em;
+        line-height: 0.95;
+        text-shadow: 0 6px 40px rgba(0, 0, 0, 0.7);
+      }
+      .mid {
+        font-size: 96px;
+        font-weight: 820;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        text-shadow: 0 6px 34px rgba(0, 0, 0, 0.75);
+      }
+      .line {
+        display: block;
+        overflow: hidden;
+        padding-bottom: 8px;
+      }
+      .line > span {
+        display: inline-block;
+      }
+      .tl-tag {
+        position: absolute;
+        left: 70px;
+        top: 56px;
+      }
+      .center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .stamp {
+        font-size: 190px;
+        font-weight: 900;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        text-shadow: 0 8px 50px rgba(0, 0, 0, 0.8);
+        white-space: nowrap;
+      }
+      .stamp-wrap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 90px;
+        display: flex;
+        justify-content: center;
+      }
+      .stamp-wrap .stamp {
+        font-size: 150px;
+        padding: 10px 46px 22px;
+        background: rgba(7, 4, 3, 0.82);
+        border-radius: 18px;
+      }
+      #need {
+        position: absolute;
+        left: 420px;
+        top: 250px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 16px 30px;
+        background: #e33b2e;
+        border-radius: 999px;
+        font-family: "Geist Mono", monospace;
+        font-weight: 700;
+        font-size: 44px;
+        letter-spacing: 0.08em;
+        color: #fff6f0;
+        box-shadow: 0 0 60px rgba(227, 59, 46, 0.6);
+      }
+      #need .pip {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #fff6f0;
+      }
+
+      /* brand lockup */
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 40px;
+      }
+      .lockup img {
+        width: 170px;
+        height: 170px;
+        border-radius: 38px;
+        box-shadow: 0 20px 70px rgba(238, 96, 24, 0.45);
+      }
+      .lockup .word {
+        font-size: 176px;
+        font-weight: 880;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        text-shadow: 0 8px 50px rgba(0, 0, 0, 0.8);
+      }
+      #title-sub {
+        margin-top: 30px;
+        font-family: "Geist Mono", monospace;
+        font-size: 44px;
+        letter-spacing: 0.06em;
+        color: #f6efe8;
+        text-shadow: 0 4px 24px rgba(0, 0, 0, 0.9);
+      }
+      #title-sub span {
+        display: inline-block;
+      }
+
+      /* phone */
+      .phone {
+        position: absolute;
+        width: 330px;
+        height: 712px;
+        padding: 14px;
+        border-radius: 52px;
+        background: #17100c;
+        border: 3px solid #4a3426;
+        box-shadow: 0 40px 100px rgba(0, 0, 0, 0.75);
+      }
+      .phone img {
+        display: block;
+        width: 296px;
+        height: 658px;
+        border-radius: 38px;
+        object-fit: cover;
+      }
+
+      /* end card */
+      #end-lock {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 170px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      #end-tag {
+        margin-top: 34px;
+        font-size: 84px;
+        font-weight: 820;
+        letter-spacing: -0.035em;
+      }
+      #end-cmd {
+        margin-top: 54px;
+        padding: 22px 34px;
+        border: 2px solid #4a3426;
+        border-radius: 14px;
+        background: #120c08;
+        font-family: "Geist Mono", monospace;
+        font-size: 28px;
+        color: #f6efe8;
+        white-space: nowrap;
+      }
+      #end-cmd .p {
+        color: #ff6a1f;
+        margin-right: 16px;
+      }
+      #end-url {
+        margin-top: 34px;
+        font-family: "Geist Mono", monospace;
+        font-size: 44px;
+        letter-spacing: 0.02em;
+        color: #ffb48a;
+      }
+      #end-plat {
+        margin-top: 20px;
+        font-family: "Geist Mono", monospace;
+        font-size: 26px;
+        letter-spacing: 0.2em;
+        color: #b9ada3;
+      }
+      #end-legal {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 54px;
+        text-align: center;
+        font-size: 24px;
+        letter-spacing: 0.02em;
+        color: #a89c92;
+      }
+      #flash {
+        background: #fff3ea;
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="46" data-width="1920" data-height="1080">
+      <!-- ============ 0. INTRO: five terminals ============ -->
+      <div id="intro" class="layer clip" data-start="0" data-duration="4.7" data-track-index="1">
+        <div class="layer bg-grid" id="intro-grid"></div>
+        <div class="glow" id="intro-glow" style="left: 260px; top: -160px"></div>
+      </div>
+      <div id="w1" class="win" style="left: 70px; top: 150px">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="name">droid · sprocket</span><i class="state"></i></div>
+        <div class="view">
+          <video id="v-w1" class="clip" src="assets/clips/t-desk-4.mp4" data-start="0" data-duration="4.7" data-playback-rate="0.66" data-track-index="2" muted playsinline data-layout-allow-overflow=""></video>
+        </div>
+      </div>
+      <div id="w2" class="win" style="left: 1230px; top: 120px">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="name">droid · widget</span><i class="state"></i></div>
+        <div class="view">
+          <video id="v-w2" class="clip" src="assets/clips/t-desk-1.mp4" data-start="0" data-duration="4.7" data-playback-rate="0.66" data-track-index="3" muted playsinline data-layout-allow-overflow=""></video>
+        </div>
+      </div>
+      <div id="w3" class="win" style="left: 150px; top: 560px">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="name">droid · gizmo</span><i class="state"></i></div>
+        <div class="view">
+          <video id="v-w3" class="clip" src="assets/clips/t-desk-2.mp4" data-start="0" data-duration="4.7" data-playback-rate="0.66" data-track-index="4" muted playsinline data-layout-allow-overflow=""></video>
+        </div>
+      </div>
+      <div id="w4" class="win" style="left: 1160px; top: 570px">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="name">droid · bolt</span><i class="state"></i></div>
+        <div class="view">
+          <video id="v-w4" class="clip" src="assets/clips/t-desk-6.mp4" data-start="0" data-duration="4.7" data-playback-rate="0.66" data-track-index="5" muted playsinline data-layout-allow-overflow=""></video>
+        </div>
+      </div>
+      <div id="w5" class="win" style="left: 650px; top: 330px">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="name">droid · bolt-2</span><i class="state"></i></div>
+        <div class="view">
+          <video id="v-w5" class="clip" src="assets/clips/s5-terminal.mp4" data-start="0" data-duration="4.7" data-media-start="1.4" data-playback-rate="0.7" data-track-index="6" muted playsinline data-layout-allow-overflow=""></video>
+        </div>
+      </div>
+      <div id="intro-text" class="layer clip" data-start="0" data-duration="4.7" data-track-index="7">
+        <div id="intro-hud">
+          <div class="chip" id="hud-a">AGENTS <b>5</b></div>
+          <div class="chip" id="hud-t">TERMINALS <b>5</b></div>
+          <div class="chip" id="hud-s">STUCK <b>?</b></div>
+        </div>
+        <div id="intro-head">
+          <div class="plate" id="intro-plate">No clue who's <span class="o" id="stuck">stuck.</span></div>
+        </div>
+      </div>
+
+      <!-- ============ FOOTAGE ============ -->
+      <div class="cam" id="cam-aisle">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-aisle" class="clip full grade" src="assets/clips/s1-aisle.mp4" data-start="4.6" data-duration="7.7" data-playback-rate="0.44" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-hire-a">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-hire-a" class="clip full grade" src="assets/clips/s3-hire.mp4" data-start="12.3" data-duration="2" data-media-start="1" data-playback-rate="1.5" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-hire-b">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-hire-b" class="clip full grade" src="assets/clips/s3-hire.mp4" data-start="14.3" data-duration="2" data-media-start="6" data-playback-rate="1.25" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-term-a">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-term-a" class="clip full grade" src="assets/clips/s5-terminal.mp4" data-start="16.3" data-duration="2.15" data-playback-rate="0.45" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-term-b">
+        <video id="v-term-b" class="clip full" src="assets/clips/t-desk-4.mp4" data-start="18.45" data-duration="1.15" data-media-start="0.2" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-act">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-act" class="clip full grade" src="assets/clips/s6-act.mp4" data-start="19.6" data-duration="3.5" data-media-start="19.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-conf">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-conf" class="clip full grade" src="assets/clips/s4-confetti.mp4" data-start="23.1" data-duration="1.9" data-media-start="3.4" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-ci">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-ci" class="clip full grade" src="assets/clips/b-actions.mp4" data-start="25" data-duration="0.7" data-media-start="0.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-pr">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-pr" class="clip full grade" src="assets/clips/b-pulls.mp4" data-start="25.7" data-duration="0.7" data-media-start="0.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-comp">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-comp" class="clip full grade" src="assets/clips/b-computers.mp4" data-start="26.4" data-duration="1.1" data-media-start="0.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-walls">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-walls" class="clip full grade" src="assets/clips/b-issues.mp4" data-start="27.5" data-duration="1.5" data-media-start="0.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-floor">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-floor" class="clip full grade" src="assets/clips/s7-elevator.mp4" data-start="29" data-duration="2.2" data-media-start="0.6" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-elev">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-elev" class="clip full grade" src="assets/clips/s7-elevator.mp4" data-start="31.2" data-duration="1.1" data-media-start="5" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-pole">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-pole" class="clip full grade" src="assets/clips/s8-pole.mp4" data-start="32.3" data-duration="1.6" data-media-start="2.9" data-playback-rate="1.25" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-arcade">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-arcade" class="clip full grade" src="assets/clips/s9-arcade.mp4" data-start="33.9" data-duration="0.9" data-media-start="0.5" data-playback-rate="1.8" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-roof">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-roof" class="clip full grade" src="assets/clips/s10-roof-wand.mp4" data-start="34.8" data-duration="0.8" data-media-start="0.3" data-playback-rate="2" data-track-index="10" muted playsinline></video>
+      </div>
+      <div class="cam" id="cam-wand">
+        <video data-color-grading="(written by media-treatment --apply)" id="v-wand" class="clip full grade" src="assets/clips/s11-wand.mp4" data-start="35.6" data-duration="1.7" data-media-start="4.6" data-playback-rate="1.2" data-track-index="10" muted playsinline></video>
+      </div>
+
+      <div id="fx" class="layer clip" data-start="4.6" data-duration="32.7" data-track-index="11">
+        <div class="layer vignette"></div>
+        <div class="layer scrim-bl"></div>
+      </div>
+
+      <!-- ============ CAPTIONS over footage ============ -->
+      <div id="c-desk" class="layer clip" data-start="4.6" data-duration="2.2" data-track-index="20">
+        <div class="cap">
+          <div class="big"><span class="line"><span>So, give them</span></span><span class="line"><span class="o">a desk.</span></span></div>
+        </div>
+      </div>
+      <div id="c-title" class="layer clip" data-start="6.8" data-duration="5.5" data-track-index="20">
+        <div class="center">
+          <div class="lockup" id="title-lock">
+            <img id="title-icon" src="assets/img/icon.png" alt="">
+            <div class="word" id="title-word">Droid Office</div>
+          </div>
+          <div id="title-sub">
+            <span>a 3D office</span> <span>where your</span> <span>droids</span> <span class="o">actually work.</span>
+          </div>
+        </div>
+      </div>
+      <div id="c-hire" class="layer clip" data-start="12.3" data-duration="4" data-track-index="20">
+        <div class="cap">
+          <div class="eyebrow"><span class="n">01</span><span>HIRE</span></div>
+          <div class="mid">
+            <span class="line"><span id="h1">Grab an issue off the wall,</span></span>
+            <span class="line"><span id="h2">hand it to a worker,</span></span>
+            <span class="line"><span id="h3" class="o">it's on it.</span></span>
+          </div>
+        </div>
+      </div>
+      <div id="c-term" class="layer clip" data-start="16.3" data-duration="3.3" data-track-index="20">
+        <div class="cap">
+          <div class="eyebrow"><span class="n">02</span><span>LIVE PTY</span></div>
+          <div class="mid">
+            <span class="line"><span id="t1">Every laptop is a live terminal.</span></span>
+            <span class="line"><span id="t2" class="o">Step right in.</span></span>
+          </div>
+        </div>
+      </div>
+      <div id="c-act" class="layer clip" data-start="19.6" data-duration="3.5" data-track-index="20">
+        <div id="need"><i class="pip"></i>NEEDS YOU</div>
+        <div class="cap">
+          <div class="eyebrow"><span class="n">03</span><span>STATUS YOU CAN SEE</span></div>
+          <div class="mid">
+            <span class="line"><span id="a1">Workers act out the job.</span></span>
+            <span class="line"><span id="a2">Need you? <span class="o">They jump.</span></span></span>
+          </div>
+        </div>
+      </div>
+      <div id="c-conf" class="layer clip" data-start="23.1" data-duration="1.9" data-track-index="20">
+        <div class="center">
+          <div class="stamp"><span id="d1" style="display: inline-block">Done?</span> <span id="d2" class="o" style="display: inline-block">Confetti.</span></div>
+        </div>
+      </div>
+      <div id="c-walls" class="layer clip" data-start="25" data-duration="4" data-track-index="20">
+        <div class="cap">
+          <div class="eyebrow"><span class="n">04</span><span>LIVE ON THE WALLS</span></div>
+          <div class="mid">
+            <span class="line"><span id="b1">CI.</span></span>
+            <span class="line"><span id="b2">Pull requests.</span></span>
+            <span class="line"><span id="b3" class="o">Factory computers.</span></span>
+          </div>
+        </div>
+      </div>
+      <div id="c-floor" class="layer clip" data-start="29" data-duration="2.2" data-track-index="20">
+        <div class="cap">
+          <div class="eyebrow"><span class="n">05</span><span>FLOORS</span></div>
+          <div class="mid">
+            <span class="line"><span id="f1">Every project gets</span></span>
+            <span class="line"><span id="f2" class="o">its own floor.</span></span>
+          </div>
+        </div>
+      </div>
+      <div id="s-elev" class="layer clip" data-start="31.2" data-duration="1.1" data-track-index="21">
+        <div class="stamp-wrap"><div class="stamp">Elevator.</div></div>
+      </div>
+      <div id="s-pole" class="layer clip" data-start="32.3" data-duration="1.6" data-track-index="21">
+        <div class="stamp-wrap"><div class="stamp">Or the <span class="o">fire pole.</span></div></div>
+      </div>
+      <div id="s-arcade" class="layer clip" data-start="33.9" data-duration="0.9" data-track-index="21">
+        <div class="stamp-wrap"><div class="stamp">Arcade.</div></div>
+      </div>
+      <div id="s-roof" class="layer clip" data-start="34.8" data-duration="0.8" data-track-index="21">
+        <div class="stamp-wrap"><div class="stamp">Rooftop.</div></div>
+      </div>
+      <div id="s-wand" class="layer clip" data-start="35.6" data-duration="1.7" data-track-index="21">
+        <div class="stamp-wrap"><div class="stamp">And yes, <span class="o">a wand.</span></div></div>
+      </div>
+
+      <!-- ============ PHONE ============ -->
+      <div id="phone" class="layer clip" data-start="37.3" data-duration="3.1" data-track-index="30">
+        <div class="layer bg-grid" id="phone-grid"></div>
+        <div class="glow" id="phone-glow" style="left: 900px; top: -260px"></div>
+        <div style="position: absolute; left: 100px; top: 0; bottom: 0; width: 900px; display: flex; flex-direction: column; justify-content: center">
+          <div class="eyebrow"><span class="n">06</span><span>DROID OFFICE FOR ANDROID</span></div>
+          <div class="big" style="font-size: 104px">
+            <span class="line"><span id="p1">Your whole office</span></span>
+            <span class="line"><span id="p2" class="o">on your phone.</span></span>
+          </div>
+        </div>
+        <div class="phone" id="ph1" style="left: 1010px; top: 230px"><img src="assets/img/home.jpg" alt=""></div>
+        <div class="phone" id="ph3" style="left: 1530px; top: 230px"><img src="assets/img/notification.jpg" alt=""></div>
+        <div class="phone" id="ph2" style="left: 1270px; top: 170px"><img src="assets/img/worker.jpg" alt=""></div>
+      </div>
+
+      <!-- ============ END CARD ============ -->
+      <div id="end" class="layer clip" data-start="40.3" data-duration="5.7" data-track-index="31">
+        <div class="layer bg-grid" id="end-grid"></div>
+        <div class="glow" id="end-glow" style="left: 260px; top: -420px"></div>
+        <div id="end-lock">
+          <div class="lockup" id="end-lockup">
+            <img src="assets/img/icon.png" alt="">
+            <div class="word">Droid Office</div>
+          </div>
+          <div id="end-tag">Open source. <span class="o">Ready today.</span></div>
+          <div id="end-cmd">Download the Mac app from the latest release</div>
+          <div id="end-url">github.com/nikships/droid-office</div>
+          <div id="end-plat">MAC APP · ANDROID COMPANION · OPEN SOURCE</div>
+        </div>
+        <div id="end-legal">A community project. Not affiliated with or endorsed by Factory.</div>
+      </div>
+
+      <div id="flash" class="layer"></div>
+
+      <!-- ============ AUDIO ============ -->
+      <audio id="vo" data-audio-group="voiceover" src="assets/vo/vo2-fenrir.wav" data-start="0" data-track-index="40" data-volume="1"></audio>
+      <audio id="music-1" data-timeline-role="music" data-audio-group="music" src="assets/music/music-a.wav" data-start="0" data-duration="32.4" data-media-start="2.9" data-track-index="41" data-volume="0.8" data-fx-carve="(written by carve.mjs)" data-fx-chain="(written by carve.mjs)" data-automation="(written by carve.mjs)"></audio>
+      <audio id="music-2" data-timeline-role="music" data-audio-group="music" src="assets/music/music-a.wav" data-start="32.2" data-duration="13.8" data-media-start="23.85" data-track-index="42" data-volume="0.8" data-fx-carve="(written by carve.mjs)" data-fx-chain="(written by carve.mjs)" data-automation="(written by carve.mjs)"></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const V = 0; // VO offset: word time + V = composition time
+
+      // ---------- intro ----------
+      tl.fromTo("#intro-grid", { backgroundPosition: "0px 0px" }, { backgroundPosition: "0px 96px", duration: 4.7, ease: "none" }, 0);
+      tl.fromTo("#intro-glow", { scale: 0.85, opacity: 0.7 }, { scale: 1.1, opacity: 1, duration: 4.7, ease: "sine.inOut" }, 0);
+      const wins = [
+        ["#w1", -4, 0.3],
+        ["#w2", 3, 0.6],
+        ["#w3", 2.5, 1.55],
+        ["#w4", -3, 1.85],
+        ["#w5", -1, 2.15],
+      ];
+      wins.forEach(([sel, rot, at]) => {
+        tl.fromTo(sel, { opacity: 0, scale: 0.6, rotation: rot * 3, y: 60 }, { opacity: 1, scale: 1, rotation: rot, y: 0, duration: 0.42, ease: "back.out(1.7)" }, at + V - 0.15);
+        tl.to(sel, { x: rot * 6, duration: 2.0, ease: "sine.inOut" }, at + V + 0.3);
+      });
+      tl.fromTo("#hud-a", { opacity: 0, y: -30 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, 0.3 + V);
+      tl.fromTo("#hud-t", { opacity: 0, y: -30 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, 1.4 + V);
+      tl.fromTo("#hud-s", { opacity: 0, y: -30 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, 2.6 + V);
+      // dim the chaos, slam the problem
+      tl.to(["#w1", "#w2", "#w3", "#w4", "#w5"], { opacity: 0.35, filter: "blur(3px)", duration: 0.3 }, 2.6 + V);
+      tl.to(".win .name", { opacity: 0, duration: 0.2 }, 2.6 + V);
+      tl.fromTo("#intro-plate", { opacity: 0, scale: 1.35 }, { opacity: 1, scale: 1, duration: 0.32, ease: "expo.out" }, 2.6 + V);
+      tl.fromTo("#stuck", { x: 0 }, { x: 10, duration: 0.05, repeat: 7, yoyo: true, ease: "none" }, 3.8 + V);
+      tl.to(".win .state", { opacity: 0.15, duration: 0.08, repeat: 7, yoyo: true, ease: "none" }, 3.8 + V);
+      // blow out to the office
+      tl.to(["#w1", "#w3"], { x: -900, opacity: 0, duration: 0.35, ease: "power3.in" }, 4.3);
+      tl.to(["#w2", "#w4"], { x: 900, opacity: 0, duration: 0.35, ease: "power3.in" }, 4.3);
+      tl.to("#w5", { scale: 2.4, opacity: 0, duration: 0.35, ease: "power3.in" }, 4.3);
+      tl.to("#intro-plate", { scale: 0.7, opacity: 0, duration: 0.3, ease: "power3.in" }, 4.32);
+
+      // flash hits on the big section changes
+      [4.6, 12.3, 25.0, 29.0, 37.3, 40.3].forEach((t) => {
+        tl.fromTo("#flash", { opacity: 0.85 }, { opacity: 0, duration: 0.28, ease: "power2.out", immediateRender: false }, t);
+      });
+
+      // ---------- aisle + title ----------
+      tl.fromTo("#cam-aisle", { scale: 1.12 }, { scale: 1.0, duration: 7.7, ease: "power1.out" }, 4.6);
+      tl.fromTo("#c-desk .line > span", { yPercent: 110 }, { yPercent: 0, duration: 0.45, ease: "expo.out", stagger: 0.75 }, 4.9 + V - 0.35);
+      tl.to("#c-desk .big", { opacity: 0, x: -60, duration: 0.25, ease: "power2.in" }, 6.5);
+      tl.fromTo("#title-icon", { scale: 0, rotation: -90 }, { scale: 1, rotation: 0, duration: 0.55, ease: "back.out(1.6)" }, 6.8 + V);
+      tl.fromTo("#title-word", { opacity: 0, x: 80 }, { opacity: 1, x: 0, duration: 0.5, ease: "power4.out" }, 7.6 + V);
+      ["9.0", "10.2", "10.5", "11.1"].forEach((t, i) => {
+        tl.fromTo(`#title-sub span:nth-child(${i + 1})`, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, Number(t) + V - 0.1);
+      });
+      tl.to("#title-lock", { scale: 1.04, duration: 4, ease: "sine.inOut" }, 8.2);
+      tl.to("#c-title .center", { opacity: 0, scale: 0.94, duration: 0.25, ease: "power2.in" }, 12.0);
+
+      // ---------- hire ----------
+      tl.fromTo("#cam-hire-a", { scale: 1.0 }, { scale: 1.1, duration: 2, ease: "none" }, 12.3);
+      tl.fromTo("#cam-hire-b", { scale: 1.1 }, { scale: 1.0, duration: 2, ease: "power2.out" }, 14.3);
+      tl.fromTo("#c-hire .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 12.35);
+      tl.fromTo("#h1", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 12.4 + V - 0.1);
+      tl.fromTo("#h2", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 13.8 + V - 0.1);
+      tl.fromTo("#h3", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "back.out(2)" }, 15.1 + V - 0.1);
+      tl.to("#c-hire .cap", { opacity: 0, duration: 0.18 }, 16.1);
+
+      // ---------- terminal ----------
+      tl.fromTo("#cam-term-a", { scale: 1.0 }, { scale: 1.18, duration: 2.15, ease: "power1.in" }, 16.3);
+      tl.fromTo("#cam-term-b", { scale: 0.6, opacity: 0.3 }, { scale: 1.0, opacity: 1, duration: 0.45, ease: "expo.out" }, 18.45);
+      tl.fromTo("#c-term .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 16.35);
+      tl.fromTo("#t1", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 16.4 + V - 0.1);
+      tl.fromTo("#t2", { yPercent: 110 }, { yPercent: 0, duration: 0.35, ease: "back.out(2)" }, 18.5 + V - 0.1);
+      tl.to("#c-term .cap", { opacity: 0, duration: 0.18 }, 19.4);
+
+      // ---------- acting / needs you ----------
+      tl.fromTo("#cam-act", { scale: 1.0 }, { scale: 1.3, duration: 3.5, ease: "power1.inOut", transformOrigin: "28% 42%" }, 19.6);
+      tl.fromTo("#c-act .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 19.65);
+      tl.fromTo("#a1", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 19.7 + V - 0.1);
+      tl.fromTo("#a2", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 21.5 + V - 0.1);
+      tl.fromTo("#need", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2.2)" }, 21.5 + V - 0.05);
+      tl.fromTo("#need", { y: 0 }, { y: -36, duration: 0.18, repeat: 3, yoyo: true, ease: "power2.out", immediateRender: false }, 22.3 + V);
+      tl.to("#c-act .cap, #need", { opacity: 0, duration: 0.1 }, 23.0);
+
+      // ---------- confetti ----------
+      tl.fromTo("#cam-conf", { scale: 1.15 }, { scale: 1.0, duration: 1.9, ease: "power2.out" }, 23.1);
+      tl.fromTo("#d1", { opacity: 0, scale: 1.6 }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out" }, 23.2 + V - 0.05);
+      tl.fromTo("#d2", { opacity: 0, scale: 1.6, rotation: -6 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.35, ease: "back.out(2.4)" }, 23.9 + V - 0.05);
+
+      // ---------- walls ----------
+      ["#cam-ci", "#cam-pr", "#cam-comp", "#cam-walls"].forEach((sel, i) => {
+        const at = [25, 25.7, 26.4, 27.5][i];
+        const d = [0.7, 0.7, 1.1, 1.5][i];
+        tl.fromTo(sel, { scale: 1.12 }, { scale: 1.0, duration: d, ease: "power2.out" }, at);
+      });
+      tl.fromTo("#c-walls .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 25.0);
+      tl.fromTo("#b1", { yPercent: 110 }, { yPercent: 0, duration: 0.3, ease: "expo.out" }, 25.1 + V - 0.1);
+      tl.fromTo("#b2", { yPercent: 110 }, { yPercent: 0, duration: 0.3, ease: "expo.out" }, 25.7 + V - 0.1);
+      tl.fromTo("#b3", { yPercent: 110 }, { yPercent: 0, duration: 0.35, ease: "back.out(2)" }, 26.4 + V - 0.1);
+      tl.to("#c-walls .cap", { opacity: 0, duration: 0.18 }, 28.8);
+
+      // ---------- floors + fun montage ----------
+      tl.fromTo("#cam-floor", { scale: 1.2, transformOrigin: "0% 75%" }, { scale: 1.32, transformOrigin: "0% 75%", duration: 2.2, ease: "power1.out" }, 29.0);
+      tl.fromTo("#c-floor .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 29.05);
+      tl.fromTo("#f1", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "expo.out" }, 29.1 + V - 0.1);
+      tl.fromTo("#f2", { yPercent: 110 }, { yPercent: 0, duration: 0.4, ease: "back.out(2)" }, 30.0 + V - 0.1);
+      tl.to("#c-floor .cap", { opacity: 0, duration: 0.15 }, 31.05);
+      tl.fromTo("#cam-elev", { scale: 1.0 }, { scale: 1.2, duration: 1.1, ease: "power2.in" }, 31.2);
+      tl.fromTo("#cam-pole", { scale: 1.15 }, { scale: 1.0, duration: 1.6, ease: "power2.out" }, 32.3);
+      tl.fromTo("#cam-arcade", { scale: 1.2 }, { scale: 1.0, duration: 0.9, ease: "power2.out" }, 33.9);
+      tl.fromTo("#cam-roof", { scale: 1.1, x: 40 }, { scale: 1.0, x: -40, duration: 0.8, ease: "none" }, 34.8);
+      tl.fromTo("#cam-wand", { scale: 1.0 }, { scale: 1.12, duration: 1.7, ease: "power1.out" }, 35.6);
+      [
+        ["#s-elev", 31.2],
+        ["#s-pole", 32.3],
+        ["#s-arcade", 33.9],
+        ["#s-roof", 34.8],
+        ["#s-wand", 35.6],
+      ].forEach(([sel, at]) => {
+        tl.fromTo(`${sel} .stamp`, { opacity: 0, scale: 1.5, y: 30 }, { opacity: 1, scale: 1, y: 0, duration: 0.22, ease: "expo.out" }, at);
+      });
+
+      // ---------- phone ----------
+      tl.fromTo("#phone-grid", { backgroundPosition: "0px 0px" }, { backgroundPosition: "96px 0px", duration: 3.1, ease: "none" }, 37.3);
+      tl.fromTo("#phone-glow", { scale: 0.8 }, { scale: 1.1, duration: 3.1, ease: "sine.inOut" }, 37.3);
+      tl.fromTo("#phone .eyebrow", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 37.35);
+      tl.fromTo("#p1", { yPercent: 110 }, { yPercent: 0, duration: 0.45, ease: "expo.out" }, 37.9 + V - 0.15);
+      tl.fromTo("#p2", { yPercent: 110 }, { yPercent: 0, duration: 0.45, ease: "back.out(1.8)" }, 38.9 + V - 0.15);
+      tl.fromTo("#ph1", { y: 700, rotation: -14 }, { y: 0, rotation: -7, duration: 0.6, ease: "power4.out" }, 37.4);
+      tl.fromTo("#ph2", { y: 760 }, { y: 0, duration: 0.6, ease: "power4.out" }, 37.55);
+      tl.fromTo("#ph3", { y: 700, rotation: 14 }, { y: 0, rotation: 7, duration: 0.6, ease: "power4.out" }, 37.7);
+      tl.to(["#ph1", "#ph2", "#ph3"], { y: -24, duration: 2.0, ease: "sine.inOut" }, 38.3);
+
+      // ---------- end card ----------
+      tl.fromTo("#end-grid", { backgroundPosition: "0px 0px" }, { backgroundPosition: "0px -96px", duration: 5.7, ease: "none" }, 40.3);
+      tl.fromTo("#end-glow", { scale: 0.85, opacity: 0.6 }, { scale: 1.05, opacity: 1, duration: 5.7, ease: "sine.inOut" }, 40.3);
+      tl.fromTo("#end-lockup", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.5, ease: "expo.out" }, 40.4 + V - 0.1);
+      tl.fromTo("#end-tag", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 41.4 + V - 0.1);
+      tl.fromTo("#end-cmd", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 42.5 + V);
+      tl.fromTo("#end-url", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 42.9 + V);
+      tl.fromTo("#end-plat", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 43.3 + V);
+      tl.fromTo("#end-legal", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 43.5 + V);
+      tl.to("#end-lockup", { scale: 1.03, duration: 4.5, ease: "sine.inOut" }, 41.0);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

@@ -6,8 +6,8 @@ import { markdown } from './markdown';
 // A Droid session's transcript, as Factory keeps it (GET /api/factory/sessions/:id/messages):
 // user and assistant text as markdown, thinking folded away, each tool call one line that opens
 // onto its input and result, and pictures as thumbnails. It pages back through older messages,
-// and while the session runs it reads the newest every few seconds and follows the bottom. The
-// Sessions window mounts it, and so does a cloud worker's window.
+// and while the session runs it reads the newest every few seconds and follows the bottom. A
+// cloud worker's window mounts it.
 
 export interface TranscriptOptions {
   sessionId: string;

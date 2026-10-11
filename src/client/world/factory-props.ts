@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COMPUTE_WALL, FLOOR } from '../../shared/layout';
+import { DROID_RACK, ROBOT_CELL } from '../../shared/layout';
 import { MONO } from '../fonts';
 import type { Dressing, DressingKit } from './factory-floor';
 import { glyphFlat } from './glyph3d';
@@ -10,11 +10,6 @@ import { mergeByMaterial, mesh, roundedBox, toon } from './toon';
 // The hero props come from tools/props/generate.py. main.ts preloads every GLB in the manifest;
 // each piece here drops in the first frame its GLB is cached, so building the office (and the
 // Node tests, which never load one) touches no fetch, DOM or WebGL.
-
-/** Where along the west wall the compute wall's Droid Computers screen is centered (its right-hand part, seen from the room). */
-const FLEET_Z = COMPUTE_WALL.z - (COMPUTE_WALL.width - (COMPUTE_WALL.width - COMPUTE_WALL.machineWidth - COMPUTE_WALL.gap)) / 2;
-/** The Droid Computer rack: a low plinth against the west wall, under the compute wall's Droid Computers screen. */
-export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: FLEET_Z - 1.15, maxZ: FLEET_Z + 1.15, top: 0.62 } as const;
 
 /** What one of the rack's cubes shows for a real Droid Computer: its readout lines and how its LED goes. */
 export interface RackCube {
@@ -34,8 +29,6 @@ export function setRackCubes(cubes: RackCube[] | null) {
   rackFeed = cubes;
   rackFed++;
 }
-/** The robot cell: an arm between two conveyors, out on the open floor between the desks and the elevator. */
-export const ROBOT_CELL = { x: 5, z: -6, width: 3, depth: 2.5, top: 1.6 } as const;
 
 const ORANGE = '#ee6018';
 const GREEN = '#3ccf91';

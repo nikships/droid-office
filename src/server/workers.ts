@@ -11,7 +11,7 @@ import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeState } from './worktrees.js';
+import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
@@ -21,7 +21,6 @@ import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
-import type { ServiceOwner } from './services.js';
 import { TaskNamer, fallbackTask } from './tasks.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
@@ -31,6 +30,7 @@ import { DropStore } from './drops.js';
 import { screenSnapshot } from './screen.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
+import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -104,6 +104,15 @@ const HOOK_TRIES = 6;
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
 const SCREEN_CHECK_MS = 1000;
+/**
+ * How long a launch prompt waits for SessionStart before the input box on its screen is enough to
+ * type it in: well past a normal start, so it only matters when the hooks can't reach the office.
+ */
+const LAUNCH_PROMPT_FALLBACK_MS = 15_000;
+/** How long a new terminal waits for SessionStart (after its worktree setup, if any) before it looks stuck on a login. */
+const BOOT_BLOCKED_MS = 12_000;
+/** The most of a failed worktree setup's output its worker is told. */
+const SETUP_OUTPUT_MAX = 3000;
 /** Tools that ask the person a question: droid's is AskUser. */
 const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
@@ -159,6 +168,8 @@ interface Worker {
   hookToken: string;
   /** Droid never reported SessionStart: it's stuck on a login or hooks screen. */
   bootBlocked?: boolean;
+  /** The first message for this run of its droid, typed in once droid can take it (see launch), and when the run started. */
+  launchPrompt?: { text: string; at: number };
   /**
    * Sessions of the subagents its droid started with the Task tool. Their hooks come with this
    * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
@@ -183,7 +194,7 @@ interface Worker {
   /** Bumped by /clear: a new conversation, so a new task. */
   taskEpoch: number;
   /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
-  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number };
+  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; launchPrompt?: { text: string; at: number } };
   /** Its process went away mid-turn with the office or the terminal host: its next start carries on (CARRY_ON_PROMPT). */
   interrupted?: boolean;
   /** Output since its scrollback was last saved to disk. */
@@ -195,6 +206,11 @@ interface Worker {
   downedTimer?: NodeJS.Timeout;
   /** Branches present at hire time, per repository; never included in gun dismissal. */
   worktreeOwnership?: Record<string, WorktreeOwnership>;
+  /** The plan its first terminal runs before the agent, to make its new worktree ready (see worktree-setup.ts). */
+  setupPlan?: string;
+  /** Its terminal is running that plan; when it finished, so the agent gets its own time to start after it. */
+  settingUp?: boolean;
+  setupDoneAt?: number;
 }
 
 export interface WorkerEvents {
@@ -204,6 +220,8 @@ export interface WorkerEvents {
   screen(workerId: string, frame: { cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }): void;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
+  /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
+  checkout?(branch: string): void;
 }
 
 export class WorkerManager {
@@ -211,6 +229,8 @@ export class WorkerManager {
   /** Which connections have each worker's terminal open (workerId -> connection IDs). */
   private subscribers = new Map<string, Set<string>>();
   private statePath: string;
+  /** Workers saved at a seat that no longer exists: never run, kept in the file untouched. */
+  private retired: unknown[] = [];
   private droidSettingsPath: string;
   /** The Droid hook commands, reused for per-worker model overlays (see droidSettings). */
   private droidHooks: Record<string, unknown[]> = {};
@@ -219,15 +239,21 @@ export class WorkerManager {
   private agentPath: string | null = null;
 
   /** Desks and names taken by the floor's guests (see guests.ts), which the office's hires leave alone. */
-  holds?: { desk(deskId: string): boolean; names(): Iterable<string> };
+  holds?: { desk(deskId: string): boolean; names(): Iterable<string>; inCheckout?(): string[] };
+  /**
+   * ⚙️ Settings → Workers: a fresh worker starts from the latest of the default branch, its worktree
+   * cut from origin's and the checkout brought there for one without (see freshen). Off, or unset:
+   * from the branch the checkout is on, which is left alone.
+   */
+  freshMain?: () => boolean;
 
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
   }
-  /** Where the office-queue command is, for the board agents' PATH (see writeOfficeCommand). */
-  private queueBin: string | undefined;
   /** Where the office-workers command is, for every agent's PATH: how a lead runs its subagents (see team.ts). */
   private teamBin: string | undefined;
+  /** The script a new worktree's terminal runs before its agent (see worktree-setup.ts). */
+  private setupScript: string | undefined;
   private screenTimer: NodeJS.Timeout;
   /** The office is shutting down: workers exiting now are being stopped, not failing to resume. */
   private closing = false;
@@ -261,8 +287,17 @@ export class WorkerManager {
     this.statePath = path.join(dataDir, 'workers.json');
     this.droidSettingsPath = path.join(dataDir, 'droid-hooks.json');
     this.writeHookSettings();
-    this.queueBin = this.writeOfficeCommand('bin', 'office-queue', "Droid Office's task queue, for the board agents");
+    // The task queue's command, from before the queue was taken out.
+    rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
+    rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
+    // In the same folder, so it's on every agent's PATH with office-workers.
+    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
+    try {
+      this.setupScript = writeSetupScript(dataDir);
+    } catch {
+      // without it, new worktrees just aren't set up
+    }
     this.agentPath = resolveCommand(agentCmd);
     this.namer = new TaskNamer(
       this.agentPath,
@@ -330,11 +365,23 @@ export class WorkerManager {
   }
 
   /**
-   * Fetches the branch the project is on, so a worktree made next starts from what's on the forge now
-   * (see Worktrees.fetch). Undefined when there's nothing to wait for.
+   * Fetches the branch a fresh worker starts from (the default branch, or the one the project is on;
+   * see freshMain), so it starts from what's on the forge now (see Worktrees.fetch). With `checkout`,
+   * for one hired into the project's checkout, which is only moved when freshMain is on. Undefined
+   * when there's nothing to wait for.
    */
-  fetchBase(): Promise<void> | undefined {
-    return this.trees.fetch();
+  fetchBase(checkout = false): Promise<void> | undefined {
+    const fresh = this.freshMain?.() ?? false;
+    if (checkout && !fresh) return undefined;
+    return this.trees.fetch(fresh ? 'main' : 'checkout');
+  }
+
+  /** Fetches the origin branch a lead explicitly picked, independently of freshMain. */
+  fetchStart(lead: string, from: string): Promise<void> | undefined {
+    const boss = this.workers.get(lead)?.info;
+    if (!boss) return undefined;
+    const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
+    return this.trees.fetchRef(from, existsSync(cwd) ? cwd : this.dir);
   }
 
   get resolvedAgent(): string | null {
@@ -354,15 +401,9 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
-  /** Each worker's terminal process and directory, to tell whose servers are whose. */
-  owners(): ServiceOwner[] {
-    return [...this.workers.values()].map((w) => ({
-      workerId: w.info.id,
-      pid: w.pty?.pid,
-      agent: w.info.kind === 'agent',
-      cwd: this.cwd(w.info),
-      root: this.dir,
-    }));
+  /** The workers' terminal process IDs, so the guest scan leaves them out. */
+  owners(): number[] {
+    return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));
   }
 
   deskOccupied(deskId: string): boolean {
@@ -398,10 +439,11 @@ export class WorkerManager {
   }
 
   /**
-   * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
-   * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
-   * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
+   * Hires a worker at a desk. `repos` are other floors' repositories a worker in its own worktree
+   * works in too (see makeWorkspace).
    * `lead` hires a subagent for that worker (see team.ts): it's told who hired it and how to report back.
+   * A subagent's worktree starts where its lead is, or from `from` (a branch, tag or commit) when the
+   * lead names one; nobody else's freshMain applies to it, and its checkout is never moved for it.
    */
   spawn(
     deskId: string,
@@ -411,11 +453,11 @@ export class WorkerManager {
     kind: Exclude<WorkerKind, 'cloud'> = 'agent',
     model?: string,
     effort?: AgentEffort,
-    meeting?: { id: string; worktree?: WorkerInfo['worktree'] },
     repos: RepoSource[] = [],
     lead?: string,
     /** Pictures staged for its first prompt (see stageImage), listed after it. */
     images?: readonly string[],
+    from?: string,
   ): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     const picked = kind === 'agent' && model === undefined ? this.officeDefault : undefined;
@@ -429,15 +471,21 @@ export class WorkerManager {
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
     if (seat.station && !prompt?.trim() && !images?.length) return 'Tell the board agent what to do';
-    if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
-    if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
-    if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
+    if (repos.length && (kind !== 'agent' || !worktree || seat.station)) return 'Only a worker in its own worktree can work in other repositories too';
     if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
+    const fresh = this.freshMain?.() ?? false;
+    let start: WorktreeStart = fresh ? 'main' : 'checkout';
+    if (from !== undefined && (lead === undefined || !worktree)) return 'Only a subagent in its own worktree starts from a branch its lead picks';
     if (lead !== undefined) {
       const boss = this.workers.get(lead)?.info;
       if (!boss) return 'Its lead has left';
       if (boss.lead) return "A subagent can't hire subagents of its own";
-      if (kind !== 'agent' || seat.station || seat.room || meeting) return 'A subagent is an agent at a desk or a bean bag';
+      if (kind !== 'agent' || seat.station) return 'A subagent is an agent at a desk or a bean bag';
+      if (worktree) {
+        const at = this.leadStart(boss, from);
+        if (typeof at === 'string') return at;
+        start = at;
+      }
     }
     const full = this.capacity?.full();
     if (full) return full;
@@ -445,11 +493,12 @@ export class WorkerManager {
     const agent = seat.station && STATION_AGENT[seat.station];
     const name = agent ? agent.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
     const id = randomBytes(6).toString('hex');
-    let wt: WorkerInfo['worktree'] = meeting?.worktree;
+    let wt: WorkerInfo['worktree'];
     let others: WorkerRepo[] | undefined;
+    if (!worktree && fresh && kind === 'agent' && !seat.station && lead === undefined) this.freshenCheckout(name);
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
-      const made = repos.length ? this.makeWorkspace(slug, repos) : this.trees.create(slug);
+      const made = repos.length ? this.makeWorkspace(slug, repos, start) : this.trees.create(slug, undefined, this.dir, start);
       if (typeof made === 'string') return made;
       if ('repos' in made) {
         ({ worktree: wt, repos: others } = made);
@@ -482,16 +531,61 @@ export class WorkerManager {
       rows: 30,
       open: false,
       activity: shown && kind !== 'shell' ? truncate(shown, 80) : prompt ? truncate(prompt, 80) : undefined,
-      meeting: meeting?.id,
       ...(lead !== undefined ? { lead } : {}),
     };
     const w = newWorker(info);
-    if (info.worktree && !info.meeting) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+    if (info.worktree) w.worktreeOwnership = Object.fromEntries(this.treesOf(info).map((t) => [t.dir, t.trees.ownership(t.ref.branch)]));
+    if (wt) w.setupPlan = this.planSetup(id, wt, others);
     this.workers.set(id, w);
     if (info.prompt) this.notePrompt(w, info.prompt);
     this.launch(w, this.briefed(w, kind === 'shell' ? undefined : text || undefined), undefined);
     this.persist();
     return info;
+  }
+
+  /**
+   * Where a subagent's worktree starts: `from` when its lead names it, else where the lead is (its
+   * own worktree's HEAD, or the checkout's for a lead in the checkout), so what the lead has
+   * committed is there. Says why not when `from` is nothing git knows.
+   */
+  private leadStart(lead: WorkerInfo, from: string | undefined): WorktreeStart | string {
+    const cwd = lead.worktree ? path.join(this.dir, lead.worktree.path) : this.dir;
+    const at = this.trees.resolve(from ?? 'HEAD', existsSync(cwd) ? cwd : this.dir);
+    if (at) return at;
+    return from === undefined ? `${lead.name}'s checkout has no commit to start from` : `There's no branch, tag or commit called ${from} here`;
+  }
+
+  /**
+   * A fresh worker without a worktree starts in the project's checkout: it's brought to the latest
+   * of the default branch first, unless someone else is working there or it holds work that a branch
+   * switch would get in the way of (see Worktrees.freshen). Toasts what happened when it's news.
+   */
+  private freshenCheckout(name: string) {
+    const others = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info)).map((w) => w.info.name);
+    const r = this.trees.freshen([...others, ...(this.holds?.inCheckout?.() ?? [])]);
+    if (r.switchedFrom) {
+      this.events.checkout?.(r.branch ?? r.main ?? '');
+      this.events.toast(`🌿 Switched the checkout from ${r.switchedFrom} to ${r.main} for ${name}`, 'info');
+    }
+    if (r.kept) this.events.toast(`🌿 ${name} starts on ${r.branch ?? 'the checkout'} as it is, not the latest ${r.main}: ${r.kept}`, 'info');
+  }
+
+  /**
+   * The plan that makes a new worker's worktrees ready (each repository's own, across repositories),
+   * written for its terminal to run; nothing when no step has anything to do.
+   */
+  private planSetup(id: string, wt: Worktree, others: WorkerRepo[] | undefined): string | undefined {
+    if (!this.setupScript) return undefined;
+    try {
+      const many = !!others?.length;
+      const steps = [
+        setupStep(this.dir, path.join(this.dir, wt.path), this.dataDir, many ? path.basename(wt.path) : undefined),
+        ...(others ?? []).map((r) => setupStep(r.dir, path.join(this.dir, r.path), path.join(r.dir, '.droid-office'), r.name)),
+      ].filter((s): s is SetupStep => !!s);
+      return steps.length ? writePlan(this.dataDir, id, steps) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Why nobody can be hired anywhere in the office right now (its worker limit), if so. */
@@ -506,7 +600,7 @@ export class WorkerManager {
    */
   takeIn(guest: WorkerInfo, sessionId: string, by: string): WorkerInfo | string {
     const seat = DESK_BY_ID.get(guest.deskId);
-    if (!seat || seat.station || seat.room) return 'A guest is brought in at a desk or a bean bag';
+    if (!seat || seat.station) return 'A guest is brought in at a desk or a bean bag';
     if (this.deskOccupied(guest.deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     const full = this.capacity?.full();
     if (full) return full;
@@ -555,7 +649,7 @@ export class WorkerManager {
     if (!lead) return prompt;
     const wt = w.info.worktree;
     const where = wt
-      ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task: commit your work there.`
+      ? `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch} made for this task from ${wt.from ?? wt.base.slice(0, 7)}: commit your work there.`
       : "You work in the project's main checkout, which other people and workers use too: don't switch branches, stash, reset or commit in it unless your task says to.";
     return `${officePrompt(this.prompts, 'subagent.brief', { name: w.info.name, lead: lead.name, where, ...forgeVars(this.forge) })}\n\n${prompt}`;
   }
@@ -589,7 +683,7 @@ export class WorkerManager {
    * (the 'worker.repos' prompt, as AGENTS.md). All or nothing: when one repository
    * can't have its worktree, the ones already made are taken out again.
    */
-  private makeWorkspace(slug: string, repos: RepoSource[]): { worktree: NonNullable<WorkerInfo['worktree']>; repos: WorkerRepo[]; notes: string[] } | string {
+  private makeWorkspace(slug: string, repos: RepoSource[], start: WorktreeStart = 'checkout'): { worktree: NonNullable<WorkerInfo['worktree']>; repos: WorkerRepo[]; notes: string[] } | string {
     // A branch can only be checked out once per repository, and two floors can be checkouts of the same one.
     const seen = new Map<string, string>();
     const own = this.trees.commonDir();
@@ -612,7 +706,7 @@ export class WorkerManager {
       })();
       return why;
     };
-    const first = this.trees.create(slug, names[0]);
+    const first = this.trees.create(slug, names[0], this.dir, start);
     if (typeof first === 'string') return fail(first);
     const { note, ...primary } = first;
     const notes = note ? [`${names[0]} ${note}`] : [];
@@ -620,7 +714,8 @@ export class WorkerManager {
     const others: WorkerRepo[] = [];
     for (const [i, r] of repos.entries()) {
       const trees = new Worktrees(r.dir);
-      const wt = trees.create(slug, names[i + 1], this.dir);
+      // A commit names this repository's history alone: the others start from their own branch.
+      const wt = trees.create(slug, names[i + 1], this.dir, typeof start === 'object' ? 'checkout' : start);
       if (typeof wt === 'string') return fail(`${r.name}: ${wt}`);
       if (wt.note) notes.push(`${names[i + 1]} ${wt.note}`);
       made.push({ trees, ref: { ...wt, path: path.relative(r.dir, path.join(this.dir, wt.path)) } });
@@ -690,7 +785,7 @@ export class WorkerManager {
     if (!clean && !images?.length) return 'Empty prompt';
     const w = [...this.workers.values()].find((x) => x.info.deskId === deskId);
     if (!w) {
-      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, undefined, [], undefined, images);
+      const info = this.spawn(deskId, by, clean, false, 'agent', model, effort, [], undefined, images);
       return typeof info === 'string' ? info : { info, hired: true };
     }
     // Typed into the question it's asking, the prompt would answer it.
@@ -726,13 +821,20 @@ export class WorkerManager {
     return this.workers.has(id) ? this.drops.save(id, name, type, body) : undefined;
   }
 
-  /** Down a worker without interrupting its session. Repeated shots never extend the grace period. */
+  /**
+   * Down a worker without interrupting its session. A shot at a worker already down confirms the
+   * kill: its revival window closes now and it is dismissed as if the deadline had passed.
+   */
   shoot(id: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (this.closing) return 'The office is closing';
     if (w.info.downedUntil !== undefined) {
-      if (w.info.downedUntil <= Date.now()) this.dismiss(w);
+      clearTimeout(w.downedTimer);
+      w.downedTimer = undefined;
+      // kill() refuses while the deadline is still ahead; closing it here is what lets it through.
+      w.info.downedUntil = Math.min(w.info.downedUntil, Date.now());
+      this.dismiss(w);
       return undefined;
     }
     w.info.downedUntil = Date.now() + WORKER_REVIVE_MS;
@@ -822,8 +924,7 @@ export class WorkerManager {
       this.emitUpdate(sub);
     }
     this.persist();
-    // A meeting's worktree is everyone at the table's: the meeting tidies it away once they've all gone.
-    if (!w.info.worktree || w.info.meeting) return {};
+    if (!w.info.worktree) return {};
     if (shot) return this.dismissWorktrees(w);
     // On the branch its work is on, should it have switched since it last came to rest.
     const wt = await this.current(w.info.worktree);
@@ -962,13 +1063,12 @@ export class WorkerManager {
   /**
    * Keeps `worktree.branch` on the branch the worktree is actually on. Agents often make their own
    * (`git checkout -b fix-x`, because the task or the repo's instructions say to) and open the pull
-   * request from there, and the PR badge, O at the desk and sending it home go by it. A meeting's
-   * worktree stays the meeting's, and a worker across repositories keeps the branch it was given in
-   * each (see openPrs).
+   * request from there, and the PR badge, O at the desk and sending it home go by it. A worker across
+   * repositories keeps the branch it was given in each (see openPrs).
    */
   private async syncBranch(w: Worker): Promise<void> {
     const wt = w.info.worktree;
-    if (!wt || w.info.meeting || w.info.repos?.length) return;
+    if (!wt || w.info.repos?.length) return;
     const now = await this.current(wt);
     // Sent home meanwhile, or another look got there first.
     if (now === wt || this.workers.get(w.info.id) !== w || w.info.worktree !== wt) return;
@@ -1026,7 +1126,7 @@ export class WorkerManager {
   /**
    * Puts a lost worker's worktree back where it was (see Worktrees.restore) and starts it again,
    * carrying on its conversation; across repositories, each worktree that's gone and the workspace's
-   * brief. Everyone else who worked there (the rest of a meeting's table) gets back to work with it.
+   * brief.
    * Resolves to whether it `rebuilt` anything, with a note on where a branch came back from (or why
    * there was nothing to do), or to what went wrong.
    */
@@ -1037,8 +1137,7 @@ export class WorkerManager {
     if (!info.worktree) return { error: `${info.name} works in the main checkout` };
     if (w.rebuilding) return {};
     const folder = this.cwd(info);
-    // Whoever the folder was deleted from under: this worker, and the rest of its meeting's table.
-    const stranded = [...this.workers.values()].filter((o) => o.info.worktree && this.cwd(o.info) === folder && (o.info.lost || this.checkLost(o)));
+    const wasLost = !!info.lost || this.checkLost(w);
     const froms: string[] = [];
     if (!existsSync(folder)) {
       const across = !!info.repos?.length;
@@ -1066,8 +1165,8 @@ export class WorkerManager {
         w.rebuilding = false;
       }
     }
-    for (const o of stranded) if (!this.checkLost(o)) this.restartIn(o);
-    if (!stranded.length) {
+    if (wasLost && !this.checkLost(w)) this.restartIn(w);
+    if (!wasLost) {
       if (!w.pty) this.resume(id);
       return { note: `${info.name}'s worktree is already there` };
     }
@@ -1185,16 +1284,30 @@ export class WorkerManager {
     const typed = text.replace(/\r\n?/g, '\n').trim();
     const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
-    // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
-    w.pty.write(`\x1b[200~${clean}\x1b[201~`);
-    const submit = queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r';
-    setTimeout(() => w.pty?.write(submit), 120);
+    this.typeIn(w, clean, queue && wantsCsiEnter(w.info.kind) ? CTRL_ENTER : '\r');
     const shown = typed || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);
     w.info.lastInputAt = Date.now();
     this.emitUpdate(w);
     return undefined;
+  }
+
+  /** Types a message into the agent's input box and submits it with `submit`. */
+  private typeIn(w: Worker, text: string, submit = '\r') {
+    // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
+    w.pty?.write(`\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => w.pty?.write(submit), 120);
+  }
+
+  /** Types in the message this run of its droid was started for, if it hasn't been yet. */
+  private sendLaunchPrompt(w: Worker) {
+    const pending = w.launchPrompt;
+    w.launchPrompt = undefined;
+    if (!pending) return;
+    if (w.pty) this.typeIn(w, pending.text);
+    // Saved at once, so an office restarting now doesn't type it in a second time.
+    this.persist();
   }
 
   /**
@@ -1327,16 +1440,7 @@ export class WorkerManager {
 
   /** The first of these branches that exists on origin (of `dir`'s repository), for a PR base. None: the forge picks the default branch. */
   private async pushedBranch(candidates: (string | undefined)[], not: string, dir = this.dir): Promise<string | undefined> {
-    for (const c of candidates) {
-      if (!c || c === not) continue;
-      try {
-        await run('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${c}`], dir);
-        return c;
-      } catch {
-        // not on the remote (or never fetched)
-      }
-    }
-    return undefined;
+    return new Worktrees(dir).pushedBranch(candidates, not);
   }
 
   resize(id: string, cols: number, rows: number) {
@@ -1361,10 +1465,12 @@ export class WorkerManager {
   /** Droid lifecycle hook callback: what a worker is doing, from its hooks. */
   handleHook(workerId: string, token: string, event: string, payload: unknown): boolean {
     const w = this.workers.get(workerId);
-    if (!w?.pty || w.info.kind !== 'agent' || !safeEq(token, w.hookToken)) return false;
+    if (!w?.pty || !safeEq(token, w.hookToken)) return false;
     if (!payload || typeof payload !== 'object') return false;
     const report = payload as Record<string, unknown>;
-    if (report.hook_event_name !== event || typeof report.session_id !== 'string' || !report.session_id) return false;
+    if (report.hook_event_name !== event) return false;
+    if (event === 'WorktreeSetup') return this.setupHook(w, report);
+    if (w.info.kind !== 'agent' || typeof report.session_id !== 'string' || !report.session_id) return false;
     if (!['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop'].includes(event)) return false;
     const session = report.session_id;
     const caller = typeof report.calling_session_id === 'string' && report.calling_session_id ? report.calling_session_id : undefined;
@@ -1384,6 +1490,36 @@ export class WorkerManager {
     return true;
   }
 
+  /** The setup script in a new worktree's terminal (see worktree-setup.ts) started, or finished. */
+  private setupHook(w: Worker, report: Record<string, unknown>): boolean {
+    const { info } = w;
+    if (!w.settingUp) return false;
+    if (report.phase === 'start') {
+      const commands = Array.isArray(report.commands) ? report.commands.filter((c): c is string => typeof c === 'string') : [];
+      if (commands.length && info.kind === 'agent' && info.status === 'starting') info.activity = truncate(`Setting up its worktree: ${commands.join(' · ')}`, 80);
+    } else if (report.phase === 'done') {
+      w.settingUp = false;
+      w.setupDoneAt = Date.now();
+      if (info.activity?.startsWith('Setting up its worktree')) info.activity = undefined;
+      const failed = (Array.isArray(report.failed) ? report.failed : []).filter((f): f is { command: string; code: number; label?: string; output?: string } => !!f && typeof f.command === 'string');
+      if (failed.length) {
+        const what = failed.map((f) => `${f.label ? `${f.label}: ` : ''}\`${f.command}\` (exit ${f.code})`).join(', ');
+        const output = failed
+          .map((f) => (typeof f.output === 'string' ? f.output.slice(-SETUP_OUTPUT_MAX) : ''))
+          .filter(Boolean)
+          .join('\n\n');
+        // The agent can't see what ran before it, and Droid clears the terminal when it starts: it's told with its first message.
+        if (w.launchPrompt) {
+          w.launchPrompt.text = `${setupFailedNote(what, output)}\n\n${w.launchPrompt.text}`;
+          this.persist();
+        }
+        this.events.toast(`🌿 ${info.name}'s worktree setup failed: ${what}.${w.launchPrompt ? ` ${info.name}'s first message says so, with the error.` : ''}`, 'warn', info.id);
+      }
+    } else return false;
+    this.emitUpdate(w);
+    return true;
+  }
+
   /** A hook from the worker's own session. */
   private sessionHook(w: Worker, event: string, report: Record<string, unknown>) {
     const session = report.session_id as string;
@@ -1393,8 +1529,10 @@ export class WorkerManager {
       w.subSessions.clear();
       w.lastTool.clear();
       w.bootBlocked = false;
+      w.settingUp = false;
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
+      this.sendLaunchPrompt(w);
     } else if (event === 'UserPromptSubmit') {
       w.bootBlocked = false;
       w.info.action = undefined;
@@ -1469,6 +1607,8 @@ export class WorkerManager {
   reconcile(now = Date.now()) {
     for (const w of this.workers.values()) {
       const { info } = w;
+      // No SessionStart came for it (the hook can't reach the office), but droid's input box is up.
+      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && readDroidScreen(screenRows(w.term)) === 'idle') this.sendLaunchPrompt(w);
       if (info.kind !== 'agent' || !w.pty || !w.term || w.bootBlocked || !info.sessionId || info.status === 'starting') {
         w.screenSeen = undefined;
         continue;
@@ -1616,7 +1756,6 @@ export class WorkerManager {
 
     const shell = defaultShell();
     const isShell = info.kind === 'shell';
-    const station = DESK_BY_ID.get(info.deskId)?.station;
     const command = this.command(info);
     const commandPath = isShell ? undefined : this.agentPath;
     const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : [...this.agentArgs];
@@ -1624,9 +1763,10 @@ export class WorkerManager {
       // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
       args.unshift('--settings', this.droidSettings(info));
       if (resumeSessionId) args.push('--resume', resumeSessionId);
-      // `--` so a prompt like "- fix login" is never parsed as a CLI option.
-      if (prompt) args.push('--', prompt);
     }
+    // Typed in at SessionStart rather than passed as `droid -- <prompt>`: droid started with a
+    // prompt argument never opens /rewind-conversation for the rest of that run.
+    w.launchPrompt = !isShell && prompt ? { text: prompt, at: Date.now() } : undefined;
     w.hookToken = randomBytes(16).toString('hex');
     // A new process: whatever subagents and prompts the last one had went with it.
     w.subSessions.clear();
@@ -1640,9 +1780,8 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // A board agent reaches the queue with the office-queue command, and any agent its subagents with
-    // office-workers.
-    const bins = [station && this.queueBin, !isShell && this.teamBin].filter((d): d is string => !!d);
+    // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
+    const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
@@ -1655,9 +1794,18 @@ export class WorkerManager {
     if (info.repos?.length) env.GIT_CEILING_DIRECTORIES = [path.dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     // The host keeps its own copy of the screen for the next office: it starts with the same history.
     const where = { cwd, env, cols: info.cols, rows: info.rows, prelude };
+    // Only a new worktree's first terminal: a resume finds it ready.
+    const plan = resumeSessionId ? undefined : w.setupPlan;
+    w.setupPlan = undefined;
     let proc: Pty;
     try {
-      if (isShell) {
+      if (plan && this.setupScript) {
+        const file = isShell ? shell : (commandPath ?? command);
+        const line = setupLine({ node: process.execPath, script: this.setupScript, plan, file, quoteFile: isShell || !!commandPath, args, cmd: WIN && !process.env.SHELL });
+        w.settingUp = true;
+        if (!isShell) info.activity = 'Setting up its worktree';
+        proc = this.host.spawn({ file: shell, args: shellRun(line), ...where });
+      } else if (isShell) {
         proc = this.host.spawn({ file: shell, args, ...where });
       } else if (commandPath) {
         proc = this.host.spawn({ file: commandPath, args, ...where });
@@ -1681,6 +1829,8 @@ export class WorkerManager {
     const { info } = w;
     // It kept working through the restart: nothing to carry on.
     w.interrupted = false;
+    // Its droid hadn't taken its first message yet: SessionStart (or the screen fallback) still types it in.
+    w.launchPrompt = saved.launchPrompt;
     info.cols = adopted.cols;
     info.rows = adopted.rows;
     const term = this.newTerm(w);
@@ -1765,15 +1915,19 @@ export class WorkerManager {
       void this.syncBranch(w);
     });
     // SessionStart fires as soon as Droid can take input. Still silent after a while means it is
-    // blocked on a human: login, first-run onboarding, hook setup. Flag it so it jumps.
-    setTimeout(() => {
+    // blocked on a human: login, first-run onboarding, hook setup. Flag it so it jumps. A worktree
+    // still being set up isn't Droid yet: the wait starts once that's done.
+    const check = () => {
       if (info.status !== 'starting' || w.pty !== proc) return;
+      const left = w.settingUp ? BOOT_BLOCKED_MS : (w.setupDoneAt ?? 0) + BOOT_BLOCKED_MS - Date.now();
+      if (left > 0) return void setTimeout(check, Math.min(left, 3000)).unref();
       if (info.kind === 'agent') {
         w.bootBlocked = true;
         info.activity = 'Waiting on Droid setup or hooks — open the terminal';
         this.setStatus(w, 'needs_input');
       } else this.setStatus(w, 'idle');
-    }, 12000);
+    };
+    setTimeout(check, BOOT_BLOCKED_MS).unref();
   }
 
   private startFailed(w: Worker, message: string) {
@@ -1807,10 +1961,9 @@ export class WorkerManager {
     if (status !== 'needs_input') w.asking = undefined;
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
-    // Nobody is looking at the terminal right now -> raise the flag (the worker jumps). A worker at the
-    // meeting table that ends its part is waiting on the meeting, not on anyone, so it stays quiet.
+    // Nobody is looking at the terminal right now -> raise the flag (the worker jumps).
     if (status === 'done' || status === 'needs_input') {
-      w.info.acked = status === 'done' && (w.info.open || !!w.info.meeting);
+      w.info.acked = status === 'done' && w.info.open;
       w.info.waitingSince = Date.now();
     } else w.info.acked = true;
     this.emitUpdate(w);
@@ -1926,7 +2079,7 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes one of the office's agent commands (office-queue, office-workers) into `sub` of the data
+   * Writes one of the office's agent commands (office-workers, office-whiteboard) into `sub` of the data
    * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
    * every start, so after an upgrade it runs the new install's script.
    */
@@ -1951,7 +2104,7 @@ process.stdin.on('end', () => {
   }
 
   private persist() {
-    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership }) => ({
+    const saved = [...this.workers.values()].map(({ info, hookToken, pty, bootBlocked, interrupted, worktreeOwnership, launchPrompt }) => ({
       id: info.id,
       kind: info.kind,
       model: info.model,
@@ -1971,16 +2124,16 @@ process.stdin.on('end', () => {
       activity: info.activity,
       task: info.task,
       pr: info.pr,
-      meeting: info.meeting,
       lead: info.lead,
       // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
       hookToken,
-      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince } : undefined,
+      // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
+      pty: pty?.id ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, launchPrompt } : undefined,
       // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
       midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked })),
     }));
     try {
-      writeFileSync(this.statePath, JSON.stringify(saved, null, 2), { mode: 0o600 });
+      writeFileSync(this.statePath, JSON.stringify([...saved, ...this.retired], null, 2), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }
@@ -1998,6 +2151,7 @@ process.stdin.on('end', () => {
         lastInput?: unknown;
       })[];
       for (const s of saved) {
+        if (s.id && typeof s.deskId === 'string' && !DESK_BY_ID.has(s.deskId)) this.retired.push(s);
         if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
         const shell = s.kind === 'shell';
         const info: WorkerInfo = {
@@ -2025,7 +2179,6 @@ process.stdin.on('end', () => {
           rows: 30,
           open: false,
           lastInputAt: legacyLastInputAt(s.lastInput),
-          meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
           ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
         };
         const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
@@ -2033,7 +2186,14 @@ process.stdin.on('end', () => {
         w.screenDirty = false;
         if (typeof s.pty?.id === 'string') {
           const status: WorkerStatus = RUNNING.has(s.pty.status) ? s.pty.status : 'idle';
-          w.saved = { ptyId: s.pty.id, status, acked: s.pty.acked !== false, waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined };
+          const launch = s.pty.launchPrompt;
+          w.saved = {
+            ptyId: s.pty.id,
+            status,
+            acked: s.pty.acked !== false,
+            waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined,
+            launchPrompt: typeof launch?.text === 'string' && launch.text && typeof launch.at === 'number' ? { text: launch.text, at: launch.at } : undefined,
+          };
         }
         // Mid-turn as the office went down: cut off, unless its terminal is picked back up still
         // running (adopt). An office from before midTurn only said so for a terminal in the host.
@@ -2054,6 +2214,12 @@ process.stdin.on('end', () => {
 // ---------------------------------------------------------------------------
 
 /** In the middle of a turn: working, or asking something (not stuck on a trust or login screen). */
+/** An agent at the issues, PR or Pipelines kiosk, which works through the forge whatever branch the checkout is on. */
+function boardAgent(info: WorkerInfo): boolean {
+  const station = DESK_BY_ID.get(info.deskId)?.station;
+  return !!station && station !== 'lead';
+}
+
 function midTurn({ info, bootBlocked }: Pick<Worker, 'info' | 'bootBlocked'>): boolean {
   return info.kind === 'agent' && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
 }
@@ -2184,6 +2350,25 @@ const WIN = process.platform === 'win32';
 /** The shell workers get when none is configured: $SHELL on Unix, cmd.exe on Windows. */
 export function defaultShell(): string {
   return process.env.SHELL || (WIN ? process.env.COMSPEC || 'cmd.exe' : '/bin/bash');
+}
+
+/**
+ * The command line a new worktree's first terminal runs: the setup script (see worktree-setup.ts)
+ * with the office's own node, then the agent (or the shell) in its place. `quoteFile` says `file` is
+ * a path; otherwise it's a command for the shell to find. `cmd` writes it for cmd.exe.
+ */
+export function setupLine(o: { node: string; script: string; plan: string; file: string; quoteFile: boolean; args: string[]; cmd: boolean; asNode?: { sh: string; cmd: string } }): string {
+  const node = o.asNode ?? runAsNode();
+  const q = o.cmd ? cmdq : shq;
+  const setup = `${q(o.node)} ${q(o.script)} ${q(o.plan)}`;
+  const run = [o.quoteFile ? q(o.file) : o.file, ...o.args.map(q)].join(' ');
+  return o.cmd ? `${node.cmd}${setup} & ${run}` : `${node.sh}${setup}; exec ${run}`;
+}
+
+/** What a worker whose worktree setup failed is told ahead of its first message, with the end of what the command printed. */
+export function setupFailedNote(what: string, output = ''): string {
+  const note = `Note from Droid Office: setting up your new worktree failed (${what}), so its dependencies may be missing. Run the setup again yourself if your task needs them.`;
+  return output.trim() ? `${note} The end of its output:\n\n\`\`\`\n${output.trim()}\n\`\`\`` : note;
 }
 
 /** How to have the default shell run one command line. */
@@ -2367,6 +2552,11 @@ function clamp(v: number, lo: number, hi: number) {
 
 function shq(s: string) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** One argument for cmd.exe. */
+function cmdq(s: string) {
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function safeEq(a: string, b: string) {

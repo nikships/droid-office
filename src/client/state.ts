@@ -6,24 +6,24 @@ import type {
   GhPull,
   GhState,
   LeaveOnMergeState,
+  FreshMainState,
   MachineState,
-  MeetingState,
   NotifyState,
   ProjectInfo,
   ProjectsDirState,
   PromptsState,
-  QueueState,
-  QueueTask,
   RepoChoice,
   ServerMsg,
-  ServicesState,
   SkyState,
   SubagentsState,
   UpgradeState,
+  WhiteboardSkillState,
   WorkerInfo,
+  ClientMsg,
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
 import type { ScreenState } from './world/laptop';
+import type { Sidearm } from './world/wand';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
@@ -32,6 +32,10 @@ import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
 import { teamOf } from '../shared/team';
+import type { WorktreeSetupState } from '../shared/worktree-setup';
+import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
+import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
+import { WhiteboardSync } from './whiteboard-sync';
 
 export type Topic =
   | 'workers'
@@ -40,9 +44,8 @@ export type Topic =
   | 'project'
   | 'screens'
   | 'upgrade'
-  | 'services'
   | 'decor'
-  | 'queue'
+  | 'pipelines'
   | 'notify'
   | 'machine'
   | 'floors'
@@ -52,14 +55,17 @@ export type Topic =
   | 'jukebox'
   | 'sky'
   | 'leaveOnMerge'
+  | 'freshMain'
   | 'subagents'
   | 'cabinet'
   | 'cabinetFrame'
-  | 'meeting'
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
-  | 'factory';
+  | 'factory'
+  | 'worktreeSetup'
+  | 'whiteboard'
+  | 'whiteboardSkill';
 
 export interface Profile {
   name: string;
@@ -91,15 +97,12 @@ export function saveProfile(p: Profile) {
   }
 }
 
-export type ViewMode = 'first' | 'third';
-
 /** The panels you can show or hide on screen, from the ☰ menu. */
 export type HudPanel = 'workers' | 'floor';
 /** The workers show by default; the rest wait in the ☰ menu until turned on. */
 export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, floor: false };
 
 export interface Settings {
-  view: ViewMode;
   /** Office sounds, 0–1. */
   volume: number;
   muted: boolean;
@@ -108,11 +111,19 @@ export interface Settings {
   musicMuted: boolean;
   /** Desktop notifications when a worker needs input or finishes while you're in another tab (once the browser allows them). */
   notify: boolean;
+  /** Worker tones (needs you, done, error) silenced on their own. Muting the office silences them too. */
+  alertsMuted: boolean;
+  /** One-tap prompts above an agent prompt box. An empty list means the owner cleared them. */
+  presets: PromptPreset[];
   /** Which panels show on screen. */
   hud: Record<HudPanel, boolean>;
   /** The ☰ menu's actions you pinned to the top bar, by id. */
   pins: string[];
+  /** What `7` puts in your hand: a magic wand that puts workers to sleep, or the .44 Magnum and its blood (opt-in). */
+  sidearm: Sidearm;
 }
+
+export type { Sidearm };
 
 const SETTINGS_KEY = 'droid-office.settings';
 const FLOOR_KEY = 'droid-office.floor';
@@ -176,15 +187,18 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
+  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, presets: defaultPresets(), hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand' };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
-    if (saved?.view === 'first' || saved?.view === 'third') s.view = saved.view;
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
     if (typeof saved?.muted === 'boolean') s.muted = saved.muted;
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));
     if (typeof saved?.musicMuted === 'boolean') s.musicMuted = saved.musicMuted;
     if (typeof saved?.notify === 'boolean') s.notify = saved.notify;
+    if (typeof saved?.alertsMuted === 'boolean') s.alertsMuted = saved.alertsMuted;
+    // No `presets` key means the defaults, including for a settings file from before the chips existed. An array is the owner's, even empty.
+    if (saved && typeof saved === 'object' && 'presets' in saved) s.presets = normalizePresets(saved.presets);
+    if (saved?.sidearm === 'wand' || saved?.sidearm === 'magnum') s.sidearm = saved.sidearm;
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
     // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
     if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string' && p !== 'people' && p !== 'chat').slice(0, 30);
@@ -208,6 +222,12 @@ export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: numbe
   return undefined;
 }
 
+/** How the Whiteboard's batches reach the server: Net.send, once main.ts has a connection (see connectWhiteboard). */
+let whiteboardSend: (msg: ClientMsg) => boolean = () => false;
+export function connectWhiteboard(send: (msg: ClientMsg) => boolean) {
+  whiteboardSend = send;
+}
+
 class Store {
   /** This connection's transport id; never shown, never a player. */
   connection = '';
@@ -227,7 +247,6 @@ class Store {
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: true };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: true };
   upgrade: UpgradeState = { available: false, phase: 'idle' };
-  services: ServicesState = { items: [], port: 4600 };
   /** Pictures on the walls. */
   decor: Decoration[] = [];
   /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
@@ -238,13 +257,12 @@ class Store {
   cabinet: CabinetState = { player: null, scores: [] };
   /** Your game on the cabinet as you last sent it; null while you're not playing. */
   cabinetFrame: CabinetFrame | null = null;
-  queue: QueueState = { tasks: [], maxWorkers: 0 };
+  /** The floor's GitHub Actions runs, or its GitLab pipelines. */
+  pipelines: PipelinesState = NO_PIPELINES;
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState = {};
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null = null;
-  /** The meeting room: the meeting at the table, and the ones before. */
-  meeting: MeetingState = { current: null, past: [] };
   /** The office's Slack / Discord webhook. */
   notify: NotifyState = {};
   /** How busy the office's machine is, and its worker limit. */
@@ -253,12 +271,20 @@ class Store {
   sky: SkyState | null = null;
   /** Whether workers whose pull request merged go home by themselves (⚙️ Settings). */
   leaveOnMerge: LeaveOnMergeState = { on: false };
+  /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
+  freshMain: FreshMainState = { on: true };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
+  /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
+  whiteboardSkill: WhiteboardSkillState = { on: true };
+  /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
+  readonly whiteboard = new WhiteboardSync((msg) => whiteboardSend(msg));
   /** The office's prompts as rewritten in Settings, and the worker a new one starts on when nobody picks: the same on every floor. */
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
   factory: FactoryState = emptyFactoryState();
+  /** How new worktrees on this floor are set up, once Settings asked (see worktreeSetup.get); null before, or on another floor. */
+  worktreeSetup: WorktreeSetupState | null = null;
   private subs = new Map<Topic, Set<() => void>>();
 
   on(topic: Topic, fn: () => void) {
@@ -277,7 +303,7 @@ class Store {
     return this.floors.find((f) => f.id === this.floor);
   }
 
-  /** The office's clock (ms since 1970) as near as this page can tell, which the DJ on the roof keeps time by. */
+  /** The office's clock (ms since 1970) as near as this page can tell. */
   officeNow(): number {
     return this.clock ? performance.now() + this.clock.offset : Date.now();
   }
@@ -292,12 +318,6 @@ class Store {
     return teamOf(this.workers.values(), leadId);
   }
 
-  /** The queue task for an issue: the one on the queue if there is one, else the latest finished one. */
-  taskForIssue(issue: number): QueueTask | undefined {
-    const tasks = this.queue.tasks.filter((t) => t.issue === issue);
-    return tasks.find((t) => t.status !== 'done') ?? tasks[tasks.length - 1];
-  }
-
   /** Everything on the floor you just arrived on, in place of the last one's. */
   private enter(v: FloorView) {
     this.floor = v.floor;
@@ -307,16 +327,15 @@ class Store {
     this.screens.clear(); // fresh full frames follow
     this.issues = v.issues;
     this.pulls = v.pulls;
-    this.queue = v.queue;
-    this.meeting = v.meeting;
+    this.pipelines = v.pipelines ?? NO_PIPELINES;
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
-    this.services = v.services;
     this.cabinet = { player: v.cabinet.player, scores: v.cabinet.scores };
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard'] as Topic[]) this.emit(t);
+    this.worktreeSetup = null;
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -324,7 +343,14 @@ class Store {
     this.jukebox = { ...j, since: this.clock ? j.startedAt - this.clock.offset : performance.now() - j.elapsed };
   }
 
+  constructor() {
+    this.whiteboard.subscribe((floor) => {
+      if (floor === this.floor) this.emit('whiteboard');
+    });
+  }
+
   apply(msg: ServerMsg) {
+    this.whiteboard.handle(msg);
     switch (msg.t) {
       case 'welcome':
         this.connection = msg.connection;
@@ -337,11 +363,13 @@ class Store {
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
         this.sky = msg.sky;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
+        this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
+        this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'subagents', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -392,10 +420,6 @@ class Store {
         this.upgrade = msg.state;
         this.emit('upgrade');
         break;
-      case 'services':
-        this.services = msg.state;
-        this.emit('services');
-        break;
       case 'decor':
         this.decor = msg.items;
         this.emit('decor');
@@ -420,13 +444,9 @@ class Store {
         if (Math.abs(this.jukebox.since - was) > 20) this.emit('jukebox');
         break;
       }
-      case 'queue':
-        this.queue = msg.state;
-        this.emit('queue');
-        break;
-      case 'meeting':
-        this.meeting = msg.state;
-        this.emit('meeting');
+      case 'pipelines':
+        this.pipelines = msg.state;
+        this.emit('pipelines');
         break;
       case 'notify':
         this.notify = msg.state;
@@ -452,9 +472,17 @@ class Store {
         this.leaveOnMerge = msg.state;
         this.emit('leaveOnMerge');
         break;
+      case 'freshMain':
+        this.freshMain = msg.state;
+        this.emit('freshMain');
+        break;
       case 'subagents':
         this.subagents = msg.state;
         this.emit('subagents');
+        break;
+      case 'whiteboardSkill':
+        this.whiteboardSkill = msg.state;
+        this.emit('whiteboardSkill');
         break;
       case 'prompts':
         this.prompts = msg.state;
@@ -463,6 +491,11 @@ class Store {
       case 'factory':
         this.factory = msg.state;
         this.emit('factory');
+        break;
+      case 'worktreeSetup':
+        if (msg.state.floor !== this.floor) break;
+        this.worktreeSetup = msg.state;
+        this.emit('worktreeSetup');
         break;
     }
   }

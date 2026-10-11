@@ -107,7 +107,6 @@ data class WorkerInfo(
     val action: String? = null,
     val task: WorkerTask? = null,
     val lastInputAt: Long? = null,
-    val meeting: String? = null,
     val lead: String? = null,
     val workedMs: Long? = null,
     val workingSince: Long? = null,
@@ -140,28 +139,6 @@ data class FloorInfo(
 
 @Serializable
 data class ProjectInfo(val name: String = "", val dir: String = "", val branch: String? = null, val remote: String? = null, val forge: String = "github")
-
-@Serializable
-data class QueuePr(val number: Int = 0, val url: String = "", val state: String = "", val title: String = "")
-
-@Serializable
-data class QueueTask(
-    val id: String,
-    val title: String = "",
-    val prompt: String = "",
-    val status: String = "queued",
-    val model: String? = null,
-    val effort: String? = null,
-    val addedBy: String = "",
-    val addedAt: Long = 0,
-    val workerId: String? = null,
-    val workerName: String? = null,
-    val outcome: String? = null,
-    val pr: QueuePr? = null,
-)
-
-@Serializable
-data class QueueState(val tasks: List<QueueTask> = emptyList(), val maxWorkers: Int = 0)
 
 @Serializable
 data class GhPull(
@@ -198,7 +175,6 @@ data class FloorView(
     val project: ProjectInfo?,
     val workers: List<WorkerInfo>,
     val pulls: GhPulls,
-    val queue: QueueState,
 )
 
 sealed interface ServerMsg {
@@ -209,8 +185,11 @@ sealed interface ServerMsg {
     data class WorkerRemove(val workerId: String) : ServerMsg
     data class Worktree(val workerId: String, val state: WorktreeState) : ServerMsg
     data class Screen(val workerId: String, val cols: Int, val rows: Int, val lines: Map<Int, List<Run>>, val full: Boolean, val cursor: Pair<Int, Int>) : ServerMsg
+    /** An attached terminal from the top: its scrollback and screen, serialized, at the PTY's size. */
+    data class TermSnapshot(val workerId: String, val event: TermEvent.Snapshot) : ServerMsg
+    /** What an attached terminal's program printed since. */
+    data class TermData(val workerId: String, val event: TermEvent.Data) : ServerMsg
     data class Toast(val text: String, val level: String, val workerId: String?) : ServerMsg
-    data class Queue(val state: QueueState) : ServerMsg
     data class Pulls(val state: GhPulls) : ServerMsg
     data class Pong(val at: Long, val now: Long) : ServerMsg
     data class Ignored(val t: String) : ServerMsg
@@ -249,8 +228,9 @@ object Protocol {
         "worker.remove" -> ServerMsg.WorkerRemove(o.str("workerId").orEmpty())
         "worker.worktree" -> ServerMsg.Worktree(o.str("workerId").orEmpty(), o.obj("state")?.let { OfficeJson.decodeFromJsonElement<WorktreeState>(it) } ?: WorktreeState())
         "screen" -> screen(o)
+        "term.snapshot" -> ServerMsg.TermSnapshot(o.str("workerId").orEmpty(), TermEvent.Snapshot(o.str("data").orEmpty(), o.int("cols") ?: 80, o.int("rows") ?: 24))
+        "term.data" -> ServerMsg.TermData(o.str("workerId").orEmpty(), TermEvent.Data(o.str("data").orEmpty()))
         "toast" -> ServerMsg.Toast(o.str("text").orEmpty(), o.str("level") ?: "info", o.str("workerId"))
-        "queue" -> ServerMsg.Queue(o.obj("state")?.let { OfficeJson.decodeFromJsonElement<QueueState>(it) } ?: QueueState())
         "gh.pulls" -> ServerMsg.Pulls(o.obj("state")?.let { OfficeJson.decodeFromJsonElement<GhPulls>(it) } ?: GhPulls())
         "pong" -> ServerMsg.Pong(o.long("at") ?: 0, o.long("now") ?: 0)
         else -> ServerMsg.Ignored(t)
@@ -267,7 +247,6 @@ object Protocol {
         project = o.obj("project")?.let { runCatching { OfficeJson.decodeFromJsonElement<ProjectInfo>(it) }.getOrNull() },
         workers = workers(o["workers"]),
         pulls = o.obj("pulls")?.let { runCatching { OfficeJson.decodeFromJsonElement<GhPulls>(it) }.getOrNull() } ?: GhPulls(),
-        queue = o.obj("queue")?.let { runCatching { OfficeJson.decodeFromJsonElement<QueueState>(it) }.getOrNull() } ?: QueueState(),
     )
 
     private fun screen(o: JsonObject): ServerMsg.Screen {
@@ -318,12 +297,6 @@ object ClientMsg {
         put("prompt", prompt)
         if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         if (queue) put("queue", true)
-    }
-
-    fun queueAdd(prompt: String, model: String?, effort: String?) = obj("queue.add") {
-        put("prompt", prompt)
-        if (model != null) put("model", model)
-        if (effort != null) put("effort", effort)
     }
 
     fun termInput(workerId: String, data: String) = obj("term.input") {

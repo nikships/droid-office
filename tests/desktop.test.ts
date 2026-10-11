@@ -10,6 +10,7 @@ import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
 import { desktopEnv, fencedEnv, knownDirs, loginShellEnv, mergeEnv, mergePath } from '../src/desktop/shell-path.ts';
+import { briefError, type UpdatePhase, updateBusy, updateView } from '../src/desktop/update-view.ts';
 import { runAsNode } from '../src/server/workers.ts';
 
 function tmp(t: { after: (fn: () => void) => void }): string {
@@ -213,4 +214,67 @@ test('the Mac app runs its office on the helper binary, which has no Dock icon, 
     officeRuntime('/usr/local/bin/node', 'darwin', () => true),
     '/usr/local/bin/node',
   );
+});
+
+test('the update window offers an update, then shows its download and the restart, in one flow', () => {
+  const available = updateView({ kind: 'available', version: '0.2.5' }, '0.2.1');
+  assert.equal(available.title, 'Droid Office 0.2.5 is available');
+  assert.match(available.detail!, /You have 0\.2\.1/);
+  assert.deepEqual(
+    available.buttons.map((b) => [b.action, b.label, Boolean(b.primary)]),
+    [
+      ['later', 'Later', false],
+      ['install', 'Install and Restart', true],
+    ],
+  );
+  assert.equal(available.escape, 'later');
+  assert.equal(available.progress, undefined);
+
+  const starting = updateView({ kind: 'downloading', version: '0.2.5', transferred: 0, total: 0 }, '0.2.1');
+  assert.equal(starting.progress, 0);
+  assert.equal(starting.detail, 'Starting the download…');
+  const halfway = updateView({ kind: 'downloading', version: '0.2.5', transferred: 49_200_000, total: 98_400_000 }, '0.2.1');
+  assert.equal(halfway.progress, 0.5);
+  assert.equal(halfway.detail, '49.2 MB of 98.4 MB (50%)');
+  assert.deepEqual(halfway.buttons, [{ action: 'cancel', label: 'Cancel' }]);
+  assert.equal(halfway.escape, 'cancel');
+  assert.equal(updateView({ kind: 'downloading', version: '0.2.5', transferred: 120, total: 100 }, '0.2.1').progress, 1);
+
+  for (const kind of ['preparing', 'restarting'] as const) {
+    const view = updateView({ kind, version: '0.2.5' }, '0.2.1');
+    assert.equal(view.progress, 'indeterminate', kind);
+    assert.deepEqual(view.buttons, [], kind);
+    assert.equal(view.escape, undefined, kind);
+  }
+});
+
+test('a manual check says what it found in the same window', () => {
+  const checking = updateView({ kind: 'checking' }, '0.2.1');
+  assert.equal(checking.progress, 'indeterminate');
+  assert.equal(checking.escape, 'close');
+  assert.equal(updateView({ kind: 'latest' }, '0.2.1').detail, 'Droid Office 0.2.1 is the newest version.');
+  assert.equal(updateView({ kind: 'unpackaged' }, '0.2.1').buttons[0]!.action, 'close');
+
+  const checkFailed = updateView({ kind: 'error', during: 'check', message: 'offline' }, '0.2.1');
+  assert.equal(checkFailed.title, "Couldn't check for updates");
+  assert.equal(checkFailed.detail, 'offline');
+  assert.deepEqual(
+    checkFailed.buttons.map((b) => b.action),
+    ['close', 'retry'],
+  );
+  assert.equal(updateView({ kind: 'error', during: 'download', version: '0.2.5', message: 'reset' }, '0.2.1').title, "Droid Office 0.2.5 didn't install");
+
+  const busy: UpdatePhase[] = [{ kind: 'checking' }, { kind: 'downloading', version: '1', transferred: 0, total: 0 }, { kind: 'preparing', version: '1' }, { kind: 'restarting', version: '1' }];
+  for (const phase of busy) assert.equal(updateBusy(phase), true, phase.kind);
+  assert.equal(updateBusy({ kind: 'available', version: '1' }), false);
+  assert.equal(updateBusy({ kind: 'latest' }), false);
+});
+
+test('update errors are cut to their first line for the window', () => {
+  assert.equal(briefError('HttpError: 404\n"method: GET url: https://example.test"\nHeaders: {…}'), 'HttpError: 404');
+  assert.equal(briefError('\n\n  net::ERR_INTERNET_DISCONNECTED  \n'), 'net::ERR_INTERNET_DISCONNECTED');
+  assert.equal(briefError(''), 'Unknown error');
+  const long = briefError('x'.repeat(500));
+  assert.equal(long.length, 240);
+  assert.ok(long.endsWith('…'));
 });

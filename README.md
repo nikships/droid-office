@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/hero.jpg" alt="A cutaway of the office building at night: five floors of desks with AI workers at glowing terminals, a glass elevator on the side, a fire pole through the floors and a rooftop bar" width="100%">
+<img src="docs/hero.jpg" alt="A cutaway of the office building at night: five floors of desks with AI workers at glowing terminals, a glass elevator on the side, a fire pole through the floors and a rooftop" width="100%">
 
 # Droid Office
 
@@ -28,13 +28,11 @@ Droid Office turns that into a place. Every agent sits at a desk with a laptop s
 
 - **A desk for every agent.** Walk up, press **E**, pick a model, and a Droid worker sits down. Its live terminal opens on the laptop in front of it.
 - **One terminal, every window.** Open the same live session in a second browser tab; it keeps streaming in each, with full scrollback.
-- **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards, task queue and workers.
+- **A floor per project.** Ride the elevator, pick one of the git projects you already have, and the office opens a new floor in it, right where it is. Nothing is cloned. Each floor has its own desks, boards and workers.
 - **Boards you can touch.** Issues and pull requests hang on the wall. Take a card off the board, carry it across the room, and hand it to a worker.
-- **A task queue that works while you don't.** Queue tasks and walk away. Each one gets a fresh worker on its own git branch, and the PR shows up on the board when it's ready.
-- **Meetings between agents.** Seat two to five workers at the glass meeting table for a debate, a lead-and-team split, a red-versus-blue attack on your change, or a review panel that posts one merged review on the PR.
-- **A place worth being in.** A rooftop bar, a golf tee, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
-
-<img src="docs/meeting.jpg" alt="Robot workers around a glass meeting table with a whiteboard of diagrams behind them" width="100%">
+- **CI on the wall.** The Pipelines board shows your GitHub Actions runs (or GitLab pipelines) as they run, wait and finish. Open a run to see its jobs and steps, re-run what failed, or kick off a workflow. Or just tell the Pipeline agent beside it to do it.
+- **A Whiteboard you share with your workers.** Workers put live HTML pages, screenshots and forms on the wall. You open them, use them, and mark them up with comments, sticky notes and pictures, and the next time a worker reads the board it sees what you changed.
+- **A place worth being in.** A rooftop over the city, an arcade cabinet, a jukebox, and weather outside the windows that follows a real city if you ask.
 
 ## Why Droid Office
 
@@ -50,38 +48,37 @@ A floor can be a GitLab project, on gitlab.com or your own host. Merge requests 
 Connect Jira Cloud once with a read-only token, give a floor an epic, and its tickets appear as a **Jira** tab on the board. Hand any ticket to a worker with one click. The office never writes to Jira.
 
 ### Built like a Factory
-A dark, industrial look in Factory orange. Install it as an app from Chrome or Edge, and it asks before a stray Cmd+W closes your office.
+A dark, industrial look in Factory orange. The Mac app opens your office full screen and keeps itself up to date.
 
 ### Always improving
 Every new feature that ships in the original project is brought over, adapted to this fork and its Droid and GitLab work. The latest additions: rewrite every prompt the office sends, set a default worker, edit and filter issues by label on the boards, keep workers running through upgrades, send workers home when their PR merges, and browse your project's docs at the office bookshelf.
 
-<img src="docs/rooftop.jpg" alt="The rooftop bar at night with a fire pit, a DJ robot, robots with drinks, and a golf tee looking over the city" width="100%">
-
 ## Get started in a minute
 
-You need Node.js 20+, `git`, and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab.
+**The Mac app release (Apple Silicon) is the only supported production install.**
 
-**The Mac app (Apple Silicon)**
+Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed.
 
-Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest) and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed; `droid`, `git` and `gh` are. See [the Mac app](docs/guide.md#the-mac-app).
+You need `git` and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab. See [the Mac app](docs/guide.md#the-mac-app).
 
-**macOS and Linux**
+There are no supported command-line installers or standalone server releases.
+
+### For developers
+
+Clone the repository to run, modify or experiment with the source. You need Node.js 20+ and the tools above.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/droid-office/main/install.sh | bash
+git clone https://github.com/nikships/droid-office.git
+cd droid-office
+npm ci
+npm run dev
 ```
 
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/nikships/droid-office/main/install.ps1 | iex
-```
-
-That installs the latest release and starts the office. It asks which folder your projects are in and lets you pick your first one. It uses your existing checkouts where they are and never clones anything. There is no login: your browser on the same machine opens straight in, and the terminal prints a link and QR code for another browser on your Wi-Fi. Run the same line again any time to update.
+Open `http://localhost:5173`. This is a developer checkout, not a production install. See [Development](docs/guide.md#development) for builds, tests and running the Mac app from source.
 
 ## Your office in your pocket
 
-**Droid Office for Android** keeps you at your desks when you're away from them. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
+**Droid Office for Android** is a companion to your running office, not a standalone office installation. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
 
 <p>
   <img src="android/docs/home.jpg" alt="The Android app listing the office's workers by floor" width="32%">
@@ -93,7 +90,7 @@ That installs the latest release and starts the office. It asks which folder you
 
 | Guide | What's in it |
 | --- | --- |
-| [The full guide](docs/guide.md) | Every feature, controls, running it on AWS in one command or on your own server, and how it all works |
+| [The full guide](docs/guide.md) | The Mac app, every feature, controls, developer setup, and how it all works |
 | [Droid Office for Android](android/README.md) | Installing and pairing the phone app, how it connects over Wi-Fi and Tailscale, and building it |
 
 ## Credits and license

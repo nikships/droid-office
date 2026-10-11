@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { FLOOR, SLAB, STREET_Y, WALL_T, type SeatPlace } from '../shared/layout';
-import type { ViewMode } from './state';
+import { STREET_Y, type SeatPlace } from '../shared/layout';
 import type { Collider } from './world/office';
 
 const RADIUS = 0.32;
@@ -13,7 +12,7 @@ const RUN = 7.5;
 const JUMP_V = 6.4;
 
 export const GRAVITY = 18;
-/** Camera height above your feet in first person (the Person's eyes). */
+/** Camera height above your feet (the Person's eyes). */
 export const EYE_HEIGHT = 1.4;
 /** The Person's hips above their feet, standing. Sitting puts them on the seat, and your eyes move with them. */
 export const HIPS = 0.42;
@@ -26,9 +25,49 @@ const DRAG_LOOK_SPEED = 0.005;
  * before it looks around, in ms, and how long at most the view is held still for. Just the flick of
  * the hand that clicked: any longer and looking around straight away feels like the mouse is gone.
  */
-const SETTLE_REST = 100;
-const SETTLE_MAX = 150;
-const CENTER = new THREE.Vector2(0, 0);
+export const SETTLE_REST = 100;
+export const SETTLE_MAX = 150;
+/**
+ * One move this big, after a click gives the mouse back, is the browser reporting the distance from
+ * the button. A menu higher on the screen is well past it; a frame of looking usually is not.
+ * That one move is dropped even after the hand has rested, and only for this long (ms).
+ */
+export const RELOCK_JUMP = 80;
+export const RELOCK_JUMP_FOR = 500;
+
+/** How long a click's relock holds the view: follow-through until `settleUntil`, and one warp until `jumpUntil`. */
+export interface Relock {
+  settleUntil: number;
+  jumpUntil: number;
+}
+
+/** A click just closed a window: hold the follow-through, and watch for the warp from the button. */
+export function relockAt(now: number): Relock {
+  return { settleUntil: now + SETTLE_MAX, jumpUntil: now + RELOCK_JUMP_FOR };
+}
+
+/** No relock in progress: every move looks. */
+export function idleRelock(): Relock {
+  return { settleUntil: 0, jumpUntil: 0 };
+}
+
+/**
+ * Whether this locked move turns the camera. Small moves wait until the hand rests. One large move
+ * inside the jump window is the distance from the click (a higher menu) and is dropped once; the
+ * move after it looks, so the mouse does not feel gone.
+ */
+export function takeRelockMove(relock: Relock, move: { dx: number; dy: number; now: number; rested: number }): { relock: Relock; look: boolean } {
+  if (relock.jumpUntil && move.now < relock.jumpUntil && Math.hypot(move.dx, move.dy) >= RELOCK_JUMP) {
+    return { relock: { settleUntil: relock.settleUntil, jumpUntil: 0 }, look: false };
+  }
+  let settleUntil = relock.settleUntil;
+  if (settleUntil) {
+    if (move.rested < SETTLE_REST && move.now < settleUntil) return { relock, look: false };
+    settleUntil = 0;
+  }
+  const jumpUntil = relock.jumpUntil && move.now < relock.jumpUntil ? relock.jumpUntil : 0;
+  return { relock: { settleUntil, jumpUntil }, look: true };
+}
 
 export class PlayerController {
   pos = new THREE.Vector3();
@@ -38,11 +77,8 @@ export class PlayerController {
   grounded = true;
   /** Heading of the camera. You look along (-sin, -cos) of it on the XZ plane. */
   camYaw = Math.PI * 0.15;
-  camPitch = 0.42;
-  camDist = 7.5;
-  /** First-person look up (+) / down (-). */
+  /** Look up (+) / down (-). */
   lookPitch = -0.08;
-  view: ViewMode = 'first';
   /** Walk cycle phase, shared by the camera bob and the first-person hands. */
   walkPhase = 0;
   private bob = 0;
@@ -57,8 +93,6 @@ export class PlayerController {
   /** How far below the floor you're on the street is: further down the higher your floor (see streetBelow). */
   street = STREET_Y;
   private jitterT = 0;
-  /** How drunk you are (see booze.ts): the view rolls and sways, and you stagger as you walk. */
-  drunk = 0;
   /** Where you're sitting, or null on your feet. You stay put there until you walk off or jump up. */
   seat: SeatPlace | null = null;
   /** You got up by walking off or jumping (not by stand()). */
@@ -74,14 +108,13 @@ export class PlayerController {
    * frame, with no walking, falling or bumping into things, and the camera follows.
    */
   rig: ((dt: number) => void) | null = null;
-  /**
-   * A click (not a drag) on the scene, in normalized device coordinates.
-   * In first person it is always the crosshair, (0, 0).
-   */
-  onClick: ((ndc: THREE.Vector2) => void) | null = null;
+  /** A click (not a drag) on the scene, at the crosshair. */
+  onClick: (() => void) | null = null;
+  /** Pointer input actually changed the camera, not just a cursor hovering over the page. */
+  onLook: (() => void) | null = null;
   private keys = new Set<string>();
   private drag: { x: number; y: number; moved: number } | null = null;
-  /** Set when this browser won't lock the pointer; first person falls back to drag-to-look. */
+  /** Set when this browser won't lock the pointer; looking around falls back to drag-to-look. */
   private lockFailed = false;
   private lockPending = false;
   private everLocked = false;
@@ -100,9 +133,9 @@ export class PlayerController {
   private escDownAt = 0;
   /** Asked for while Esc was down: taken once it comes up (see lock). */
   private lockOnEscUp = false;
-  /** The lock asked for is to settle (see lock), and until when (ms) a lock that landed so still is. */
+  /** The lock asked for is to settle (see lock). Set when it lands, cleared as the hand rests and the warp is dropped. */
   private settleNext = false;
-  private settleUntil = 0;
+  private relock: Relock = idleRelock();
   /** When the mouse last moved, or a lock that settles landed. */
   private movedAt = 0;
   enabled = true;
@@ -147,14 +180,14 @@ export class PlayerController {
 
     dom.addEventListener('pointerdown', (e) => {
       if (!this.enabled) return;
-      if (this.view === 'first' && e.pointerType === 'mouse' && !this.lockFailed) {
+      if (e.pointerType === 'mouse' && !this.lockFailed) {
         if (this.locked) {
-          if (e.button === 0) this.onClick?.(CENTER);
+          if (e.button === 0) this.onClick?.();
           return;
         }
         this.lock();
       }
-      // Drag to orbit (third person) or to look around (first person without pointer lock).
+      // Drag to look around, without pointer lock.
       this.drag = { x: e.clientX, y: e.clientY, moved: 0 };
     });
     window.addEventListener('pointerup', (e) => {
@@ -162,11 +195,7 @@ export class PlayerController {
       this.drag = null;
       // A click that captured the mouse is not also a click on the world.
       if (!d || d.moved > 5 || !this.enabled || this.locked || this.lockPending || e.target !== dom) return;
-      if (this.view === 'first') this.onClick?.(CENTER);
-      else {
-        const r = dom.getBoundingClientRect();
-        this.onClick?.(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1));
-      }
+      this.onClick?.();
     });
     window.addEventListener('pointermove', (e) => {
       const now = performance.now();
@@ -176,11 +205,10 @@ export class PlayerController {
       if (this.locked) {
         // Held for a moment under a window (see yieldMouse), the mouse doesn't turn your head.
         if (!this.enabled) return;
-        // Taken back from a click, the hand that clicked may be moving on still: that isn't looking around.
-        if (this.settleUntil) {
-          if (rested < SETTLE_REST && now < this.settleUntil) return;
-          this.settleUntil = 0;
-        }
+        // Taken back from a click, the hand's follow-through is not a look, and neither is one warp from the button.
+        const step = takeRelockMove(this.relock, { dx: e.movementX, dy: e.movementY, now, rested });
+        this.relock = step.relock;
+        if (!step.look) return;
         // Some platforms report a bogus huge jump right after locking.
         const clamp = (v: number) => THREE.MathUtils.clamp(v, -250, 250);
         this.look(clamp(e.movementX) * LOOK_SPEED, clamp(e.movementY) * LOOK_SPEED);
@@ -192,11 +220,7 @@ export class PlayerController {
       this.drag.x = e.clientX;
       this.drag.y = e.clientY;
       this.drag.moved += Math.abs(dx) + Math.abs(dy);
-      if (this.view === 'first') this.look(dx * DRAG_LOOK_SPEED, dy * DRAG_LOOK_SPEED);
-      else {
-        this.camYaw -= dx * 0.006;
-        this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.004, 0.05, 1.3);
-      }
+      this.look(dx * DRAG_LOOK_SPEED, dy * DRAG_LOOK_SPEED);
     });
     document.addEventListener('pointerlockchange', () => {
       this.lockPending = false;
@@ -212,20 +236,13 @@ export class PlayerController {
       this.drag = null;
       // The pause to click doesn't count as the hand coming to rest: only once it's taken.
       if (this.settleNext) this.movedAt = performance.now();
-      this.settleUntil = this.settleNext ? this.movedAt + SETTLE_MAX : 0;
+      this.relock = this.settleNext ? relockAt(this.movedAt) : idleRelock();
       this.settleNext = false;
       // A lock that lands with a window open (the one yieldMouse takes, or a relock racing the next window) is let go.
       if (!this.enabled) this.unlock();
     });
     document.addEventListener('pointerlockerror', () => this.refused());
-    dom.addEventListener(
-      'wheel',
-      (e) => {
-        if (this.view === 'third') this.camDist = THREE.MathUtils.clamp(this.camDist + e.deltaY * 0.01, 2.5, 16);
-        e.preventDefault();
-      },
-      { passive: false },
-    );
+    dom.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
   }
 
   get locked(): boolean {
@@ -239,21 +256,7 @@ export class PlayerController {
 
   /** Whether clicking the scene will capture the mouse for looking around. */
   get canLock(): boolean {
-    return this.view === 'first' && !this.lockFailed && typeof this.dom.requestPointerLock === 'function';
-  }
-
-  setView(view: ViewMode) {
-    if (view === this.view) return;
-    if (view === 'first') {
-      this.lookPitch = -0.08;
-      this.facing = this.camYaw + Math.PI;
-    } else {
-      // Start the orbit camera behind where you were looking.
-      this.camYaw = this.facing - Math.PI;
-      this.unlock();
-    }
-    this.view = view;
-    this.updateCamera(true);
+    return !this.lockFailed && typeof this.dom.requestPointerLock === 'function';
   }
 
   unlock() {
@@ -287,8 +290,8 @@ export class PlayerController {
 
   /**
    * Captures the mouse for looking around, as the first click on the scene does. With `settle` (a
-   * click just closed a window), the view holds still until the mouse comes to rest, so the rest of
-   * the hand's move doesn't swing it somewhere else.
+   * click just closed a window), the view holds still until the mouse comes to rest, and one warp
+   * from that click (a button higher on the screen) is dropped, so neither swings the view.
    */
   lock(settle = false) {
     this.settleNext = settle;
@@ -330,11 +333,14 @@ export class PlayerController {
   }
 
   private look(dx: number, dy: number) {
+    const yaw = this.camYaw;
+    const pitch = this.lookPitch;
     this.camYaw -= dx;
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy, -1.45, 1.45);
+    if (this.camYaw !== yaw || this.lookPitch !== pitch) this.onLook?.();
   }
 
-  /** Sits you down in `place`, facing the way it does. In first person you look out from it; in third the camera stays put. */
+  /** Sits you down in `place`, facing the way it does, and you look out from it. */
   sit(place: SeatPlace) {
     this.seat = place;
     this.pos.set(place.x, place.y, place.z);
@@ -344,10 +350,8 @@ export class PlayerController {
     this.stepOffset = 0;
     this.bob = 0;
     this.facing = place.rotY;
-    if (this.view === 'first') {
-      this.camYaw = place.rotY - Math.PI;
-      this.lookPitch = -0.08;
-    }
+    this.camYaw = place.rotY - Math.PI;
+    this.lookPitch = -0.08;
   }
 
   /** Gets you up off your seat onto the floor beside it: out in front (or behind), else wherever there's room. */
@@ -425,28 +429,19 @@ export class PlayerController {
       this.onPathEnd?.('cancelled');
     }
     if (this.path && this.enabled) this.followPath(dt);
-    if (this.view === 'first') this.facing = Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI));
+    this.facing = Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI));
     if (steering) {
       const len = Math.hypot(ix, iz);
       ix /= len;
       iz /= len;
       // Camera-relative: "forward" is where the camera looks.
-      // Drunk, your feet wander off to one side and then the other.
-      const t = this.jitterT;
-      const stagger = this.drunk * (0.4 * Math.sin(t * 1.6) + 0.22 * Math.sin(t * 3.7 + 1));
-      const sin = Math.sin(this.camYaw + stagger);
-      const cos = Math.cos(this.camYaw + stagger);
+      const sin = Math.sin(this.camYaw);
+      const cos = Math.cos(this.camYaw);
       const dx = ix * cos + iz * sin;
       const dz = -ix * sin + iz * cos;
       const speed = (k.has('ShiftLeft') || k.has('ShiftRight') ? RUN : WALK) * this.speedBoost;
       this.tryMove(this.pos.x + dx * speed * dt, this.pos.z);
       this.tryMove(this.pos.x, this.pos.z + dz * speed * dt);
-      if (this.view === 'third') {
-        const want = Math.atan2(dx, dz);
-        let diff = want - this.facing;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        this.facing += diff * Math.min(1, dt * 14);
-      }
     }
 
     // Never below the street: past the edge of the grass there's nothing else to stand on.
@@ -482,7 +477,7 @@ export class PlayerController {
     this.updateCamera();
   }
 
-  /** A step along `path`: toward its next corner, turning (and in first person, looking) the way you go. */
+  /** A step along `path`: toward its next corner, turning to look the way you go. */
   private followPath(dt: number) {
     const path = this.path!;
     const next = path[0];
@@ -508,8 +503,7 @@ export class PlayerController {
     this.moving = true;
     const want = Math.atan2(dx, dz);
     const ease = Math.min(1, dt * 8);
-    if (this.view === 'first') this.camYaw += Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease;
-    else this.facing += Math.atan2(Math.sin(want - this.facing), Math.cos(want - this.facing)) * ease;
+    this.camYaw += Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease;
     // Up against something the map didn't know about: give up rather than walk on the spot.
     this.stuckFor = Math.hypot(this.pos.x - x0, this.pos.z - z0) < step * 0.2 ? this.stuckFor + dt : 0;
     if (this.stuckFor > 1) {
@@ -518,61 +512,15 @@ export class PlayerController {
     }
   }
 
-  updateCamera(snap = false) {
-    if (this.view === 'first') {
-      this.camera.position.set(this.pos.x, this.pos.y + EYE_HEIGHT + this.bob + this.stepOffset + this.lift, this.pos.z);
-      this.camera.rotation.set(this.lookPitch, this.camYaw, 0);
-      this.shake();
-      return;
-    }
-    const target = new THREE.Vector3(this.pos.x, this.pos.y + this.stepOffset + this.lift + 1.3, this.pos.z);
-    const off = new THREE.Vector3(Math.sin(this.camYaw) * Math.cos(this.camPitch), Math.sin(this.camPitch), Math.cos(this.camYaw) * Math.cos(this.camPitch)).multiplyScalar(this.camDist);
-    const cam = target.clone().add(off);
-    // Keep the camera on your side of the outside walls, so they never block the view: inside the
-    // room while you're in the office, out of the building while you're outside or on the balcony.
-    // And under the loft, its roof or the garage ceiling.
-    const m = 0.4;
-    // On the ladder or a pole you can be down in a shaft under the floor, but you're still indoors.
-    const rigged = !!this.rig;
-    const indoors = (rigged || this.pos.y > -SLAB - 0.5) && this.pos.x > FLOOR.minX && this.pos.x < FLOOR.maxX && this.pos.z > FLOOR.minZ && this.pos.z < FLOOR.maxZ;
-    if (indoors) {
-      cam.x = THREE.MathUtils.clamp(cam.x, FLOOR.minX + m, FLOOR.maxX - m);
-      cam.z = THREE.MathUtils.clamp(cam.z, FLOOR.minZ + m, FLOOR.maxZ - m);
-    }
-    const floorY = rigged ? 0 : Math.max(groundAt(this.colliders, this.pos.x, this.pos.z, this.pos.y), this.street);
-    const roof = ceilingAt(this.colliders, cam.x, cam.z, floorY) - 0.3;
-    cam.y = THREE.MathUtils.clamp(cam.y, floorY + 0.6, Math.max(floorY + 0.6, Math.min(floorY + 3.5, roof)));
-    // Down on the street, stay under the garage ceiling so its edge never cuts across the view.
-    const garage = this.street - STREET_Y - SLAB;
-    if (this.pos.y < garage - 1 && !rigged) cam.y = Math.min(cam.y, Math.max(floorY + 0.6, garage - 0.3));
-    // How far you are out past each outside wall (west, east, north, south), and how far inside them the camera is.
-    const e = WALL_T + m;
-    const out = [FLOOR.minX - WALL_T - this.pos.x, this.pos.x - FLOOR.maxX - WALL_T, FLOOR.minZ - WALL_T - this.pos.z, this.pos.z - FLOOR.maxZ - WALL_T];
-    const side = out.indexOf(Math.max(...out));
-    const camIn = Math.min(cam.x - (FLOOR.minX - e), FLOOR.maxX + e - cam.x, cam.z - (FLOOR.minZ - e), FLOOR.maxZ + e - cam.z) > 0;
-    // Outside, back the camera out through the wall you're standing beyond: above the garage always,
-    // and down in it where it's walled in (the west and north sides).
-    if (!indoors && out[side] > 0 && camIn && (cam.y > garage || side === 0 || side === 2)) {
-      if (side === 0) cam.x = FLOOR.minX - e;
-      else if (side === 1) cam.x = FLOOR.maxX + e;
-      else if (side === 2) cam.z = FLOOR.minZ - e;
-      else cam.z = FLOOR.maxZ + e;
-    }
-    if (snap) this.camera.position.copy(cam);
-    else this.camera.position.lerp(cam, 0.25);
-    this.camera.lookAt(target);
+  updateCamera() {
+    this.camera.position.set(this.pos.x, this.pos.y + EYE_HEIGHT + this.bob + this.stepOffset + this.lift, this.pos.z);
+    this.camera.rotation.set(this.lookPitch, this.camYaw, 0);
     this.shake();
   }
 
-  /** The jitters: the view trembles a little, on top of wherever you're looking. Drunk, it rolls and sways. */
+  /** The jitters: the view trembles a little, on top of wherever you're looking. */
   private shake() {
     const t = this.jitterT;
-    if (this.drunk > 0) {
-      const d = this.drunk;
-      this.camera.rotation.z += d * (0.07 * Math.sin(t * 0.9) + 0.025 * Math.sin(t * 2.3 + 1));
-      this.camera.rotation.x += d * 0.03 * Math.sin(t * 0.7 + 2);
-      this.camera.rotation.y += d * 0.04 * Math.sin(t * 0.55 + 4);
-    }
     if (this.jitter <= 0) return;
     const a = this.jitter * 0.01;
     this.camera.rotation.x += a * (Math.sin(t * 71) + 0.6 * Math.sin(t * 131 + 1));

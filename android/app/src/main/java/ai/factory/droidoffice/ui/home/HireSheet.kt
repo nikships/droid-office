@@ -59,7 +59,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Effort
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.Tags
@@ -72,7 +71,6 @@ import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Chip
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.PrimaryButton
-import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
@@ -120,13 +118,11 @@ fun HireSheet(onDismiss: () -> Unit) {
         scope.launch { sheet.hide() }.invokeOnCompletion { onDismiss() }
     }
 
-    fun hire(queue: Boolean) {
+    fun hire() {
         val kind = if (shell) "shell" else "agent"
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
-        val ok = if (queue) connection.send(ClientMsg.queueAdd(prompt.trim(), modelId, e))
-        else connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree)
+        val ok = connection.hire(prompt.trim().takeIf { !shell && it.isNotBlank() }, kind, modelId, e, worktree)
         if (ok) {
-            if (queue) scope.launch { snackbar.showSnackbar("Added to the queue") }
             if (!shell && modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
             close()
         } else {
@@ -196,14 +192,11 @@ fun HireSheet(onDismiss: () -> Unit) {
             Spacer(Modifier.height(18.dp))
             PrimaryButton(
                 if (shell) "Open a shell" else "Hire",
-                { hire(queue = false) },
+                { hire() },
                 Modifier.fillMaxWidth().tagged(Tags.Hire.SUBMIT),
                 enabled = link.phase == Phase.Connected,
                 icon = if (shell) OfficeIcons.Shell else OfficeIcons.Sparkle,
             )
-            AnimatedVisibility(!shell && prompt.isNotBlank()) {
-                SecondaryButton("Add to the queue instead", { hire(queue = true) }, Modifier.fillMaxWidth().padding(top = 10.dp).tagged(Tags.Hire.QUEUE), enabled = link.phase == Phase.Connected, icon = OfficeIcons.Queue)
-            }
             if (link.phase != Phase.Connected) {
                 Text("Waiting for the office…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp).align(Alignment.CenterHorizontally))
             }

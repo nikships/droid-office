@@ -5,6 +5,7 @@ import type { ImageResult } from './decor.js';
 import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesState } from '../shared/protocol.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
+import { Worktrees } from './worktrees.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
@@ -29,11 +30,13 @@ export interface ChangesTarget {
   /** The commit its worktree branched from, when it has one. */
   worktreeBase?: string;
   /**
-   * For another floor's repository a worker works in (see WorkerInfo.repos): the branch diffs are
-   * taken against and PRs target, instead of the one the office was opened on (null: none), where
-   * that repository's open pull requests are, and how to refresh its boards.
+   * The branch diffs are taken against and PRs target, instead of the one the office was opened on
+   * (null: none): the one its worktree was cut from. For another floor's repository a worker works in
+   * (see WorkerInfo.repos), also where that repository's open pull requests are, and how to refresh its boards.
    */
   baseBranch?: string | null;
+  /** The checkout's branch, tried as a PR base when the diff's branch hasn't been pushed. */
+  prBaseFallback?: string | null;
   openPull?(branch: string): { number: number; url: string } | undefined;
   refreshGitHub?(): void;
 }
@@ -125,6 +128,56 @@ function fields(out: string): string[] {
   const f = out.split('\0');
   if (f[f.length - 1] === '') f.pop();
   return f;
+}
+
+/** Tracked changes for one comparison, including rename paths and line counts. */
+async function diffFiles(cwd: string, ref?: string): Promise<Map<string, ChangedFile>> {
+  const refs = ref ? [ref] : [];
+  const [names, numstat] = await Promise.all([git(['diff', '--name-status', '-M', '-z', ...refs], cwd), git(['diff', '--numstat', '-M', '-z', ...refs], cwd)]);
+  const files = new Map<string, ChangedFile>();
+  // `--name-status -z`: "M\0path\0", renames "R100\0old\0new\0".
+  const ns = fields(names);
+  for (let i = 0; i < ns.length; ) {
+    const kind = ns[i++][0];
+    const renamed = kind === 'R' || kind === 'C';
+    const from = renamed ? ns[i++] : undefined;
+    const p = ns[i++];
+    if (p === undefined) break;
+    const status: ChangeStatus = renamed ? 'R' : kind === 'A' || kind === 'D' || kind === 'T' ? kind : 'M';
+    files.set(p, { path: p, from, status, additions: 0, deletions: 0, binary: false, uncommitted: false, sig: '' });
+  }
+  // `--numstat -z`: "add\tdel\tpath\0", renames "add\tdel\t\0old\0new\0"; binaries count as "-".
+  const st = fields(numstat);
+  for (let i = 0; i < st.length; ) {
+    const [a, d, ...name] = st[i++].split('\t');
+    const p0 = name.join('\t');
+    const p = p0 === '' ? st[(i += 2) - 1] : p0;
+    const f = p === undefined ? undefined : files.get(p);
+    if (!f) continue;
+    if (a === '-') f.binary = true;
+    else {
+      f.additions = Number(a) || 0;
+      f.deletions = Number(d) || 0;
+    }
+  }
+  return files;
+}
+
+/** Actual index/worktree changes, even when their combined diff against the branch base is empty. */
+function dirtyFiles(status: string): Map<string, ChangedFile> {
+  const files = new Map<string, ChangedFile>();
+  const sf = fields(status);
+  // `status --porcelain -z`: "XY path\0", renames "XY new\0old\0".
+  for (let i = 0; i < sf.length; ) {
+    const rec = sf[i++];
+    const xy = rec.slice(0, 2);
+    const p = rec.slice(3);
+    const renamed = /[RC]/.test(xy);
+    const from = renamed ? sf[i++] : undefined;
+    const kind: ChangeStatus = xy === '??' ? '?' : renamed ? 'R' : xy.includes('D') ? 'D' : xy.includes('A') ? 'A' : xy.includes('T') ? 'T' : 'M';
+    files.set(p, { path: p, from, status: kind, additions: 0, deletions: 0, binary: false, uncommitted: true, sig: '' });
+  }
+  return files;
 }
 
 async function countLines(file: string): Promise<{ lines: number; binary: boolean }> {
@@ -234,10 +287,7 @@ export class Changes {
         if (r.code > 1) throw new GitError(reason(r, 'git diff failed'));
         out = r.out;
       } else {
-        const base = await this.baseCommit(t);
-        const r = await run('git', ['diff', '-M', base.commit, '--', ...(file.from ? [file.from] : []), file.path], t.cwd);
-        if (r.code !== 0) throw new GitError(reason(r, 'git diff failed'));
-        out = r.out;
+        out = (await this.comparison(t, file)).diff;
       }
       const truncated = out.length > MAX_DIFF;
       return { diff: truncated ? out.slice(0, MAX_DIFF) : out, truncated };
@@ -273,7 +323,7 @@ export class Changes {
       }
       if (file.status === '?' || file.status === 'A') return { status: 404, error: 'That file is new' };
       // `cat-file`, not `show`: show would run the file through any textconv filter the repo sets.
-      const object = `${(await this.baseCommit(t)).commit}:${name}`;
+      const object = `${(await this.comparison(t, file)).commit ?? ''}:${name}`;
       const size = Number(await git(['cat-file', '-s', object], t.cwd));
       if (size > MAX_IMAGE_BYTES) return { status: 413, error: `That picture is over ${MAX_IMAGE_BYTES / 1024 / 1024} MB` };
       return { type, body: await runBytes('git', ['cat-file', 'blob', object], t.cwd, MAX_IMAGE_BYTES + 1) };
@@ -300,9 +350,10 @@ export class Changes {
   async discard(workerId: string, filePath: string | undefined, who: string, repo?: string): Promise<string | undefined> {
     return this.action(workerId, repo, 'Discarding…', async (t, w) => {
       if (filePath !== undefined) {
-        const file = w.last?.files.find((f) => f.path === filePath);
-        if (!file?.uncommitted) return 'That file has no uncommitted changes';
-        if (file.status === '?') await git(['clean', '-f', '--', file.path], t.cwd);
+        const dirty = dirtyFiles(await git(['status', '--porcelain=v1', '-z', '-uall'], t.cwd));
+        const file = dirty.get(filePath) ?? [...dirty.values()].find((f) => f.from === filePath);
+        if (!file) return 'That file has no uncommitted changes';
+        if (file.status === '?' && (await gitMaybe(['cat-file', '-e', `HEAD:${file.path}`], t.cwd)) === undefined) await git(['clean', '-f', '--', file.path], t.cwd);
         else await git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...(file.from ? [file.from] : []), file.path], t.cwd);
         this.events.toast(`${who} discarded the changes to ${path.basename(file.path)} at ${t.name}'s desk`, 'info');
       } else {
@@ -319,10 +370,12 @@ export class Changes {
   async pullRequest(workerId: string, title: string, body: string, who: string, repo?: string): Promise<string | undefined> {
     if (!title.trim()) return 'The pull request needs a title';
     return this.action(workerId, repo, 'Pushing the branch and opening a pull request…', async (t, w) => {
-      const s = w.last ?? (await this.compute(w, t));
+      const s = await this.compute(w, t);
+      if (s.error) return s.error;
       if (!s.branch || !s.prBase) return "This checkout isn't on a branch of its own";
       if (s.pr) return `There's already a pull request for ${s.branch}: ${s.pr.url}`;
-      if (s.files.some((f) => f.uncommitted)) return 'Commit the changes first';
+      // Never trust the cached or capped display list to decide whether a checkout is safe to push.
+      if (await git(['status', '--porcelain=v1', '-z', '-uall'], t.cwd)) return 'Commit the changes first';
       if (!s.ahead) return `${s.branch} has no commits that ${s.prBase} lacks`;
       const remotes = (await git(['remote'], t.cwd)).split('\n').filter(Boolean);
       const remote = remotes.includes('origin') ? 'origin' : remotes[0];
@@ -365,11 +418,20 @@ export class Changes {
     return w;
   }
 
-  /** A file in the worker's list of changes, looking again when it isn't in the last one. */
+  /** Recheck a requested file: its dirty status and rename paths may have changed since the poll. */
   private async changedFile(workerId: string, repo: string | undefined, t: ChangesTarget, filePath: string): Promise<ChangedFile | string> {
-    let state = this.watches.get(watchKey(workerId, repo))?.last;
-    if (!state?.files.some((f) => f.path === filePath)) state = await this.compute({ workerId, repo }, t);
+    const state = await this.compute({ workerId, repo }, t);
     return state.files.find((f) => f.path === filePath) ?? state.error ?? 'That file has no changes';
+  }
+
+  /** Keep branch diffs normally; a cancelling dirty edit compares with HEAD, then the index. */
+  private async comparison(t: ChangesTarget, file: ChangedFile): Promise<{ diff: string; commit?: string }> {
+    const base = await this.baseCommit(t);
+    for (const commit of file.uncommitted ? [base.commit, 'HEAD', undefined] : [base.commit]) {
+      const diff = await git(['diff', '-M', ...(commit ? [commit] : []), '--', ...(file.from ? [file.from] : []), file.path], t.cwd);
+      if (diff || !file.uncommitted || commit === undefined) return { diff, commit };
+    }
+    return { diff: '', commit: base.commit };
   }
 
   /** Runs one commit / discard / PR at a time per checkout, showing watchers that it's in progress. */
@@ -447,60 +509,38 @@ export class Changes {
     }
     // With two refs, git takes the merge base with a merge of them both: the newer one's, as a rule.
     const commit = (refs.length && (await gitMaybe(['merge-base', 'HEAD', ...refs], t.cwd))) || head;
-    const prBase = onBranch && baseBranch && branch !== baseBranch ? baseBranch : undefined;
+    const trees = new Worktrees(t.cwd);
+    const fallback = t.prBaseFallback === undefined ? this.baseBranch : (t.prBaseFallback ?? undefined);
+    const prBase = onBranch && branch !== baseBranch ? await trees.pushedBranch([baseBranch, fallback, trees.defaultBranch()], branch) : undefined;
     return { commit, label, branch: onBranch ? branch : undefined, prBase };
   }
 
   private async compute({ workerId, repo }: { workerId: string; repo?: string }, t: ChangesTarget): Promise<ChangesState> {
     try {
       const base = await this.baseCommit(t);
-      const [numstat, names, status] = await Promise.all([git(['diff', '--numstat', '-M', '-z', base.commit], t.cwd), git(['diff', '--name-status', '-M', '-z', base.commit], t.cwd), git(['status', '--porcelain=v1', '-z', '-uall'], t.cwd)]);
-      const files = new Map<string, ChangedFile>();
-      // `--name-status -z`: "M\0path\0", renames "R100\0old\0new\0".
-      const ns = fields(names);
-      for (let i = 0; i < ns.length; ) {
-        const kind = ns[i++][0];
-        const renamed = kind === 'R' || kind === 'C';
-        const from = renamed ? ns[i++] : undefined;
-        const p = ns[i++];
-        if (p === undefined) break;
-        const status: ChangeStatus = renamed ? 'R' : kind === 'A' || kind === 'D' || kind === 'T' ? kind : 'M';
-        files.set(p, { path: p, from, status, additions: 0, deletions: 0, binary: false, uncommitted: false, sig: '' });
-      }
-      // `--numstat -z`: "add\tdel\tpath\0", renames "add\tdel\t\0old\0new\0"; binaries count as "-".
-      const st = fields(numstat);
-      for (let i = 0; i < st.length; ) {
-        const [a, d, p0] = st[i++].split('\t');
-        const p = p0 === '' ? st[(i += 2) - 1] : p0;
-        const f = p === undefined ? undefined : files.get(p);
-        if (!f) continue;
-        if (a === '-') f.binary = true;
-        else {
-          f.additions = Number(a) || 0;
-          f.deletions = Number(d) || 0;
+      const [files, status] = await Promise.all([diffFiles(t.cwd, base.commit), git(['status', '--porcelain=v1', '-z', '-uall'], t.cwd)]);
+      const dirty = dirtyFiles(status);
+      const missing = [...dirty.values()].filter((f) => f.status !== '?' && !files.has(f.path));
+      // The worktree can cancel a committed branch edit, or an unstaged edit can cancel a staged one.
+      for (const ref of ['HEAD', undefined]) {
+        if (!missing.length) break;
+        const fallback = await diffFiles(t.cwd, ref);
+        for (let i = missing.length - 1; i >= 0; i--) {
+          const f = fallback.get(missing[i].path);
+          if (f) {
+            files.set(f.path, f);
+            missing.splice(i, 1);
+          }
         }
       }
-      // `status --porcelain -z`: "XY path\0", renames "XY new\0old\0", untracked "?? path\0".
-      const untracked: string[] = [];
-      const sf = fields(status);
-      for (let i = 0; i < sf.length; ) {
-        const rec = sf[i++];
-        const xy = rec.slice(0, 2);
-        const p = rec.slice(3);
-        if (xy === '??') {
-          untracked.push(p);
-          continue;
-        }
-        const f = files.get(p);
-        if (f) f.uncommitted = true;
-        if (/[RC]/.test(xy)) {
-          const old = sf[i++];
-          const g = old === undefined ? undefined : files.get(old);
-          if (g) g.uncommitted = true;
-        }
+      for (const f of dirty.values()) {
+        if (f.status === '?' || !files.has(f.path)) files.set(f.path, f);
+        files.get(f.path)!.uncommitted = true;
+        const old = f.from === undefined ? undefined : files.get(f.from);
+        if (old) old.uncommitted = true;
       }
-      for (const p of untracked) if (!files.has(p)) files.set(p, { path: p, status: '?', additions: 0, deletions: 0, binary: false, uncommitted: true, sig: '' });
-      const all = [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
+      // Keep dirty files reachable by Commit/Discard even when clean branch changes fill the cap.
+      const all = [...files.values()].sort((a, b) => Number(b.uncommitted) - Number(a.uncommitted) || a.path.localeCompare(b.path));
       const list = all.slice(0, MAX_FILES);
       await Promise.all(
         list.map(async (f) => {

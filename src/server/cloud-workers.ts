@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { CloudScreenFrame } from '../shared/cloud-screen.js';
 import type { CloudTurn, CloudWorker } from '../shared/factory-cloud.js';
 import type { AgentEffort, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
 import { isAgentEffort } from '../shared/protocol.js';
@@ -12,8 +13,7 @@ import { clockWork } from './workers.js';
 // where, what they're doing, and what the office remembers of their turns, kept in the floor's
 // .droid-office/cloud-workers.json so they're back at their desks after a restart. They are sent
 // with the same worker.update and worker.remove messages as the office's own workers, but never
-// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the queue, the team, meetings,
-// the worker limit) ever sees one.
+// reach the WorkerManager: nothing there (PTYs, hooks, worktrees, the team, the worker limit) ever sees one.
 
 const FILE = 'cloud-workers.json';
 /** Fields of a WorkerInfo that only mean something while the office runs. */
@@ -29,6 +29,8 @@ export interface CloudSeating {
 export interface CloudEvents {
   update(info: WorkerInfo): void;
   remove(workerId: string): void;
+  /** Its laptop screen changed (see cloud-screen.ts). */
+  screen?(workerId: string, frame: CloudScreenFrame): void;
 }
 
 interface Cloudie {
@@ -40,6 +42,8 @@ interface Cloudie {
   polledAt: number;
   /** What was last sent, to tell whether anything changed. */
   sent: string;
+  /** Its laptop screen: the tail of its transcript as the last poll read it. Not saved; the next poll after a restart paints it again. */
+  screen?: { frame: CloudScreenFrame; json: string };
 }
 
 interface Saved {
@@ -104,7 +108,6 @@ export class CloudWorkers {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (seat.station) return 'A board agent always works on this machine';
-    if (seat.room) return 'Only a meeting seats workers at the meeting table';
     if (this.deskTaken(deskId) || this.seating.deskTaken(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     return undefined;
   }
@@ -180,6 +183,21 @@ export class CloudWorkers {
 
   seen(id: string): { count: number; updatedAt: number } | undefined {
     return this.workers.get(id)?.seen;
+  }
+
+  /** Paints a worker's laptop, telling everyone when it changed. */
+  setScreen(id: string, frame: CloudScreenFrame) {
+    const w = this.workers.get(id);
+    if (!w) return;
+    const json = JSON.stringify(frame);
+    if (w.screen?.json === json) return;
+    w.screen = { frame, json };
+    this.events.screen?.(id, frame);
+  }
+
+  /** Every painted laptop, for someone walking in. */
+  fullScreens(): { workerId: string; frame: CloudScreenFrame }[] {
+    return [...this.workers.values()].flatMap((w) => (w.screen ? [{ workerId: w.info.id, frame: w.screen.frame }] : []));
   }
 
   /**

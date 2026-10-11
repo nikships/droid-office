@@ -4,7 +4,8 @@ import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.
 import { isAgentEffort } from '../../shared/protocol.js';
 import type { CloudWorkers } from '../cloud-workers.js';
 import { fallbackTask } from '../tasks.js';
-import { NEW_SESSION_GRACE_MS } from '../../shared/factory-sessions.js';
+import { cloudScreen } from '../../shared/cloud-screen.js';
+import { NEW_SESSION_GRACE_MS, mergeMessages, messageOf, type FactoryMessage } from '../../shared/factory-sessions.js';
 import { FactoryError, type FactoryApi } from './api.js';
 import { HttpError, SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
 import { alreadyGone, whileNew, type NewSessionOptions } from './new-session.js';
@@ -19,8 +20,8 @@ import type { SessionsFeature } from './sessions.js';
 
 /** How often a resting cloud worker's session is read: someone may type to it in Factory's web app. */
 const IDLE_EVERY_MS = 60_000;
-/** Newest messages read for what it's doing now. */
-const TAIL = 8;
+/** Newest messages read for what it's doing now, and enough of them to fill its laptop's screen. */
+const TAIL = 20;
 /** The most pictures one message carries, as the office's prompts take. */
 const MAX_IMAGES = 10;
 const PROMPT_MAX = 20_000;
@@ -257,7 +258,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   /**
    * Sends a cloud worker home: it leaves its desk now, its session is interrupted when it's working,
-   * and deleted when `deleteSession` (otherwise it stays in the Sessions window). Resolves to what to
+   * and deleted when `deleteSession` (otherwise it stays on the Factory account). Resolves to what to
    * tell the floor about the session, if anything.
    */
   async sendHome(id: string, deleteSession: boolean): Promise<{ note?: string; error?: string }> {
@@ -384,6 +385,11 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         }
       }
     });
+    if (messages) {
+      const parsed = messages.map(messageOf).filter((m): m is FactoryMessage => !!m);
+      const frame = cloudScreen(mergeMessages([], parsed));
+      if (frame) floor.cloud.setScreen(id, frame);
+    }
     floor.cloud.polled(id, { count, updatedAt }, mapped.turn, now);
     if (next) floor.cloud.setStatus(id, next);
   }

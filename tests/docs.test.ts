@@ -21,7 +21,7 @@ function fixture(t: { after(fn: () => void): void }, git: boolean) {
   put('docs/API.MD', 'Some intro\n\nThe API\n=======\n');
   put('src/index.ts', 'export {};\n');
   put('node_modules/dep/README.md', '# a dependency\n');
-  put('.droid-office/meetings/notes.md', '# office notes\n');
+  put('.droid-office/notes.md', '# office notes\n');
   put('ignored/secret.md', '# ignored\n');
   put('pic.png', 'not really a png');
   writeFileSync(path.join(root, 'outside.md'), '# outside\n');

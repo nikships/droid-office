@@ -22,7 +22,8 @@ function controller(t: TestContext, colliders: Collider[]) {
       else Reflect.deleteProperty(globalThis, name);
     });
   }
-  const player = new PlayerController(new THREE.PerspectiveCamera(), new EventTarget() as unknown as HTMLElement, [officeFloor, ...colliders]);
+  const dom = new EventTarget();
+  const player = new PlayerController(new THREE.PerspectiveCamera(), dom as unknown as HTMLElement, [officeFloor, ...colliders]);
   player.camYaw = 0;
   function keys(...codes: string[]) {
     player.clearKeys();
@@ -35,8 +36,38 @@ function controller(t: TestContext, colliders: Collider[]) {
   function frames(count: number, dt = 1 / 60) {
     for (let i = 0; i < count; i++) player.update(dt);
   }
-  return { player, keys, frames };
+  return { player, keys, frames, win, doc, dom };
 }
+
+test('only actual pointer-driven camera changes wake rendering, not unlocked hover or ignored input', (t) => {
+  const { player, win, doc, dom } = controller(t, []);
+  let looks = 0;
+  player.onLook = () => looks++;
+  const pointer = (target: EventTarget, type: string, fields: Record<string, number | string>) => {
+    const event = new Event(type);
+    for (const [key, value] of Object.entries(fields)) Object.defineProperty(event, key, { value });
+    target.dispatchEvent(event);
+  };
+  pointer(win, 'pointermove', { clientX: 50, clientY: 50, movementX: 10, movementY: 0 });
+  assert.equal(looks, 0);
+  pointer(dom, 'pointerdown', { pointerType: 'touch', clientX: 50, clientY: 50 });
+  pointer(win, 'pointermove', { clientX: 60, clientY: 50 });
+  assert.equal(looks, 1, 'drag-to-look wakes');
+  assert.equal(player.camYaw, -0.05, 'dragging right turns the camera right');
+  pointer(win, 'pointerup', {});
+  Object.defineProperty(doc, 'pointerLockElement', { value: dom });
+  pointer(win, 'pointermove', { movementX: 10, movementY: 0 });
+  assert.equal(looks, 2, 'locked looking wakes');
+  assert.ok(Math.abs(player.camYaw + 0.072) < 1e-12);
+  pointer(win, 'pointermove', { movementX: 0, movementY: 0 });
+  assert.equal(looks, 2);
+  player.enabled = false;
+  pointer(win, 'pointermove', { movementX: 10, movementY: 0 });
+  player.enabled = true;
+  player.mouseLook = false;
+  pointer(win, 'pointermove', { movementX: 10, movementY: 0 });
+  assert.equal(looks, 2, 'disabled looking never wakes');
+});
 
 const desk: Collider = { minX: -1.05, maxX: 1.05, minZ: -0.53, maxZ: 0.53, top: 0.78 };
 

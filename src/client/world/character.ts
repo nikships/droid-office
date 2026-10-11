@@ -3,7 +3,6 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
-import type { Drink } from '../../shared/rooftop';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
 import { OpenBook } from './book';
@@ -14,73 +13,6 @@ import { glyphFlat } from './glyph3d';
 import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
-
-/** Medic hands in the character's root space; feet stay planted while it crouches. */
-export interface MedicPose {
-  readonly left: THREE.Vector3;
-  readonly right: THREE.Vector3;
-  readonly crouch: number;
-  readonly stride: number;
-}
-
-/** A two-piece limb, created only for medics. Its endpoint is the actual hand/boot mesh. */
-class MedicLimb {
-  private readonly direction = new THREE.Vector3();
-  private readonly bend = new THREE.Vector3();
-  private readonly elbow = new THREE.Vector3();
-  private readonly upperMesh: THREE.Mesh;
-  private readonly originalPosition: THREE.Vector3;
-  private readonly originalScale: THREE.Vector3;
-  readonly lower = new THREE.Group();
-
-  constructor(
-    private readonly upper: THREE.Object3D,
-    readonly endpoint: THREE.Object3D,
-    private readonly a: number,
-    private readonly b: number,
-    originalLength: number,
-    geometry: THREE.BufferGeometry,
-  ) {
-    this.upperMesh = upper.children[0] as THREE.Mesh;
-    this.originalPosition = this.upperMesh.position.clone();
-    this.originalScale = this.upperMesh.scale.clone();
-    this.upperMesh.scale.y = a / originalLength;
-    this.upperMesh.position.y = -a / 2;
-    const material = Array.isArray(this.upperMesh.material) ? this.upperMesh.material[0] : this.upperMesh.material;
-    const lowerMesh = mesh(geometry, material, 0, -b / 2, 0, false);
-    this.lower.add(lowerMesh, endpoint);
-    endpoint.position.set(0, -b, 0);
-    upper.parent!.add(this.lower);
-  }
-
-  /** The bend direction picks the elbow/knee plane, without changing the contact point. */
-  pose(target: THREE.Vector3, bendX: number, bendZ: number) {
-    const d = this.direction.subVectors(target, this.upper.position).length();
-    this.direction.multiplyScalar(1 / Math.max(1e-6, d));
-    const reach = THREE.MathUtils.clamp(d, Math.abs(this.a - this.b) + 0.001, this.a + this.b - 0.001);
-    const along = (reach * reach + this.a * this.a - this.b * this.b) / (2 * reach);
-    this.bend.set(bendX, 0, bendZ).addScaledVector(this.direction, -this.direction.dot(this.bend)).normalize();
-    this.elbow
-      .copy(this.upper.position)
-      .addScaledVector(this.direction, along)
-      .addScaledVector(this.bend, Math.sqrt(Math.max(0, this.a * this.a - along * along)));
-    this.upper.quaternion.setFromUnitVectors(DOWN, this.bend.subVectors(this.elbow, this.upper.position).normalize());
-    this.lower.position.copy(this.elbow);
-    this.lower.quaternion.setFromUnitVectors(DOWN, this.bend.copy(this.upper.position).addScaledVector(this.direction, reach).sub(this.elbow).normalize());
-  }
-
-  restore(hand: boolean) {
-    this.upperMesh.position.copy(this.originalPosition);
-    this.upperMesh.scale.copy(this.originalScale);
-    this.upper.rotation.set(0, 0, 0);
-    if (hand) {
-      this.upper.add(this.endpoint);
-      this.endpoint.position.set(0, -0.38, 0);
-      this.endpoint.name = '';
-    }
-    this.lower.removeFromParent();
-  }
-}
 
 /** How long reaching out to use something takes, in seconds. */
 export const REACH_TIME = 0.42;
@@ -106,35 +38,6 @@ export function popCurve(p: number): number {
   return 1 + 2.7 * u * u * u + 1.7 * u * u;
 }
 
-/** How far round the club goes, from pointing down at the ball: back over the right shoulder, and on through to the finish. */
-const BACKSWING = 2.4;
-const FOLLOW = 2.5;
-/** The swing's plane leans out from upright this far, down to the ball in front of the feet (world/golf.ts STANCE). */
-const SWING_LEAN = 0.5;
-/** Where the swing turns, high in the chest; the club's head is CLUB down from it. */
-const SWING_AT = new THREE.Vector3(0, 0.95, 0.06);
-const CLUB = 1.04;
-/** Down through the ball, holding the finish, and back to the ball again, in seconds. */
-const DOWNSWING = 0.14;
-const FINISH = 1;
-const SETTLE = 0.5;
-/** A swing all on its own (someone else's) takes the club back for this long first. */
-export const BACKSWING_TIME = 0.45;
-/** How long after the downswing starts the club meets the ball. */
-export const IMPACT = 0.08;
-const DOWN = new THREE.Vector3(0, -1, 0);
-const hands = new THREE.Vector3();
-const armDir = new THREE.Vector3();
-
-/** A golf club, hanging down from the hands (its grip at 0): a wrapped grip, a steel shaft and the head at the bottom, its face toward +x. */
-function golfClub(): THREE.Group {
-  const club = new THREE.Group();
-  club.add(mesh(new THREE.CylinderGeometry(0.02, 0.017, 0.2, 8), toon('#2b2d42'), 0, -0.04, 0, false));
-  club.add(mesh(new THREE.CylinderGeometry(0.011, 0.009, CLUB - 0.36 - 0.05, 6), toon('#ced4da'), 0, -(CLUB - 0.36) / 2 - 0.05, 0, false));
-  club.add(mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), toon('#8d99ae'), 0.005, -(CLUB - 0.36), 0.03, false));
-  return club;
-}
-
 /** A full mug of coffee standing on y = 0, with its handle on the -x side. */
 export function coffeeMug(scale = 1): THREE.Group {
   const mug = new THREE.Group();
@@ -145,122 +48,6 @@ export function coffeeMug(scale = 1): THREE.Group {
   mug.add(mesh(new THREE.CylinderGeometry(r * 0.8, r * 0.8, height * 0.04, 16), toon('#6f4518'), 0, height, 0, false));
   mug.add(mesh(new THREE.TorusGeometry(height * 0.28, r * 0.2, 6, 12), china, -r, height / 2, 0, false));
   return mug;
-}
-
-/** Clear glass, faintly blue; no cartoon outline, so the drink inside shows through it. */
-const GLASS = new THREE.MeshBasicMaterial({ color: '#e8f6ff', transparent: true, opacity: 0.38, depthWrite: false });
-GLASS.userData.outlineParameters = { visible: false };
-
-/** A drink from the rooftop bar in its glass, standing on y = 0. */
-export function drinkGlass(d: Drink, scale = 1): THREE.Group {
-  const g = new THREE.Group();
-  const S = scale;
-  const cyl = (rTop: number, rBottom: number, h: number, mat: THREE.Material, y: number, x = 0) => {
-    g.add(mesh(new THREE.CylinderGeometry(rTop * S, rBottom * S, h * S, 14), mat, x * S, y * S, 0, false));
-  };
-  const liquid = toon(d.color);
-  // A stem and a foot, for the glasses that have them.
-  const stem = (h: number) => {
-    cyl(0.032, 0.034, 0.006, GLASS, 0.003);
-    cyl(0.005, 0.005, h, GLASS, h / 2);
-  };
-  switch (d.glass) {
-    case 'pint':
-      cyl(0.044, 0.036, 0.15, GLASS, 0.075);
-      cyl(0.041, 0.034, 0.115, liquid, 0.06);
-      cyl(0.043, 0.041, 0.022, toon('#fffaf0'), 0.128);
-      break;
-    case 'wine':
-      stem(0.07);
-      cyl(0.042, 0.03, 0.075, GLASS, 0.107);
-      cyl(0.036, 0.028, 0.035, liquid, 0.088);
-      break;
-    case 'martini': {
-      stem(0.075);
-      cyl(0.065, 0.005, 0.07, GLASS, 0.11);
-      cyl(0.052, 0.005, 0.055, liquid, 0.103);
-      // An olive on a stick.
-      const olive = mesh(new THREE.SphereGeometry(0.013 * S, 10, 8), toon('#7a9a3a'), 0.012 * S, 0.12 * S, 0, false);
-      g.add(olive);
-      const pick = mesh(new THREE.CylinderGeometry(0.002 * S, 0.002 * S, 0.09 * S, 6), toon('#c98b5a'), 0.02 * S, 0.14 * S, 0, false);
-      pick.rotation.z = -0.35;
-      g.add(pick);
-      break;
-    }
-    case 'highball': {
-      cyl(0.034, 0.032, 0.15, GLASS, 0.075);
-      cyl(0.031, 0.029, 0.12, liquid, 0.062);
-      // Ice, and a straw.
-      for (const [x, y] of [
-        [-0.01, 0.11],
-        [0.012, 0.095],
-      ]) {
-        const cube = mesh(new THREE.BoxGeometry(0.02 * S, 0.02 * S, 0.02 * S), toon('#f4fbff'), x * S, y * S, 0.004 * S, false);
-        cube.rotation.set(0.4, 0.6, 0.2);
-        g.add(cube);
-      }
-      if (d.id !== 'water') {
-        const straw = mesh(new THREE.CylinderGeometry(0.004 * S, 0.004 * S, 0.19 * S, 6), toon(d.id === 'maitai' ? '#ef476f' : '#06d6a0'), 0.012 * S, 0.13 * S, 0, false);
-        straw.rotation.z = -0.22;
-        g.add(straw);
-      }
-      if (d.id === 'maitai') {
-        // A paper umbrella, and a wedge of pineapple on the rim.
-        const umbrella = mesh(new THREE.ConeGeometry(0.035 * S, 0.018 * S, 10), toon('#ffd166'), -0.018 * S, 0.19 * S, 0, false);
-        umbrella.rotation.z = 0.4;
-        g.add(umbrella);
-        g.add(mesh(new THREE.BoxGeometry(0.028 * S, 0.02 * S, 0.01 * S), toon('#ffd166'), 0.03 * S, 0.148 * S, 0, false));
-      } else if (d.id === 'mojito') {
-        for (const [x, z] of [
-          [-0.012, 0.006],
-          [0.006, -0.01],
-          [0.01, 0.01],
-        ])
-          g.add(mesh(new THREE.SphereGeometry(0.009 * S, 6, 5), toon('#3f8f45'), x * S, 0.117 * S, z * S, false));
-        g.add(mesh(new THREE.CylinderGeometry(0.018 * S, 0.018 * S, 0.006 * S, 10, 1, false, 0, Math.PI), toon('#9bc53d'), 0.022 * S, 0.15 * S, 0, false));
-      }
-      break;
-    }
-    case 'shot':
-      cyl(0.026, 0.022, 0.06, GLASS, 0.03);
-      cyl(0.023, 0.02, 0.042, liquid, 0.024);
-      // A wedge of lime balanced on the rim.
-      g.add(mesh(new THREE.CylinderGeometry(0.016 * S, 0.016 * S, 0.008 * S, 10, 1, false, 0, Math.PI), toon('#9bc53d'), 0.022 * S, 0.065 * S, 0, false));
-      break;
-  }
-  return g;
-}
-
-/** Takes a glass from drinkGlass out of the hand holding it, and frees what it was made of (its materials are shared). */
-export function putDownGlass(g: THREE.Group) {
-  g.removeFromParent();
-  g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
-}
-
-/** On a smoke break, one drag every this many seconds. */
-export const SMOKE_CYCLE = 6;
-/** When, in a smoke cycle, the smoke is blown out. */
-export const EXHALE_AT = 2.5;
-
-/** How far the cigarette hand is up at the mouth (0..1), `c` seconds into a smoke cycle. */
-export function dragCurve(c: number): number {
-  const ease = (x: number) => x * x * (3 - 2 * x);
-  if (c < 0.7) return ease(c / 0.7);
-  if (c < 1.7) return 1;
-  if (c < 2.3) return 1 - ease((c - 1.7) / 0.6);
-  return 0;
-}
-
-/** A cigarette, lit end toward +z, and the material of its glowing tip. */
-export function cigarette(): { group: THREE.Group; ember: THREE.MeshToonMaterial } {
-  const group = new THREE.Group();
-  group.add(mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.12, 8).rotateX(Math.PI / 2), toon('#fffaf3'), 0, 0, 0.01, false));
-  group.add(mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.045, 8).rotateX(Math.PI / 2), toon('#e9a03b'), 0, 0, -0.07, false));
-  const ember = toonUnique('#ff6a2b');
-  ember.emissive = new THREE.Color('#ff3b00');
-  ember.emissiveIntensity = 0.3;
-  group.add(mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.02, 8).rotateX(Math.PI / 2), ember, 0, 0, 0.078, false));
-  return { group, ember };
 }
 
 /**
@@ -338,7 +125,6 @@ export function boxOfStuff(): THREE.Group {
 }
 
 const v1 = new THREE.Vector3();
-const v2 = new THREE.Vector3();
 const q1 = new THREE.Quaternion();
 /** Where a person's fist holds the gun's grip, at the end of the arm. */
 const PERSON_GUN_MOUNT = new THREE.Vector3(0, -0.38, 0);
@@ -549,7 +335,7 @@ export class Person {
   private skin: THREE.MeshToonMaterial;
   private hairMat: THREE.MeshToonMaterial;
   private hair = new THREE.Group();
-  /** Their Factory crew kit (lanyard, card, patches) and work boots, off while they wear a medic's uniform. */
+  /** Their Factory crew kit (lanyard, card, patches) and work boots. */
   private crew: THREE.Group;
   private boots: THREE.Mesh[];
   private look: Look;
@@ -557,12 +343,10 @@ export class Person {
   private head: THREE.Group;
   private walkPhase = 0;
   private reachT = -1;
-  /** Held in the left hand, kept upright however the arm swings: a mug of coffee or a drink. */
+  /** Held in the left hand, kept upright however the arm swings: a mug of coffee. */
   private mug = new THREE.Group();
   private cup: THREE.Group;
   private wantsMug = false;
-  /** A drink from the rooftop bar, in the mug's place. */
-  private glass: { id: string; group: THREE.Group } | null = null;
   /** An issue card off the board, held out in front in both hands. */
   private card: HeldCard;
   private cardHolder = new THREE.Group();
@@ -570,13 +354,6 @@ export class Person {
   private book: OpenBook | null = null;
   private bookHolder = new THREE.Group();
   pose: Pose = 'stand';
-  private cig: THREE.Group;
-  private ember: THREE.MeshToonMaterial;
-  /** Seconds into a smoke break, or -1 when not on one. */
-  private smokeT = -1;
-  private wispIn = 0;
-  /** Where smoke comes off: the lit end (a wisp) or the mouth, blowing it out along `dir`. */
-  onSmoke: ((kind: 'wisp' | 'exhale', at: THREE.Vector3, dir: THREE.Vector3) => void) | null = null;
   /** The emote being played, how far into it (seconds), and its emoji over their head. */
   private emoting: { emote: Emote; t: number; pop: THREE.Sprite; size: THREE.Vector2 } | null = null;
   /** A thumb up and a pointing finger on the right hand, out only for those emotes. */
@@ -593,17 +370,10 @@ export class Person {
   /** Holding on to the ladder or a fire pole (see setGrip). */
   private grip: 'ladder' | 'pole' | null = null;
   /**
-   * At the golf tee with a club (see setGolf): the club's swing, how far back it's been taken (and
-   * `want`, where it's going), and a swing under way (`swingT` seconds in, from `top`), or -1.
-   * `autoT` is a whole swing playing by itself (golfSwing), taken back to `power`.
-   */
-  private golf: { swing: THREE.Group; back: number; want: number; top: number; swingT: number; autoT: number; power: number } | null = null;
-  /**
-   * A .44 Magnum in the right fist (see setGunPose): where the fist holds it, the pivot it spins
-   * round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
+   * A .44 Magnum or the wand in the right fist (see setGunPose): where the fist holds it, the pivot
+   * it spins round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
   private gun: { mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
-  private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
   constructor(name: string, color: string, look: Look) {
     this.look = { ...look };
@@ -657,16 +427,6 @@ export class Person {
     this.mug.position.set(0, -0.38, 0);
     this.mug.visible = false;
     this.armR.add(this.mug);
-    // For smoke breaks: a cigarette sticking out of the right fist (the arm on -x, see reach), lit end
-    // pointing down at your side and up and away when it's at your mouth.
-    const cig = cigarette();
-    this.cig = cig.group;
-    this.ember = cig.ember;
-    const along = new THREE.Vector3(0, -0.9, -0.44).normalize();
-    this.cig.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), along);
-    this.cig.position.set(0, -0.38, 0).addScaledVector(along, 0.07);
-    this.cig.visible = false;
-    this.armL.add(this.cig);
     // Between the hands when both arms are out in front (see update), its front to whoever they walk up to.
     const holder = this.cardHolder;
     holder.position.set(0, 0.8, 0.36);
@@ -804,24 +564,7 @@ export class Person {
   /** A mug of coffee in the left hand, or not. */
   holdMug(on: boolean) {
     this.wantsMug = on;
-    this.cup.visible = !this.glass;
-    this.mug.visible = (on || !!this.glass) && !this.card.held && !this.book;
-  }
-
-  /** A drink from the rooftop bar in the left hand (in place of a mug), or none (null). */
-  holdDrink(d: Drink | null) {
-    if ((d?.id ?? null) === (this.glass?.id ?? null)) return;
-    if (this.glass) {
-      putDownGlass(this.glass.group);
-      this.glass = null;
-    }
-    if (d) {
-      const group = drinkGlass(d, 1.4);
-      group.position.set(0.02, -0.08, 0.1);
-      this.mug.add(group);
-      this.glass = { id: d.id, group };
-    }
-    this.holdMug(this.wantsMug);
+    this.mug.visible = on && !this.card.held && !this.book;
   }
 
   /** Carries an issue card in both hands, or puts it down (null). The mug waits while the hands are full. */
@@ -879,7 +622,7 @@ export class Person {
   }
 
   /**
-   * Poses the emote over whatever the arms were doing (walking, sitting, a drag on a cigarette),
+   * Poses the emote over whatever the arms were doing (walking, sitting),
    * `k` of the way. The dance's bounce and steps only happen with both feet on the floor (`still`).
    */
   private emoteStep(dt: number, still: number) {
@@ -947,44 +690,6 @@ export class Person {
     e.pop.material.opacity = THREE.MathUtils.clamp((seconds - u) / 0.4, 0, 1);
   }
 
-  get smoking(): boolean {
-    return this.smokeT >= 0;
-  }
-
-  /** Lights a cigarette (or puts it out): it's in their right hand, and they take a drag every few seconds. */
-  setSmoking(on: boolean) {
-    if (on === this.smoking) return;
-    this.smokeT = on ? 0 : -1;
-    this.cig.visible = on;
-  }
-
-  /** A drag: up to the mouth, hold while the tip glows, back down, then blow the smoke out. */
-  private smokeStep(dt: number, walking: boolean, airborne: boolean) {
-    const prev = this.smokeT % SMOKE_CYCLE;
-    this.smokeT += dt;
-    const c = this.smokeT % SMOKE_CYCLE;
-    const k = walking || airborne ? 0 : dragCurve(c);
-    if (!airborne) {
-      this.armL.rotation.x = THREE.MathUtils.lerp(-0.9, -2.6, k);
-      this.armL.rotation.z = THREE.MathUtils.lerp(0.15, 0.6, k);
-    }
-    const glow = k > 0.9 ? 1.4 : 0.3;
-    this.ember.emissiveIntensity += (glow - this.ember.emissiveIntensity) * Math.min(1, dt * 6);
-    if (!this.onSmoke) return;
-    this.wispIn -= dt;
-    const exhale = prev < EXHALE_AT && c >= EXHALE_AT;
-    if (this.wispIn > 0 && !exhale) return;
-    this.root.updateMatrixWorld(true);
-    if (this.wispIn <= 0) {
-      this.wispIn = 0.16 + Math.random() * 0.12;
-      this.onSmoke('wisp', this.cig.localToWorld(v1.set(0, 0, 0.09)), v2.set(0, 1, 0));
-    }
-    if (exhale) {
-      const dir = v2.set(0, 0.25, 1).applyQuaternion(this.root.quaternion).normalize();
-      this.onSmoke('exhale', this.head.localToWorld(v1.set(0, -0.1, 0.36)), dir);
-    }
-  }
-
   /** Sits down with the hips `hips` above the feet, on a couch or a chair, or gets up (null). */
   sit(hips: number | null) {
     this.hips = hips;
@@ -1000,200 +705,28 @@ export class Person {
     this.grip = grip;
   }
 
-  /** At the golf tee with a club in both hands, over the ball (the ball in front of their feet, the hole off to their left), or not. */
-  setGolf(on: boolean) {
-    if (on === !!this.golf) return;
-    if (!on) {
-      const { swing } = this.golf!;
-      this.body.remove(swing);
-      swing.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
-      this.golf = null;
-      // The swing turned the arms and legs every which way; standing, they only swing back and forth.
-      for (const limb of [this.armL, this.armR, this.legL, this.legR]) limb.rotation.set(0, 0, 0);
-      return;
-    }
-    const swing = new THREE.Group();
-    swing.position.copy(SWING_AT);
-    const club = golfClub();
-    club.position.y = -0.36;
-    swing.add(club);
-    this.body.add(swing);
-    this.golf = { swing, back: 0, want: 0, top: 0, swingT: -1, autoT: -1, power: 0 };
-  }
-
-  /** Taking the club back, `k` of the way (0 at the ball, 1 as far as it goes), the harder to hit it. */
-  golfBack(k: number) {
-    const g = this.golf;
-    if (g && g.swingT < 0) g.want = THREE.MathUtils.clamp(k, 0, 1);
-  }
-
-  /** Down through the ball from wherever it was taken back to, up into the finish, and back to the ball. */
-  golfHit() {
-    const g = this.golf;
-    if (!g) return;
-    g.top = g.back;
-    g.swingT = 0;
-    g.autoT = -1;
-  }
-
-  /** A whole swing, all by itself: back `power` of the way over BACKSWING_TIME, then through (someone else's shot). */
-  golfSwing(power: number) {
-    const g = this.golf;
-    if (!g) return;
-    g.swingT = -1;
-    g.autoT = 0;
-    g.power = THREE.MathUtils.clamp(power, 0, 1);
-  }
-
-  /** The golf swing, over whatever the arms and legs were doing. */
-  private golfStep(dt: number) {
-    const g = this.golf!;
-    if (g.autoT >= 0) {
-      g.autoT += dt;
-      g.want = g.power * Math.min(1, g.autoT / BACKSWING_TIME);
-      if (g.autoT >= BACKSWING_TIME) this.golfHit();
-    }
-    let phi: number;
-    let finish = 0;
-    if (g.swingT >= 0) {
-      const s = (g.swingT += dt);
-      if (s < DOWNSWING) {
-        // Faster and faster down through the ball.
-        const u = (s / DOWNSWING) ** 2;
-        phi = THREE.MathUtils.lerp(-g.top * BACKSWING, FOLLOW, u);
-        finish = Math.max(0, phi / FOLLOW);
-      } else if (s < DOWNSWING + FINISH) {
-        phi = FOLLOW;
-        finish = 1;
-      } else if (s < DOWNSWING + FINISH + SETTLE) {
-        const u = (s - DOWNSWING - FINISH) / SETTLE;
-        finish = 1 - u * u * (3 - 2 * u);
-        phi = FOLLOW * finish;
-      } else {
-        g.swingT = -1;
-        g.back = g.want = 0;
-        phi = 0;
-      }
-      if (g.swingT >= 0) g.back = 0;
-    } else {
-      g.back += (g.want - g.back) * Math.min(1, dt * 12);
-      phi = -g.back * BACKSWING;
-    }
-    g.swing.rotation.set(-SWING_LEAN, 0, phi);
-    // Both hands on the grip, wherever the swing has it.
-    const r = 0.36;
-    const down = -Math.cos(phi) * r;
-    hands.set(SWING_AT.x + Math.sin(phi) * r, SWING_AT.y + down * Math.cos(SWING_LEAN), SWING_AT.z - down * Math.sin(SWING_LEAN));
-    for (const [arm, sx] of [
-      [this.armL, -0.33],
-      [this.armR, 0.33],
-    ] as const) {
-      armDir.set(hands.x - sx, hands.y - 0.9, hands.z).normalize();
-      arm.quaternion.setFromUnitVectors(DOWN, armDir);
-    }
-    // Shoulders turned away on the way back, round to the hole at the finish; eyes on the ball until it's gone.
-    const coil = Math.min(0, phi) / BACKSWING;
-    this.body.rotation.y = coil * 0.45 + finish * 0.5;
-    this.head.rotation.x = 0.4 * (1 - finish) + 0.05;
-    this.head.rotation.y = -coil * 0.35 + finish * 0.6;
-    this.legL.rotation.set(0, 0, -0.1);
-    this.legR.rotation.set(0, 0, 0.1);
-  }
-
   /** Takes it out of the scene and frees its sprites (its materials are shared). */
   dispose() {
-    this.medicPose(null);
     this.root.removeFromParent();
     if (this.label) disposeSprite(this.label);
     this.endEmote();
   }
 
-  /** Overrides ordinary animation for a medic carrying a stretcher. Null restores normal limbs. */
-  medicPose(pose: MedicPose | null) {
-    if (!pose) {
-      if (!this.medicRig) return;
-      this.medicRig.limbs.forEach((limb, i) => limb.restore(i < 2));
-      for (const item of this.medicRig.uniform) item.removeFromParent();
-      for (const geometry of this.medicRig.geometries) geometry.dispose();
-      for (const o of [this.crew, ...this.boots]) o.visible = true;
-      const tag = this.label;
-      if (tag) tag.visible = this.medicRig.labelVisible;
-      this.medicRig = null;
-      this.body.position.set(0, 0, 0);
-      this.body.rotation.set(0, 0, 0);
-      this.head.rotation.set(0, 0, 0);
-      return;
-    }
-    if (!this.medicRig) {
-      const forearm = new THREE.CapsuleGeometry(0.075, 0.14, 3, 8);
-      const shin = new THREE.CapsuleGeometry(0.09, 0.04, 3, 8);
-      const boot = new THREE.BoxGeometry(0.16, 0.09, 0.23);
-      const patch = new THREE.BoxGeometry(1, 1, 1);
-      const cap = new THREE.CylinderGeometry(0.34, 0.35, 0.12, 12);
-      const limbs: MedicLimb[] = [];
-      for (const [i, arm] of [this.armL, this.armR].entries()) {
-        const hand = arm.children[1];
-        hand.name = i ? 'medic-right-hand' : 'medic-left-hand';
-        limbs.push(new MedicLimb(arm, hand, 0.29, 0.29, 0.4, forearm));
-      }
-      for (const [i, leg] of [this.legL, this.legR].entries()) {
-        const foot = mesh(boot, toon('#202936'), 0, 0, 0, false);
-        foot.name = i ? 'medic-right-foot' : 'medic-left-foot';
-        limbs.push(new MedicLimb(leg, foot, 0.22, 0.22, 0.42, shin));
-      }
-      const hat = mesh(cap, this.shirt, 0, 0.39, 0, false);
-      this.head.add(hat);
-      const uniform: THREE.Object3D[] = [hat];
-      for (const [w, h] of [
-        [0.16, 0.045],
-        [0.045, 0.16],
-      ]) {
-        const cross = mesh(patch, toon('#d84a45'), 0, 0.77, 0.265, false);
-        cross.scale.set(w, h, 0.015);
-        this.body.add(cross);
-        uniform.push(cross);
-      }
-      for (const o of [this.crew, ...this.boots]) o.visible = false;
-      this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.label?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
-    }
-    const rig = this.medicRig;
-    // A medic on the job shows no name: its red cross takes the place of a badge.
-    const tag = this.label;
-    if (tag) tag.visible = false;
-    this.body.position.set(0, -0.24 * pose.crouch, 0);
-    this.body.rotation.set(0.4 * pose.crouch, 0, 0);
-    rig.inverse.copy(this.body.quaternion).invert();
-    rig.target.copy(pose.left).sub(this.body.position).applyQuaternion(rig.inverse);
-    rig.limbs[0].pose(rig.target, -1, 0.2);
-    rig.target.copy(pose.right).sub(this.body.position).applyQuaternion(rig.inverse);
-    rig.limbs[1].pose(rig.target, 1, 0.2);
-    for (let i = 0; i < 2; i++) {
-      const step = Math.sin(pose.stride + i * Math.PI) * (1 - pose.crouch);
-      rig.target
-        .set(i ? 0.13 : -0.13, 0.115 + Math.max(0, step) * 0.055, step * 0.12)
-        .sub(this.body.position)
-        .applyQuaternion(rig.inverse);
-      const limb = rig.limbs[i + 2];
-      limb.pose(rig.target, 0, 1);
-      limb.endpoint.quaternion.copy(limb.lower.quaternion).invert().multiply(rig.inverse);
-    }
-    this.head.rotation.set(0.15 * pose.crouch, 0, 0);
-  }
-
   /**
-   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered, mid-trick), or away in
-   * its holster (null). The arm swings up to aim as it draws.
+   * A .44 Magnum in the right fist, posed (see GunMotion: drawn, holstered,
+   * mid-trick), or away in its holster (null). The arm swings up to aim as it draws.
    */
   setGunPose(pose: Readonly<GunPose> | null) {
-    if (!pose) {
-      if (!this.gun) return;
+    if (this.gun && !pose) {
       disposeGun(this.gun.prop);
       this.gun.mount.removeFromParent();
       this.gun = null;
-      this.armL.rotation.set(0, 0, 0);
-      this.finger.visible = this.emoting?.emote.id === 'point';
-      return;
+      if (!pose) {
+        this.armL.rotation.set(0, 0, 0);
+        this.finger.visible = this.emoting?.emote.id === 'point';
+      }
     }
+    if (!pose) return;
     if (this.gun) {
       this.gun.pose = pose;
       return;
@@ -1207,8 +740,8 @@ export class Person {
     const pivot = new THREE.Group();
     pivot.position.copy(SPIN_AT);
     const prop = magnum();
-    prop.position.copy(SPIN_AT).negate();
     const muzzle = new Muzzle();
+    prop.position.copy(SPIN_AT).negate();
     prop.add(muzzle.group);
     pivot.add(prop);
     wrist.add(pivot);
@@ -1285,11 +818,10 @@ export class Person {
     this.sitK += ((this.hips === null ? 0 : 1) - this.sitK) * Math.min(1, dt * 10);
     const sit = this.sitK > 0.001 ? this.sitK : 0;
     if (sit) {
-      // Legs out over the edge of the seat, hands in the lap (a cigarette still comes up for a drag).
+      // Legs out over the edge of the seat, hands in the lap.
       for (const leg of [this.legL, this.legR]) leg.rotation.x = THREE.MathUtils.lerp(leg.rotation.x, -1.35, sit);
       for (const arm of [this.armL, this.armR]) arm.rotation.x = THREE.MathUtils.lerp(arm.rotation.x, -0.55, sit);
     }
-    if (this.smokeT >= 0) this.smokeStep(dt, moving, airborne);
     if (this.book) {
       // Both arms out in front, hands under the book's bottom corners.
       this.armL.rotation.set(-1.5, 0, 0.32);
@@ -1336,7 +868,6 @@ export class Person {
     this.head.rotation.y = this.head.rotation.z = 0;
     this.body.rotation.y = this.body.rotation.z = 0;
     if (this.emoting) this.emoteStep(dt, moving || airborne ? 0 : 1 - sit);
-    if (this.golf && !sit && !airborne) this.golfStep(dt);
     if (this.gun) this.gunStep(dt);
   }
 }
@@ -1518,8 +1049,8 @@ const ease = (x: number) => x * x * (3 - 2 * x);
 /** 0 → 1 with a little overshoot, for props popping in. */
 const popIn = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 + 2.7 * (x - 1) ** 3 + 1.7 * (x - 1) ** 2);
 
-/** A stack of papers held up to read, bound at the top; its top sheet flips over. The sheets face -z. */
-function papers(): { group: THREE.Group; page: THREE.Group } {
+/** A stack of papers held up to read, bound at the top. The sheets face -z. */
+function papers(): { group: THREE.Group } {
   const group = new THREE.Group();
   const W = 0.34;
   const H = 0.44;
@@ -1537,13 +1068,10 @@ function papers(): { group: THREE.Group; page: THREE.Group } {
     }
   };
   lines(group, -0.01);
-  // The top sheet hangs from the binding, so it flips up over the top.
-  const page = new THREE.Group();
-  page.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016, false));
-  lines(page, -0.022);
-  group.add(page);
+  group.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016, false));
+  lines(group, -0.022);
   group.add(mesh(new THREE.BoxGeometry(W * 0.5, 0.05, 0.05), toon('#adb5bd'), 0, 0, 0, false));
-  return { group, page };
+  return { group };
 }
 
 /** A little globe: blue sea, green blobs of land and a gold ring round its middle. */
@@ -1588,6 +1116,20 @@ const DANCE = { up: 0.5, moves: 8 * BEAT, down: 0.5 } as const;
 /** How high a hop between the seat and the desk goes, over the straight line. */
 const HOP = 0.5;
 
+/** Task cards are drawn this much smaller than other labels: at full size one is wider than the desk under it. */
+const CARD_SCALE = 0.55;
+/** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
+export const FADE_NEAR = 1.4;
+export const FADE_FAR = 6.4;
+export const LEVITATE_TIME = 3;
+export const LEVITATE_HEIGHT = 1.4;
+
+/** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
+export function labelFade(d: number): number {
+  const u = Math.min(1, Math.max(0, (d - FADE_NEAR) / (FADE_FAR - FADE_NEAR)));
+  return u * u * (3 - 2 * u);
+}
+
 /** The little Droid worker that sits at a desk. Forward is +z. */
 export class Worker {
   readonly root = new THREE.Group();
@@ -1607,9 +1149,13 @@ export class Worker {
   /** Its worktree was deleted outside the office (WorkerInfo.lost): its bubble says so until it's fixed. */
   private lost = false;
   private nameTag: THREE.Sprite | null = null;
+  /** How opaque its card and name tag are (see seenFrom). */
+  private labelAlpha = 1;
   private name = '';
   private eyes: THREE.Mesh[] = [];
   private blinkAt = Math.random() * 4;
+  /** Down from the wand rather than the gun: eyes shut, asleep (see die). */
+  private asleep = false;
   status: WorkerStatus = 'starting';
   bouncing = false;
   /** You're close enough to read its card: it lands the hop it's in and stands still until you walk away. */
@@ -1620,14 +1166,34 @@ export class Worker {
   private cheerT = 0;
   /** Up on its desk dancing (a pull request merged): where, and how many seconds in. */
   private dancing: { stage: Stage; t: number } | null = null;
+  /** Swish and flick lifts it briefly without changing its task or status. */
+  private levitating: number | null = null;
   private pupils: THREE.Mesh[] = [];
   private feet: THREE.Mesh[] = [];
   /** Sent home: the box of its things in its arms, and how far into its waddle it is. */
   private leaving: { box: THREE.Group; boxT: number; stride: number } | null = null;
   /** Shot: light out, face slack, flat where it fell while its session keeps running (see die). */
   private dead = false;
-  /** On its way out (sent home) or in (called to a meeting): it waddles along instead of standing. */
+  /** Walking instead of standing, on its way out. */
   walking = false;
+  /** Full-rate motion, rather than a hop enabled but held still beside its finished task card. */
+  get animating(): boolean {
+    if (this.dead) return false;
+    return (
+      this.walking ||
+      this.stride > 0 ||
+      this.spawnT < 1 ||
+      !!this.dancing ||
+      this.levitating !== null ||
+      !!this.leaving ||
+      this.cheerT > 0 ||
+      this.twirlT >= 0 ||
+      this.status === 'working' ||
+      this.status === 'needs_input' ||
+      this.acts.size > 1 ||
+      (this.bouncing && (!this.held || this.bounceT > 0))
+    );
+  }
   /** What its latest tool call was (see setAction), and what it's acting out right now. */
   private nextAction: WorkerAction | undefined;
   private action: WorkerAction | undefined;
@@ -1641,7 +1207,6 @@ export class Worker {
   private turnY = 0;
   /** Seconds into its finishing spin, or -1. */
   private twirlT = -1;
-  private flipT = 0;
   private papers: ReturnType<typeof papers>;
   private globe: ReturnType<typeof globe>;
   /** Beside its laptop, where the globe floats (see setPropSpot). */
@@ -1779,12 +1344,19 @@ export class Worker {
     this.cheerT = seconds;
   }
 
+  /** A harmless lift above its seat, easing up and back down at full size. */
+  levitate(): boolean {
+    if (this.dead || this.leaving || this.walking || this.dancing || this.levitating !== null || isAsleep(this.status)) return false;
+    this.levitating = 0;
+    return true;
+  }
+
   /**
    * Hops up on to `stage` (its desk), dances for a few seconds with its light flashing like a disco
    * ball, and hops back down into its seat. Asked again mid-dance, it stays up and dances on.
    */
   dance(stage: Stage) {
-    if (this.leaving || this.dead) return;
+    if (this.leaving || this.dead || this.levitating !== null) return;
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1796,10 +1368,11 @@ export class Worker {
     } else d.t = Math.min(d.t, DANCE.up);
   }
 
-  /** Back in its seat at once, mid-dance or not (it's being sent home). */
+  /** Back in its seat at once, mid-dance or levitation (it's being sent home or downed). */
   stopDancing() {
-    if (!this.dancing) return;
+    if (!this.dancing && this.levitating === null) return;
     this.dancing = null;
+    this.levitating = null;
     this.settle();
   }
 
@@ -1822,6 +1395,7 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
     this.bounceT = 0;
@@ -1867,10 +1441,14 @@ export class Worker {
     this.root.add(this.bubble);
   }
 
-  /** Shot: its light goes out, its face goes slack and its bubble goes away. Its session runs on. */
-  die() {
+  /**
+   * Shot: its light goes out, its face goes slack and its bubble goes away. Its session runs on.
+   * `asleep` (hit by the wand) shuts its eyes instead, fast asleep.
+   */
+  die(asleep = false) {
     if (this.dead) return;
     this.dead = true;
+    this.asleep = asleep;
     this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
@@ -1942,14 +1520,37 @@ export class Worker {
         color: '#ffffff',
         muted: '#a6a6a6',
       });
+      this.bubble.scale.multiplyScalar(CARD_SCALE);
     } else if (bubble) this.bubble = textSprite(bubble, { bg: '#0a0a0a', color: lost ? LOST_CHIP[1] : (border ?? '#eeeeee'), border: border ?? (lost ? LOST_CHIP[1] : '#2f2f2f'), size: 38 });
     if (this.bubble) this.root.add(this.bubble);
   }
 
+  /** You're `d` metres from its head: its card and name tag fade out as you come up to it (see labelFade). */
+  seenFrom(d: number) {
+    this.labelAlpha = labelFade(d);
+  }
+
+  /**
+   * Called every frame, since the card is redrawn whenever what it says changes. Opacity only:
+   * `visible` belongs to whoever hides the labels outright (a heavenly ascent).
+   */
+  private fadeLabels() {
+    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = this.labelAlpha;
+  }
+
   update(dt: number, t: number) {
+    this.fadeLabels();
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     if (this.dead) return this.flatline(dt);
+    if (this.levitating !== null) {
+      this.levitating = Math.min(LEVITATE_TIME, this.levitating + dt);
+      this.root.position.y = LEVITATE_HEIGHT * Math.sin((Math.PI * this.levitating) / LEVITATE_TIME) ** 2;
+      if (this.levitating >= LEVITATE_TIME) {
+        this.root.position.y = 0;
+        this.levitating = null;
+      }
+    }
     this.cheerT = Math.max(0, this.cheerT - dt);
     // Waiting on you: a couple of seconds of jumping, then arms crossed and a tapping foot, and round again.
     this.waitT = this.status === 'needs_input' ? this.waitT + dt : 0;
@@ -1999,12 +1600,12 @@ export class Worker {
     }
     this.body.rotation.y = this.turnY + twirl;
     this.body.rotation.z = isAsleep(this.status) ? Math.sin(t * 1.5) * 0.08 : s.roll;
-    this.props(dt, t);
+    this.props(t);
     this.blink(dt, s.lid);
     this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.5 : 1);
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + (hopping ? this.body.position.y : 0) + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + (hopping ? this.body.position.y : 0);
-    // Walking in to a meeting: the same waddle as on the way out, without the box.
+    // Walking uses the same waddle as on the way out, without the box.
     if (this.walking || this.stride) {
       this.stride = this.walking ? this.stride + dt * 9 : 0;
       const s = Math.sin(this.stride);
@@ -2043,20 +1644,14 @@ export class Worker {
   }
 
   /** The papers and the globe come and go with the act they belong to. */
-  private props(dt: number, t: number) {
+  private props(t: number) {
     const show = (prop: THREE.Object3D, act: Act) => {
       const w = this.acts.get(act) ?? 0;
       prop.visible = w > 0.02;
       if (prop.visible) prop.scale.setScalar(Math.max(0.001, popIn(w)));
       return prop.visible;
     };
-    if (show(this.papers.group, 'read')) {
-      // A page every second or so, flipped up and over the top.
-      this.flipT = (this.flipT + dt) % 1.1;
-      const f = Math.min(1, this.flipT / 0.45);
-      this.papers.page.rotation.x = -ease(f) * Math.PI * 1.1;
-      this.papers.page.visible = f < 1;
-    }
+    show(this.papers.group, 'read');
     if (show(this.globe.group, 'web')) {
       this.globe.group.position.copy(this.spot).y += Math.sin(t * 2) * 0.03;
       this.globe.ball.rotation.y = t * 2.2;
@@ -2066,6 +1661,10 @@ export class Worker {
 
   /** Shot: flat where it fell, lids heavy, light out. Only the name tag stays up. */
   private flatline(dt: number) {
+    if (this.asleep) {
+      for (const e of this.eyes) e.scale.y = 0.08;
+      return;
+    }
     this.blinkAt -= dt;
     if (this.blinkAt < 0) this.blinkAt = 4 + Math.random() * 4;
     const shut = this.blinkAt < 0.4;

@@ -39,6 +39,8 @@ function project(root: string, name: string): string {
 
 /** Records where it was started and whether git finds a repository there, then waits. */
 const fakeAgent = `#!/usr/bin/env node
+// The task namer runs droid exec and waits out its timeout on a process that doesn't exit.
+if (process.argv.includes('--output-format')) process.exit(1);
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 let top = null;
@@ -158,7 +160,7 @@ async function waitFor<T>(read: () => T, ok: (v: T) => boolean, timeout = 5000):
 test('a worker across repositories gets a workspace with a worktree of each on one branch, and starts in it', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const w = workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]);
+  const w = workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]);
   assert.equal(typeof w, 'object', String(w));
   if (typeof w === 'string') return;
   const slug = w.worktree!.branch.replace(/^office\//, '');
@@ -206,7 +208,7 @@ test('a worker across repositories gets a workspace with a worktree of each on o
 test('hiring across repositories needs its own worktree and different repositories, and leaves nothing behind when it fails', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const hire = (repos: RepoSource[], worktree = true) => workers.spawn('desk-1', 'Cody', undefined, worktree, 'agent', undefined, undefined, undefined, repos);
+  const hire = (repos: RepoSource[], worktree = true) => workers.spawn('desk-1', 'Cody', undefined, worktree, 'agent', undefined, undefined, repos);
   assert.match(String(hire([source('floor-api', f.b)], false)), /own worktree/);
   // Another checkout of the web repository is still the web repository.
   const twin = path.join(f.root, 'web-twin');
@@ -237,7 +239,7 @@ test('hiring across repositories needs its own worktree and different repositori
 test('sending a worker across repositories home checks every worktree, and deletes them all and its workspace', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
+  const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
   const w = hire();
   const ws = path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
   writeFileSync(path.join(ws, 'api', 'server.js'), 'wip\n');
@@ -267,7 +269,7 @@ test('sending a worker across repositories home checks every worktree, and delet
 test('O opens a pull request in each repository with commits, and each one lists them all', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);
-  const w = workers.spawn('desk-1', 'Cody', 'Work on GitHub issue #12: "Sign in with passkeys".', true, 'agent', undefined, undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]) as WorkerInfo;
+  const w = workers.spawn('desk-1', 'Cody', 'Work on GitHub issue #12: "Sign in with passkeys".', true, 'agent', undefined, undefined, [source('floor-api', f.b), source('floor-admin', f.c)]) as WorkerInfo;
   const ws = path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
   await sessionStart(workers, path.join(f.a, '.droid-office'), w.id);
   // Work in web and api; nothing in admin.
@@ -449,17 +451,17 @@ test('a worker across repositories goes home once its pull requests have merged 
   const web = [pull(3, 'MERGED', 'office/pip-1', 'h3')];
   const floors = (api: GhPull[] | undefined) => (id: string) => (id === 'api' ? api : undefined);
   // api's PR still open, or not on api's list (yet): it stays.
-  assert.deepEqual(landedWorkers([w], web, [], floors([pull(9, 'OPEN', 'office/pip-1')])), []);
-  assert.deepEqual(landedWorkers([w], web, [], floors([])), []);
-  assert.deepEqual(landedWorkers([w], web, [], floors(undefined)), []);
+  assert.deepEqual(landedWorkers([w], web, floors([pull(9, 'OPEN', 'office/pip-1')])), []);
+  assert.deepEqual(landedWorkers([w], web, floors([])), []);
+  assert.deepEqual(landedWorkers([w], web, floors(undefined)), []);
   // Both merged: it goes, with each merged head.
-  assert.deepEqual(landedWorkers([w], web, [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])), [{ worker: w, pr: 3, head: 'h3', heads: { api: 'h9' }, prs: ['web #3', 'api #9'] }]);
+  assert.deepEqual(landedWorkers([w], web, floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])), [{ worker: w, pr: 3, head: 'h3', heads: { api: 'h9' }, prs: ['web #3', 'api #9'] }]);
   // Only api had work: its PR merging is enough.
   const apiOnly = { ...w, repos: [{ ...w.repos![0] }] };
   assert.deepEqual(
-    landedWorkers([apiOnly], [], [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])).map((l) => l.prs),
+    landedWorkers([apiOnly], [], floors([pull(9, 'MERGED', 'office/pip-1', 'h9')])).map((l) => l.prs),
     [['api #9']],
   );
   // web's own PR open: it stays.
-  assert.deepEqual(landedWorkers([w], [pull(3, 'OPEN', 'office/pip-1')], [], floors([pull(9, 'MERGED', 'office/pip-1')])), []);
+  assert.deepEqual(landedWorkers([w], [pull(3, 'OPEN', 'office/pip-1')], floors([pull(9, 'MERGED', 'office/pip-1')])), []);
 });

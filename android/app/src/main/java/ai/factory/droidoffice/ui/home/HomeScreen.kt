@@ -415,7 +415,7 @@ private fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Bo
                     }
                 }
             }
-            val pr = Workers.pr(w, data.pulls, data.queue.tasks)
+            val pr = Workers.pr(w, data.pulls)
             val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
             if (pr != null || branch != null) {
                 Row(Modifier.padding(start = 26.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

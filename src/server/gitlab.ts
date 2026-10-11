@@ -423,13 +423,6 @@ export class GitLab implements Board {
     return { comment };
   }
 
-  async review(n: number, file: string): Promise<string> {
-    // -F body=@file reads the file's contents as the body.
-    const note = JSON.parse(await this.api(this.notesPath('pull', n), ['--method', 'POST', '-F', `body=@${file}`], 60_000)) as RestNote;
-    void this.refreshPulls();
-    return `${this.itemUrl('pull', n)}#note_${note.id}`;
-  }
-
   async merge(n: number, method: GhMergeMethod, deleteBranch: boolean, auto: boolean): Promise<string | undefined> {
     try {
       const info = await this.projectInfo();

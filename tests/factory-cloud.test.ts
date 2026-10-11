@@ -7,7 +7,7 @@ import { CloudWorkers } from '../src/server/cloud-workers.js';
 import { FactoryApi, FactoryError } from '../src/server/factory/api.js';
 import { CloudFeature, cloudRefusal, mountCloud, type CloudFloor } from '../src/server/factory/cloud.js';
 import { HttpError, type FeatureHost } from '../src/server/factory/feature.js';
-import type { FactoryRegistry } from '../src/server/factory/registry.js';
+import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
 import { computerOf, type FactoryComputersState } from '../src/shared/factory-computers.js';
 import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
@@ -16,7 +16,7 @@ import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
 
 const KEY = 'fk-test-cloud-1234';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const DESK = DESKS.filter((d) => !d.station && !d.room && !d.beanbag);
+const DESK = DESKS.filter((d) => !d.station && !d.beanbag);
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('not really a picture')]);
 const tick = () => new Promise((r) => setTimeout(r, 15));
 
@@ -242,6 +242,53 @@ test('hire: a failed create hires nobody, gives the desk back and says what Fact
   assert.equal(r2.cloud.deskTaken(DESK[0].id), false);
 });
 
+for (const action of ['replace', 'disconnect'] as const) {
+  for (const succeeds of [true, false]) {
+    test(`hire: ${action} during session creation still ${succeeds ? 'seats the worker' : 'releases the failed hire’s desk'}`, async (t) => {
+      let release!: (r: Response) => void;
+      let started!: () => void;
+      const creating = new Promise<void>((r) => (started = r));
+      const held = new Promise<Response>((r) => (release = r));
+      t.after(() => release(json(422, {})));
+      const f = factory({
+        'POST /sessions': () => {
+          started();
+          return held;
+        },
+      });
+      const r = rig(t, f);
+      let connected = true;
+      let api = f.api;
+      const reg = new FactoryRegistry({
+        link: { connection: () => ({ connected, capabilities: [] }), client: () => (connected ? api : undefined), rejected: () => {} },
+        broadcast: () => {},
+        toast: () => {},
+      });
+      t.after(() => reg.stop());
+      reg.register((host) => new CloudFeature(host, { floors: () => [r.floor], agentArgs: [], computers: () => computersState(), toast: () => {} }));
+      const hiring = reg.http('POST', '/cloud/hire', new URLSearchParams(), async () => JSON.stringify(hireBody({ prompt: '' })), { trusted: true });
+      await creating;
+      assert.equal(r.cloud.deskTaken(DESK[0].id), true);
+      if (action === 'replace') {
+        api = new FactoryApi('fk-test-new-2222', (async () => json(404, {})) as typeof fetch);
+        reg.keyReplaced();
+      } else {
+        connected = false;
+        reg.connectionChanged();
+      }
+      release(succeeds ? json(201, { sessionId: 's1' }) : json(422, { detail: 'Computer is not reachable' }));
+      // Drain ready promise callbacks, not a wall-clock timeout. A scoped API never reaches the cleanup.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(r.cloud.list().length, succeeds ? 1 : 0);
+      if (succeeds) r.cloud.remove(r.cloud.list()[0].id);
+      assert.equal(r.cloud.deskTaken(DESK[0].id), false, 'no invisible reservation survives the response');
+      assert.equal(r.cloud.hold(DESK[0].id), undefined, 'another hire can reserve the same desk');
+      r.cloud.release(DESK[0].id);
+      assert.equal((await hiring).status, succeeds ? 200 : 422);
+    });
+  }
+}
+
 test('hire: refuses what can’t run on a Factory computer before asking Factory', async (t) => {
   const f = factory({});
   const r = rig(t, f, { taken: [DESK[1].id] });
@@ -431,6 +478,45 @@ test('poll: a deleted session or computer is a clear error at the desk, and a fa
   r.feature.recheck(w.id);
   computers = computersState();
   await assert.rejects(r.feature.poll(k.api), (err: Error) => err instanceof FactoryError && err.status === 401);
+});
+
+test('poll: its laptop shows the tail of its transcript, sent once per change and to whoever walks in', async (t) => {
+  const tail = [
+    { id: 'm2', role: 'assistant', seq: 2, createdAt: 2, content: [{ type: 'tool_use', id: 't1', name: 'Execute', input: { command: 'npm test' } }] },
+    { id: 'm1', role: 'user', seq: 1, createdAt: 1, content: [{ type: 'text', text: 'say hi' }] },
+  ];
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
+    'GET /sessions/s1': () => session('running', 2),
+    'GET /sessions/s1/messages': () => json(200, { messages: tail }),
+  });
+  const r = rig(t, f);
+  const screens: string[][] = [];
+  Reflect.set(r.cloud, 'events', {
+    update: () => {},
+    remove: () => {},
+    screen: (_: string, frame: { lines: Record<number, [string][]> }) => screens.push(Object.values(frame.lines).map((runs) => runs.map((x) => x[0]).join(''))),
+  });
+  const w = await r.feature.hire(f.api, hireBody(), 'Nik');
+  await tick();
+  await r.feature.poll(f.api);
+  assert.equal(screens.length, 1);
+  assert.deepEqual(
+    screens[0].filter((l) => l),
+    ['> say hi', '● Execute npm test', '  ⎿  Running…'],
+  );
+  r.clock(1000);
+  r.cloud.polled(w.id, undefined, r.cloud.turn(w.id) ?? {}, 0);
+  Reflect.set(r.cloud.seen(w.id)!, 'count', 0);
+  await r.feature.poll(f.api);
+  assert.equal(screens.length, 1, 'the same tail paints nothing new');
+  assert.deepEqual(
+    r.cloud.fullScreens().map((s) => s.workerId),
+    [w.id],
+  );
+  r.cloud.remove(w.id);
+  assert.deepEqual(r.cloud.fullScreens(), []);
 });
 
 test('restart: a cloud worker is back at its desk and picks its session up again by id', async (t) => {

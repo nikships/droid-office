@@ -75,6 +75,8 @@ export class FactoryRegistry {
   private flushTimer?: ReturnType<typeof setTimeout>;
   /** Bumped on every connection change, so a poll that was in flight then is thrown away. */
   private generation = 0;
+  /** Bumped only when another key replaces the last one, not when the same key is checked again. */
+  private replaced = 0;
   private wasActive = false;
   private wasConnected = false;
   /** sameness() of the last broadcast, and when it went out. */
@@ -180,6 +182,7 @@ export class FactoryRegistry {
 
   /** Another key replaced the last one: every feature forgets the old account's data and starts over. */
   keyReplaced() {
+    this.replaced++;
     for (const run of this.runs.values()) run.feature.reset();
     this.wasActive = false;
     this.connectionChanged();
@@ -234,6 +237,7 @@ export class FactoryRegistry {
 
   private async poll(run: Run, api: FactoryApi) {
     const generation = this.generation;
+    const replaced = this.replaced;
     run.running = true;
     run.forced = false;
     let error: unknown;
@@ -245,7 +249,7 @@ export class FactoryRegistry {
     run.running = false;
     if (generation !== this.generation) {
       // The connection changed while it ran: what it read belongs to the old one.
-      if (!this.opts.link.connection().connected) run.feature.reset();
+      if (!this.opts.link.connection().connected || replaced !== this.replaced) run.feature.reset();
       return;
     }
     const now = this.now();

@@ -25,6 +25,25 @@ object Tags {
         const val SNACKBAR = "app.snackbar"
     }
 
+    object Update {
+        const val NOTICE_STATUS = "update.notice.status"
+        const val NOTICE_OPEN = "update.notice.open"
+        const val NOTICE_DISMISS = "update.notice.dismiss"
+        const val ROW = "update.row"
+        const val STATUS = "update.status"
+        const val OPEN = "update.open"
+        const val DIALOG = "update.dialog"
+        const val DIALOG_STATUS = "update.dialog.status"
+        const val PROGRESS = "update.progress"
+        const val ERROR = "update.error"
+        const val INSTALL = "update.install"
+        const val CANCEL = "update.cancel"
+        const val CHECK = "update.check"
+        const val DISMISS = "update.dismiss"
+        const val BROWSER = "update.browser"
+        const val DOWNLOAD = "update.download"
+    }
+
     object Welcome {
         const val SCAN = "welcome.scan"
         const val PASTE = "welcome.paste"
@@ -93,7 +112,6 @@ object Tags {
         const val MODEL = "hire.model"
         const val WORKTREE = "hire.worktree"
         const val SUBMIT = "hire.submit"
-        const val QUEUE = "hire.queue"
         const val MODEL_SHEET = "hire.model_sheet"
 
         fun effort(wire: String) = "hire.effort/$wire"
@@ -123,7 +141,6 @@ object Tags {
         const val GONE = "worker.gone"
         const val GONE_BACK = "worker.gone.back"
         const val KEYS = "worker.keys"
-        const val ZOOM = "key.zoom"
         const val PHONE = "key.phone"
         const val INPUT = "composer.input"
         const val ATTACH = "composer.attach"

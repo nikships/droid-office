@@ -1,5 +1,10 @@
 # Spec: .44 Magnum, worker Darwin Awards
 
+> The Magnum is now opt-in. By default `7` draws a magic wand (`src/client/world/wand.ts`): the
+> same moves, deadline, revival and cleanup, with sparkles, a spell circle and a sleeping worker
+> in place of the gunshot, blood and slack face. Settings → You → "What 7 puts in your hand"
+> (`Settings.sidearm`, kept in the browser) picks the Magnum described below.
+
 ## Summary
 
 Pressing `7` toggles a realistic silver .44 Magnum in your right hand.
@@ -14,14 +19,12 @@ collect it and its owned worktrees and branches are deleted.
 
 - `7` toggles the gun on and off. Both draw and holster get an animation
   and a sound (slide click out, soft click away).
-- The gun lives in the right hand. The left hand keeps its mug, drink,
-  or smoke.
+- The gun lives in the right hand. The left hand keeps its mug.
 - Blocked with a "hands full" toast while carrying an issue card, book,
-  or basketball, and while golfing, climbing, or hanging a picture.
+  or basketball, and while climbing or hanging a picture.
 - While drawn, the crosshair turns red and the hint bar reads
   `Click: fire · 7: holster`.
-- First person shows the gun in `Hands`; third person shows it in your
-  character's raised right hand (same pattern as the golf club prop).
+- The gun shows in `Hands`.
 - `1-6` are emotes, so `7` is free.
 
 ### Firing
@@ -54,7 +57,7 @@ collect it and its owned worktrees and branches are deleted.
 
 - The server stops the session and deletes its owned worktrees and branches,
   including uncommitted changes and unpublished commits. No cleanup choices.
-  Pre-existing branches and shared meeting worktrees retain their ownership protection.
+  Pre-existing branches retain their ownership protection.
 - When `worker.remove` arrives, clients route the worker to the
   medic sequence instead of the walk-out: two white-uniform paramedics
   walk in from the elevator with a stretcher, load the body (~4.8s, blood
@@ -65,9 +68,11 @@ collect it and its owned worktrees and branches are deleted.
 ### Edge cases
 
 - Multiple bodies have independent deadlines; repeated shots do not extend them.
+- Shooting a body that is already down confirms the kill: the server closes its window at
+  once and dismisses it, and the medics come without waiting out the 30 seconds.
 - Floor switches, disconnects, reloads and server restarts do not cancel deadlines.
 - Revival at or after the deadline is refused; collected bodies cannot be revived.
-- Weird positions (meeting table, beanbag, mid-arrival, upstairs floors):
+- Weird positions (beanbag, upstairs floors):
   fall to the floor the same way everywhere.
 - Upstairs floors: medics use the elevator, never the balcony parachute.
 

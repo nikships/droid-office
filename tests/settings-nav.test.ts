@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS_CARDS, SETTINGS_PANES, SETTINGS_SCOPE, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
+import { SETTINGS_CARDS, SETTINGS_PANES, settingsPaneAfter, type SettingsPane } from '../src/shared/settings-nav.js';
 
 test('settings has the eight categories, in order', () => {
   assert.deepEqual(
@@ -13,41 +13,44 @@ test('settings has the eight categories, in order', () => {
   );
 });
 
-test('every fork setting is in a category, with who it is for', () => {
+test('every setting is in a category', () => {
   const byTitle = new Map(SETTINGS_CARDS.map((c) => [c.title, c]));
-  const expect: [string, SettingsPane, 'you' | 'floor' | 'office' | null][] = [
-    ['Your character', 'you', null],
-    ['Camera view', 'you', 'you'],
-    ['Office sounds', 'sound', 'you'],
-    ['Jukebox', 'sound', 'you'],
-    ['Desktop notifications', 'notify', 'you'],
-    ['Channel notifications (Slack / Discord)', 'notify', 'office'],
-    ['Outside', 'building', 'office'],
-    ['Jira', 'building', 'office'],
-    ["This floor's Jira epic", 'building', 'floor'],
-    ['Workspace folder', 'building', 'office'],
-    ['Source hot reload', 'building', 'office'],
-    ['Factory API key', 'factory', 'office'],
-    ['Default worker', 'workers', 'office'],
-    ['Prompts', 'workers', 'office'],
-    ['Worker limit', 'workers', 'office'],
-    ['Workers whose pull request merged', 'workers', 'office'],
-    ['Subagents', 'subagents', 'office'],
-    ['Subagent worker', 'subagents', 'office'],
-    ['Team size', 'subagents', 'office'],
-    ['Where subagents work', 'subagents', 'office'],
-    ['Waking the lead', 'subagents', 'office'],
-    ['Droid skill', 'subagents', 'office'],
-    ['Droid Office for Android', 'phone', 'office'],
+  const expect: [string, SettingsPane][] = [
+    ['Your character', 'you'],
+    ['What 7 puts in your hand', 'you'],
+    ['Office sounds', 'sound'],
+    ['Alert sounds', 'sound'],
+    ['Jukebox', 'sound'],
+    ['Desktop notifications', 'notify'],
+    ['Channel notifications (Slack / Discord)', 'notify'],
+    ['Outside', 'building'],
+    ['Jira', 'building'],
+    ["This floor's Jira epic", 'building'],
+    ['Workspace folder', 'building'],
+    ['Source hot reload', 'building'],
+    ['Factory API key', 'factory'],
+    ['Default worker', 'workers'],
+    ['Where fresh workers start', 'workers'],
+    ['Prompts', 'workers'],
+    ['Prompt chips', 'workers'],
+    ['Worker limit', 'workers'],
+    ['Workers whose pull request merged', 'workers'],
+    ['Worktree setup', 'workers'],
+    ['Subagents', 'subagents'],
+    ['Subagent worker', 'subagents'],
+    ['Models leads can pick', 'subagents'],
+    ['Team size', 'subagents'],
+    ['Where subagents work', 'subagents'],
+    ['Waking the lead', 'subagents'],
+    ['Droid skill', 'subagents'],
+    ['Whiteboard skill', 'subagents'],
+    ['Droid Office for Android', 'phone'],
   ];
   assert.equal(byTitle.size, expect.length);
-  for (const [title, pane, scope] of expect) {
-    assert.deepEqual(byTitle.get(title), { pane, title, scope });
+  for (const [title, pane] of expect) {
+    assert.deepEqual(byTitle.get(title), { pane, title });
   }
   for (const pane of SETTINGS_PANES) assert.ok(SETTINGS_CARDS.some((c) => c.pane === pane.id));
-  assert.deepEqual(SETTINGS_SCOPE.you, ['Just you', 'Only for you, kept in this browser']);
-  assert.equal(SETTINGS_SCOPE.floor[0], 'This floor');
-  assert.equal(SETTINGS_SCOPE.office[0], 'Everyone');
 });
 
 test('arrow keys move between categories and wrap, Home and End jump', () => {

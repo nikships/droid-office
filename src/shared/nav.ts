@@ -9,6 +9,7 @@ import {
   CABINET,
   DESK_SIZE,
   DESKS,
+  DROID_RACK,
   ELEVATOR,
   ELEVATOR_FRONT,
   EXIT_DOOR,
@@ -19,14 +20,15 @@ import {
   KIOSK,
   LADDER,
   LOFT,
-  MEETING_ROOM,
-  MEETING_SEATS,
-  MEETING_TABLE,
+  GLASS_ROOM,
+  GLASS_ROOM_CHAIRS,
+  GLASS_ROOM_TABLE,
   PARACHUTE,
   PLANTS,
   POLE,
   POLES,
   ROAD,
+  ROBOT_CELL,
   STAIRS,
   STATIONS,
   type DeskDef,
@@ -44,7 +46,7 @@ type Rect = [number, number, number, number]; // minX, maxX, minZ, maxZ
 type Circle = [number, number, number]; // x, z, radius
 
 /** The desk's own frame: `t` along its width, `s` out toward the side the worker sits on. */
-export function deskPoint(d: DeskDef, t: number, s: number): Pt {
+export function deskPoint(d: Pick<DeskDef, 'x' | 'z' | 'rotY'>, t: number, s: number): Pt {
   return [d.x + Math.cos(d.rotY) * t + Math.sin(d.rotY) * s, d.z - Math.sin(d.rotY) * t + Math.cos(d.rotY) * s];
 }
 
@@ -69,6 +71,10 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
   for (const x of [LOFT.minX + 0.15, (LOFT.minX + LOFT.maxX) / 2]) circles.push([x, LOFT.minZ + 0.15, 0.14]);
   rects.push([STAIRS.fromX, STAIRS.toX, STAIRS.minZ - 0.1, STAIRS.maxZ]);
   rects.push([ELEVATOR.x - ELEVATOR.width / 2, ELEVATOR.x + ELEVATOR.width / 2, FLOOR.minZ, ELEVATOR_FRONT]);
+  // The factory props, as world/factory-props.ts puts them: the fenced robot cell and the Droid Computer rack.
+  const cell = ROBOT_CELL;
+  rects.push([cell.x - cell.width / 2, cell.x + cell.width / 2, cell.z - cell.depth / 2, cell.z + cell.depth / 2]);
+  rects.push([DROID_RACK.minX, DROID_RACK.maxX, DROID_RACK.minZ, DROID_RACK.maxZ]);
   // The gong's frame, as office.ts puts it.
   rects.push([GONG.x - GONG.width / 2 - 0.12, GONG.x + GONG.width / 2 + 0.3, GONG.z - 0.3, GONG.z + 0.3]);
   // The jukebox, against the east wall.
@@ -96,17 +102,17 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
     const zs = corners.map(([, z]) => z);
     rects.push([Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]);
   }
-  // The meeting room under the loft: its glass walls, with the doorway in the north one, and the
+  // The unused room under the loft: its glass walls, with the doorway in the north one, and the
   // table with its chairs, as office.ts puts them.
-  const room = MEETING_ROOM;
+  const room = GLASS_ROOM;
   const G = 0.06;
   rects.push([room.minX - G, room.minX + G, room.minZ - G, room.maxZ]);
   rects.push([room.minX - G, room.door.x0, room.minZ - G, room.minZ + G]);
   rects.push([room.door.x1, room.maxX, room.minZ - G, room.minZ + G]);
-  const t = MEETING_TABLE;
+  const t = GLASS_ROOM_TABLE;
   rects.push([t.x - t.width / 2, t.x + t.width / 2, t.z - t.depth / 2, t.z + t.depth / 2]);
   // Chairs tucked in at the table, a little smaller than a desk's, so there's a way round behind them.
-  for (const d of MEETING_SEATS) {
+  for (const d of GLASS_ROOM_CHAIRS) {
     const [cx, cz] = deskPoint(d, 0, 0.85);
     circles.push([cx, cz, 0.3]);
   }
@@ -307,21 +313,6 @@ const WALK_OFF_X = -38;
 
 const pathLength = (pts: Pt[]) => pts.reduce((n, p, i) => (i ? n + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0), 0);
 
-/** Where a worker called to a meeting comes in: out of the elevator. */
-const IN_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
-
-/**
- * A worker's walk in to its seat when it's called to a meeting: out of the elevator and round the
- * furniture to beside its chair (the last point), on whichever side is the shorter way, where it hops on.
- */
-export function wayIn(seat: DeskDef): Pt[] {
-  const ways = [-1, 1].map((side) => {
-    const pts = [...route(IN_FROM, deskPoint(seat, side * 0.7, seat.room ? 1.4 : 1.75)), deskPoint(seat, side * 0.7, 0.95)];
-    return { pts, cost: pathLength(pts) };
-  });
-  return ways[0].cost <= ways[1].cost ? ways[0].pts : ways[1].pts;
-}
-
 /**
  * A worker's walk out of the building once it's sent home. The first point is where it hops down,
  * beside its chair (or its bean bag) on whichever side is the shorter way out; then round the
@@ -357,9 +348,8 @@ function wayTo(seat: DeskDef, door: Pt): Pt[] {
       ? [deskPoint(seat, side * 1.05, 0.1), deskPoint(seat, side * 1.05, 1.25)]
       : seat.station
         ? [deskPoint(seat, side * 0.95, KIOSK.stand), deskPoint(seat, side * 0.95, -1)]
-        : // At the meeting table there's less room behind the chair, before the glass.
-          [deskPoint(seat, side * 0.7, 0.95), deskPoint(seat, side * 0.7, seat.room ? 1.4 : 1.75)];
-    // A bean bag or a kiosk can stand with one side up against something (the elevator, by the queue).
+        : [deskPoint(seat, side * 0.7, 0.95), deskPoint(seat, side * 0.7, 1.75)];
+    // A bean bag or a kiosk can stand with one side up against something (the elevator, by the Pipelines board).
     const blocked = !!(seat.beanbag || seat.station) && !walkable(down[0], down[1]);
     const pts = [down, ...route(back, door)];
     return { pts, cost: (blocked ? 1000 : 0) + pathLength(pts) };

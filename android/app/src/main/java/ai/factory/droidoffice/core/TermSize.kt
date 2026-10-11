@@ -1,22 +1,12 @@
 package ai.factory.droidoffice.core
 
-import kotlin.math.floor
+data class TermSize(val cols: Int, val rows: Int)
 
-data class TermSize(val cols: Int, val rows: Int) {
-    companion object {
-        /** The drawable viewport, after padding, at a fixed readable cell size. */
-        fun fit(width: Float, height: Float, cellWidth: Float, lineHeight: Float): TermSize? {
-            if (listOf(width, height, cellWidth, lineHeight).any { !it.isFinite() || it <= 0f }) return null
-            // Match the renderer's half-cell margin and the server's PTY limits.
-            return TermSize(
-                floor(width / cellWidth - 0.5f).toInt().coerceIn(20, 400),
-                floor(height / lineHeight).toInt().coerceIn(5, 200),
-            )
-        }
-    }
-}
-
-/** Resize only when the phone's viewport changes, not whenever another window claims the PTY. */
+/**
+ * The phone view's resizes of a shared PTY: what to send as the phone's viewport changes, what to
+ * restore when it ends, and when another window has taken the size back. It resizes only when the
+ * phone's viewport changes, not whenever another window claims the PTY.
+ */
 class PhoneSizing(original: TermSize? = null, sentSizes: List<TermSize> = emptyList()) {
     var original: TermSize? = original
         private set
@@ -24,6 +14,8 @@ class PhoneSizing(original: TermSize? = null, sentSizes: List<TermSize> = emptyL
     val sentSizes: List<TermSize> get() = sizes.toList()
     private val lastSent: TermSize? get() = sizes.lastOrNull()
     private var requested: TermSize? = lastSent
+    /** The office has applied a size this phone sent, so the PTY at another one means another window. */
+    private var confirmed = false
 
     fun request(current: TermSize, target: TermSize): TermSize? {
         if (original == null) original = current
@@ -41,8 +33,19 @@ class PhoneSizing(original: TermSize? = null, sentSizes: List<TermSize> = emptyL
         requested = size
     }
 
+    /**
+     * Whether another window has resized the PTY since this phone did (the desktop typed into it).
+     * Until the office applies the phone's first size, the PTY still at the original is not that.
+     */
+    fun takenOver(current: TermSize): Boolean {
+        if (current == lastSent) confirmed = true
+        return sizes.isNotEmpty() && current !in sizes && (confirmed || current != original)
+    }
+
+    /** The office may have put the original size back while the phone was away (see src/server/phone-sizes.ts). */
     fun disconnected() {
         requested = null
+        confirmed = false
     }
 
     /** Restore even if the phone's resize is still in flight, but leave another window's size alone. */
@@ -52,5 +55,6 @@ class PhoneSizing(original: TermSize? = null, sentSizes: List<TermSize> = emptyL
         original = null
         sizes.clear()
         requested = null
+        confirmed = false
     }
 }

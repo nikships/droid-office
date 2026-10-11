@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARDS, DESK_BY_ID, deskSeat, MEETING_SEATS, STATIONS } from '../src/shared/layout.js';
+import { BOARDS, DESK_BY_ID, deskSeat, FLOOR, STATIONS } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import type { Interactable } from '../src/client/world/office.js';
 import { buildSnapshot, cameraPose, createAutomation, facingToward, freeSpotNear, listTargets, pitchToward, resolveTarget, runCommand, standFor, type AutomationHost, type RawState, type TargetContext } from '../src/client/automation.js';
 
-/** The spots a floor has, the way world/office.ts lays them out: desks, a kiosk, a meeting chair, a bean bag and the boards. */
+/** The spots a floor has, the way world/office.ts lays them out: desks, a kiosk, a bean bag and the boards. */
 function floorSpots(): Interactable[] {
   const desk = (id: string): Interactable => {
     const s = deskSeat(DESK_BY_ID.get(id)!, 1.25);
@@ -17,18 +17,15 @@ function floorSpots(): Interactable[] {
     return { kind, x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
   };
   const kiosk = STATIONS.find((s) => s.station === 'issues')!;
-  const chair = MEETING_SEATS[0];
   return [
     desk('desk-1'),
     desk('desk-2'),
     { kind: 'desk', deskId: 'beanbag-1', x: 15, z: -9.8, radius: 1.8, off: true },
     { kind: 'station', deskId: kiosk.id, x: kiosk.x, z: kiosk.z + 1, radius: 1.3 },
-    { kind: 'desk', deskId: chair.id, x: chair.x, z: chair.z, radius: 1 },
     board('issues'),
     board('pulls'),
     { kind: 'coffee', x: -15.7, z: 10.9, radius: 1.4 },
-    { kind: 'meeting', x: 13.7, z: 10.55, radius: 2.6 },
-    { kind: 'meeting', x: 13.7, z: 12, radius: 2.4 },
+    { kind: 'coffee', x: -15.7, z: 11, radius: 1.4 },
     { kind: 'seat', seatId: 'couch', x: 10, z: 0, radius: 1.5 },
   ];
 }
@@ -37,7 +34,7 @@ const worker = (over: Partial<WorkerInfo>): WorkerInfo => ({ id: 'w1', name: 'Ad
 
 function context(over: Partial<TargetContext> = {}): TargetContext {
   return {
-    workers: [worker({}), worker({ id: 'w2', name: 'Grace', deskId: 'meeting-1', status: 'working' })],
+    workers: [worker({})],
     spots: floorSpots(),
     floors: [
       { id: 'f1', name: 'droid-office' },
@@ -51,7 +48,7 @@ function context(over: Partial<TargetContext> = {}): TargetContext {
 test('list() names the desks, kiosks, boards, places and floors you can go to from here', () => {
   const list = listTargets(context());
   const ids = list.map((t) => t.id);
-  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'meeting-1', 'issues', 'pulls', 'coffee', 'meeting', 'f1', 'f2', ROOF]);
+  assert.deepEqual(ids, ['desk-1', 'desk-2', 'station-issues', 'issues', 'pulls', 'coffee', 'f1', 'f2', ROOF]);
   assert.deepEqual(list[0], { id: 'desk-1', kind: 'desk', label: 'Desk 1', deskId: 'desk-1', worker: { id: 'w1', name: 'Ada', status: 'idle' } });
   assert.equal(list[1].worker, undefined, 'a free desk is listed without a worker');
   assert.equal(list.find((t) => t.id === 'station-issues')?.kind, 'kiosk');
@@ -59,7 +56,7 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   assert.equal(list.find((t) => t.id === 'coffee')?.kind, 'place');
   assert.ok(!ids.includes('beanbag-1'), 'a bean bag that is put away is nowhere to go');
   assert.ok(!ids.includes('couch'), 'seats are not named targets');
-  assert.equal(ids.filter((id) => id === 'meeting').length, 1, 'a place with several spots is listed once');
+  assert.equal(ids.filter((id) => id === 'coffee').length, 1, 'a place with several spots is listed once');
   assert.deepEqual(
     list.filter((t) => t.kind === 'floor').map((t) => [t.id, !!t.here]),
     [
@@ -68,10 +65,29 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
       [ROOF, false],
     ],
   );
-  // An empty meeting chair isn't listed; nor is a roof with no floors under it.
+  // A roof with no floors under it isn't listed.
   const empty = listTargets(context({ workers: [], floors: [] })).map((t) => t.id);
-  assert.ok(!empty.includes('meeting-1'));
   assert.ok(!empty.includes(ROOF));
+});
+
+test('the Whiteboard on the east wall is a board to go to, by id or name', () => {
+  const b = BOARDS.whiteboard;
+  assert.deepEqual(b, { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' });
+  // Its spot, the way world/office.ts lays every board's out: 1.6 m into the room from its face.
+  const spot: Interactable = { kind: 'whiteboard', x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
+  assert.ok(spot.x < b.x, 'the spot is in the room, west of the east wall');
+  const ctx = context({ spots: [...floorSpots(), spot] });
+  assert.deepEqual(
+    listTargets(ctx).find((t) => t.id === 'whiteboard'),
+    { id: 'whiteboard', kind: 'board', label: 'Whiteboard' },
+  );
+  for (const q of ['whiteboard', 'Whiteboard']) {
+    const r = resolveTarget(q, ctx);
+    assert.ok(r.ok, q);
+    assert.equal(r.target.spot, spot, 'E there uses the wall');
+  }
+  // A floor without it (the roof) has no Whiteboard to go to.
+  assert.ok(!resolveTarget('whiteboard', context()).ok);
 });
 
 test('goTo targets resolve by id, worker, label, agent name and floor, and say why when they do not', () => {
@@ -85,7 +101,6 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.equal(id('desk-2').spot?.deskId, 'desk-2', 'the desk carries the spot E uses there');
   assert.equal(id('w1').id, 'desk-1', 'a worker id goes to its desk');
   assert.equal(id('ada').id, 'desk-1', 'a worker name, any case');
-  assert.equal(id('Grace').id, 'meeting-1', 'a worker at the meeting table');
   assert.equal(id('desk 2').id, 'desk-2', 'a desk label');
   assert.equal(id('Issues agent').id, 'station-issues', "the board agent's name goes to its kiosk");
   assert.equal(id('issues').kind, 'board', 'the board, not its kiosk');
@@ -104,7 +119,7 @@ test('goTo targets resolve by id, worker, label, agent name and floor, and say w
   assert.match(fail(''), /needs a target/);
   assert.match(fail('nobody'), /No such target "nobody"/);
   assert.match(fail('beanbag-1'), /Bean bag 1 isn't somewhere to go/);
-  assert.match(fail('desk-1', context({ floor: ROOF, spots: [{ kind: 'bar', x: 0, z: 0, radius: 2 }] })), /up on the roof/);
+  assert.match(fail('desk-1', context({ floor: ROOF, spots: [{ kind: 'elevator', x: 0, z: 0, radius: 2 }] })), /up on the roof/);
   assert.match(fail('roof', context({ floors: [] })), /no roof yet/);
   const twins = context({ workers: [worker({}), worker({ id: 'w3', name: 'ada', deskId: 'desk-2' })] });
   assert.match(fail('Ada', twins), /could be Desk 1 \(desk-1\) or Desk 2 \(desk-2\): use the id/);
@@ -171,28 +186,14 @@ test('standing at a board or a place uses its spot, stepping out of anything in 
     freeSpotNear({ x: 0, z: 0 }, 0, 1, (x) => x < 2),
     null,
   );
-  const meeting = resolveTarget('Grace', context());
-  assert.ok(meeting.ok);
-  const chair = standFor(meeting.target, () => false)!;
-  assert.deepEqual(chair.face, { x: MEETING_SEATS[0].x, y: 0.9, z: MEETING_SEATS[0].z }, 'at the meeting table, face its chair');
   assert.equal(
     standFor({ id: 'f2', kind: 'floor', label: 'website' }, () => false),
     null,
   );
 });
 
-test('camera presets sit behind you in third person and look ahead in first', () => {
-  for (const facing of [0, Math.PI / 2, -2]) {
-    const third = cameraPose('third', facing);
-    assert.equal(third.view, 'third');
-    // updateCamera puts the camera at (sin camYaw, cos camYaw) from you: the opposite of where you face.
-    assert.ok(Math.abs(Math.sin(third.camYaw) + Math.sin(facing)) < 1e-9);
-    assert.ok(Math.abs(Math.cos(third.camYaw) + Math.cos(facing)) < 1e-9);
-  }
-  assert.deepEqual(cameraPose('first', 0), { view: 'first', camYaw: -Math.PI, lookPitch: -0.08 });
-  assert.ok(cameraPose('close', 0).camDist! < cameraPose('third', 0).camDist!);
-  assert.ok(cameraPose('wide', 0).camDist! > cameraPose('third', 0).camDist!);
-  assert.ok(cameraPose('wide', 0).camPitch! > cameraPose('third', 0).camPitch!);
+test('the first camera preset looks ahead, level', () => {
+  assert.deepEqual(cameraPose('first', 0), { camYaw: -Math.PI, lookPitch: -0.08 });
 });
 
 function raw(over: Partial<RawState> = {}): RawState {
@@ -203,7 +204,7 @@ function raw(over: Partial<RawState> = {}): RawState {
       { id: 'f2', name: 'website', waiting: 0 },
     ],
     riding: false,
-    player: { x: 1.23456, y: 0, z: -2.0049, facing: Math.PI * 3, lookPitch: -0.2049, view: 'first', seat: null, enabled: true, walking: false, climbing: false },
+    player: { x: 1.23456, y: 0, z: -2.0049, facing: Math.PI * 3, lookPitch: -0.2049, seat: null, enabled: true, walking: false, climbing: false },
     camera: { x: 1.23456, y: 1.4, z: -2.0049 },
     using: null,
     modals: [],
@@ -211,9 +212,9 @@ function raw(over: Partial<RawState> = {}): RawState {
     workers: [worker({ status: 'needs_input', task: { name: 'Fix the jukebox' } }), worker({ id: 'w2', name: 'Grace', deskId: 'station-issues', status: 'done', acked: true })],
     carrying: null,
     hanging: false,
-    golfing: false,
     gun: false,
     gunMove: null,
+    sidearm: 'wand',
     ...over,
   };
 }
@@ -227,6 +228,8 @@ test('state() is a rounded JSON snapshot of where you are, what is open and who 
   assert.equal(s.player.lookPitch, -0.2);
   assert.equal(Math.abs(s.player.facing), 3.14, 'the heading wrapped into ±π');
   assert.equal(s.player.controls, true);
+  assert.equal(s.player.sidearm, 'wand');
+  assert.equal(buildSnapshot(raw({ sidearm: 'magnum' })).player.sidearm, 'magnum');
   assert.equal(s.camera.x, 1.23);
   assert.equal(s.using, null);
   assert.equal(s.terminal, null);
@@ -254,7 +257,7 @@ test('state() is a rounded JSON snapshot of where you are, what is open and who 
   assert.deepEqual(buildSnapshot(raw({ using: { kind: 'seat', seatId: 'couch', x: 0, z: 0, radius: 2 } })).using, { kind: 'seat', id: 'couch', label: 'seat' });
   assert.deepEqual(buildSnapshot(raw({ terminal: 'gone' })).terminal, { workerId: 'gone', name: 'gone' });
   const roof = buildSnapshot(raw({ floor: ROOF }));
-  assert.deepEqual(roof.floor, { id: ROOF, name: 'Rooftop bar' });
+  assert.deepEqual(roof.floor, { id: ROOF, name: 'Rooftop' });
   assert.equal(roof.onRoof, true);
   assert.equal(buildSnapshot(raw({ floor: null })).floor, null);
 });
@@ -266,12 +269,13 @@ function fakeOffice() {
     raw: raw(),
     busy: null as string | null,
     near: null as Interactable | null,
+    cantLetGo: null as string | null,
     walk: 'arrived' as 'arrived' | 'cancelled' | 'stuck' | 'never',
     rideTo: null as string | null,
     frames: 0,
     commands: [
       { id: 'issues', label: 'Issues', shown: true },
-      { id: 'roof', label: 'Rooftop bar', shown: true },
+      { id: 'roof', label: 'Rooftop', shown: true },
       { id: 'upgrade', label: 'Upgrade', shown: false },
       { id: 'decor', label: 'Hang a picture', shown: true, blocked: 'no walls up here' },
     ],
@@ -294,6 +298,13 @@ function fakeOffice() {
       setTimeout(() => done(s.walk as 'arrived'), 5);
     },
     near: () => s.near,
+    letGo: () => {
+      log.push('letGo');
+      if (s.cantLetGo) return s.cantLetGo;
+      // Stepping off takes a few frames, then you're back on the floor.
+      setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, climbing: false, y: 0 } }), 15);
+      return null;
+    },
     use: (spot, key) => {
       log.push(`use ${spot.deskId ?? spot.kind} ${key}`);
       if (spot.deskId === 'desk-1' && key === 'E') s.raw = { ...s.raw, terminal: 'w1', modals: [{ label: 'Ada terminal' }] };
@@ -315,8 +326,7 @@ function fakeOffice() {
       setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, enabled: true } }), 40);
     },
     setCamera: (pose) => {
-      log.push(`camera ${pose.view} ${pose.camDist ?? ''}`);
-      s.raw = { ...s.raw, player: { ...s.raw.player, view: pose.view } };
+      log.push(`camera ${pose.lookPitch}`);
     },
     frames: () => s.frames++,
     wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
@@ -382,6 +392,36 @@ test('ride and goTo a floor resolve once the doors open there, and reject a trip
   assert.deepEqual(log, ['ride f2', 'ride f1', `ride ${ROOF}`]);
 });
 
+test('E on the ladder gets off it like the key does; every other move waits until you are off', async () => {
+  const { s, log, office } = fakeOffice();
+  s.near = { kind: 'ladder', x: -17, z: 0, radius: 1.4 };
+  const onLadder = () => {
+    s.raw = { ...s.raw, player: { ...s.raw.player, climbing: true, y: 0 } };
+    s.busy = 'on the ladder: interact("E") gets off it';
+  };
+  onLadder();
+  // Nothing else is in reach up the ladder: those keys, a goTo and a ride all still wait.
+  await assert.rejects(office.interact('P'), /Can't use anything now: on the ladder/);
+  await assert.rejects(office.goTo('desk-1'), /Can't go to Desk 1 now: on the ladder/);
+  await assert.rejects(office.ride('website'), /Can't ride now: on the ladder/);
+  const off = await office.interact('E');
+  assert.equal(off.player.climbing, false);
+  assert.equal(off.player.y, 0);
+  assert.deepEqual(log, ['letGo'], 'E let go of the ladder rather than using what is near');
+  // Once off, the same E is about what's near again: the ladder, to grab it.
+  s.busy = null;
+  await office.interact('E');
+  assert.equal(log.at(-1), 'use ladder E');
+  // Halfway through the hatch to another floor there's nothing to step off onto yet.
+  onLadder();
+  s.cantLetGo = 'climbing through the hatch to another floor';
+  await assert.rejects(office.interact('E'), /Can't get off now: climbing through the hatch/);
+  // Riding between floors on the ladder, E waits like everything else.
+  s.raw = { ...s.raw, riding: true };
+  s.busy = 'riding to another floor';
+  await assert.rejects(office.interact('E'), /Can't use anything now: riding/);
+});
+
 test('open runs a ☰ command by id, closeAll shuts every window, camera picks a preset', async () => {
   const { s, log, office } = fakeOffice();
   assert.deepEqual(
@@ -394,9 +434,9 @@ test('open runs a ☰ command by id, closeAll shuts every window, camera picks a
   await assert.rejects(office.open('upgrade'), /isn't offered here/);
   await assert.rejects(office.open('decor'), /can't be used now: no walls up here/);
   assert.equal((await office.open('roof')).floor?.id, ROOF, 'the roof is a ride');
-  assert.equal((await office.camera('wide')).player.view, 'third');
-  await assert.rejects(office.camera('fisheye' as 'wide'), /camera takes one of first, third, close, wide/);
-  assert.deepEqual(log, ['run issues', 'closeAll', `ride ${ROOF}`, 'camera third 14']);
+  await office.camera('first');
+  await assert.rejects(office.camera('third' as 'first'), /camera takes one of first, not "third"/);
+  assert.deepEqual(log, ['run issues', 'closeAll', `ride ${ROOF}`, 'camera -0.08']);
   assert.ok(office.list().some((t) => t.id === 'desk-1'));
   assert.equal(s.raw.floor, ROOF);
 });

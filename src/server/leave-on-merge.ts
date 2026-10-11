@@ -1,54 +1,15 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import type { GhPull, LeaveOnMergeState, QueueTask, WorkerInfo } from '../shared/protocol.js';
+import type { GhPull, LeaveOnMergeState, WorkerInfo } from '../shared/protocol.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
+import { SavedSwitch } from './saved-switch.js';
 
 /**
  * Whether a worker whose pull request merged goes home by itself, picked in ⚙️ Settings by anyone
  * and kept in .droid-office/leave-on-merge.json. The same on every floor; off until someone turns it on.
  */
-export class LeaveOnMerge {
-  private saved?: Required<LeaveOnMergeState>;
-  private path: string;
-
-  constructor(
-    dataDir: string,
-    private onState: (state: LeaveOnMergeState) => void,
-  ) {
-    this.path = path.join(dataDir, 'leave-on-merge.json');
-    this.restore();
-  }
-
-  get on(): boolean {
-    return this.saved?.on ?? false;
-  }
-
-  state(): LeaveOnMergeState {
-    return this.saved ? { ...this.saved } : { on: false };
-  }
-
-  set(on: boolean, by: string) {
-    this.saved = { on, by, at: Date.now() };
-    this.persist();
-    this.onState(this.state());
-  }
-
-  private restore() {
-    try {
-      const s = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<LeaveOnMergeState>;
-      if (typeof s.on === 'boolean') this.saved = { on: s.on, by: typeof s.by === 'string' ? s.by : 'someone', at: typeof s.at === 'number' ? s.at : 0 };
-    } catch {
-      // never set: workers wait to be sent home
-    }
-  }
-
-  private persist() {
-    try {
-      writeFileSync(this.path, JSON.stringify(this.saved ?? {}, null, 2), { mode: 0o600 });
-    } catch {
-      // disk issues shouldn't take the office down
-    }
+export class LeaveOnMerge extends SavedSwitch {
+  constructor(dataDir: string, onState: (state: LeaveOnMergeState) => void) {
+    super(dataDir, 'leave-on-merge.json', false, onState);
   }
 }
 
@@ -68,16 +29,16 @@ export interface Landed {
 /**
  * The workers free to go home because their work landed: a pull request of theirs merged and none
  * is still open (the same call as the purple bubble, see workerPr), they're at rest, and nobody has
- * their terminal open. Board agents, shells and the meeting table don't come and go by pull request.
+ * their terminal open. Board agents and shells don't come and go by pull request.
  * A worker across repositories has pull requests on other floors too (`pullsOf` has their lists):
  * none of them may be open, or opened from its desk but missing from its floor's list.
  */
-export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], tasks: QueueTask[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
+export function landedWorkers(workers: WorkerInfo[], pulls: GhPull[], pullsOf?: (floor: string) => GhPull[] | undefined): Landed[] {
   const out: Landed[] = [];
   for (const w of workers) {
-    if (w.downedUntil !== undefined || w.kind !== 'agent' || w.meeting || DESK_BY_ID.get(w.deskId)?.station) continue;
+    if (w.downedUntil !== undefined || w.kind !== 'agent' || DESK_BY_ID.get(w.deskId)?.station) continue;
     if (isBusy(w.status) || w.prOpening || w.open) continue;
-    const pr = workerPr(w, pulls, tasks);
+    const pr = workerPr(w, pulls);
     if (w.repos?.length) {
       const landed = landedAcross(w, pr, pulls, pullsOf);
       if (landed) out.push(landed);

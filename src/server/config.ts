@@ -15,6 +15,11 @@ export interface Config {
   homeFloor?: string;
   /** Where the Droid subagents skill goes (the CLI sets ~/.factory/skills; unset in tests so they never touch it). */
   skillsDir?: string;
+  /**
+   * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
+   * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
+   */
+  renders?: boolean;
   /** --projects / DROID_OFFICE_PROJECTS: picks the workspace folder, as ⚙️ Settings in the office does. */
   projects?: string;
   /** Started as `droid-office <dir>`: that checkout is a floor of its own (it's also `dir`). */
@@ -25,8 +30,6 @@ export interface Config {
   agentArgs: string[];
   tls?: { cert: string; key: string };
   trustProxy: boolean;
-  /** This machine's public address (set by deploy/aws.sh): the Services board's owner SSH hint. */
-  publicHost?: string;
   /** The most workers the office runs at once, across every floor; ⚙️ Settings can't go past it. */
   maxWorkers?: number;
   /** Slack / Discord webhook to post to when a worker needs input or finishes ('' turns it off). */
@@ -44,11 +47,12 @@ Usage:
   droid-office [dir] [options]
   droid-office setup [--projects <dir>] [--project <repo>]...
   droid-office prune [dir] [--dry-run] [--force]
+  droid-office browser <install|status|path|apparmor-profile>
 
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
 office uses it where it is (it never clones or copies a repository). Workers,
-terminals, boards and the task queue on a floor all belong to that checkout.
+terminals and boards on a floor all belong to that checkout.
 
 The first time it starts in a terminal with no floors, it walks you through
 which folder your projects are in and which of them to open first.
@@ -65,6 +69,10 @@ Commands:
   prune                   Remove leftover worker worktrees (.droid-office/worktrees/)
                           and their office/* branches. Anything with uncommitted
                           changes or unpushed commits is kept unless --force is given.
+  browser                 The Chromium the Whiteboard renders cards with. "browser
+                          install" downloads it (about 100 MB, no admin rights) into
+                          one shared folder (env DROID_OFFICE_BROWSERS_PATH moves it;
+                          default <your cache folder>/droid-office/browsers)
 
 Options:
       --home <dir>        Where the office keeps its data when no [dir] is given
@@ -305,7 +313,6 @@ export function loadConfig(argv: string[]): Config {
     agentArgs,
     tls,
     trustProxy,
-    publicHost: process.env.DROID_OFFICE_PUBLIC_HOST || undefined,
     maxWorkers: workerLimit,
     webhook,
     city: city.trim() || undefined,

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { SUBAGENT_DEFAULTS, SUBAGENT_MAX_PER_LEAD, isAgentEffort, type AgentChoice, type SubagentSettings, type SubagentsState } from '../shared/protocol.js';
+import { SUBAGENT_DEFAULTS, SUBAGENT_MAX_PER_LEAD, SUBAGENT_MODEL_NOTE_MAX, SUBAGENT_MODELS_MAX, isAgentEffort, type AgentChoice, type SubagentModel, type SubagentSettings, type SubagentsState } from '../shared/protocol.js';
+import { isValidDroidModel } from './agents.js';
+import { oneLine } from './droid-models.js';
 import { agentChoiceProblem } from './prompts.js';
 
 /** Where Droid looks for the user's own skills, on every project. */
@@ -53,6 +55,7 @@ It covers every command and flag, and how to brief, wait for, read, answer and d
 - Give the brief on stdin in a quoted heredoc (\`<<'EOF'\`), never inline in the command.
 - Unless \`office-workers whoami\` says otherwise, every subagent gets its own git worktree, cut from the latest on the forge. Pass \`--no-worktree\` only for read-only work, or when it must see your uncommitted changes.
 - Split the work so no two subagents edit the same files, and don't hire more subagents than the work needs.
+- Pick each subagent's model from \`office-workers models\` with \`--model\`: the cheapest one that can do its piece well for simple work, a strong one for hard work. Follow the owner's notes on a model, and weigh its credit multiplier.
 - After hiring, run \`office-workers wait\` until each one has reported, and answer questions with \`office-workers send\`. Look at their changes before you count the work as done.
 - Cleanup is never automatic. When the work is done, tell the user what each subagent did and ask before you \`office-workers dismiss\` anyone.
 `;
@@ -70,7 +73,34 @@ export function cleanSettings(raw: unknown, base: SubagentSettings = SUBAGENT_DE
     const choice: AgentChoice = { ...(typeof a.model === 'string' && a.model ? { model: a.model } : {}), ...(isAgentEffort(a.effort) ? { effort: a.effort } : {}) };
     agent = choice.model || choice.effort ? choice : undefined;
   }
-  return { on: bool('on'), deskWorkers: bool('deskWorkers'), skill: bool('skill'), worktree: bool('worktree'), wakeLead: bool('wakeLead'), maxPerLead: max, ...(agent ? { agent } : {}) };
+  let models = base.models;
+  if (r.models === null) models = undefined;
+  else if (Array.isArray(r.models)) models = cleanModels(r.models);
+  return {
+    on: bool('on'),
+    deskWorkers: bool('deskWorkers'),
+    skill: bool('skill'),
+    worktree: bool('worktree'),
+    wakeLead: bool('wakeLead'),
+    maxPerLead: max,
+    ...(agent ? { agent } : {}),
+    ...(models?.length ? { models: models.map((m) => ({ ...m })) } : {}),
+  };
+}
+
+/** The models leads may pick, made safe: well-shaped ids once each, notes on one short line. */
+function cleanModels(list: unknown[]): SubagentModel[] {
+  const out: SubagentModel[] = [];
+  const seen = new Set<string>();
+  for (const entry of list) {
+    const e = (typeof entry === 'string' ? { id: entry } : entry) as Record<string, unknown> | null;
+    if (!e || typeof e !== 'object' || !isValidDroidModel(e.id) || seen.has(e.id)) continue;
+    seen.add(e.id);
+    const note = oneLine(e.note, SUBAGENT_MODEL_NOTE_MAX);
+    out.push({ id: e.id, ...(note ? { note } : {}) });
+    if (out.length >= SUBAGENT_MODELS_MAX) break;
+  }
+  return out;
 }
 
 /**
@@ -94,17 +124,24 @@ export class Subagents {
 
   get settings(): SubagentSettings {
     const { by: _by, at: _at, ...settings } = this.saved;
-    return { ...settings, ...(settings.agent ? { agent: { ...settings.agent } } : {}) };
+    return { ...settings, ...(settings.agent ? { agent: { ...settings.agent } } : {}), ...(settings.models ? { models: settings.models.map((m) => ({ ...m })) } : {}) };
   }
 
   state(): SubagentsState {
     return { ...this.settings, ...(this.saved.by ? { by: this.saved.by, at: this.saved.at } : {}), ...(this.skill.path ? { skillPath: this.skill.path } : {}), ...(this.skill.error ? { skillError: this.skill.error } : {}) };
   }
 
-  /** Saves new settings (all of them: no `agent` is the office's default worker); returns why it can't, if it can't. */
+  /**
+   * Saves new settings (all of them: no `agent` is the office's default worker, no `models` is any
+   * model); returns why it can't, if it can't.
+   */
   set(raw: unknown, by: string): string | undefined {
-    const { agent: _agent, ...rest } = this.settings;
-    const next = cleanSettings(raw, rest);
+    const { agent: _agent, models, ...rest } = this.settings;
+    const sent = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).models : undefined;
+    // A models value that is neither a list nor null is malformed: it keeps the saved list, so it
+    // can never widen what leads may pick.
+    const malformed = sent !== undefined && sent !== null && !Array.isArray(sent);
+    const next = cleanSettings(raw, malformed ? { ...rest, ...(models ? { models } : {}) } : rest);
     if (next.agent) {
       const why = agentChoiceProblem(next.agent);
       if (why) return why;

@@ -1,76 +1,52 @@
 import * as THREE from 'three';
-import { ELEVATOR, ELEVATOR_FRONT } from '../../shared/layout';
-import { nearestWalkable, route, type Pt } from '../../shared/nav';
-import type { MedicPose } from './character';
+import { WALL_HEIGHT } from '../../shared/layout';
 
 /**
- * Workers shot with the .44 Magnum. The server owns their revival deadlines; this class renders
- * the shared downed state and the medic pickup after dismissal.
- *
- * One shot, one scene: the worker tumbles out of its chair onto the floor with a thud, and a blood
- * pool spreads under it while its session keeps running (see shoot). Pressing E nearby
- * stands it back up in its seat with its session untouched, or expiry calls in two
- * paramedics with a stretcher (see confirm): they walk in from the elevator, lower and open the scoop
- * stretcher, support and settle the body, close the bed and lift together, then carry it back to the elevator and fade, and the laptop shuts and
- * shrinks as on a send-home. Every client on the floor sees the same lifecycle.
- *
- * No DOM or WebGL at import time, so tests can load this in Node.
+ * The server owns revival deadlines. This scene renders the fall and downed state, then a
+ * white-gold beam lifts a dismissed worker straight through the ceiling. The laptop shuts and
+ * shrinks as on a send-home. No DOM or WebGL at import time, so tests can load this in Node.
  */
 
 /** Seconds tumbling out of the chair onto the floor. */
 export const FALL_TIME = 0.75;
 /** Seconds for the blood pool to spread to full size under the body. */
 export const BLEED_TIME = 6;
+/** Seconds for the spell circle to open to full size: a spell takes hold at once, blood takes its time. */
+export const SPELL_TIME = 1.2;
 /** How wide the blood pool gets, in meters. */
 export const POOL_R = 0.9;
-/** Seconds lowering, stabilizing, loading and lifting together. */
-export const LOAD_TIME = 4.8;
-/** How fast the medics walk the stretcher in and out, in m/s. */
-export const MEDIC_PACE = 1.6;
-/** Seconds fading away at the elevator with the body. */
+/** Seconds for the heavenly beam to appear before the body rises. */
+export const BEAM_TIME = 0.8;
+/** Seconds floating straight up through the ceiling. */
+export const ASCEND_TIME = 3.6;
+/** Seconds fading the empty beam after the worker has left. */
 export const FADE_TIME = 0.7;
-/** Seconds for the team to appear at full size at the elevator. */
-const TEAM_IN = 0.65;
+/** Rise far enough that the entire body clears the ceiling, including on the loft. */
+export const ASCEND_HEIGHT = WALL_HEIGHT + 2;
 /** Seconds for a shut laptop to shrink away. */
 const LAPTOP_GONE = 0.3;
 /** A worker's feet are this far above its origin. */
 const FEET = 0.07;
-/** How high the stretcher's bed is. */
-const BED_Y = 0.72;
-const LOW_BED = 0.16;
-const HANDLE_Z = 1.04;
-const MEDIC_Z = 1.3;
-const LOWER_END = 0.85;
-const SUPPORT_END = 1.8;
-const SETTLE_END = 2.9;
-const LIFT_END = 4.3;
 /** How far out of its seat the shot worker lands. */
 const TUMBLE = 0.65;
 
-/** Where the medics come from: out of the elevator, on every floor. */
-const MEDIC_FROM: Pt = [ELEVATOR.x, ELEVATOR_FRONT + 0.5];
+export type CasualtyPhase = 'fall' | 'bled' | 'beam' | 'ascend' | 'fade';
 
-/** Falling, bled out waiting for revival, medics on the way, loading, carrying out, gone. */
-export type CasualtyPhase = 'fall' | 'bled' | 'fetch' | 'load' | 'carry' | 'fade';
+/**
+ * How a downed worker looks: shot with the Magnum (a blood pool, face slack) or hit by the wand
+ * (asleep on a glowing spell circle with stars circling over it). The lifecycle is the same.
+ */
+export type CasualtyLook = 'blood' | 'spell';
 
 /** What a casualty needs of a worker's model (see world/character.ts Worker). */
 export interface CasualtyModel {
   readonly root: THREE.Group;
   update(dt: number, t: number): void;
-  /** Light out, face slack, bubble gone. */
-  die(): void;
+  /** Light out, face slack (or eyes shut, `asleep`), bubble gone. */
+  die(asleep?: boolean): void;
   /** Back on its feet: light and bubble as its status says. */
   revive(): void;
   dispose(): void;
-}
-
-/** What a casualty needs of a medic (see world/character.ts Person). */
-export interface Medic {
-  readonly root: THREE.Group;
-  update(dt: number, t: number, moving: boolean, airborne: boolean): void;
-  dispose(): void;
-  /** Optional articulated contact pose, applied after ordinary character animation. */
-  medicPose?(pose: MedicPose | null): void;
 }
 
 /** What a casualty needs of a laptop (see world/laptop.ts Laptop). */
@@ -82,11 +58,8 @@ export interface CasualtyLaptop {
 }
 
 export interface CasualtyHooks {
-  /** A paramedic in whites, by name. */
-  spawnMedic(name: string): Medic;
-  /** The thud as the body lands, and the siren sting as the medics come in. */
-  onLand(at: THREE.Vector3): void;
-  onSiren(at: THREE.Vector3): void;
+  /** The thud as the body lands, or it dozes off for a spell. */
+  onLand(at: THREE.Vector3, look: CasualtyLook): void;
 }
 
 let poolGeo: THREE.CircleGeometry | null = null;
@@ -116,66 +89,90 @@ function bloodPool(): THREE.Group {
   return pool;
 }
 
-/** A split scoop bed with padded head support and handles the medics can actually hold. */
-function stretcher(): { root: THREE.Group; halves: THREE.Group[]; geometries: THREE.BufferGeometry[] } {
-  const root = new THREE.Group();
-  root.name = 'medic-stretcher';
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const pole = new THREE.CylinderGeometry(0.025, 0.025, 2.18, 8).rotateX(Math.PI / 2);
-  const steel = new THREE.MeshToonMaterial({ color: '#ced9df' });
-  const canvas = new THREE.MeshToonMaterial({ color: '#ed833b' });
-  const cushion = new THREE.MeshToonMaterial({ color: '#163b50' });
-  const halves = [-1, 1].map((side) => {
-    const half = new THREE.Group();
-    half.name = side < 0 ? 'stretcher-left' : 'stretcher-right';
-    const rail = new THREE.Mesh(pole, steel);
-    rail.position.x = side * 0.35;
-    half.add(rail);
-    const bed = new THREE.Mesh(box, canvas);
-    bed.scale.set(0.34, 0.055, 1.65);
-    bed.position.x = side * 0.17;
-    bed.castShadow = bed.receiveShadow = true;
-    half.add(bed);
-    const pad = new THREE.Mesh(box, cushion);
-    pad.scale.set(0.32, 0.07, 0.3);
-    pad.position.set(side * 0.17, 0.055, -0.38);
-    pad.receiveShadow = true;
-    half.add(pad);
-    root.add(half);
-    return half;
-  });
-  root.position.y = BED_Y;
-  return { root, halves, geometries: [box, pole] };
+let spellGeo: { disc: THREE.CircleGeometry; rim: THREE.RingGeometry; inner: THREE.RingGeometry; rune: THREE.CircleGeometry; star: THREE.OctahedronGeometry } | null = null;
+let spellMat: { disc: THREE.MeshBasicMaterial; rim: THREE.MeshBasicMaterial; inner: THREE.MeshBasicMaterial; rune: THREE.MeshBasicMaterial; star: THREE.MeshBasicMaterial } | null = null;
+/** How many stars circle over a sleeping worker, and how high (in units of the circle's radius). */
+const SPELL_STARS = 4;
+const STAR_Y = 0.55;
+
+/**
+ * The spell circle, the droid wand's colors: a dim orange glow on the floor in a bright orange
+ * rim, a white hairline ring with eight orange marks round it, and white sparks circling over the
+ * sleeper. It turns slowly while the spell holds (see step).
+ */
+function spellCircle(): THREE.Group {
+  spellGeo ??= {
+    disc: new THREE.CircleGeometry(1, 40),
+    rim: new THREE.RingGeometry(0.88, 1, 48),
+    inner: new THREE.RingGeometry(0.56, 0.61, 40),
+    rune: new THREE.CircleGeometry(0.07, 4),
+    star: new THREE.OctahedronGeometry(0.07, 0),
+  };
+  const glow = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+  spellMat ??= { disc: glow('#ee6018', 0.22), rim: glow('#ff8a4a', 0.9), inner: glow('#eeeeee', 0.7), rune: glow('#ee6018', 0.95), star: glow('#fff4ea', 1) };
+  const g = spellGeo;
+  const m = spellMat;
+  const circle = new THREE.Group();
+  circle.name = 'spell-circle';
+  const flat = (geo: THREE.BufferGeometry, mat: THREE.Material, y: number) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = y;
+    circle.add(mesh);
+    return mesh;
+  };
+  flat(g.disc, m.disc, 0);
+  flat(g.rim, m.rim, 0.001);
+  flat(g.inner, m.inner, 0.001);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    flat(g.rune, m.rune, 0.002).position.set(Math.cos(a) * 0.74, 0.002, Math.sin(a) * 0.74);
+  }
+  for (let i = 0; i < SPELL_STARS; i++) {
+    const star = new THREE.Mesh(g.star, m.star);
+    star.name = 'spell-star';
+    const a = (i / SPELL_STARS) * Math.PI * 2;
+    star.position.set(Math.cos(a) * 0.4, STAR_Y, Math.sin(a) * 0.4);
+    star.userData.phase = a;
+    circle.add(star);
+  }
+  circle.scale.setScalar(0.05);
+  return circle;
 }
 
-interface Team {
-  group: THREE.Group;
-  medics: Medic[];
-  bed: ReturnType<typeof stretcher>;
-  /** Only private material copies fade; character and worker materials may be shared elsewhere. */
-  materials: Map<THREE.Material, THREE.Material>;
-  way: Pt[];
-  next: number;
-  heading: number;
-  pickupHeading: number;
-  speed: number;
-  moving: boolean;
-  stride: number;
-  left: THREE.Vector3;
-  right: THREE.Vector3;
-  pose: { left: THREE.Vector3; right: THREE.Vector3; crouch: number; stride: number };
-  pickupAt: THREE.Vector3;
-  withdrawal: THREE.Vector3;
-  bodyFrom: THREE.Vector3;
-  bodyRotation: THREE.Quaternion;
-  bodyTo: THREE.Vector3;
-  bodyTargetRotation: THREE.Quaternion;
-  scratch: THREE.Vector3;
-  inverse: THREE.Quaternion;
+/** A soft white-gold column and a pool of light, with private resources for each ascent. */
+function heavenlyBeam(height: number) {
+  const root = new THREE.Group();
+  root.name = 'heavenly-beam';
+  const materials: THREE.MeshBasicMaterial[] = [];
+  const geometries: THREE.BufferGeometry[] = [];
+  const add = (geometry: THREE.BufferGeometry, color: string, opacity: number, name: string) => {
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+    material.userData.opacity = opacity;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = name;
+    root.add(mesh);
+    materials.push(material);
+    geometries.push(geometry);
+    return mesh;
+  };
+  add(new THREE.CylinderGeometry(0.65, 1.35, height, 40, 1, true), '#ffe6ad', 0.14, 'beam-column').position.y = height / 2;
+  add(new THREE.CylinderGeometry(0.28, 0.95, height, 32, 1, true), '#fff9e8', 0.18, 'beam-core').position.y = height / 2;
+  const pool = add(new THREE.CircleGeometry(1.35, 40), '#fff2cc', 0.22, 'beam-pool');
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.y = 0.005;
+  const rim = add(new THREE.RingGeometry(1.28, 1.35, 40), '#ffe6ad', 0.5, 'beam-rim');
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.006;
+  const light = new THREE.PointLight('#fff2cc', 0, 4, 2);
+  light.position.y = 1.2;
+  root.add(light);
+  return { root, materials, geometries, light };
 }
 
 interface Casualty {
   model: CasualtyModel;
+  look: CasualtyLook;
   /** The seat anchor it fell out of (and goes back to on Revive). */
   seat: THREE.Object3D;
   scale: number;
@@ -198,12 +195,13 @@ interface Casualty {
   laptop: CasualtyLaptop | null;
   /** 0 → 1 as the shut laptop shrinks away. */
   lgone: number;
-  team: Team | null;
+  beam: ReturnType<typeof heavenlyBeam> | null;
+  /** The fallen pose, eased face-up as the beam appears. */
+  rotation: THREE.Quaternion;
   /** Confirmed: the model and laptop are this class's to dispose. Before that they're the office's. */
   owned: boolean;
 }
 
-const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const easeOut = (p: number) => 1 - (1 - p) * (1 - p);
 const smooth = (p: number) => {
   const u = THREE.MathUtils.clamp(p, 0, 1);
@@ -220,6 +218,11 @@ export class Casualties {
     private ground: (x: number, z: number, y: number) => number,
     private hooks: CasualtyHooks,
   ) {}
+
+  /** A fall, a body on the floor, a body ascending. The picture is still playing it out. */
+  get active(): boolean {
+    return this.all.size > 0;
+  }
 
   /** Whether `id` is down on the floor and can still be revived. */
   dying(id: string): boolean {
@@ -247,14 +250,20 @@ export class Casualties {
     return this.all.get(id)?.phase ?? null;
   }
 
+  /** How `id` went down, if it has a scene running. */
+  lookOf(id: string): CasualtyLook | null {
+    return this.all.get(id)?.look ?? null;
+  }
+
   /**
    * Shoots the worker: it tumbles out of `seat` onto the floor, landing with a thud, and bleeds
-   * out under a spreading pool. False when it already has a scene running.
+   * out under a spreading pool. A `spell` puts it to sleep there instead, on a spreading spell
+   * circle. False when it already has a scene running.
    */
-  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D): boolean {
+  shoot(id: string, model: CasualtyModel, seat: THREE.Object3D, look: CasualtyLook = 'blood'): boolean {
     if (this.all.has(id)) return false;
     // Off the desk first if it was up there dancing: it falls out of its seat.
-    model.die();
+    model.die(look === 'spell');
     const from = model.root.getWorldPosition(new THREE.Vector3());
     const quat = model.root.getWorldQuaternion(new THREE.Quaternion());
     const yaw = new THREE.Euler().setFromQuaternion(quat, 'YXZ').y;
@@ -267,8 +276,13 @@ export class Casualties {
     // Sideways out of the chair, into the open: forward would put it under the desk.
     const side = Math.random() < 0.5 ? -1 : 1;
     const floor = new THREE.Vector3(from.x + Math.cos(yaw) * side * TUMBLE, 0, from.z - Math.sin(yaw) * side * TUMBLE);
-    floor.y = this.ground(floor.x, floor.z, from.y) - FEET;
-    const pool = bloodPool();
+    // No collider under the landing spot (or none it can stand on from this height) reads as
+    // -Infinity, which would drop the body through the floor: fall back to the seat's own ground.
+    let top = this.ground(floor.x, floor.z, from.y);
+    if (!Number.isFinite(top)) top = this.ground(from.x, from.z, from.y);
+    if (!Number.isFinite(top)) top = from.y + FEET;
+    floor.y = top - FEET;
+    const pool = look === 'spell' ? spellCircle() : bloodPool();
     // On top of whatever is underfoot, not at the body's origin (feet are FEET above it, and the
     // rugs under the desks stand 0.021 proud of the floorboards).
     pool.position.set(floor.x, floor.y + FEET + 0.03, floor.z);
@@ -276,6 +290,7 @@ export class Casualties {
     this.parent.add(pool);
     this.all.set(id, {
       model,
+      look,
       seat,
       scale: local,
       phase: 'fall',
@@ -290,7 +305,8 @@ export class Casualties {
       pool,
       laptop: null,
       lgone: 0,
-      team: null,
+      beam: null,
+      rotation: new THREE.Quaternion(),
       owned: false,
     });
     return true;
@@ -309,73 +325,22 @@ export class Casualties {
     return true;
   }
 
-  /**
-   * Confirms the kill: two paramedics walk in from the elevator with a stretcher, load the body
-   * with a supported scoop pickup, carry it back to the elevator and fade. The laptop
-   * shuts and shrinks as on a send-home. False when there's no body to collect.
-   */
+  /** Confirms dismissal: a heavenly beam appears, then the body floats straight through the ceiling. */
   confirm(id: string, laptop: CasualtyLaptop): boolean {
     const c = this.all.get(id);
     if (!c || (c.phase !== 'fall' && c.phase !== 'bled')) return false;
     if (c.phase === 'fall') this.land(c);
     c.owned = true;
     c.laptop = laptop;
-    c.phase = 'fetch';
+    c.phase = 'beam';
     c.t = 0;
-    const group = new THREE.Group();
-    group.name = 'medic-team';
-    const medics = [this.hooks.spawnMedic('🚑 Medic'), this.hooks.spawnMedic('🚑 Medic')];
-    const bed = stretcher();
-    const left = new THREE.Vector3(-0.35, BED_Y, 0.26);
-    const right = new THREE.Vector3(0.35, BED_Y, 0.26);
-    const pose = { left, right, crouch: 0, stride: 0 };
-    medics.forEach((medic, i) => {
-      medic.root.position.set(0, 0, i ? -MEDIC_Z : MEDIC_Z);
-      medic.root.rotation.y = i ? 0 : Math.PI;
-      medic.medicPose?.(pose);
-      group.add(medic.root);
-    });
-    group.add(bed.root);
-    this.parent.add(group);
-    // The worker origin is at its feet. Approach the torso center, not the chair-side origin.
-    const torso = c.model.root.localToWorld(new THREE.Vector3(0, 0.55, 0));
-    const body: Pt = [torso.x, torso.z];
-    const way = route(MEDIC_FROM, nearestWalkable(body));
-    way.push(body);
-    group.position.set(way[0][0], this.ground(way[0][0], way[0][1], c.floor.y) - FEET, way[0][1]);
-    const heading = way.length > 1 ? Math.atan2(way[1][0] - way[0][0], way[1][1] - way[0][1]) : c.yaw;
-    group.rotation.y = heading;
-    const team: Team = {
-      group,
-      medics,
-      bed,
-      materials: new Map(),
-      way,
-      next: 1,
-      heading,
-      pickupHeading: Math.atan2(c.floor.x - torso.x, c.floor.z - torso.z),
-      speed: 0,
-      moving: false,
-      stride: 0,
-      left,
-      right,
-      pose,
-      pickupAt: new THREE.Vector3(),
-      withdrawal: new THREE.Vector3(c.floor.x - c.from.x, 0, c.floor.z - c.from.z).normalize().multiplyScalar(0.55),
-      bodyFrom: new THREE.Vector3(),
-      bodyRotation: new THREE.Quaternion(),
-      bodyTo: new THREE.Vector3(),
-      bodyTargetRotation: new THREE.Quaternion(),
-      scratch: new THREE.Vector3(),
-      inverse: new THREE.Quaternion(),
-    };
-    c.team = team;
-    this.copyMaterials(team, group);
-    this.opacity(team, 0);
+    c.rotation.copy(c.model.root.quaternion);
+    c.beam = heavenlyBeam(ASCEND_HEIGHT);
+    c.beam.root.position.set(c.floor.x, c.floor.y + FEET + 0.025, c.floor.z);
+    this.parent.add(c.beam.root);
     c.model.root.traverse((object) => {
       if ((object as THREE.Sprite).isSprite) object.visible = false;
     });
-    this.hooks.onSiren(group.position);
     return true;
   }
 
@@ -385,28 +350,20 @@ export class Casualties {
       if (c.owned) {
         this.dropModel(c);
       } else this.reseat(c);
-      this.dropTeam(c);
+      this.dropBeam(c);
       this.dropPool(c);
       this.dropLaptop(c);
     }
     this.all.clear();
   }
 
-  /** Where the medic teams are, for the doors to open. */
-  positions(): THREE.Vector3[] {
-    const out: THREE.Vector3[] = [];
-    for (const c of this.all.values()) if (c.team) out.push(c.team.group.position);
-    return out;
-  }
-
   update(dt: number, t: number) {
     for (const [id, c] of this.all) {
       this.step(c, dt);
       c.model.update(dt, t);
-      if (c.team) this.poseTeam(c, dt, t);
       if (c.laptop && !this.closeLaptop(c, dt)) c.laptop = null;
       if (c.phase === 'fade' && c.t >= FADE_TIME) {
-        this.dropTeam(c);
+        this.dropBeam(c);
         this.dropPool(c);
         this.dropLaptop(c);
         this.dropModel(c);
@@ -428,73 +385,33 @@ export class Casualties {
         return;
       }
       case 'bled':
-        c.bleed = Math.min(1, c.bleed + dt / BLEED_TIME);
+        c.bleed = Math.min(1, c.bleed + dt / (c.look === 'spell' ? SPELL_TIME : BLEED_TIME));
         c.pool.scale.setScalar(Math.max(0.05, POOL_R * easeOut(c.bleed)));
+        if (c.look === 'spell') this.twinkle(c, dt);
         return;
-      case 'fetch': {
-        const team = c.team!;
-        this.opacity(team, smooth(c.t / TEAM_IN));
-        if (this.walk(team, dt, team.pickupHeading)) {
-          c.phase = 'load';
+      case 'beam': {
+        const p = smooth(c.t / BEAM_TIME);
+        this.beamOpacity(c, p);
+        root.quaternion.slerpQuaternions(c.rotation, SUPINE, p);
+        if (c.t >= BEAM_TIME) {
+          c.phase = 'ascend';
           c.t = 0;
-          team.pickupAt.copy(team.group.position);
-          team.bodyFrom.copy(root.position);
-          team.bodyRotation.copy(root.quaternion);
-          team.bodyTargetRotation.copy(team.group.quaternion).multiply(SUPINE);
-          team.scratch.set(0, LOW_BED + 0.31 * root.scale.x, 0.58 * root.scale.x);
-          team.group.localToWorld(team.scratch);
-          team.bodyTo.copy(team.scratch);
-          team.moving = false;
         }
         return;
       }
-      case 'load': {
-        const team = c.team!;
-        const lower = smooth(c.t / LOWER_END);
-        const settle = smooth((c.t - LOWER_END) / (SETTLE_END - LOWER_END));
-        const lift = smooth((c.t - SETTLE_END) / (LIFT_END - SETTLE_END));
-        // Split the scoop around the body while lowering. Support it before closing the bed.
-        const open = lower * (1 - smooth((c.t - SUPPORT_END) / (SETTLE_END - SUPPORT_END)));
-        team.bed.halves[0].position.x = -open * 0.2;
-        team.bed.halves[1].position.x = open * 0.2;
-        team.bed.root.position.y = THREE.MathUtils.lerp(BED_Y, LOW_BED, lower) + (BED_Y - LOW_BED) * lift;
-        if (root.parent !== team.group) {
-          root.position.lerpVectors(team.bodyFrom, team.bodyTo, settle);
-          root.position.y += (BED_Y - LOW_BED) * lift;
-          root.quaternion.slerpQuaternions(team.bodyRotation, team.bodyTargetRotation, settle);
-          if (settle >= 1) {
-            // Keep the body fixed to its support during the shared rise and withdrawal.
-            team.group.attach(root);
-            this.copyMaterials(team, root);
-          }
-        }
-        if (root.parent === team.group) root.position.y = team.bed.root.position.y + 0.31 * root.scale.x;
-        const withdraw = smooth((c.t - LIFT_END) / (LOAD_TIME - LIFT_END));
-        const x = team.pickupAt.x + team.withdrawal.x * withdraw;
-        const z = team.pickupAt.z + team.withdrawal.z * withdraw;
-        const move = Math.hypot(x - team.group.position.x, z - team.group.position.z);
-        team.group.position.x = x;
-        team.group.position.z = z;
-        team.moving = move > 1e-5;
-        team.stride += move * 7;
-        c.pool.scale.setScalar(Math.max(0.001, Math.max(0.05, POOL_R * easeOut(c.bleed)) * (1 - settle)));
-        if (c.t < LOAD_TIME) return;
-        const here: Pt = [team.group.position.x, team.group.position.z];
-        team.way = [here, ...route(nearestWalkable(here), MEDIC_FROM)];
-        team.next = 1;
-        team.speed = 0;
-        c.phase = 'carry';
-        c.t = 0;
-        return;
-      }
-      case 'carry':
-        if (this.walk(c.team!, dt)) {
+      case 'ascend': {
+        const p = THREE.MathUtils.clamp(c.t / ASCEND_TIME, 0, 1);
+        // Ease into the rise without moving sideways or shrinking the worker.
+        root.position.y = c.floor.y + ASCEND_HEIGHT * p * p;
+        c.pool.scale.setScalar(Math.max(0.001, Math.max(0.05, POOL_R * easeOut(c.bleed)) * (1 - smooth(p / 0.3))));
+        if (p >= 1) {
           c.phase = 'fade';
           c.t = 0;
         }
         return;
+      }
       case 'fade':
-        this.opacity(c.team!, 1 - smooth(c.t / FADE_TIME));
+        this.beamOpacity(c, 1 - smooth(c.t / FADE_TIME));
         return;
     }
   }
@@ -505,113 +422,24 @@ export class Casualties {
     c.model.root.rotation.set(c.tip, c.yaw + c.lean + c.side * 0.9, c.lean * 0.6 + c.side * 0.35);
     c.phase = 'bled';
     c.t = 0;
-    this.hooks.onLand(c.floor);
+    this.hooks.onLand(c.floor, c.look);
   }
 
-  /** Slows for corners and arrival, turns before stepping, and accelerates without a lurch. */
-  private walk(team: Team, dt: number, arrivalHeading?: number): boolean {
-    const pos = team.group.position;
-    while (team.next < team.way.length && Math.hypot(team.way[team.next][0] - pos.x, team.way[team.next][1] - pos.z) < 0.015) team.next++;
-    if (team.next >= team.way.length) {
-      team.speed = 0;
-      team.moving = false;
-      if (arrivalHeading === undefined) return true;
-      const turn = wrap(arrivalHeading - team.group.rotation.y);
-      team.group.rotation.y += THREE.MathUtils.clamp(turn, -dt * 1.6, dt * 1.6);
-      return Math.abs(turn) < 0.01;
-    }
-    const [x, z] = team.way[team.next];
-    const dx = x - pos.x;
-    const dz = z - pos.z;
-    const distance = Math.hypot(dx, dz);
-    team.heading = Math.atan2(dx, dz);
-    const turn = wrap(team.heading - team.group.rotation.y);
-    team.group.rotation.y += THREE.MathUtils.clamp(turn, -dt * 1.6, dt * 1.6);
-    const target = MEDIC_PACE * Math.max(0, 1 - Math.abs(turn) / 1.2) * Math.min(1, Math.sqrt(distance / 0.7));
-    team.speed += THREE.MathUtils.clamp(target - team.speed, -dt * 3.5, dt * 2.4);
-    const move = Math.min(distance, team.speed * dt);
-    pos.x += (dx / distance) * move;
-    pos.z += (dz / distance) * move;
-    const g = this.ground(pos.x, pos.z, pos.y + FEET) - FEET;
-    pos.y += (g - pos.y) * Math.min(1, dt * 14);
-    team.moving = move > 1e-5;
-    team.stride += move * 7;
-    return false;
-  }
-
-  /** Hands change between handles and support points; the endpoint meshes follow those targets. */
-  private poseTeam(c: Casualty, dt: number, t: number) {
-    const team = c.team!;
-    const loading = c.phase === 'load';
-    const lower = loading ? smooth(c.t / LOWER_END) : 0;
-    const lift = loading ? smooth((c.t - SETTLE_END) / (LIFT_END - SETTLE_END)) : 1;
-    const support = loading ? smooth((c.t - LOWER_END * 0.65) / 0.45) * (1 - smooth((c.t - SUPPORT_END) / (SETTLE_END - SUPPORT_END))) : 0;
-    const crouch = lower * (1 - lift);
-    // The same tiny vertical movement carries stretcher, body and both hands; feet remain on the floor.
-    const bob = team.moving ? Math.sin(team.stride * 2) * 0.012 : 0;
-    if (!loading || c.t > LIFT_END) team.bed.root.position.y = BED_Y + bob;
-    if (c.model.root.parent === team.group) c.model.root.position.y = team.bed.root.position.y + 0.31 * c.model.root.scale.x;
-    team.group.updateWorldMatrix(true, false);
-    c.model.root.updateWorldMatrix(true, false);
-    for (let i = 0; i < team.medics.length; i++) {
-      const medic = team.medics[i];
-      const end = i ? -1 : 1;
-      medic.root.position.z = end * (MEDIC_Z - support * 0.27);
-      medic.root.updateWorldMatrix(true, false);
-      medic.update(dt, t, team.moving, false);
-      team.inverse.copy(medic.root.quaternion).invert();
-      for (let hand = 0; hand < 2; hand++) {
-        const side = hand ? 1 : -1;
-        const target = hand ? team.right : team.left;
-        // Handles are expressed in the team frame, support points in the worker's own frame.
-        target.set(side * (0.35 + Math.abs(team.bed.halves[0].position.x)), team.bed.root.position.y, end * HANDLE_Z);
-        if (support) {
-          team.scratch.set(0, i ? 1.02 : 0.12, 0);
-          c.model.root.localToWorld(team.scratch);
-          team.scratch.y = Math.max(team.scratch.y - 0.13, c.floor.y + FEET + 0.09);
-          team.group.worldToLocal(team.scratch);
-          team.scratch.x += side * 0.23;
-          target.lerp(team.scratch, support);
-        }
-        target.sub(medic.root.position).applyQuaternion(team.inverse);
-      }
-      // Facing inward means the front medic walks backwards, maintaining sight of the patient.
-      if (!i) {
-        team.scratch.copy(team.left);
-        team.left.copy(team.right);
-        team.right.copy(team.scratch);
-      }
-      team.pose.crouch = crouch;
-      team.pose.stride = team.moving ? team.stride : 0;
-      medic.medicPose?.(team.pose);
+  /** The spell circle turning slowly, its stars bobbing as they circle. */
+  private twinkle(c: Casualty, dt: number) {
+    c.pool.rotation.y += dt * 0.7;
+    for (const star of c.pool.children) {
+      if (star.name !== 'spell-star') continue;
+      const phase = star.userData.phase as number;
+      star.position.y = STAR_Y + Math.sin(c.t * 2.4 + phase) * 0.06;
+      star.rotation.y += dt * 3;
     }
   }
 
-  private copyMaterials(team: Team, root: THREE.Object3D) {
-    root.traverse((object) => {
-      const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const clone = (original: THREE.Material) => {
-        let material = team.materials.get(original);
-        if (!material) {
-          material = original.clone();
-          team.materials.set(original, material);
-        }
-        return material;
-      };
-      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(clone) : clone(mesh.material);
-    });
-  }
-
-  private opacity(team: Team, value: number) {
-    for (const [original, material] of team.materials) {
-      material.opacity = original.opacity * value;
-      const transparent = original.transparent || value < 1;
-      if (material.transparent !== transparent) {
-        material.transparent = transparent;
-        material.needsUpdate = true;
-      }
-    }
+  private beamOpacity(c: Casualty, value: number) {
+    const beam = c.beam!;
+    for (const material of beam.materials) material.opacity = (material.userData.opacity as number) * value;
+    beam.light.intensity = value * 2;
   }
 
   /** Shuts the laptop and shrinks it away; false once it's gone. */
@@ -635,29 +463,14 @@ export class Casualties {
     c.model.revive();
   }
 
-  private dropTeam(c: Casualty) {
-    const team = c.team;
-    if (!team) return;
-    c.team = null;
-    team.group.removeFromParent();
-    // Medic helpers free their own geometry. Keep the worker's geometry out of team cleanup.
-    const geometry = new Set(team.bed.geometries);
-    for (const medic of team.medics) {
-      medic.medicPose?.(null);
-      medic.dispose();
-      medic.root.traverse((object) => {
-        if ((object as THREE.Mesh).isMesh) geometry.add((object as THREE.Mesh).geometry);
-      });
-    }
-    for (const item of geometry) item.dispose();
-    for (const material of team.materials.values()) material.dispose();
-    // Stretcher materials were created for this team, unlike shared character materials.
-    const bedMaterials = new Set<THREE.Material>();
-    team.bed.root.traverse((object) => {
-      const material = (object as THREE.Mesh).material;
-      if (material && !Array.isArray(material)) bedMaterials.add(material);
-    });
-    for (const [original, material] of team.materials) if (bedMaterials.has(material)) original.dispose();
+  private dropBeam(c: Casualty) {
+    const beam = c.beam;
+    if (!beam) return;
+    c.beam = null;
+    beam.root.removeFromParent();
+    for (const geometry of beam.geometries) geometry.dispose();
+    for (const material of beam.materials) material.dispose();
+    beam.light.dispose();
   }
 
   private dropModel(c: Casualty) {

@@ -104,7 +104,7 @@ test('board agents on a GitLab floor are briefed for glab and merge requests', (
   assert.match(pulls, /glab mr diff/);
   assert.doesNotMatch(pulls, /\bgh pr\b/);
   assert.match(stationBrief('issues', 'gitlab'), /GitLab issues with the glab CLI/);
-  assert.match(stationBrief('queue', 'gitlab'), /linked to that GitLab issue/);
+  assert.match(stationBrief('actions', 'gitlab'), /GitLab CI\/CD pipelines with the glab CLI/);
   // GitHub floors are briefed as before.
   assert.match(stationBrief('pulls'), /gh pr diff/);
 });

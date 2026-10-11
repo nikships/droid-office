@@ -8,7 +8,11 @@ import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
 import type { JukeboxState } from './jukebox.js';
+import type { PipelineDetail, PipelinesState } from './pipelines.js';
 import type { PromptId } from './prompts.js';
+import type { WorktreeSetupState } from './worktree-setup.js';
+import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
+import type { PingHow } from './whiteboard-ping.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -49,7 +53,7 @@ export interface PromptsState {
   /** Prompts someone rewrote, by id; the rest are the defaults. */
   custom: Partial<Record<PromptId, { text: string; by: string; at: number }>>;
   /**
-   * What a worker starts on when whoever starts it picks no model (the Queue agent's tasks, say).
+   * What a worker starts on when whoever starts it picks no model (a board agent, say).
    * Unset: Droid's own default model.
    */
   agent?: AgentChoice & { by: string; at: number };
@@ -126,8 +130,6 @@ export interface WorkerInfo {
   task?: WorkerTask;
   /** When its terminal last took input (keystrokes or a prompt). */
   lastInputAt?: number;
-  /** The meeting it was called to, for a worker at the meeting room's table (see Meeting). */
-  meeting?: string;
   /**
    * The worker that hired this one as its subagent with `office-workers hire` (see server/team.ts),
    * while that worker is still on the floor. Subagents report back to it and can't hire their own.
@@ -227,7 +229,7 @@ export interface WorktreeState {
   dirty: number;
   /** Commits on its branch since it was made. */
   ahead: number;
-  /** Commits only its branch has: on no remote, and not in the office's own checkout. */
+  /** Commits only its branch (or its worktree's detached HEAD) has: on no remote, and not in the office's own checkout. */
   unpushed: number;
   /** Set when git couldn't tell, e.g. the branch is gone. */
   error?: string;
@@ -295,165 +297,6 @@ export interface GhPull {
   body: string;
   /** Issues it closes ("closes #12" in its description), as GitHub links them. */
   closes: number[];
-}
-
-export type TaskStatus = 'queued' | 'running' | 'done';
-
-/** A task on the 📋 queue whiteboard: a GitHub issue or free text, seated to a worker by itself. */
-export interface QueueTask {
-  id: string;
-  /** Droid model requested for this task, instead of Droid's own default. */
-  model?: string;
-  /** Reasoning effort requested for this task, when one was chosen. */
-  effort?: AgentEffort;
-  /** The GitHub issue it came from, when it did. */
-  issue?: number;
-  title: string;
-  prompt: string;
-  addedBy: string;
-  addedAt: number;
-  status: TaskStatus;
-  /** The worker seated for it (it may have gone home since). */
-  workerId?: string;
-  workerName?: string;
-  /** The worker's own branch, when it got a worktree. */
-  branch?: string;
-  startedAt?: number;
-  finishedAt?: number;
-  /** How it ended: the worker finished its turn, stopped or fell asleep, was sent home, or never started. */
-  outcome?: 'done' | 'exited' | 'killed' | 'failed';
-  error?: string;
-  /** The pull request that closes the issue, or was opened from the worker's branch. */
-  pr?: { number: number; url: string; state: string; title: string };
-  /** Ids of the pictures pasted into the task (see ClientMsg `images`), kept until it starts. */
-  images?: string[];
-}
-
-export interface QueueState {
-  tasks: QueueTask[];
-  /** How many workers the queue may keep busy at once; 0 pauses it. */
-  maxWorkers: number;
-}
-
-/** How the workers at the meeting table work together (see shared/meetings.ts). */
-export type MeetingPattern = 'debate' | 'lead' | 'mapreduce' | 'redblue' | 'review';
-
-/** A worker's place at a meeting. */
-export interface MeetingSeat {
-  /** Its part in the meeting, e.g. "Skeptic", "Red team" or "Security". */
-  role: string;
-  /** Its chair (see MEETING_SEATS in layout). */
-  deskId: string;
-  workerId?: string;
-  workerName?: string;
-}
-
-/** One worker's part in a round: what it's doing, and the file that says it has done it. */
-export interface MeetingTurn {
-  /** Which of the meeting's seats. */
-  seat: number;
-  /** e.g. "proposing", "critiquing", "writing the decision". */
-  doing: string;
-  /** Relative to the meeting's checkout. */
-  file: string;
-  /** waiting: not handed over yet; sent: handed over, not started on; working: on it; done: its file is written. */
-  state: 'waiting' | 'sent' | 'working' | 'done';
-  sentAt?: number;
-  /** It was reminded once already: it ended its turn without writing the file, or never started. */
-  retried?: boolean;
-}
-
-export type MeetingStatus = 'running' | 'done' | 'stopped';
-
-/**
- * A meeting in the meeting room: 2–5 workers on one question or task, in rounds, following a pattern.
- * It ends when its output file is written, or stops at its round limit and says why.
- */
-export interface Meeting {
-  id: string;
-  pattern: MeetingPattern;
-  title: string;
-  /** The question or task, as whoever called the meeting put it. */
-  prompt: string;
-  /** The file the meeting writes, relative to its checkout, declared up front. */
-  output: string;
-  /** The head of the table first. */
-  seats: MeetingSeat[];
-  /** Map-reduce: what the task runs over, a part per line. */
-  parts?: string[];
-  /** Review panel: the pull request under review. */
-  pr?: number;
-  /** The GitHub issue it's about, when it was called from one. */
-  issue?: number;
-  model?: string;
-  effort?: AgentEffort;
-  /** The round limit. */
-  rounds: number;
-  /** The round it's on (from 1), and the step within it (red / blue take turns inside a round). */
-  round: number;
-  step: number;
-  /** Red / blue: the red team found nothing more in this round, so it's the last. */
-  lastRound?: number;
-  /** The current step's parts. */
-  turns: MeetingTurn[];
-  status: MeetingStatus;
-  /** Why it stopped short. */
-  reason?: string;
-  calledBy: string;
-  startedAt: number;
-  finishedAt?: number;
-  /** The meeting's own git worktree, relative to the project, which everyone at the table shares. */
-  worktree?: { path: string; branch: string; base: string; from?: string };
-  /** Where the round notes go, relative to the checkout. */
-  notes: string;
-  /** The commit on the meeting's branch that holds the output. */
-  commit?: string;
-  /** Review panel: the review the office posted on the pull request, or why it couldn't. */
-  review?: { url?: string; error?: string };
-  /** The start of the output file as it gets written, for the board in the room. */
-  preview?: string;
-  /** Its workers have gone home and its worktree was tidied away. */
-  cleared?: boolean;
-}
-
-/** A meeting that's over, in a line. */
-export interface MeetingRecord {
-  id: string;
-  pattern: MeetingPattern;
-  title: string;
-  status: MeetingStatus;
-  /** The line on the room's door: pattern, rounds, and the output (or why it stopped). */
-  summary: string;
-  calledBy: string;
-  finishedAt: number;
-  branch?: string;
-  output: string;
-}
-
-export interface MeetingState {
-  /** The meeting in the room: the one running, or the last one until the room is cleared or the next is called. */
-  current: Meeting | null;
-  /** Earlier meetings on the floor, newest first. */
-  past: MeetingRecord[];
-}
-
-/** What calling a meeting asks for (see shared/meetings.ts for each pattern's defaults and limits). */
-export interface MeetingRequest {
-  pattern: MeetingPattern;
-  prompt: string;
-  title?: string;
-  /** The output file, relative to the checkout; the pattern's default when missing. */
-  output?: string;
-  /** A role per worker, the head of the table first. */
-  roles: string[];
-  parts?: string[];
-  pr?: number;
-  issue?: number;
-  rounds?: number;
-  model?: string;
-  effort?: AgentEffort;
-  /** Pictures pasted into the dialog, as the ids their upload answered with; every worker at the table is given them. */
-  images?: string[];
 }
 
 /** Where a team webhook posts: Slack and Discord get their own message format, anything else plain JSON. */
@@ -603,8 +446,8 @@ export interface ProjectInfo {
 }
 
 /**
- * One floor of the building: a project in its own checkout, with its own desks, workers, boards
- * and queue. You go between them in the elevator.
+ * One floor of the building: a project in its own checkout, with its own desks, workers and
+ * boards. You go between them in the elevator.
  */
 export interface FloorInfo {
   id: string;
@@ -626,7 +469,7 @@ export interface FloorInfo {
   addedAt: number;
   /**
    * For the elevator panel: what's under way there. `workers` counts the ones hired onto
-   * desks, bean bags and the meeting room's table, not the board agents at their kiosks.
+   * desks and bean bags, not the board agents at their kiosks.
    */
   workers: number;
   busy: number;
@@ -665,45 +508,18 @@ export interface FloorView {
   workers: WorkerInfo[];
   issues: GhState<GhIssue>;
   pulls: GhState<GhPull>;
-  queue: QueueState;
+  /** The repository's GitHub Actions runs, or the GitLab project's pipelines. */
+  pipelines: PipelinesState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
-  services: ServicesState;
   /** What the lounge jukebox is playing. */
   jukebox: JukeboxState;
   /** Who's at the arcade cabinet, what's on its screen, and the building's high scores. */
   cabinet: CabinetView;
-  /** The meeting room: who's meeting about what, and the meetings before. */
-  meeting: MeetingState;
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-}
-
-/** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
-export interface ServiceInfo {
-  port: number;
-  /** The address the office reaches it on, on its own machine. */
-  host: string;
-  pid: number;
-  /** Its command line, shortened, e.g. "vite --port 5173". */
-  command: string;
-  /** The worker whose terminal started it. */
-  workerId: string;
-  /** Its working directory relative to its floor's checkout ('' is the project root). */
-  cwd?: string;
-  /** The <title> of its front page. */
-  title?: string;
-  since: number;
-}
-
-export interface ServicesState {
-  items: ServiceInfo[];
-  /** The office's port on its machine. Service tunnels end there and the office relays them. */
-  port: number;
-  /** user@host the owner tunnels with (offices deployed with deploy/aws.sh), e.g. ubuntu@203.0.113.7 */
-  ssh?: string;
 }
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
@@ -830,6 +646,19 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
+/**
+ * Whether a fresh worker starts from the latest of the default branch (⚙️ Settings), for every floor:
+ * a worktree cut from origin's main whatever the checkout is on, and a worker without one in the
+ * checkout brought to the latest main when nobody else's work is in the way. Subagents start where
+ * their lead says either way. On by default.
+ */
+export interface FreshMainState {
+  on: boolean;
+  /** Who set it, and when. Unset for the default (on). */
+  by?: string;
+  at?: number;
+}
+
 /** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
   /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
@@ -840,6 +669,11 @@ export interface SubagentSettings {
   skill: boolean;
   /** What a subagent runs when its lead doesn't pick. Unset: the office's default worker. */
   agent?: AgentChoice;
+  /**
+   * The models a lead may give a subagent with --model, each with the owner's note on what it's
+   * good for. Unset: any model droid lists. The subagent worker above is always allowed.
+   */
+  models?: SubagentModel[];
   /** Each subagent gets its own git worktree unless its lead asks for none. */
   worktree: boolean;
   /** The most subagents one lead has on the floor at once. */
@@ -848,8 +682,17 @@ export interface SubagentSettings {
   wakeLead: boolean;
 }
 
+/** A model a lead may give its subagents, and what the office's owner says it's for. */
+export interface SubagentModel {
+  id: string;
+  /** Shown to the lead next to the model, so it routes work by it ("cheap, fine for tests"). */
+  note?: string;
+}
+
 export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
+export const SUBAGENT_MODELS_MAX = 100;
+export const SUBAGENT_MODEL_NOTE_MAX = 200;
 
 /** The Subagents settings for every floor, with who set them and where the Droid skill is. */
 export interface SubagentsState extends SubagentSettings {
@@ -859,6 +702,39 @@ export interface SubagentsState extends SubagentSettings {
   skillPath?: string;
   /** Why the skill couldn't be written or taken away. */
   skillError?: string;
+}
+
+/**
+ * The droid-office-whiteboard skill (⚙️ Settings → Droid), which tells Droid workers how to use the
+ * Whiteboard with office-whiteboard: on or off for the whole office, who set it, and where it is.
+ */
+export interface WhiteboardSkillState {
+  on: boolean;
+  by?: string;
+  at?: number;
+  /** The skill's SKILL.md, when it's installed. */
+  skillPath?: string;
+  /** Why the skill couldn't be written or taken away. */
+  skillError?: string;
+}
+
+/** Whether the office can render Whiteboard cards to images, and why not when it can't. */
+export interface WhiteboardRendererStatus {
+  available: boolean;
+  reason?: string;
+  /** The browser is being downloaded (its first use), with how far along it is. */
+  installing?: { percent?: number; message: string };
+}
+
+/** A card's latest render, as the window and the wall know it: the image's revision and time, or its last error. */
+export interface WhiteboardRenderInfo {
+  /** The board revision the latest good image shows, and when it finished (ms); absent before the first one. */
+  rev?: number;
+  at?: number;
+  /** The image matches the card as it is now. */
+  current: boolean;
+  /** The last render failed, keeping the last good image. */
+  error?: string;
 }
 
 /** A line of a worker's terminal that matched a search. */
@@ -880,17 +756,17 @@ export interface SearchResults {
 }
 
 /** Why the gong rang. */
-export type GongWhy = 'hit' | 'merged' | 'queue';
+export type GongWhy = 'hit' | 'merged';
 
 export type ClientMsg =
   | { t: 'profile'; name: string; color: string; look: Look }
   /**
-   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue.
+   * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress).
    * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
   | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[] }
   | { t: 'worker.resume'; workerId: string }
-  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left in the Sessions window. */
+  /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
   /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
   | { t: 'worker.shoot'; workerId: string }
@@ -930,27 +806,23 @@ export type ClientMsg =
   | { t: 'gh.comment'; kind: 'issue' | 'pull'; number: number; body: string }
   /** Hit the office gong (E at the gong); everyone on the floor hears it. */
   | { t: 'gong' }
-  /** Blow the DJ's air horn on the roof; everyone up there hears it. */
-  | { t: 'horn' }
   /** Close an issue, or a pull request without merging it; the answer comes back as gh.closed. */
   | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh or glab account; answered with gh.labeled. */
   | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; add: string[]; remove: string[] }
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; model?: string; effort?: AgentEffort; images?: string[] }
-  | { t: 'queue.remove'; taskId: string }
-  /** Move a queued task up (-1) or down (+1) the queue. */
-  | { t: 'queue.move'; taskId: string; delta: number }
-  /** Put a finished task back on the queue. */
-  | { t: 'queue.retry'; taskId: string }
-  /** Forget the finished tasks. */
-  | { t: 'queue.clear' }
-  | { t: 'queue.limit'; maxWorkers: number }
-  /** Call a meeting: workers sit down round the meeting room's table and work through it in rounds. */
-  | ({ t: 'meeting.start' } & MeetingRequest)
-  /** Stop the meeting that's running; its workers stay at the table. */
-  | { t: 'meeting.stop' }
-  /** Send the last meeting's workers home and clear the table. */
-  | { t: 'meeting.clear' }
+  /** Look at the floor's GitHub Actions runs or GitLab pipelines again now. */
+  | { t: 'pipelines.refresh' }
+  /** A run's jobs (and their steps, on GitHub); answered with `pipelines.detail`. */
+  | { t: 'pipelines.detail'; id: number }
+  /** Run a finished run again: only its failed jobs, or all of it. Answered with `pipelines.done`. */
+  | { t: 'pipelines.rerun'; id: number; failed: boolean }
+  /** Cancel a run that's waiting or running; answered with `pipelines.done`. */
+  | { t: 'pipelines.cancel'; id: number }
+  /**
+   * Start a workflow by hand on `ref` (GitHub's workflow_dispatch, with its `inputs`), or a new GitLab
+   * pipeline (`workflow` "pipeline", the inputs as its variables). Answered with `pipelines.done`.
+   */
+  | { t: 'pipelines.run'; workflow: string; ref: string; inputs?: Record<string, string> }
   /** Set the office's Slack / Discord webhook; '' removes it. */
   | { t: 'notify.webhook'; url: string }
   /** Post a test message through the webhook; the outcome comes back as a toast. */
@@ -1022,6 +894,8 @@ export type ClientMsg =
   | { t: 'floor.remove'; floor: string }
   /** Workers whose pull request merged go home by themselves (true), or wait to be sent home. */
   | { t: 'leaveOnMerge.set'; on: boolean }
+  /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
+  | { t: 'freshMain.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
@@ -1030,6 +904,21 @@ export type ClientMsg =
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker a new one starts on when nobody picks; null goes back to the office's --agent. */
   | { t: 'prompts.agent'; choice: AgentChoice | null }
+  /** How new worktrees on the floor you're on are set up (⚙️ Settings → Workers); answered with `worktreeSetup`. */
+  | { t: 'worktreeSetup.get' }
+  /** The floor's own worktree setup, in place of the repository's or the detected one; null goes back to those. */
+  | { t: 'worktreeSetup.set'; setup: { setup: string; copy: string[] } | null }
+  /**
+   * A batch for a floor's Whiteboard, numbered in this connection's epoch for that floor (from its
+   * `whiteboard` snapshot). Answered with an `ack` or a `rejected` update, after the commit.
+   */
+  | { t: 'whiteboard.apply'; floor: string; envelope: OpEnvelope }
+  /** Send this connection a fresh snapshot of a floor's Whiteboard, with its epoch for that floor. */
+  | { t: 'whiteboard.sync'; floor: string }
+  /** Type the Whiteboard line into a worker's terminal (see shared/whiteboard-ping.ts); answered with `whiteboard.pinged`. */
+  | { t: 'whiteboard.ping'; worker: string }
+  /** Install the droid-office-whiteboard skill (true), or take it away. */
+  | { t: 'whiteboardSkill.set'; on: boolean }
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   | { t: 'ping'; at: number };
@@ -1067,7 +956,9 @@ export type ServerMsg =
       /** Outside the windows: the same on every floor. */
       sky: SkyState;
       leaveOnMerge: LeaveOnMergeState;
+      freshMain: FreshMainState;
       subagents: SubagentsState;
+      whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
@@ -1095,12 +986,10 @@ export type ServerMsg =
   /** Sent to whoever commented: the comment as GitHub saved it, or why it wasn't. */
   | { t: 'gh.commented'; kind: 'issue' | 'pull'; number: number; comment?: GhComment; error?: string }
   /**
-   * The gong rings, for everyone on the floor: someone hit it, pull request `pr` merged (confetti
-   * over the desk it came from), or the last task on the queue just finished (a bigger party).
+   * The gong rings, for everyone on the floor: someone hit it, or pull request `pr` merged (confetti
+   * over the desk it came from).
    */
   | { t: 'gong'; why: GongWhy; by?: string; pr?: number }
-  /** Someone on the roof blew the DJ's air horn (sent to everyone up there, them too). */
-  | { t: 'horn'; by: string }
   /** Sent to whoever asked to close it. */
   | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; error?: string }
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */
@@ -1111,13 +1000,16 @@ export type ServerMsg =
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
   | { t: 'upgrade'; state: UpgradeState }
-  | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
   | { t: 'cabinet'; state: CabinetState }
-  | { t: 'queue'; state: QueueState }
-  | { t: 'meeting'; state: MeetingState }
+  /** The floor's GitHub Actions runs or GitLab pipelines changed: all of them, to everyone on it. */
+  | { t: 'pipelines'; state: PipelinesState }
+  /** To whoever asked: a run's jobs, or why they couldn't be read. */
+  | { t: 'pipelines.detail'; id: number; detail?: PipelineDetail; error?: string }
+  /** To whoever asked to start, re-run or cancel a run: done, or why not. */
+  | { t: 'pipelines.done'; action: 'run' | 'rerun' | 'cancel'; id?: number; error?: string }
   | { t: 'notify'; state: NotifyState }
   /** The office's Jira connection or this floor's epic changed. */
   | { t: 'jira'; state: JiraFloorState }
@@ -1131,8 +1023,38 @@ export type ServerMsg =
   | { t: 'machine'; state: MachineState }
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
+  | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
+  | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
+  /**
+   * A floor's Whiteboard (see shared/whiteboard.ts and server/whiteboard.ts). A `snapshot` comes after
+   * `welcome` and `floor.enter` and for `whiteboard.sync`; a `patch` goes to everyone on the floor for
+   * every committed batch; `ack` and `rejected` go to the connection that sent the batch. `origin` on
+   * a patch names the batch it came from, so its sender can drop it from what it still has pending.
+   * `caps` are card capabilities (the whole map on a snapshot, new cards' on a patch) for the card URLs
+   * `/whiteboard/c/<cap>/<path>`. `renderer` comes with a snapshot.
+   */
+  | {
+      t: 'whiteboard';
+      floor: string;
+      update: WhiteboardUpdate;
+      origin?: { epoch: string; seq: number };
+      caps?: Record<string, string>;
+      renderer?: WhiteboardRendererStatus;
+    }
+  /**
+   * To everyone on the floor: a card has a new latest image (or a failed render), so the window, the
+   * grid and the wall fetch `/api/whiteboard/render` again. A snapshot is followed by one of these per
+   * card that has a render.
+   */
+  | { t: 'whiteboard.rendered'; floor: string; card: string; info: WhiteboardRenderInfo }
+  /** To everyone: the renderer became available or unavailable, or its browser download moved on. */
+  | { t: 'whiteboard.renderer'; status: WhiteboardRendererStatus }
+  /** To whoever pinged: the line went in (`how`), or why it didn't. */
+  | { t: 'whiteboard.pinged'; worker: string; ok: boolean; how?: PingHow; error?: string }
   | { t: 'prompts'; state: PromptsState }
+  /** To whoever asked, and to everyone on the floor when it's changed. */
+  | { t: 'worktreeSetup'; state: WorktreeSetupState }
   /** Sent to whoever watches that worker's changes, whenever they change. */
   | { t: 'changes'; state: ChangesState }
   | { t: 'changes.diff'; workerId: string; repo?: string; path: string; diff: string; truncated: boolean; error?: string }

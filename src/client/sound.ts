@@ -1,8 +1,7 @@
 /**
  * Office sounds, synthesized with Web Audio so there are no audio files to ship: workers typing
  * while they work, the coffee machine, thunder after a flash, the gong, and the dings when a worker
- * needs you. And the lounge jukebox, whose tunes are in music.ts, and up on the roof, the DJ's drum
- * and bass (dnb.ts).
+ * needs you. And the lounge jukebox, whose tunes are in music.ts.
  *
  * Everything here is triggered by something: there is no background hum, no weather, no random
  * room noise. Silence until something happens.
@@ -10,12 +9,14 @@
  * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
  * which has a volume of its own.
  */
-import { CABINET, DJ_BOOTH, FLOOR, GONG, JUKEBOX } from '../shared/layout';
+import { CABINET, FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
+import { soundCloudUrl } from '../shared/soundcloud';
 import { TunePlayer } from './music';
-import { DjPlayer } from './dnb';
+import { SoundCloudPlayer } from './ui/soundcloud';
 import type { GunCue } from './world/gun-motion';
+import type { WandCue } from './world/wand-motion';
 
 type Pos = { x: number; y: number; z: number };
 
@@ -76,17 +77,39 @@ interface Typist {
   word: number;
 }
 
+export type AlertKind = 'needs_input' | 'done' | 'error';
+
+/** Short, and not the same shape: a rise, a major third, two low notes down. Square is quieter so it doesn't shout. */
+const ALERTS: Record<AlertKind, { freq: number; type: OscillatorType; at: number; len: number; gain: number }[]> = {
+  needs_input: [
+    { freq: 784, type: 'sine', at: 0, len: 0.09, gain: 0.22 },
+    { freq: 1175, type: 'sine', at: 0.1, len: 0.11, gain: 0.2 },
+  ],
+  done: [
+    { freq: 659, type: 'triangle', at: 0, len: 0.1, gain: 0.24 },
+    { freq: 880, type: 'triangle', at: 0.11, len: 0.14, gain: 0.22 },
+  ],
+  error: [
+    { freq: 392, type: 'square', at: 0, len: 0.08, gain: 0.08 },
+    { freq: 247, type: 'square', at: 0.1, len: 0.12, gain: 0.07 },
+  ],
+};
+
 export class OfficeSound {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   /** The room itself; it goes quiet while the tab is hidden. */
   private ambience!: GainNode;
-  /** Worker dings, which you still want to hear from another tab. */
+  /** The gong (other than a plain hit). Still audible in a background tab. */
   private alerts!: GainNode;
+  /** Needs-you, done, and error. The alert mute is this bus alone, so it leaves the gong. */
+  private dings!: GainNode;
   private analyser!: AnalyserNode;
   private buf!: Buffers;
   private volume = 0.7;
   private muted = false;
+  /** Worker tones only. The office mute still silences them, because they share its volume. */
+  private alertsMuted = false;
   private typists = new Map<string, Typist>();
   private listener: Listener = { x: 0, y: 1.4, z: 0, fx: 0, fz: -1 };
   // The jukebox: from the cabinet, through a filter that muffles it from across the room, to your own volume.
@@ -100,13 +123,8 @@ export class OfficeSound {
   private jukebox: JukeboxPlay | null = null;
   private tune: TunePlayer | null = null;
   private stream: HTMLAudioElement | null = null;
+  private soundcloud: SoundCloudPlayer | null = null;
   private musicTimer = 0;
-  // The DJ on the roof, through the speakers by the booth, at your music volume.
-  private djIn!: PannerNode;
-  private dj: DjPlayer | null = null;
-  /** How far into the DJ's set it is (see djTime), while you're up there. */
-  private djClock: (() => number) | null = null;
-  private djTimer = 0;
   /** A stream that won't play here. */
   onMusicError?: (text: string) => void;
   /** How many of each sound have played, for quick checks from the console. */
@@ -125,6 +143,12 @@ export class OfficeSound {
     this.volume = Math.max(0, Math.min(1, volume));
     this.muted = muted;
     this.applyVolume();
+  }
+
+  /** Silences the worker tones (needs you, done, error) and leaves the room alone. */
+  setAlertsMuted(muted: boolean) {
+    this.alertsMuted = muted;
+    this.applyAlerts();
   }
 
   /** Output level (RMS) right now, for headless checks. */
@@ -173,6 +197,8 @@ export class OfficeSound {
     this.ambience.connect(this.master);
     this.alerts = ctx.createGain();
     this.alerts.connect(this.master);
+    this.dings = ctx.createGain();
+    this.dings.connect(this.master);
     // The jukebox skips the master (it has its own volume) and keeps playing while the tab is hidden.
     this.musicIn = this.panner(JUKEBOX, MUSIC_REF, MUSIC_ROLLOFF);
     this.musicTone = biquad(ctx, 'lowpass', 16000, 0.5);
@@ -182,14 +208,11 @@ export class OfficeSound {
     this.musicMeter.fftSize = 2048;
     this.musicIn.connect(this.musicTone).connect(this.musicBus).connect(ctx.destination);
     this.musicBus.connect(this.musicMeter);
-    // Loud enough to hear from anywhere on the roof, and loudest on the dance floor.
-    this.djIn = this.panner({ x: DJ_BOOTH.x, y: 2.2, z: DJ_BOOTH.z }, 7, 0.8);
-    this.djIn.connect(this.musicBus);
     this.applyVolume();
+    this.applyAlerts();
     this.applyMusicVolume();
     this.applyJukebox();
     this.applyVisibility();
-    this.applyDj();
     void ctx.resume();
   }
 
@@ -198,6 +221,11 @@ export class OfficeSound {
     // Squared, so the slider feels even to the ear.
     const g = this.muted ? 0 : this.volume * this.volume;
     this.master.gain.setTargetAtTime(g, this.ctx.currentTime, 0.04);
+  }
+
+  private applyAlerts() {
+    if (!this.ctx) return;
+    this.dings.gain.setTargetAtTime(this.alertsMuted ? 0 : 1, this.ctx.currentTime, 0.03);
   }
 
   private applyVisibility() {
@@ -374,74 +402,6 @@ export class OfficeSound {
     this.count('bonk');
     this.play(pick(this.buf.steps), { gain: 0.35, rate: 0.5 });
     this.blip(this.ambience, this.ctx.currentTime + 0.01, 180, 0.6, 0.18, 0.12);
-  }
-
-  // ---- Golf off the balcony ------------------------------------------------------------------------
-
-  /**
-   * A golf ball: the club through it (`hit`), coming down on grass or the road (`bounce`, `speed`
-   * in m/s) or dying in sand or rough (`thud`), off the railing's glass (`rail`) or a wall, rattling
-   * into the cup, and a fanfare for a hole in one. `at` is where, for someone else's ball; your own
-   * you hear wherever it is, since the camera's following it.
-   */
-  golf(kind: 'hit' | 'bounce' | 'thud' | 'rail' | 'wall' | 'cup' | 'cheer', at?: Pos, speed = 5) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count(`golf-${kind}`);
-    const out = at ? this.panner(at, 3, 1) : ctx.createGain();
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.005;
-    const hard = Math.min(1, speed / 15);
-    switch (kind) {
-      case 'hit':
-        // A crisp tock, and the swish of the club on through.
-        this.blip(out, t0, 1900, 0.55, 0.06, 0.3, 'triangle');
-        this.play(pick(this.buf.steps), { gain: 0.45, rate: 2.6, dest: out });
-        {
-          const swish = this.noise(this.buf.white);
-          const g = ctx.createGain();
-          envelope(g.gain, t0, [
-            [0.03, 0.06],
-            [0.16, 0],
-          ]);
-          swish
-            .connect(biquad(ctx, 'bandpass', 2400, 1.2))
-            .connect(g)
-            .connect(out);
-          swish.start(t0);
-          swish.stop(t0 + 0.2);
-        }
-        break;
-      case 'bounce':
-        this.play(pick(this.buf.steps), { gain: 0.08 + hard * 0.3, rate: rand(1.7, 2), dest: out });
-        this.blip(out, t0, rand(620, 700), 0.7, 0.05, 0.03 + hard * 0.06);
-        break;
-      case 'thud':
-        this.play(pick(this.buf.steps), { gain: 0.08 + hard * 0.2, rate: rand(1.1, 1.3), dest: out });
-        break;
-      case 'rail':
-        // A knock on the glass.
-        this.clink(out, t0, rand(1250, 1400), 0.05 + hard * 0.08);
-        this.play(pick(this.buf.steps), { gain: 0.25, rate: 2.2, dest: out });
-        break;
-      case 'wall':
-        this.play(pick(this.buf.steps), { gain: 0.15 + hard * 0.3, rate: 1.9, dest: out });
-        break;
-      case 'cup':
-        // Plunk, and a rattle round the bottom.
-        this.blip(out, t0, 520, 0.6, 0.12, 0.14, 'triangle');
-        for (let i = 1; i <= 3; i++) this.blip(out, t0 + 0.08 + i * 0.06, 900 - i * 90, 0.8, 0.04, 0.05 / i);
-        break;
-      case 'cheer':
-        // Ta-da-da-DAAA.
-        [523, 659, 784, 1047].forEach((f, i) => {
-          const when = t0 + 0.25 + i * 0.13;
-          const len = i === 3 ? 0.9 : 0.2;
-          this.blip(out, when, f, 1, len, 0.1, 'triangle');
-          this.blip(out, when, f * 2, 1, len * 0.7, 0.03);
-        });
-        break;
-    }
   }
 
   /** Whoosh: the rush of air and the squeal of hands on brass, all the way down a fire pole. */
@@ -675,9 +635,8 @@ export class OfficeSound {
   // ---- The gong ----------------------------------------------------------------------------------
 
   /**
-   * The gong by the PR board rings: someone hit it, a pull request merged (a harder stroke), or the
-   * task queue emptied (three strokes, each bigger than the last). From where it hangs, so you hear
-   * which way it is.
+   * The gong by the PR board rings: someone hit it, or a pull request merged (a harder stroke). From
+   * where it hangs, so you hear which way it is.
    */
   gong(why: GongWhy) {
     this.unlock();
@@ -690,8 +649,7 @@ export class OfficeSound {
     const out = why === 'hit' ? this.panner(GONG_AT, 4, 0.6) : this.panner(GONG_AT, 8, 0.45);
     out.connect(why === 'hit' ? this.ambience : this.alerts);
     const t0 = ctx.currentTime + 0.03;
-    if (why === 'queue') [0.7, 0.85, 1.1].forEach((strength, i) => this.strike(out, t0 + i * 0.85, strength));
-    else this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
+    this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
   }
 
   /** One stroke of the mallet: a felt thump, the metal ringing, and a bright wash that blooms after. */
@@ -895,6 +853,172 @@ export class OfficeSound {
     }
   }
 
+  // ---- The magic wand ----------------------------------------------------------------------------
+
+  /** Your spell: a bright rising zing over a quick run of chimes and a shimmer. Yours, so not positional. */
+  wandZap() {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count('wandZap');
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(this.ambience, t0, 520, 3.2, 0.22, 0.16, 'triangle');
+    [1319, 1568, 1976, 2637].forEach((f, i) => this.blip(this.ambience, t0 + 0.04 + i * 0.045, f, 1.01, 0.28, 0.07));
+    this.shimmer(this.ambience, t0, 0.45, 0.06);
+  }
+
+  /** A spell landing on a worker, from where it hit: a soft "boing" down and a sprinkle of chimes. */
+  spellHit(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('spellHit');
+    const out = this.panner(at, 3, 0.9);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(out, t0, 880, 0.5, 0.3, 0.14);
+    [2093, 2637, 3136].forEach((f, i) => this.blip(out, t0 + 0.05 + i * 0.06, f, 1, 0.22, 0.05));
+    this.shimmer(out, t0, 0.5, 0.05);
+  }
+
+  /** A spell fizzling out on a wall or the floor, from where it landed. */
+  fizzle(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('fizzle');
+    const out = this.panner(at, 3, 0.9);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.blip(out, t0, 1400, 0.6, 0.16, 0.06, 'triangle');
+    this.shimmer(out, t0, 0.3, 0.04);
+  }
+
+  /** A worker under the wand's spell drifting off on the floor: a soft bump and a sleepy three-note slide down. */
+  doze(at: Pos) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.count('doze');
+    const out = this.panner(at, 2.5, 1);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    this.play(pick(this.buf.steps), { gain: 0.18, rate: 0.6, when: t0, dest: out });
+    [784, 659, 523].forEach((f, i) => this.blip(out, t0 + 0.12 + i * 0.22, f, 0.97, 0.3, 0.07));
+  }
+
+  /**
+   * The wand's moves and spells (world/wand-motion.ts): a hum as the rotor spins up, a bright
+   * run on the way out, a falling one on the way back, air for every swing, chimes where the magic
+   * happens and a tick per lit segment of the build.
+   */
+  wandCue(cue: WandCue) {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const t0 = ctx.currentTime + 0.005;
+    switch (cue) {
+      case 'draw':
+        this.count('wandDraw');
+        this.swish(t0, 0.18, 600, 2400, 0.12, 1.1);
+        [1047, 1319, 1568].forEach((f, i) => this.blip(this.ambience, t0 + 0.04 + i * 0.05, f, 1.01, 0.2, 0.05));
+        break;
+      case 'holster':
+        this.count('wandHolster');
+        this.swish(t0, 0.16, 2200, 700, 0.09, 1.1);
+        [1568, 1319, 1047].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.05, f, 0.99, 0.18, 0.045));
+        this.blip(this.ambience, t0 + 0.12, 420, 0.4, 0.3, 0.05, 'triangle');
+        break;
+      case 'whoosh':
+        this.gunCue('whoosh');
+        break;
+      case 'boot':
+        // The rotor spinning up: a soft hum climbing an octave.
+        this.count('wandBoot');
+        this.blip(this.ambience, t0, 160, 2, 0.45, 0.06, 'sawtooth');
+        this.blip(this.ambience, t0, 320, 2, 0.45, 0.04, 'triangle');
+        break;
+      case 'ready':
+        this.count('wandReady');
+        this.blip(this.ambience, t0, 1760, 1, 0.12, 0.05);
+        this.blip(this.ambience, t0 + 0.07, 2637, 1, 0.18, 0.04);
+        break;
+      case 'charge':
+        // Gathering: a glittering run that climbs.
+        this.count('wandCharge');
+        for (let i = 0; i < 6; i++) this.blip(this.ambience, t0 + i * 0.04, 880 * 2 ** (i / 4), 1.01, 0.12, 0.03);
+        this.shimmer(this.ambience, t0, 0.3, 0.03);
+        break;
+      case 'release':
+        this.wandZap();
+        break;
+      case 'lumos':
+        // The tip catching light: a rising bell over a breath of glitter.
+        this.count('wandLumos');
+        this.blip(this.ambience, t0, 660, 2, 0.5, 0.08, 'triangle');
+        [1319, 1976].forEach((f, i) => this.blip(this.ambience, t0 + 0.08 + i * 0.08, f, 1, 0.6, 0.05));
+        this.shimmer(this.ambience, t0, 0.7, 0.04);
+        break;
+      case 'swish':
+        this.count('wandSwish');
+        this.swish(t0, 0.32, 500, 2800, 0.18, 1.6);
+        break;
+      case 'flick':
+        this.count('wandFlick');
+        this.swish(t0, 0.08, 2600, 5200, 0.16, 2.4);
+        this.blip(this.ambience, t0 + 0.03, 1568, 1.5, 0.25, 0.08);
+        this.shimmer(this.ambience, t0, 0.6, 0.05);
+        break;
+      case 'spark':
+        // A sparkler fizzing: a few tiny crackles at random, over a breath of hiss.
+        this.count('wandSpark');
+        for (let i = 0; i < 3; i++) this.click(t0 + Math.random() * 0.06, rand(3200, 6400), 0.035);
+        this.shimmer(this.ambience, t0, 0.09, 0.025);
+        break;
+      case 'confetti':
+        // A party popper: a sharp pop, paper rushing out, and a bright little fanfare.
+        this.count('wandConfetti');
+        this.click(t0, 1800, 0.22);
+        this.blip(this.ambience, t0, 320, 0.5, 0.08, 0.12, 'triangle');
+        this.swish(t0 + 0.01, 0.4, 3500, 900, 0.1, 0.8);
+        [784, 988, 1175, 1568].forEach((f, i) => this.blip(this.ambience, t0 + 0.06 + i * 0.06, f, 1, 0.3, 0.05));
+        this.shimmer(this.ambience, t0 + 0.1, 0.8, 0.035);
+        break;
+      case 'tick':
+        this.count('wandTick');
+        this.blip(this.ambience, t0, rand(2300, 2500), 1, 0.04, 0.035, 'square');
+        break;
+      case 'done':
+        // The build passing: a bright major arpeggio.
+        this.count('wandDone');
+        [1047, 1319, 1568, 2093].forEach((f, i) => this.blip(this.ambience, t0 + i * 0.07, f, 1, 0.35, 0.06));
+        this.shimmer(this.ambience, t0 + 0.2, 0.6, 0.04);
+        break;
+      case 'shield':
+        // The ward going up: a low swell under a high ring.
+        this.count('wandShield');
+        this.blip(this.ambience, t0, 220, 1.5, 0.8, 0.08, 'triangle');
+        this.blip(this.ambience, t0 + 0.05, 1760, 0.98, 0.9, 0.04);
+        this.shimmer(this.ambience, t0, 0.9, 0.04);
+        break;
+    }
+  }
+
+  /** High, airy noise swelling and fading over `len` seconds: the glitter under a spell. */
+  private shimmer(dest: AudioNode, when: number, len: number, gain: number) {
+    const ctx = this.ctx!;
+    const n = this.noise(this.buf.white);
+    const g = ctx.createGain();
+    envelope(g.gain, when, [
+      [len * 0.2, gain],
+      [len, 0],
+    ]);
+    n.connect(biquad(ctx, 'bandpass', 7000, 2))
+      .connect(g)
+      .connect(dest);
+    n.start(when);
+    n.stop(when + len + 0.02);
+  }
+
   /** A short steel click: a tick of bright noise over a pinged tone at `freq`. */
   private click(when: number, freq: number, gain: number) {
     const ctx = this.ctx!;
@@ -1007,20 +1131,6 @@ export class OfficeSound {
     n.stop(t0 + 0.2);
   }
 
-  /** The medics coming in: a two-tone siren sting, from the elevator. */
-  siren(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('siren');
-    const out = this.panner(at, 6, 0.6);
-    out.connect(this.alerts);
-    const t0 = ctx.currentTime + 0.02;
-    for (let i = 0; i < 3; i++) {
-      this.blip(out, t0 + i * 0.42, 660, 1.335, 0.2, 0.16, 'triangle');
-      this.blip(out, t0 + i * 0.42 + 0.21, 880, 0.75, 0.2, 0.16, 'triangle');
-    }
-  }
-
   // ---- The arcade -------------------------------------------------------------------------------
 
   /** The arcade cabinet's chip bleeps: a piece landing, lines clearing (a longer run up for more at once), the game ending. */
@@ -1038,152 +1148,56 @@ export class OfficeSound {
 
   // ---- Alerts ----------------------------------------------------------------------------------
 
-  /** Two notes up when a worker is done, a three-note nudge when it needs input. */
-  ding(kind: 'done' | 'needs_input') {
+  /**
+   * A short tone, different for each reason: needs input rises, done is two notes up, an error
+   * falls. They stay audible in a background tab. The alert mute drops them; the office mute does
+   * too, since they share its volume.
+   */
+  ding(kind: AlertKind) {
+    this.unlock();
+    if (!this.ctx || this.alertsMuted) return;
+    this.count(kind);
+    this.tone(kind, this.dings);
+  }
+
+  /** The elevator arriving: the done tone, on the office volume, so the alert mute doesn't cover it. */
+  floorChime() {
+    this.unlock();
+    if (!this.ctx) return;
+    this.count('floor');
+    this.tone('done', this.master);
+  }
+
+  /** The three tones in order, on one clock, so they don't pile up. Nothing while they're muted. */
+  previewAlerts() {
     this.unlock();
     const ctx = this.ctx;
-    if (!ctx) return;
-    if (ctx.state === 'suspended') void ctx.resume();
-    this.count(kind);
-    const notes = kind === 'done' ? [660, 880] : [880, 660, 880];
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = f;
-      const t0 = ctx.currentTime + i * 0.12;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
-      o.connect(g).connect(this.alerts);
-      o.start(t0);
-      o.stop(t0 + 0.3);
+    if (!ctx || this.alertsMuted) return;
+    const t0 = ctx.currentTime;
+    (['needs_input', 'done', 'error'] as const).forEach((kind, i) => {
+      this.count(kind);
+      this.tone(kind, this.dings, t0 + i * 0.32);
     });
   }
 
-  // ---- The roof ---------------------------------------------------------------------------------
-
-  /** The DJ's set on the roof, `clock` saying how far into it it is (see djTime); null stops it. */
-  setDj(clock: (() => number) | null) {
-    const was = !!this.djClock;
-    this.djClock = clock;
-    if (was !== !!clock) this.applyDj();
-  }
-
-  private applyDj() {
+  private tone(kind: AlertKind, dest: AudioNode, at?: number) {
     const ctx = this.ctx;
     if (!ctx) return;
-    if (!this.djClock) {
-      this.dj?.stop();
-      this.dj = null;
-      clearInterval(this.djTimer);
-      return;
-    }
-    if (this.dj) return;
-    const dj = (this.dj = new DjPlayer(ctx, this.djIn));
-    this.count('dj');
-    // On a timer rather than every frame, so it carries on in a background tab.
-    const tick = () => {
-      if (this.djClock) dj.tick(this.djClock());
-    };
-    tick();
-    this.djTimer = window.setInterval(tick, 150);
-  }
-
-  /** Someone at the DJ booth blew the air horn. */
-  horn() {
-    if (!this.dj) return;
-    this.dj.horn();
-    this.count('horn');
-  }
-
-  /** A drink poured at the bar: ice into the glass, a splash, and a clink. */
-  pour(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('pour');
-    const out = this.panner(at, 1.2, 1);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.05;
-    // Ice cubes knocking in.
-    for (let i = 0; i < 3; i++) this.clink(out, t0 + i * rand(0.07, 0.12), rand(2200, 3200), 0.05);
-    // The pour: filtered noise that rises in pitch as the glass fills.
-    const pour = this.noise(this.buf.white);
-    const tone = biquad(ctx, 'bandpass', 700, 1.4);
-    tone.frequency.setValueAtTime(700, t0 + 0.35);
-    tone.frequency.linearRampToValueAtTime(1500, t0 + 1.15);
-    const g = ctx.createGain();
-    envelope(g.gain, t0 + 0.35, [
-      [0.06, 0.09],
-      [0.7, 0.08],
-      [0.85, 0],
-    ]);
-    const wobble = this.noise(this.buf.gurgle, true);
-    wobble.playbackRate.value = 4;
-    const amp = ctx.createGain();
-    amp.gain.value = 0.6;
-    wobble.connect(amp.gain);
-    pour.connect(tone).connect(amp).connect(g).connect(out);
-    pour.start(t0 + 0.35);
-    pour.stop(t0 + 1.3);
-    wobble.start(t0 + 0.35);
-    wobble.stop(t0 + 1.3);
-    // Slid across the bar to you.
-    this.clink(out, t0 + 1.45, 3900, 0.08);
-  }
-
-  /** A glass rings: a couple of high partials, gone in a moment. */
-  private clink(out: AudioNode, when: number, f: number, level: number) {
-    const ctx = this.ctx!;
-    for (const [mul, lvl] of [
-      [1, 1],
-      [2.76, 0.4],
-    ]) {
+    if (ctx.state === 'suspended') void ctx.resume();
+    const base = at ?? ctx.currentTime;
+    for (const n of ALERTS[kind]) {
       const o = ctx.createOscillator();
-      o.frequency.value = f * mul;
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(level * lvl, when + 0.003);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.25);
-      o.connect(g).connect(out);
-      o.start(when);
-      o.stop(when + 0.3);
+      o.type = n.type;
+      o.frequency.value = n.freq;
+      const t0 = base + n.at;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(n.gain, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + n.len);
+      o.connect(g).connect(dest);
+      o.start(t0);
+      o.stop(t0 + n.len + 0.02);
     }
-  }
-
-  /** Hic! One too many. */
-  hiccup() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('hiccup');
-    const t0 = ctx.currentTime + 0.02;
-    const o = ctx.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(260, t0);
-    o.frequency.exponentialRampToValueAtTime(420, t0 + 0.06);
-    const g = ctx.createGain();
-    envelope(g.gain, t0, [
-      [0.008, 0.12],
-      [0.05, 0.08],
-      [0.11, 0],
-    ]);
-    o.connect(biquad(ctx, 'bandpass', 1100, 2.5))
-      .connect(g)
-      .connect(this.ambience);
-    o.start(t0);
-    o.stop(t0 + 0.14);
-    // The catch in the throat, just before it.
-    const n = this.noise(this.buf.white);
-    const ng = ctx.createGain();
-    envelope(ng.gain, t0 - 0.015, [
-      [0.004, 0.08],
-      [0.02, 0],
-    ]);
-    n.connect(biquad(ctx, 'bandpass', 1800, 1))
-      .connect(ng)
-      .connect(this.ambience);
-    n.start(t0 - 0.015);
-    n.stop(t0 + 0.02);
   }
 
   // ---- The jukebox ------------------------------------------------------------------------------
@@ -1211,6 +1225,7 @@ export class OfficeSound {
   /** 1 on each beat of the tune, falling to 0 before the next, for the jukebox's lights. */
   beat(): number {
     if (this.tune) return this.tune.beat(this.musicAt());
+    if (this.soundcloud?.playing) return 0.35 + 0.25 * Math.sin(performance.now() / 320);
     if (this.stream && !this.stream.paused) return 0.35 + 0.25 * Math.sin(performance.now() / 320);
     return 0;
   }
@@ -1233,9 +1248,11 @@ export class OfficeSound {
   /** Starts what the jukebox plays now, once there's audio; `changed` puts it on again from the top. */
   private applyJukebox(changed = false) {
     const ctx = this.ctx;
-    if (!ctx || (!changed && (this.tune || this.stream))) return;
+    if (!ctx || (!changed && (this.tune || this.stream || this.soundcloud))) return;
     this.tune?.stop();
     this.tune = null;
+    this.soundcloud?.dispose();
+    this.soundcloud = null;
     if (this.stream) {
       this.stream.pause();
       this.stream.removeAttribute('src');
@@ -1255,6 +1272,13 @@ export class OfficeSound {
   }
 
   private startStream(url: string) {
+    const sc = soundCloudUrl(url);
+    if (sc) {
+      this.soundcloud = new SoundCloudPlayer(sc, (text) => this.onMusicError?.(text));
+      this.hearStream();
+      this.count('soundcloud');
+      return;
+    }
     const a = new Audio();
     a.preload = 'auto';
     a.loop = true;
@@ -1287,9 +1311,11 @@ export class OfficeSound {
 
   /** A stream plays outside Web Audio (most don't allow that), so it gets quieter with distance by hand. */
   private hearStream() {
-    if (!this.stream) return;
+    if (!this.stream && !this.soundcloud) return;
     const d = Math.max(MUSIC_REF, this.jukeboxDistance());
-    this.stream.volume = Math.min(1, this.musicGain() * (MUSIC_REF / (MUSIC_REF + MUSIC_ROLLOFF * (d - MUSIC_REF))));
+    const volume = Math.min(1, this.musicGain() * (MUSIC_REF / (MUSIC_REF + MUSIC_ROLLOFF * (d - MUSIC_REF))));
+    if (this.stream) this.stream.volume = volume;
+    this.soundcloud?.setVolume(volume);
   }
 
   private jukeboxDistance(): number {

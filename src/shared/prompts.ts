@@ -1,6 +1,5 @@
 // Every prompt the office writes for a worker by itself: what Hand to a worker, Review and the
-// boards' other buttons send, what the queue adds to a task, the board agents' briefs, the meeting
-// room's parts and the sign writer's instructions. Each can be rewritten in Settings (kept by
+// boards' other buttons send, the board agents' briefs and the sign writer's instructions. Each can be rewritten in Settings (kept by
 // server/prompts.ts, for the whole building); these are the defaults, which "Default" goes back to.
 // A {{name}} in one is filled in by the office when it's sent. One template serves GitHub and
 // GitLab floors: whatever differs between them ({{cli}}, {{pullName}}, {{ref}}, the commands) is a
@@ -10,18 +9,20 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'queue' | 'repos' | 'stations' | 'subagents' | 'meetings' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'whiteboard' | 'wand' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   issues: 'Issues board',
   pulls: 'Pull requests board',
-  queue: 'Task queue',
+  changes: '🌿 Changes window',
   repos: '🗂️ Across repositories',
+  worktrees: 'Worktree setup',
   stations: 'Board agents',
   subagents: '🧭 Team lead & subagents',
-  meetings: 'Meeting room',
+  whiteboard: '🧑‍🎨 Whiteboard',
   office: 'Worker signs',
+  wand: 'Droid wand',
 };
 
 export interface PromptDef {
@@ -31,7 +32,7 @@ export interface PromptDef {
   used: string;
   /** Its placeholders, and what each one becomes. */
   vars: Record<string, string>;
-  /** Placeholders the office counts on being there (the file a meeting waits for, say). */
+  /** Placeholders the office counts on being there. */
   needs?: string[];
   /** It may be left empty, and then nothing is sent. */
   optional?: boolean;
@@ -95,6 +96,38 @@ export function pullPromptVars(forge: Forge | undefined, it: PullForPrompt, repo
   };
 }
 
+/** One checkout in the Changes window, for the prompt that asks its worker to commit it and open a pull request. */
+export interface ShipForPrompt {
+  /** What the pull request is about: the task card's name, or what you typed when it had none. */
+  title: string;
+  /** The task card's summary, or the rest of what you typed. */
+  summary?: string;
+  branch: string;
+  /** The branch the pull request targets. */
+  base: string;
+  /** The checkout's folder in a workspace across repositories; none when the worker works in it directly. */
+  folder?: string;
+  /** The pull request already open for the branch. */
+  pr?: number;
+}
+
+/** What the Changes window's Commit & open PR fills in on a floor. */
+export function shipPromptVars(forge: Forge | undefined, it: ShipForPrompt) {
+  const w = forgeWords(forge);
+  const vars = forgeVars(forge);
+  return {
+    ...vars,
+    title: it.title,
+    summary: it.summary ?? '',
+    branch: it.branch,
+    base: it.base,
+    where: it.folder ? `the \`${it.folder}\` folder of your workspace` : 'your checkout',
+    open: it.pr
+      ? `${vars.PullName} ${w.ref(it.pr)} is already open for \`${it.branch}\`, so the push updates it. If its description no longer says what the branch does, update it with \`${w.cli}\`.`
+      : `Open a ${w.pull} against \`${it.base}\` with \`${w.cli}\`. Title it after the task, and say in the description what changed, why, and how you checked it.`,
+  };
+}
+
 /** The command that merges it, the way the merge dialog was set. */
 export function mergeCommand(forge: Forge | undefined, n: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean, repo: string, project: string): string {
   if (forge === 'gitlab') return `glab mr merge ${n}${method === 'squash' ? ' --squash' : ''}${deleteBranch ? ' --remove-source-branch' : ''} --auto-merge=false --yes --repo ${project}`;
@@ -108,27 +141,16 @@ type BoardKind = Exclude<StationKind, 'lead'>;
 const BOARD: Record<BoardKind, string> = {
   issues: 'the 📌 Issues board',
   pulls: 'the 🔀 Pull Requests board',
-  queue: 'the 📋 task queue',
+  actions: 'the 🚀 Pipelines board',
 };
-
-/** How a board agent reaches the queue: the office-queue command, which the office puts on its PATH. */
-const QUEUE_API = `The task queue gives each task a fresh worker in its own git worktree, a few at a time; a task usually ends with a {{pullName}}. Use it with the office-queue command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself):
-- See it: office-queue list (each task's id, status, title, worker and {{pullName}})
-- Add a task: office-queue add --title "Short title" [--issue <number>], with the task's prompt on stdin in a quoted heredoc so nothing in it gets expanded. It prints the new task's id. With --issue the task is linked to that {{site}} issue, which is assigned when the task starts.
-  office-queue add --title "Fix the login redirect" <<'EOF'
-  …the full prompt…
-  EOF
-- Take a waiting task off: office-queue remove <id>`;
 
 /** What a board agent is told ahead of the first request typed to it. */
 function stationDefault(kind: BoardKind): string {
-  const queue = kind === 'queue';
   return [
     `You're the ${STATION_AGENT[kind].name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk by ${BOARD[kind]}, and whoever walks up types you a request. The first one is at the end of this message.`,
     '{{job}}',
-    `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. Work that needs code changed goes on the task queue, ${queue ? 'always' : 'unless the person asks you for something else'}.`,
-    QUEUE_API,
-    `${queue ? "When you've queued it, say in a few lines what you queued: each task's id and title." : "When you've done what was asked, say in a few lines what you did, with links."} Then wait: the next request may come from someone else.`,
+    "You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. You don't change code yourself. When a request needs code changed, say what needs doing and suggest who can do it: a worker at a desk (an issue's Hand to a worker button, or E at an empty desk), or the Team lead at the kiosk on the east wall for bigger jobs. Give them a brief they can paste: what to change and where, how to check it, and to open a {{pullName}}.",
+    "When you've done what was asked, say in a few lines what you did, with links. Then wait: the next request may come from someone else.",
     `The request:`,
   ].join('\n\n');
 }
@@ -139,15 +161,16 @@ const LEAD_DEFAULT = [
   `You're the ${STATION_AGENT.lead.name} in Droid Office, a shared 3D office where a team works alongside coding agents. You stand at a kiosk on the east wall, looking out over the desks, and whoever walks up types you a request. The first one is at the end of this message.`,
   'You get things done by running a team, not by doing the work yourself. For each request you hire subagents: fresh coding agents who sit down at the desks in this room, each with its own laptop and terminal that anyone can walk up to and watch. You brief them, keep track of them, answer their questions, check what they did, and tell whoever asked how it went. {{job}}',
   `You do all of it with the office-workers command, which is on your PATH (it knows who you are, so don't call the office's HTTP API yourself). Run \`office-workers help\` before you hire anyone: it is the whole guide. In short:
-- office-workers hire --title "Short title", with the subagent's brief on stdin in a quoted heredoc so nothing in it gets expanded. It prints the subagent's name and desk.
+- office-workers models lists the models you may give a subagent with --model, each with its credit multiplier, provider, efforts, and any note from the office's owner.
+- office-workers hire --title "Short title" --model <id>, with the subagent's brief on stdin in a quoted heredoc so nothing in it gets expanded. It prints the subagent's name and desk.
 - office-workers wait: waits until one of your subagents reports, finishes its turn, needs input or leaves, and prints what happened. office-workers list shows your whole team.
 - office-workers read <name> shows the end of its terminal; office-workers send <name> answers it or asks for more, the message on stdin.
 - office-workers dismiss <name> sends one home, keeping its worktree and branch when they hold work.`,
   `How to run a request:
 1. Read only as much of the code as it takes to split the work into independent pieces that don't touch the same files. A small request is one piece: don't hire more subagents than the work needs.
-2. Hire one subagent per piece. Each starts knowing nothing, so give it a complete brief: the goal, where to look, what's off limits, how to check its work, and how to finish (usually committing in its own worktree and opening a {{pullName}}).
+2. Hire one subagent per piece, on the model that fits that piece: the cheapest one on the office-workers models list that can do it well for mechanical or well-specified work, a strong one for hard design or debugging. The owner's notes on a model come first; the credit multiplier is what its tokens cost against the base rate. Each subagent starts knowing nothing, so give it a complete brief: the goal, where to look, what's off limits, how to check its work, and how to finish (usually committing in its own worktree and opening a {{pullName}}).
 3. Wait for their reports and deal with what comes back: answer questions, send follow-ups, and look at their changes (git -C <their worktree> diff) before you count a piece as done.
-4. When every piece is done, tell the person in a few lines what each subagent did, with links, and what's left. Leave your team at their desks unless you're asked to send them home: people may want to look at their work.`,
+4. When every piece is done, tell the person in a few lines what each subagent did and on which model, with links, and what's left. Leave your team at their desks unless you're asked to send them home: people may want to look at their work.`,
   `You're in the project's main checkout, which other people and workers use too: don't switch branches, commit, or leave edits in it. When you've reported back, wait: the next request may come from someone else.`,
   `The request:`,
 ].join('\n\n');
@@ -212,9 +235,6 @@ const MERGE_VARS = {
   read: 'The command that shows it: gh pr view 12, or glab mr view 12 --comments',
   merge: 'The merge command for the method (and branch deletion) picked in the merge dialog',
 };
-const OUTPUT = "That file is the meeting's output.";
-const FILE_NOTE = 'The note this part is written to, which the meeting waits for';
-const OUTPUT_NOTE = "The meeting's output file, which ends it";
 const CHECKOUT =
   'Get onto its branch: `{{checkout}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
 
@@ -223,7 +243,7 @@ const DEFS = {
   'issue.work': {
     group: 'issues',
     label: 'Hand to a worker',
-    used: 'The task a worker gets for an issue: Hand to a worker, Add to queue, and a card carried to a desk or the queue.',
+    used: 'The task a worker gets for an issue: Hand to a worker, and a card carried to a desk.',
     vars: { ...ISSUE_VARS, openPull: 'How to finish: open a pull request that closes it (on GitLab, a merge request with glab mr create that says "Closes #12")' },
     text: 'Work on {{site}} issue #{{number}}: "{{title}}".\n\nRead it first with `{{cli}} issue view {{number}} --comments`. Create a new branch, implement the change, verify it, then {{openPull}}.',
   },
@@ -234,13 +254,6 @@ const DEFS = {
     vars: ISSUE_VARS,
     optional: true,
     text: 'This is about {{site}} issue #{{number}} "{{title}}" ({{url}}). Read it with `{{cli}} issue view {{number}} --comments`.',
-  },
-  'issue.meeting': {
-    group: 'issues',
-    label: 'Meeting about it',
-    used: 'What a meeting about an issue is about, to start with: the meeting form opens with it filled in.',
-    vars: ISSUE_VARS,
-    text: '{{site}} issue #{{number}}: “{{title}}”. Read it first with {{cli}} issue view {{number}} --comments.',
   },
 
   // --- Pull requests board ---
@@ -291,28 +304,41 @@ const DEFS = {
     optional: true,
     text: 'This is about {{pullName}} {{ref}} "{{title}}" ({{url}}), branch `{{branch}}` into `{{base}}`. Read it with `{{view}}` and see its changes with `{{diff}}`.',
   },
-  'pull.panel': {
-    group: 'pulls',
-    label: 'Review panel',
-    used: 'What a Review panel is about, to start with: the meeting form opens with it filled in.',
-    vars: PULL_VARS,
-    text: 'Review {{pullName}} {{ref}}: “{{title}}”.',
-  },
 
-  // --- Task queue ---
-  'queue.worktree': {
-    group: 'queue',
-    label: 'Worktree note',
-    used: 'Added after every task the queue starts in its own git worktree.',
-    vars: {},
-    optional: true,
-    text: "You're in your own git worktree, on a fresh branch made for this task. Commit there, push it, and open the pull request from it.",
+  // --- Changes window ---
+  'changes.ship': {
+    group: 'changes',
+    label: 'Commit & open PR',
+    used: "What Commit & open PR in a desk's Changes window types to its worker, for the repository tab you are on.",
+    vars: {
+      title: "The task card's name, or the first line you typed when the worker had no card yet",
+      summary: "The task card's summary, or the rest of what you typed",
+      branch: 'The branch the checkout is on',
+      base: 'The branch the pull request targets',
+      where: 'Which checkout: "your checkout", or "the `web` folder of your workspace" for a worker across repositories',
+      open: 'How to finish: open a pull request against the base, or push to the one already open for the branch',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    needs: ['branch'],
+    text: [
+      'Commit your work in {{where}} and open a {{pullName}} for it.',
+      '',
+      'Your task, as the card above your desk sums it up: "{{title}}"',
+      '',
+      '{{summary}}',
+      '',
+      '1. Look over what is uncommitted (`git status`, `git diff`) and commit it on `{{branch}}` with a message that says what changed and why. Leave out anything that should not be committed, like build output or secrets, and say what you left out.',
+      '2. Push `{{branch}}` to origin.',
+      '3. {{open}}',
+      '4. Reply with its link.',
+    ].join('\n'),
   },
 
   // --- Board agents ---
   'station.issues': station('issues'),
   'station.pulls': station('pulls'),
-  'station.queue': station('queue'),
+  'station.actions': station('actions'),
 
   // --- Team lead & subagents ---
   'station.lead': {
@@ -347,165 +373,13 @@ const DEFS = {
     text: '📨 {{news}} Run `office-workers wait` to read what your team said, then carry on with what you were asked.',
   },
 
-  // --- Meeting room ---
-  'meeting.brief': {
-    group: 'meetings',
-    label: 'Sitting down',
-    used: 'What every worker at the table is told when it sits down, ahead of its first part.',
-    vars: {
-      title: "The meeting's title",
-      role: 'Their role at the table',
-      pattern: 'The kind of meeting: Debate, Lead & team…',
-      others: 'The other roles at the table',
-      how: 'How the rounds of this kind of meeting go',
-      about: 'What the meeting is about, as it was called',
-      pullRequest: 'For a pull request: a line saying which and how to read it (empty otherwise)',
-      issue: 'For an issue: a line saying which and how to read it (empty otherwise)',
-      cwd: 'Their working directory',
-      notes: "The notes folder, where they read each other's parts",
-      output: "The output file, as it's named in the project",
-      outputPath: 'The output file, by its full path',
-      rounds: 'The round limit: "3 rounds"',
-      where: 'What they may and may not do in the checkout (commit, push, switch branches)',
-      ...FORGE_VARS,
-      ...PULL_WORDS,
-    },
-    text: [
-      '{{title}}',
-      "You're the {{role}} in a {{pattern}} meeting in Droid Office's meeting room, round the table with {{others}}. {{how}}",
-      'What the meeting is about:\n{{about}}',
-      '{{pullRequest}}',
-      '{{issue}}',
-      'How it runs: the office hands each of you your part of every round in a message like this one. Do just that part, write it to the file it names, and end your turn; the next round starts once every part of this one is written. Your working directory is {{cwd}}, and every file of the meeting is in it: the notes go in {{notes}}/, which is where you read what the others wrote. The meeting ends when {{output}} ({{outputPath}}) is written, and only the part that says so writes it. It has {{rounds}} at most, so keep your notes short: bullets over prose.',
-      '{{where}}',
-    ].join('\n\n'),
-  },
-  'meeting.wait': {
-    group: 'meetings',
-    label: 'No part in round 1',
-    used: 'Told (after sitting down) to a worker with nothing to do in the first round, like the team in Lead & team.',
-    vars: {},
-    text: "Round 1 has no part for you. Reply in one line that you're ready and end your turn; your part comes in a later message.",
-  },
-  'meeting.nudge': {
-    group: 'meetings',
-    label: 'Nudge',
-    used: 'Sent once to a worker that ended its turn without writing its part.',
-    vars: { file: 'The file the meeting is waiting on' },
-    needs: ['file'],
-    text: 'You ended your turn without writing {{file}}, which the meeting is waiting on. Write it now, then end your turn.',
-  },
-  'meeting.debate.propose': {
-    group: 'meetings',
-    label: 'Debate · propose',
-    used: 'Round 1 of a Debate, for everyone at the table.',
-    vars: { role: 'Their role', file: FILE_NOTE },
-    needs: ['file'],
-    text: "Propose your answer, from where you stand as the {{role}}: what you'd do, why, and what it costs. Write it to {{file}}, then end your turn.",
-  },
-  'meeting.debate.critique': {
-    group: 'meetings',
-    label: 'Debate · critique',
-    used: 'The rounds of a Debate between the first and the last, for everyone at the table.',
-    vars: { previousRound: 'The round before this one', theirNotes: "The others' notes from it", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Read the others' notes from round {{previousRound}}: {{theirNotes}}. Say where they're wrong or miss something, then give your revised proposal. Write it to {{file}}, then end your turn.",
-  },
-  'meeting.debate.decide': {
-    group: 'meetings',
-    label: 'Debate · decide',
-    used: 'The last round of a Debate, for the head of the table.',
-    vars: { notes: 'The notes folder', lastNotes: "The last round's notes", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read every note in {{notes}}/ (the last round's are {{lastNotes}}). Weigh the proposals and critiques, and write the decision to {{output}}: what was decided and why, the options that lost and why, and what's still open. ${OUTPUT}`,
-  },
-  'meeting.lead.plan': {
-    group: 'meetings',
-    label: 'Lead & team · plan',
-    used: 'Round 1 of Lead & team, for the lead.',
-    vars: { parts: 'How many parts: "2 parts"', team: 'The rest of the table, by role', exampleRole: "The first teammate's role", file: 'The plan, which the meeting waits for' },
-    needs: ['file'],
-    text: 'Read the task and the code it touches, and split the work into {{parts}}, one each for {{team}}. Write the plan to {{file}}: a section for each of them headed with their role (like "## {{exampleRole}}"), saying what to do and which files they own, so that no two of them touch the same file. Don\'t make the changes yourself. Then end your turn.',
-  },
-  'meeting.lead.part': {
-    group: 'meetings',
-    label: 'Lead & team · do a part',
-    used: 'Round 2 of Lead & team, for each teammate.',
-    vars: { plan: "The lead's plan", role: 'Their role, which heads their section of it', lead: "The lead's role", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Read {{plan}} and do your part, the section headed \"## {{role}}\". Change only the files it gives you, and don't commit. When you're done, write what you did and what the {{lead}} should know (what you couldn't do, how you checked it) to {{file}}, then end your turn.",
-  },
-  'meeting.lead.merge': {
-    group: 'meetings',
-    label: 'Lead & team · merge',
-    used: 'Round 3 of Lead & team, for the lead.',
-    vars: { reports: "The team's reports", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read the team's reports ({{reports}}) and look at their changes (git status, git diff). Fix whatever doesn't fit together and check that it works (build it, run the tests). Then write {{output}}: what was done, by whom, and how it was checked. ${OUTPUT} Don't commit.`,
-  },
-  'meeting.mapreduce.map': {
-    group: 'meetings',
-    label: 'Map-reduce · map',
-    used: 'Round 1 of Map-reduce, for each mapper.',
-    vars: { parts: 'Their parts, one "- " line each', file: FILE_NOTE },
-    needs: ['parts', 'file'],
-    text: 'Do the task for your parts, and only those:\n{{parts}}\nWrite what you found or did to {{file}}, a section per part, then end your turn.',
-  },
-  'meeting.mapreduce.reduce': {
-    group: 'meetings',
-    label: 'Map-reduce · reduce',
-    used: 'Round 2 of Map-reduce, for the head of the table.',
-    vars: { results: "The mappers' notes", output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `Read the mappers' results ({{results}}) and combine them into {{output}}: one result that reads as a whole, not a pile of sections. ${OUTPUT}`,
-  },
-  'meeting.redblue.attack': {
-    group: 'meetings',
-    label: 'Red / blue · attack',
-    used: 'Every round of Red / blue, for the Red team. A note that says just NO FINDINGS ends the meeting early.',
-    vars: { previousFixes: "After round 1: a sentence (starting with a space) pointing at the Blue team's last fixes. Empty in round 1", file: FILE_NOTE },
-    needs: ['file'],
-    text: "Attack the change the meeting is about like an adversary would: bugs, security holes, unhandled edge cases, broken error handling. Read the code; don't change it.{{previousFixes}} List each finding in {{file}} with its file:line, what goes wrong and how to make it happen, the most serious first. If you find nothing worth fixing, write just NO FINDINGS. Then end your turn.",
-  },
-  'meeting.redblue.fix': {
-    group: 'meetings',
-    label: 'Red / blue · fix',
-    used: 'Every round of Red / blue, for the Blue team.',
-    vars: { findings: "The Red team's findings", file: "The Blue team's note on what it did", lastRound: 'In the last round: a sentence (starting with a space) asking it to write the output too. Empty otherwise', output: OUTPUT_NOTE },
-    needs: ['file', 'lastRound'],
-    text: "Read the Red team's findings in {{findings}} and fix each one that's real, in the checkout (don't commit). For each, say in {{file}} what you did, or why it isn't a problem.{{lastRound}} Then end your turn.",
-  },
-  'meeting.redblue.writeup': {
-    group: 'meetings',
-    label: 'Red / blue · write it up',
-    used: 'Red / blue, once the Red team finds nothing more: for the Blue team.',
-    vars: { findings: "The Red team's last note", notes: 'The notes folder', output: OUTPUT_NOTE },
-    needs: ['output'],
-    text: `The Red team found nothing more in {{findings}}. Write {{output}}: every finding from every round ({{notes}}/), what was fixed and how, and what's still open. ${OUTPUT} Don't commit.`,
-  },
-  'meeting.review.review': {
-    group: 'meetings',
-    label: 'Review panel · review',
-    used: 'Round 1 of a Review panel, for each reviewer. A note that says just NO FINDINGS counts as nothing found.',
-    vars: {
-      number: 'The pull request number',
-      ref: 'Its number as written: #12, or !12 on a GitLab floor',
-      read: 'How to read it: gh pr view 12 and gh pr diff 12, or the glab mr commands on a GitLab floor',
-      role: 'Their lens: Security, Performance…',
-      file: FILE_NOTE,
-      ...PULL_WORDS,
-      ...FORGE_VARS,
-    },
-    needs: ['file'],
-    text: "Review {{pullName}} {{ref}} through your lens, {{role}}, and nothing else. Read it with {{read}}; don't check it out or change any files. Write your findings to {{file}}, one per bullet: the file:line, what's wrong and what to do about it, the most serious first. If you find nothing, write just NO FINDINGS. Then end your turn.",
-  },
-  'meeting.review.combine': {
-    group: 'meetings',
-    label: 'Review panel · combine',
-    used: 'Round 2 of a Review panel, for the head of the table. The office posts the file on the pull request.',
-    vars: { findings: "Every reviewer's notes", exampleRole: "A reviewer's lens, for the example tag", output: OUTPUT_NOTE, ...PULL_WORDS, ...FORGE_VARS },
-    needs: ['output'],
-    text: `Read every reviewer's findings ({{findings}}). Drop the duplicates, keeping the clearest wording, and write one combined review to {{output}} in Markdown: a short summary with your verdict first, then the findings, the most serious first, each tagged with the lens it came from in bold brackets like **[{{exampleRole}}]**, with its file:line. Don't post it: the office posts it on the {{pullName}} once the file is written. ${OUTPUT}`,
+  // --- Whiteboard ---
+  'whiteboard.ping': {
+    group: 'whiteboard',
+    label: 'Ping a worker',
+    used: "Typed into a worker's terminal by the Whiteboard window's Ping a worker button: queued behind its turn when it's working, and waking it when it's asleep.",
+    vars: { floor: "The floor's name" },
+    text: 'The owner updated the Whiteboard. Run `office-whiteboard read` and look at what changed.',
   },
 
   // --- Across repositories ---
@@ -529,6 +403,46 @@ const DEFS = {
       '- When the task spans projects, keep them working together and test them together. Commit in each project you change.',
       "- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}'s; in the other projects' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.",
     ].join('\n'),
+  },
+
+  // --- Worktree setup ---
+  'worktree.setup': {
+    group: 'worktrees',
+    label: 'Set up with a worker',
+    used: 'What the hire window opens with from Settings → Workers → Worktree setup → Have a worker set it up: a worker writes the repository’s setup file and opens a pull request with it.',
+    vars: {
+      file: 'The setup file at the repository root: .droid-office.json',
+      include: 'The file of extra patterns to copy that other tools read too: .worktreeinclude',
+      now: 'What a new worktree on the floor gets today, in words',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    needs: ['file'],
+    text: [
+      'Set this repository up so that Droid Office can make a fresh git worktree of it ready for a worker by itself, then open a {{pullName}} with the change.',
+      '',
+      "When Droid Office makes a worktree for a worker, it reads `{{file}}` at the worktree's root. It copies the untracked files in the main checkout that match `worktree.copy` (gitignore patterns, plus any in `{{include}}`) into the new worktree, then runs `worktree.setup` there in the worker's terminal before the agent starts. The command runs with sh on macOS and Linux and cmd on Windows, with DROID_OFFICE_ROOT_PATH set to the main checkout and DROID_OFFICE_WORKTREE_PATH to the new worktree. Without the file, a new worktree {{now}}.",
+      '',
+      '1. Work out what a fresh clone of this project needs before its build, tests and dev server work: dependency installs for every package manager and workspace in it (lockfile-exact where the tool allows, like `npm ci`, `pnpm install --frozen-lockfile` or `uv sync`), code generation, git submodules. Read the README, AGENTS.md, CI workflows, Makefiles and package scripts. Leave out anything slow and optional, anything that needs secrets or a running service, and anything that writes outside the worktree.',
+      '2. Find the untracked local files a worktree needs from the main checkout, like `.env` files or local config: check .gitignore and what the code reads. Write them as patterns anchored at the root, like `/.env`. Never commit their contents.',
+      '3. Write `{{file}}` at the repository root (or fix the one that is there):',
+      '```json',
+      '{ "worktree": { "setup": "npm ci", "copy": ["/.env"] } }',
+      '```',
+      'Keep `setup` to one command line, steps joined with `&&`. When it needs more than that, add a script to the repository (like `scripts/worktree-setup.sh`) and run it from `setup`.',
+      '4. Test it from scratch in your own worktree: delete what the setup creates (like node_modules or .venv), run the command, then check that the project builds and its tests run. Fix it until they do.',
+      '5. If the README or AGENTS.md documents how to set the project up, mention the file there in a sentence.',
+      '6. Commit, push your branch and open a {{pullName}} with `{{cli}}` saying what the setup runs and roughly how long it takes.',
+    ].join('\n'),
+  },
+
+  // --- Wand commands ---
+  'wand.ship': {
+    group: 'wand',
+    label: 'Ship it',
+    used: 'A close-range Ship it confetti pop sends this intent to the one worker under the crosshair. The worker chooses how to ship its work.',
+    vars: {},
+    text: 'Ship your current work: commit and push it to main, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it.',
   },
 
   // --- Worker signs ---

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+<title>Terminal</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  /* The app serves these from its own font resources (ui/worker/TerminalPage.kt). */
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('/fonts/geist_mono.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: 'Droid Office Terminal Symbols';
+    src: url('/fonts/terminal_symbols.ttf') format('truetype');
+    font-weight: 400 700;
+    font-style: normal;
+    unicode-range: U+E000-F8FF, U+F0000-F0FFF;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0a0a0a;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #term {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    transform-origin: 0 0;
+  }
+  /* Swipes scroll it; the app shows Latest instead of a scrollbar. */
+  .xterm .xterm-scrollable-element > .scrollbar,
+  .xterm .xterm-viewport::-webkit-scrollbar {
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script type="module" src="terminal.js"></script>
+</body>
+</html>

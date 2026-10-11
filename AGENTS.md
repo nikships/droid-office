@@ -2,7 +2,7 @@
 
 A 3D office in the browser where its owner hires droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
-Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, meetings, queue, floors, state files).
+Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, pipelines, floors, state files).
 
 Planned work has written plans; follow them and keep them current when doing that work:
 
@@ -10,23 +10,22 @@ Planned work has written plans; follow them and keep them current when doing tha
 | --- | --- |
 | The single-owner shape (why there is no multiplayer, accounts, voice, chat or presence) | [docs/single-owner.md](docs/single-owner.md) (implemented) |
 | Factory: the API key connection, and the computers, sessions and credits, CI, AutoWiki and cloud workers built on it | [docs/factory.md](docs/factory.md) (implemented) |
+| The Whiteboard: the agent and owner board that replaces the Services board, and removing Services | [docs/whiteboard.md](docs/whiteboard.md) (implemented) |
 
 ## Repository map
 
 | Path | Contents |
 | --- | --- |
-| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards, queue, meetings, floors |
+| `src/server/` | Node server: CLI and config, workers, PTY host, hooks, GitHub/GitLab boards and pipelines, floors |
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
-| `bin/droid-office.js` | Published CLI entry; loads the built `dist/server/server/cli.js` |
-| `bin/office-queue.js` | Plain-Node `office-queue` command that board agents use to reach the task queue |
+| `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
-| `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
-| `install.sh`, `install.ps1` | Release installers for macOS/Linux and Windows |
+| `deploy/` | `aws.sh` (EC2 lifecycle), `provision.sh` (machine setup it runs) and `factory-computer.sh` (a Factory Droid Computer's repository setup script) |
 | `docs/` | `guide.md` (every feature, setup and how each subsystem works) and the README pictures |
 
 ## Nested instructions
@@ -35,7 +34,7 @@ This file is the layer that applies everywhere. Each directory below has its own
 
 | Path | Read it before you |
 | --- | --- |
-| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, queue, meetings or floors |
+| [`src/server/AGENTS.md`](src/server/AGENTS.md) | change the Node server, workers, PTYs, boards, pipelines or floors |
 | [`src/shared/AGENTS.md`](src/shared/AGENTS.md) | change a type or helper compiled into both server and client |
 | [`src/client/AGENTS.md`](src/client/AGENTS.md) | change the Vite app, or anything `ui/` and `world/` share |
 | [`src/client/ui/AGENTS.md`](src/client/ui/AGENTS.md) | change a DOM window or panel |
@@ -43,7 +42,7 @@ This file is the layer that applies everywhere. Each directory below has its own
 | [`src/desktop/AGENTS.md`](src/desktop/AGENTS.md) | change the Mac app |
 | [`android/AGENTS.md`](android/AGENTS.md) | change the Android app |
 | [`tests/AGENTS.md`](tests/AGENTS.md) | add or change a test (`tests/*.test.ts` only; a file in a subdirectory never runs) |
-| [`bin/AGENTS.md`](bin/AGENTS.md) | change a published command |
+| [`bin/AGENTS.md`](bin/AGENTS.md) | change a checkout, packaged app or worker-facing command |
 | [`deploy/AGENTS.md`](deploy/AGENTS.md) | change AWS or VPS provisioning |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | change the guide or another doc |
 | [`tools/AGENTS.md`](tools/AGENTS.md) | change a generator under `tools/` |
@@ -71,11 +70,14 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 
 `node bin/droid-office.js` runs `dist/`, so run `npm run build` after changing source.
 
+`.droid-office.json` at the root is what Droid Office runs in a fresh worktree of this repository: `npm ci`, after copying an untracked `android/local.properties` from the main checkout. Update it when a fresh clone needs another step or local file.
+
 ## Conventions
 
-- `.droid-office/` is runtime state (config, workers, scrollback, queue, worktrees). Never commit it.
+- `.droid-office/` is runtime state (config, workers, scrollback, worktrees). Never commit it.
+- The Mac app release is the only supported production install. Developers can clone and run the source; do not add standalone installers, release tarballs or curl/PowerShell install commands. The npm package is private.
 - The Mac app runs the office, its PTY host and the commands written for workers on the Electron binary (`process.execPath`) with `ELECTRON_RUN_AS_NODE=1`. A new script the office runs with `process.execPath` goes through `runAsNode` in `src/server/workers.ts`, and must stay a file on disk (the app has no asar archive).
-- `.env.example` lists every environment variable the office and the installers read. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
+- `.env.example` lists every environment variable the office reads. Adding, renaming or removing one updates `.env.example` in the same change; `tests/env-example.test.ts` fails otherwise. Never commit a `.env` file.
 - Do not change the `version` in `package.json` except to start a new minor. `.github/workflows/release.yml` publishes every change on `main` as `v<major>.<minor>.<commit count on main>`.
 - Commit subjects use a conventional prefix: `feat:`, `fix:`, `docs:` or `chore:`.
 - Fix what `npm run lint` reports in code. Never add `biome-ignore` or other suppression comments, and do not turn off rules in `biome.jsonc` to pass a check.
@@ -99,6 +101,6 @@ npm run typecheck
 npm run test:coverage
 ```
 
-CI then packs the release and starts it through `install.sh` (steps "Pack the release" and "Install it with install.sh and start it"). When changing `install.sh`, the `files` or `bin` fields of `package.json`, or server startup, also run those steps locally as the workflow writes them.
+CI then sets the release version and starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. The Mac job packages the app and starts the office on the app's own Electron; when changing app packaging or startup, also run that smoke test.
 
-CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters.
+CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.

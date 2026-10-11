@@ -95,3 +95,62 @@ test('a visible arriving worker outside the office is targetable, while unregist
   scene.updateMatrixWorld(true);
   assert.equal(gunHit(f.ray, f.office, f.workers), null, 'a miss never becomes a hit on a player');
 });
+
+function laptopFixture(distance = 2) {
+  const f = fixture();
+  const laptop = new THREE.Group();
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.45), new THREE.MeshBasicMaterial());
+  screen.position.z = -distance;
+  laptop.add(screen);
+  f.office.add(laptop);
+  const screens = new Map<THREE.Object3D, string>([[screen, 'laptop-worker']]);
+  return { ...f, laptop, screen, screens };
+}
+
+test('a shot at a laptop screen selects its UI rather than the worker behind it, at any distance', () => {
+  for (const distance of [2, 12, 1000]) {
+    const f = laptopFixture(distance);
+    f.body.position.z = -distance - 1;
+    f.office.updateMatrixWorld(true);
+    const hit = gunHit(f.ray, f.office, f.workers, f.screens);
+    assert.equal(hit?.hit.object, f.screen);
+    assert.ok(Math.abs(hit!.hit.distance - distance) < 1e-9);
+    assert.equal(hit?.laptopWorkerId, 'laptop-worker');
+    assert.equal(hit?.workerId, null, 'screen shots do not damage the worker');
+  }
+});
+
+test('screen shots still respect visible blockers and do not treat the laptop shell as its UI', () => {
+  const f = laptopFixture();
+  f.office.add(f.blocker);
+  f.office.updateMatrixWorld(true);
+  let hit = gunHit(f.ray, f.office, f.workers, f.screens);
+  assert.equal(hit?.hit.object, f.blocker);
+  assert.equal(hit?.laptopWorkerId, null);
+  f.laptop.add(f.blocker);
+  f.office.updateMatrixWorld(true);
+  hit = gunHit(f.ray, f.office, f.workers, f.screens);
+  assert.equal(hit?.laptopWorkerId, null, 'another solid inside the laptop is not a screen');
+});
+
+test('hidden laptop screens cannot open a UI or block a worker', () => {
+  for (const hidden of ['laptop', 'screen', 'material', 'opacity'] as const) {
+    const f = laptopFixture();
+    if (hidden === 'laptop') f.laptop.visible = false;
+    else if (hidden === 'screen') f.screen.visible = false;
+    else if (hidden === 'material') f.screen.material.visible = false;
+    else f.screen.material.opacity = 0;
+    f.office.updateMatrixWorld(true);
+    const hit = gunHit(f.ray, f.office, f.workers, f.screens);
+    assert.equal(hit?.workerId, 'worker');
+    assert.equal(hit?.laptopWorkerId, null);
+  }
+});
+
+test('an unregistered display remains a solid miss, not a laptop UI target', () => {
+  const f = laptopFixture();
+  f.office.updateMatrixWorld(true);
+  const hit = gunHit(f.ray, f.office, f.workers);
+  assert.equal(hit?.hit.object, f.screen);
+  assert.equal(hit?.laptopWorkerId, null);
+});

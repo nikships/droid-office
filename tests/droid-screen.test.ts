@@ -34,6 +34,14 @@ test("Droid's screen says whether it's busy, asking or at rest", () => {
 test('only the bottom of the screen counts, not what scrolled by above it', () => {
   const quoted = ['  cat src/server/droid-screen.ts', '  /Press ESC to stop/  /inspect approval details/', ...Array.from({ length: 6 }, (_, i) => `  line ${i}`)];
   assert.equal(readDroidScreen([...quoted, ...IDLE]), 'idle');
+  // A reply right above the input box, or the box itself, quoting a dialog's key hints: the footer under them says it's at rest.
+  const reply = ['Assistant: Click "inspect approval details" to see what was requested.', '', ' Auto (Off) · all actions require approval        Sonnet 5.5 (High)'];
+  assert.equal(readDroidScreen([...reply, ...box(''), ...footer]), 'idle');
+  assert.equal(screenStatus('done', readDroidScreen([...reply, ...box(''), ...footer])!, true), undefined);
+  assert.equal(readDroidScreen(['   Press ESC stop agent to cancel it.', '', ...box(''), ...footer]), 'idle');
+  assert.equal(readDroidScreen([...history, ...box('what does inspect approval details do?'), ...footer]), 'idle');
+  // Quoted the same way while a turn runs: still busy.
+  assert.equal(readDroidScreen([...reply, ' ⠋ Executing...  (Press ESC to stop)', ...box(''), ...footer]), 'busy');
   // Something else (a login, a menu, another program): no say.
   assert.equal(readDroidScreen(['Sign in to Factory', 'Open https://app.factory.ai/device', '']), undefined);
   assert.equal(readDroidScreen([]), undefined);

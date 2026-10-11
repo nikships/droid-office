@@ -3,11 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars } from '../src/shared/prompts.js';
+import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, issuePromptVars, mergeCommand, placeholders, promptText, pullPromptVars, shipPromptVars } from '../src/shared/prompts.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import { stationBrief } from '../src/server/stations.js';
-import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentChoice, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
+import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
 function scratch(t: { after(fn: () => void): void }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-prompts-'));
@@ -39,6 +38,30 @@ test('the editor names no prompt with an emoji', () => {
   for (const id of PROMPT_IDS) assert.doesNotMatch(PROMPTS[id].label, /\p{Extended_Pictographic}/u, id);
 });
 
+test('Commit & open PR asks the worker to ship its checkout, from its task card, on either forge', () => {
+  const github = fillPrompt(PROMPTS['changes.ship'].text, shipPromptVars('github', { title: 'Fix Login Redirect', summary: 'Tracing why expired sessions still reach the dashboard', branch: 'office/pixel-1', base: 'main' }));
+  assert.equal(
+    github,
+    [
+      'Commit your work in your checkout and open a pull request for it.',
+      '',
+      'Your task, as the card above your desk sums it up: "Fix Login Redirect"',
+      '',
+      'Tracing why expired sessions still reach the dashboard',
+      '',
+      '1. Look over what is uncommitted (`git status`, `git diff`) and commit it on `office/pixel-1` with a message that says what changed and why. Leave out anything that should not be committed, like build output or secrets, and say what you left out.',
+      '2. Push `office/pixel-1` to origin.',
+      '3. Open a pull request against `main` with `gh`. Title it after the task, and say in the description what changed, why, and how you checked it.',
+      '4. Reply with its link.',
+    ].join('\n'),
+  );
+
+  // Across repositories, with a merge request already open and no summary: the empty line goes.
+  const gitlab = fillPrompt(PROMPTS['changes.ship'].text, shipPromptVars('gitlab', { title: 'Add Dark Mode', branch: 'office/nova-2', base: 'develop', folder: 'web', pr: 9 }));
+  assert.match(gitlab, /^Commit your work in the `web` folder of your workspace and open a merge request for it\.\n\nYour task, as the card above your desk sums it up: "Add Dark Mode"\n\n1\. /);
+  assert.match(gitlab, /3\. Merge request !9 is already open for `office\/nova-2`, so the push updates it\. If its description no longer says what the branch does, update it with `glab`\./);
+});
+
 // What the boards sent before their prompts could be rewritten, word for word, on each forge.
 const GITHUB_PULL = { number: 5, title: 'Fix "{{title}}" the dog', url: 'https://github.com/o/r/pull/5', headRefName: 'feat/dog', baseRefName: 'main' };
 const GITLAB_PULL = { number: 9, title: 'Fix the cat', url: 'https://gitlab.example.com/grp/sub/proj/-/merge_requests/9', headRefName: 'feat/cat', baseRefName: 'develop' };
@@ -51,7 +74,6 @@ test('the boards send what they always did on a GitHub floor', () => {
     'Work on GitHub issue #7: "Dog barks".\n\nRead it first with `gh issue view 7 --comments`. Create a new branch, implement the change, verify it, then open a pull request that closes #7.',
   );
   assert.equal(fillPrompt(PROMPTS['issue.ask'].text, issue), 'This is about GitHub issue #7 "Dog barks" (https://github.com/o/r/issues/7). Read it with `gh issue view 7 --comments`.');
-  assert.equal(fillPrompt(PROMPTS['issue.meeting'].text, issue), 'GitHub issue #7: “Dog barks”. Read it first with gh issue view 7 --comments.');
 
   const pull = pullPromptVars('github', GITHUB_PULL, 'o/r', 'o/r');
   assert.equal(
@@ -62,7 +84,6 @@ test('the boards send what they always did on a GitHub floor', () => {
     fillPrompt(PROMPTS['pull.ask'].text, pull),
     'This is about pull request #5 "Fix "{{title}}" the dog" (https://github.com/o/r/pull/5), branch `feat/dog` into `main`. Read it with `gh pr view 5 --comments` and see its changes with `gh pr diff 5`.',
   );
-  assert.equal(fillPrompt(PROMPTS['pull.panel'].text, pull), 'Review pull request #5: “Fix "{{title}}" the dog”.');
   const checkout =
     '1. Get onto its branch: `gh pr checkout 5`. If git says `feat/dog` is already checked out in another worktree, use `git fetch origin feat/dog && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:feat/dog`.';
   assert.equal(
@@ -100,7 +121,6 @@ test('the boards send what they always did on a GitLab floor', () => {
     'Work on GitLab issue #3: "Cat meows".\n\nRead it first with `glab issue view 3 --comments`. Create a new branch, implement the change, verify it, then open a merge request with `glab mr create` whose description says "Closes #3".',
   );
   assert.equal(fillPrompt(PROMPTS['issue.ask'].text, issue), 'This is about GitLab issue #3 "Cat meows" (https://gitlab.example.com/grp/sub/proj/-/issues/3). Read it with `glab issue view 3 --comments`.');
-  assert.equal(fillPrompt(PROMPTS['issue.meeting'].text, issue), 'GitLab issue #3: “Cat meows”. Read it first with glab issue view 3 --comments.');
 
   const pull = pullPromptVars('gitlab', GITLAB_PULL, 'grp/sub/proj', GITLAB_PROJECT);
   assert.equal(
@@ -111,7 +131,6 @@ test('the boards send what they always did on a GitLab floor', () => {
     fillPrompt(PROMPTS['pull.ask'].text, pull),
     'This is about merge request !9 "Fix the cat" (https://gitlab.example.com/grp/sub/proj/-/merge_requests/9), branch `feat/cat` into `develop`. Read it with `glab mr view 9 --comments` and see its changes with `glab mr diff 9`.',
   );
-  assert.equal(fillPrompt(PROMPTS['pull.panel'].text, pull), 'Review merge request !9: “Fix the cat”.');
   const checkout =
     '1. Get onto its branch: `glab mr checkout 9`. If git says `feat/cat` is already checked out in another worktree, use `git fetch origin feat/cat && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:feat/cat`.';
   assert.equal(
@@ -153,25 +172,22 @@ test('a rewritten board prompt fills in the floor it is sent on', () => {
   );
 });
 
-test('the board agents are briefed as they always were on both forges', () => {
-  const brief = (kind: 'issues' | 'pulls' | 'queue', forge: 'github' | 'gitlab') => stationBrief(kind, forge);
+test('the board agents are briefed for their forge on both forges', () => {
   for (const forge of ['github', 'gitlab'] as const) {
     const [site, cli, pull] = forge === 'gitlab' ? ['GitLab', 'glab', 'merge request'] : ['GitHub', 'gh', 'pull request'];
-    for (const kind of ['issues', 'pulls', 'queue'] as const) {
-      const b = brief(kind, forge);
+    for (const kind of ['issues', 'pulls', 'actions'] as const) {
+      const b = stationBrief(kind, forge);
       assert.doesNotMatch(b, /\{\{/, `${forge} ${kind}`);
-      assert.match(b, new RegExp(`a task usually ends with a ${pull}\\. Use it`));
-      assert.match(b, new RegExp(`each task's id, status, title, worker and ${pull}\\)`));
-      assert.match(b, new RegExp(`linked to that ${site} issue, which is assigned`));
+      assert.doesNotMatch(b, /task queue|office-queue/, `${forge} ${kind}`);
+      assert.match(b, new RegExp(`to open a ${pull}\\.`), `${forge} ${kind}`);
       assert.ok(b.endsWith('The request:'));
     }
-    assert.match(brief('issues', forge), new RegExp(`${site} issues with the ${cli} CLI`));
+    assert.match(stationBrief('issues', forge), new RegExp(`${site} issues with the ${cli} CLI`));
   }
-  assert.match(brief('pulls', 'gitlab'), /merge requests with the glab CLI: sum them up and review them \(glab mr view --comments, glab mr diff, glab ci status\)/);
-  assert.match(brief('queue', 'gitlab'), /to open a merge request with glab mr create\), since/);
+  assert.match(stationBrief('pulls', 'gitlab'), /merge requests with the glab CLI: sum them up and review them \(glab mr view --comments, glab mr diff, glab ci status\)/);
   assert.equal(
-    brief('issues', 'github').split('\n\n')[1],
-    "You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them. To get an issue worked on, put it on the task queue with its number.",
+    stationBrief('issues', 'github').split('\n\n')[1],
+    "You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them.",
   );
 });
 
@@ -197,8 +213,8 @@ test('a rewritten prompt is kept, used, and put back to the default', (t) => {
 
   // Empty only where empty means "send nothing"; never too long, never an unknown prompt.
   assert.match(book.setPrompt('issue.work', '  ', 'Ada') ?? '', /can’t be empty/);
-  assert.equal(book.setPrompt('queue.worktree', '', 'Ada'), undefined);
-  assert.equal(book.text('queue.worktree'), '');
+  assert.equal(book.setPrompt('issue.ask', '', 'Ada'), undefined);
+  assert.equal(book.text('issue.ask'), '');
   assert.match(book.setPrompt('issue.work', 'x'.repeat(PROMPT_MAX + 1), 'Ada') ?? '', /at most/);
   assert.match(book.setPrompt('nope', 'x', 'Ada') ?? '', /Unknown prompt/);
   assert.match(book.setPrompt('constructor', 'x', 'Ada') ?? '', /Unknown prompt/);
@@ -234,74 +250,4 @@ test('a board agent is told its rewritten brief, with the floor filled in', () =
   assert.equal(stationBrief('pulls', 'github', source), 'You review pull requests with GitHub. The request:');
   assert.equal(stationBrief('pulls', 'gitlab', source), 'You review merge requests with GitLab. The request:');
   assert.equal(stationBrief('issues', 'gitlab', source), stationBrief('issues', 'gitlab'));
-});
-
-function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentChoice | undefined, note?: string, useWorktree = true) {
-  const dir = scratch(t);
-  const workers: WorkerInfo[] = [];
-  const manager: QueueWorkers = {
-    officeDefault,
-    list: () => workers,
-    deskOccupied: (desk) => workers.some((w) => w.deskId === desk),
-    spawn(deskId, by, prompt, _worktree, kind, model, effort) {
-      const w: WorkerInfo = {
-        id: `w${workers.length}`,
-        deskId,
-        kind,
-        model,
-        effort,
-        prompt,
-        name: 'T',
-        color: '#fff',
-        status: 'working',
-        acked: false,
-        createdBy: by,
-        createdAt: Date.now(),
-        cols: 80,
-        rows: 24,
-        open: false,
-      };
-      workers.push(w);
-      return w;
-    },
-    kill: async () => ({}),
-  };
-  const queue = new TaskQueue(dir, manager, useWorktree, {
-    update() {},
-    toast() {},
-    claimIssue: async () => undefined,
-    refreshGitHub() {},
-    hiringPaused: () => undefined,
-    emptied() {},
-    ...(note !== undefined ? { worktreeNote: () => note } : {}),
-  });
-  t.after(() => queue.shutdown());
-  return { queue, workers };
-}
-
-test('a task nobody picked a worker for runs on the office default, model and effort included; one that did keeps its own', (t) => {
-  const { queue, workers } = queueFixture(t, { model: 'custom:droidproxy:gpt-6-sol', effort: 'low' });
-  assert.equal(queue.add('Fix the dog', 'Queue agent'), undefined);
-  assert.deepEqual([workers[0].model, workers[0].effort], ['custom:droidproxy:gpt-6-sol', 'low']);
-  assert.equal(queue.add('Fix the cat', 'Ada', undefined, undefined, 'glm-5.3-flash'), undefined);
-  assert.deepEqual([workers[1].model, workers[1].effort], ['glm-5.3-flash', undefined]);
-  // Without one set, it's Droid's own default model, as it always was.
-  const plain = queueFixture(t, undefined);
-  plain.queue.add('Fix it', 'Ada');
-  assert.deepEqual([plain.workers[0].model, plain.workers[0].effort], [undefined, undefined]);
-});
-
-test('the worktree note the queue adds is the old one by default, and can be rewritten or left off', (t) => {
-  const standard = queueFixture(t, undefined);
-  standard.queue.add('Fix it', 'Ada');
-  assert.equal(standard.workers[0].prompt, "Fix it\n\nYou're in your own git worktree, on a fresh branch made for this task. Commit there, push it, and open the pull request from it.");
-  const rewritten = queueFixture(t, undefined, 'Push to your branch.');
-  rewritten.queue.add('Fix it', 'Ada');
-  assert.equal(rewritten.workers[0].prompt, 'Fix it\n\nPush to your branch.');
-  const none = queueFixture(t, undefined, '');
-  none.queue.add('Fix it', 'Ada');
-  assert.equal(none.workers[0].prompt, 'Fix it');
-  const noGit = queueFixture(t, undefined, undefined, false);
-  noGit.queue.add('Fix it', 'Ada');
-  assert.equal(noGit.workers[0].prompt, 'Fix it');
 });

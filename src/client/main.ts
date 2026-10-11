@@ -1,9 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
-import { randomLook } from '../shared/avatar';
 import {
-  BALCONY,
   BEANBAGS,
   COMPUTE_WALL,
   DESK_BY_ID,
@@ -11,7 +9,6 @@ import {
   ELEVATOR,
   ELEVATOR_CAR,
   FLOOR,
-  GOLF_HOLE,
   LADDER,
   LOFT,
   POLE,
@@ -36,8 +33,7 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
-import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo, WorkerTask } from '../shared/protocol';
-import { MEETING_PATTERNS } from '../shared/meetings';
+import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
 import { isAsleep, isBusy, workerPr } from '../shared/status';
@@ -45,35 +41,35 @@ import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } f
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
-import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
+import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
+import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
 import { buildOffice, type DeskView, type InteractKind, type Interactable } from './world/office';
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
-import { DrunkVision } from './world/drunk';
-import { Booze, type Stage as Feeling } from './booze';
-import { djFrame, djTime } from './dnb';
-import { openBar } from './ui/bar';
-import { DRINK_BY_ID, ROOF, ROOF_NAME, type Drink } from '../shared/rooftop';
+import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import { Person, type PrBadge, Worker, type Stage } from './world/character';
-import { GolfBalls, PIN_DISTANCE, fly, pinText, type Flight, type Hit, type Shot } from './world/golf';
-import { Golfer } from './golf';
 import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
 import { Laptop } from './world/laptop';
-import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world/boards';
+import { BoardTexture, PipelinesBoardTexture } from './world/boards';
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
-import { Arrivals, Departures } from './world/leaving';
+import { Departures } from './world/leaving';
 import { Casualties } from './world/casualties';
 import { TeamLines, type TeamLink } from './world/team-lines';
 import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
+import { type Sidearm, SPELL_CONFETTI, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
+import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
+import { protegoWorkers, wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -84,21 +80,20 @@ import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openMo
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
-import { openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
+import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
 import { openPrompt, confirmDialog, sendHomeDialog, lostWorktreeDialog, routeWorktreeMessage, worktreePref } from './ui/prompt';
 import { issuePrompt, openBoard } from './ui/boards';
 import { openTicket, routeJiraMessage } from './ui/jira';
 import { bindFactory, watchFactory } from './factory';
-import { openFactorySessions } from './ui/factory-sessions';
 import { FactoryTvTexture } from './world/factory-tv';
 import { creditsNote } from '../shared/factory-sessions';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
-import { openServices, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
-import { openQueue } from './ui/queue';
+import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
+import { isLive, stateWord } from '../shared/pipelines';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
@@ -106,12 +101,16 @@ import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
+import { officePrompt } from './ui/prompts';
+import { forgeVars } from '../shared/prompts';
+import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 import { openPhone } from './ui/phone';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
+import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wall';
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
 import { setRackCubes } from './world/factory-props';
@@ -119,6 +118,7 @@ import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
+import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
 import { trackTitle } from '../shared/jukebox';
@@ -126,8 +126,6 @@ import { GAME, scoreText } from '../shared/cabinet';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
-import { MeetingBoardTexture, MeetingSignTexture, meetingStage } from './world/meeting';
-import { issueMeeting, openMeeting, type MeetingPreset } from './ui/meeting';
 
 // Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
 const loading = loadingScreen(() => () => {});
@@ -139,7 +137,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-const effect = new OutlineEffect(renderer, { defaultThickness: 0.0032, defaultColor: [0.2, 0.2, 0.2] });
+const effect = new OutlineEffect(renderer, { defaultThickness: 0.0018, defaultColor: [0.035, 0.035, 0.035] });
 const scene = new THREE.Scene();
 // It is always night; the sky's color and the fog change with the weather (world/sky.ts).
 scene.background = new THREE.Color('#0a0720');
@@ -169,12 +167,14 @@ office.group.add(teamLines.group);
 
 // The MacBook GLBs load after the scene exists; each laptop swaps its procedural
 // stand-in for them the first frame they are cached (see world/laptop.ts). A gun drawn before
-// magnum.glb lands stays empty until it does (see world/gun.ts).
+// magnum.glb lands stays empty until it does (see world/gun.ts), and so does a wand before wand.glb (world/wand.ts).
 void loadPropManifest()
   .then(() => preloadProps(Object.keys(propManifest())))
   .then(() => {
     const gun = propScene('magnum');
     if (gun) setMagnumModel(gun);
+    const wand = propScene('wand');
+    if (wand) setWandModel(wand);
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
@@ -198,7 +198,7 @@ noOutline(office.group);
 const STATION_INFO: Record<StationKind, { icon: string; offer: string; does: string; example: string }> = {
   issues: { icon: '📌', offer: 'Ask me about issues', does: 'I file, find, triage, label and close them', example: 'File an issue: the bean bag walks straight through the jukebox' },
   pulls: { icon: '🔀', offer: 'Ask me about PRs', does: 'I sum up, review, comment on and merge them', example: 'Review the newest PR and tell me if it’s ready to merge' },
-  queue: { icon: '📋', offer: 'Ask me to queue work', does: 'I turn it into tasks for fresh workers', example: 'Queue every open bug issue, most important first' },
+  actions: { icon: '🚀', offer: 'Ask me about CI', does: 'I kick off pipelines, re-run failures and explain what broke', example: 'Kick off the release workflow on main and tell me when it’s done' },
   lead: { icon: '🧭', offer: 'Give me a big job', does: 'I split it up and hire a team of subagents at the desks', example: 'Add dark mode: one subagent on the settings, one on the styles, one on the tests' },
 };
 /** The board agents waiting by their boards before anyone has asked them anything (see buildKiosk). */
@@ -246,12 +246,15 @@ store.on('workers', () => {
   deskLinks = k;
   renderPullsBoard();
 });
-const servicesTex = new ServicesBoardTexture();
-const renderServicesBoard = () => servicesTex.render(store.services.items, store.workers);
-mountBoard(office.boardMeshes.services, servicesTex.texture, renderServicesBoard, ['services', 'workers']);
-const queueTex = new QueueBoardTexture();
-const renderQueueBoard = () => queueTex.render(store.queue, store.workers);
-mountBoard(office.boardMeshes.queue, queueTex.texture, renderQueueBoard, ['queue', 'workers']);
+const pipelinesTex = new PipelinesBoardTexture();
+const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
+mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
+// Running runs' clocks and spinners move each second; the texture skips a redraw that would look the same.
+setInterval(() => {
+  if (store.pipelines.runs.some((r) => isLive(r.state))) renderPipelinesBoard();
+}, 1000);
+// Ages on finished runs tick by the minute.
+setInterval(renderPipelinesBoard, 60_000);
 // The compute wall on the west wall: this machine, and the Factory Droid Computers (world/factory-computers.ts).
 const computeWall = new ComputeWallTextures();
 const renderMachineBoard = () => {
@@ -274,13 +277,6 @@ setInterval(() => {
     stopWatchingWall = undefined;
   }
 }, 1000);
-// The meeting room: its output as it's written on the back wall, and how it's going on the door.
-const meetingBoardTex = new MeetingBoardTexture();
-const renderMeetingBoard = () => meetingBoardTex.render(store.meeting);
-mountBoard(office.meetingBoard, meetingBoardTex.texture, renderMeetingBoard, ['meeting']);
-const meetingSignTex = new MeetingSignTexture();
-const renderMeetingSign = () => meetingSignTex.render(store.meeting);
-mountBoard(office.meetingSign, meetingSignTex.texture, renderMeetingSign, ['meeting']);
 // Factory's CI automations on the north wall past the gong.
 /** This floor's GitHub repository (owner/repo), if its checkout has one. */
 const floorGithubRepo = () => {
@@ -293,6 +289,31 @@ mountBoard(office.boardMeshes.ci, ciTex.texture, () => renderCiBoard(), ['factor
 // Its "5M" ages: redrawn only when one of them ticks over.
 setInterval(() => renderCiBoard(), 60_000);
 const showCi = (add = false) => openCiWindow({ floorRepo: floorGithubRepo(), add });
+// The floor's Whiteboard on the east wall, following its persisted selection (world/whiteboard-wall.ts).
+const whiteboardTex = new WhiteboardTexture(() => renderWhiteboardWall());
+/** This floor's Whiteboard, as the window has it (null before its snapshot). */
+const floorWhiteboard = () => (store.floor ? store.whiteboard.board(store.floor) : null);
+/** The card the wall shows, or undefined when it shows the grid. */
+const wallCard = () => {
+  const board = floorWhiteboard();
+  const view = board && wallView(board);
+  return view?.kind === 'card' ? view.card : undefined;
+};
+const renderWhiteboardWall = () => {
+  const floor = store.floor;
+  const f = floor ? store.whiteboard.floor(floor) : undefined;
+  whiteboardTex.render({
+    floor,
+    board: floorWhiteboard(),
+    renderer: f?.renderer ?? { available: false },
+    renders: f?.renders ?? {},
+    renderUrl: (card, opts) => (floor ? store.whiteboard.renderUrl(floor, card, opts) : undefined),
+    now: Date.now(),
+  });
+};
+mountBoard(office.boardMeshes.whiteboard, whiteboardTex.texture, renderWhiteboardWall, ['whiteboard', 'floor']);
+// Its "updated 2m ago" times: redrawn only when one of them ticks over.
+setInterval(renderWhiteboardWall, 30_000);
 
 // Pictures people hung on the walls
 const gallery = new Gallery();
@@ -304,8 +325,8 @@ const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, f
 scene.add(confetti.mesh);
 
 // The lounge TV: the Factory sessions dashboard while the office is connected to Factory, else its
-// standby screen (world/factory-tv.ts). E there opens 🛰️ Sessions. The same slice puts each
-// worker's credits in the Workers panel, its desk hint and its terminal's header.
+// standby screen (world/factory-tv.ts). It is a board only: nothing opens from it. The same slice
+// puts each worker's credits in the Workers panel, its desk hint and its terminal's header.
 const tvTex = new FactoryTvTexture();
 const renderTv = (force = false) => tvTex.render(store.factory, Date.now(), force);
 const tvMat = office.tvScreen.material as THREE.MeshBasicMaterial;
@@ -324,25 +345,14 @@ store.on('factory', () => {
   renderWorkers((id) => openWorkerTerminal(id));
   hintKey = '';
 });
-function showSessions(sessionId?: string) {
-  openFactorySessions({ openSettings: () => showSettings('factory'), openWorker: (id) => openWorkerTerminal(id) }, sessionId);
-}
-/** E at the TV: the sessions, or connecting Factory first. */
-function useTv() {
-  if (store.factory.connection.connected) showSessions();
-  else showSettings('factory');
-}
 // The world's canvases drew at boot, before the bundled fonts were necessarily in: repaint them
 // once Geist and Geist Mono are loaded, so nothing is left in a fallback typeface.
 void loadFonts().then(() => {
   renderIssuesBoard();
   renderPullsBoard();
-  renderServicesBoard();
-  renderQueueBoard();
+  renderPipelinesBoard();
   computeWall.repaint();
   renderMachineBoard();
-  renderMeetingBoard();
-  renderMeetingSign();
   renderCiBoard(true);
   renderTv(true);
   redrawText();
@@ -350,7 +360,7 @@ void loadFonts().then(() => {
 // The boss's monitor upstairs: Minesweeper, from the boss's chair.
 const arcade = new Arcade(office.bossScreen);
 
-// ---- The rooftop bar ------------------------------------------------------------------------------
+// ---- The rooftop ---------------------------------------------------------------------------------
 /** Up on the roof: built the first time anyone goes up there. */
 let roof: Rooftop | null = null;
 function theRoof(): Rooftop {
@@ -376,11 +386,6 @@ function syncRoof() {
 store.on('floors', syncRoof);
 /** Where you are now: up on the roof (true), or on a floor of the office. */
 let upTop = false;
-/** How far into the DJ's set it is, on the office's clock, so everyone up there hears the same bar. */
-const djAt = () => djTime(store.officeNow());
-/** Drinks from the bar, and how they make the world look (see booze.ts, world/drunk.ts). */
-const booze = new Booze();
-const drunkVision = new DrunkVision(renderer);
 
 // ---- Networking & state -------------------------------------------------------------------------
 const net = new Net(() => store.profile, whereNow);
@@ -388,30 +393,24 @@ bindFactory(net);
 
 const me = new Person(store.profile.name, store.profile.color, store.profile.look);
 me.showLabel(false);
+// You are the camera: the hands are all you see of yourself.
+me.root.visible = false;
 scene.add(me.root);
 noOutline(me.root);
 const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
-player.view = settings.view;
 const hands = new Hands(store.profile.color, me.skinColor);
 const caffeine = new Caffeine();
 /** No shaking the view for the coffee jitters when the system asks for less motion. */
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-// Cigarette smoke, from anyone on a smoke break.
+// Muzzle smoke, and the dust kicked up landing off a fire pole.
 const smoke = new Smoke();
 scene.add(smoke.group);
-const puff = (kind: 'wisp' | 'exhale', at: THREE.Vector3, dir: THREE.Vector3) => (kind === 'wisp' ? smoke.wisp(at) : smoke.exhale(at, dir));
-const camLocal = new THREE.Vector3();
-// In first person yours comes off the cigarette in your hand and out in front of the camera.
-me.onSmoke = (kind, at, dir) => {
-  if (player.view !== 'first') return puff(kind, at, dir);
-  if (kind === 'wisp') return smoke.wisp(camera.localToWorld(hands.cigTip(camLocal)));
-  smoke.exhale(camera.localToWorld(camLocal.set(0, -0.14, -0.3)), camera.getWorldDirection(camLocal).setY(0.1).normalize());
-};
 const sound = new OfficeSound();
 sound.setVolume(settings.volume, settings.muted);
+sound.setAlertsMuted(settings.alertsMuted);
 sound.setMusicVolume(settings.music, settings.musicMuted);
 sound.onMusicError = (text) => toast(text, 'warn');
 // The jukebox on your floor: everyone there hears it from the same bar, and its lights say what's on.
@@ -426,78 +425,6 @@ const notifier = new DesktopNotifier(
   () => settings.notify,
   (id) => openWorkerTerminal(id),
 );
-// ---- Golf off the balcony --------------------------------------------------------------------------
-// Everyone's balls, in the air or lying where they stopped.
-const balls = new GolfBalls();
-scene.add(balls.group);
-/** Your closest shot to the pin so far (meters) and how many you've holed in one, kept in this browser. */
-const GOLF_KEY = 'droid-office.golf';
-function golfRecord(): { best: number | null; holes: number } {
-  try {
-    const r = JSON.parse(localStorage.getItem(GOLF_KEY) ?? '{}') as { best?: unknown; holes?: unknown };
-    return { best: typeof r.best === 'number' ? r.best : null, holes: typeof r.holes === 'number' ? r.holes : 0 };
-  } catch {
-    return { best: null, holes: 0 };
-  }
-}
-function saveGolfRecord(r: { best: number | null; holes: number }) {
-  try {
-    localStorage.setItem(GOLF_KEY, JSON.stringify(r));
-  } catch {
-    // private window: it's only for this visit then
-  }
-}
-/** A shot off the tee: where it goes is worked out the same way everywhere. */
-function shotHere(shot: Shot): Flight {
-  return fly(shot, player.street, office.stack.state.index);
-}
-const golf = new Golfer(player, me, camera, {
-  holding: () => undefined,
-  hit: (shot) => {
-    balls.launch(shotHere(shot));
-    sound.golf('hit');
-  },
-  ball: () => balls.mine,
-  street: () => player.street,
-  done: () => {
-    // Not '': that reads as "no hint shown", and the golf hint would stay up.
-    hintKey = 'stale';
-  },
-});
-balls.onHit = (hit: Hit) => {
-  // Your ball's heard wherever it lands (the camera's following it).
-  if (hit.kind === 'cup') sound.golf('cup');
-  else if (hit.kind === 'bounce') sound.golf(hit.lie === 'sand' || hit.lie === 'rough' ? 'thud' : 'bounce', undefined, hit.speed);
-  else sound.golf(hit.kind, undefined, hit.speed);
-};
-balls.onRest = (f: Flight) => {
-  if (f.holed) {
-    confetti.burst(GOLF_HOLE.x, player.street + 1.2, GOLF_HOLE.z, 260, 1.4);
-    sound.golf('cheer');
-  }
-  const rec = golfRecord();
-  if (f.holed) {
-    rec.holes++;
-    toast(rec.holes === 1 ? 'HOLE IN ONE!' : `HOLE IN ONE! That's ${rec.holes}`);
-  } else if (Number.isFinite(f.fromPin) && (rec.best === null || f.fromPin < rec.best)) {
-    if (rec.best !== null) toast(`${pinText(f.fromPin)} from the pin — your best yet!`);
-    rec.best = f.fromPin;
-  } else return;
-  saveGolfRecord(rec);
-};
-
-/** E at the tee: take a club out and step up to the ball. */
-function teeOff() {
-  if (golf.active || trip || climber.active) return;
-  if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
-  if (player.seat) standUp();
-  if (hanger.active) hanger.cancel();
-  if (errand) stopWalking();
-  if (smokeBreakUntil) setSmoking(false);
-  holsterGun(true);
-  golf.start();
-}
-
 sky.onThunder = (delay, loud) => sound.thunder(delay, loud);
 const hanger = new Hanger(net, camera, canvas, player, office, gallery);
 scene.add(hanger.ghost.group);
@@ -616,6 +543,10 @@ interface WorkerView {
   deskId: string;
   status: string;
   acked: boolean;
+  /** The action last painted, so a new run of failures dings once. */
+  action?: string;
+  /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
+  heard: boolean;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -627,61 +558,166 @@ const departures = new Departures(
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
-// Workers called to a meeting, walking in from the elevator to the meeting table.
-const arrivals = new Arrivals(scene, (x, z, y) => groundAt(office.colliders, x, z, y));
-// Workers shot with the .44 Magnum: shared downed state, then revival or a medic pickup.
+// Workers shot with the .44 Magnum or put to sleep by the wand: shared downed state, then revival or a heavenly ascent.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
-  spawnMedic: (name) => {
-    const m = new Person(name, '#f2f4f6', randomLook());
-    noOutline(m.root);
-    return m;
-  },
-  onLand: (at) => sound.thud(at),
-  onSiren: (at) => sound.siren(at),
+  onLand: (at, look) => (look === 'spell' ? sound.doze(at) : sound.thud(at)),
 });
-/** The gun in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
+/** What `7` puts in your hand (Settings → You): the wand unless you opted into the Magnum. */
+const wandOut = () => settings.sidearm === 'wand';
+/** The words for what `7` does, by what's in your hand. Only the look and the words differ; what happens to the worker is the same. */
+const arms = () =>
+  wandOut()
+    ? { name: '🪄 Droid wand', fire: 'Cast', away: 'Put away', downed: '💤', isDown: 'is under a spell', revive: 'Wake up', reviveVerb: 'wake it', body: '', again: 'Zap it again to send it home now', target: 'to enchant' }
+    : { name: '🔫 .44 Magnum', fire: 'Fire', away: 'Holster', downed: '🩹', isDown: 'is down', revive: 'Revive', reviveVerb: 'revive', body: "'s body", again: 'Shoot again to finish it now', target: 'to shoot' };
+/** The gun (or the wand) in your right hand (`7` draws and holsters it), mid-draw included, holstering not. */
 let gunOut = false;
+/** Which one is out (or on its way away): settings.sidearm when it was drawn. */
+let drawnArm: Sidearm = settings.sidearm;
 /** The gun's draw, holster and tricks, played on your hands and your character alike. */
 const gunMotion = new GunMotion();
+/** The wand's draw, casts and spells, played on your hands. */
+const wandMotion = new WandMotion();
+/** Lock the intended worker at the start; aim and reach must still agree when the magic lands. */
+let wandRecipient: { spell: 'ship' | 'leviosa'; id: string } | null = null;
+const lastWandShip = new Map<string, number>();
+/** Lumos: the wand's emitter lit, throwing light round you until you put it out (1 again) or away. */
+let lumos = false;
+/** The light Lumos (and a spell leaving the tip) throws on the room, following the tip. */
+const wandLight = new THREE.PointLight('#ffc49a', 0, 7, 1.6);
+wandLight.visible = false;
+scene.add(wandLight);
+/** The tip's trail of light through the air. */
+const tipTrail = new TipTrail();
+scene.add(tipTrail.points);
 /** Dust where missed shots cracked into the walls and floor, and the spray where workers were hit. */
 const puffs: { group: THREE.Object3D; update(dt: number): boolean; dispose(): void }[] = [];
 
-/** `7`: the .44 Magnum out of its holster, or back in. Mash it and each press cancels the last, like a yy. */
+/** `7`: the wand (or the .44 Magnum) out, or back away. Mash it and each press cancels the last, like a yy. */
 function toggleGun() {
   if (gunOut) {
     holsterGun();
     return;
   }
-  if (golf.active) return toast('Your hands are full: put the club back first (E)', 'warn');
   if (climber.active) return toast('Your hands are full: both hands on the climb', 'warn');
   if (hanger.active) return toast('Your hands are full: hang the picture first (or F to stop)', 'warn');
   if (carrying) return toast(`Your hands are full: put #${carrying.issue} down first (Q)`, 'warn');
   if (readingNow()) return toast('Your hands are full: close the book first', 'warn');
+  // Drawing one while the other is still on its way away: that one goes at once.
+  if (drawnArm !== settings.sidearm) stowArms();
+  drawnArm = settings.sidearm;
   gunOut = true;
-  gunMotion.draw();
+  if (drawnArm === 'wand') wandMotion.draw();
+  else gunMotion.draw();
   hintKey = 'stale';
 }
 
-/** The gun back in its holster: with a spin, or `quiet`ly straight away when your hands are needed. */
+/** Both straight away, no move: what's in your hand is gone this frame. */
+function stowArms() {
+  wandRecipient = null;
+  gunMotion.stow();
+  wandMotion.stow();
+  setLumos(false);
+}
+
+/** The gun back in its holster (the wand put away): with a move, or `quiet`ly straight away when your hands are needed. */
 function holsterGun(quiet = false) {
   // Even on its way back in: something else wants your hands now.
-  if (quiet) gunMotion.stow();
+  if (quiet) stowArms();
   if (!gunOut) return;
   gunOut = false;
-  if (!quiet) gunMotion.holster();
+  if (!quiet) {
+    if (drawnArm === 'wand') wandMotion.holster();
+    else gunMotion.holster();
+    setLumos(false);
+  }
   hintKey = 'stale';
 }
 
-/** 1–6 with the gun out: a trick in place of an emote. As many as you like, each from the top. */
+/** 1–6 with the gun out: a trick in place of an emote; with the wand, a spell. As many as you like, each from the top. */
 function gunTrick(id: GunTrickId) {
   if (!gunMotion.trick(id)) return;
   hintKey = 'stale';
 }
+function wandSpell(id: WandSpellId) {
+  if (!wandMotion.spell(id)) return;
+  wandRecipient = null;
+  if (id === 'ship' || id === 'leviosa') {
+    const target = aimedWandWorker(id === 'ship' ? WAND_SHIP_REACH : Infinity);
+    if (target) wandRecipient = { spell: id, id: target.id };
+  }
+  hintKey = 'stale';
+}
 
-/** The gun's muzzle in the world, in whichever view you're in, or null with it away. */
+/** Only a directly aimed worker body; laptop clicks retain their separate UI-opening behavior. */
+function aimedWandWorker(reach = Infinity): { id: string; point: THREE.Vector3 } | null {
+  raycaster.setFromCamera(CROSSHAIR, camera);
+  const result = aimedShot();
+  const id = wandWorker(result ? { workerId: result.workerId, distance: result.hit.distance } : null, reach);
+  return id && result ? { id, point: result.hit.point.clone() } : null;
+}
+
+/** One close-range confetti pop means one shipping prompt, not a direct publish or merge call. */
+function wandShip() {
+  const recipient = wandRecipient;
+  wandRecipient = null;
+  const target = aimedWandWorker(WAND_SHIP_REACH);
+  if (recipient?.spell !== 'ship' || !target || target.id !== recipient.id) return hintToast(`Aim directly at one worker within ${WAND_SHIP_REACH} meters to Ship it`, 'info');
+  const now = performance.now();
+  if (now - (lastWandShip.get(target.id) ?? -Infinity) < WAND_SHIP_COOLDOWN) return hintToast('That worker just received Ship it', 'info');
+  const worker = store.workers.get(target.id);
+  const request = wandShipRequest(worker, officePrompt('wand.ship'));
+  if (typeof request === 'string') return hintToast(request, 'warn');
+  if (!net.send(request)) return hintToast('Reconnect to the office before asking a worker to ship', 'warn');
+  lastWandShip.set(target.id, now);
+  confetti.spray(target.point, camera.getWorldDirection(blowDir).addScaledVector(UP, 0.35).normalize(), 90, SPELL_CONFETTI);
+  addEffect(new Sparkles(target.point, null, { colors: SPELL_TIP, count: 16, speed: 1.1, size: 0.014, seconds: 0.7, lift: 0.3 }));
+  hintToast(`${request.queue ? 'Queued Ship it for' : 'Asked to ship:'} ${worker!.name}`, 'info');
+}
+
+function wandLevitate() {
+  const recipient = wandRecipient;
+  wandRecipient = null;
+  const target = aimedWandWorker();
+  if (recipient?.spell !== 'leviosa' || !target || target.id !== recipient.id) return hintToast('Aim directly at a worker to lift it', 'info');
+  const view = workerViews.get(target.id);
+  if (!view?.model.levitate()) return hintToast('Swish and flick lifts an awake worker resting at its seat', 'info');
+  addEffect(new Sparkles(target.point, null, { colors: SPELL_TIP, count: 28, speed: 0.6, size: 0.016, seconds: 2, lift: 1.2 }));
+}
+
+/** A rescue ward, not a wake-up call for offline processes or protection from the gun. */
+function wandRevive() {
+  const positions = [...workerViews].flatMap(([id, view]) => {
+    const worker = store.workers.get(id);
+    return worker ? [{ worker, pos: view.model.root.getWorldPosition(new THREE.Vector3()) }] : [];
+  });
+  const ids = protegoWorkers(positions, player.pos, store.officeNow());
+  let sent = 0;
+  for (const id of ids)
+    if (net.send({ t: 'worker.revive', workerId: id })) {
+      sent++;
+      const at = workerViews.get(id)!.model.root.getWorldPosition(new THREE.Vector3());
+      addEffect(new Sparkles(at, null, { colors: SPELL_TIP, count: 24, speed: 0.8, size: 0.016, seconds: 1, lift: 1 }));
+    }
+  hintToast(sent ? `Protego: reviving ${sent} downed worker${sent === 1 ? '' : 's'}` : 'No revivable workers within 6 meters', 'info');
+}
+
+/** Lumos on or off: the tip lights, and so does the room round you. */
+function setLumos(on: boolean) {
+  if (on === lumos) return;
+  lumos = on;
+  hands.setLumos(on);
+  hintKey = 'stale';
+}
+
+/** The gun's muzzle in the world, or null with it away. */
 function muzzleAt(out: THREE.Vector3): THREE.Vector3 | null {
-  if (player.view !== 'first') return me.muzzleTip(out);
   const tip = hands.muzzleTip(out);
+  return tip && camera.localToWorld(tip);
+}
+
+/** The wand's tip in the world, or null with it away. */
+function wandTipAt(out: THREE.Vector3): THREE.Vector3 | null {
+  const tip = hands.wandTip(out);
   return tip && camera.localToWorld(tip);
 }
 
@@ -700,9 +736,70 @@ function gunCues(cues: readonly GunCue[]) {
 }
 const muzzleWorld = new THREE.Vector3();
 const blowDir = new THREE.Vector3();
+const tipWorld = new THREE.Vector3();
+const tipDir = new THREE.Vector3();
 
-/** A click with the gun out: fire at what's under the crosshair (or the mouse, in third person). */
-function fireGun(ndc: THREE.Vector2) {
+/** What the wand's move just did: its sounds, and each spell's magic. */
+function wandCues(cues: readonly WandCue[]) {
+  for (const cue of cues) {
+    sound.wandCue(cue);
+    const tip = wandTipAt(tipWorld);
+    switch (cue) {
+      case 'release':
+        if (tip) castBolt(tip);
+        break;
+      case 'lumos':
+        setLumos(!lumos);
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 14, speed: 0.5, size: 0.012, seconds: 0.7, lift: 0.2 }));
+        break;
+      case 'flick':
+        wandLevitate();
+        // Swish and flick: sparks lifting off the tip and floating up, light as a feather.
+        if (tip) {
+          addEffect(new Sparkles(tip, camera.getWorldDirection(blowDir), { colors: SPELL_TIP, count: 26, speed: 0.9, size: 0.016, seconds: 1.6, lift: 1.6 }));
+          addEffect(new SpellImpact(tip.clone().addScaledVector(blowDir, 0.25), blowDir.clone().negate(), false));
+        }
+        break;
+      case 'spark':
+        // A sparkler's spit: sparks flung every way that fall away as they fade.
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 7, speed: 1.3, size: 0.011, seconds: 0.55, lift: -2.2 }));
+        break;
+      case 'party':
+        danceParty();
+        confetti.rain(FLOOR, floorArea(FLOOR) * CONFETTI_DENSITY, 3, ceilingOver);
+        confetti.rain(LOFT, floorArea(LOFT) * CONFETTI_DENSITY, 3, () => LOFT.y + LOFT.height - 0.1);
+        break;
+      case 'confetti':
+        wandShip();
+        break;
+      case 'shield':
+        hands.ward();
+        wandRevive();
+        break;
+      case 'done':
+        if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 10, speed: 0.4, size: 0.01, seconds: 0.6, lift: 0.3 }));
+        break;
+    }
+  }
+  if (cues.length) hintKey = 'stale';
+}
+
+/** A spark, puff, spray or streak in the scene until it has faded. */
+function addEffect(effect: (typeof puffs)[number]) {
+  scene.add(effect.group);
+  puffs.push(effect);
+}
+
+/** A click with the gun (or the wand) out: fire at what's under the crosshair, or flick the wand at it. */
+function fireGun() {
+  if (drawnArm === 'wand') {
+    // The bolt leaves on the flick's release cue, a tenth of a second on (see wandCues).
+    if (wandMotion.cast()) {
+      wandRecipient = null;
+      hintKey = 'stale';
+    }
+    return;
+  }
   gunMotion.fire();
   hands.fireGun();
   me.fire();
@@ -712,65 +809,99 @@ function fireGun(ndc: THREE.Vector2) {
   // Smoke curling off the muzzle.
   const tip = muzzleAt(new THREE.Vector3());
   if (tip) {
+    const at = tip.clone();
     for (let i = 0; i < 2; i++) {
-      tip.x += (Math.random() - 0.5) * 0.05;
-      tip.y += Math.random() * 0.04;
-      tip.z += (Math.random() - 0.5) * 0.05;
-      smoke.wisp(tip);
+      at.x += (Math.random() - 0.5) * 0.05;
+      at.y += Math.random() * 0.04;
+      at.z += (Math.random() - 0.5) * 0.05;
+      smoke.wisp(at);
     }
   }
-  raycaster.setFromCamera(ndc, camera);
-  resolveGunShot();
-}
-
-function resolveGunShot() {
-  if (upTop) return;
-  const byRoot = new Map<THREE.Object3D, string>();
-  for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
-  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
-  const result = gunHit(raycaster, office.group, byRoot);
-  const direction = raycaster.ray.direction.clone();
-  landShot(result, direction);
+  raycaster.setFromCamera(CROSSHAIR, camera);
+  const result = aimedShot();
+  landShot(result, raycaster.ray.direction.clone());
 }
 
 /**
- * What a bullet does where it lands. Anything solid in front blocks it, and a miss cracks into it
- * with dust. A worker sprays blood back out of the wound with a wet smack and is shot: the server
- * starts its revival window (worker.shoot) and every client on the floor sees it go down, its
- * session still running. No menu opens anywhere.
+ * The flick's release: a bolt from the tip to whatever is under the crosshair now, landing when it
+ * gets there (BOLT_SPEED), where it does what a shot does (landShot). A miss off into the distance
+ * just flies out of sight.
+ */
+function castBolt(tip: THREE.Vector3) {
+  if (upTop) return;
+  raycaster.setFromCamera(CROSSHAIR, camera);
+  const result = aimedShot();
+  const direction = raycaster.ray.direction.clone();
+  const to = result?.hit.point.clone() ?? raycaster.ray.at(40, new THREE.Vector3());
+  addEffect(new SpellBolt(tip, to, () => result && landShot(result, direction)));
+  addEffect(new Sparkles(tip, direction, { colors: SPELL_TIP, count: 9, speed: 0.6, size: 0.012, seconds: 0.45, lift: 0.2 }));
+  // A spell barely nudges the camera.
+  if (!reduceMotion.matches) thud = Math.max(thud, 0.08);
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** What a shot along `raycaster` would strike first: a laptop screen, worker, other solid, or nothing. */
+function aimedShot(): ReturnType<typeof gunHit> {
+  if (upTop) return null;
+  const byRoot = new Map<THREE.Object3D, string>();
+  const screens = new Map<THREE.Object3D, string>();
+  for (const [id, v] of workerViews) {
+    byRoot.set(v.model.root, id);
+    screens.set(v.laptop.screen, id);
+  }
+  // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
+  return gunHit(raycaster, office.group, byRoot, screens);
+}
+
+/** Where a shot strikes something that isn't a worker: dust and a crack, or a spell's mark fizzling out. */
+function missAt(hit: THREE.Intersection) {
+  const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
+  if (wandOut()) {
+    addEffect(new SpellImpact(hit.point, normal, false));
+    sound.fizzle(hit.point);
+    return;
+  }
+  addEffect(new Puff(hit.point, normal));
+  sound.impact(hit.point);
+}
+
+/**
+ * What a bullet (or a spell) does where it lands. Anything solid in front blocks it, and a miss
+ * cracks into it with dust (a spell leaves its mark and fizzles). A worker sprays blood back out of
+ * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
+ * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
+ * floor sees it go down, its session still running. Shooting it again while it's down confirms the
+ * kill. A laptop screen instead opens its worker's UI, like E at the desk, without a reach limit.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
+  if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
-    if (!hit) return;
-    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
-    const puff = new Puff(hit.point, normal);
-    scene.add(puff.group);
-    puffs.push(puff);
-    sound.impact(hit.point);
+    if (hit) missAt(hit);
     return;
   }
   // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
-    const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
-    const puff = new Puff(hit.point, normal);
-    scene.add(puff.group);
-    puffs.push(puff);
-    sound.impact(hit.point);
-    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk to shoot` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
+    missAt(hit);
+    hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk ${arms().target}` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
     return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
-  const spray = new BloodSpray(hit.point, out, direction);
-  scene.add(spray.group);
-  puffs.push(spray);
-  sound.hit(hit.point);
+  if (wandOut()) {
+    addEffect(new SpellImpact(hit.point, out, true));
+    sound.spellHit(hit.point);
+  } else {
+    addEffect(new BloodSpray(hit.point, out, direction));
+    sound.hit(hit.point);
+  }
   const v = workerViews.get(workerId);
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
-  if (!v || !w || !desk || w.downedUntil !== undefined) return;
+  if (!v || !w || !desk) return;
+  // A second shot at a body on the floor confirms the kill: the server dismisses it now and the body ascends.
   net.send({ t: 'worker.shoot', workerId });
 }
 
@@ -790,34 +921,33 @@ function reviveNearby(): boolean {
   return true;
 }
 
-/** Set while a floor's workers arrive with it (a welcome, an elevator ride): they're in their seats already. */
-let seatedAlready = false;
 let firstWelcome = true;
 /** The server version this page was loaded with. */
 let bootVersion = '';
 let upgradePhase = '';
 
+connectWhiteboard((msg) => net.send(msg));
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
+  store.whiteboard.status(up);
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
   const wasOn = msg.t === 'welcome' ? (store.floor ?? lastFloor()) : null;
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
     departures.clear();
-    arrivals.clear();
     casualties.clear();
-    seatedAlready = true;
   }
   if (msg.t === 'worker.remove') sentHome.add(msg.workerId);
   store.apply(msg);
-  seatedAlready = false;
   sentHome.clear();
   routeTerminalMessage(msg);
   routeChangesMessage(msg);
   routePullMessage(msg);
+  routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
+  routeWhiteboardMessage(msg);
   switch (msg.t) {
     case 'welcome': {
       // A few pings, to line this page's clock up with the office's for the jukebox.
@@ -850,6 +980,8 @@ net.onMessage((msg) => {
       if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
+      const following = changesLogFor();
+      if (following && following !== openId && store.workers.has(following)) net.send({ t: 'worker.attach', workerId: following });
       renderProject();
       hud.refresh();
       // Back from a restart on another version: this page's code is stale, so load the new one.
@@ -875,6 +1007,7 @@ net.onMessage((msg) => {
       routeWorktreeMessage(msg);
       break;
     case 'toast': {
+      if (msg.level === 'error') sound.ding('error');
       const el = toast(msg.text, msg.level);
       const id = msg.workerId;
       // About a worker on this floor (a subagent hired, a report back): a click opens its terminal.
@@ -887,16 +1020,14 @@ net.onMessage((msg) => {
     }
     case 'upgrade':
       if (msg.state.phase === 'restarting') showRestarting(msg.state, net);
-      if (msg.state.phase === 'failed' && upgradePhase === 'building') toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+      if (msg.state.phase === 'failed' && upgradePhase === 'building') {
+        toast(`The upgrade failed, so the office stays on ${msg.state.current?.sha ?? 'this version'}`, 'error');
+        sound.ding('error');
+      }
       upgradePhase = msg.state.phase;
       break;
     case 'gong':
       gongRang(msg.why, msg.pr);
-      break;
-    case 'horn':
-      if (!upTop) break;
-      sound.horn();
-      if (msg.by !== store.profile.name) toast(`📯 ${msg.by} blew the air horn!`);
       break;
     case 'automation.run': {
       const { id } = msg;
@@ -907,6 +1038,8 @@ net.onMessage((msg) => {
       break;
     }
   }
+  // The terminal canvas updates on its own. Everything else can change the picture, so draw promptly.
+  if (msg.t !== 'term.data' && msg.t !== 'term.snapshot') renderWake();
 });
 
 function renderUpgrade() {
@@ -923,8 +1056,8 @@ function renderProject() {
   if (store.floor === ROOF) {
     const n = builtFloors().length;
     $('project-meta').classList.remove('lobby');
-    $('project-name').textContent = `🍸 ${ROOF_NAME}`;
-    $('project-meta').textContent = `🛗 on top of ${n} floor${n === 1 ? '' : 's'} · 🎧 drum & bass`;
+    $('project-name').textContent = `🏙️ ${ROOF_NAME}`;
+    $('project-meta').textContent = `🛗 on top of ${n} floor${n === 1 ? '' : 's'} · the city all around`;
     return;
   }
   if (!p) {
@@ -944,13 +1077,16 @@ function renderProject() {
 store.on('floors', renderProject);
 store.on('project', renderProject);
 
-/** The tab title counts the workers waiting on someone, on every floor, so you can see them from another tab. */
+/** The tab title counts workers waiting on someone, on every floor, while this tab is in the background. Focusing it clears the count. */
 function renderTitle() {
   const name = store.project?.name;
   const elsewhere = store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0);
   const waiting = [...store.workers.values()].filter(waitingOnSomeone).length + elsewhere;
-  document.title = `${waiting ? `(${waiting}) ` : ''}${name ? `${name} · ` : ''}Droid Office`;
+  document.title = officeTitle(name, waiting, document.hidden || !document.hasFocus());
 }
+window.addEventListener('visibilitychange', renderTitle);
+window.addEventListener('focus', renderTitle);
+window.addEventListener('blur', renderTitle);
 
 // ---- Floors & the elevator ----------------------------------------------------------------------
 /** In the car, facing out through the doors: where you are when you arrive on a floor. */
@@ -1025,7 +1161,6 @@ function ride(floorId: string) {
   closeAllModals();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
-  if (golf.active) golf.stop();
   const inside = inElevator(player.pos.x, player.pos.z);
   trip = { floor: floorId, how: 'elevator', timer: window.setTimeout(tripFailed, 10_000) };
   player.enabled = false;
@@ -1062,7 +1197,6 @@ function switchFloor(floorId: string) {
   closeAllModals();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
-  if (golf.active) golf.stop();
   if (player.seat) standUp();
   // The floor list isn't a window, so nothing else stops an errand on this floor.
   if (errand) stopWalking();
@@ -1127,12 +1261,9 @@ function setPlace() {
   if (r) r.group.visible = up;
   player.colliders = up ? r!.colliders : office.colliders;
   sky.setRoof(up, roofDrop(roofFloors()));
-  sound.setDj(up ? djAt : null);
   // You can see the whole city from up there (and its clouds); from the top floors, as far as the haze.
   camera.far = up ? 700 : FAR;
   camera.updateProjectionMatrix();
-  // Drinks stay at the bar (what you've had comes down with you).
-  if (!up) booze.putDown();
   if (hanger.active) hanger.cancel();
   hintKey = 'stale';
 }
@@ -1147,8 +1278,7 @@ function usable(): Interactable[][] {
  * the pole…). `back` is standing in the spot you left from last time, the doors open already.
  */
 function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
-  // The balls lying about were this floor's, and so were a menu left open and the laptop you typed into.
-  balls.clear();
+  // A menu left open and the laptop you typed into were the last floor's.
   setPlace();
   paintFloor();
   renderProject();
@@ -1182,7 +1312,7 @@ function arrive(how: TripKind | 'back' = trip?.how ?? 'elevator') {
   }
   setTimeout(() => {
     lift().setOpen(true);
-    sound.ding('done');
+    sound.floorChime();
     player.enabled = !modalOpen();
   }, 450);
 }
@@ -1246,7 +1376,6 @@ function walkThen(at: { x: number; y?: number; z: number }, what: string, then: 
   closeAllModals();
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
-  if (golf.active) golf.stop();
   if (errand) stopWalking();
   const to = { x: at.x, y: at.y ?? 0, z: at.z };
   const path = wayTo(player.pos, to);
@@ -1271,6 +1400,8 @@ function errandEnd(why: WalkEnd) {
 /** How close (meters) you stop a worker jumping, and how far you go before it starts again. */
 const HOLD_NEAR = 4;
 const HOLD_LEAVE = 5;
+/** Where its card and name tag fade from, above a worker's feet (see Worker.seenFrom). */
+const WORKER_HEAD = 1.6;
 
 function syncWorkers() {
   for (const w of store.workers.values()) {
@@ -1285,13 +1416,11 @@ function syncWorkers() {
       // its head and the back of its chair, so it shows from across the room.
       const beside = desk.def.station ? new THREE.Vector3(0.62, 0.9, 0) : new THREE.Vector3(0.64, 0.5, -0.1);
       model.setPropSpot(model.root.worldToLocal(desk.laptopAnchor.localToWorld(beside)));
-      // Called to a meeting just now: out of the elevator and over to the table, one after another.
-      if (desk.def.room && !seatedAlready) arrivals.add(model, desk);
       const laptop = new Laptop();
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
-      v = { model, laptop, deskId: w.deskId, status: '', acked: true };
+      v = { model, laptop, deskId: w.deskId, status: '', acked: true, heard: false };
       workerViews.set(w.id, v);
     }
     if (v.status !== w.status || v.acked !== w.acked) {
@@ -1313,13 +1442,16 @@ function syncWorkers() {
       noOutline(v.model.root);
     }
     v.model.setAction(w.action);
+    if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
+    v.action = w.action;
+    v.heard = true;
     v.model.setPr(prBadge(w));
     v.model.setLost(!!w.lost);
     const engineBadge = w.cloud ? cloudBadge(w.cloud) : w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const deskDef = DESK_BY_ID.get(w.deskId);
     // A cloud worker's card says where it runs even before it has a task.
     const task = w.task ?? (w.cloud ? { name: 'Ready', summary: w.cloud.error ?? 'Waiting for a prompt' } : undefined);
-    v.model.setTask(meetingCard(w) ?? (task && w.kind !== 'shell' ? { ...task, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task));
+    v.model.setTask(task && w.kind !== 'shell' ? { ...task, name: engineBadge ? `${engineBadge} · ${task.name}` : task.name } : task);
     // Keys clack while it types, not while it reads, watches its tests or browses.
     if (deskDef) sound.setTyping(w.id, deskDef.x, deskDef.z, w.status === 'working' && (!w.action || w.action === 'edit'));
     const again = w.kind === 'shell' ? 'restart' : 'resume';
@@ -1327,15 +1459,13 @@ function syncWorkers() {
     const outside = w.guest ? `🚪 ${PROVIDER_LABEL[w.guest.provider]}, outside the office · ${w.guest.tty}` : w.cloud && (w.cloud.error ? `☁ ${w.cloud.error}` : `☁ Running on ${w.cloud.computerName} · E to open`);
     v.laptop.setPlaceholder(outside ? outside : w.lost ? lost : w.status === 'offline' ? `💤 ${w.name} is asleep — press R to ${again}` : w.status === 'exited' ? `${w.name} exited` : 'booting…');
     if (w.downedUntil !== undefined) {
-      arrivals.forget(v.model);
-      casualties.shoot(w.id, v.model, desk.seatAnchor);
+      casualties.shoot(w.id, v.model, desk.seatAnchor, wandOut() ? 'spell' : 'blood');
     } else if (casualties.revive(w.id)) v.model.cheer(0.8);
   }
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
-    arrivals.forget(v.model);
     const desk = office.desks.get(v.deskId);
-    // A shot worker: the medics take the body instead of the send-home walk-out.
+    // A shot worker: the body ascends instead of the send-home walk-out.
     if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
@@ -1353,6 +1483,7 @@ function syncWorkers() {
       v.laptop.dispose();
     }
     sound.removeTypist(id);
+    lastWandShip.delete(id);
     workerViews.delete(id);
   }
   arrangeSeats();
@@ -1385,23 +1516,6 @@ function syncTeamLines() {
 }
 
 /**
- * The card over a worker at the meeting table: its role, the round, and whether it has the floor
- * (working on its part) or is listening while the others work on theirs.
- */
-function meetingCard(w: WorkerInfo): WorkerTask | undefined {
-  const m = store.meeting.current;
-  if (!w.meeting || !m || m.id !== w.meeting) return undefined;
-  const i = m.seats.findIndex((s) => s.workerId === w.id);
-  if (i < 0) return undefined;
-  const role = m.seats[i].role;
-  const p = MEETING_PATTERNS[m.pattern];
-  if (m.status !== 'running') return { name: `${role} · ${p.icon} ${p.label}`, summary: m.status === 'done' ? `✅ The meeting wrote ${m.output}` : `⛔ Stopped: ${m.reason ?? 'stopped'}` };
-  const t = m.turns.find((x) => x.seat === i);
-  if (!t || t.state === 'done') return { name: `👂 ${role} · round ${m.round} of ${m.rounds}`, summary: t ? 'Part written: listening' : 'Listening' };
-  return { name: `💬 ${role} · round ${m.round} of ${m.rounds}`, summary: t.state === 'working' ? t.doing : `${t.doing} (up next)` };
-}
-
-/**
  * A seat or kiosk shows it's free (its '+', or the board agent waiting there) only while nobody's at
  * it, and once every desk is taken, bean bags come out for the workers who don't fit.
  */
@@ -1415,12 +1529,10 @@ function arrangeSeats() {
   for (const c of appeared) if (p.y > -0.1 && p.y < c.top && p.x > c.minX - 0.3 && p.x < c.maxX + 0.3 && p.z > c.minZ - 0.3 && p.z < c.maxZ + 0.3) p.y = c.top;
 }
 store.on('workers', syncWorkers);
-// A worker at the meeting table shows its role and round over its head (see meetingCard).
-store.on('meeting', syncWorkers);
 
 /** A worker's pull request for its bubble, named the way this floor's forge names it ("🎉 MR !12 merged"). */
 function prBadge(w: WorkerInfo): PrBadge | undefined {
-  const pr = workerPr(w, store.pulls.items, store.queue.tasks);
+  const pr = workerPr(w, store.pulls.items);
   if (!pr) return undefined;
   const { pr: kind, ref } = words();
   return { state: pr.state, label: `${pr.state === 'open' ? '🔀' : '🎉'} ${kind} ${ref(pr.number)} ${pr.state}` };
@@ -1433,7 +1545,6 @@ const paintPrs = () => {
   }
 };
 store.on('pulls', paintPrs);
-store.on('queue', paintPrs);
 
 // ---- Actions ------------------------------------------------------------------------------------
 function freeDesk(): string | null {
@@ -1510,6 +1621,7 @@ function promptAtDesk(deskId: string) {
       title: `🐚 Run in ${w.name}`,
       placeholder: 'npm run dev',
       submitLabel: 'Run ▶',
+      recall: false,
       onSubmit: (text) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text }),
     });
   } else {
@@ -1543,23 +1655,38 @@ function hireAtDesk(deskId: string) {
   });
 }
 
+/** The hire window at the nearest free desk, with a task to write this repository's worktree setup and open a pull request. */
+function hireForWorktreeSetup() {
+  const desk = nearestFreeDesk();
+  if (!desk) return toast('Every desk on this floor is taken — send a worker home first', 'warn');
+  if (officeIsFull()) return;
+  const now = store.worktreeSetup ? describeSetup(store.worktreeSetup.resolved) : 'runs what the office detects from its lockfiles';
+  openPrompt({
+    title: `🌿 Set up worktrees at ${desk.label}`,
+    subtitle: 'A worker writes this repository’s worktree setup, tests it, and opens a pull request with it. Pick its model, edit the task if you like, then hire.',
+    warning: pressureNote(store.machine),
+    initial: officePrompt('worktree.setup', { file: SETUP_FILE, include: INCLUDE_FILE, now, ...forgeVars(store.project?.forge) }),
+    submitLabel: 'Hire & start',
+    modelOption: true,
+    worktreeOption: true,
+    worktreeChecked: true,
+    imagesOption: true,
+    deskId: desk.id,
+    onSubmit: (text, o) => hire(desk.id, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
+  });
+}
+
 function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.downedUntil !== undefined) {
-    const revive = `Walk up to ${w.name} and press E to revive — otherwise`;
-    return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
+    if (wandOut()) return toast(`Walk up to ${w.name} and press E to wake it, or zap it again to send it home now — otherwise it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
+    const revive = `Walk up to ${w.name} and press E to revive, or shoot it again to finish it now — otherwise`;
+    return toast(`${revive} it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
   }
   if (w.cloud) return sendCloudHome(net, w);
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
   const session = w.kind === 'shell' ? 'shared shell' : 'Droid session';
-  if (w.meeting) {
-    // The meeting's worktree is the whole table's: it's tidied away once they've all gone.
-    const m = store.meeting.current;
-    const on = m?.id === w.meeting && m.status === 'running';
-    confirmDialog(`Send ${w.name} home?`, on ? `${w.name} is in the meeting on “${m.title}”, which stops without it.` : `${w.name} leaves the meeting room.`, 'Send home', () => net.send({ t: 'worker.kill', workerId: id }));
-    return;
-  }
   if (w.worktree) {
     // A worker with its own worktree: choose what becomes of the worktree and its branch.
     sendHomeDialog({
@@ -1578,8 +1705,8 @@ function killWorker(id: string) {
     : `This stops the ${session} at ${where} for everyone and frees the desk.`;
   confirmDialog(`Send ${w.name} home?`, body, 'Send home', () => net.send({ t: 'worker.kill', workerId: id }));
 }
-/** E at a board agent: type it a request. It's hired with it when nobody is there yet. */
-function askStation(deskId: string) {
+/** E at a board agent: type it a request, starting from `initial`. It's hired with it when nobody is there yet. */
+function askStation(deskId: string, initial?: string) {
   const kind = DESK_BY_ID.get(deskId)?.station;
   if (!kind) return;
   const w = store.workerAtDesk(deskId);
@@ -1603,6 +1730,7 @@ function askStation(deskId: string) {
     title: `${info.icon} Ask the ${name}`,
     subtitle,
     placeholder: `e.g. ${info.example}`,
+    initial,
     submitLabel: 'Send ✨',
     warning: w ? undefined : pressureNote(store.machine),
     modelOption: !w,
@@ -1730,7 +1858,6 @@ function standAt(desk: DeskDef) {
   if (player.seat) standUp();
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
-  if (golf.active) golf.stop();
   if (errand) stopWalking();
   const spot = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
   player.pos.set(spot.x, 0, spot.z);
@@ -1840,8 +1967,11 @@ function openWorkerChanges(id: string, repo?: string) {
   openChanges(net, id, () => openWorkerTerminal(id), repo);
 }
 
-function showQueue() {
-  openQueue(net, { openTerminal: openWorkerTerminal });
+/** The Pipeline agent's kiosk, by the board. */
+const PIPELINES_DESK = 'station-actions';
+/** The Pipelines window: on one run, or on its Run workflow form. */
+function showPipelines(open: PipelinesOpen = {}) {
+  openPipelines(net, { askAgent: (initial) => askStation(PIPELINES_DESK, initial) }, open);
 }
 
 // ---- The command palette (Ctrl+K, ⌘K on a Mac) ------------------------------------------------------
@@ -1852,9 +1982,8 @@ function spotOf(kind: InteractKind): Interactable | undefined {
   return office.interactables.find((it) => it.kind === kind && !it.off);
 }
 
-/** Where you stand at a desk: behind the worker, or in front of a kiosk. Meeting chairs are the chair itself. */
+/** Where you stand at a desk: behind the worker, or in front of a kiosk. */
 function deskSpot(desk: DeskDef): { x: number; z: number } | undefined {
-  if (desk.room) return office.interactables.find((it) => it.deskId === desk.id);
   return deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
 }
 
@@ -1863,7 +1992,7 @@ function nearestFreeDesk(): DeskDef | undefined {
   let best: DeskDef | undefined;
   let bestD = Infinity;
   for (const d of [...DESKS, ...BEANBAGS]) {
-    if (d.station || d.room || store.workerAtDesk(d.id)) continue;
+    if (d.station || store.workerAtDesk(d.id)) continue;
     if (d.beanbag && office.interactables.find((it) => it.deskId === d.id)?.off !== false) continue;
     const dist = Math.hypot(d.x - player.pos.x, d.z - player.pos.z);
     if (dist < bestD) {
@@ -1910,32 +2039,33 @@ function paletteEntries(): PaletteEntry[] {
     open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
     walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
   });
-  out.push(atSpot('queue', 'the task queue', { icon: '📋', kind: 'Action', title: 'Open the task queue', detail: 'Issues and tasks waiting for a worker', keywords: ['backlog', 'tasks'], open: showQueue }));
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
   out.push({ icon: '🖼️', kind: 'Action', title: 'Hang a picture', detail: 'On a wall of this floor', keywords: ['decorate', 'frame', 'art'], open: startHanging });
   out.push({ icon: '🔎', kind: 'Action', title: 'Search every terminal', keywords: ['find'], open: showSearch });
-  if (store.factory.connection.connected) {
-    out.push(
-      atSpot('tv', 'the lounge TV', { icon: '🛰️', kind: 'Board', title: 'Droid sessions', detail: 'Factory sessions, transcripts and credits', keywords: ['factory', 'credits', 'cloud', 'transcript', 'tv'], open: () => showSessions() }),
-    );
-    for (const x of store.factory.sessions.items.slice(0, 30)) {
-      out.push(
-        atSpot('tv', 'the lounge TV', {
-          icon: '🛰️',
-          kind: 'Session',
-          title: x.title.replace(/\s+/g, ' ').trim().slice(0, 90) || `Session ${x.id.slice(0, 8)}`,
-          detail: [x.status, store.factory.sessions.office[x.id]?.name].filter(Boolean).join(' · '),
-          open: () => showSessions(x.id),
-        }),
-      );
-    }
-  }
-
   const prWord = words().pr;
   out.push(atSpot('issues', 'the Issues board', { icon: '📌', kind: 'Board', title: 'Issues board', open: () => openBoard('issues', net, boardActions()) }));
   out.push(atSpot('pulls', `the ${prWord} board`, { icon: '🔀', kind: 'Board', title: `${prWord} board`, keywords: ['pull requests', 'merge requests'], open: () => openBoard('pulls', net, boardActions()) }));
-  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
+  out.push(
+    atSpot('actions', 'the Pipelines board', {
+      icon: '🚀',
+      kind: 'Board',
+      title: 'Pipelines board',
+      detail: store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions runs: running, waiting and recent',
+      keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
+      open: () => showPipelines(),
+    }),
+  );
+  out.push(
+    atSpot('actions', 'the Pipelines board', {
+      icon: '▶',
+      kind: 'Action',
+      title: store.project?.forge === 'gitlab' ? 'Run a pipeline' : 'Run a workflow',
+      detail: 'Start CI by hand on a branch',
+      keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
+      open: () => showPipelines({ run: true }),
+    }),
+  );
   if (store.factory.connection.connected) {
     out.push(
       atSpot('ci', 'the CI automations board', {
@@ -1969,7 +2099,6 @@ function paletteEntries(): PaletteEntry[] {
     }),
   );
   for (const c of store.factory.computers.items) out.push(atSpot('computers', 'the compute wall', { icon: '🖥️', kind: 'Droid Computer', title: c.name, detail: c.managed ? c.providerType : 'BYOM', open: () => showComputers(c.id) }));
-  out.push(atSpot('meeting', 'the meeting room', { icon: '🤝', kind: 'Board', title: 'Meeting room', keywords: ['call a meeting'], open: () => showMeeting() }));
   out.push(atSpot('bookshelf', 'the bookshelf', { icon: '📚', kind: 'Board', title: 'Bookshelf', detail: "The project's docs", keywords: ['docs', 'readme', 'markdown'], open: () => showBookshelf() }));
   out.push(
     atSpot('bookshelf', 'the bookshelf', { icon: '🏭', kind: 'Board', title: 'AutoWiki', detail: "Factory's wiki of this repository, on the bookshelf", keywords: ['wiki', 'factory', 'documentation'], open: () => showBookshelf('wiki') }),
@@ -1997,18 +2126,6 @@ function paletteEntries(): PaletteEntry[] {
       }),
     );
   }
-  for (const svc of store.services.items) {
-    const board = spotOf('services');
-    out.push({
-      icon: '🌐',
-      kind: 'Service',
-      title: svc.title || svc.command,
-      detail: [`:${svc.port}`, svc.title && svc.command, store.workers.get(svc.workerId)?.name].filter(Boolean).join(' · '),
-      keywords: [String(svc.port)],
-      open: () => window.open(serviceUrl(svc.port), '_blank', 'noopener'),
-      walk: board ? () => walkThen(board, 'the Services board', () => openServices()) : undefined,
-    });
-  }
   return out;
 }
 
@@ -2021,21 +2138,6 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
   if (!e.repeat) togglePalette(paletteEntries);
 });
-
-/** The meeting room's window: how the meeting's going, or the form to call one (prefilled from an issue or a PR). */
-function showMeeting(preset?: MeetingPreset) {
-  openMeeting(
-    net,
-    {
-      openTerminal: openWorkerTerminal,
-      openPr: (id) => {
-        const w = store.workers.get(id);
-        if (w) pullRequestFor(w);
-      },
-    },
-    preset,
-  );
-}
 
 function showJukebox() {
   openJukebox(net, () => showSettings('sound'));
@@ -2099,10 +2201,8 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
 
 function boardActions() {
   return {
-    queue: (prompt: string, title: string, issue: number, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, model, effort }),
     assign: (prompt: string, title: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
-    meeting: (preset: MeetingPreset) => showMeeting(preset),
     goToDesk,
     pickUp,
   };
@@ -2114,7 +2214,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if ((target.kind === 'desk' || target.kind === 'station') && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
     if (w?.downedUntil !== undefined) {
-      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}'s body to revive`, 'info');
+      if (key === 'E' && !reviveNearby()) hintToast(`Walk closer to ${w.name}${arms().body} to ${arms().reviveVerb}`, 'info');
       return;
     }
   }
@@ -2126,8 +2226,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (useSpot(spot, key)) return;
   if (target.kind === 'desk' && target.deskId) {
     const w = store.workerAtDesk(target.deskId);
-    // Nobody is hired at the meeting table: a meeting seats its own workers there.
-    if (!w && DESK_BY_ID.get(target.deskId)?.room) return key === 'E' ? showMeeting() : undefined;
     if (key === 'B' && !w) return openShell(target.deskId);
     // A guest runs outside the office: there's only what the office knows of it to look at, or bringing it in.
     if (w?.guest && key === 'R') return bringInGuest(w);
@@ -2154,149 +2252,29 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'elevator') showElevator();
   else if (target.kind === 'issues') openBoard('issues', net, boardActions(), issuesTex.tab);
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
-  else if (target.kind === 'services') openServices();
   else if (target.kind === 'computers') showComputers();
-  else if (target.kind === 'queue') showQueue();
+  else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
   else if (target.kind === 'ci') showCi();
+  else if (target.kind === 'whiteboard') openWhiteboard(net, { card: wallCard()?.id });
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
-  else if (target.kind === 'tv') useTv();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'coffee') drinkCoffee();
-  else if (target.kind === 'smoke') {
-    if (smokeBreakUntil) {
-      setSmoking(false);
-      toast('You stub it out in the ashtray');
-    } else {
-      setSmoking(true);
-      toast('🚬 Smoke break');
-    }
-  } else if (target.kind === 'gong') hitGong();
+  else if (target.kind === 'gong') hitGong();
   else if (target.kind === 'cabinet') cabinet.play();
   else if (target.kind === 'ladder') grabLadder();
   else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
-  else if (target.kind === 'meeting') showMeeting();
-  else if (target.kind === 'bar') showBar();
-  else if (target.kind === 'dj') blowHorn();
-  else if (target.kind === 'golf') teeOff();
-}
-
-// ---- The rooftop bar ---------------------------------------------------------------------------------
-/** What the bartender says as they slide it over. */
-const CHEERS: Record<string, string> = {
-  beer: 'Cheers! 🍻',
-  wine: 'Salud!',
-  martini: 'Shaken, not stirred',
-  maitai: 'Aloha!',
-  shot: 'Salt, shot, lime… whoa',
-  mojito: 'Fresh and minty',
-  water: 'Good call. Stay hydrated',
-};
-
-/** E at the bar: the menu. */
-function showBar() {
-  openBar({ cutOff: booze.cutOff(performance.now() / 1000), order: orderDrink });
-}
-
-/** The bartender comes over and pours it (a water, if you've had enough), and slides it across to you. */
-function orderDrink(d: Drink) {
-  const r = roof;
-  if (!r || !upTop) return;
-  const cut = d.strength > 0 && booze.cutOff(performance.now() / 1000);
-  const drink = cut ? DRINK_BY_ID.get('water')! : d;
-  r.serve(player.pos.z);
-  sound.pour(r.pourAt);
-  if (cut) toast("🙅 The bartender slides you a water instead: you've had enough", 'warn');
-  setTimeout(() => {
-    if (!upTop) return;
-    booze.drink(drink, performance.now() / 1000);
-    reach();
-    if (player.view === 'first') hands.sip();
-    if (!cut) toast(`${drink.emoji} ${drink.name}. ${CHEERS[drink.id] ?? 'Enjoy!'}`);
-  }, 1500);
-}
-
-let lastHorn = 0;
-/** E at the DJ booth: the air horn, for everyone on the roof. */
-function blowHorn() {
-  const now = performance.now();
-  if (now - lastHorn < 1500) return;
-  lastHorn = now;
-  net.send({ t: 'horn' });
-}
-
-/** How it's going to your head, the last time it changed, and when the next hiccup comes. */
-let feeling: Feeling = 0;
-let nextHiccup = 0;
-let nextSip = 0;
-const FEELINGS = ['😌 You feel sober again', '🥴 You’re feeling a little tipsy', '🌀 Whoa… is the city spinning?', '🤪 You’re wasted. Maybe have some water'];
-
-/** Every frame: how drunk you are, the glass in your hand, hiccups and the odd sip. */
-function drinking(now: number) {
-  const secs = now / 1000;
-  const amount = booze.amount(secs);
-  player.drunk = reduceMotion.matches ? 0 : Math.min(1.3, amount);
-  const glass = booze.holding(secs);
-  me.holdDrink(glass);
-  hands.holdDrink(glass);
-  if (glass && player.view === 'first' && now > nextSip) {
-    if (nextSip) hands.sip();
-    nextSip = now + 9000 + Math.random() * 9000;
-  }
-  const stage = booze.stage(secs);
-  if (stage !== feeling) {
-    if (stage > feeling || stage === 0) toast(FEELINGS[stage], stage >= 3 ? 'warn' : 'info');
-    feeling = stage;
-  }
-  if (amount > 0.5 && now > nextHiccup) {
-    if (nextHiccup) {
-      sound.hiccup();
-      if (!reduceMotion.matches) thud = Math.max(thud, 0.25);
-    }
-    nextHiccup = now + 5000 + Math.random() * 12000;
-  }
-  return amount;
 }
 
 /** A cup from the kitchen machine: a minute of quicker feet and higher jumps, and a mug in your hand. */
 function drinkCoffee() {
   const jittery = caffeine.drink(performance.now() / 1000);
   sound.coffee();
-  if (player.view === 'first') hands.sip();
+  hands.sip();
   if (jittery) toast('☕ One cup too many… you’ve got the jitters!', 'warn');
   else if (caffeine.cups > 1) toast('☕ Another cup: back to a full minute of buzz');
   else toast('☕ Fresh coffee! A minute of quicker feet and higher jumps');
-}
-
-// ---- Smoke breaks ------------------------------------------------------------------------------------
-/** When your smoke break ends by itself (performance.now()), or 0 when you're not on one. */
-let smokeBreakUntil = 0;
-const SMOKE_BREAK_MS = 90_000;
-
-function setSmoking(on: boolean) {
-  if (on === smokeBreakUntil > 0) return;
-  smokeBreakUntil = on ? performance.now() + SMOKE_BREAK_MS : 0;
-  me.setSmoking(on);
-  hands.setSmoking(on);
-}
-
-/** Out on the balcony (a little slack at the door), where smoking is allowed. */
-function onBalcony(): boolean {
-  const p = player.pos;
-  return p.y > -0.5 && p.y < 2 && p.x > BALCONY.minX - 0.5 && p.x < BALCONY.maxX + 0.5 && p.z > BALCONY.minZ - 0.8 && p.z < BALCONY.maxZ + 0.5;
-}
-
-/** Ends the break when the cigarette burns down, or when you take it back inside. */
-function checkSmokeBreak(now: number) {
-  if (!smokeBreakUntil) return;
-  if (!onBalcony()) {
-    setSmoking(false);
-    toast('🚭 No smoking inside, so you put it out');
-  } else if (now > smokeBreakUntil) {
-    setSmoking(false);
-    toast("That one's done. Back to work!");
-  }
 }
 
 // ---- Carrying an issue card ------------------------------------------------------------------------
@@ -2317,7 +2295,7 @@ function pickUp(it: GhIssue) {
   if (carrying) toast(`📌 #${carrying.issue} went back on the board`);
   setCarrying({ issue: it.number, title: it.title });
   sound.paper();
-  toast(`✋ You took #${it.number} off the board: take it to an empty desk, a worker or the 📋 queue and press E`);
+  toast(`✋ You took #${it.number} off the board: take it to an empty desk or a worker and press E`);
 }
 
 /** Q, or E at the issues board: the card goes back where it came from. */
@@ -2330,8 +2308,7 @@ function putBack() {
 
 /**
  * E with a card in your hands: an empty desk hires a worker for the issue (with the prompt 🤖 Hand
- * to a worker uses), an agent at a desk gets it as its next prompt, the queue board queues it, and
- * the issues board takes it back (or swaps it for the `note` you point at there). False when it's none
+ * to a worker uses), an agent at a desk gets it as its next prompt, and the issues board takes it back (or swaps it for the `note` you point at there). False when it's none
  * of those, so E does what it always does there.
  */
 function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): boolean {
@@ -2341,21 +2318,6 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
     return true;
   }
   const prompt = issuePrompt({ number: card.issue, title: card.title });
-  if (it.kind === 'queue') {
-    if (onQueue(card.issue)) toast(`#${card.issue} is already on the queue`, 'warn');
-    else {
-      const { model, effort } = rememberedChoice('queue');
-      net.send({ t: 'queue.add', prompt, title: `#${card.issue} ${card.title}`, issue: card.issue, model, effort });
-      putDown();
-    }
-    return true;
-  }
-  // At the meeting room: a meeting about it, and the card goes back up on the board.
-  if (it.kind === 'meeting' || (it.kind === 'desk' && it.deskId && DESK_BY_ID.get(it.deskId)?.room && !store.workerAtDesk(it.deskId))) {
-    putBack();
-    showMeeting(issueMeeting(card.issue, card.title));
-    return true;
-  }
   if (it.kind !== 'desk' || !it.deskId) return false;
   const w = store.workerAtDesk(it.deskId);
   const why = w ? cantTakeCard(w) : '';
@@ -2371,20 +2333,15 @@ function dropCard(it: Interactable, card: CarriedIssue, note: GhIssue | null): b
   return true;
 }
 
-/** The card left your hands for a desk or the queue (the office says who took it). */
+/** The card left your hands for a desk (the office says who took it). */
 function putDown() {
   setCarrying(null);
   sound.paper();
 }
 
-function onQueue(issue: number): boolean {
-  const t = store.taskForIssue(issue);
-  return !!t && t.status !== 'done';
-}
-
 /** Why the worker at a desk can't be handed an issue card right now, or '' when it can. */
 function cantTakeCard(w: WorkerInfo): string {
-  if (w.downedUntil !== undefined) return `Walk up to ${w.name}'s body and press E to revive first`;
+  if (w.downedUntil !== undefined) return `Walk up to ${w.name}${arms().body} and press E to ${arms().reviveVerb} first`;
   if (w.kind === 'shell') return `${w.name} is a shell, not an agent`;
   if (w.guest) return guestKeyNote(w, 'P');
   if (w.lost) return `${w.name}'s worktree was deleted — press E at its desk to fix it`;
@@ -2409,13 +2366,12 @@ function freePlace(seat: SeatDef): SeatPlace | null {
   return best;
 }
 
-/** E at a seat: sit down on it. Sitting there already, get up (or play, or order, where the seat offers it). */
+/** E at a seat: sit down on it. Sitting there already, get up (or play, where the seat offers it). */
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
     if (seat.game) arcade.play();
-    else if (seat.bar) showBar();
     else standUp();
     return;
   }
@@ -2501,8 +2457,12 @@ function ceilingOver(x: number, z: number): number {
 const CONFETTI_DENSITY = 3.5;
 const floorArea = (a: Area) => (a.maxX - a.minX) * (a.maxZ - a.minZ);
 
-/** Someone hit the gong, a pull request merged (a dance party under a confetti rain), or the queue emptied (a party). */
+/** When the gong was last struck. The swing is part of the render pace (see render-pace.ts). */
+let gongStruckAt = 0;
+
+/** Someone hit the gong, or a pull request merged (a dance party under a confetti rain). */
 function gongRang(why: GongWhy, pr?: number) {
+  gongStruckAt = performance.now();
   office.gong.strike(why === 'hit' ? 0.7 : 1);
   sound.gong(why);
   const top = office.gong.top;
@@ -2515,20 +2475,6 @@ function gongRang(why: GongWhy, pr?: number) {
     if (w && workerViews.has(w.id)) burstOver(w.deskId, 220);
     else confetti.burst(top.x, top.y, top.z, 220);
     danceParty();
-  } else if (why === 'queue') {
-    // Three strokes (sound.gong plays them): a burst at the gong, then every desk, then a cannon.
-    confetti.burst(top.x, top.y, top.z, 160);
-    setTimeout(() => {
-      office.gong.strike(0.85);
-      for (const [id, v] of workerViews) {
-        burstOver(v.deskId, 120);
-        if (!isAsleep(store.workers.get(id)?.status ?? 'offline')) v.model.cheer(4);
-      }
-    }, 850);
-    setTimeout(() => {
-      office.gong.strike(1.2);
-      confetti.burst(top.x, top.y, top.z, 450, 1.5);
-    }, 1700);
   }
 }
 
@@ -2575,7 +2521,6 @@ function renderHint() {
   const el = $('hint');
   if (hanger.active && !modalOpen()) return renderHangHint(el);
   if (climber.active && !modalOpen()) return renderClimbHint(el);
-  if (golf.active && !modalOpen()) return renderGolfHint(el);
   const casualty = !modalOpen() && nearbyCasualty();
   if (casualty) {
     const hint = casualtyHint(casualty, true);
@@ -2627,42 +2572,37 @@ function hintFor(it: Interactable): Hint {
       return issuesTex.hasNotes ? { k: 'notes', parts: [title('📌 Issues board'), key('E', 'Open'), aside('or point at a note to take it')] } : board('📌 Issues board');
     case 'pulls':
       return board('🔀 Pull request board');
-    case 'services':
-      return board('🌐 Services board');
     case 'ci': {
       const ci = store.factory.ci;
       const n = ci.workflows.length;
       const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
       return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
     }
+    case 'whiteboard': {
+      const board = floorWhiteboard();
+      const card = wallCard();
+      const sum = board && gridSummary(board);
+      const about = card ? clip(card.title || 'Untitled', 40) : sum ? (sum.changed ? `${sum.cards} · ${sum.changed} changed` : board.cards.length ? sum.cards : 'nothing on it yet') : '';
+      return { k: about, parts: [title('🗒️ Whiteboard'), about ? aside(about) : '', key('E', card ? 'Open this card' : 'Open')] };
+    }
     case 'computers': {
       const about = computeWall.view ? wallSummary(computeWall.view) : '';
       return { k: about, parts: [title('🖥️ Compute wall'), aside(about), key('E', 'Open the Computers')] };
     }
-    case 'queue': {
-      const n = store.queue.tasks.filter((t) => t.status !== 'done').length;
-      return { k: String(n), parts: [title(`📋 Task queue${n ? ` · ${n}` : ''}`), key('E', 'Open')] };
-    }
-    case 'tv': {
-      const f = store.factory;
-      const on = f.connection.connected && !f.connection.rejected;
-      const running = f.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length;
-      const about = !on ? 'standby · connect Factory in ⚙️ Settings' : running ? `${running} session${running === 1 ? '' : 's'} running` : 'Droid sessions & credits';
-      return { k: about, parts: [title('📺 Droid sessions TV'), aside(about), key('E', on ? 'Open Sessions' : 'Connect Factory')] };
+    case 'actions': {
+      const p = store.pipelines;
+      const run = aimedRun !== undefined ? p.runs.find((r) => r.id === aimedRun) : undefined;
+      if (run) return { k: `run:${run.id}:${run.state}`, parts: [title(clip(`🚀 ${run.workflow} #${run.number} · ${run.title}`, 60)), aside(stateWord(run)), key('E', 'Open the run')] };
+      const live = p.runs.filter((r) => isLive(r.state)).length;
+      const about = p.error ? "can't read the runs" : live ? `${live} running or waiting` : p.runs.length ? 'all quiet' : '';
+      return { k: about, parts: [title(store.project?.forge === 'gitlab' ? '🚀 GitLab pipelines' : '🚀 GitHub Actions'), about ? aside(about) : '', key('E', 'Open')] };
     }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
       return { k: String(buzzed), parts: [title('☕ Coffee machine'), key('E', buzzed ? 'Another cup' : 'Grab a cup')] };
     }
-    case 'smoke':
-      return { k: String(smokeBreakUntil > 0), parts: [title('🚬 Ashtray'), key('E', smokeBreakUntil ? 'Stub it out' : 'Take a smoke break')] };
     case 'gong':
       return { k: '', parts: [title('🎉 Merge gong'), aside('rings when a PR merges'), key('E', 'Bang it')] };
-    case 'golf': {
-      const { best, holes } = golfRecord();
-      const about = [holes ? `${holes} hole${holes === 1 ? '' : 's'} in one` : '', best !== null ? `your best ${pinText(best)} from the pin` : `the pin's ${Math.round(PIN_DISTANCE)} m out`].filter(Boolean).join(' · ');
-      return { k: about, parts: [title('Golf tee'), aside(about), key('E', 'Tee off')] };
-    }
     case 'jukebox': {
       const j = store.jukebox;
       const what = j.on ? trackTitle(j) : '';
@@ -2679,12 +2619,6 @@ function hintFor(it: Interactable): Hint {
       const wiki = store.factory.connection.connected && store.floor ? wikiShelfLine(store.factory.wiki.floors[store.floor]) : '';
       return { k: wiki, parts: [title('📚 Bookshelf'), aside(wiki ? `the project's docs · ${wiki}` : "the project's docs"), key('E', 'Read the docs')] };
     }
-    case 'meeting': {
-      const m = store.meeting.current;
-      const p = m && MEETING_PATTERNS[m.pattern];
-      const what = !m || !p ? 'free' : m.status === 'running' ? `${p.icon} ${p.label} · ${meetingStage(m)}` : `${p.icon} ${p.label} ${m.status === 'done' ? 'done ✅' : 'stopped ⛔'}`;
-      return { k: what, parts: [title('🤝 Meeting room'), aside(clip(what, 50)), key('E', m?.status === 'running' ? 'See how it’s going' : m ? 'See it / call a meeting' : 'Call a meeting')] };
-    }
     case 'elevator': {
       const f = store.currentFloor();
       const n = store.floors.length;
@@ -2698,7 +2632,7 @@ function hintFor(it: Interactable): Hint {
       const seat = SEATING_BY_ID.get(it.seatId ?? '');
       if (!seat) return { k: '', parts: [] };
       if (player.seat?.seatId === seat.id) {
-        const use = seat.game ? 'Play Minesweeper' : seat.bar ? 'Order a drink' : '';
+        const use = seat.game ? 'Play Minesweeper' : '';
         return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
       }
       const full = !freePlace(seat);
@@ -2718,15 +2652,6 @@ function hintFor(it: Interactable): Hint {
       const up = floorThere(1)?.name ?? 'upstairs';
       return { k: `landing|${up}`, parts: [title('🚒 Fire pole'), aside(`comes down from ${up}`), key('E', 'Twirl')] };
     }
-    case 'bar': {
-      const cut = booze.cutOff(performance.now() / 1000);
-      return { k: String(cut), parts: [title('🍸 Sky Bar'), aside(cut ? "you've had enough" : 'drinks on the house'), key('E', cut ? 'Ask for water' : 'Order a drink')] };
-    }
-    case 'dj': {
-      const f = djFrame(djAt());
-      const what = f.part === 'drop' ? '🔥 the drop' : f.part === 'build' ? 'building up…' : f.part === 'breakdown' ? 'the breakdown' : 'mixing in the next track';
-      return { k: what, parts: [title('🎧 DJ Merge Conflict'), aside(`drum & bass · ${what}`), key('E', '📯 Air horn!')] };
-    }
   }
 }
 
@@ -2734,13 +2659,6 @@ function hintFor(it: Interactable): Hint {
 function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
   const parts = (...mid: (HTMLElement | string)[]) => [h('span.title', {}, `🗂️ #${card.issue} in hand`), ...mid, key('Q', 'Put it back')];
   if (it?.kind === 'issues') return aimedNote ? { k: String(aimedNote.number), parts: parts(key('E', `Swap it for #${aimedNote.number}`)) } : { k: '', parts: parts(key('E', 'Pin it back up')) };
-  if (it?.kind === 'queue') {
-    const on = onQueue(card.issue);
-    return { k: String(on), parts: parts(on ? aside('already on the queue') : key('E', 'Put it on the queue')) };
-  }
-  if (it?.kind === 'meeting' || (it?.kind === 'desk' && it.deskId && DESK_BY_ID.get(it.deskId)?.room && !store.workerAtDesk(it.deskId))) {
-    return { k: 'meeting', parts: parts(key('E', 'Call a meeting about it')) };
-  }
   if (it?.kind === 'desk' && it.deskId) {
     const w = store.workerAtDesk(it.deskId);
     if (!w) return { k: '', parts: parts(key('E', 'Hire a worker for it')) };
@@ -2752,20 +2670,25 @@ function carryHint(card: CarriedIssue, it: Interactable | null): Hint {
     const rest = hintFor(it);
     return { k: rest.k, parts: parts(...rest.parts) };
   }
-  return { k: '', parts: parts(aside('take it to an empty desk, a worker or the 📋 queue')) };
+  return { k: '', parts: parts(aside('take it to an empty desk or a worker')) };
 }
 
 function casualtyHint(w: WorkerInfo, near: boolean): Hint {
   const seconds = Math.max(0, Math.ceil((w.downedUntil! - store.officeNow()) / 1000));
+  const a = arms();
   return {
-    k: `downed|${w.id}|${seconds}|${near}`,
-    parts: [h('span.title', {}, `🩹 ${w.name} is down`), seconds ? (near ? key('E', 'Revive') : aside('Walk up to the body to revive')) : aside('Medics on their way'), aside(`${seconds}s · then worktree + branch deleted`)],
+    k: `downed|${w.id}|${seconds}|${near}|${gunOut}|${settings.sidearm}`,
+    parts: [
+      h('span.title', {}, `${a.downed} ${w.name} ${a.isDown}`),
+      seconds ? (near ? key('E', a.revive) : aside(`Walk up to ${a.body ? 'the body' : 'it'} to ${a.reviveVerb}`)) : aside('Ascending to heaven'),
+      ...(seconds && gunOut ? [aside(a.again)] : []),
+      aside(`${seconds}s · then worktree + branch deleted`),
+    ],
   };
 }
 
 function deskHint(deskId: string): Hint {
   const w = store.workerAtDesk(deskId);
-  if (!w && DESK_BY_ID.get(deskId)?.room) return { k: 'room', parts: [h('span.title', {}, `🤝 ${DESK_BY_ID.get(deskId)!.label} · free`), key('E', 'Call a meeting')] };
   if (!w) {
     const m = store.machine;
     const full = officeFull(m);
@@ -2879,32 +2802,26 @@ function stationHint(deskId: string): Hint {
   };
 }
 
-/** The gun out: fire it, or put it back. */
-function renderGunHint(el: HTMLElement) {
-  const doing = GUN_TRICKS.find((x) => x.id === gunMotion.doing);
-  const k = `gun|${doing?.id ?? ''}`;
-  if (k === hintKey) return;
-  hintKey = k;
-  el.replaceChildren(h('span.title', {}, doing ? `${doing.emoji} ${doing.label}` : '🔫 .44 Magnum'), key('Click', 'Fire'), key('1–6', 'Tricks'), key('7', 'Holster'));
-  el.classList.remove('hidden');
+/** The spells on 1–6 as the hint and the wheel name them: Lumos is Nox while it's lit. */
+function wandSpells() {
+  return WAND_SPELLS.map((x) => (x.id === 'lumos' && lumos ? { ...x, emoji: '🌑', label: 'Nox' } : x));
 }
-/** At the golf tee: how to aim and swing, or how to get back to it while the ball's out there. */
-function renderGolfHint(el: HTMLElement) {
-  const title = (text: string) => h('span.title', {}, text);
-  const stage = golf.doing;
-  const k = `golf|${stage}`;
-  if (k === hintKey) return;
-  hintKey = k;
-  const parts =
-    stage === 'watch'
-      ? [title('Fore!'), key('Space', 'Back to the tee'), key('E', 'Done')]
-      : stage === 'charge' || stage === 'swing'
-        ? [title('Let go to hit it'), aside('the fuller the meter, the further it goes')]
-        : [key('Space', 'Hold to swing'), key('A D', 'Aim'), key('W S', 'Loft'), key('E', 'Done')];
-  el.replaceChildren(...parts);
-  el.classList.remove('hidden');
-}
+/** The tricks (with the gun) or spells (with the wand) on 1–6, in key order. */
+const armMoves = (): readonly { id: string; emoji: string; label: string }[] => (drawnArm === 'wand' ? wandSpells() : GUN_TRICKS);
 
+/** The gun (or the wand) out: fire it, or put it back. */
+function renderGunHint(el: HTMLElement) {
+  const wand = drawnArm === 'wand';
+  const now = wand ? wandMotion.doing : gunMotion.doing;
+  const doing = now === 'cast' ? { id: 'cast', emoji: '✨', label: 'Casting' } : armMoves().find((x) => x.id === now);
+  const k = `gun|${doing?.id ?? ''}|${drawnArm}|${lumos}`;
+  if (k === hintKey) return;
+  hintKey = k;
+  const a = arms();
+  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? `${a.name} · 💡 Lumos` : a.name;
+  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
+  el.classList.remove('hidden');
+}
 /** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
 function renderClimbHint(el: HTMLElement) {
   const title = (text: string) => h('span.title', {}, text);
@@ -2942,7 +2859,7 @@ function renderHangHint(el: HTMLElement) {
 let crossKey = '';
 const finePointer = window.matchMedia('(pointer: fine)').matches;
 function renderCrosshair() {
-  const show = player.view === 'first' && !modalOpen() && !golf.active;
+  const show = !modalOpen();
   const free = show && finePointer && player.canLock && !player.locked;
   const k = `${show}|${!!target}|${free}|${relookOnKey}|${gunOut}`;
   if (k === crossKey) return;
@@ -2958,7 +2875,7 @@ function renderCrosshair() {
 // ---- Reaching out ---------------------------------------------------------------------------------
 /** Plays the reach on your hands and your character. */
 function reach() {
-  if (player.view === 'first') hands.reach();
+  hands.reach();
   me.reach();
 }
 
@@ -2978,17 +2895,18 @@ function emote(id: EmoteId) {
   }
   me.emote(id);
   hands.emote(id);
-  if (player.view === 'first') popEmoji(id);
+  popEmoji(id);
 }
 /** Number `i` on the keys (0 for 1) and round the wheel: a trick with the gun out, else an emote. */
 function emoteOrTrick(i: number) {
+  if (gunOut && drawnArm === 'wand') return wandSpell(WAND_SPELLS[i].id);
   if (gunOut) return gunTrick(GUN_TRICKS[i].id);
   emote(EMOTES[i].id);
 }
 const emoteWheel = new EmoteWheel(
   emoteOrTrick,
   (open) => (player.mouseLook = !open),
-  () => (gunOut ? { title: 'Trick', items: GUN_TRICKS } : { title: 'Emote', items: EMOTES }),
+  () => (gunOut ? { title: drawnArm === 'wand' ? 'Spell' : 'Trick', items: [...armMoves()] } : { title: 'Emote', items: EMOTES }),
 );
 $('hud').append(emoteWheel.el);
 
@@ -3045,17 +2963,12 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyE') climber.letGo();
     return;
   }
-  // At the golf tee, E puts the club back (Space swings, see Golfer); nothing else is in reach, and no emotes mid-swing.
-  if (golf.active && (e.code === 'KeyF' || e.code === 'KeyG' || e.code in DESK_KEYS || /^(?:Digit|Numpad)[1-6]$/.test(e.code))) {
-    if (e.code === 'KeyE') golf.stop();
-    return;
-  }
   // A nearby body takes E even with the gun or another object in your hands.
   if (e.code === 'KeyE' && !e.repeat && reviveNearby()) {
     e.preventDefault();
     return;
   }
-  // 7 draws and holsters the .44 Magnum (1–6 are emotes).
+  // 7 draws and holsters the wand or the .44 Magnum (1–6 are emotes).
   if (e.code === 'Digit7' || e.code === 'Numpad7') {
     if (!e.repeat) toggleGun();
     return;
@@ -3082,7 +2995,7 @@ function officeKey(e: KeyboardEvent): boolean {
       hud.toggleMenu();
       return true;
     case 'KeyH':
-      openHelp();
+      openHelp(settings.sidearm);
       return true;
     case 'KeyF':
       startHanging();
@@ -3160,7 +3073,7 @@ onModalChange((open) => {
   hintKey = '';
 });
 
-/** Once the last window is closed, the game has the keyboard again and, in first person, the mouse. */
+/** Once the last window is closed, the game has the keyboard again and the mouse. */
 function backToGame() {
   if (modalOpen()) return;
   if (!isTyping()) canvas.focus({ preventScroll: true });
@@ -3176,7 +3089,7 @@ document.addEventListener('pointerlockchange', () => {
   if (player.locked) relookOnKey = false;
 });
 
-// ---- Clicking the world: use what's under the crosshair (first person) or the mouse (third) ----------
+// ---- Clicking the world: use what's under the crosshair ----------
 const raycaster = new THREE.Raycaster();
 const CROSSHAIR = new THREE.Vector2(0, 0);
 /** How close (meters from your eyes) you must be to use each kind of thing. */
@@ -3186,13 +3099,11 @@ const REACH: Record<InteractKind, number> = {
   coffee: 3,
   issues: 9,
   pulls: 9,
-  services: 9,
-  queue: 9,
+  actions: 9,
   ci: 9,
+  whiteboard: 9,
   computers: 9,
-  tv: 10,
   decor: 9,
-  smoke: 3,
   elevator: 4.5,
   gong: 3.5,
   jukebox: 4,
@@ -3200,11 +3111,7 @@ const REACH: Record<InteractKind, number> = {
   cabinet: 4,
   ladder: 3,
   pole: 4,
-  meeting: 7,
-  bar: 3.5,
-  dj: 6,
   bookshelf: 4,
-  golf: 3.5,
 };
 const eye = new THREE.Vector3();
 
@@ -3257,45 +3164,35 @@ function useSpot(spot: BoardSpot | null, key: DeskKey): boolean {
   return true;
 }
 
-/** The note on the issues board under the crosshair (or, in third person, the mouse), which E takes. */
-let aimedNote: GhIssue | null = null;
-/** The tab or Jira card on the issues board under the crosshair or the mouse. */
-let aimedSpot: BoardSpot | null = null;
-/** Where the mouse is over the scene, for pointing at notes in third person; null when it's off it. */
-let pointer: THREE.Vector2 | null = null;
-canvas.addEventListener('pointermove', (e) => {
-  const r = canvas.getBoundingClientRect();
-  (pointer ??= new THREE.Vector2()).set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-});
-canvas.addEventListener('pointerleave', () => (pointer = null));
+/** The run on the Pipelines board an aim lands on, or undefined. */
+function runUnder(aim: { it: Interactable; hit: THREE.Intersection } | null): number | undefined {
+  if (aim?.it.kind !== 'actions' || aim.hit.object !== office.boardMeshes.actions || !aim.hit.uv) return undefined;
+  return pipelinesTex.runAt(aim.hit.uv);
+}
 
-player.onClick = (ndc) => {
-  // At the tee, a click is you steadying the mouse to aim: nothing else is in reach.
-  if (modalOpen() || golf.active) return;
+/** The note on the issues board under the crosshair, which E takes. */
+let aimedNote: GhIssue | null = null;
+/** The run on the Pipelines board under the crosshair, which E opens. */
+let aimedRun: number | undefined;
+/** The tab or Jira card on the issues board under the crosshair. */
+let aimedSpot: BoardSpot | null = null;
+
+player.onClick = () => {
+  if (modalOpen()) return;
   if (emoteWheel.isOpen) return emoteWheel.click();
-  // The gun out: a click fires at what's under the crosshair (or the mouse).
+  // The gun out: a click fires at what's under the crosshair.
   if (gunOut) {
-    fireGun(ndc);
+    fireGun();
     return;
   }
   if (hanger.active) {
     reach();
-    hanger.place(ndc);
+    hanger.place();
     return;
   }
-  if (player.view === 'first') {
-    // Reach out even at nothing, like poking the air.
-    reach();
-    if (target) interact(target, 'E');
-    return;
-  }
-  const aim = aimedAt(ndc, 2.5);
-  if (!aim) return;
-  if (!aim.near) {
-    toast('Walk closer to that first');
-    return;
-  }
-  use(aim.it, 'E', noteUnder(aim), spotUnder(aim));
+  // Reach out even at nothing, like poking the air.
+  reach();
+  if (target) interact(target, 'E');
 };
 
 // Buttons must not keep focus, or Space (jump) would click them again.
@@ -3314,8 +3211,15 @@ const waitingNow = () => waitingInOrder(store.workers.values());
 const hudActions: HudAction[] = [
   { id: 'issues', icon: '📌', label: 'Issues', section: 'Open', count: () => store.issues.items.filter((i) => i.state === 'OPEN').length, run: () => openBoard('issues', net, boardActions()) },
   { id: 'pulls', icon: '🔀', label: 'Pull requests', section: 'Open', count: () => store.pulls.items.filter((p) => p.state === 'OPEN').length, run: () => openBoard('pulls', net, boardActions()) },
-  { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
-  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
+  {
+    id: 'pipelines',
+    icon: '🚀',
+    label: 'Pipelines',
+    section: 'Open',
+    count: () => store.pipelines.runs.filter((r) => isLive(r.state)).length,
+    title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
+    run: () => showPipelines(),
+  },
   {
     id: 'ci',
     icon: '🏭',
@@ -3326,32 +3230,21 @@ const hudActions: HudAction[] = [
     title: () => 'Droid in GitHub Actions, from Factory',
     run: () => showCi(),
   },
+  {
+    id: 'whiteboard',
+    icon: '🧑‍🎨',
+    label: 'Whiteboard',
+    section: 'Open',
+    shown: () => !upTop && !!store.floor,
+    count: whiteboardChanged,
+    title: () => "The floor's Whiteboard: artifacts from workers, your marks on them",
+    run: () => openWhiteboard(net),
+  },
   { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
-  // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
-  {
-    id: 'meeting',
-    icon: '🤝',
-    label: 'Meeting room',
-    section: 'Open',
-    status: () => store.meeting.current?.status === 'running',
-    chip: () => 'In a meeting',
-    title: () => 'Call a meeting: workers work through a question or a task together',
-    run: () => showMeeting(),
-  },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
-  {
-    id: 'sessions',
-    icon: '🛰️',
-    label: 'Droid sessions',
-    section: 'Open',
-    shown: () => store.factory.connection.connected,
-    count: () => store.factory.sessions.items.filter((x) => x.status === 'running' || x.status === 'pending').length,
-    title: () => 'Every Droid session on the Factory account: what each is doing and what it costs (the lounge TV)',
-    run: () => showSessions(),
-  },
   { id: 'autowiki', icon: '🏭', label: 'AutoWiki', section: 'Open', title: () => "Factory's wiki of this repository, on the bookshelf", run: () => showBookshelf('wiki') },
   { id: 'elevator', icon: '🛗', label: 'Elevator', section: 'Open', count: () => store.floors.reduce((n, f) => n + (f.id === store.floor ? 0 : f.waiting), 0), title: () => 'Ride to another project', run: showElevator },
-  { id: 'roof', icon: '🍸', label: 'Rooftop bar', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof: a DJ, drinks and the city', run: () => ride(ROOF) },
+  { id: 'roof', icon: '🏙️', label: 'Rooftop', section: 'Open', shown: () => !upTop && builtFloors().length > 0, title: () => 'Ride the elevator up to the roof', run: () => ride(ROOF) },
   {
     id: 'decor',
     icon: '🖼️',
@@ -3364,7 +3257,7 @@ const hudActions: HudAction[] = [
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
-  { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: openHelp },
+  { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
     id: 'upgrade',
     icon: '⬆️',
@@ -3407,15 +3300,19 @@ function showSettings(pane?: SettingsPane) {
     (s) => {
       Object.assign(settings, s);
       saveSettings(settings);
-      player.setView(settings.view);
       sound.setVolume(settings.volume, settings.muted);
+      sound.setAlertsMuted(settings.alertsMuted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
+      // The hint names what's in your hand; the hands swap props by themselves next frame.
+      hintKey = 'stale';
     },
     editProfile,
-    () => sound.ding('done'),
+    () => sound.floorChime(),
+    () => sound.previewAlerts(),
     notifier,
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
+    hireForWorktreeSetup,
   );
 }
 
@@ -3435,24 +3332,108 @@ function resize() {
   camera.updateProjectionMatrix();
   hands.setAspect(w / hgt);
 }
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => {
+  resize();
+  renderWake();
+});
 resize();
 
-const timer = new THREE.Timer();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
-const headPos = new THREE.Vector3();
-/** Last frame went through the drunk vision. */
-let drunkVisionOn = false;
 
 const fpsEl = $('fps');
 let fpsFrames = 0;
 let fpsSince = performance.now();
 /** Frames drawn since the page loaded, so automation commands can wait for the scene to catch up. */
 let framesDrawn = 0;
+/** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
+let lookedUntil = 0;
+/** When the scene last moved or the page last came into view. Full rate holds for IDLE_AFTER_MS after it. */
+let activeAt = performance.now();
+const renderLoop = new RenderLoop({
+  pace: currentPace,
+  draw: drawFrame,
+  animation: (callback) => renderer.setAnimationLoop(callback),
+  delay: (callback, ms) => window.setTimeout(callback, ms),
+  cancelDelay: (id) => window.clearTimeout(id),
+  now: () => performance.now(),
+  paused: () => {
+    fpsEl.textContent = '';
+    fpsFrames = 0;
+    fpsSince = performance.now();
+  },
+});
 
-function frame(ts?: number) {
+/** A worker walking, hopping, mid-turn, leaving, or being carried out. */
+function workerMoving(): boolean {
+  for (const v of workerViews.values()) if (v.model.animating) return true;
+  for (const a of idleAgents) if (a.view.vacancy.visible && a.model.animating) return true;
+  return departures.positions().length > 0 || casualties.active;
+}
+
+/** Traffic is the thing you're looking at, not just the street outside the windows. */
+function trafficInView(): boolean {
+  if (upTop) return true;
+  const { x, y, z } = player.pos;
+  if (y < -0.4) return true;
+  return x < FLOOR.minX || x > FLOOR.maxX || z < FLOOR.minZ || z > FLOOR.maxZ;
+}
+
+/** What the pace decision needs. Hidden covers a background tab and, on macOS, a fully covered window. */
+function sceneMotion(): SceneMotion {
+  const now = performance.now();
+  const secs = now / 1000;
+  const playerBusy =
+    player.moving ||
+    !player.grounded ||
+    player.vy !== 0 ||
+    player.jitter > 0 ||
+    thud > 0 ||
+    climber.active ||
+    hanger.active ||
+    !!errand ||
+    !!gunMotion.doing ||
+    !!wandMotion.doing ||
+    !!me.emoteId ||
+    arcade.animating ||
+    cabinet.animating ||
+    readingNow() ||
+    now < lookedUntil;
+  return {
+    player: playerBusy,
+    worker: workerMoving(),
+    confetti: confetti.count > 0,
+    gong: gongRinging(now, gongStruckAt),
+    coffee: caffeine.jitter(secs) > 0,
+    smoke: smoke.group.children.length > 0 || puffs.length > 0,
+    cars: trafficInView(),
+    elevator: !!trip,
+    // Cards snap on and off the board. One carried while you walk is the player moving.
+    boardCard: false,
+    sky: skyFalling(sky.rain, sky.snow),
+  };
+}
+
+/** `?pace=full` on this tab's address: a recording tab that must never idle or pause (see RenderSignals). */
+const fullRate = new URLSearchParams(location.search).get('pace') === 'full';
+
+function currentPace(): RenderPace {
+  const now = performance.now();
+  const motion = sceneMotion();
+  if (sceneIsMoving(motion)) activeAt = now;
+  return renderPace({
+    hidden: document.visibilityState !== 'visible',
+    // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
+    // it is also false when this window is visible beside another one.
+    covered: false,
+    fullRate,
+    motion,
+    quietMs: now - activeAt,
+  });
+}
+
+function drawFrame(dt: number, t: number) {
   framesDrawn++;
   fpsFrames++;
   const fpsNow = performance.now();
@@ -3461,9 +3442,6 @@ function frame(ts?: number) {
     fpsFrames = 0;
     fpsSince = fpsNow;
   }
-  timer.update(ts);
-  const dt = Math.min(timer.getDelta(), 0.1);
-  const t = timer.getElapsed();
   const now = performance.now();
 
   // Coffee: quicker feet, higher jumps, a mug in hand, and maybe the jitters.
@@ -3473,40 +3451,49 @@ function frame(ts?: number) {
   thud = Math.max(0, thud - dt * 2.5);
   player.jitter = reduceMotion.matches ? 0 : Math.max(caffeine.jitter(secs), thud);
   const mug = caffeine.buzzed(secs);
-  // Both hands are on the club at the tee.
-  me.holdMug(mug && !golf.active);
+  me.holdMug(mug);
   hands.holdMug(mug);
   renderCaffeine(caffeine, secs);
-  // Drinks from the rooftop bar: a glass in hand, and the world swaying.
-  const drunk = drinking(now);
   player.update(dt);
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
   arcade.update(camera, dt);
   cabinet.update(camera, dt);
-  // Pulled away from the tee (sat down, off up the ladder, into the elevator): the club goes back.
-  if (golf.active && (trip || hanger.active || climber.active || player.seat || upTop)) golf.stop();
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
-  golf.update(dt);
-  balls.update(dt);
-  office.tee.ball.visible = golf.doing !== 'watch';
   me.root.position.copy(player.pos);
   me.root.position.y += player.stepOffset;
   me.root.rotation.y = player.facing;
   const grip = climber.grip;
   me.setGrip(grip);
+  // Switched in Settings with one drawn: the other comes out in its place.
+  if (gunOut && drawnArm !== settings.sidearm) {
+    holsterGun(true);
+    toggleGun();
+  }
   const gunCuesNow = gunMotion.update(dt);
+  const wandCuesNow = wandMotion.update(dt);
   me.setGunPose(gunMotion.pose);
   hands.setGunPose(gunMotion.pose);
-  me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip && !golf.active, player.speedBoost);
-  const firstPerson = player.view === 'first';
-  // In first person you are the camera; in third, hide yourself when it's zoomed in right behind your head.
-  // At the tee the camera's behind the ball, and you're the one holding the club.
-  me.root.visible = golf.active || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5);
-  if (firstPerson && !golf.active) hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
+  hands.setWandPose(wandMotion.pose);
+  me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip, player.speedBoost);
+  hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   gunCues(gunCuesNow);
+  wandCues(wandCuesNow);
+  // The wand's light on the room (Lumos, and the flash of a spell leaving it), and the trail its tip draws.
+  const wandPose = wandMotion.pose;
+  const tipNow = wandPose ? wandTipAt(tipWorld) : null;
+  tipTrail.emit(tipWorld, tipNow && wandPose ? wandPose.trail : 0);
+  tipTrail.update(dt);
+  const wandGlow = 2.4 * hands.lumos + 1.6 * (wandPose?.glow ?? 0);
+  wandLight.visible = !!tipNow && wandGlow > 0.02;
+  if (tipNow) {
+    // A touch ahead of the tip, so it lights what's in front of you rather than the shaft's own shadow side.
+    hands.wandDir(tipDir);
+    wandLight.position.copy(tipNow).add(tipDir.transformDirection(camera.matrixWorld).multiplyScalar(0.12));
+    wandLight.intensity = wandGlow;
+  }
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
   const fov = 55 + rush * 16;
@@ -3531,6 +3518,8 @@ function frame(ts?: number) {
     // A jumping worker holds still while you're near enough to read its card, and jumps again once you walk away.
     const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
+    workerPos.y += WORKER_HEAD;
+    v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
     // A board agent's kiosk has no laptop to paint (see buildKiosk).
     if (desk.station) continue;
@@ -3542,7 +3531,6 @@ function frame(ts?: number) {
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
-  arrivals.update(dt);
   casualties.update(dt, t);
   for (let i = puffs.length - 1; i >= 0; i--) {
     if (puffs[i].update(dt)) continue;
@@ -3551,57 +3539,39 @@ function frame(ts?: number) {
     puffs.splice(i, 1);
   }
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...departures.positions(), ...arrivals.positions(), ...casualties.positions()]);
+    office.update(t, dt, [player.pos, ...departures.positions()]);
     office.stack.update(dt, [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }], camera.position);
     office.jukebox.update(t, dt, sound.beat());
   }
-  checkSmokeBreak(now);
   smoke.update(dt, camera);
   confetti.update(dt);
   if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);
   hanger.update();
   sky.update(dt, t, camera);
-  if (upTop && roof) {
-    // Everything up there moves to the DJ's set; strobes flash the whole roof as a drop lands.
-    const strobe = roof.update(t, dt, djFrame(djAt()), { dark: sky.lampsOn, motion: !reduceMotion.matches });
-    ambient.intensity += strobe * 1.5;
-    hemi.intensity += strobe * 0.8;
-  }
+  if (upTop && roof) roof.update(t, dt, { dark: sky.lampsOn });
   aimedNote = null;
   aimedSpot = null;
-  if (modalOpen() || hanger.active || climber.active || golf.active) target = null;
-  else if (firstPerson) {
+  aimedRun = undefined;
+  if (modalOpen() || hanger.active || climber.active) target = null;
+  else {
     const aim = aimedAt(CROSSHAIR);
     target = aim?.near ? aim.it : mySeat();
     if (aim?.near) {
       aimedNote = noteUnder(aim);
       aimedSpot = spotUnder(aim);
-    }
-  } else {
-    target = mySeat() ?? pickTarget();
-    // By the issues board, the mouse points at the note you'd take, a tab or a Jira card.
-    if (target?.kind === 'issues' && pointer) {
-      const aim = aimedAt(pointer, 2.5);
-      if (aim?.near) {
-        aimedNote = noteUnder(aim);
-        aimedSpot = spotUnder(aim);
-      }
+      aimedRun = runUnder(aim);
     }
   }
   issuesTex.lift(aimedNote?.number ?? null);
   issuesTex.hover(aimedSpot);
+  pipelinesTex.hover(aimedRun ?? null);
   renderHint();
   renderCrosshair();
 
-  // A few drinks in, the frame goes to the screen through the drunk vision (see world/drunk.ts).
-  const blurry = drunk > 0.01;
-  if (blurry) drunkVision.begin();
-  else if (drunkVisionOn) drunkVision.release();
-  drunkVisionOn = blurry;
   effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {
+  if (!arcade.zoomed && !cabinet.zoomed) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();
@@ -3610,16 +3580,51 @@ function frame(ts?: number) {
     effect.render(hands.scene, hands.camera);
     sky.shading(true);
   }
-  if (blurry) drunkVision.end(drunk, t, !reduceMotion.matches);
   loading.drew();
 }
 
-let loopStarted = false;
-function startLoop() {
-  if (loopStarted) return;
-  loopStarted = true;
-  renderer.setAnimationLoop(frame);
+/** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
+function renderWake() {
+  renderLoop.wake();
 }
+
+/** The camera is being driven. Full rate starts before the player controller has stepped. */
+function renderLook() {
+  lookedUntil = performance.now() + 200;
+  renderWake();
+}
+
+function startLoop() {
+  renderLoop.start();
+}
+
+// A background tab and a fully covered window both show up as visibilityState "hidden".
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') activeAt = performance.now();
+  renderWake();
+});
+window.addEventListener('pageshow', () => {
+  activeAt = performance.now();
+  renderWake();
+});
+// Typing in a window is the terminal's canvas, not the 3D scene.
+window.addEventListener('keydown', () => {
+  if (modalOpen() || isTyping()) return;
+  renderLook();
+});
+window.addEventListener('pointerdown', () => {
+  if (modalOpen()) return;
+  renderLook();
+});
+window.addEventListener(
+  'wheel',
+  () => {
+    if (modalOpen()) return;
+    renderLook();
+  },
+  { passive: true },
+);
+player.onLook = renderLook;
 
 // ---- Boot ------------------------------------------------------------------------------------------
 function boot() {
@@ -3667,22 +3672,20 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
   return { x: c.x, y: c.y, z: c.z };
 }
 
-/** Faces and looks at `face` from where you stand, in either view. */
+/** Faces and looks at `face` from where you stand. */
 function aimAt(face: { x: number; y: number; z: number }) {
   player.facing = facingToward(player.pos, face);
   player.camYaw = player.facing - Math.PI;
   player.lookPitch = pitchToward({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z }, face);
-  player.updateCamera(true);
+  player.updateCamera();
 }
 
 function setCamera(pose: CameraPose) {
-  player.setView(pose.view);
   player.camYaw = pose.camYaw;
-  if (pose.lookPitch !== undefined) player.lookPitch = pose.lookPitch;
-  if (pose.camPitch !== undefined) player.camPitch = pose.camPitch;
-  if (pose.camDist !== undefined) player.camDist = pose.camDist;
-  if (pose.view === 'first') player.facing = pose.camYaw + Math.PI;
-  player.updateCamera(true);
+  player.lookPitch = pose.lookPitch;
+  player.facing = pose.camYaw + Math.PI;
+  player.updateCamera();
+  renderWake();
 }
 
 const automation = createAutomation({
@@ -3697,7 +3700,6 @@ const automation = createAutomation({
       z: player.pos.z,
       facing: player.facing,
       lookPitch: player.lookPitch,
-      view: player.view,
       seat: player.seat?.seatId ?? null,
       enabled: player.enabled,
       walking: !!errand,
@@ -3710,11 +3712,11 @@ const automation = createAutomation({
     workers: [...store.workers.values()],
     carrying: carrying?.issue ?? null,
     hanging: hanger.active,
-    golfing: golf.active,
     gun: gunOut,
-    gunMove: gunMotion.doing,
+    gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
+    sidearm: settings.sidearm,
   }),
-  busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder or a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
+  busy: () => (trip ? 'riding to another floor' : climber.grip === 'ladder' ? 'on the ladder: interact("E") gets off it' : climber.active ? 'on a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
   centerOf,
   place: (at, face) => {
@@ -3722,21 +3724,35 @@ const automation = createAutomation({
     if (player.seat) standUp();
     if (hanger.active) hanger.cancel();
     if (climber.active) climber.abort();
-    if (golf.active) golf.stop();
     if (errand) stopWalking();
     player.pos.set(at.x, at.y, at.z);
     player.vy = 0;
     aimAt(face);
+    renderWake();
   },
-  aim: aimAt,
-  walk: (at, label, done) => walkThen(at, label, () => {}, undefined, done),
+  aim: (face) => {
+    aimAt(face);
+    renderWake();
+  },
+  walk: (at, label, done) => {
+    walkThen(at, label, () => {}, undefined, done);
+    renderWake();
+  },
   near: () => mySeat() ?? pickTarget(),
   // No note or tab on the issues board: whatever the crosshair happens to be over, E opens the board.
   use: (spot, key) => use(spot, key, null, null),
+  letGo: () => {
+    const why = climber.letGo();
+    renderWake();
+    return why;
+  },
   commands: () => hudActions.map((a) => ({ id: a.id, label: actionLabel(a), shown: actionOffered(a), blocked: a.blocked?.() })),
   run: (id) => hudActions.find((a) => a.id === id)?.run(),
   closeAll: closeAllModals,
-  ride,
+  ride: (floor) => {
+    ride(floor);
+    renderWake();
+  },
   setCamera,
   frames: () => framesDrawn,
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -3746,8 +3762,6 @@ const automation = createAutomation({
 // Debug handle for quick checks from the console / headless screenshots.
 (window as any).__office = {
   roof: () => roof,
-  booze,
-  dj: () => djFrame(djAt()),
   store,
   player,
   caffeine,
@@ -3756,11 +3770,11 @@ const automation = createAutomation({
   cabinet,
   workerViews,
   departures,
-  arrivals,
   casualties,
   scene,
   net,
   renderer,
+  renderLoop,
   hands,
   me,
   settings,
@@ -3770,8 +3784,6 @@ const automation = createAutomation({
   ride,
   switchFloor,
   climber,
-  golf,
-  balls,
   elevatorPanelOpen,
   confetti,
   sky,
@@ -3779,8 +3791,11 @@ const automation = createAutomation({
   emoteWheel,
   emote,
   gunMotion,
+  wandMotion,
   toggleGun,
   gunTrick,
+  wandSpell,
+  lumos: () => lumos,
 };
 (window as any).__sound = sound;
 (window as any).__notify = notifier;

@@ -1,14 +1,24 @@
+import { Terminal } from '@xterm/xterm';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
+import { shipPromptVars } from '../../shared/prompts';
+import { isAsleep } from '../../shared/status';
+import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { withToken } from '../token';
-import { h, openModal, type Modal } from './dom';
+import { TERM_THEME } from '../world/laptop';
+import { h, openModal, toast, type Modal } from './dom';
+import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
+import { officePrompt } from './prompts';
+import { termFontSize } from './term-font';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
-// office was opened on, refreshed while the worker works, with commit / discard / open-a-PR.
+// office was opened on, refreshed while the worker works, with commit / discard / open-a-PR, and
+// Commit & open PR, which asks the worker itself to do both. T swaps the diff for its terminal.
 
-let current: { workerId: string; repo(): string | undefined; show(repo?: string): void; modal: Modal } | null = null;
+let current: { workerId: string; repo(): string | undefined; show(repo?: string): void; logging(): boolean; modal: Modal } | null = null;
 const listeners = new Set<(msg: ServerMsg) => void>();
 
 /** Main feeds every server message through here so the open window can pick its own. */
@@ -21,6 +31,11 @@ export function openChangesFor(): { workerId: string; repo?: string } | null {
   return current ? { workerId: current.workerId, repo: current.repo() } : null;
 }
 
+/** The worker whose terminal the Changes window is following (T), so a reconnect can attach to it again. */
+export function changesLogFor(): string | null {
+  return current?.logging() ? current.workerId : null;
+}
+
 const STATUS_WORD: Record<ChangedFile['status'], string> = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', T: 'type changed', '?': 'new file' };
 
 function plusMinus(a: number, d: number, binary = false): HTMLElement {
@@ -28,10 +43,16 @@ function plusMinus(a: number, d: number, binary = false): HTMLElement {
   return h('span.pm', {}, h('span.add', {}, `+${a}`), ' ', h('span.del', {}, `−${d}`));
 }
 
-/** A path with its folder dimmed, so the file name stands out in a long list. */
+/** A file's git status as one letter in a colored box; an untracked file shows as added. */
+function statusLetter(f: ChangedFile, title?: string): HTMLElement {
+  const letter = f.status === '?' ? 'A' : f.status;
+  return h('span.st', { class: letter, title }, letter);
+}
+
+/** A path with its folder dimmed, so the file name stands out in a long list. A long folder is cut first, never the name. */
 function pathLabel(p: string): HTMLElement {
   const i = p.lastIndexOf('/');
-  return h('span.path', { title: p }, i >= 0 ? h('span.dir', {}, p.slice(0, i + 1)) : null, p.slice(i + 1));
+  return h('span.path.list-title', { title: p }, i >= 0 ? h('span.dir', {}, p.slice(0, i + 1)) : null, h('span.name', {}, p.slice(i + 1)));
 }
 
 /** Renders a unified diff: hunk headers, added and removed lines, with line numbers. */
@@ -105,6 +126,14 @@ function renderPreview(workerId: string, repo: string | undefined, f: ChangedFil
   );
 }
 
+/** Why Commit & open PR can't be asked for in this checkout now, or '' when it can. */
+function shipBlocker(s: ChangesState, name: string, asleep: boolean, uncommitted: number): string {
+  if (asleep) return `${name} is asleep: press R at its desk first`;
+  if (!s.branch || !s.prBase) return "This checkout isn't on a branch of its own";
+  if (s.pr) return uncommitted ? '' : `Nothing uncommitted to add to ${words().pr} ${words().ref(s.pr.number)}`;
+  return uncommitted || s.ahead ? '' : `Nothing on ${s.branch} that ${s.prBase} lacks yet`;
+}
+
 /**
  * The Changes window for a worker. A worker across repositories (see WorkerInfo.repos) gets a tab per
  * repository, its own floor's first; `repo` opens on another floor's one.
@@ -122,30 +151,86 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   let requestedSig = '';
   let loading = false;
 
-  const dot = h('span.dot', { style: `background:${info.color}` });
   const title = h('h2', {}, `${info.name} · changes`);
-  const branch = h('span.branch');
-  const terminalBtn = h('button.btn', { type: 'button', title: 'Open the terminal instead' }, 'Terminal');
-  const closeBtn = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const filesHead = h('h4', {}, 'Changed files');
-  const list = h('ul', { role: 'listbox', 'aria-label': 'Changed files' });
+  const branch = h('p.sub.hidden');
+  const diffViewBtn = h('button.btn.on', { type: 'button', 'aria-pressed': 'true', title: 'The changed files and their diff (T)' }, 'Diff');
+  const logViewBtn = h('button.btn', { type: 'button', 'aria-pressed': 'false', title: "The worker's terminal, to watch it (T)" }, 'Log', h('span.key', {}, 'T'));
+  const viewSeg = h('span.seg', { role: 'group', 'aria-label': 'Show' }, diffViewBtn, logViewBtn);
+  const terminalBtn = h('button.btn', { type: 'button', title: 'Leave Changes for the terminal, to type to the worker' }, 'Terminal');
+  const closeBtn = h('button.btn.icon.close', { 'aria-label': 'Close' }, '✕');
+  const filesHead = h('div.eyebrow.changes-files-head', {}, 'Changed files');
+  const list = h('ul.list', { role: 'listbox', 'aria-label': 'Changed files' });
   const files = h('aside.changes-files', {}, filesHead, list);
   const diffHead = h('div.dh');
   const diffBody = h('div.diff-scroll');
   const diff = h('section.changes-diff', {}, diffHead, diffBody);
+  const changesBody = h('div.changes-body', {}, files, diff);
+  const logHost = h('div.changes-log.hidden', { 'aria-label': `${info.name}'s terminal` });
   const summary = h('span.grow');
   const discardBtn = h('button.btn', { type: 'button', title: 'Throw away every uncommitted change in this checkout' }, 'Discard all');
   const commitBtn = h('button.btn', { type: 'button', title: 'git add -A && git commit' }, 'Commit…');
   const prSlot = h('span.pr-slot');
-  const tabs = h('nav.changes-tabs', { role: 'tablist', 'aria-label': 'Repositories' });
+  // Only an agent can be asked to ship its work; a shell would run the prompt as a command.
+  const shipBtn = info.kind === 'agent' ? h('button.btn.accent', { type: 'button' }, `Commit & open ${words().pr}`) : null;
+  const tabs = h('nav.tabs.changes-tabs', { role: 'tablist', 'aria-label': 'Repositories' });
   const el = h(
-    'div.modal.desk-changes',
+    'div.modal.full.desk-changes',
     { role: 'dialog', 'aria-label': `${info.name}'s changes`, tabindex: -1 },
-    h('header', {}, dot, title, branch, onTerminal ? terminalBtn : null, closeBtn),
+    h('header', {}, colorDot(info.color), h('div.titles', {}, title, branch), h('div.actions', {}, viewSeg, onTerminal ? terminalBtn : null), closeBtn),
     tabs,
-    h('div.changes-body', {}, files, diff),
-    h('footer', {}, summary, discardBtn, commitBtn, prSlot),
+    changesBody,
+    logHost,
+    h('footer', {}, summary, discardBtn, commitBtn, prSlot, shipBtn),
   );
+
+  /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
+  let term: Terminal | null = null;
+  let attached = false;
+  let view: 'diff' | 'log' = 'diff';
+
+  const openLog = () => {
+    if (term) return term.scrollToBottom();
+    const t = new Terminal({ fontFamily: TERM_FONT, fontSize: termFontSize(), lineHeight: 1.1, theme: TERM_THEME, cursorBlink: false, disableStdin: true, scrollback: 5000, allowProposedApi: true });
+    const unicode = new Unicode11Addon();
+    t.loadAddon(unicode);
+    t.unicode.activeVersion = '11';
+    // Keys belong to the window (T, Esc), never to the program in the terminal.
+    t.attachCustomKeyEventHandler(() => false);
+    term = t;
+    void loadFonts().then(() => {
+      if (current?.modal !== modal || term !== t) return;
+      t.open(logHost);
+      // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
+      const w = store.workers.get(workerId);
+      if (w) t.resize(w.cols, w.rows);
+      attached = true;
+      net.send({ t: 'worker.attach', workerId });
+    });
+  };
+
+  const setView = (next: 'diff' | 'log') => {
+    if (next === view) return;
+    view = next;
+    for (const [btn, on] of [
+      [diffViewBtn, next === 'diff'],
+      [logViewBtn, next === 'log'],
+    ] as const) {
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', String(on));
+    }
+    changesBody.classList.toggle('hidden', next === 'log');
+    logHost.classList.toggle('hidden', next !== 'log');
+    if (next === 'log') openLog();
+    el.focus();
+  };
+  diffViewBtn.addEventListener('click', () => setView('diff'));
+  logViewBtn.addEventListener('click', () => setView('log'));
+
+  /** The task card as a commit message or pull request text: its name, then its summary. */
+  const taskText = () => {
+    const task = store.workers.get(workerId)?.task;
+    return task ? [task.name.trim(), task.summary.trim()].filter(Boolean).join('\n\n') : '';
+  };
 
   const where = () => (state?.dir ? state.dir : 'the project folder');
 
@@ -170,15 +255,13 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   const renderEmpty = () => {
     diffHead.replaceChildren();
-    if (!state) return diffBody.replaceChildren(h('div.changes-empty', {}, h('div.spinner')));
-    if (state.error) return diffBody.replaceChildren(h('div.changes-empty', {}, h('div.big', {}, '🚧'), h('p', {}, `Couldn't read ${where()}: ${state.error}`)));
+    if (!state) return diffBody.replaceChildren(h('div.empty-state', {}, h('span.spinner')));
+    if (state.error) return diffBody.replaceChildren(emptyState('🚧', `Couldn't read ${where()}`, state.error));
     diffBody.replaceChildren(
-      h(
-        'div.changes-empty',
-        {},
-        h('div.big', {}, '🌱'),
-        h('p', {}, state.base === 'HEAD' ? `Nothing uncommitted in ${where()}.` : `${info.name} hasn't changed anything since ${state.base} yet.`),
-        h('p.note', {}, 'This window follows the checkout as the worker works, so changes show up here as they are made.'),
+      emptyState(
+        '🌱',
+        state.base === 'HEAD' ? `Nothing uncommitted in ${where()}` : `${info.name} hasn't changed anything since ${state.base} yet`,
+        'This window follows the checkout as the worker works, so changes show up here as they are made.',
       ),
     );
   };
@@ -191,31 +274,30 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     filesHead.textContent = n ? `${n}${s.more ? '+' : ''} changed file${n > 1 || s.more ? 's' : ''}` : 'Changed files';
     for (const f of s.files) {
       const li = h(
-        'li',
+        'li.list-row',
         { class: f.path === selected ? 'on' : '', role: 'option', 'aria-selected': f.path === selected ? 'true' : 'false', tabindex: -1, onclick: () => select(f.path) },
-        h('span.st', { class: f.status === '?' ? 'A' : f.status, title: STATUS_WORD[f.status] }, f.status === '?' ? 'A' : f.status),
-        pathLabel(f.path),
-        f.uncommitted ? h('span.dirty', { title: 'Not committed yet' }) : null,
-        plusMinus(f.additions, f.deletions, f.binary),
+        h('span.list-icon', {}, statusLetter(f, STATUS_WORD[f.status])),
+        h('span.list-main', {}, pathLabel(f.path)),
+        h('span.list-end', {}, h('span.dirty', f.uncommitted ? { class: 'on', title: 'Not committed yet' } : {}), plusMinus(f.additions, f.deletions, f.binary)),
       );
       list.append(li);
     }
-    if (s.more) list.append(h('li.empty', {}, `…and ${s.more} more`));
+    if (s.more) list.append(h('li.list-row.more', {}, `…and ${s.more} more`));
     list.querySelector('li.on')?.scrollIntoView({ block: 'nearest' });
   };
 
   const renderDiffHead = () => {
     const f = state?.files.find((x) => x.path === selected);
     if (!f) return diffHead.replaceChildren();
-    const discardOne = h('button.btn', { type: 'button', title: 'Throw away the uncommitted changes to this file' }, 'Discard');
+    const discardOne = h('button.btn.sm', { type: 'button', title: 'Throw away the uncommitted changes to this file' }, 'Discard');
     discardOne.addEventListener('click', () =>
       confirmDialog(`Discard the changes to ${f.path.split('/').pop()}?`, `This puts ${f.path} back to the last commit in ${where()}. ${f.status === '?' ? 'The file is deleted.' : 'Committed changes stay.'}`, 'Discard', () =>
         net.send({ t: 'changes.discard', workerId, path: f.path, repo }),
       ),
     );
     diffHead.replaceChildren(
-      h('span.st', { class: f.status === '?' ? 'A' : f.status }, f.status === '?' ? 'A' : f.status),
-      h('span.path', { title: f.path }, f.from ? `${f.from} → ${f.path}` : f.path),
+      statusLetter(f),
+      f.from ? h('span.path', { title: `${f.from} → ${f.path}` }, `${f.from} → ${f.path}`) : pathLabel(f.path),
       h('span.word', {}, f.uncommitted ? `${STATUS_WORD[f.status]} · not committed` : STATUS_WORD[f.status]),
       plusMinus(f.additions, f.deletions, f.binary),
     );
@@ -235,13 +317,21 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       if (s.files.length) bits.push(plusMinus(adds, dels));
       bits.push(uncommitted ? `${uncommitted} uncommitted` : s.files.length ? 'all committed' : '');
       if (s.ahead) bits.push(`${s.ahead} commit${s.ahead > 1 ? 's' : ''} ahead of ${s.base}`);
-      if (!s.dir) bits.push(h('span', { title: "This worker works in the project folder itself, so this is everything uncommitted there — everyone's edits, not just its own." }, '📁 shared project folder'));
-      else bits.push(h('span', { title: `Its own worktree at ${s.dir}` }, `📁 ${s.dir}`));
+      if (!s.dir) bits.push(h('span', { title: "This worker works in the project folder itself, so this is everything uncommitted there — everyone's edits, not just its own." }, 'shared project folder'));
+      else bits.push(h('span.where', { title: `Its own worktree at ${s.dir}` }, s.dir));
       summary.append(...bits.filter(Boolean).map((b) => (typeof b === 'string' ? h('span', {}, b) : b)));
     }
     discardBtn.disabled = busy || !uncommitted;
     commitBtn.disabled = busy || !uncommitted;
     commitBtn.textContent = uncommitted ? `Commit ${uncommitted} file${uncommitted > 1 ? 's' : ''}…` : 'Commit…';
+    if (shipBtn) {
+      const w = store.workers.get(workerId) ?? info;
+      const why = s && !busy && !s.error ? shipBlocker(s, w.name, isAsleep(w.status), uncommitted) : '';
+      shipBtn.disabled = !s || busy || !!s.error || !!why;
+      shipBtn.textContent = s?.pr ? `Commit & push to ${words().ref(s.pr.number)}` : `Commit & open ${words().pr}`;
+      shipBtn.title =
+        why || `Asks ${w.name} to commit everything here and ${s?.pr ? `push it to ${words().pr} ${words().ref(s.pr.number)}` : `open a ${words().pull} against ${s?.prBase ?? 'the base branch'}`}, with the message from its task card`;
+    }
     prSlot.replaceChildren();
     if (!s) return;
     if (s.pr) prSlot.append(h('a.btn.primary', { href: s.pr.url, target: '_blank', rel: 'noopener', title: `Open on ${words().site}` }, `${words().pr} ${words().ref(s.pr.number)} ↗`));
@@ -253,9 +343,10 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
         openPrompt({
           title: `Open a ${words().pull}`,
           subtitle: `Pushes ${s.branch} to origin and opens a ${words().pr} against ${s.prBase}. The first line is the title; the rest is the description.`,
-          initial: s.subject ?? '',
+          initial: taskText() || (s.subject ?? ''),
           placeholder: 'Title',
           submitLabel: `Open ${words().pr} ↗`,
+          recall: false,
           onSubmit: (text) => {
             const [first, ...rest] = text.split('\n');
             net.send({ t: 'changes.pr', workerId, title: first.trim(), body: rest.join('\n').trim(), repo });
@@ -272,6 +363,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     const s = state;
     if (!s || s.error) branch.textContent = '';
     else branch.textContent = s.base === 'HEAD' ? `🌿 ${s.branch} · uncommitted changes` : `🌿 ${s.branch} · vs ${s.base}`;
+    branch.title = branch.textContent;
+    branch.classList.toggle('hidden', !branch.textContent);
   };
 
   const onState = (s: ChangesState) => {
@@ -293,12 +386,18 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   };
 
   const onMsg = (msg: ServerMsg) => {
-    if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
+    if (msg.t === 'term.data' && msg.workerId === workerId) term?.write(msg.data);
+    else if (msg.t === 'term.snapshot' && msg.workerId === workerId && term) {
+      const t = term;
+      t.reset();
+      t.resize(msg.cols, msg.rows);
+      t.write(msg.data, () => t.scrollToBottom());
+    } else if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
     else if (msg.t === 'changes.diff' && msg.workerId === workerId && msg.repo === repo && msg.path === selected) {
       loading = false;
       shownSig = requestedSig;
       const f = state?.files.find((x) => x.path === selected);
-      const text = msg.error ? h('div.changes-empty', {}, h('p', {}, msg.error)) : renderDiff(msg.diff, msg.truncated);
+      const text = msg.error ? h('div.empty-state', {}, h('p', {}, msg.error)) : renderDiff(msg.diff, msg.truncated);
       const type = f ? changedImageType(f.path) : undefined;
       // A picture's diff only says it differs, so show the picture instead. An SVG is text too: its diff stays below.
       if (f && type) diffBody.replaceChildren(renderPreview(workerId, repo, f), ...(type === 'image/svg+xml' ? [text] : []));
@@ -315,7 +414,10 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     if (next) select(next.path);
   };
   el.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'j') move(1);
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 't' || e.key === 'T') setView(view === 'diff' ? 'log' : 'diff');
+    else if (view === 'log') return;
+    else if (e.key === 'ArrowDown' || e.key === 'j') move(1);
     else if (e.key === 'ArrowUp' || e.key === 'k') move(-1);
     else return;
     e.preventDefault();
@@ -335,9 +437,39 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     openPrompt({
       title: `Commit ${n} file${n === 1 ? '' : 's'}`,
       subtitle: `Stages everything in ${where()} and commits it${state?.branch ? ` on ${state.branch}` : ''}.`,
+      initial: taskText(),
       placeholder: 'What changed, and why',
       submitLabel: 'Commit',
+      recall: false,
       onSubmit: (text) => net.send({ t: 'changes.commit', workerId, message: text, repo }),
+    });
+  });
+  shipBtn?.addEventListener('click', () => {
+    const s = state;
+    const w = store.workers.get(workerId);
+    if (!s?.branch || !s.prBase || !w) return;
+    const { branch: branchName, prBase } = s;
+    // Across repositories each checkout is a folder of the workspace the worker starts in.
+    const folder = w.repos?.length ? (repo ? w.repos.find((r) => r.floor === repo)?.name : w.worktree?.path.split(/[\\/]/).pop()) : undefined;
+    const send = (title: string, summary: string) => {
+      const prompt = officePrompt('changes.ship', shipPromptVars(store.project?.forge, { title, summary, branch: branchName, base: prBase, folder, pr: s.pr?.number }));
+      net.send({ t: 'worker.prompt', workerId, prompt, queue: w.status === 'working' });
+      toast(`🌿 Asked ${w.name} to commit${s.pr ? ` and push to ${words().pr} ${words().ref(s.pr.number)}` : ` and open a ${words().pull}`}`);
+      setView('log');
+    };
+    const name = w.task?.name.trim() ?? '';
+    const about = w.task?.summary.trim() ?? '';
+    if (name && about) return send(name, about);
+    openPrompt({
+      title: s.pr ? `Commit & push to ${words().pr} ${words().ref(s.pr.number)}` : `Commit & open a ${words().pull}`,
+      subtitle: `${w.name} has no task card to write it from yet, so say what this work is. The first line is the title; the rest is the description. ${w.name} commits it, pushes ${branchName} and ${s.pr ? `updates ${words().pr} ${words().ref(s.pr.number)}` : `opens a ${words().pr} against ${prBase}`}.`,
+      initial: taskText() || (s.subject ?? ''),
+      placeholder: 'Title',
+      submitLabel: `Ask ${w.name}`,
+      onSubmit: (text) => {
+        const [first, ...rest] = text.split('\n');
+        send(first.trim(), rest.join('\n').trim());
+      },
     });
   });
   terminalBtn.addEventListener('click', () => {
@@ -355,7 +487,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     tabs.replaceChildren(
       ...[{ id: undefined as string | undefined, name: own, pr: w.pr }, ...repos.map((r) => ({ id: r.floor as string | undefined, name: r.name, pr: r.pr }))].map((t) =>
         h(
-          'button.btn',
+          'button.tab',
           {
             type: 'button',
             role: 'tab',
@@ -364,8 +496,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
             title: t.id ? `Its worktree of ${t.name}` : `Its worktree of this floor's project, ${t.name}`,
             onclick: () => show(t.id),
           },
-          `📁 ${t.name}`,
-          t.pr ? h('small', {}, ` · #${t.pr.number}`) : null,
+          t.name,
+          t.pr ? h('small', {}, `#${t.pr.number}`) : null,
         ),
       ),
     );
@@ -390,11 +522,13 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   listeners.add(onMsg);
   const unsub = store.on('workers', () => {
-    if (!store.workers.has(workerId)) modal.close();
-    else {
-      renderHeader();
-      renderTabs();
-    }
+    const w = store.workers.get(workerId);
+    if (!w) return modal.close();
+    renderHeader();
+    renderTabs();
+    renderFooter();
+    // Someone typing in its terminal resized the PTY: follow it, as the terminal window does.
+    if (term && attached && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
   });
   const modal = openModal(el, {
     doing: `🌿 looking over ${info.name}'s changes`,
@@ -402,10 +536,13 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       listeners.delete(onMsg);
       unsub();
       net.send({ t: 'changes.unwatch', workerId, repo });
+      if (attached) net.send({ t: 'worker.detach', workerId });
+      term?.dispose();
+      term = null;
       if (current?.modal === modal) current = null;
     },
   });
-  current = { workerId, repo: () => repo, show, modal };
+  current = { workerId, repo: () => repo, show, logging: () => attached, modal };
   previous?.modal.close();
   closeBtn.addEventListener('click', () => modal.close());
   if (repo && !info.repos?.some((r) => r.floor === repo)) repo = undefined;
