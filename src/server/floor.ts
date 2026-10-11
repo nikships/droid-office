@@ -28,7 +28,8 @@ import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
-import { WhiteboardStore, type WhiteboardRenderer } from './whiteboard.js';
+import { WhiteboardStore, renderInfo } from './whiteboard.js';
+import type { WhiteboardRenderers } from './whiteboard-render.js';
 import { boardReaders } from './whiteboard-agent.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
@@ -70,8 +71,8 @@ export interface FloorContext {
   pullsChanged(floor: Floor): void;
   /** Whether a worker on another floor works in this floor's project too. */
   lent(floor: Floor): boolean;
-  /** What renders Whiteboard cards to images, shared by every floor; none is the office without one. */
-  renderer?: WhiteboardRenderer;
+  /** What renders Whiteboard cards to images, shared by every floor (each gets its own view); none is the office without one. */
+  renderer?: WhiteboardRenderers;
 }
 
 /** The open pull request on a floor's board whose head is `branch`. */
@@ -338,7 +339,20 @@ export class Floor {
     this.jukebox = new Jukebox(dataDir);
     this.whiteboard = new WhiteboardStore(def.dir, {
       readers: () => boardReaders(this.workers.list()),
-      renderer: ctx.renderer,
+      renderer: ctx.renderer?.floor(this.id, {
+        onRendered: (card) => {
+          const store = this.whiteboard;
+          const info =
+            store &&
+            renderInfo(
+              store.renderer,
+              store.board.cards.find((c) => c.id === card),
+              card,
+            );
+          if (info) ctx.emit(this, { t: 'whiteboard.rendered', floor: this.id, card, info });
+        },
+        resolveMarks: (card, key, marks) => this.whiteboard?.resolveMarks(card, key, marks),
+      }),
       onPatch: (patch, { origin, caps }) => ctx.emit(this, { t: 'whiteboard', floor: this.id, update: { kind: 'patch', patch }, ...(origin ? { origin } : {}), ...(Object.keys(caps).length ? { caps } : {}) }),
     });
     this.ready = this.workers.start();

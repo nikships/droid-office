@@ -15,6 +15,11 @@ export interface Config {
   homeFloor?: string;
   /** Where the Droid subagents skill goes (the CLI sets ~/.factory/skills; unset in tests so they never touch it). */
   skillsDir?: string;
+  /**
+   * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
+   * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
+   */
+  renders?: boolean;
   /** --projects / DROID_OFFICE_PROJECTS: picks the workspace folder, as ⚙️ Settings in the office does. */
   projects?: string;
   /** Started as `droid-office <dir>`: that checkout is a floor of its own (it's also `dir`). */
