@@ -70,12 +70,24 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   assert.ok(!empty.includes(ROOF));
 });
 
-test('the reserved east-wall Whiteboard slot is not an automation target yet', () => {
-  assert.deepEqual(BOARDS.whiteboard, { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' });
-  assert.ok(!listTargets(context()).some((t) => t.id === 'whiteboard'));
-  const target = resolveTarget('whiteboard', context());
-  assert.ok(!target.ok);
-  assert.match(target.error, /No such target/);
+test('the Whiteboard on the east wall is a board to go to, by id or name', () => {
+  const b = BOARDS.whiteboard;
+  assert.deepEqual(b, { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' });
+  // Its spot, the way world/office.ts lays every board's out: 1.6 m into the room from its face.
+  const spot: Interactable = { kind: 'whiteboard', x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
+  assert.ok(spot.x < b.x, 'the spot is in the room, west of the east wall');
+  const ctx = context({ spots: [...floorSpots(), spot] });
+  assert.deepEqual(
+    listTargets(ctx).find((t) => t.id === 'whiteboard'),
+    { id: 'whiteboard', kind: 'board', label: 'Whiteboard' },
+  );
+  for (const q of ['whiteboard', 'Whiteboard']) {
+    const r = resolveTarget(q, ctx);
+    assert.ok(r.ok, q);
+    assert.equal(r.target.spot, spot, 'E there uses the wall');
+  }
+  // A floor without it (the roof) has no Whiteboard to go to.
+  assert.ok(!resolveTarget('whiteboard', context()).ok);
 });
 
 test('goTo targets resolve by id, worker, label, agent name and floor, and say why when they do not', () => {

@@ -110,6 +110,8 @@ import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
+import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wall';
+import { openWhiteboard } from './ui/whiteboard';
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
 import { setRackCubes } from './world/factory-props';
@@ -287,6 +289,31 @@ mountBoard(office.boardMeshes.ci, ciTex.texture, () => renderCiBoard(), ['factor
 // Its "5M" ages: redrawn only when one of them ticks over.
 setInterval(() => renderCiBoard(), 60_000);
 const showCi = (add = false) => openCiWindow({ floorRepo: floorGithubRepo(), add });
+// The floor's Whiteboard on the east wall, following its persisted selection (world/whiteboard-wall.ts).
+const whiteboardTex = new WhiteboardTexture(() => renderWhiteboardWall());
+/** This floor's Whiteboard, as the window has it (null before its snapshot). */
+const floorWhiteboard = () => (store.floor ? store.whiteboard.board(store.floor) : null);
+/** The card the wall shows, or undefined when it shows the grid. */
+const wallCard = () => {
+  const board = floorWhiteboard();
+  const view = board && wallView(board);
+  return view?.kind === 'card' ? view.card : undefined;
+};
+const renderWhiteboardWall = () => {
+  const floor = store.floor;
+  const f = floor ? store.whiteboard.floor(floor) : undefined;
+  whiteboardTex.render({
+    floor,
+    board: floorWhiteboard(),
+    renderer: f?.renderer ?? { available: false },
+    renders: f?.renders ?? {},
+    renderUrl: (card, opts) => (floor ? store.whiteboard.renderUrl(floor, card, opts) : undefined),
+    now: Date.now(),
+  });
+};
+mountBoard(office.boardMeshes.whiteboard, whiteboardTex.texture, renderWhiteboardWall, ['whiteboard', 'floor']);
+// Its "updated 2m ago" times: redrawn only when one of them ticks over.
+setInterval(renderWhiteboardWall, 30_000);
 
 // Pictures people hung on the walls
 const gallery = new Gallery();
@@ -2159,6 +2186,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'computers') showComputers();
   else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
   else if (target.kind === 'ci') showCi();
+  else if (target.kind === 'whiteboard') openWhiteboard(net, { card: wallCard()?.id });
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
@@ -2480,6 +2508,13 @@ function hintFor(it: Interactable): Hint {
       const n = ci.workflows.length;
       const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
       return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
+    }
+    case 'whiteboard': {
+      const board = floorWhiteboard();
+      const card = wallCard();
+      const sum = board && gridSummary(board);
+      const about = card ? clip(card.title || 'Untitled', 40) : sum ? (sum.changed ? `${sum.cards} · ${sum.changed} changed` : board.cards.length ? sum.cards : 'nothing on it yet') : '';
+      return { k: about, parts: [title('🗒️ Whiteboard'), about ? aside(about) : '', key('E', card ? 'Open this card' : 'Open')] };
     }
     case 'computers': {
       const about = computeWall.view ? wallSummary(computeWall.view) : '';
@@ -2997,6 +3032,7 @@ const REACH: Record<InteractKind, number> = {
   pulls: 9,
   actions: 9,
   ci: 9,
+  whiteboard: 9,
   computers: 9,
   decor: 9,
   elevator: 4.5,

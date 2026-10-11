@@ -238,7 +238,7 @@ In one change, before the Whiteboard takes the slot:
 3. The server store, the agent route, `office-whiteboard`, links and assets, and the skill. Test them end to end against a real server, including crashes between writes and retried operation ids. (Done, with the window's sync module, the render routes against `NoRenderer`, the Settings toggle and Ping a worker.)
 4. The window: the grid, the sandbox and bridge, forms and state, Use and Mark up, comments, stickies, pictures, reattach, canvas cards, owner HTML, live updates, offline queueing, the selection, Ping a worker.
 5. The renderer: install, queue and cache, tiles, PNGs for agents, thumbnails.
-6. The wall: the grid and artifact views, the selection, **E** to open, the automation API kind (`whiteboard`).
+6. The wall: the grid and artifact views, the selection, **E** to open, the automation API kind (`whiteboard`). (Done, in `src/client/world/whiteboard-wall.ts`; checked by hand with stand-in renders until the renderer lands.)
 7. `docs/guide.md`: a feature bullet, a "How it works" bullet, and the whiteboard folder in its State bullet. Also `.env.example` if a variable is added, and the full CI checks from the root `AGENTS.md`.
 
 ## Acceptance checks
