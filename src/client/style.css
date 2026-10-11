@@ -193,6 +193,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .side section:hover .panel-x, .panel-x:focus-visible { opacity: 1; }
 .panel-x:hover { background: var(--surface-hover); color: var(--text); }
 @media (hover: none) { .panel-x { opacity: .6; } }
+/* The Workers panel's sort: by when they were hired, or by status with whoever needs you on top. */
+.panel-sort { flex: none; margin-left: auto; height: 22px; padding: 0 var(--space-1); border: 0; border-radius: var(--radius); background: none; color: var(--text-tertiary); font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; cursor: pointer; align-self: center; }
+.panel-sort:hover { background: var(--surface-hover); color: var(--text); }
+.panel-sort[aria-pressed=true] { color: var(--accent); }
+.panel-sort + .panel-x { margin-left: 0; }
 
 .side { position: absolute; top: 64px; right: 12px; width: 250px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 80px); pointer-events: none; }
 .side > * { pointer-events: auto; }

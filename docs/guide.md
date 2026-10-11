@@ -263,7 +263,7 @@ Everything the office tells a worker by itself can be rewritten in ⚙️ Settin
 | Esc | Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt the agent) |
 | Shift + Esc | Leave a terminal (so does Ctrl + ], the ✕, or Esc after clicking off the terminal) |
 
-You can also click a nearby desk to interact with it, or click a worker in the Workers panel (**🤖 Workers**, top right) to open its terminal.
+You can also click a nearby desk to interact with it, or click a worker in the Workers panel (**🤖 Workers**, top right) to open its terminal. The panel lists workers by when they were hired, each lead with its subagents under it; **⇅ Hired** in its header switches it to **⇅ Status**, a triage list with whoever needs input first (longest wait on top), then the ones that are done, then the ones working, then the rest. The browser remembers the choice.
 
 ## One command on AWS
 

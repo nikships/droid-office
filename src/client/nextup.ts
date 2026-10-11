@@ -1,7 +1,8 @@
 // The workers waiting on you on this floor, longest first: N takes you to each in turn (see main.ts),
-// arrows at the edge of the screen point to them (ui/compass.ts), and the top bar and the Workers panel count them.
+// arrows at the edge of the screen point to them (ui/compass.ts), the top bar and the Workers panel count them,
+// and the Workers panel can list them first.
 
-import type { WorkerInfo } from '../shared/protocol';
+import type { WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { waitingOnSomeone } from './notify';
 
 type Waiting = WorkerInfo & { status: 'needs_input' | 'done' };
@@ -14,6 +15,18 @@ function since(w: WorkerInfo): number {
 /** Workers waiting on someone, whoever has waited longest first. */
 export function waitingInOrder(workers: Iterable<WorkerInfo>): Waiting[] {
   return [...workers].filter(waitingOnSomeone).sort((a, b) => since(a) - since(b) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
+const TRIAGE: Partial<Record<WorkerStatus, number>> = { needs_input: 0, done: 1, working: 2 };
+const triage = (w: WorkerInfo) => TRIAGE[w.status] ?? 3;
+
+/**
+ * The Workers panel as a triage list: needs input, then done (whoever has waited longest first in
+ * each), then working, then everyone else. Workers that tie keep the order they came in.
+ */
+export function workersByStatus(workers: Iterable<WorkerInfo>): WorkerInfo[] {
+  const wait = (w: WorkerInfo) => (triage(w) < 2 ? since(w) : 0);
+  return [...workers].sort((a, b) => triage(a) - triage(b) || wait(a) - wait(b));
 }
 
 /** "2 waiting · 1 done": the ones that need input, then the ones that finished. */

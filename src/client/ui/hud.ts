@@ -8,14 +8,46 @@ import { DESK_BY_ID } from '../../shared/layout';
 import { teamSummary, workersByTeam } from '../../shared/team';
 import { PROVIDER_LABEL, processLabel, statusWord } from '../../shared/guests';
 import { creditsNote } from '../../shared/factory-sessions';
+import { workersByStatus } from '../nextup';
+
+type WorkerSort = 'hired' | 'status';
+const SORT_KEY = 'droid-office.workers-sort';
+
+function workerSort(): WorkerSort {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'status' ? 'status' : 'hired';
+  } catch {
+    return 'hired';
+  }
+}
+
+function setWorkerSort(sort: WorkerSort) {
+  try {
+    localStorage.setItem(SORT_KEY, sort);
+  } catch {
+    // storage blocked
+  }
+}
 
 export function renderWorkers(onOpen: (id: string) => void) {
   const ul = $('workers');
   ul.replaceChildren();
-  const workers = workersByTeam(store.workers.values());
+  const sort = workerSort();
+  const byTeam = workersByTeam(store.workers.values());
+  const workers = sort === 'status' ? workersByStatus(byTeam) : byTeam;
+  const sortBtn = $('worker-sort');
+  sortBtn.textContent = sort === 'status' ? '⇅ Status' : '⇅ Hired';
+  sortBtn.title = sort === 'status' ? 'Sorted by status: needs input, then done, then working. Click to sort by when they were hired' : 'Sorted by when they were hired, teams together. Click to sort by status: needs input first';
+  sortBtn.setAttribute('aria-pressed', String(sort === 'status'));
+  sortBtn.onclick = () => {
+    setWorkerSort(sort === 'status' ? 'hired' : 'status');
+    renderWorkers(onOpen);
+  };
   for (const w of workers) {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const team = store.teamOf(w.id);
+    // Sorted by status a subagent isn't under its lead, so it isn't indented as if it were.
+    const nested = sort === 'hired' && lead;
     const badge = w.kind === 'agent' ? modelBadge(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : undefined;
     const sub = [
       teamSummary(team),
@@ -43,8 +75,8 @@ export function renderWorkers(onOpen: (id: string) => void) {
               : lead
                 ? `Open ${w.name}'s terminal (a subagent of ${lead.name})`
                 : `Open ${w.name}'s terminal`,
-          class: lead ? 'subagent' : team.length ? 'lead' : undefined,
-          style: lead ? `--lead:${lead.color}` : undefined,
+          class: nested ? 'subagent' : sort === 'hired' && team.length ? 'lead' : undefined,
+          style: nested ? `--lead:${nested.color}` : undefined,
         },
         h('span.dot', { style: `background:${w.color}` }),
         h('span.name', {}, w.name, sub ? h('span.sub', {}, ...glyphText(sub)) : null),

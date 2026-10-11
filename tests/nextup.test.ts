@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NextUp, waitingInOrder, waitingLabel } from '../src/client/nextup.js';
+import { NextUp, waitingInOrder, waitingLabel, workersByStatus } from '../src/client/nextup.js';
 import type { WorkerInfo, WorkerStatus } from '../src/shared/protocol.js';
 
 function worker(id: string, status: WorkerStatus, waitingSince?: number, acked = false): WorkerInfo {
@@ -46,6 +46,29 @@ test('an office from before waitingSince goes by who was hired first', () => {
   assert.deepEqual(
     waitingInOrder([young, old]).map((w) => w.id),
     ['old', 'young'],
+  );
+});
+
+test('sorted by status, the Workers panel reads as a triage list: needs input, done, working, then the rest', () => {
+  const ws = [
+    worker('idle', 'idle'),
+    worker('busy', 'working'),
+    worker('done-new', 'done', 300, true),
+    worker('asks-new', 'needs_input', 400),
+    worker('asleep', 'offline'),
+    worker('done-old', 'done', 100),
+    worker('busy-2', 'working'),
+    worker('asks-old', 'needs_input', 200),
+    { ...worker('legacy', 'done'), createdAt: 150 },
+  ];
+  assert.deepEqual(
+    workersByStatus(ws).map((w) => w.id),
+    ['asks-old', 'asks-new', 'done-old', 'legacy', 'done-new', 'busy', 'busy-2', 'idle', 'asleep'],
+  );
+  assert.deepEqual(
+    ws.map((w) => w.id),
+    ['idle', 'busy', 'done-new', 'asks-new', 'asleep', 'done-old', 'busy-2', 'asks-old', 'legacy'],
+    'the list it was given is left as it was',
   );
 });
 
