@@ -8,10 +8,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
 const SKIP = new Set(['node_modules', 'dist']);
-const INSTALLERS = ['install.sh', 'install.ps1'];
 
-/** Set by the office for its own workers, or by the installers for themselves: not user settings. */
-const INTERNAL = new Set(['DROID_OFFICE_HOOK_URL', 'DROID_OFFICE_HOOK_TOKEN', 'DROID_OFFICE_WORKER_ID', 'DROID_OFFICE_SESSION_ID', 'DROID_OFFICE_INSTALL_REFRESH', 'DROID_OFFICE_ROOT_PATH', 'DROID_OFFICE_WORKTREE_PATH']);
+/** Set by the office for its own workers: not user settings. */
+const INTERNAL = new Set(['DROID_OFFICE_HOOK_URL', 'DROID_OFFICE_HOOK_TOKEN', 'DROID_OFFICE_WORKER_ID', 'DROID_OFFICE_SESSION_ID', 'DROID_OFFICE_ROOT_PATH', 'DROID_OFFICE_WORKTREE_PATH']);
 /** The operating system's own variables, read to find the shell and programs. */
 const SYSTEM = new Set(['PATH', 'PATHEXT', 'SHELL', 'COMSPEC', 'GROK_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'LOCALAPPDATA']);
 
@@ -23,7 +22,7 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Every variable named in src/, bin/ and the installers: process.env reads and DROID_OFFICE_* names. */
+/** Every variable named in src/ and bin/: process.env reads and DROID_OFFICE_* names. */
 function namesInCode(): Map<string, string> {
   const found = new Map<string, string>();
   const add = (name: string, file: string) => found.has(name) || found.set(name, path.relative(ROOT, file));
@@ -31,10 +30,6 @@ function namesInCode(): Map<string, string> {
     const text = readFileSync(file, 'utf8');
     for (const m of text.matchAll(/process\.env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\])/g)) add(m[1] ?? m[2], file);
     for (const m of text.matchAll(/\bDROID_OFFICE_[A-Z0-9_]+/g)) add(m[0], file);
-  }
-  for (const name of INSTALLERS) {
-    const file = path.join(ROOT, name);
-    for (const m of readFileSync(file, 'utf8').matchAll(/\bDROID_OFFICE_[A-Z0-9_]+/g)) add(m[0], file);
   }
   return found;
 }
@@ -45,7 +40,7 @@ function documented(): Set<string> {
   return new Set([...text.matchAll(/^(?:#\s*)?([A-Z_][A-Z0-9_]*)=/gm)].map((m) => m[1]));
 }
 
-test('.env.example lists every setting the office and installers read', () => {
+test('.env.example lists every setting the office reads', () => {
   const listed = documented();
   const missing = [...namesInCode()].filter(([name]) => !INTERNAL.has(name) && !SYSTEM.has(name) && !listed.has(name));
   assert.deepEqual(

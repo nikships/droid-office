@@ -48,36 +48,37 @@ A floor can be a GitLab project, on gitlab.com or your own host. Merge requests 
 Connect Jira Cloud once with a read-only token, give a floor an epic, and its tickets appear as a **Jira** tab on the board. Hand any ticket to a worker with one click. The office never writes to Jira.
 
 ### Built like a Factory
-A dark, industrial look in Factory orange. Install it as an app from Chrome or Edge, and it asks before a stray Cmd+W closes your office.
+A dark, industrial look in Factory orange. The Mac app opens your office full screen and keeps itself up to date.
 
 ### Always improving
 Every new feature that ships in the original project is brought over, adapted to this fork and its Droid and GitLab work. The latest additions: rewrite every prompt the office sends, set a default worker, edit and filter issues by label on the boards, keep workers running through upgrades, send workers home when their PR merges, and browse your project's docs at the office bookshelf.
 
 ## Get started in a minute
 
-You need Node.js 20+, `git`, and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab.
+**The Mac app release (Apple Silicon) is the only supported production install.**
 
-**The Mac app (Apple Silicon)**
+Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed.
 
-Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest) and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed; `droid`, `git` and `gh` are. See [the Mac app](docs/guide.md#the-mac-app).
+You need `git` and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab. See [the Mac app](docs/guide.md#the-mac-app).
 
-**macOS and Linux**
+There are no supported command-line installers or standalone server releases.
+
+### For developers
+
+Clone the repository to run, modify or experiment with the source. You need Node.js 20+ and the tools above.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/droid-office/main/install.sh | bash
+git clone https://github.com/nikships/droid-office.git
+cd droid-office
+npm ci
+npm run dev
 ```
 
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/nikships/droid-office/main/install.ps1 | iex
-```
-
-That installs the latest release and starts the office. It asks which folder your projects are in and lets you pick your first one. It uses your existing checkouts where they are and never clones anything. There is no login: your browser on the same machine opens straight in, and the terminal prints a link and QR code for another browser on your Wi-Fi. Run the same line again any time to update.
+Open `http://localhost:5173`. This is a developer checkout, not a production install. See [Development](docs/guide.md#development) for builds, tests and running the Mac app from source.
 
 ## Your office in your pocket
 
-**Droid Office for Android** keeps you at your desks when you're away from them. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
+**Droid Office for Android** is a companion to your running office, not a standalone office installation. Install `Droid-Office-<version>.apk` from the [latest release](https://github.com/nikships/droid-office/releases/latest), then scan the code from ⚙️ Settings → **Phone** in the office. On your Wi-Fi, or from anywhere over Tailscale, you see every worker on every floor, hire new ones, watch their live terminals and prompt them. A worker that needs you or finishes buzzes your phone, and you answer it right from the notification.
 
 <p>
   <img src="android/docs/home.jpg" alt="The Android app listing the office's workers by floor" width="32%">
@@ -89,7 +90,7 @@ That installs the latest release and starts the office. It asks which folder you
 
 | Guide | What's in it |
 | --- | --- |
-| [The full guide](docs/guide.md) | Every feature, controls, running it on AWS in one command or on your own server, and how it all works |
+| [The full guide](docs/guide.md) | The Mac app, every feature, controls, developer setup, and how it all works |
 | [Droid Office for Android](android/README.md) | Installing and pairing the phone app, how it connects over Wi-Fi and Tailscale, and building it |
 
 ## Credits and license

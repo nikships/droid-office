@@ -20,8 +20,8 @@ These are the checks `.github/workflows/release.yml` runs on this PR, in order. 
 - [ ] `npm run lint`
 - [ ] `npm run typecheck`
 - [ ] `npm run test:coverage` (the tests, failing below the coverage thresholds in `package.json`)
-- [ ] Pack the release (`npm pack` of the built app with `npm-shrinkwrap.json`)
-- [ ] Install the packed release with `install.sh` and start it (smoke test: `/login.html` answers 200)
+- [ ] Start the built office from the checkout (smoke test: `/` answers 200)
+- [ ] When the Mac job runs, package the app and start the office on its own Electron (smoke test: `/` answers 200)
 
 `release.yml` runs only on pull requests that touch a path in its `pull_request.paths` filter.
 

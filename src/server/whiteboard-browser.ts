@@ -28,10 +28,10 @@ export interface BrowsersPathEnv {
 }
 
 /**
- * The one folder the office, its installers and the Mac app download Chromium into and launch it from
+ * The one folder the office and the Mac app download Chromium into and launch it from
  * (PLAYWRIGHT_BROWSERS_PATH, for the commands the office runs). Dedicated to the office, so that
  * Playwright's own cleanup of old revisions never touches a browser someone else installed.
- * DROID_OFFICE_BROWSERS_PATH moves it. The installers don't repeat this logic: they run
+ * DROID_OFFICE_BROWSERS_PATH moves it. The Mac app doesn't repeat this logic: it runs
  * `droid-office browser install`, which resolves it here.
  */
 export function browsersPath({ platform = process.platform, env = process.env, home = os.homedir() }: BrowsersPathEnv = {}): string {
@@ -443,7 +443,7 @@ Commands:
   apparmor-profile  Print the AppArmor profile Ubuntu 23.10+ needs for its sandbox
 `;
 
-/** `droid-office browser …`, for the installers, the Mac app and anyone fixing a host by hand. Resolves to the exit code. */
+/** `droid-office browser …`, for the Mac app and developer checkouts. Resolves to the exit code. */
 export async function browserCommand(args: string[], out: (s: string) => void = (s) => process.stdout.write(s)): Promise<number> {
   const [cmd, ...rest] = args;
   switch (cmd) {
@@ -452,7 +452,7 @@ export async function browserCommand(args: string[], out: (s: string) => void = 
       try {
         const s = await ensureBrowser({
           onProgress: (p) => {
-            // A line per tenth, so a log or an install script isn't flooded.
+            // A line per tenth, so the browser log isn't flooded.
             const step = p.percent === undefined ? -1 : Math.floor(p.percent / 10);
             if (p.percent === undefined ? p.phase !== 'done' : step !== last) out(`${p.message}\n`);
             last = step;

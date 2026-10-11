@@ -1,17 +1,17 @@
 name: Release
 
 # Every change to the app that lands on main is built, tested and published as a GitHub release
-# marked Latest: install.sh installs its tarball, and the Mac app (src/desktop) updates itself to
-# it through electron-updater, which reads the release's latest-mac.yml. Every release gets a new
+# marked Latest. The Mac app is the only supported production install and updates itself through
+# electron-updater, which reads the release's latest-mac.yml. Every release gets a new
 # version, package.json's major.minor plus the number of commits on main (v0.1.68, v0.1.69, ...),
 # so the app always sees it as newer; bump package.json for a new minor.
 #
 # The Android app (android/) is built and tested alongside, and its APK is attached to the release.
 #
-# Pull requests get the same build, tests and a real install of the packed release through
-# install.sh, but publish nothing. A pull request builds the unsigned Mac app only when it touches
+# Pull requests get the same build, tests and a startup check from the checkout, but publish
+# nothing. A pull request builds the unsigned Mac app only when it touches
 # what the app packages or runs on Electron's Node, and the Android APK only when it touches
-# android/ (the changes job); a push to main or a manual run always builds and releases all three.
+# android/ (the changes job); a push to main or a manual run always builds both apps.
 
 on:
   push:
@@ -20,14 +20,15 @@ on:
       - 'src/**'
       - 'bin/**'
       - 'tests/**'
+      - 'README.md'
+      - 'docs/guide.md'
+      - '.agents/skills/office-video-capture/references/example-launch/example-composition.html'
       - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
-      - 'install.sh'
-      - 'install.ps1'
       - '.env.example'
       - '.gitignore'
       - 'electron-builder.yml'
@@ -39,14 +40,15 @@ on:
       - 'src/**'
       - 'bin/**'
       - 'tests/**'
+      - 'README.md'
+      - 'docs/guide.md'
+      - '.agents/skills/office-video-capture/references/example-launch/example-composition.html'
       - '.husky/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
       - 'vite.config.ts'
       - 'biome.jsonc'
-      - 'install.sh'
-      - 'install.ps1'
       - '.env.example'
       - '.gitignore'
       - 'electron-builder.yml'
@@ -97,7 +99,7 @@ jobs:
       # Electron is only for the Mac app, which the mac job builds.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     outputs:
-      version: ${{ steps.pack.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -116,7 +118,7 @@ jobs:
       - run: npm run typecheck
 
       # The Whiteboard renderer's tests start a real headless Chromium, with its sandbox on. It lives
-      # outside the workspace, in the one folder `droid-office browser` and the installers share.
+      # outside the workspace, in the one folder the office and the Mac app share.
       - name: Choose the shared Chromium folder
         run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
 
@@ -141,48 +143,28 @@ jobs:
       - name: Test with coverage
         run: npm run test:coverage # fails below the line and function thresholds in package.json
 
-      - name: Pack the release
-        id: pack
+      - name: Set the release version
+        id: version
         run: |
           version="$(node -p 'require("./package.json").version.split(".").slice(0, 2).join(".")').$(git rev-list --count HEAD)"
           npm version "$version" --no-git-tag-version --allow-same-version
-          # It's built already, and installs don't have the build tools.
-          npm pkg delete scripts.prepare
-          # Installs get exactly the dependency versions tested here.
-          cp package-lock.json npm-shrinkwrap.json
-          npm pkg set 'files[]=npm-shrinkwrap.json'
-          npm pack --ignore-scripts
-          mv "droid-office-$version.tgz" droid-office.tgz
-          tar -tzf droid-office.tgz | grep -qx 'package/npm-shrinkwrap.json'
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Install it with install.sh and start it
+      - name: Start the office from the checkout
         env:
-          DROID_OFFICE_TARBALL: ${{ github.workspace }}/droid-office.tgz
-          DROID_OFFICE_INSTALL_DIR: ${{ runner.temp }}/install
-          DROID_OFFICE_BIN_DIR: ${{ runner.temp }}/bin
           DROID_OFFICE_HOME: ${{ runner.temp }}/office
-          DROID_OFFICE_INSTALL_ONLY: '1'
         run: |
-          bash install.sh
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/bin/droid-office" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
+          node "$GITHUB_WORKSPACE/bin/droid-office.js" --host 127.0.0.1 --port 4700 > office.log 2>&1 &
           office=$!
+          trap 'kill -INT "$office" 2>/dev/null || true' EXIT
           for _ in $(seq 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4700/ || true)
             [ "$code" = 200 ] && break
             sleep 1
           done
           cat office.log
-          [ "$code" = 200 ] || { echo "the installed office didn't answer (last status: $code)"; exit 1; }
-          grep -qx "v${{ steps.pack.outputs.version }}" install/current
-          kill -INT "$office"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: tarball
-          path: droid-office.tgz
-          if-no-files-found: error
+          [ "$code" = 200 ] || { echo "the checkout's office didn't answer (last status: $code)"; exit 1; }
 
   mac:
     needs: changes

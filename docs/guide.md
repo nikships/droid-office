@@ -4,9 +4,7 @@ A cartoon 3D office that is yours alone: you are the only person in it. A loadin
 
 Every project is **a floor of the building**. Ride the elevator, pick one of the git projects you already have on the office's machine, and the office opens a new floor for it, painted its own colors. It works in your checkout right where it is: it never clones or copies a repository. Every worker, terminal and board on a floor works in that project's checkout.
 
-```
-droid-office
-```
+Install the [Mac app release](#the-mac-app) for production use. Developers can [clone and run the source](#development).
 
 ## What's inside
 
@@ -94,70 +92,47 @@ droid-office
 
 ## Requirements
 
-On the machine that runs the office (your laptop or a VPS):
+For the production Mac app:
 
-- **Node.js 20+**. Prebuilt PTY binaries ship for Linux, macOS and Windows, x64 and arm64, so no compiler is needed.
+- **An Apple Silicon Mac.** The app includes its own Node.js runtime; no separate Node.js install is needed.
 - The **[Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart)** (`droid`), installed, signed in and configured as the user that runs the office. Every worker and board agent is a Droid session.
 - **git**, plus the **GitHub CLI** (`gh`) logged in (`gh auth login`) for GitHub projects' issue and PR boards, and the **GitLab CLI** (`glab`) logged in (`glab auth login`) for GitLab projects. A GitLab floor's PR board shows its merge requests, and its workers open merge requests with `glab`. Self-managed GitLab instances work once `glab auth login --hostname <host>` has signed in to them.
 - **Chromium**, for the Whiteboard's renderer: about 100 MB to download and 200 MB on disk, downloaded for you (see [Chromium for the Whiteboard](#chromium-for-the-whiteboard)). The office runs without it.
 - `curl` is optional. The status hooks use it when it's there and fall back to Node when it isn't.
 
+Developer checkouts also need **Node.js 20+** and npm. The source can run on macOS, Linux and Windows, but those checkouts are not supported production installations.
+
 ## Install & run
 
-One line installs the latest release and starts the office. You don't need to clone anything:
+**The Mac app release is the only supported production install.** Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it, and drag **Droid Office** into Applications. Launch the app to start your office. It keeps itself up to date; see [The Mac app](#the-mac-app) for first launch, logs and updates.
+
+Command-line installers and standalone server release tarballs are no longer provided or supported. Developers can clone the repository and run or modify it themselves; see [Development](#development).
+
+### Running a developer checkout
+
+To run the built source without Vite:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/droid-office/main/install.sh | bash
+git clone https://github.com/nikships/droid-office.git
+cd droid-office
+npm ci              # builds the client, server and desktop app
+npm run start       # runs the built office from this checkout
 ```
 
-Anything after `bash -s --` goes to the office, such as a port:
+The command examples below use `droid-office` as shorthand for `node bin/droid-office.js` from the checkout. They are developer tools, not a production installation method.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/droid-office/main/install.sh | bash -s -- --port 4700
-```
-
-The script checks for Node.js 20+ and npm, downloads the newest [release](https://github.com/nikships/droid-office/releases) into `~/.local/share/droid-office` and installs its dependencies there. It also puts an `droid-office` command in `~/.local/bin`, so after the first run `droid-office` on its own starts the office. Run the curl line again to update. Set `DROID_OFFICE_VERSION=v0.1.68` to install a particular release, or `DROID_OFFICE_INSTALL_ONLY=1` to install without starting. The other settings are listed at the top of [`install.sh`](install.sh). It runs on macOS and Linux.
-
-**On Windows**, one line in PowerShell does the same:
-
-```powershell
-irm https://raw.githubusercontent.com/nikships/droid-office/main/install.ps1 | iex
-```
-
-To pass the office options, like a port, run it as a script block instead:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/nikships/droid-office/main/install.ps1))) --port 4700
-```
-
-It installs releases into `%LOCALAPPDATA%\droid-office` and puts an `droid-office` command in `%LOCALAPPDATA%\droid-office\bin`, which it adds to your user PATH. Open a new terminal after the first install and `droid-office` starts the office from PowerShell, cmd or Git Bash. Run the irm line again to update. It takes the same settings as `install.sh`, set the PowerShell way (`$env:DROID_OFFICE_VERSION = 'v0.1.68'` before the irm line), plus `DROID_OFFICE_NO_MODIFY_PATH=1` to leave your PATH alone, and `DROID_OFFICE_BIN_DIR=none` skips the command. They're listed at the top of [`install.ps1`](install.ps1). It works in Windows PowerShell 5.1 and PowerShell 7. You can also run `install.sh` inside WSL.
-
-Or install from a clone, to work on the office itself:
-
-```bash
-git clone https://github.com/nikships/droid-office && cd droid-office
-npm install          # also builds the client and server
-npm install -g .     # puts `droid-office` on your PATH
-```
-
-Then run it, from anywhere:
-
-```bash
-droid-office
-```
-
-The first time it starts in a terminal, it walks you through setting up before it opens:
+The first time the checkout starts in a terminal, it walks you through setting up before it opens:
 
 1. **Which folder your projects are in.** It suggests a code folder you already have (`~/Workspace`, `~/code`, `~/repos`…), else your home folder. The office looks for git projects in it and its subfolders, and never clones or copies anything.
 2. **Your first project.** It lists the git projects it found, most recently active first. Pick one by number, type its full path, or type a word to search. It becomes the first floor, and you can add more the same way.
 
-Press Enter to skip any step: the elevator in the office asks for your first project too. Run `droid-office setup` to go through it again while the office is stopped, or `droid-office setup --projects ~/Workspace --project ~/Workspace/my-project` to do the same without questions, from a script. When `install.sh` is piped into bash, it hands the office your terminal so the walkthrough can ask its questions.
+Press Enter to skip any step: the elevator in the office asks for your first project too. Run `droid-office setup` to go through it again while the office is stopped, or `droid-office setup --projects ~/Workspace --project ~/Workspace/my-project` to do the same without questions, from a script.
 
 It prints the URL for this machine's browser, which needs no login, and — unless bound to loopback — a join URL and QR code for other devices on your Wi-Fi (see [Access](#access) below).
 
 The office keeps its data in `~/droid-office` (`--home` or `DROID_OFFICE_HOME` to move it) and opens your existing checkouts as floors where they are. To make it look for them in another folder, like `~/Workspace`, pick the **Workspace folder** in ⚙️ Settings → **Building**, or with **Change folder** in the elevator's add-a-project panel (or start with `--projects` or `DROID_OFFICE_PROJECTS`). The folder has to exist. Floors you already have stay where they are when it moves. The list of floors is `~/droid-office/.droid-office/floors.json`. Each floor keeps its workers, pictures and worktrees in its own checkout's `.droid-office/`.
 
-Every setting the office and the installers read from the environment is listed, with its default, in [`.env.example`](.env.example). The office doesn't load `.env` files: export the settings in the shell that starts it, or set them as `Environment=` lines in its systemd unit. A command-line flag wins over its environment variable.
+Every setting the office reads from the environment is listed, with its default, in [`.env.example`](.env.example). The office doesn't load `.env` files: export the settings in the shell that starts it, or set them as `Environment=` lines in a developer checkout's systemd unit. A command-line flag wins over its environment variable.
 
 You can also start the office in a project, `droid-office ~/code/my-project`: that project becomes a floor, and the office keeps its data in `~/code/my-project/.droid-office` as it did before there were floors. An office that already ran in a project carries on in it when you start `droid-office` there again. You can take that project off the building in the elevator like any other floor.
 
@@ -165,8 +140,8 @@ You can also start the office in a project, `droid-office ~/code/my-project`: th
 
 The Whiteboard draws its cards with a headless Chromium, driven by `playwright-core` and pinned to the revision that release expects. Its sandbox is always on: the office never starts it with `--no-sandbox`. Two things have to be in place, and neither stops the office from starting. If one is missing, the board says renders are unavailable and why.
 
-- **The browser** (about 100 MB to download, 200 MB on disk) goes into one folder every install and launch shares: `~/Library/Caches/droid-office/browsers` on macOS, `$XDG_CACHE_HOME/droid-office/browsers` (default `~/.cache/droid-office/browsers`) on Linux, and `%LOCALAPPDATA%\droid-office\browsers` on Windows. `DROID_OFFICE_BROWSERS_PATH` moves it. It needs no admin rights. `install.sh` and `install.ps1` download it right after installing the office, and a failed download (no network, say) only prints a note and leaves the office installed. The Mac app downloads it in the background at launch and again after an update that pins a new revision (`~/Library/Logs/Droid Office/browser.log`). `droid-office browser install` downloads it by hand, `droid-office browser status` says whether it's there, and `DROID_OFFICE_SKIP_BROWSER=1` makes the installers skip it.
-- **On Linux, its system libraries** need admin rights, so the installers never install them. As an admin, run `sudo node <install dir>/node_modules/playwright-core/cli.js install-deps chromium` (the error the board shows names the exact command for your install). `deploy/provision.sh` does this on the AWS box. Playwright has library lists for Ubuntu 22.04 and 24.04 and Debian 12 and 13, on x64 and arm64; those are the supported distributions. macOS (Intel and Apple Silicon) and Windows 10 and 11 on x64 need nothing more.
+- **The browser** (about 100 MB to download, 200 MB on disk) goes into one folder every install and launch shares: `~/Library/Caches/droid-office/browsers` on macOS, `$XDG_CACHE_HOME/droid-office/browsers` (default `~/.cache/droid-office/browsers`) on Linux, and `%LOCALAPPDATA%\droid-office\browsers` on Windows. `DROID_OFFICE_BROWSERS_PATH` moves it. It needs no admin rights. The Mac app downloads it in the background at launch and again after an update that pins a new revision (`~/Library/Logs/Droid Office/browser.log`). Developer checkouts can run `droid-office browser install` to download it by hand and `droid-office browser status` to check whether it's there. The office also downloads it on first use; a failed download leaves the office running and reports why renders are unavailable.
+- **On Linux developer checkouts, its system libraries** need admin rights. As an admin, run `sudo node <checkout>/node_modules/playwright-core/cli.js install-deps chromium` (the error the board shows names the exact command for your checkout). `deploy/provision.sh` does this on the AWS box. Playwright has library lists for Ubuntu 22.04 and 24.04 and Debian 12 and 13, on x64 and arm64. macOS (Intel and Apple Silicon) and Windows 10 and 11 on x64 need nothing more. These source platforms are not production install targets.
 - **On Ubuntu 23.10 and later**, AppArmor stops unprivileged programs from using the user namespaces Chromium's sandbox needs, and it fails with *No usable sandbox*. With admin rights, `droid-office browser apparmor-profile | sudo tee /etc/apparmor.d/droid-office-chromium` followed by `sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium` installs a profile for that browser alone. `deploy/provision.sh` installs it on the AWS box.
 
 ### The Mac app
@@ -180,9 +155,9 @@ On a Mac with Apple Silicon, **Droid Office.app** does all of this for you: it s
 - **Quitting** works like restarting the office: workers keep running in their terminal host, and opening the app again within 30 minutes picks them back up. Closing the window leaves the app and the office running; click the Dock icon to bring it back. The office's output goes to `~/Library/Logs/Droid Office/office.log` (**Office → Show Office Log**).
 - **Updates.** Every release on `main` comes with the app (see [Releases](#development)). The app checks for a newer one at launch and every 30 minutes, downloads it in the background, and asks to restart once it's ready: restarting keeps your workers running, and **Later** installs it the next time you quit. **Droid Office → Check for Updates…** checks now. It reads the public releases of `nikships/droid-office`, so it needs no GitHub login. What it did is in `~/Library/Logs/Droid Office/updates.log`.
 
-### Install as an app
+### Open the running office in a browser app window
 
-In Chrome or Edge, open the office and choose **Install** in the address bar, or **⋮ → Cast, save and share → Install page as app**. Droid Office opens in its own window, with its own icon in your Dock, taskbar or app launcher. This needs HTTPS with a certificate your browser trusts, or `localhost` (including an SSH tunnel). The office server and any tunnel still need to be running; the app has no offline mode.
+In Chrome or Edge, open an already-running office and choose **Install** in the address bar, or **⋮ → Cast, save and share → Install page as app**. This only creates a browser window shortcut, not a Droid Office installation. The Mac app (or a developer checkout) still needs to be running. The shortcut has no offline mode and needs HTTPS with a certificate your browser trusts, or `localhost` (including an SSH tunnel).
 
 ### Access
 
@@ -293,7 +268,7 @@ You can also click a nearby desk to interact with it, or click a worker in the W
 
 ## One command on AWS
 
-If you have the AWS CLI logged in, one command gives you your own office on EC2. No Terraform needed:
+This is a developer-only source deployment, not a supported production install. Production users should use the [Mac app release](#the-mac-app). If you want to experiment with a checkout on EC2 and have the AWS CLI logged in:
 
 ```bash
 git clone https://github.com/nikships/droid-office && cd droid-office
@@ -355,7 +330,7 @@ Useful options for `up`:
 
 ## Running it on a VPS
 
-The simplest private setup needs no certificates at all. Run `droid-office --host 127.0.0.1` and connect with `ssh -L 4600:localhost:4600 you@server`, then open http://localhost:4600. The tunnel lands on loopback, so you walk straight in with no login.
+This section is for developer checkouts only, not supported production hosting. The simplest private setup needs no certificates at all. Run `droid-office --host 127.0.0.1` from your checkout and connect with `ssh -L 4600:localhost:4600 you@server`, then open http://localhost:4600. The tunnel lands on loopback, so you walk straight in with no login.
 
 To serve it on a real domain instead, put the office behind HTTPS. The simplest setup is Caddy, which gets certificates automatically:
 
@@ -397,7 +372,7 @@ After=network.target
 [Service]
 User=dev
 WorkingDirectory=/home/dev
-ExecStart=/usr/bin/env droid-office --host 127.0.0.1 --trust-proxy
+ExecStart=/usr/bin/node /home/dev/droid-office/bin/droid-office.js --host 127.0.0.1 --trust-proxy
 Restart=on-failure
 # Restarting the office leaves the workers' terminals running for the next one to pick up.
 KillMode=process
@@ -433,7 +408,7 @@ browser ──HTTPS/WSS──▶ droid-office (Node)
 - **Pull requests.** **O** at a worktree worker's desk runs `git push -u origin <branch>` in its worktree, then `gh pr create` (or the floor's forge) with the task as the body and the commits listed. `<branch>` is the one the worktree is on now, which may be one the worker made itself rather than `office/<name>`. The base is the branch the worktree was cut from (`worktree.from`: the default branch, the checkout's branch, or for a subagent its lead's branch), if that branch is on the remote, else the branch the checkout is on when it has been pushed, otherwise the forge's default branch. The Changes window uses the same pushed-branch check (`Worktrees.pushedBranch`), with the default branch as its last candidate, so a subagent's unpublished lead is not used as a PR target. Its diff still shows only what it changed relative to its lead. The PR number is saved with the worker, so the board can point back at the desk.
 - **Across repositories.** A worker hired with other floors' projects (`WorkerInfo.repos`, `makeWorkspace` in `src/server/workers.ts`) gets a workspace folder, `.droid-office/worktrees/<name>/` on its own floor, with a worktree of its own project and of each other one in it, all on `office/<name>`, named after their checkouts. Each is cut from that checkout's fetched base (the same `git fetch origin <branch>` as a single worktree; the floor's checkout is never cloned or moved), and its `from` branch is what that project's pull request targets. Two checkouts of the same repository are refused, and so are more than 8 other projects. The workspace isn't a repository; the agent starts there with `GIT_CEILING_DIRECTORIES` set to its parent, so git run in it finds nothing instead of the floor's own checkout, and the `worker.repos` prompt is written there as `AGENTS.md`. If one project can't have its worktree, the ones already made are removed again. **O** pushes and opens a pull request in each worktree that has commits and no pull request yet (the issue's `Closes #n` only in the home project's; the others say `Part of owner/repo#n`), then puts a list of all of them between `<!-- agent-office:related -->` markers in each description, replacing the list on later presses. A worker across repositories goes home by itself once no pull request of its is open on any floor's board, one has merged, and none of its worktrees holds work those merges didn't deliver; a failed check keeps the worker. `droid-office prune` leaves a workspace alone while worktrees are in it, and in the other projects lists the worker's branch as checked out elsewhere (and prunes it once that office no longer lists the worker).
 - **Changes.** While a desk's Changes window is open, the office runs `git status` and `git diff` in that worker's checkout every two seconds and pushes the file list when it differs. A worker across repositories has a tab per repository, each diffed against that floor's own branch. The diff is against the merge base with the newer of the branch the office was opened on and its origin copy, so it covers the worker's commits and its uncommitted edits, and a pull request merged on the forge that the project never pulled is not shown as the worker's change. Uncommitted edits stay listed even when they undo a change already committed on the branch; their diff and picture preview compare against `HEAD` (or the index) then. Within the list's limit, files with uncommitted edits come first. Commit is `git add -A && git commit`, discard is `git restore` / `git clean` (or `reset --hard` for everything), and Open PR checks the checkout's whole `git status` again and refuses while anything is uncommitted, then pushes the branch and runs `gh pr create`. Commit & open PR runs nothing itself: it is a `worker.prompt` with the `changes.ship` prompt filled in from the task card (`WorkerInfo.task`), the tab's branch, its pull-request base and, across repositories, the tab's folder in the workspace; a working agent gets it queued behind what it is doing. Only an agent gets the button, and only on a branch of its own with something to commit or push. **T** attaches the window to the worker's terminal like the terminal window does (`worker.attach`, detached when Changes closes), but never types to it or resizes it: it takes the PTY's size.
-- **Terminals.** Each worker's PTY lives in `droid-office-ptys` (`src/server/ptyhost.ts`), a detached process the server starts for each floor and talks to over a Unix socket in that project's `.droid-office/`. On SIGTERM the server leaves the PTYs running there, and the next server takes them back with a snapshot of each screen. Hooks that fire in between retry until it's up. If no server comes back within 30 minutes, the PTYs are ended. An update with `install.sh` (which resolves its release and launcher directories to absolute paths) keeps every release a running office or terminal host still uses, a host that outlived a server restart included, and prunes it at a later install once those processes have exited; when it can't inspect processes, it leaves cleanup for later. The server mirrors each PTY in a headless xterm. Each window that opens the terminal gets a serialized snapshot, then the live stream; closing one window detaches only it. Laptops get compact per-row diffs a few times a second. The PTY takes the size of whichever window typed into it last. Android draws the snapshot and stream in xterm.js inside a WebView, so it keeps the snapshot's scrollback. Its **Desktop** view never sends `term.resize`. Its **Phone** view sends one when selected or when its viewport changes, measured at readable text size; switching it off or leaving the terminal sends back the size from before, unless another window resized it since, in which case the phone switches to Desktop. The server also remembers, per phone connection, the size each terminal had before that phone's first resize, and when the connection closes it puts back every terminal still at the size the phone last set.
+- **Terminals.** Each worker's PTY lives in `droid-office-ptys` (`src/server/ptyhost.ts`), a detached process the server starts for each floor and talks to over a Unix socket in that project's `.droid-office/`. On SIGTERM the server leaves the PTYs running there, and the next server takes them back with a snapshot of each screen. Hooks that fire in between retry until it's up. If no server comes back within 30 minutes, the PTYs are ended. The server mirrors each PTY in a headless xterm. Each window that opens the terminal gets a serialized snapshot, then the live stream; closing one window detaches only it. Laptops get compact per-row diffs a few times a second. The PTY takes the size of whichever window typed into it last. Android draws the snapshot and stream in xterm.js inside a WebView, so it keeps the snapshot's scrollback. Its **Desktop** view never sends `term.resize`. Its **Phone** view sends one when selected or when its viewport changes, measured at readable text size; switching it off or leaving the terminal sends back the size from before, unless another window resized it since, in which case the phone switches to Desktop. The server also remembers, per phone connection, the size each terminal had before that phone's first resize, and when the connection closes it puts back every terminal still at the size the phone last set.
 - **Scrollback and search.** Every 15 seconds, for each worker that printed something new, and again as the office shuts down, its last 3,000 lines are serialized, colors included, to `.droid-office/scrollback/<worker>.ansi`. A worker that starts again (after a restart, or when you resume it) gets its old lines replayed into its terminal first, then a dim *office restarted* line. `GET /api/search?q=` matches case-insensitively, treating runs of whitespace as one space, over each worker's terminal buffer. It returns the newest lines first, each distinct line once. The browser finds the hit again in its own copy of the terminal and scrolls to it. An office from before this release may still have a `chat.jsonl` in its `.droid-office/`; it is left on disk and never read.
 - **Pictures in prompts.** `src/client/ui/images.ts` uploads each pasted or dropped picture as it's added (`POST /api/prompt/image`, which checks the file's first bytes, not the browser's word for it, and keeps it in `drops/staged/<id>/`; `DELETE` takes it out). A message that carries a prompt (`worker.spawn`, `worker.prompt`, `station.prompt`) lists the picture ids in `images`, and the server turns them into paths: `DropStore.adopt` copies each into the worker's own drops and `withImages` (`src/shared/drops.ts`) appends the numbered list to the prompt. The ids stay staged until the message has been handled. Closing a dialog without sending deletes its staged pictures.
 - **Sky.** The server decides the weather and tells every window (`src/server/sky.ts`), and every browser renders it as a night sky. Without `--city`, the office sits in the middle of the host's time zone at 40° north (34° south if its clocks go forward in January), and the weather changes every 20 to 50 minutes, with the season's odds. With `--city` (a name, or `lat,lon`), it asks open-meteo.com for the place once and for its current weather every 15 minutes; no key is needed, and nothing but the city's name and coordinates is sent. The office has no roof, so the moon and the sky light the rooms too, but only faintly. A few lines added to every lit material put a faint neon fill in the office and the garage, pools of light around each open laptop's screen (the nearest 16 to you; the main light in the room) and pools around the lamps outside (`src/client/world/sky.ts`). The wall boards are unlit and dimmed to `BOARD_GLOW` in `main.ts`. A server on AWS keeps UTC, so on an office deployed with `deploy/aws.sh`, put `DROID_OFFICE_CITY="Portland, Oregon"` in `/etc/droid-office/env` and restart the service.
@@ -478,9 +453,14 @@ Anyone who reaches the office can drive Droid in that directory, and through it 
 
 ## Development
 
+Developers can clone, run and modify the source on their own machines. Source checkouts and custom deployments are not supported production installs; the production distribution is the [Mac app release](#the-mac-app).
+
 ```bash
-npm install          # also builds, and installs the pre-commit hook
-npm run build        # vite (client) + tsc (server)
+git clone https://github.com/nikships/droid-office.git
+cd droid-office
+npm ci               # also builds, and installs the pre-commit hook
+npm run dev          # Vite on :5173, server on :4600
+npm run build        # vite (client) + tsc (server and desktop app)
 npm run lint         # Biome: lint and formatting check, fails on any warning
 npm run format       # Biome: rewrite the files in the house format
 npm run typecheck
@@ -497,7 +477,7 @@ A worktree the office cuts of this repository sets itself up from [`.droid-offic
 
 **Lint and format.** [Biome](https://biomejs.dev) lints and formats every `.js`, `.mjs` and `.ts` file outside `dist/`, with the settings in [`biome.jsonc`](biome.jsonc): two-space indents, single quotes, semicolons, trailing commas and 240-column lines. `npm run format` fixes the formatting.
 
-**Pre-commit hook.** `npm install` in a clone points git at [`.husky/`](.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't, like the packed release.
+**Pre-commit hook.** `npm ci` or `npm install` in a clone points git at [`.husky/`](.husky) (through the `prepare` script), and every commit then runs [lint-staged](https://github.com/lint-staged/lint-staged) and `npm run typecheck`. lint-staged runs `biome check --write` on the staged files, so formatting is fixed and added to the commit, and a lint finding stops it. The hook is a convenience; CI runs the same `npm run lint` and `npm run typecheck`. `git commit --no-verify` skips it, and `HUSKY=0` skips installing it. It isn't installed in CI (`CI=true`) or where dev dependencies aren't.
 
 `npm run test:coverage` fails when line or function coverage of `src/` and `bin/` drops below the thresholds in its `package.json` script, and CI runs it in place of `npm test`. `npm test` still runs on Node 20.
 
@@ -553,7 +533,7 @@ curl -s localhost:4600/api/automation -H 'content-type: application/json' -d '{"
 
 Rules for changing the code are in [`AGENTS.md`](AGENTS.md). A directory with its own rules has an `AGENTS.md` beside the code; the root file lists them.
 
-**Releases.** Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](.github/workflows/release.yml), and `install.sh` installs the newest one. The workflow builds, lints and typechecks the office, runs the tests with the coverage thresholds, packs the release with an `npm-shrinkwrap.json` so every install gets the tested dependency versions, then installs the pack through `install.sh` and starts it before publishing. Alongside, a macOS job builds the Mac app at that version, signs it with the Developer ID from the repository's secrets (`MAC_CERTS`, `CERT_PASSWORD`), notarizes the app and its disk image with Apple (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), and starts the office on the app's own Electron. Only once both jobs pass does the release go up, marked Latest, with the tarball, the dmg, the zip and `latest-mac.yml`, which is what installed apps update from. Pull requests run the same steps, with an unsigned app, but publish nothing; a pull request builds the Mac app only when it touches `src/desktop`, `src/server`, `src/shared`, `bin`, `build`, `electron-builder.yml`, `package.json`, `package-lock.json` or a `tsconfig`, and the Android APK only when it touches `android/`. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so every release is a new version the app updates to; bump `package.json` to start a new minor version.
+**Releases.** Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](.github/workflows/release.yml). The Mac app is the only supported production installation; there is no standalone server tarball or npm publication, and `package.json` marks the package private. The workflow builds, lints and typechecks the office, runs the tests with the coverage thresholds, and starts the built office from the checkout. Alongside, a macOS job builds the Mac app at that version, signs it with the Developer ID from the repository's secrets (`MAC_CERTS`, `CERT_PASSWORD`), notarizes the app and its disk image with Apple (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), and starts the office on the app's own Electron. The Android job tests and builds the companion APK. Only once all three jobs pass does the release go up, marked Latest, with the dmg, the zip, their update metadata and the companion APK. Installed Mac apps update through `latest-mac.yml`. Pull requests run the same checks, with an unsigned app, but publish nothing; a pull request builds the Mac app only when it touches `src/desktop`, `src/server`, `src/shared`, `bin`, `build`, `electron-builder.yml`, `package.json`, `package-lock.json` or a `tsconfig`, and the Android APK only when it touches `android/`. Workflow changes build both apps. A release is named after `package.json`'s major.minor and the number of commits on `main` (`v0.1.68`), so every release is a new version the app updates to; bump `package.json` to start a new minor version.
 
 ## License
 

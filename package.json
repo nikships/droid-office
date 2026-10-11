@@ -1,6 +1,7 @@
 {
   "name": "droid-office",
   "version": "0.1.0",
+  "private": true,
   "description": "A 3D office in the browser where its owner hires Droid workers at desks and works in their live PTYs.",
   "type": "module",
   "productName": "Droid Office",
