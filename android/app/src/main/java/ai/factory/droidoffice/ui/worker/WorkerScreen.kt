@@ -154,7 +154,9 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         val screen = screens[workerId]
         NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         val zoom = rememberTerminalZoom(workerId)
-        var phone by rememberSaveable(workerId) { mutableStateOf(false) }
+        // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
+        // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
+        var phone by rememberSaveable(workerId) { mutableStateOf(!worker.isCloud) }
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
         val currentSize = TermSize(worker.cols, worker.rows)
