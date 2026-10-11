@@ -17,6 +17,7 @@ import {
   thumbRect,
   tileDraws,
   tileGrid,
+  viewOnImage,
   tileNote,
   wallRegion,
   wallView,
@@ -157,6 +158,30 @@ test('the region takes only the tiles it needs, each slice put where it goes on 
   // A capped render: the region past its last tile draws nothing.
   const capped = tileGrid({ width: 1280, height: 50_000, tiles: 2 }, { width: 1280, height: 4000 });
   assert.deepEqual(tileDraws({ x: 0, y: 20_000, w: 1280, h: 640 }, capped, dest), []);
+  // The status says where the cap is and how tall the tiles are: the grid ends at the cap, so a view past it is slid back onto what was rendered.
+  const status = { width: 1280, height: 50_000, tiles: 8, tileHeight: 2048, capped: { capPx: 16_384 } };
+  const atCap = tileGrid(status, { width: 1280, height: 2048 });
+  assert.deepEqual(atCap, { width: 1280, height: 16_384, count: 8, tileHeight: 2048, scale: 1 });
+  const slid = wallRegion({ x: 0, y: 30_000, w: 1280, h: 800 }, atCap);
+  assert.equal(slid.y + slid.h, 16_384);
+  assert.deepEqual(
+    tileDraws(slid, atCap, dest).map((d) => d.tile),
+    [7],
+  );
+});
+
+test("a canvas's view is moved into its image's coordinates, which start at the canvas point the render says", () => {
+  // A canvas rendered from -200,-100, at half scale (wider than the renderer's cap).
+  const status = { width: 9000, height: 3000, tiles: 1, tileHeight: 2048, origin: { x: -200, y: -100 }, scale: 0.5 };
+  const grid = tileGrid(status, { width: 4500, height: 1500 });
+  assert.equal(grid.scale, 0.5);
+  const view = { x: 800, y: 400, w: 1600, h: 800 };
+  assert.deepEqual(viewOnImage(view, status.origin), { x: 1000, y: 500, w: 1600, h: 800 });
+  assert.equal(viewOnImage(view, undefined), view);
+  assert.equal(viewOnImage(undefined, status.origin), undefined);
+  const [d] = tileDraws(wallRegion(viewOnImage(view, status.origin), grid), grid, { x: 0, y: 0, w: WALL_W, h: WALL_H });
+  // The canvas point 800,400 is image px (800 + 200) * 0.5 = 500, (400 + 100) * 0.5 = 250.
+  assert.deepEqual([d.sx, d.sy, d.sw, d.sh], [500, 250, 800, 400]);
 });
 
 test('placeholders say what the renderer is doing, and authors read "You" for the owner', () => {
