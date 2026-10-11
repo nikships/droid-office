@@ -9,6 +9,11 @@ test('GitHub repositories stay owner/repo, however they are typed', () => {
   assert.equal(normalizeRepo('https://github.com/nikships/droidproxy.git'), 'nikships/droidproxy');
   assert.equal(normalizeRepo('git@github.com:nikships/droidproxy.git'), 'nikships/droidproxy');
   assert.equal(normalizeRepo('https://github.com/nikships/droidproxy/issues/12'), 'nikships/droidproxy');
+  // git rewrites git@github.com: to a credentialed https URL. The token is longer than the
+  // address limit and contains a colon, and it must not become part of the repository.
+  const token = 'x'.repeat(400);
+  assert.equal(normalizeRepo(`https://x-access-token:${token}@github.com/acme/api.git`), 'acme/api');
+  assert.equal(normalizeRepo('https://user:secret@github.com/acme/api/issues/12'), 'acme/api');
   assert.equal(forgeOf('nikships/droidproxy'), 'github');
 });
 

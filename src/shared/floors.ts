@@ -59,13 +59,16 @@ const GL_MAX_SEGMENTS = 21;
 /**
  * A repository from what someone typed or pasted, or from a checkout's remote URL. GitHub
  * repositories come back as `owner/repo` (owner/repo, or a github.com URL: https, ssh or git@).
- * GitLab projects come back as `host/group/…/project` (a URL on any other host, host/group/project,
- * or a bare path of three or more segments, which means gitlab.com). Undefined for anything else,
- * so it can never become a CLI option or a path outside the projects folder.
+ * An https URL may carry credentials (`https://user:token@github.com/owner/repo`); those are
+ * dropped before the address is read, so a long token cannot hide the repository or land in a
+ * floor id. GitLab projects come back as `host/group/…/project` (a URL on any other host,
+ * host/group/project, or a bare path of three or more segments, which means gitlab.com).
+ * Undefined for anything else, so it can never become a CLI option or a path outside the
+ * projects folder.
  */
 export function normalizeRepo(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
-  let s = value.trim();
+  let s = value.trim().replace(/^(https?:\/\/)[^/@\s]+@/i, '$1');
   if (s.length > 400) return undefined;
   let host: string | undefined;
   const url = /^(?:(?:https?|ssh|git):\/\/)?(?:[\w.~%-]+@)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?::\d+)?[/:](.*)$/.exec(s);
