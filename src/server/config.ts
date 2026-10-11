@@ -42,6 +42,7 @@ Usage:
   droid-office [dir] [options]
   droid-office setup [--projects <dir>] [--project <repo>]...
   droid-office prune [dir] [--dry-run] [--force]
+  droid-office browser <install|status|path|apparmor-profile>
 
 Runs the office. Every project is a floor of the building: ride the elevator and
 pick one of the git checkouts you already have in your workspace folder. The
@@ -63,6 +64,10 @@ Commands:
   prune                   Remove leftover worker worktrees (.droid-office/worktrees/)
                           and their office/* branches. Anything with uncommitted
                           changes or unpushed commits is kept unless --force is given.
+  browser                 The Chromium the Whiteboard renders cards with. "browser
+                          install" downloads it (about 100 MB, no admin rights) into
+                          one shared folder (env DROID_OFFICE_BROWSERS_PATH moves it;
+                          default <your cache folder>/droid-office/browsers)
 
 Options:
       --home <dir>        Where the office keeps its data when no [dir] is given

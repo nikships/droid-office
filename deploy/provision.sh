@@ -19,6 +19,18 @@ quiet() {
   rm -f "$log"
 }
 
+# Like quiet, but a failure is the caller's to handle.
+quiet_soft() {
+  local log
+  log=$(mktemp)
+  if ! "$@" >"$log" 2>&1; then
+    tail -n 20 "$log" >&2
+    rm -f "$log"
+    return 1
+  fi
+  rm -f "$log"
+}
+
 step "Waiting for the instance to finish booting"
 sudo cloud-init status --wait >/dev/null 2>&1 || true
 
@@ -85,6 +97,31 @@ echo "    at $(git -C /opt/droid-office log -1 --format='%h %s')"
 step "npm install (builds the office)"
 (cd /opt/droid-office && quiet npm install --no-audit --no-fund)
 
+# The Whiteboard renders cards with a headless Chromium, which `droid-office browser` downloads into one
+# folder the service shares. None of this stops the office from starting: a step that fails says so, and
+# the Whiteboard reports renders as unavailable until it is fixed.
+step "Installing Chromium for the Whiteboard"
+BROWSERS="$(node /opt/droid-office/bin/droid-office.js browser path)"
+# The libraries Chromium needs, as root through playwright-core's own command (apt, no other changes).
+if ! quiet_soft sudo -E env DEBIAN_FRONTEND=noninteractive node /opt/droid-office/node_modules/playwright-core/cli.js install-deps chromium; then
+  echo "    (carrying on without Chromium's libraries: run 'sudo node /opt/droid-office/node_modules/playwright-core/cli.js install-deps chromium' on the box)"
+fi
+# The browser itself, as the office user: no admin rights, into $BROWSERS.
+if ! quiet_soft env DROID_OFFICE_BROWSERS_PATH="$BROWSERS" node /opt/droid-office/bin/droid-office.js browser install; then
+  echo "    (carrying on without Chromium: run 'droid-office browser install' as $USER on the box)"
+fi
+# Ubuntu 23.10 and later stop unprivileged processes from using user namespaces, which Chromium's
+# sandbox needs, unless AppArmor has a profile that allows it for that binary. The office never turns
+# the sandbox off, so this profile is what lets it render there. Older releases have no such rule.
+if [[ -e /etc/apparmor.d/abi/4.0 ]] && command -v apparmor_parser >/dev/null 2>&1; then
+  profile=$(mktemp)
+  DROID_OFFICE_BROWSERS_PATH="$BROWSERS" node /opt/droid-office/bin/droid-office.js browser apparmor-profile >"$profile"
+  sudo install -m 644 -o root -g root "$profile" /etc/apparmor.d/droid-office-chromium
+  rm -f "$profile"
+  quiet_soft sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium ||
+    echo "    (the AppArmor profile for Chromium didn't load; see docs/guide.md)"
+fi
+
 # The office keeps its data (floors, workers, boards) in ~/droid-office and
 # clones projects into ~/workspace/<owner>/<repo>. It starts with no project: its elevator
 # lists every repository the GitHub token can see, and cloning one makes it the first floor.
@@ -141,6 +178,8 @@ WorkingDirectory=$RUN_DIR
 EnvironmentFile=/etc/droid-office/env
 Environment=HOME=$HOME
 Environment=DROID_OFFICE_HOME=$OFFICE_HOME
+# The folder Chromium was downloaded into, and the AppArmor profile above names.
+Environment=DROID_OFFICE_BROWSERS_PATH=$BROWSERS
 Environment=SHELL=/bin/bash
 Environment=PATH=$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Lets the office upgrade itself from its UI: it builds the new version, then exits, and

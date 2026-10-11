@@ -20,6 +20,12 @@
 #   DROID_OFFICE_NO_MODIFY_PATH  1: write the `droid-office` command, but leave your user PATH alone
 #   DROID_OFFICE_INSTALL_ONLY  1: install, but don't start the office
 #   DROID_OFFICE_TARBALL       install this release tarball (a local file) instead of downloading one
+#   DROID_OFFICE_SKIP_BROWSER  1: don't download the Chromium the Whiteboard renders with
+#   DROID_OFFICE_BROWSERS_PATH where that Chromium goes (default %LOCALAPPDATA%\droid-office\browsers)
+#
+# After the office is installed this also downloads Chromium (about 100 MB, no admin rights) for the
+# Whiteboard's renderer. If that fails, the office is still installed and starts; only renders are off,
+# and `droid-office browser install` tries again.
 #
 # Everything runs inside a script block so that `irm | iex` leaves nothing behind in your session but
 # the PATH addition, and errors throw instead of calling `exit`, which would close the PowerShell window
@@ -226,6 +232,23 @@
       return 'droid-office'
     }
 
+    # Downloads the Chromium the Whiteboard renders with, into the folder `droid-office browser` uses.
+    # Never fatal: no network or a blocked download leaves the office installed, with renders off.
+    function Install-Browser([string]$entry, [string]$launcher) {
+      if ($env:DROID_OFFICE_SKIP_BROWSER -eq '1') { return }
+      Step 'Downloading Chromium for the Whiteboard (about 100 MB)'
+      $ok = $false
+      try {
+        & node $entry browser install | Out-Host
+        $ok = ($LASTEXITCODE -eq 0)
+      } catch {}
+      if (-not $ok) {
+        $again = if ($launcher) { $launcher } else { "node `"$entry`"" }
+        Warn "couldn't download Chromium. The office works without it; only the Whiteboard's renders are off."
+        Warn "  Try again later with: $again browser install"
+      }
+    }
+
     Check-Requirements
 
     $tag = ''
@@ -258,6 +281,7 @@
 
     $entry = Join-Path $versions "$tag\bin\droid-office.js"
     $launcher = Write-Launcher $tag $entry
+    Install-Browser $entry $launcher
 
     if ($env:DROID_OFFICE_INSTALL_ONLY -eq '1') {
       $start = if ($launcher) { $launcher } else { "node `"$entry`"" }

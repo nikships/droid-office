@@ -81,6 +81,7 @@ On the machine that runs the office (your laptop or a VPS):
 - **Node.js 20+**. Prebuilt PTY binaries ship for Linux, macOS and Windows, x64 and arm64, so no compiler is needed.
 - The **[Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart)** (`droid`), installed, signed in and configured as the user that runs the office. Every worker and board agent is a Droid session.
 - **git**, plus the **GitHub CLI** (`gh`) logged in (`gh auth login`) for GitHub projects' issue and PR boards, and the **GitLab CLI** (`glab`) logged in (`glab auth login`) for GitLab projects. A GitLab floor's PR board shows its merge requests, and its workers open merge requests with `glab`. Self-managed GitLab instances work once `glab auth login --hostname <host>` has signed in to them.
+- **Chromium**, for the Whiteboard's renderer: about 100 MB to download and 200 MB on disk, downloaded for you (see [Chromium for the Whiteboard](#chromium-for-the-whiteboard)). The office runs without it.
 - `curl` is optional. The status hooks use it when it's there and fall back to Node when it isn't.
 
 ## Install & run
@@ -141,6 +142,14 @@ The office keeps its data in `~/droid-office` (`--home` or `DROID_OFFICE_HOME` t
 Every setting the office and the installers read from the environment is listed, with its default, in [`.env.example`](.env.example). The office doesn't load `.env` files: export the settings in the shell that starts it, or set them as `Environment=` lines in its systemd unit. A command-line flag wins over its environment variable.
 
 You can also start the office in a project, `droid-office ~/code/my-project`: that project becomes a floor, and the office keeps its data in `~/code/my-project/.droid-office` as it did before there were floors. An office that already ran in a project carries on in it when you start `droid-office` there again. You can take that project off the building in the elevator like any other floor.
+
+### Chromium for the Whiteboard
+
+The Whiteboard draws its cards with a headless Chromium, driven by `playwright-core` and pinned to the revision that release expects. Its sandbox is always on: the office never starts it with `--no-sandbox`. Two things have to be in place, and neither stops the office from starting. If one is missing, the board says renders are unavailable and why.
+
+- **The browser** (about 100 MB to download, 200 MB on disk) goes into one folder every install and launch shares: `~/Library/Caches/droid-office/browsers` on macOS, `$XDG_CACHE_HOME/droid-office/browsers` (default `~/.cache/droid-office/browsers`) on Linux, and `%LOCALAPPDATA%\droid-office\browsers` on Windows. `DROID_OFFICE_BROWSERS_PATH` moves it. It needs no admin rights. `install.sh` and `install.ps1` download it right after installing the office, and a failed download (no network, say) only prints a note and leaves the office installed. The Mac app downloads it in the background at launch and again after an update that pins a new revision (`~/Library/Logs/Droid Office/browser.log`). `droid-office browser install` downloads it by hand, `droid-office browser status` says whether it's there, and `DROID_OFFICE_SKIP_BROWSER=1` makes the installers skip it.
+- **On Linux, its system libraries** need admin rights, so the installers never install them. As an admin, run `sudo node <install dir>/node_modules/playwright-core/cli.js install-deps chromium` (the error the board shows names the exact command for your install). `deploy/provision.sh` does this on the AWS box. Playwright has library lists for Ubuntu 22.04 and 24.04 and Debian 12 and 13, on x64 and arm64; those are the supported distributions. macOS (Intel and Apple Silicon) and Windows 10 and 11 on x64 need nothing more.
+- **On Ubuntu 23.10 and later**, AppArmor stops unprivileged programs from using the user namespaces Chromium's sandbox needs, and it fails with *No usable sandbox*. With admin rights, `droid-office browser apparmor-profile | sudo tee /etc/apparmor.d/droid-office-chromium` followed by `sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium` installs a profile for that browser alone. `deploy/provision.sh` installs it on the AWS box.
 
 ### The Mac app
 
@@ -287,7 +296,7 @@ What `up` does, in about 2 minutes:
 1. Creates an SSH key pair (kept in `~/.config/droid-office/aws/<name>/`).
 2. Creates a security group that opens **only SSH (port 22), and only to your current IP**. The office itself is never on the internet.
 3. Gives the machine a fixed Elastic IP and launches a **t3.xlarge** (4 vCPU, 16 GiB) Ubuntu 24.04 instance with a 50 GiB disk.
-4. Installs Node 22, git, the GitHub CLI and the **Droid CLI**. It clones the latest droid-office from GitHub and runs `npm i`. The office keeps its data in `~/droid-office` on the machine and clones projects into `~/workspace/<owner>/<repo>`.
+4. Installs Node 22, git, the GitHub CLI and the **Droid CLI**. It clones the latest droid-office from GitHub and runs `npm i`. It also installs the system libraries for the Whiteboard's Chromium (`playwright-core install-deps chromium`), downloads that browser as the office user, and adds an AppArmor profile that lets it use user namespaces for its sandbox (see [Chromium for the Whiteboard](#chromium-for-the-whiteboard)); if one of those fails it says so and the office is set up anyway. The office keeps its data in `~/droid-office` on the machine and clones projects into `~/workspace/<owner>/<repo>`.
 5. Runs the office under systemd with `Restart=always`, so it comes back after a crash or a reboot, and `KillMode=process`, so restarting it leaves the workers running. It listens on `127.0.0.1:4600` on the machine, so the only way in is an SSH tunnel.
 6. Opens an SSH tunnel and your browser at `http://localhost:4600`. The tunnel lands on the machine's loopback, which the office trusts, so you walk straight in: no login, no token, nothing to write down.
 7. The office opens on its elevator with no floors yet. It lists every repository your GitHub token can see: pick one and it becomes the first floor.
