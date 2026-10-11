@@ -51,6 +51,7 @@ export interface Modal {
 }
 
 const stack: Modal[] = [];
+const escapeClaims: { owner: HTMLElement; claim: () => boolean }[] = [];
 const listeners = new Set<(open: boolean) => void>();
 
 export function onModalChange(fn: (open: boolean) => void) {
@@ -86,6 +87,29 @@ export function setDoing(modal: Modal, doing: string | undefined) {
 }
 
 /**
+ * Lets a popup inside a window take Esc before the window does. `claim` closes the popup and
+ * returns true when it was open. The window asks while handling Esc, so the order the two were
+ * registered in does not matter. Returns the function that withdraws the claim.
+ */
+export function claimEscape(owner: HTMLElement, claim: () => boolean): () => void {
+  const entry = { owner, claim };
+  escapeClaims.push(entry);
+  return () => {
+    const i = escapeClaims.indexOf(entry);
+    if (i >= 0) escapeClaims.splice(i, 1);
+  };
+}
+
+/** Whether a popup inside `modal` just took this Esc (the newest claim first). */
+function escapeClaimed(modal: HTMLElement): boolean {
+  for (let i = escapeClaims.length - 1; i >= 0; i--) {
+    const { owner, claim } = escapeClaims[i];
+    if (modal.contains(owner) && claim()) return true;
+  }
+  return false;
+}
+
+/**
  * Opens a modal. Esc closes it unless `escCloses` is false (for dialogs you mustn't skip) or a
  * function that returns false for that keypress (to let Esc through to what has focus), and so
  * does a ✕ in its top right corner unless `closeButton` is false (it follows `escCloses`). `doing`
@@ -103,6 +127,11 @@ export function openModal(
   let closed = false;
   const onKey = (e: KeyboardEvent) => {
     if (stack[stack.length - 1] !== modal) return;
+    if (e.key === 'Escape' && escapeClaimed(content)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Escape' && (typeof opts.escCloses === 'function' ? opts.escCloses(e) : opts.escCloses !== false)) {
       // Stop it here so the Esc that closes a terminal isn't also typed into it.
       e.preventDefault();
