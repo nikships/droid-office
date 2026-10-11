@@ -722,6 +722,19 @@ export interface WhiteboardSkillState {
 export interface WhiteboardRendererStatus {
   available: boolean;
   reason?: string;
+  /** The browser is being downloaded (its first use), with how far along it is. */
+  installing?: { percent?: number; message: string };
+}
+
+/** A card's latest render, as the window and the wall know it: the image's revision and time, or its last error. */
+export interface WhiteboardRenderInfo {
+  /** The board revision the latest good image shows, and when it finished (ms); absent before the first one. */
+  rev?: number;
+  at?: number;
+  /** The image matches the card as it is now. */
+  current: boolean;
+  /** The last render failed, keeping the last good image. */
+  error?: string;
 }
 
 /** A line of a worker's terminal that matched a search. */
@@ -1029,6 +1042,14 @@ export type ServerMsg =
       caps?: Record<string, string>;
       renderer?: WhiteboardRendererStatus;
     }
+  /**
+   * To everyone on the floor: a card has a new latest image (or a failed render), so the window, the
+   * grid and the wall fetch `/api/whiteboard/render` again. A snapshot is followed by one of these per
+   * card that has a render.
+   */
+  | { t: 'whiteboard.rendered'; floor: string; card: string; info: WhiteboardRenderInfo }
+  /** To everyone: the renderer became available or unavailable, or its browser download moved on. */
+  | { t: 'whiteboard.renderer'; status: WhiteboardRendererStatus }
   /** To whoever pinged: the line went in (`how`), or why it didn't. */
   | { t: 'whiteboard.pinged'; worker: string; ok: boolean; how?: PingHow; error?: string }
   | { t: 'prompts'; state: PromptsState }

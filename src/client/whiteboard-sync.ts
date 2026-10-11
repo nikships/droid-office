@@ -12,7 +12,7 @@
 //
 // No DOM here: tests drive it in Node with a fake `send`.
 
-import type { ClientMsg, ServerMsg, WhiteboardRendererStatus } from '../shared/protocol';
+import type { ClientMsg, ServerMsg, WhiteboardRenderInfo, WhiteboardRendererStatus } from '../shared/protocol';
 import { OWNER_AUTHOR, applyOps, applyPatch, findCard, type Board, type Op, type OpError } from '../shared/whiteboard';
 
 export type ApplyResult = { ok: true; rev: number } | { ok: false; reason: 'invalid'; error: OpError } | { ok: false; reason: 'expired' };
@@ -47,6 +47,8 @@ export interface FloorBoard {
   drafts: Draft[];
   caps: Record<string, string>;
   renderer: WhiteboardRendererStatus;
+  /** Each card's latest render, from `whiteboard.rendered`. */
+  renders: Record<string, WhiteboardRenderInfo>;
   /** Patches arrive for it: this connection is on the floor and has its snapshot. */
   live: boolean;
   /** The last batch the server refused as invalid, for the window to show. */
@@ -79,7 +81,7 @@ export class WhiteboardSync {
   floor(id: string): FloorBoard {
     let f = this.floors.get(id);
     if (!f) {
-      f = { floor: id, committed: null, epoch: null, seqs: new Map(), pending: [], drafts: [], caps: {}, renderer: { available: false }, live: false };
+      f = { floor: id, committed: null, epoch: null, seqs: new Map(), pending: [], drafts: [], caps: {}, renderer: { available: false }, renders: {}, live: false };
       this.floors.set(id, f);
     }
     return f;
@@ -184,6 +186,19 @@ export class WhiteboardSync {
       for (const f of this.floors.values()) if (f.floor !== msg.floor && f.pending.length) this.sync(f);
       return;
     }
+    if (msg.t === 'whiteboard.renderer') {
+      for (const f of this.floors.values()) {
+        f.renderer = msg.status;
+        this.changed(f.floor);
+      }
+      return;
+    }
+    if (msg.t === 'whiteboard.rendered') {
+      const f = this.floor(msg.floor);
+      f.renders = { ...f.renders, [msg.card]: msg.info };
+      this.changed(f.floor);
+      return;
+    }
     if (msg.t !== 'whiteboard') return;
     const f = this.floor(msg.floor);
     const u = msg.update;
@@ -231,6 +246,18 @@ export class WhiteboardSync {
     const cap = f?.caps[cardId];
     if (!card?.content || !cap) return undefined;
     return `/whiteboard/c/${cap}/${card.content.entry.split('/').map(encodeURIComponent).join('/')}#wb=${encodeURIComponent(nonce)}`;
+  }
+
+  /**
+   * `/api/whiteboard/render?…`: a card's latest image (a grid thumbnail, or one tile of the full page),
+   * keyed by its render time so a new render is fetched rather than cached; undefined before the first.
+   */
+  renderUrl(floorId: string, cardId: string, opts: { size?: 'thumb' | 'full'; tile?: number } = {}): string | undefined {
+    const info = this.floors.get(floorId)?.renders[cardId];
+    if (info?.at === undefined) return undefined;
+    const q = new URLSearchParams({ floor: floorId, card: cardId, size: opts.size ?? 'full', v: String(info.at) });
+    if (opts.tile !== undefined) q.set('tile', String(opts.tile));
+    return `/api/whiteboard/render?${q}`;
   }
 
   private snapshot(f: FloorBoard, board: Board, epoch: string, caps: Record<string, string>, renderer?: WhiteboardRendererStatus) {
