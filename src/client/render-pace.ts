@@ -71,6 +71,11 @@ export interface RenderSignals {
    * browser that never reports occlusion can still pause, and so tests can drive it.
    */
   covered: boolean;
+  /**
+   * The tab was opened with `?pace=full`: draw every frame whatever the other signals say, so a
+   * screen recording of a still or covered office does not drop to the idle pace or stop.
+   */
+  fullRate: boolean;
   motion: SceneMotion;
   /** Milliseconds since something in `motion` was last going, or the page last came into view. */
   quietMs: number;
@@ -91,10 +96,11 @@ export function sceneIsMoving(motion: SceneMotion): boolean {
 }
 
 /**
- * Hidden or covered: draw nothing. Visible and something in `motion` is going, or was within
- * `IDLE_AFTER_MS`: every frame. Visible and quiet for longer than that: the idle pace.
+ * `fullRate`: every frame. Hidden or covered: draw nothing. Visible and something in `motion` is
+ * going, or was within `IDLE_AFTER_MS`: every frame. Visible and quiet for longer than that: the idle pace.
  */
 export function renderPace(signals: RenderSignals): RenderPace {
+  if (signals.fullRate) return 'full';
   if (signals.hidden || signals.covered) return 'paused';
   if (sceneIsMoving(signals.motion) || signals.quietMs < IDLE_AFTER_MS) return 'full';
   return 'idle';

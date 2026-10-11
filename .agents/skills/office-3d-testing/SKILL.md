@@ -86,6 +86,17 @@ curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: applicati
 # 200 {"ok":true,"value":{…state…}} · 422 {"ok":false,"error":"…"} · 409 no tab open · 504 no answer in time
 ```
 
+### Input the API doesn't cover
+
+Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells, and the arcade's keys. To test those, load the movement rig from [`office-choreography`](../office-choreography/SKILL.md) into the test tab. Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
+
+```bash
+AGENT_BROWSER_SESSION=office-test .agents/skills/office-choreography/scripts/run.sh \
+  "(async()=>{ await office.goTo('elevator'); await __walkTo(8.3,-3); await __walkTo(6.8,-0.7); __tap('KeyE','e'); await __sleep(6000); return office.state().floor.id })()"
+```
+
+For video proof of a fix (a PR, a bug repro), record the same steps with [`office-video-capture`](../office-video-capture/SKILL.md)'s `rec.sh`.
+
 ## 4. Pitfalls
 
 - **A long eval drops the connection.** Keep each `eval` short (a few commands, not a whole tour), or start the work and poll `office.state()` from later evals.

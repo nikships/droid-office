@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { FRAME_DT_CAP, GONG_RING_MS, IDLE_AFTER_MS, IDLE_FRAME_MS, SCENE_MOTIONS, advanceClock, frameDelta, gongRinging, renderPace, skyFalling, stillScene, type RenderClock, type RenderSignals } from '../src/client/render-pace.js';
 
 function signals(patch: Partial<Omit<RenderSignals, 'motion'>> & { motion?: Partial<RenderSignals['motion']> } = {}): RenderSignals {
-  return { hidden: false, covered: false, quietMs: IDLE_AFTER_MS, ...patch, motion: { ...stillScene(), ...patch.motion } };
+  return { hidden: false, covered: false, fullRate: false, quietMs: IDLE_AFTER_MS, ...patch, motion: { ...stillScene(), ...patch.motion } };
 }
 
 const off: RenderClock = { mode: 'off', resume: false };
@@ -12,6 +12,13 @@ test('a hidden tab or a covered window pauses, even if the scene is moving', () 
   assert.equal(renderPace(signals({ hidden: true, motion: { player: true } })), 'paused');
   assert.equal(renderPace(signals({ covered: true, motion: { worker: true, sky: true } })), 'paused');
   assert.equal(renderPace(signals({ hidden: true, covered: true })), 'paused');
+});
+
+test('a tab opened with ?pace=full draws every frame, still, hidden or covered', () => {
+  assert.equal(renderPace(signals({ fullRate: true })), 'full');
+  assert.equal(renderPace(signals({ fullRate: true, quietMs: IDLE_AFTER_MS * 10 })), 'full');
+  assert.equal(renderPace(signals({ fullRate: true, hidden: true })), 'full');
+  assert.equal(renderPace(signals({ fullRate: true, covered: true })), 'full');
 });
 
 test('a visible office with nothing moving idles, and each kind of motion goes back to full rate', () => {

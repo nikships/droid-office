@@ -3321,6 +3321,9 @@ function sceneMotion(): SceneMotion {
   };
 }
 
+/** `?pace=full` on this tab's address: a recording tab that must never idle or pause (see RenderSignals). */
+const fullRate = new URLSearchParams(location.search).get('pace') === 'full';
+
 function currentPace(): RenderPace {
   const now = performance.now();
   const motion = sceneMotion();
@@ -3330,6 +3333,7 @@ function currentPace(): RenderPace {
     // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
     // it is also false when this window is visible beside another one.
     covered: false,
+    fullRate,
     motion,
     quietMs: now - activeAt,
   });
