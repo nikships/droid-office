@@ -170,6 +170,7 @@ export class CloudWorkers {
     w.polledAt = at;
     if (seen) w.seen = seen;
     w.turn = turn;
+    this.persist();
   }
 
   polledAt(id: string): number {
@@ -251,7 +252,7 @@ export class CloudWorkers {
     const saved: Saved[] = [...this.workers.values()].map((w) => {
       const info: Partial<WorkerInfo> = { ...w.info };
       for (const k of LIVE) delete info[k];
-      return { info: info as WorkerInfo, ...(w.turn.sentAt !== undefined || w.turn.seenBusy ? { turn: w.turn } : {}) };
+      return saving(info as WorkerInfo, w.turn);
     });
     const json = JSON.stringify(saved, null, 2);
     if (json === this.savedJson) return;
@@ -279,16 +280,34 @@ export class CloudWorkers {
       if (!info || this.workers.has(info.id) || this.deskTaken(info.deskId)) continue;
       // Its first message may never have gone: it's at rest until its session says otherwise.
       if (info.status === 'starting') info.status = 'idle';
-      const turn: CloudTurn = s.turn && typeof s.turn === 'object' ? s.turn : {};
-      const w: Cloudie = { info, turn, polledAt: 0, sent: JSON.stringify(info) };
+      const w: Cloudie = { info, turn: turnOf(s.turn), polledAt: 0, sent: JSON.stringify(info) };
       this.workers.set(info.id, w);
     }
     this.savedJson = JSON.stringify(
-      [...this.workers.values()].map((w) => ({ info: w.info, ...(w.turn.sentAt !== undefined || w.turn.seenBusy ? { turn: w.turn } : {}) })),
+      [...this.workers.values()].map((w) => saving(w.info, w.turn)),
       null,
       2,
     );
   }
+}
+
+/** A worker as cloud-workers.json keeps it: its turn only while the office follows one (a message out, a run seen, a reply looked for). */
+function saving(info: WorkerInfo, turn: CloudTurn): Saved {
+  return { info, ...(turn.sentAt !== undefined || turn.seenBusy || turn.replyBy !== undefined ? { turn } : {}) };
+}
+
+/** A saved turn, with only the fields that still make sense. */
+function turnOf(raw: unknown): CloudTurn {
+  if (!raw || typeof raw !== 'object') return {};
+  const r = raw as Record<string, unknown>;
+  const turn: CloudTurn = {};
+  const time = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  if (time(r.sentAt)) turn.sentAt = r.sentAt as number;
+  if (time(r.countAtSend)) turn.countAtSend = r.countAtSend as number;
+  if (r.seenBusy === true) turn.seenBusy = true;
+  if (time(r.replyBy)) turn.replyBy = r.replyBy as number;
+  if (turn.replyBy !== undefined && time(r.replyAfter)) turn.replyAfter = r.replyAfter as number;
+  return turn;
 }
 
 const STATUSES = new Set<unknown>(['starting', 'idle', 'working', 'needs_input', 'done', 'exited', 'offline']);

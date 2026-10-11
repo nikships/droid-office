@@ -357,6 +357,8 @@ export class FloorJira {
   private file: string;
   private backoffUntil = 0;
   private strikes = 0;
+  /** Bumped when the board starts over, so a read that was on its way then doesn't land on the new one. */
+  private generation = 0;
 
   constructor(
     dataDir: string,
@@ -383,6 +385,7 @@ export class FloorJira {
 
   /** The office connected, reconnected or disconnected: start over. Resolves once the board is read again. */
   connectionChanged(): Promise<void> {
+    this.generation++;
     this.backoffUntil = 0;
     this.strikes = 0;
     this.board = this.emptyBoard();
@@ -429,15 +432,18 @@ export class FloorJira {
     const epic = this.epic;
     if (!api || !epic || !this.board || this.board.loading) return;
     if (!force && Date.now() < this.backoffUntil) return;
+    const generation = this.generation;
+    // The epic, the site or the account changed while it read: it belongs to the board before.
+    const stale = () => generation !== this.generation || this.epic !== epic || this.office.client() !== api;
     this.board = { ...this.board, loading: true };
     this.events.board(this.board);
     try {
       const items = (await api.children(epic.key)).map((r) => ticketOf(api.site, r));
-      if (this.epic !== epic) return;
+      if (stale()) return;
       this.strikes = 0;
       this.board = { epic: epic.key, items, fetchedAt: Date.now(), loading: false };
     } catch (err) {
-      if (this.epic !== epic) return;
+      if (stale()) return;
       if (err instanceof JiraError && err.status === 429) {
         this.strikes++;
         const wait = Math.max((err.retryAfter ?? 0) * 1000, Math.min(MAX_BACKOFF_MS, BACKOFF_MS * 2 ** (this.strikes - 1)));
@@ -467,12 +473,14 @@ export class FloorJira {
     }
     if (raw.fields?.parent?.key !== this.epic.key) throw new JiraError(`${key} isn't one of ${this.epic.key}'s tickets`, 403);
     const f = raw.fields ?? {};
+    const comments = await api.comments(key);
+    if (this.office.client() !== api) throw new JiraError('The office’s Jira connection changed while that was read. Open the ticket again.', 409);
     return {
       ...ticketOf(api.site, raw),
       description: adfToMarkdown(f.description),
       reporter: f.reporter?.displayName ?? undefined,
       created: String(f.created ?? ''),
-      comments: await api.comments(key),
+      comments,
     };
   }
 

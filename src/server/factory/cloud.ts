@@ -328,7 +328,10 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       if (err instanceof FactoryError && err.status === 404 && (floor.cloud.seen(id) || now - info.createdAt > NEW_SESSION_GRACE_MS)) return this.broken(floor, id, 'its session is gone from Factory', now);
       throw err;
     }
-    const turn: CloudTurn = floor.cloud.turn(id) ?? {};
+    const kept: CloudTurn = floor.cloud.turn(id) ?? {};
+    // A reply looked for past its time is given up on: one saved before a long restart, say.
+    const { replyBy, replyAfter, ...rest } = kept;
+    const turn: CloudTurn = replyBy !== undefined && now >= replyBy ? rest : kept;
     let mapped = cloudStatus({ status: String(s?.status ?? ''), messageCount: Number(s?.messageCount) || 0 }, turn, now);
     const count = Number(s?.messageCount) || 0;
     const updatedAt = Number(s?.updatedAt) || 0;
