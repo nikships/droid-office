@@ -1239,11 +1239,32 @@ test("the office's branch keeps a worker's commits once it has moved on: the dia
 
 test('commits on a detached HEAD count as work: sending the worker home keeps them unless asked to delete', async (t) => {
   const f = carryOnFixture(t);
-  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  /** A commit of `file` on HEAD, written as a fixture object so no Git identity is needed. */
+  const commit = (cwd: string, file: string) => {
+    writeFileSync(path.join(cwd, file), file);
+    git(cwd, 'add', file);
+    let parent = '';
+    try {
+      parent = git(cwd, 'rev-parse', '--verify', '--quiet', 'HEAD');
+    } catch {
+      // the repository's first commit
+    }
+    const object = [
+      `tree ${git(cwd, 'write-tree')}`,
+      ...(parent ? [`parent ${parent}`] : []),
+      'author Fixture <fixture@example.invalid> 1000000000 +0000',
+      'committer Fixture <fixture@example.invalid> 1000000000 +0000',
+      '',
+      `add ${file}`,
+      '',
+    ].join('\n');
+    const oid = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd, input: object, encoding: 'utf8' }).trim();
+    git(cwd, 'update-ref', 'HEAD', oid);
+    return oid;
+  };
   git(f.root, 'init', '-q', '-b', 'main');
-  writeFileSync(path.join(f.root, 'a.txt'), 'a');
-  git(f.root, 'add', 'a.txt');
-  git(f.root, 'commit', '-qm', 'init');
+  commit(f.root, 'a.txt');
   const workers = manager(f, []);
   t.after(() => workers.shutdown());
   const hire = (desk: string) => {
@@ -1252,12 +1273,6 @@ test('commits on a detached HEAD count as work: sending the worker home keeps th
     const cwd = path.join(f.root, w.worktree!.path);
     git(cwd, 'checkout', '-q', '--detach');
     return { w, cwd, office: w.worktree!.branch };
-  };
-  const commit = (cwd: string, file: string) => {
-    writeFileSync(path.join(cwd, file), file);
-    git(cwd, 'add', file);
-    git(cwd, 'commit', '-qm', `add ${file}`);
-    return git(cwd, 'rev-parse', 'HEAD');
   };
   // A commit only the detached HEAD has: the dialog warns, and sending it home with no choice keeps it all.
   const a = hire('desk-1');
