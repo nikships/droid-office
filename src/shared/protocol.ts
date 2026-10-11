@@ -11,6 +11,8 @@ import type { JukeboxState } from './jukebox.js';
 import type { PipelineDetail, PipelinesState } from './pipelines.js';
 import type { PromptId } from './prompts.js';
 import type { WorktreeSetupState } from './worktree-setup.js';
+import type { OpEnvelope, WhiteboardUpdate } from './whiteboard.js';
+import type { PingHow } from './whiteboard-ping.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -510,7 +512,6 @@ export interface FloorView {
   pipelines: PipelinesState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
-  services: ServicesState;
   /** What the lounge jukebox is playing. */
   jukebox: JukeboxState;
   /** Who's at the arcade cabinet, what's on its screen, and the building's high scores. */
@@ -519,31 +520,6 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-}
-
-/** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
-export interface ServiceInfo {
-  port: number;
-  /** The address the office reaches it on, on its own machine. */
-  host: string;
-  pid: number;
-  /** Its command line, shortened, e.g. "vite --port 5173". */
-  command: string;
-  /** The worker whose terminal started it. */
-  workerId: string;
-  /** Its working directory relative to its floor's checkout ('' is the project root). */
-  cwd?: string;
-  /** The <title> of its front page. */
-  title?: string;
-  since: number;
-}
-
-export interface ServicesState {
-  items: ServiceInfo[];
-  /** The office's port on its machine. Service tunnels end there and the office relays them. */
-  port: number;
-  /** user@host the owner tunnels with (offices deployed with deploy/aws.sh), e.g. ubuntu@203.0.113.7 */
-  ssh?: string;
 }
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
@@ -728,6 +704,39 @@ export interface SubagentsState extends SubagentSettings {
   skillError?: string;
 }
 
+/**
+ * The droid-office-whiteboard skill (⚙️ Settings → Droid), which tells Droid workers how to use the
+ * Whiteboard with office-whiteboard: on or off for the whole office, who set it, and where it is.
+ */
+export interface WhiteboardSkillState {
+  on: boolean;
+  by?: string;
+  at?: number;
+  /** The skill's SKILL.md, when it's installed. */
+  skillPath?: string;
+  /** Why the skill couldn't be written or taken away. */
+  skillError?: string;
+}
+
+/** Whether the office can render Whiteboard cards to images, and why not when it can't. */
+export interface WhiteboardRendererStatus {
+  available: boolean;
+  reason?: string;
+  /** The browser is being downloaded (its first use), with how far along it is. */
+  installing?: { percent?: number; message: string };
+}
+
+/** A card's latest render, as the window and the wall know it: the image's revision and time, or its last error. */
+export interface WhiteboardRenderInfo {
+  /** The board revision the latest good image shows, and when it finished (ms); absent before the first one. */
+  rev?: number;
+  at?: number;
+  /** The image matches the card as it is now. */
+  current: boolean;
+  /** The last render failed, keeping the last good image. */
+  error?: string;
+}
+
 /** A line of a worker's terminal that matched a search. */
 export interface TerminalHit {
   workerId: string;
@@ -899,6 +908,17 @@ export type ClientMsg =
   | { t: 'worktreeSetup.get' }
   /** The floor's own worktree setup, in place of the repository's or the detected one; null goes back to those. */
   | { t: 'worktreeSetup.set'; setup: { setup: string; copy: string[] } | null }
+  /**
+   * A batch for a floor's Whiteboard, numbered in this connection's epoch for that floor (from its
+   * `whiteboard` snapshot). Answered with an `ack` or a `rejected` update, after the commit.
+   */
+  | { t: 'whiteboard.apply'; floor: string; envelope: OpEnvelope }
+  /** Send this connection a fresh snapshot of a floor's Whiteboard, with its epoch for that floor. */
+  | { t: 'whiteboard.sync'; floor: string }
+  /** Type the Whiteboard line into a worker's terminal (see shared/whiteboard-ping.ts); answered with `whiteboard.pinged`. */
+  | { t: 'whiteboard.ping'; worker: string }
+  /** Install the droid-office-whiteboard skill (true), or take it away. */
+  | { t: 'whiteboardSkill.set'; on: boolean }
   /** The answer to an `automation.run`: what the command resolved with, or why it rejected. */
   | { t: 'automation.result'; id: string; ok: boolean; value?: unknown; error?: string }
   | { t: 'ping'; at: number };
@@ -938,6 +958,7 @@ export type ServerMsg =
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
       subagents: SubagentsState;
+      whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
@@ -979,7 +1000,6 @@ export type ServerMsg =
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
   | { t: 'upgrade'; state: UpgradeState }
-  | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
@@ -1005,6 +1025,33 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
+  | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
+  /**
+   * A floor's Whiteboard (see shared/whiteboard.ts and server/whiteboard.ts). A `snapshot` comes after
+   * `welcome` and `floor.enter` and for `whiteboard.sync`; a `patch` goes to everyone on the floor for
+   * every committed batch; `ack` and `rejected` go to the connection that sent the batch. `origin` on
+   * a patch names the batch it came from, so its sender can drop it from what it still has pending.
+   * `caps` are card capabilities (the whole map on a snapshot, new cards' on a patch) for the card URLs
+   * `/whiteboard/c/<cap>/<path>`. `renderer` comes with a snapshot.
+   */
+  | {
+      t: 'whiteboard';
+      floor: string;
+      update: WhiteboardUpdate;
+      origin?: { epoch: string; seq: number };
+      caps?: Record<string, string>;
+      renderer?: WhiteboardRendererStatus;
+    }
+  /**
+   * To everyone on the floor: a card has a new latest image (or a failed render), so the window, the
+   * grid and the wall fetch `/api/whiteboard/render` again. A snapshot is followed by one of these per
+   * card that has a render.
+   */
+  | { t: 'whiteboard.rendered'; floor: string; card: string; info: WhiteboardRenderInfo }
+  /** To everyone: the renderer became available or unavailable, or its browser download moved on. */
+  | { t: 'whiteboard.renderer'; status: WhiteboardRendererStatus }
+  /** To whoever pinged: the line went in (`how`), or why it didn't. */
+  | { t: 'whiteboard.pinged'; worker: string; ok: boolean; how?: PingHow; error?: string }
   | { t: 'prompts'; state: PromptsState }
   /** To whoever asked, and to everyone on the floor when it's changed. */
   | { t: 'worktreeSetup'; state: WorktreeSetupState }

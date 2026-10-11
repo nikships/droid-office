@@ -42,7 +42,7 @@ import { PROVIDER_LABEL, guestKeyNote, outsideNote, processLabel, statusWord } f
 import { Net } from './net';
 import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
-import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
+import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
@@ -58,7 +58,7 @@ import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
 import { Laptop } from './world/laptop';
-import { BoardTexture, PipelinesBoardTexture, ServicesBoardTexture } from './world/boards';
+import { BoardTexture, PipelinesBoardTexture } from './world/boards';
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
@@ -90,7 +90,6 @@ import { FactoryTvTexture } from './world/factory-tv';
 import { creditsNote } from '../shared/factory-sessions';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
-import { openServices, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
@@ -111,6 +110,7 @@ import { toggleFloorMenu } from './ui/floormenu';
 import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
+import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wall';
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
 import { setRackCubes } from './world/factory-props';
@@ -118,6 +118,7 @@ import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
+import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
 import { trackTitle } from '../shared/jukebox';
@@ -245,9 +246,6 @@ store.on('workers', () => {
   deskLinks = k;
   renderPullsBoard();
 });
-const servicesTex = new ServicesBoardTexture();
-const renderServicesBoard = () => servicesTex.render(store.services.items, store.workers);
-mountBoard(office.boardMeshes.services, servicesTex.texture, renderServicesBoard, ['services', 'workers']);
 const pipelinesTex = new PipelinesBoardTexture();
 const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
 mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
@@ -291,6 +289,31 @@ mountBoard(office.boardMeshes.ci, ciTex.texture, () => renderCiBoard(), ['factor
 // Its "5M" ages: redrawn only when one of them ticks over.
 setInterval(() => renderCiBoard(), 60_000);
 const showCi = (add = false) => openCiWindow({ floorRepo: floorGithubRepo(), add });
+// The floor's Whiteboard on the east wall, following its persisted selection (world/whiteboard-wall.ts).
+const whiteboardTex = new WhiteboardTexture(() => renderWhiteboardWall());
+/** This floor's Whiteboard, as the window has it (null before its snapshot). */
+const floorWhiteboard = () => (store.floor ? store.whiteboard.board(store.floor) : null);
+/** The card the wall shows, or undefined when it shows the grid. */
+const wallCard = () => {
+  const board = floorWhiteboard();
+  const view = board && wallView(board);
+  return view?.kind === 'card' ? view.card : undefined;
+};
+const renderWhiteboardWall = () => {
+  const floor = store.floor;
+  const f = floor ? store.whiteboard.floor(floor) : undefined;
+  whiteboardTex.render({
+    floor,
+    board: floorWhiteboard(),
+    renderer: f?.renderer ?? { available: false },
+    renders: f?.renders ?? {},
+    renderUrl: (card, opts) => (floor ? store.whiteboard.renderUrl(floor, card, opts) : undefined),
+    now: Date.now(),
+  });
+};
+mountBoard(office.boardMeshes.whiteboard, whiteboardTex.texture, renderWhiteboardWall, ['whiteboard', 'floor']);
+// Its "updated 2m ago" times: redrawn only when one of them ticks over.
+setInterval(renderWhiteboardWall, 30_000);
 
 // Pictures people hung on the walls
 const gallery = new Gallery();
@@ -327,7 +350,6 @@ store.on('factory', () => {
 void loadFonts().then(() => {
   renderIssuesBoard();
   renderPullsBoard();
-  renderServicesBoard();
   renderPipelinesBoard();
   computeWall.repaint();
   renderMachineBoard();
@@ -837,8 +859,10 @@ let firstWelcome = true;
 let bootVersion = '';
 let upgradePhase = '';
 
+connectWhiteboard((msg) => net.send(msg));
 net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
+  store.whiteboard.status(up);
 });
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
@@ -856,6 +880,7 @@ net.onMessage((msg) => {
   routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
+  routeWhiteboardMessage(msg);
   switch (msg.t) {
     case 'welcome': {
       // A few pings, to line this page's clock up with the office's for the jukebox.
@@ -1973,7 +1998,6 @@ function paletteEntries(): PaletteEntry[] {
       open: () => showPipelines({ run: true }),
     }),
   );
-  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
   if (store.factory.connection.connected) {
     out.push(
       atSpot('ci', 'the CI automations board', {
@@ -2033,18 +2057,6 @@ function paletteEntries(): PaletteEntry[] {
         open: () => openIssue(issue, net, boardActions()),
       }),
     );
-  }
-  for (const svc of store.services.items) {
-    const board = spotOf('services');
-    out.push({
-      icon: '🌐',
-      kind: 'Service',
-      title: svc.title || svc.command,
-      detail: [`:${svc.port}`, svc.title && svc.command, store.workers.get(svc.workerId)?.name].filter(Boolean).join(' · '),
-      keywords: [String(svc.port)],
-      open: () => window.open(serviceUrl(svc.port), '_blank', 'noopener'),
-      walk: board ? () => walkThen(board, 'the Services board', () => openServices()) : undefined,
-    });
   }
   return out;
 }
@@ -2172,10 +2184,10 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'elevator') showElevator();
   else if (target.kind === 'issues') openBoard('issues', net, boardActions(), issuesTex.tab);
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
-  else if (target.kind === 'services') openServices();
   else if (target.kind === 'computers') showComputers();
   else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
   else if (target.kind === 'ci') showCi();
+  else if (target.kind === 'whiteboard') openWhiteboard(net, { card: wallCard()?.id });
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
@@ -2492,13 +2504,18 @@ function hintFor(it: Interactable): Hint {
       return issuesTex.hasNotes ? { k: 'notes', parts: [title('📌 Issues board'), key('E', 'Open'), aside('or point at a note to take it')] } : board('📌 Issues board');
     case 'pulls':
       return board('🔀 Pull request board');
-    case 'services':
-      return board('🌐 Services board');
     case 'ci': {
       const ci = store.factory.ci;
       const n = ci.workflows.length;
       const about = !store.factory.connection.connected ? 'connect Factory first' : n ? `${n} Droid workflow${n === 1 ? '' : 's'}` : ci.fetchedAt ? 'no Droid workflows yet' : '';
       return { k: about, parts: [title('🏭 CI automations'), about ? aside(about) : '', key('E', 'Open')] };
+    }
+    case 'whiteboard': {
+      const board = floorWhiteboard();
+      const card = wallCard();
+      const sum = board && gridSummary(board);
+      const about = card ? clip(card.title || 'Untitled', 40) : sum ? (sum.changed ? `${sum.cards} · ${sum.changed} changed` : board.cards.length ? sum.cards : 'nothing on it yet') : '';
+      return { k: about, parts: [title('🗒️ Whiteboard'), about ? aside(about) : '', key('E', card ? 'Open this card' : 'Open')] };
     }
     case 'computers': {
       const about = computeWall.view ? wallSummary(computeWall.view) : '';
@@ -3014,9 +3031,9 @@ const REACH: Record<InteractKind, number> = {
   coffee: 3,
   issues: 9,
   pulls: 9,
-  services: 9,
   actions: 9,
   ci: 9,
+  whiteboard: 9,
   computers: 9,
   decor: 9,
   elevator: 4.5,
@@ -3135,7 +3152,6 @@ const hudActions: HudAction[] = [
     title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
     run: () => showPipelines(),
   },
-  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
   {
     id: 'ci',
     icon: '🏭',
@@ -3145,6 +3161,16 @@ const hudActions: HudAction[] = [
     count: () => store.factory.ci.workflows.length,
     title: () => 'Droid in GitHub Actions, from Factory',
     run: () => showCi(),
+  },
+  {
+    id: 'whiteboard',
+    icon: '🧑‍🎨',
+    label: 'Whiteboard',
+    section: 'Open',
+    shown: () => !upTop && !!store.floor,
+    count: whiteboardChanged,
+    title: () => "The floor's Whiteboard: artifacts from workers, your marks on them",
+    run: () => openWhiteboard(net),
   },
   { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },

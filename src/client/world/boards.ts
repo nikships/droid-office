@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
 import { DESK_BY_ID } from '../../shared/layout';
-import type { GhIssue, GhPull, GhState, ServiceInfo, WorkerInfo } from '../../shared/protocol';
+import type { GhIssue, GhPull, GhState, WorkerInfo } from '../../shared/protocol';
 import type { Forge } from '../../shared/floors';
 import { pipelineGroups, type PipelinesState, type RunState } from '../../shared/pipelines';
 import { runRows } from './pipeline-rows';
@@ -554,90 +554,6 @@ export class BoardTexture {
       if (hidden > 0) this.more(hidden, rect.x + rect.w - 14, rect.y + rect.h - 12);
     });
     track(g, 0);
-  }
-}
-
-/** The services board: a wall display listing the web servers workers are running. */
-export class ServicesBoardTexture {
-  readonly texture: THREE.CanvasTexture;
-  private canvas = document.createElement('canvas');
-  private ctx: CanvasRenderingContext2D;
-  private drawn = '';
-
-  constructor() {
-    this.canvas.width = BOARD_W * SCREEN_SCALE;
-    this.canvas.height = BOARD_H * SCREEN_SCALE;
-    this.ctx = this.canvas.getContext('2d')!;
-    this.ctx.scale(SCREEN_SCALE, SCREEN_SCALE);
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = ANISOTROPY;
-  }
-
-  render(items: ServiceInfo[], workers: Map<string, WorkerInfo>) {
-    const rows = items.map((s) => {
-      const w = workers.get(s.workerId);
-      return { port: s.port, title: s.title || s.command, who: [w?.name ?? 'A worker', w?.worktree?.branch].filter(Boolean).join(' · '), color: w?.color ?? '#8d99ae' };
-    });
-    // Worker updates stream in constantly; only redraw when what's shown changes.
-    const key = JSON.stringify(rows);
-    if (key === this.drawn) return;
-    this.drawn = key;
-    const g = this.ctx;
-    const W = BOARD_W;
-    const H = BOARD_H;
-    backdrop(g);
-    if (!rows.length) {
-      g.textAlign = 'center';
-      g.fillStyle = INK;
-      mono(g, 600, 40, 0.04);
-      g.fillText('No web servers running', W / 2, H / 2 - 20);
-      g.fillStyle = MUTED;
-      mono(g, 500, 24, 0.02);
-      g.fillText('When a worker starts one, it shows up here', W / 2, H / 2 + 36);
-      g.textAlign = 'left';
-      track(g, 0);
-      this.texture.needsUpdate = true;
-      return;
-    }
-    const shown = rows.slice(0, 5);
-    const rowH = Math.min(140, (H - 40) / shown.length);
-    const fs = Math.round(rowH * 0.36);
-    shown.forEach((r, i) => {
-      const y = 20 + i * rowH;
-      g.fillStyle = PANEL;
-      g.fillRect(24, y + 6, W - 48, rowH - 12);
-      g.strokeStyle = HAIR_STRONG;
-      g.lineWidth = 2;
-      g.strokeRect(25, y + 7, W - 50, rowH - 14);
-      // A live light, and the worker's color down the row's edge.
-      g.fillStyle = r.color;
-      g.fillRect(24, y + 6, 6, rowH - 12);
-      g.fillStyle = GREEN;
-      g.fillRect(62, y + rowH / 2 - fs * 0.18, fs * 0.36, fs * 0.36);
-      g.fillStyle = ORANGE;
-      mono(g, 700, fs, 0.02);
-      g.textAlign = 'right';
-      g.fillText(`:${r.port}`, W - 50, y + rowH / 2 + fs * 0.35);
-      g.textAlign = 'left';
-      const textW = W - 120 - 50 - g.measureText(`:${r.port}`).width - 30;
-      g.fillStyle = INK;
-      sans(g, 600, fs);
-      g.fillText(clip(g, r.title, textW), 110, y + rowH / 2 - fs * 0.08);
-      g.fillStyle = MUTED;
-      mono(g, 500, Math.round(fs * 0.58), 0.02);
-      g.fillText(clip(g, r.who, textW), 110, y + rowH / 2 + fs * 0.72);
-    });
-    track(g, 0);
-    if (rows.length > shown.length) {
-      g.fillStyle = MUTED;
-      mono(g, 500, 20, 0.1);
-      g.textAlign = 'right';
-      g.fillText(`+${rows.length - shown.length} MORE`, W - 24, H - 10);
-      g.textAlign = 'left';
-      track(g, 0);
-    }
-    this.texture.needsUpdate = true;
   }
 }
 

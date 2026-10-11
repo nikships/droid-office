@@ -49,8 +49,6 @@ Commands
   destroy            Terminate the machine and delete everything this script created (asks you
                      to type the office name first). `down` does the same.
 
-  service <port>     Open a worker's web server from the office's 🌐 Services board on
-                     http://localhost:<port> (through the office; Ctrl-C closes the tunnel)
   status             Show the instance, whether the office is up and which IPs may SSH in
   allow <ip|me>      Let an IP (or CIDR) reach SSH. "me" = your current IP. "anywhere" opens SSH
                      to every IP — reasonable, since SSH only accepts your key
@@ -337,29 +335,6 @@ tunnel() {
   warn "The tunnel dropped — reopen it with: deploy/aws.sh open$NAME_FLAG"
 }
 
-# A worker's server from the 🌐 Services board: localhost:<port> tunnels to the office, which
-# relays it by that port (see src/server/relay.ts), so the local port must match the service's.
-service_tunnel() {
-  local port="$1" pid i up=0
-  port_busy "$port" && die "localhost:$port is already in use on this computer — stop whatever runs there first"
-  # shellcheck disable=SC2046
-  ssh $(ssh_opts) -N -o ExitOnForwardFailure=yes -L "$port:127.0.0.1:$OFFICE_PORT" "$SSH_USER@$IP" &
-  pid=$!
-  trap 'kill "$pid" 2>/dev/null; echo; ok "Tunnel closed"; exit 0' INT TERM
-  for ((i = 0; i < 40; i++)); do
-    kill -0 "$pid" 2>/dev/null || die "couldn't open the SSH tunnel to $IP"
-    port_busy "$port" && { up=1; break; }
-    sleep 0.5
-  done
-  [[ $up -eq 1 ]] || { kill "$pid" 2>/dev/null; die "the tunnel didn't come up"; }
-  ok "The worker's server: http://localhost:$port"
-  echo "   (through the office on $IP — Ctrl-C closes it)"
-  open_url "http://localhost:$port"
-  wait "$pid" || true
-  trap - INT TERM
-  warn "The tunnel dropped — reopen it with: deploy/aws.sh service $port$NAME_FLAG"
-}
-
 # The tunnel lands on the box's loopback, which the office trusts (see lan.ts), so the
 # owner walks straight in: no login, no token, nothing to write down.
 open_office() {
@@ -499,7 +474,7 @@ cmd_up() {
   git_email=$(git config user.email 2>/dev/null || true)
   {
     printf 'export APP_REPO=%q APP_REF=%q PROJECT_REPO=%q\n' "$APP_REPO" "$APP_REF" "$project_repo"
-    printf 'export PUBLIC_HOST=%q GH_TOKEN=%q FACTORY_API_KEY=%q\n' "$IP" "$gh_token" "$FACTORY_KEY"
+    printf 'export GH_TOKEN=%q FACTORY_API_KEY=%q\n' "$gh_token" "$FACTORY_KEY"
     printf 'export GIT_NAME=%q GIT_EMAIL=%q\n' "$git_name" "$git_email"
     cat "$SCRIPT_DIR/provision.sh"
   } | remote 'bash -s' || die "provisioning failed (re-run \"deploy/aws.sh up\" to retry; it picks up where it left off)"
@@ -521,15 +496,6 @@ cmd_open() {
   require_instance
   wait_healthy || die "the office isn't answering — check: deploy/aws.sh logs$NAME_FLAG"
   open_office
-}
-
-cmd_service() {
-  preflight
-  [[ ${#POSITIONAL[@]} -eq 1 && "${POSITIONAL[0]}" =~ ^[0-9]+$ && ${POSITIONAL[0]} -gt 0 && ${POSITIONAL[0]} -lt 65536 ]] ||
-    die "usage: deploy/aws.sh service <port>   (a port from the office's 🌐 Services board)"
-  [[ "${POSITIONAL[0]}" -ne $OFFICE_PORT ]] || die "$OFFICE_PORT is the office itself — use: deploy/aws.sh open"
-  require_instance
-  service_tunnel "${POSITIONAL[0]}"
 }
 
 cmd_status() {
@@ -713,7 +679,6 @@ cmd_down() {
 case "$CMD" in
   up) cmd_up ;;
   open) cmd_open ;;
-  service) cmd_service ;;
   status) cmd_status ;;
   allow) cmd_allow ;;
   revoke) cmd_revoke ;;

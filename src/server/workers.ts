@@ -21,7 +21,6 @@ import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
-import type { ServiceOwner } from './services.js';
 import { TaskNamer, fallbackTask } from './tasks.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
@@ -292,6 +291,8 @@ export class WorkerManager {
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
     this.teamBin = this.writeOfficeCommand(path.join('bin', 'team'), 'office-workers', "Droid Office's subagents, for every agent");
+    // In the same folder, so it's on every agent's PATH with office-workers.
+    this.writeOfficeCommand(path.join('bin', 'team'), 'office-whiteboard', "The floor's Whiteboard, for every agent");
     try {
       this.setupScript = writeSetupScript(dataDir);
     } catch {
@@ -400,15 +401,9 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
-  /** Each worker's terminal process and directory, to tell whose servers are whose. */
-  owners(): ServiceOwner[] {
-    return [...this.workers.values()].map((w) => ({
-      workerId: w.info.id,
-      pid: w.pty?.pid,
-      agent: w.info.kind === 'agent',
-      cwd: this.cwd(w.info),
-      root: this.dir,
-    }));
+  /** The workers' terminal process IDs, so the guest scan leaves them out. */
+  owners(): number[] {
+    return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));
   }
 
   deskOccupied(deskId: string): boolean {
@@ -1785,7 +1780,7 @@ export class WorkerManager {
       DROID_OFFICE_HOOK_URL: this.hook.url,
       DROID_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // Any agent runs its subagents with office-workers.
+    // Any agent runs its subagents with office-workers, and uses the Whiteboard with office-whiteboard.
     const bins = [!isShell && this.teamBin].filter((d): d is string => !!d);
     if (bins.length) {
       // Windows spells it Path.
@@ -2084,7 +2079,7 @@ process.stdin.on('end', () => {
   }
 
   /**
-   * Writes one of the office's agent commands (office-workers) into `sub` of the data
+   * Writes one of the office's agent commands (office-workers, office-whiteboard) into `sub` of the data
    * dir, running bin/<name>.js with the office's own node, and returns that directory. Rewritten on
    * every start, so after an upgrade it runs the new install's script.
    */

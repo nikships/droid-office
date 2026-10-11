@@ -19,6 +19,13 @@
 #   DROID_OFFICE_BIN_DIR       where the `droid-office` command goes (default ~/.local/bin; empty: none)
 #   DROID_OFFICE_INSTALL_ONLY  1: install, but don't start the office
 #   DROID_OFFICE_TARBALL       install this release tarball (a local file) instead of downloading one
+#   DROID_OFFICE_SKIP_BROWSER  1: don't download the Chromium the Whiteboard renders with
+#   DROID_OFFICE_BROWSERS_PATH where that Chromium goes (default: droid-office/browsers in your cache folder)
+#
+# After the office is installed this also downloads Chromium (about 100 MB, no admin rights) for the
+# Whiteboard's renderer. If that fails, the office is still installed and starts; only renders are off,
+# and `droid-office browser install` tries again. On Linux the browser also needs system libraries, which
+# need admin rights, so this never installs them (see docs/guide.md).
 set -euo pipefail
 
 REPO="nikships/droid-office"
@@ -193,6 +200,18 @@ EOF
   esac
 }
 
+# Downloads the Chromium the Whiteboard renders with, into the folder `droid-office browser` uses.
+# Never fatal: no network or a blocked download leaves the office installed, with renders off.
+install_browser() {
+  local entry="$1"
+  [ "${DROID_OFFICE_SKIP_BROWSER:-}" = 1 ] && return 0
+  step "Downloading Chromium for the Whiteboard (about 100 MB)"
+  if ! node "$entry" browser install </dev/null >&2; then
+    warn "couldn't download Chromium. The office works without it; only the Whiteboard's renders are off."
+    warn "  Try again later with: ${LAUNCHER:-node $entry} browser install"
+  fi
+}
+
 main() {
   trap cleanup EXIT
   check_requirements
@@ -236,6 +255,7 @@ main() {
 
   local entry="$VERSIONS/$tag/bin/droid-office.js"
   write_launcher "$tag" "$entry"
+  install_browser "$entry"
 
   if [ "${DROID_OFFICE_INSTALL_ONLY:-}" = 1 ]; then
     step "Droid Office $tag is installed. Start it with: ${LAUNCHER:-node $entry}"

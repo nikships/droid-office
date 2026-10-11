@@ -96,7 +96,7 @@ export const STATIONS: DeskDef[] = [
   { id: 'station-pulls', station: 'pulls', x: 0, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'PR board' },
   // Between the Issues board and the Pipelines board.
   { id: 'station-actions', station: 'actions', x: -7.8, z: FLOOR.minZ + 1.3, rotY: Math.PI, label: 'Pipelines board' },
-  // On the east wall between the Services board and the TV, looking out over the desks it hires at.
+  // On the east wall between the Whiteboard slot and the TV, looking out over the desks it hires at.
   { id: 'station-lead', station: 'lead', x: FLOOR.maxX - 1.3, z: -4.2, rotY: Math.PI / 2, label: 'Team kiosk' },
 ];
 /** A board agent's kiosk: its top, and how far behind its middle (toward the wall) the agent stands. */
@@ -201,7 +201,7 @@ export const BOARDS = {
   actions: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 PIPELINES' },
   pulls: { x: 3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '03 CODE REVIEW' },
   // East wall, north of the lounge TV.
-  services: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'SERVICES' },
+  whiteboard: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' },
   // North wall, between the gong and the north-east corner, under the Factory mural: Factory's CI
   // automations (world/factory-ci.ts). Low enough to clear the mural, so its title is on the board
   // itself rather than a sign over it.

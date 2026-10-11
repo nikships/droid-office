@@ -74,7 +74,13 @@ export class Net {
     this.ws?.close();
   }
 
-  send(msg: ClientMsg) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  /**
+   * Sends now, or drops the message while the connection is down: says which. Whatever must not be
+   * lost keeps it and sends it again itself (the Whiteboard's batches wait in WhiteboardSync).
+   */
+  send(msg: ClientMsg): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
   }
 }

@@ -17,9 +17,15 @@ if (argv[0] === 'setup') {
   process.exit(await setupCommand(argv.slice(1)));
 }
 
+if (argv[0] === 'browser') {
+  const { browserCommand } = await import('./whiteboard-browser.js');
+  process.exit(await browserCommand(argv.slice(1)));
+}
+
 const cfg = loadConfig(argv);
 cfg.homeFloor = os.homedir();
 cfg.skillsDir = FACTORY_SKILLS_DIR;
+cfg.renders = true;
 await ensureSelfSigned(cfg);
 // A new office started in a terminal: where projects go, GitHub or GitLab, and the first floor, before it opens.
 if (!cfg.project) {

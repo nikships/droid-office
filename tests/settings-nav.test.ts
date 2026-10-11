@@ -43,6 +43,7 @@ test('every setting is in a category', () => {
     ['Where subagents work', 'subagents'],
     ['Waking the lead', 'subagents'],
     ['Droid skill', 'subagents'],
+    ['Whiteboard skill', 'subagents'],
     ['Droid Office for Android', 'phone'],
   ];
   assert.equal(byTitle.size, expect.length);

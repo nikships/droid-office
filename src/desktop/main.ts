@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import { downloadBrowser } from './browser.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
@@ -298,6 +299,8 @@ if (!app.requestSingleInstanceLock()) {
       saveSettings(settingsFile, settings);
     }
     await openOffice();
+    mkdirSync(logDir, { recursive: true });
+    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
     updates.start();
   });
 }

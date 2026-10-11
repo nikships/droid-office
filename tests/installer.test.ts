@@ -11,7 +11,7 @@ import test, { type TestContext } from 'node:test';
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, cli = "console.log('FIXTURE_CLI', ...process.argv.slice(2));\n") {
   const root = mkdtempSync(path.join(os.tmpdir(), 'office-installer-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const pkg = path.join(root, 'package');
@@ -21,7 +21,7 @@ function fixture(t: TestContext) {
   writeFileSync(path.join(pkg, 'package.json'), JSON.stringify(metadata));
   writeFileSync(path.join(pkg, 'package-lock.json'), JSON.stringify({ ...metadata, lockfileVersion: 3, requires: true, packages: { '': metadata } }));
   copyFileSync(path.join(repo, 'bin/droid-office.js'), path.join(pkg, 'bin/droid-office.js'));
-  writeFileSync(path.join(pkg, 'dist/server/server/cli.js'), "console.log('FIXTURE_CLI', ...process.argv.slice(2));\n");
+  writeFileSync(path.join(pkg, 'dist/server/server/cli.js'), cli);
   const tarball = path.join(root, 'release.tgz');
   execFileSync('tar', ['-czf', tarball, '-C', root, 'package']);
   const installDir = path.join(root, 'install');
@@ -76,6 +76,25 @@ test('relative install roots produce a launcher that works from another director
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), 'FIXTURE_CLI argument with spaces');
   }
+});
+
+test('the install downloads Chromium through the installed release, and skips it when asked', { skip: !supported }, (t) => {
+  const f = fixture(t);
+  const result = f.install();
+  assert.match(result.stderr, /Downloading Chromium for the Whiteboard/);
+  assert.match(result.stderr, /FIXTURE_CLI browser install/, 'the release itself runs `browser install`');
+  assert.ok(!result.stderr.includes('sudo'), 'the installer never asks for or runs admin rights');
+  const skipped = f.install({ DROID_OFFICE_SKIP_BROWSER: '1' });
+  assert.ok(!skipped.stderr.includes('Chromium'));
+});
+
+test('a failed Chromium download leaves the office installed, with a note', { skip: !supported }, (t) => {
+  const f = fixture(t, "if (process.argv[2] === 'browser') { console.error('getaddrinfo ENOTFOUND cdn.playwright.dev'); process.exit(1); }\nconsole.log('FIXTURE_CLI');\n");
+  const result = f.install({ DROID_OFFICE_BIN_DIR: path.join(f.root, 'bin') });
+  assert.match(result.stderr, /couldn't download Chromium/);
+  assert.match(result.stderr, /droid-office browser install/);
+  assert.ok(existsSync(path.join(f.installDir, 'versions/v0.1.2/.installed')));
+  assert.ok(existsSync(path.join(f.root, 'bin/droid-office')));
 });
 
 test('relative XDG roots and symlinked directories resolve before launching', { skip: !supported }, (t) => {

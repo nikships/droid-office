@@ -115,6 +115,29 @@ jobs:
 
       - run: npm run typecheck
 
+      # The Whiteboard renderer's tests start a real headless Chromium, with its sandbox on. It lives
+      # outside the workspace, in the one folder `droid-office browser` and the installers share.
+      - name: Choose the shared Chromium folder
+        run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
+
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/browsers
+          key: chromium-${{ runner.os }}-${{ hashFiles('node_modules/playwright-core/package.json') }}
+
+      - name: Install Chromium and its libraries
+        run: |
+          # The download, through playwright-core's bundled CLI; a cache hit makes it a no-op.
+          node bin/droid-office.js browser install
+          sudo node node_modules/playwright-core/cli.js install-deps chromium
+          # Ubuntu 24.04 blocks the user namespaces Chromium's sandbox needs unless AppArmor allows them
+          # for its binary: the profile deploy/provision.sh installs on the AWS box.
+          if [ -e /etc/apparmor.d/abi/4.0 ]; then
+            node bin/droid-office.js browser apparmor-profile | sudo tee /etc/apparmor.d/droid-office-chromium > /dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium
+          fi
+
       - name: Test with coverage
         run: npm run test:coverage # fails below the line and function thresholds in package.json
 

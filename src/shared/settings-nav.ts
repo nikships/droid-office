@@ -52,6 +52,7 @@ export const SETTINGS_CARDS = [
   { pane: 'subagents', title: 'Where subagents work' },
   { pane: 'subagents', title: 'Waking the lead' },
   { pane: 'subagents', title: 'Droid skill' },
+  { pane: 'subagents', title: 'Whiteboard skill' },
   { pane: 'phone', title: 'Droid Office for Android' },
 ] as const satisfies readonly { pane: SettingsPane; title: string }[];
 

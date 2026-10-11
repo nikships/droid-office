@@ -70,7 +70,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'services' | 'actions' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
