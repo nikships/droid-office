@@ -79,7 +79,6 @@ import ai.factory.droidoffice.ui.components.UpdateDialog
 import ai.factory.droidoffice.ui.components.UpdateSnackbar
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
-import ai.factory.droidoffice.ui.home.HomeScreen
 import ai.factory.droidoffice.ui.offices.OfficesScreen
 import ai.factory.droidoffice.ui.onboarding.PairScreen
 import ai.factory.droidoffice.ui.onboarding.ScanScreen
@@ -104,7 +103,7 @@ sealed interface Incoming {
 @Serializable data object ScanKey : NavKey
 @Serializable data class PairKey(val invite: PairingInvite) : NavKey
 @Serializable data object HomeKey : NavKey
-@Serializable data class WorkerKey(val id: String) : NavKey
+@Serializable data class WorkerKey(val id: String, val draft: String? = null) : NavKey
 @Serializable data object OfficesKey : NavKey
 
 val LocalGraph = staticCompositionLocalOf<AppGraph> { error("no graph") }
@@ -258,14 +257,13 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                         )
                     }
                     entry<HomeKey> {
-                        HomeScreen(
-                            onOpenWorker = { id -> nav.push(WorkerKey(id)) },
-                            onOffices = { nav.push(OfficesKey) },
+                        MainTabs(
+                            onOpenWorker = { id, draft -> nav.push(WorkerKey(id, draft)) },
                             onScan = { nav.push(ScanKey) },
                         )
                     }
                     entry<WorkerKey> { key ->
-                        WorkerScreen(workerId = key.id, onBack = { nav.pop() })
+                        WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft)
                     }
                     entry<OfficesKey> {
                         OfficesScreen(onBack = { nav.pop() }, onPairNew = { nav.push(ScanKey) }, onSwitched = { nav.home() })
@@ -277,7 +275,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                 banner = banner,
                 onOpen = { b ->
                     banner = null
-                    if (nav.top != WorkerKey(b.workerId)) nav.push(WorkerKey(b.workerId))
+                    if ((nav.top as? WorkerKey)?.id != b.workerId) nav.push(WorkerKey(b.workerId))
                 },
                 onDismiss = { banner = null },
                 modifier = Modifier.align(Alignment.TopCenter),

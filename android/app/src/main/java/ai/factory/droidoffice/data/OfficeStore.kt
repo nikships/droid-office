@@ -49,6 +49,8 @@ data class AppSettings(
     val notifyNeedsInput: Boolean = true,
     val notifyDone: Boolean = true,
     val haptics: Boolean = true,
+    /** Wait a few seconds, with Cancel, before an answer from the Asks tab goes to the worker. */
+    val answerDelay: Boolean = true,
     /** The model and effort the last Droid was hired with, which the hire sheet starts on. */
     val hireModel: String? = null,
     val hireEffort: String? = null,
@@ -85,6 +87,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
                 notifyNeedsInput = p[NOTIFY_INPUT] ?: true,
                 notifyDone = p[NOTIFY_DONE] ?: true,
                 haptics = p[HAPTICS] ?: true,
+                answerDelay = p[ANSWER_DELAY] ?: true,
                 hireModel = p[HIRE_MODEL],
                 hireEffort = p[HIRE_EFFORT],
             ),
@@ -140,6 +143,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
             p[NOTIFY_INPUT] = s.notifyNeedsInput
             p[NOTIFY_DONE] = s.notifyDone
             p[HAPTICS] = s.haptics
+            p[ANSWER_DELAY] = s.answerDelay
             s.hireModel?.let { p[HIRE_MODEL] = it } ?: p.remove(HIRE_MODEL)
             s.hireEffort?.let { p[HIRE_EFFORT] = it } ?: p.remove(HIRE_EFFORT)
         }
@@ -154,6 +158,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
         val NOTIFY_INPUT = booleanPreferencesKey("notify_needs_input")
         val NOTIFY_DONE = booleanPreferencesKey("notify_done")
         val HAPTICS = booleanPreferencesKey("haptics")
+        val ANSWER_DELAY = booleanPreferencesKey("answer_delay")
         val HIRE_MODEL = stringPreferencesKey("hire_model")
         val HIRE_EFFORT = stringPreferencesKey("hire_effort")
         fun tokenKey(id: String) = stringPreferencesKey("token.$id")

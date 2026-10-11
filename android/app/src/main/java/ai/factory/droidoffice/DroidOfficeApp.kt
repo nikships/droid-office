@@ -13,6 +13,7 @@ import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.notify.Alerts
 import ai.factory.droidoffice.notify.StayConnectedService
+import ai.factory.droidoffice.session.Answers
 import ai.factory.droidoffice.session.OfficeConnection
 import ai.factory.droidoffice.session.Pairer
 import ai.factory.droidoffice.update.GitHubUpdates
@@ -56,6 +57,7 @@ class AppGraph(val app: Application) {
     val connection = OfficeConnection(scope, api, store, network, deviceName)
     val pairer = Pairer(api, store, deviceName, scope)
     val visibility = AppVisibility()
+    val answers = Answers(connection)
     val alerts = Alerts(app, scope, connection, store, visibility)
     val updates = UpdateController(scope, GitHubUpdates(app))
 

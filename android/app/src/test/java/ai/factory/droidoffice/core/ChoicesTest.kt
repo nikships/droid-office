@@ -1,7 +1,9 @@
 package ai.factory.droidoffice.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChoicesTest {
@@ -23,9 +25,61 @@ class ChoicesTest {
             ),
         )!!
         assertEquals("Which file should I create?", menu.question)
-        assertEquals(listOf(Choice(1, "hello.txt"), Choice(2, "bye.txt"), Choice(3, "Other (type your answer)")), menu.choices)
+        assertEquals(listOf(Choice(1, "hello.txt", "A greeting"), Choice(2, "bye.txt"), Choice(3, "Other (type your answer)")), menu.choices)
         assertNull(menu.pointer)
         assertEquals("2", Choices.keys(menu, menu.choices[1]))
+        assertEquals(true, Choices.takesText(menu))
+        assertEquals("3" + "bonjour.txt" + Keys.ENTER, Choices.textKeys(menu, "bonjour.txt"))
+    }
+
+    @Test
+    fun readsDroidsAskUserBoxWithDescriptionsAndItsOwnAnswerRow() {
+        val menu = Choices.read(
+            listOf(
+                "⏺ I need your choice before I can write the file.",
+                "",
+                "  Ask User",
+                "  Which greeting should I write into HELLO.md?",
+                "",
+                "  1. hi",
+                "     Short and friendly",
+                "     for a README",
+                "  2. hello",
+                "  3. hey",
+                "     Casual",
+                "  Or type your own answer...",
+                "",
+                "  ↑/↓ Navigate · Space/Enter/1-9 Select · ESC stop agent",
+            ),
+        )!!
+        assertEquals("Which greeting should I write into HELLO.md?", menu.question)
+        assertEquals(listOf("hi", "hello", "hey"), menu.choices.map { it.label })
+        assertEquals(listOf("Short and friendly for a README", null, "Casual"), menu.choices.map { it.description })
+        assertTrue(menu.freeText)
+        assertEquals(Keys.DOWN.repeat(3) + "salut" + Keys.ENTER, Choices.textKeys(menu, "salut\n"))
+        assertNull(Choices.textKeys(menu, "  "))
+        assertEquals(Keys.DOWN.repeat(3), Choices.toTextRow(menu))
+        assertEquals(Keys.DOWN, Choices.toTextRow(menu.copy(pointer = 2)))
+        assertFalse(Choices.onTextRow(listOf("  ↑/↓ Navigate · Space/Enter/1-9 Select · ESC stop agent")))
+        assertTrue(Choices.onTextRow(listOf("  > salut", "", "  Enter Submit answer • ← back to options • ESC stop agent", "")))
+    }
+
+    @Test
+    fun aHintUnderTheLastChoiceIsNotItsDescription() {
+        val menu = Choices.read(listOf("Pick one?", "1. red", "2. green", "Press a number to answer"))!!
+        assertEquals(listOf(null, null), menu.choices.map { it.description })
+        assertFalse(menu.freeText)
+        assertNull(Choices.textKeys(menu, "blue"))
+    }
+
+    @Test
+    fun sameQuestionAndChoicesIsTheSameMenu() {
+        val a = Choices.read(listOf("Pick one?", "1. red", "2. green"))!!
+        val b = Choices.read(listOf("Pick one?", "1. red", "2. green"))!!.copy(pointer = 1)
+        val c = Choices.read(listOf("Pick one?", "1. red", "2. blue"))!!
+        assertTrue(Choices.same(a, b))
+        assertFalse(Choices.same(a, c))
+        assertFalse(Choices.same(a, null))
     }
 
     @Test

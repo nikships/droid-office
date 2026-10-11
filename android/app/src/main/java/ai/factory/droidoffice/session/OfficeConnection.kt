@@ -131,6 +131,7 @@ class OfficeConnection(
     private val holders = MutableStateFlow<Set<String>>(emptySet())
     private val nonce = MutableStateFlow(0)
     private val attached = ConcurrentHashMap.newKeySet<String>()
+    private val holds = HashMap<String, Int>()
     /** Each attached terminal's stream, on the main thread like [handle]. */
     private val feeds = HashMap<String, TermFeed>()
     @Volatile private var socket: WebSocket? = null
@@ -184,16 +185,41 @@ class OfficeConnection(
         }
     }
 
+    /**
+     * Attaches to a worker's terminal: its stream comes in, and the office takes keys for it only
+     * from an attached window. Counted, so the terminal screen and an answer from the Asks tab or a
+     * notification can each hold it; it detaches when the last one lets go.
+     */
     fun attach(workerId: String) {
+        synchronized(holds) { holds[workerId] = (holds[workerId] ?: 0) + 1 }
         attached += workerId
         feeds.getOrPut(workerId) { TermFeed() }
         send(ClientMsg.attach(workerId))
     }
 
     fun detach(workerId: String) {
+        val left = synchronized(holds) {
+            val n = (holds[workerId] ?: 1) - 1
+            if (n <= 0) holds.remove(workerId) else holds[workerId] = n
+            n
+        }
+        if (left > 0) return
         attached -= workerId
         feeds.remove(workerId)
         send(ClientMsg.detach(workerId))
+    }
+
+    /**
+     * Types [keys] into a worker's terminal as an answer, attaching for the moment it takes when
+     * nothing on this phone has it open. False when the office can't be reached.
+     */
+    fun answer(workerId: String, keys: String): Boolean {
+        attach(workerId)
+        return try {
+            send(ClientMsg.termInput(workerId, keys))
+        } finally {
+            detach(workerId)
+        }
     }
 
     /** The stream of a terminal this phone attached to; null once it detached. */
@@ -270,6 +296,7 @@ class OfficeConnection(
             _data.value = OfficeData(officeId = office.id)
             _screens.value = emptyMap()
             attached.clear()
+            synchronized(holds) { holds.clear() }
             feeds.clear()
             models = null
         }
@@ -413,6 +440,7 @@ class OfficeConnection(
                 _data.update { it.copy(workers = it.workers - msg.workerId) }
                 _screens.update { it - msg.workerId }
                 attached -= msg.workerId
+                synchronized(holds) { holds.remove(msg.workerId) }
                 feeds.remove(msg.workerId)
             }
             is ServerMsg.Screen -> _screens.update { it + (msg.workerId to ScreenState.apply(it[msg.workerId], msg)) }
