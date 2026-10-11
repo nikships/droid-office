@@ -72,6 +72,17 @@ test('Droid model list puts custom models first and legacy ones last, without di
   ]);
 });
 
+test('Droid model list keeps what a lead weighs: provider, credit multiplier, image support and promo', () => {
+  const [opus, flash, bad] = parseDroidModelList([
+    { id: 'claude-opus-5-5', displayName: 'Opus 5.5', modelProvider: 'anthropic', tokenMultiplier: 1.6 },
+    { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', modelProvider: ' factory\n', tokenMultiplier: 0.06, noImageSupport: true, promoLabel: '50% off, launch discount' },
+    { id: 'odd', modelProvider: '', tokenMultiplier: -1, noImageSupport: 'yes', promoLabel: 7 },
+  ]);
+  assert.deepEqual(opus, { id: 'claude-opus-5-5', displayName: 'Opus 5.5', provider: 'anthropic', tokenMultiplier: 1.6 });
+  assert.deepEqual(flash, { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', provider: 'factory', tokenMultiplier: 0.06, noImages: true, promo: '50% off, launch discount' });
+  assert.deepEqual(bad, { id: 'odd', displayName: 'odd' });
+});
+
 test("Droid catalogue lists droid's own models and keeps settings-only ids and the settings default", async (t) => {
   const file = settingsFile(t, {
     customModels: [{ id: 'custom:a', displayName: 'A' }],

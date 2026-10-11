@@ -7,6 +7,7 @@ import { h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { choices, field, toggle as kitToggle } from './kit';
 import { agentFields, modelBadge, officeChoice } from './models';
+import { subagentModelPicker } from './subagent-models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 import { presetEditor } from './prompt-box';
@@ -99,8 +100,8 @@ function choiceLabel(c: AgentChoice): string {
 
 /** The Subagents settings as the office keeps them, without who set them or where the skill is. */
 function subagentSettings(): SubagentSettings {
-  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, agent } = store.subagents;
-  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}) };
+  const { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, agent, models } = store.subagents;
+  return { on, deskWorkers, skill, worktree, maxPerLead, wakeLead, ...(agent ? { agent } : {}), ...(models?.length ? { models } : {}) };
 }
 
 /**
@@ -658,6 +659,9 @@ export function openSettings(
     subSet({ agent: undefined });
   });
 
+  const subModels = subagentModelPicker((models) => subSet({ models }));
+  const subModelsNote = desc();
+
   const subSize = radios(
     'Most subagents per lead',
     Array.from({ length: SUBAGENT_MAX_PER_LEAD }, (_, i) => [i + 1, String(i + 1)] as const),
@@ -705,6 +709,10 @@ export function openSettings(
     subAgentNote.textContent = s.agent
       ? `Subagents start on ${choiceLabel(s.agent)} unless their lead asks for something else with --model or --effort.`
       : `Subagents start on the office’s default worker (${choiceLabel(officeChoice())}, from Workers → Default worker) unless their lead asks for something else with --model or --effort. The picker lists every model droid can run: your own models, Factory’s and legacy ones.`;
+    subModels.paint(s.models);
+    subModelsNote.textContent = s.models?.length
+      ? `Leads choose each subagent’s model from these ${s.models.length}, by your notes and each model’s credit multiplier (office-workers models), and hire refuses any other. The subagent worker above is always allowed.`
+      : 'Leads may give a subagent any model droid lists, choosing by each one’s strengths and credit multiplier. Tick models to limit them to those, and add a note on what each is for: the lead reads it when it picks.';
     subSizeNote.textContent = `A lead can have at most ${s.maxPerLead} subagent${s.maxPerLead === 1 ? '' : 's'} on the floor at once; sending one home frees its place. The office's worker limit still counts every one.`;
     subSkillNote.textContent = s.skillError
       ? s.skillError
@@ -810,6 +818,7 @@ export function openSettings(
       group(
         'How they work',
         card('Subagent worker', { desc: subAgentNote, below: [subAgent.element, h('div.row', {}, subAgentSave, subAgentBack)] }),
+        card('Models leads can pick', { desc: subModelsNote, below: [subModels.element] }),
         card('Team size', { desc: subSizeNote, control: subSize.row }),
         card('Where subagents work', { desc: subTreeNote, control: subTree.row }),
         card('Waking the lead', { desc: subWakeNote, control: subWake.row }),

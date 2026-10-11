@@ -24,6 +24,7 @@ import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
 import type { PromptSource } from './prompts.js';
 import { Team } from './team.js';
+import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
@@ -59,6 +60,8 @@ export interface FloorContext {
   freshMain(): boolean;
   /** ⚙️ Settings → Subagents: how workers hire subagents. */
   subagents(): SubagentSettings;
+  /** Droid's model list, which leads choose subagents' models from. */
+  droidModels?(): Promise<DroidModelCatalogue>;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
@@ -277,6 +280,7 @@ export class Floor {
         dir: def.dir,
         git: !!this.project.branch,
         settings: () => ctx.subagents(),
+        ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },

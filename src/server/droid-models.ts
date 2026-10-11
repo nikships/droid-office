@@ -21,6 +21,14 @@ export interface DroidModelOption {
   legacy?: true;
   defaultReasoningEffort?: AgentEffort;
   supportedReasoningEfforts?: AgentEffort[];
+  /** Who serves it, as droid says: anthropic, openai, google, factory… */
+  provider?: string;
+  /** Droid's credit multiplier: what a token costs against the base rate (0.5 is half). */
+  tokenMultiplier?: number;
+  /** It can't read images. */
+  noImages?: true;
+  /** A limited offer droid advertises on it ("50% off, launch discount"). */
+  promo?: string;
 }
 
 export interface DroidModelCatalogue {
@@ -43,6 +51,21 @@ function efforts(value: unknown): AgentEffort[] | undefined {
 
 function displayName(value: unknown, id: string): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : id;
+}
+
+/**
+ * Text for one line of what a lead reads (a provider, a promo, the owner's note on a model):
+ * control characters and line breaks flattened to spaces, cut at `max`. Its words are still read by
+ * the lead as written; they come from droid and from the owner's own Settings, both trusted.
+ */
+export function oneLine(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const flat = value.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim();
+  return flat ? flat.slice(0, max) : undefined;
+}
+
+function multiplier(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1000 ? value : undefined;
 }
 
 /**
@@ -104,6 +127,9 @@ export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
     const legacy = !custom && (e.legacy === true || e.deprecated === true);
     const fallback = effort(e.defaultReasoningEffort);
     const supported = efforts(e.supportedReasoningEfforts);
+    const provider = oneLine(e.modelProvider, 40);
+    const tokenMultiplier = multiplier(e.tokenMultiplier);
+    const promo = oneLine(e.promoLabel, 80);
     groups[custom ? 0 : legacy ? 2 : 1].push({
       id: e.id,
       displayName: displayName(e.displayName, e.id),
@@ -111,6 +137,10 @@ export function parseDroidModelList(list: unknown[]): DroidModelOption[] {
       ...(legacy ? { legacy: true as const } : {}),
       ...(fallback ? { defaultReasoningEffort: fallback } : {}),
       ...(supported ? { supportedReasoningEfforts: supported } : {}),
+      ...(provider ? { provider } : {}),
+      ...(tokenMultiplier !== undefined ? { tokenMultiplier } : {}),
+      ...(e.noImageSupport === true ? { noImages: true as const } : {}),
+      ...(promo ? { promo } : {}),
     });
   }
   return groups.flat();
