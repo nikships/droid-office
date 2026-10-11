@@ -16,15 +16,18 @@ const news = (r: { changed: boolean; first: { game: string } | null }) => ({ cha
 test('a high score set by one person is still on the table after a restart', (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-arcade-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const at = new Date(2026, 9, 9, 12).getTime();
+  t.mock.timers.enable({ apis: ['Date'], now: at });
   const before = new HighScores(dir);
   assert.deepEqual(news(before.record(entry(1, 1200))), { changed: true, first: game(1) });
+  t.mock.timers.tick(86_400_000);
   assert.deepEqual(news(before.record(entry(2, 400, 'Grace'))), { changed: true, first: null });
   const after = new HighScores(dir);
   assert.deepEqual(
-    after.top().map((s) => [s.name, s.score]),
+    after.top().map((s) => [s.name, s.score, s.at]),
     [
-      ['Ada', 1200],
-      ['Grace', 400],
+      ['Ada', 1200, at],
+      ['Grace', 400, at + 86_400_000],
     ],
   );
 });
@@ -32,15 +35,19 @@ test('a high score set by one person is still on the table after a restart', (t)
 test('the same game only ever goes up, and only its own player can raise it', (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-arcade-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const table = new HighScores(dir);
   table.record(entry(1, 500));
   // Saved as Ada walked away from it, then again when it ended: one entry, the higher score.
+  t.mock.timers.tick(86_400_000);
   assert.equal(table.record(entry(1, 900)).changed, true);
+  assert.equal(table.top()[0].at, Date.now(), 'raising a score updates when it was set');
+  t.mock.timers.tick(86_400_000);
   assert.equal(table.record(entry(1, 300)).changed, false);
   assert.equal(table.record(entry(1, 5000, 'Mallory')).changed, false);
   assert.deepEqual(
-    table.top().map((s) => [s.game, s.score]),
-    [[game(1), 900]],
+    table.top().map((s) => [s.game, s.score, s.at]),
+    [[game(1), 900, 1_000_000 + 86_400_000]],
   );
   // Nothing scored is nothing to show.
   assert.equal(table.record(entry(2, 0)).changed, false);

@@ -516,27 +516,41 @@ function paintAttract(g: CanvasRenderingContext2D, v: ScreenView) {
   }
 }
 
-/** The high-score table: place, name and score, `width` wide from `x`, a row every `step`, in `size` px. */
+/** Place, name, score and date; narrow tables put the date under the name within each row. */
 function table(g: CanvasRenderingContext2D, scores: readonly HighScore[], x: number, width: number, y: number, step: number, size: number, mine?: string) {
+  const compact = width < 300;
   scores.forEach((s, i) => {
     const cy = y + i * step;
+    const ty = compact ? cy - step * 0.2 : cy;
     if (s.game === mine) {
       g.fillStyle = 'rgba(255, 209, 102, 0.22)';
       g.beginPath();
       g.roundRect(x - 8, cy - step / 2 + 2, width + 16, step - 4, 8);
       g.fill();
     }
-    g.font = `900 ${size}px ${FONT}`;
     const score = scoreText(s.score);
+    const date = new Date(s.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    g.font = `800 ${size * 0.75}px ${FONT}`;
+    const dateWidth = compact ? 0 : g.measureText(date).width + size;
+    g.font = `900 ${size}px ${FONT}`;
+    const scoreWidth = g.measureText(score).width;
     const place = size * 1.6;
     g.textAlign = 'left';
     g.fillStyle = i === 0 ? '#ffd166' : DIM;
-    g.fillText(String(i + 1), x, cy);
+    g.fillText(String(i + 1), x, ty);
     g.fillStyle = s.color;
-    g.fillText(fit(g, s.name, width - place - g.measureText(score).width - size), x + place, cy);
+    g.fillText(fit(g, s.name, width - place - scoreWidth - size - dateWidth), x + place, ty);
     g.textAlign = 'right';
     g.fillStyle = TEXT;
-    g.fillText(score, x + width, cy);
+    g.fillText(score, x + width, ty);
+    g.font = `800 ${size * 0.75}px ${FONT}`;
+    g.fillStyle = DIM;
+    if (compact) {
+      g.textAlign = 'left';
+      g.fillText(date, x + place, cy + step * 0.3);
+    } else {
+      g.fillText(date, x + width - scoreWidth - size, cy);
+    }
   });
 }
 
