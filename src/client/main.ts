@@ -58,7 +58,7 @@ import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
 import { Laptop } from './world/laptop';
-import { BoardTexture, PipelinesBoardTexture, ServicesBoardTexture } from './world/boards';
+import { BoardTexture, PipelinesBoardTexture } from './world/boards';
 import type { BoardSpot } from './world/board-layout';
 import { loadFonts } from './fonts';
 import { Gallery } from './world/gallery';
@@ -90,7 +90,6 @@ import { FactoryTvTexture } from './world/factory-tv';
 import { creditsNote } from '../shared/factory-sessions';
 import { openIssue, openPull, routePullMessage } from './ui/pull';
 import { openAsk } from './ui/ask';
-import { openServices, serviceUrl } from './ui/services';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
@@ -245,9 +244,6 @@ store.on('workers', () => {
   deskLinks = k;
   renderPullsBoard();
 });
-const servicesTex = new ServicesBoardTexture();
-const renderServicesBoard = () => servicesTex.render(store.services.items, store.workers);
-mountBoard(office.boardMeshes.services, servicesTex.texture, renderServicesBoard, ['services', 'workers']);
 const pipelinesTex = new PipelinesBoardTexture();
 const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
 mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
@@ -327,7 +323,6 @@ store.on('factory', () => {
 void loadFonts().then(() => {
   renderIssuesBoard();
   renderPullsBoard();
-  renderServicesBoard();
   renderPipelinesBoard();
   computeWall.repaint();
   renderMachineBoard();
@@ -1973,7 +1968,6 @@ function paletteEntries(): PaletteEntry[] {
       open: () => showPipelines({ run: true }),
     }),
   );
-  out.push(atSpot('services', 'the Services board', { icon: '🌐', kind: 'Board', title: 'Services board', detail: 'Web servers the workers are running', open: () => openServices() }));
   if (store.factory.connection.connected) {
     out.push(
       atSpot('ci', 'the CI automations board', {
@@ -2033,18 +2027,6 @@ function paletteEntries(): PaletteEntry[] {
         open: () => openIssue(issue, net, boardActions()),
       }),
     );
-  }
-  for (const svc of store.services.items) {
-    const board = spotOf('services');
-    out.push({
-      icon: '🌐',
-      kind: 'Service',
-      title: svc.title || svc.command,
-      detail: [`:${svc.port}`, svc.title && svc.command, store.workers.get(svc.workerId)?.name].filter(Boolean).join(' · '),
-      keywords: [String(svc.port)],
-      open: () => window.open(serviceUrl(svc.port), '_blank', 'noopener'),
-      walk: board ? () => walkThen(board, 'the Services board', () => openServices()) : undefined,
-    });
   }
   return out;
 }
@@ -2172,7 +2154,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (target.kind === 'elevator') showElevator();
   else if (target.kind === 'issues') openBoard('issues', net, boardActions(), issuesTex.tab);
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
-  else if (target.kind === 'services') openServices();
   else if (target.kind === 'computers') showComputers();
   else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
   else if (target.kind === 'ci') showCi();
@@ -2492,8 +2473,6 @@ function hintFor(it: Interactable): Hint {
       return issuesTex.hasNotes ? { k: 'notes', parts: [title('📌 Issues board'), key('E', 'Open'), aside('or point at a note to take it')] } : board('📌 Issues board');
     case 'pulls':
       return board('🔀 Pull request board');
-    case 'services':
-      return board('🌐 Services board');
     case 'ci': {
       const ci = store.factory.ci;
       const n = ci.workflows.length;
@@ -3014,7 +2993,6 @@ const REACH: Record<InteractKind, number> = {
   coffee: 3,
   issues: 9,
   pulls: 9,
-  services: 9,
   actions: 9,
   ci: 9,
   computers: 9,
@@ -3135,7 +3113,6 @@ const hudActions: HudAction[] = [
     title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
     run: () => showPipelines(),
   },
-  { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
   {
     id: 'ci',
     icon: '🏭',

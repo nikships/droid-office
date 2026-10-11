@@ -16,7 +16,6 @@ import { MAX_REPOS, childEnv, resolveCommand, type RepoSource } from './workers.
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidModelCatalogue } from './droid-models.js';
 import { Upgrader } from './upgrade.js';
-import { Services } from './services.js';
 import { GUEST_REFUSED, GuestScanner, guestRefusal, type AgentProcess } from './guests.js';
 import { PhoneSizes } from './phone-sizes.js';
 import { ImageProxy } from './decor.js';
@@ -32,9 +31,8 @@ import { FreshMain } from './saved-switch.js';
 import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
-import { relayRequest, relayUpgrade, stoppedPage, tunneledPort } from './relay.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
@@ -480,25 +478,6 @@ export async function startServer(cfg: Config) {
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
 
-  // The owner SSHes to a deployed office as the box's own user (deploy/aws.sh tunnels as ubuntu,
-  // never as the old restricted team user): the Services board's tunnel hint comes straight from
-  // the box's public address, no team membership involved.
-  const ownerSsh = cfg.publicHost ? `ubuntu@${cfg.publicHost}` : undefined;
-
-  // Web servers the workers start, for the Services board and service tunnels (see relay.ts).
-  // One scan covers every floor; each floor's board lists its own workers' servers.
-  const servicesState = (floor: Floor | undefined, items = services.list()): ServicesState => ({
-    items: floor ? items.filter((s) => floor.workers.get(s.workerId)) : [],
-    port: cfg.port,
-    ssh: ownerSsh,
-  });
-  const services = new Services(
-    () => [...floors.values()].flatMap((f) => f.workers.owners()),
-    (items) => {
-      for (const c of clients.values()) sendTo(c, { t: 'services', state: servicesState(floorOf(c), items) });
-    },
-  );
-
   /** The cabinet as `c` sees it: their own game (or none), plus the building's high scores. */
   const cabinetState = (c: Client): CabinetState => {
     return { player: c.playing && c.game ? { game: c.game } : null, scores: highScores.top() };
@@ -527,7 +506,6 @@ export async function startServer(cfg: Config) {
     pulls: floor?.board.pulls ?? { items: [], fetchedAt: 0, loading: false },
     pipelines: floor?.pipelines.state ?? NO_PIPELINES,
     decor: floor?.decor.list() ?? [],
-    services: servicesState(floor),
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
@@ -709,15 +687,6 @@ export async function startServer(cfg: Config) {
         p = decodeURIComponent(url.pathname);
       } catch {
         return send(res, 400, { error: 'Bad request' });
-      }
-      // A service tunnel (localhost:5173 -> the office): relay to that worker's server. SSH tunnels
-      // arrive over loopback; anything else needs the token like any other request.
-      const tunneled = tunneledPort(req, cfg.port);
-      const svc = tunneled ? services.lookup(tunneled) : undefined;
-      if (tunneled && svc) {
-        if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, true);
-        if (svc === 'gone') return stoppedPage(res, tunneled);
-        return relayRequest(req, res, svc);
       }
       // The client bundle's static files: hashed scripts, models, fonts and icons. They carry no
       // office data, and <script> tags, stylesheets and 3D loaders can't append the LAN token, so
@@ -982,12 +951,6 @@ export async function startServer(cfg: Config) {
     } catch {
       socket.destroy();
       return;
-    }
-    const tunneled = tunneledPort(req, cfg.port);
-    const svc = tunneled ? services.lookup(tunneled) : undefined;
-    if (tunneled && svc) {
-      if (svc !== 'gone' && lanAllowed(req, url, lanToken)) return relayUpgrade(req, socket, head, svc);
-      return refuseUpgrade(socket);
     }
     // The socket is the office page's own: this start's token (or loopback) plus a matching Origin
     // (see sameOrigin), or a paired phone. A phone's device token in the Authorization header skips
@@ -1908,11 +1871,10 @@ export async function startServer(cfg: Config) {
     server.once('error', reject);
     server.listen(cfg.port, cfg.host, () => resolve());
   });
-  services.start();
   // Agents someone started by hand in a floor's checkout, at desks of their own (see guests.ts).
   const guestScanner = new GuestScanner(
     () => [...floors.values()].map((f) => ({ id: f.id, dir: f.dir, home: building.isHome(f.id), syncGuests: (procs: AgentProcess[]) => f.syncGuests(procs) })),
-    () => [...floors.values()].flatMap((f) => f.workers.owners().flatMap((o) => (o.pid ? [o.pid] : []))),
+    () => [...floors.values()].flatMap((f) => f.workers.owners()),
   );
   guestScanner.start();
   await hotReload.start();
@@ -1925,7 +1887,6 @@ export async function startServer(cfg: Config) {
     arcade.flush();
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
-    services.stop();
     guestScanner.stop();
     webhook.stop();
     machine.stop();

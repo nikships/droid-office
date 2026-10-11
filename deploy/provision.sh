@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs ON the EC2 instance (piped over ssh by deploy/aws.sh). Idempotent: safe to re-run.
 # Expects these to be exported by the caller: APP_REPO APP_REF PROJECT_REPO (optional)
-# PUBLIC_HOST GH_TOKEN FACTORY_API_KEY GIT_NAME GIT_EMAIL
+# GH_TOKEN FACTORY_API_KEY GIT_NAME GIT_EMAIL
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 APT=(sudo -E apt-get -y -q -o DPkg::Lock::Timeout=600)
@@ -55,8 +55,6 @@ step "Writing secrets to /etc/droid-office/env"
 sudo install -d -m 755 /etc/droid-office
 env_file=$(mktemp)
 {
-  # The address the owner SSHes to, so the office can show the tunnel command.
-  [[ -n "${PUBLIC_HOST:-}" ]] && printf 'DROID_OFFICE_PUBLIC_HOST="%s"\n' "$PUBLIC_HOST"
   [[ -n "${FACTORY_API_KEY:-}" ]] && printf 'FACTORY_API_KEY="%s"\n' "$FACTORY_API_KEY"
   true
 } >"$env_file"

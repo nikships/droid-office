@@ -193,6 +193,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
 
   const workers = manager(f, updates);
   t.after(() => workers.shutdown());
+  assert.deepEqual(workers.owners(), [], 'no worker terminal processes yet');
   const worker = workers.spawn('desk-2', 'test', '- inspect this code');
   assert.equal(typeof worker, 'object');
   if (typeof worker === 'string') return;
@@ -202,6 +203,9 @@ test('Droid workers launch with their own hook overlay and resume the correct se
       (records) => records.some((r) => r.kind === 'droid' && r.args.includes('--settings')),
     )
   ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
+  const pids = workers.owners();
+  assert.equal(pids.length, 1, 'the guest scan gets the running worker terminal');
+  assert.ok(Number.isInteger(pids[0]) && pids[0] > 0, 'ownership is a PID list');
   assert.deepEqual(first.args.slice(0, 3), ['--settings', path.join(f.data, 'droid-hooks.json'), '--from-test']);
   // Droid started with a prompt argument never opens /rewind-conversation: the prompt is typed in instead.
   assert.equal(first.args.at(-1), '--from-test');
@@ -247,6 +251,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
     () => workers.get(worker.id)?.status,
     (status) => status === 'exited',
   );
+  assert.deepEqual(workers.owners(), [], 'exited workers have no terminal process to exclude');
   assert.equal(workers.resume(worker.id), undefined);
   const second = (
     await waitFor(

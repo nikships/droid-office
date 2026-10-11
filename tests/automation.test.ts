@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARDS, DESK_BY_ID, deskSeat, STATIONS } from '../src/shared/layout.js';
+import { BOARDS, DESK_BY_ID, deskSeat, FLOOR, STATIONS } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import type { Interactable } from '../src/client/world/office.js';
@@ -68,6 +68,14 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
   // A roof with no floors under it isn't listed.
   const empty = listTargets(context({ workers: [], floors: [] })).map((t) => t.id);
   assert.ok(!empty.includes(ROOF));
+});
+
+test('the reserved east-wall Whiteboard slot is not an automation target yet', () => {
+  assert.deepEqual(BOARDS.whiteboard, { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' });
+  assert.ok(!listTargets(context()).some((t) => t.id === 'whiteboard'));
+  const target = resolveTarget('whiteboard', context());
+  assert.ok(!target.ok);
+  assert.match(target.error, /No such target/);
 });
 
 test('goTo targets resolve by id, worker, label, agent name and floor, and say why when they do not', () => {

@@ -25,8 +25,6 @@ export interface Config {
   agentArgs: string[];
   tls?: { cert: string; key: string };
   trustProxy: boolean;
-  /** This machine's public address (set by deploy/aws.sh): the Services board's owner SSH hint. */
-  publicHost?: string;
   /** The most workers the office runs at once, across every floor; ⚙️ Settings can't go past it. */
   maxWorkers?: number;
   /** Slack / Discord webhook to post to when a worker needs input or finishes ('' turns it off). */
@@ -305,7 +303,6 @@ export function loadConfig(argv: string[]): Config {
     agentArgs,
     tls,
     trustProxy,
-    publicHost: process.env.DROID_OFFICE_PUBLIC_HOST || undefined,
     maxWorkers: workerLimit,
     webhook,
     city: city.trim() || undefined,

@@ -21,7 +21,6 @@ import { isBusy } from '../shared/status.js';
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
-import type { ServiceOwner } from './services.js';
 import { TaskNamer, fallbackTask } from './tasks.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
@@ -400,15 +399,9 @@ export class WorkerManager {
     return this.workers.get(id)?.info;
   }
 
-  /** Each worker's terminal process and directory, to tell whose servers are whose. */
-  owners(): ServiceOwner[] {
-    return [...this.workers.values()].map((w) => ({
-      workerId: w.info.id,
-      pid: w.pty?.pid,
-      agent: w.info.kind === 'agent',
-      cwd: this.cwd(w.info),
-      root: this.dir,
-    }));
+  /** The workers' terminal process IDs, so the guest scan leaves them out. */
+  owners(): number[] {
+    return [...this.workers.values()].flatMap((w) => (w.pty?.pid ? [w.pty.pid] : []));
   }
 
   deskOccupied(deskId: string): boolean {

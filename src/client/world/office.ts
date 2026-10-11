@@ -70,7 +70,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'services' | 'actions' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -115,7 +115,7 @@ export interface Office {
    * just came out, in case someone is standing there.
    */
   setBeanbags(out: Set<string>): Collider[];
-  boardMeshes: Record<keyof typeof BOARDS, THREE.Mesh>;
+  boardMeshes: Record<Exclude<keyof typeof BOARDS, 'whiteboard'>, THREE.Mesh>;
   tvScreen: THREE.Mesh;
   /** The monitor on the boss's desk upstairs, where Minesweeper plays (ui/arcade.ts). */
   bossScreen: THREE.Mesh;
@@ -1324,6 +1324,8 @@ export function buildOffice(): Office {
   // Cork boards on the walls
   const boardMeshes = {} as Office['boardMeshes'];
   for (const key of Object.keys(BOARDS) as (keyof typeof BOARDS)[]) {
+    // Reserved for the Whiteboard; leave its wall slot empty until it is implemented.
+    if (key === 'whiteboard') continue;
     const b = BOARDS[key];
     // Out from the wall, the way the board faces.
     const nx = Math.sin(b.rotY);

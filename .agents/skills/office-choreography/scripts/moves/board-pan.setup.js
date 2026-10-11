@@ -1,4 +1,4 @@
-// Back off a wall board and turn a little right of it. MOVE_ARG = issues | pulls | actions | ci | computers | services.
+// Back off a wall board and turn a little right of it. MOVE_ARG = issues | pulls | actions | ci | computers.
 (async () => {
   const o = window.office;
   await o.closeAll();

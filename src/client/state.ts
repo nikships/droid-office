@@ -14,7 +14,6 @@ import type {
   PromptsState,
   RepoChoice,
   ServerMsg,
-  ServicesState,
   SkyState,
   SubagentsState,
   UpgradeState,
@@ -42,7 +41,6 @@ export type Topic =
   | 'project'
   | 'screens'
   | 'upgrade'
-  | 'services'
   | 'decor'
   | 'pipelines'
   | 'notify'
@@ -238,7 +236,6 @@ class Store {
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: true };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: true };
   upgrade: UpgradeState = { available: false, phase: 'idle' };
-  services: ServicesState = { items: [], port: 4600 };
   /** Pictures on the walls. */
   decor: Decoration[] = [];
   /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
@@ -319,12 +316,11 @@ class Store {
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
-    this.services = v.services;
     this.cabinet = { player: v.cabinet.player, scores: v.cabinet.scores };
     this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'services', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -400,10 +396,6 @@ class Store {
       case 'upgrade':
         this.upgrade = msg.state;
         this.emit('upgrade');
-        break;
-      case 'services':
-        this.services = msg.state;
-        this.emit('services');
         break;
       case 'decor':
         this.decor = msg.items;

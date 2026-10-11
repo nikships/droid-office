@@ -60,9 +60,9 @@ EOF
 | Command | Use |
 | --- | --- |
 | `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `actions`, `services`, `coffee`, `elevator`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
+| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
 | `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal |
-| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `services`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
+| `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Elevator to a floor id or name, or `roof` |

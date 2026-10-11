@@ -510,7 +510,6 @@ export interface FloorView {
   pipelines: PipelinesState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
-  services: ServicesState;
   /** What the lounge jukebox is playing. */
   jukebox: JukeboxState;
   /** Who's at the arcade cabinet, what's on its screen, and the building's high scores. */
@@ -519,31 +518,6 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
-}
-
-/** A web server a worker started (a dev server, a preview), found by the ports it listens on. */
-export interface ServiceInfo {
-  port: number;
-  /** The address the office reaches it on, on its own machine. */
-  host: string;
-  pid: number;
-  /** Its command line, shortened, e.g. "vite --port 5173". */
-  command: string;
-  /** The worker whose terminal started it. */
-  workerId: string;
-  /** Its working directory relative to its floor's checkout ('' is the project root). */
-  cwd?: string;
-  /** The <title> of its front page. */
-  title?: string;
-  since: number;
-}
-
-export interface ServicesState {
-  items: ServiceInfo[];
-  /** The office's port on its machine. Service tunnels end there and the office relays them. */
-  port: number;
-  /** user@host the owner tunnels with (offices deployed with deploy/aws.sh), e.g. ubuntu@203.0.113.7 */
-  ssh?: string;
 }
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
@@ -979,7 +953,6 @@ export type ServerMsg =
    */
   | { t: 'toast'; text: string; level: 'info' | 'warn' | 'error'; workerId?: string }
   | { t: 'upgrade'; state: UpgradeState }
-  | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
   | { t: 'jukebox'; state: JukeboxState }
   /** Your game on the arcade cabinet on your floor now, and the building's high scores. */

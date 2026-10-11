@@ -16,7 +16,7 @@ The positions below come from `office.state().player` on commit `208c6a6`. Desks
 | What | How to get there, where you land | Notes |
 | --- | --- | --- |
 | Issues board | `goTo('issues')` → (−11.7, −11.32), facing π, pitch 0.43 | Hold S for 1.1 s to back off to z ≈ −6.3 with the cards filling the view |
-| Other boards | `goTo('pulls' \| 'actions' \| 'ci' \| 'computers' \| 'services')` | Hold S for 0.65 s to fit a whole board in view |
+| Other boards | `goTo('pulls' \| 'actions' \| 'ci' \| 'computers')` | Hold S for 0.65 s to fit a whole board in view |
 | Centre aisle | (−6.0, 9.6) to (−6.0, 2.3) | A potted plant sits just past z 2.3 |
 | Aisle by the desks | (−3.1, 2.26), facing π | Desks and laptops fill the background |
 | End of desk row 1/2/4 | From `goTo('desk-1')`, route via (−11.6, −6.4) → (−14.4, −6.4) → (−14.4, −4.9), then `__look(Math.PI/2, -0.14)` | Walking straight there gets stuck on a chair |

@@ -825,34 +825,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
   .hint { max-width: calc(100vw - 24px); bottom: 190px; }
 }
 
-/* Tunnel-command rows (the Services board) */
-.os-tabs { display: flex; gap: 4px; }
-.os-tabs .btn { padding: 3px 10px; }
-.cmd { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; }
-.cmd pre { flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--font-mono); background: #060606; color: #e6e6e6; border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; user-select: all; }
-/* Services board */
-.svc-count { margin-left: 6px; background: var(--accent-muted); color: var(--accent); border-radius: var(--radius-xs); padding: 0 5px; font: 600 10px/1.5 var(--font-mono); }
-.svc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.svc-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); cursor: pointer; transition: border-color var(--duration) var(--ease); }
-.svc-list li:hover { background: var(--surface-hover); }
-.svc-list li.on { background: var(--accent-muted); border-color: var(--accent); }
-.svc-list li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.svc-list .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border-strong); flex: none; }
-.svc-main { flex: 1; min-width: 0; }
-.svc-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.svc-meta { font: 400 11px var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.svc-port { font: 600 13px var(--font-mono); color: var(--accent); }
-.svc-list .btn { padding: 3px 10px; text-decoration: none; color: inherit; }
-.svc-empty { text-align: center; padding: 18px 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text-secondary); }
-.svc-empty p { margin: 0; font-weight: 600; }
-.services .note { margin: 8px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-.services code { font: 12px var(--font-mono); background: var(--surface-hover); border-radius: var(--radius-xs); padding: 1px 4px; word-break: break-all; }
-.svc-status { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 13px; background: var(--surface-raised); }
-.svc-status.ok { border-color: rgba(60, 207, 145, .4); color: var(--success); background: rgba(60, 207, 145, .06); }
-.svc-status.error { border-color: rgba(239, 68, 68, .45); color: var(--danger); background: rgba(239, 68, 68, .06); }
-.services .svc-status { margin-top: 12px; }
-.modal header .os-tabs { margin-right: 4px; }
-
 /* The jukebox */
 .jb-soundcloud { position: fixed; left: var(--space-4); bottom: var(--space-4); z-index: 20; width: min(350px, calc(100vw - 32px)); padding: var(--space-3); box-shadow: var(--shadow-window); }
 .jb-soundcloud summary { cursor: pointer; font-size: var(--text-small); }
