@@ -1,3 +1,5 @@
+import { soundCloudStationUrl, soundCloudUrl } from './soundcloud.js';
+
 // The lounge jukebox: the tunes it has and what it's playing, shared by the server (which keeps one
 // per floor) and the browser (which synthesizes the tunes, see client/music.ts).
 
@@ -22,7 +24,7 @@ export interface JukeboxState {
   on: boolean;
   /** One of JUKEBOX_TUNES, or STREAM for `url`. It stays put while the jukebox is off, to turn back on. */
   track: string;
-  /** Internet radio or an audio file someone pasted. */
+  /** Internet radio, an audio file, or a SoundCloud page someone pasted. */
   url?: string;
   /** Who last put something on, or turned it off. */
   by?: string;
@@ -39,6 +41,7 @@ export function trackTitle(s: Pick<JukeboxState, 'track' | 'url'>): string {
   if (s.track !== STREAM) return tuneById(s.track)?.title ?? 'A tune';
   try {
     const u = new URL(s.url ?? '');
+    if (soundCloudStationUrl(u.href)) return `SoundCloud · ${u.pathname.includes('artist-stations:') ? 'Artist station' : 'Track station'}`;
     const file = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() ?? '');
     return file ? `${u.hostname} · ${file}` : u.hostname;
   } catch {
@@ -57,5 +60,5 @@ export function checkStreamUrl(raw: unknown): { url: string } | { error: string 
     return { error: "That isn't a web link. Paste an address that starts with https://" };
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'Only http and https links can play on the jukebox' };
-  return { url: u.href };
+  return { url: soundCloudUrl(u.href) ?? u.href };
 }

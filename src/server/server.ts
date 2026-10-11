@@ -38,6 +38,7 @@ import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
+import { resolveSoundCloudStation } from './soundcloud.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
@@ -810,6 +811,10 @@ export async function startServer(cfg: Config) {
         } catch {
           return send(res, 502, { error: 'Could not load Droid models' });
         }
+      }
+      if (p === '/api/jukebox/soundcloud' && req.method === 'GET') {
+        const r = await resolveSoundCloudStation(url.searchParams.get('url') ?? '');
+        return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
       }
       if (p === '/api/image' && req.method === 'GET') {
         // A picture on the wall, fetched by the office so the 3D view can draw it (see decor.ts).

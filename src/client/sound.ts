@@ -12,7 +12,9 @@
 import { CABINET, FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
+import { soundCloudUrl } from '../shared/soundcloud';
 import { TunePlayer } from './music';
+import { SoundCloudPlayer } from './ui/soundcloud';
 import type { GunCue } from './world/gun-motion';
 import type { WandCue } from './world/wand-motion';
 
@@ -121,6 +123,7 @@ export class OfficeSound {
   private jukebox: JukeboxPlay | null = null;
   private tune: TunePlayer | null = null;
   private stream: HTMLAudioElement | null = null;
+  private soundcloud: SoundCloudPlayer | null = null;
   private musicTimer = 0;
   /** A stream that won't play here. */
   onMusicError?: (text: string) => void;
@@ -1236,6 +1239,7 @@ export class OfficeSound {
   /** 1 on each beat of the tune, falling to 0 before the next, for the jukebox's lights. */
   beat(): number {
     if (this.tune) return this.tune.beat(this.musicAt());
+    if (this.soundcloud?.playing) return 0.35 + 0.25 * Math.sin(performance.now() / 320);
     if (this.stream && !this.stream.paused) return 0.35 + 0.25 * Math.sin(performance.now() / 320);
     return 0;
   }
@@ -1258,9 +1262,11 @@ export class OfficeSound {
   /** Starts what the jukebox plays now, once there's audio; `changed` puts it on again from the top. */
   private applyJukebox(changed = false) {
     const ctx = this.ctx;
-    if (!ctx || (!changed && (this.tune || this.stream))) return;
+    if (!ctx || (!changed && (this.tune || this.stream || this.soundcloud))) return;
     this.tune?.stop();
     this.tune = null;
+    this.soundcloud?.dispose();
+    this.soundcloud = null;
     if (this.stream) {
       this.stream.pause();
       this.stream.removeAttribute('src');
@@ -1280,6 +1286,13 @@ export class OfficeSound {
   }
 
   private startStream(url: string) {
+    const sc = soundCloudUrl(url);
+    if (sc) {
+      this.soundcloud = new SoundCloudPlayer(sc, (text) => this.onMusicError?.(text));
+      this.hearStream();
+      this.count('soundcloud');
+      return;
+    }
     const a = new Audio();
     a.preload = 'auto';
     a.loop = true;
@@ -1312,9 +1325,11 @@ export class OfficeSound {
 
   /** A stream plays outside Web Audio (most don't allow that), so it gets quieter with distance by hand. */
   private hearStream() {
-    if (!this.stream) return;
+    if (!this.stream && !this.soundcloud) return;
     const d = Math.max(MUSIC_REF, this.jukeboxDistance());
-    this.stream.volume = Math.min(1, this.musicGain() * (MUSIC_REF / (MUSIC_REF + MUSIC_ROLLOFF * (d - MUSIC_REF))));
+    const volume = Math.min(1, this.musicGain() * (MUSIC_REF / (MUSIC_REF + MUSIC_ROLLOFF * (d - MUSIC_REF))));
+    if (this.stream) this.stream.volume = volume;
+    this.soundcloud?.setVolume(volume);
   }
 
   private jukeboxDistance(): number {
