@@ -568,7 +568,7 @@ export async function startServer(cfg: Config) {
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (c: Client): FloorView => ({ ...floorView(undefined, c), floor: ROOF });
   const screensOf = (c: Client, floor: Floor | undefined) => {
-    for (const { workerId, frame } of floor?.workers.fullScreens() ?? []) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
+    for (const { workerId, frame } of [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? [])]) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
   const images = new ImageProxy();
 

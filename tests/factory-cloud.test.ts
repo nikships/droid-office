@@ -480,6 +480,45 @@ test('poll: a deleted session or computer is a clear error at the desk, and a fa
   await assert.rejects(r.feature.poll(k.api), (err: Error) => err instanceof FactoryError && err.status === 401);
 });
 
+test('poll: its laptop shows the tail of its transcript, sent once per change and to whoever walks in', async (t) => {
+  const tail = [
+    { id: 'm2', role: 'assistant', seq: 2, createdAt: 2, content: [{ type: 'tool_use', id: 't1', name: 'Execute', input: { command: 'npm test' } }] },
+    { id: 'm1', role: 'user', seq: 1, createdAt: 1, content: [{ type: 'text', text: 'say hi' }] },
+  ];
+  const f = factory({
+    'POST /sessions': () => json(201, { sessionId: 's1' }),
+    'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
+    'GET /sessions/s1': () => session('running', 2),
+    'GET /sessions/s1/messages': () => json(200, { messages: tail }),
+  });
+  const r = rig(t, f);
+  const screens: string[][] = [];
+  Reflect.set(r.cloud, 'events', {
+    update: () => {},
+    remove: () => {},
+    screen: (_: string, frame: { lines: Record<number, [string][]> }) => screens.push(Object.values(frame.lines).map((runs) => runs.map((x) => x[0]).join(''))),
+  });
+  const w = await r.feature.hire(f.api, hireBody(), 'Nik');
+  await tick();
+  await r.feature.poll(f.api);
+  assert.equal(screens.length, 1);
+  assert.deepEqual(
+    screens[0].filter((l) => l),
+    ['> say hi', '● Execute npm test', '  ⎿  Running…'],
+  );
+  r.clock(1000);
+  r.cloud.polled(w.id, undefined, r.cloud.turn(w.id) ?? {}, 0);
+  Reflect.set(r.cloud.seen(w.id)!, 'count', 0);
+  await r.feature.poll(f.api);
+  assert.equal(screens.length, 1, 'the same tail paints nothing new');
+  assert.deepEqual(
+    r.cloud.fullScreens().map((s) => s.workerId),
+    [w.id],
+  );
+  r.cloud.remove(w.id);
+  assert.deepEqual(r.cloud.fullScreens(), []);
+});
+
 test('restart: a cloud worker is back at its desk and picks its session up again by id', async (t) => {
   const f = factory({
     'POST /sessions': () => json(201, { sessionId: 's1' }),
