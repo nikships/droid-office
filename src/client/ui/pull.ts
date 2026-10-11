@@ -114,6 +114,12 @@ function avatar(name: string) {
   for (const ch of name) x = (x * 31 + ch.charCodeAt(0)) | 0;
   const el = h('span.gh-avatar', { 'aria-hidden': 'true' }, (name[0] ?? '?').toUpperCase());
   el.style.setProperty('--avatar', AVATAR_COLORS[Math.abs(x) % AVATAR_COLORS.length]);
+  // A GitHub login has a public picture; the initial on its color shows under it and stays if it can't load.
+  if (words().site === 'GitHub' && /^[A-Za-z0-9-]+(\[bot\])?$/.test(name)) {
+    const img = h('img', { src: `https://github.com/${encodeURIComponent(name.replace(/\[bot\]$/, ''))}.png?size=48`, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+    img.addEventListener('error', () => img.remove());
+    el.append(img);
+  }
   return el;
 }
 
@@ -1260,7 +1266,6 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   // The footer stays put and renderFrame only shows and hides its buttons.
   const closeIssue = h('button.btn.danger', { type: 'button', title: `Close this issue on ${words().site}`, onclick: () => openClose('issue', it, net, load) }, 'Close issue…');
   const pickUp = h('button.btn', { type: 'button', title: 'Carry its card to an empty desk or a worker, and press E there', onclick: () => actions.pickUp(it) }, 'Pick it up');
-  const meta = h('div.gh-meta');
   const info = h('div.gh-side-info');
   conv.append(h('div.gh-detail', {}, h('div.gh-col', {}, thread, comment.el), h('aside.gh-side', {}, info)));
   const title = h('h3.gh-title', { title: it.title }, h('span.gh-ref', {}, `#${it.number}`), ' ', it.title);
@@ -1268,7 +1273,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     'div.modal.xl.gh-window.issue',
     { role: 'dialog', 'aria-label': `Issue #${it.number}` },
     h('header', {}, pill, h('div.titles', {}, h('h2', {}, `Issue #${it.number}`)), close),
-    h('div.gh-hero', {}, title, meta),
+    h('div.gh-hero', {}, title),
     h('div.gh-body', {}, conv),
     h(
       'footer',
@@ -1287,7 +1292,6 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   );
   const renderFrame = () => {
     const isOpen = it.state === 'OPEN';
-    meta.replaceChildren(avatar(it.author), h('b', {}, it.author), h('span', {}, `opened this ${timeAgo(it.createdAt)}`));
     info.replaceChildren(
       sideSection('Assignees', it.assignees.length ? h('div.gh-side-list', {}, ...it.assignees.map((a) => h('span.gh-person', {}, avatar(a), a))) : h('span.gh-side-none', {}, 'No one')),
       sideSection(
