@@ -28,6 +28,7 @@
     "start": "node bin/droid-office.js",
     "desktop": "npm run build && electron .",
     "package:mac": "npm run build && electron-builder --mac --arm64 --publish never",
+    "package:remastered": "npm run build && electron-builder --mac --arm64 --publish never --config electron-builder.remastered.yml",
     "prepare": "node .husky/install.mjs && npm run build"
   },
   "lint-staged": {

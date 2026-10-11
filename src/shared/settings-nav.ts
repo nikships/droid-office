@@ -31,6 +31,7 @@ export const SETTINGS_CARDS = [
   { pane: 'sound', title: 'Office sounds' },
   { pane: 'sound', title: 'Alert sounds' },
   { pane: 'sound', title: 'Jukebox' },
+  { pane: 'graphics', title: 'Graphics Lab' },
   { pane: 'graphics', title: 'Render resolution' },
   { pane: 'graphics', title: 'Temporal anti-aliasing' },
   { pane: 'graphics', title: 'Sharpening' },

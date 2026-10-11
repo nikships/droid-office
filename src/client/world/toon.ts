@@ -17,6 +17,32 @@ function gradientMap(): THREE.DataTexture {
   return gradient;
 }
 
+/** The light ramps the Remastered renderer can swap in: texel brightnesses, and whether they blend into each other. */
+const RAMPS: Record<string, { levels: number[]; smooth: boolean }> = {
+  classic: { levels: [90, 185, 255], smooth: false },
+  bands5: { levels: [70, 125, 175, 220, 255], smooth: false },
+  soft: { levels: [90, 185, 255], smooth: true },
+  smooth: { levels: [55, 255], smooth: true },
+};
+
+/**
+ * Swaps the ramp every toon material shares, in place: the same texture object, so no material needs rebuilding.
+ * The texture is freed first, since its old storage is a fixed size.
+ */
+export function setToonRamp(style: string) {
+  const ramp = RAMPS[style] ?? RAMPS.classic;
+  const tex = gradientMap();
+  const data = new Uint8Array(ramp.levels.flatMap((v) => [v, v, v, 255]));
+  const filter = ramp.smooth ? THREE.LinearFilter : THREE.NearestFilter;
+  const img = tex.image as { data: Uint8Array; width: number; height: number };
+  if (img.width === ramp.levels.length && tex.magFilter === filter && img.data.every((v, i) => v === data[i])) return;
+  tex.dispose();
+  tex.image = { data, width: ramp.levels.length, height: 1 };
+  tex.minFilter = filter;
+  tex.magFilter = filter;
+  tex.needsUpdate = true;
+}
+
 const cache = new Map<string, THREE.MeshToonMaterial>();
 
 export function toon(color: THREE.ColorRepresentation, opts: { emissive?: THREE.ColorRepresentation; transparent?: boolean; opacity?: number } = {}): THREE.MeshToonMaterial {

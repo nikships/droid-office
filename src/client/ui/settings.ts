@@ -842,6 +842,8 @@ export function openSettings(
   };
   paintGraphics();
 
+  const labButton = h('button.btn', { type: 'button' }, 'Open the Graphics Lab');
+  labButton.addEventListener('click', () => window.dispatchEvent(new Event('office:graphics-lab')));
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
@@ -864,6 +866,15 @@ export function openSettings(
       ),
     ],
     graphics: [
+      group(
+        'Remastered',
+        card('Graphics Lab', {
+          desc: desc(
+            'Every Remastered renderer setting, live, in a see-through panel beside the game: native HDR, bloom, ambient occlusion, probe GI, color, lights and shadows. ` opens and closes it. While the Remastered renderer is on, it replaces the resolution and anti-aliasing settings below.',
+          ),
+          control: labButton,
+        }),
+      ),
       group(
         'Resolution',
         card('Render resolution', { desc: scaleNote, control: scale.row }),

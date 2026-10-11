@@ -21,6 +21,7 @@ test('every setting is in a category', () => {
     ['Office sounds', 'sound'],
     ['Alert sounds', 'sound'],
     ['Jukebox', 'sound'],
+    ['Graphics Lab', 'graphics'],
     ['Render resolution', 'graphics'],
     ['Temporal anti-aliasing', 'graphics'],
     ['Sharpening', 'graphics'],

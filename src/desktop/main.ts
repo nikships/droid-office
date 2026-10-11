@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
+import { classicRunning, isRemastered, quitClassic } from './edition.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
@@ -11,6 +12,8 @@ import { desktopEnv } from './shell-path.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
+/** Droid Office Remastered (see edition.ts): the same office, drawn by the Remastered renderer, and never updated. */
+const REMASTERED = isRemastered(app.getAppPath());
 /** How many ports past the chosen one to try when something that isn't an office holds it. */
 const PORT_TRIES = 20;
 
@@ -174,6 +177,13 @@ async function openOffice() {
     if (running) {
       // Another office (a terminal's `npm start`, an earlier app) already answers here: use it rather than start a second one.
       officeUrl = `http://localhost:${port}/`;
+      if (REMASTERED)
+        void dialog.showMessageBox({
+          type: 'info',
+          message: 'This office draws the classic way',
+          detail: `An office this app didn't start already runs on port ${port} (a terminal's npm start?). It serves its own page, without the Remastered renderer. Stop it and choose Office → Restart Office to get the Remastered renderer.`,
+          buttons: ['OK'],
+        });
     } else {
       const dir = settings.officeDir ?? defaultOfficeDir();
       mkdirSync(logDir, { recursive: true });
@@ -248,7 +258,7 @@ function menu(): Menu {
       label: app.name,
       submenu: [
         { role: 'about' },
-        { label: 'Check for Updates…', click: () => void updates.check(true) },
+        ...(REMASTERED ? [] : [{ label: 'Check for Updates…', click: () => void updates.check(true) }]),
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -276,40 +286,60 @@ function menu(): Menu {
   return Menu.buildFromTemplate(template);
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (!win || win.isDestroyed()) createWindow();
-    else win.focus();
-  });
+/**
+ * Droid Office and Remastered share the userData folder, and with it the single-instance lock: Remastered first asks a
+ * running Droid Office to quit (its office stops the way a restart does, keeping every worker), then takes over.
+ */
+async function handOver(): Promise<boolean> {
+  if (!REMASTERED || !(await classicRunning())) return true;
+  await app.whenReady();
+  show(page('Closing Droid Office…', 'Droid Office Remastered runs the same office on the same data. Your workers keep running.'));
+  if (await quitClassic()) return true;
+  await dialog.showMessageBox({ type: 'warning', message: "Droid Office didn't quit", detail: 'Quit Droid Office, then open Droid Office Remastered again.', buttons: ['Quit'] });
+  return false;
+}
 
-  app.on('activate', () => {
-    if (!win || win.isDestroyed()) createWindow();
-  });
+void handOver().then((ok) => {
+  if (ok) start();
+  else app.quit();
+});
 
-  // The Mac way: closing the window leaves the app (and the office) running until you quit.
-  app.on('window-all-closed', () => {});
+function start() {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      if (!win || win.isDestroyed()) createWindow();
+      else win.focus();
+    });
 
-  app.on('before-quit', (e) => {
-    quitting = true;
-    if (!office) return;
-    e.preventDefault();
-    void stopOffice(true).finally(() => app.quit());
-  });
+    app.on('activate', () => {
+      if (!win || win.isDestroyed()) createWindow();
+    });
 
-  void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(menu());
-    if (await moveToApplications()) return;
-    show(page('Opening the office…'));
-    officeEnv = await desktopEnv();
-    if (!settings.officeDir) {
-      settings = { ...settings, officeDir: await chooseOfficeDir(true) };
-      saveSettings(settingsFile, settings);
-    }
-    await openOffice();
-    mkdirSync(logDir, { recursive: true });
-    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
-    updates.start();
-  });
+    // The Mac way: closing the window leaves the app (and the office) running until you quit.
+    app.on('window-all-closed', () => {});
+
+    app.on('before-quit', (e) => {
+      quitting = true;
+      if (!office) return;
+      e.preventDefault();
+      void stopOffice(true).finally(() => app.quit());
+    });
+
+    void app.whenReady().then(async () => {
+      Menu.setApplicationMenu(menu());
+      if (await moveToApplications()) return;
+      show(page('Opening the office…'));
+      officeEnv = await desktopEnv();
+      if (!settings.officeDir) {
+        settings = { ...settings, officeDir: await chooseOfficeDir(true) };
+        saveSettings(settingsFile, settings);
+      }
+      await openOffice();
+      mkdirSync(logDir, { recursive: true });
+      downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
+      if (!REMASTERED) updates.start();
+    });
+  }
 }

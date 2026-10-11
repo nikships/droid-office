@@ -98,7 +98,47 @@ const uniforms = {
   skyDrop: { value: 0 },
   /** Where the street is, which the haze thins out with height over. */
   skyStreet: { value: STREET_Y },
+  // The Remastered renderer's dials (see world/remaster.ts). At these values a material draws as it always has.
+  /** Unlit screens, signs and LEDs (MeshBasicMaterial with toneMapped off): past 1 they go brighter than white. */
+  rmGlow: { value: 1 },
+  /** How much the unlit surfaces count while the GI probes are baked; 1 the rest of the time. */
+  rmBakeGlow: { value: 1 },
+  /** Lit materials' emissive light: the city's windows, bulbs, trim. */
+  rmEmissive: { value: 1 },
+  /** The laptop screens' pools of light, the office's neon fill, and the lamps and garage light outside. */
+  rmScreens: { value: 1 },
+  rmFill: { value: 1 },
+  rmLamps: { value: 1 },
+  /** The light-probe grid's bounce light: 0 when there is no grid. */
+  rmGI: { value: 0 },
+  /** Draw lit surfaces with only the probe grid's light, to see what GI adds. */
+  rmGIOnly: { value: 0 },
 };
+
+/** The uniforms the Remastered renderer turns. */
+export const remasterUniforms = {
+  glow: uniforms.rmGlow,
+  bakeGlow: uniforms.rmBakeGlow,
+  emissive: uniforms.rmEmissive,
+  screens: uniforms.rmScreens,
+  fill: uniforms.rmFill,
+  lamps: uniforms.rmLamps,
+  gi: uniforms.rmGI,
+  giOnly: uniforms.rmGIOnly,
+};
+
+// The probe grid's light (three.js's LightProbeGridWebGL) is scaled by rmGI and fades out within a meter of the grid's
+// box, rather than every surface outside it taking the light of the probe nearest it. It is also kept in rmProbeIrr
+// for the GI-only view.
+const PROBE_LINE = 'irradiance += getLightProbeGridIrradiance( probeWorldPos, probeWorldNormal );';
+if (THREE.ShaderChunk.lights_fragment_begin.includes(PROBE_LINE)) {
+  THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+    PROBE_LINE,
+    /* glsl */ `vec3 rmProbeOut = max( max( probesMin - probeWorldPos, probeWorldPos - probesMax ), 0.0 );
+		rmProbeIrr = rmGI * ( 1.0 - smoothstep( 0.0, 1.0, length( rmProbeOut ) ) ) * getLightProbeGridIrradiance( probeWorldPos, probeWorldNormal );
+		irradiance += rmProbeIrr;`,
+  );
+} else console.warn('sky: three.js light-probe chunk changed; probe GI is unscaled');
 
 const v3 = (x: number, y: number, z: number) => `vec3(${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`;
 
@@ -122,6 +162,8 @@ uniform vec3 skyScreenMax;
 uniform float skyWet;
 uniform float skySnow;
 uniform float skyClearRooms, skyDrop, skyStreet;
+uniform float rmEmissive, rmScreens, rmFill, rmLamps, rmGI, rmGIOnly;
+vec3 rmProbeIrr = vec3( 0.0 );
 
 // Inside the office's walls (and up through its open top).
 float skyInOffice( vec3 p ) {
@@ -177,11 +219,22 @@ material.diffuseColor = mix( material.diffuseColor, vec3( 0.93, 0.96, 1.0 ), sky
 /** The lamps' light, added to what the sun and the sky give. */
 const LIGHT = /* glsl */ `
 if ( skyOn > 0.0 ) {
-  vec3 skyLight = skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + skyScreensAt( vSkyWorld, skyN );
+  vec3 skyLight = rmFill * skyIndoor * skyOffice * ( 0.65 + 0.35 * skyN.y ) + rmScreens * skyScreensAt( vSkyWorld, skyN );
   // The lamps and the garage light only what's outside the office, so indoors skips their loop.
-  if ( skyIndoor < 1.0 ) skyLight += ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) );
+  if ( skyIndoor < 1.0 ) skyLight += rmLamps * ( 1.0 - skyIndoor ) * ( skyGar * skyGarage + skyLampsAt( vSkyWorld, skyN ) );
   reflectedLight.indirectDiffuse += skyLight * BRDF_Lambert( material.diffuseColor );
+  if ( rmGIOnly > 0.5 ) {
+    reflectedLight.directDiffuse = vec3( 0.0 );
+    reflectedLight.directSpecular = vec3( 0.0 );
+    reflectedLight.indirectDiffuse = rmProbeIrr * BRDF_Lambert( material.diffuseColor );
+    totalEmissiveRadiance = vec3( 0.0 );
+  }
 }
+`;
+
+/** Lit materials' own glow, turned by the Remastered renderer; your hands (skyOn 0) keep theirs. */
+const EMISSIVE = /* glsl */ `
+totalEmissiveRadiance *= mix( 1.0, rmEmissive, skyOn );
 `;
 
 const WORLD = /* glsl */ `
@@ -248,9 +301,20 @@ const HAZE = /* glsl */ `
 // sharing one set of uniforms. Nothing else in the office uses onBeforeCompile, so this is its
 // default; unlit ones (glass, signs, outlines) only get the haze. Both need the world position
 // and the room tests in PARS, since the haze clears inside the office and the garage.
-THREE.Material.prototype.onBeforeCompile = (shader) => {
+THREE.Material.prototype.onBeforeCompile = function (this: THREE.Material, shader) {
   const fogged = shader.fragmentShader.includes('#include <fog_fragment>');
   const lit = shader.fragmentShader.includes('#include <lights_fragment_end>');
+  // Unlit surfaces (screens, signs, LEDs, the ceiling tubes) are dimmed by rmBakeGlow while the GI probes are baked:
+  // in the office they are decoration more than light. Screens, signs and LEDs (not tone mapped) also have their own
+  // dial, rmGlow, which makes them glow past white.
+  if (!lit && shader.fragmentShader.includes('#include <opaque_fragment>')) {
+    const glow = this.toneMapped === false;
+    shader.uniforms.rmBakeGlow = uniforms.rmBakeGlow;
+    if (glow) shader.uniforms.rmGlow = uniforms.rmGlow;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform float rmBakeGlow;${glow ? '\nuniform float rmGlow;' : ''}`)
+      .replace('#include <opaque_fragment>', `#include <opaque_fragment>\ngl_FragColor.rgb *= rmBakeGlow${glow ? ' * rmGlow' : ''};`);
+  }
   if (!fogged && !lit) return;
   Object.assign(shader.uniforms, uniforms);
   const world = shader.vertexShader.includes('#include <project_vertex>') ? ['#include <project_vertex>', WORLD] : ['#include <fog_vertex>', WORLD_FROM_VIEW];
@@ -261,8 +325,16 @@ THREE.Material.prototype.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${HAZE_PARS}`).replace('#include <fog_fragment>', HAZE);
   }
   if (lit) {
-    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_begin>', `${SURFACE}\n#include <lights_fragment_begin>`).replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${LIGHT}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <lights_fragment_begin>', `${SURFACE}\n#include <lights_fragment_begin>`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${LIGHT}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${EMISSIVE}`);
   }
+};
+// Every material shares the function above, so three.js's default key (its source) can't tell a glowing screen from
+// a plain decal of the same kind once both draw into a render target, where neither is tone mapped.
+THREE.Material.prototype.customProgramCacheKey = function (this: THREE.Material) {
+  return this.toneMapped === false ? 'sky:glow' : 'sky';
 };
 
 // ---- The sky ------------------------------------------------------------------------------------
