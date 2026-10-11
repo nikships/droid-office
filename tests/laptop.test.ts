@@ -123,6 +123,8 @@ test('a laptop opens its procedural stand-in lid and paints its screen', (t) => 
   const inner = laptop as unknown as { baseModel: THREE.Group; lidModel: THREE.Group; lid: THREE.Group };
   assert.equal(inner.baseModel.children.length, 3);
   assert.equal(inner.lidModel.children.length, 3);
+  assert.equal(laptop.screen.parent, inner.lidModel);
+  assert.equal(laptop.screen.geometry.type, 'PlaneGeometry');
   const closed = inner.lid.rotation.x;
   laptop.setPlaceholder('waiting…');
   laptop.update(0.1, screen(80, 24, 5), 3);
@@ -142,6 +144,7 @@ test('wireDisplay points a GLB Display node at the live screen, and ignores the 
   inner.lidModel.add(display);
   inner.wireDisplay();
   assert.equal(display.material, inner.screenMat);
+  assert.equal(laptop.screen, display, 'shots follow the replacement display');
   laptop.dispose();
 });
 
@@ -239,6 +242,7 @@ test('a laptop swaps its stand-in for the MacBook GLBs once they are cached', as
   const display = inner.lidModel.getObjectByName('Display') as THREE.Mesh | undefined;
   assert.ok(display?.isMesh, 'the lid GLB lands with its Display node');
   assert.equal(display.material, inner.screenMat, 'the live screen paints onto the GLB display');
+  assert.equal(laptop.screen, display, 'the GLB display is the shot target');
   laptop.dispose();
 });
 

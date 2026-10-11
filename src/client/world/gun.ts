@@ -19,12 +19,17 @@ const DRUM_AT = new THREE.Vector3(0, 0.047, 0.03);
 /** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
 const CRANE_AT = new THREE.Vector2(0.008, 0.012);
 
-/** The closest rendered solid struck by a bullet; only registered workers can be targets. */
-export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: ReadonlyMap<THREE.Object3D, string>): { hit: THREE.Intersection; workerId: string | null } | null {
+/** The closest rendered solid struck by a bullet or spell, including registered laptop screens. */
+export function gunHit(
+  ray: THREE.Raycaster,
+  office: THREE.Object3D,
+  workers: ReadonlyMap<THREE.Object3D, string>,
+  screens: ReadonlyMap<THREE.Object3D, string> = new Map(),
+): { hit: THREE.Intersection; workerId: string | null; laptopWorkerId: string | null } | null {
   // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
   // would throw before any worker could react. Only rendered meshes can absorb a bullet.
   const solids = new Set<THREE.Mesh>();
-  for (const root of [office, ...workers.keys()])
+  for (const root of [office, ...workers.keys(), ...screens.keys()])
     root.traverseVisible((object) => {
       if (object instanceof THREE.Mesh) solids.add(object);
     });
@@ -39,7 +44,7 @@ export function gunHit(ray: THREE.Raycaster, office: THREE.Object3D, workers: Re
       if (!object.visible) shown = false;
       workerId ??= workers.get(object) ?? null;
     }
-    if (shown) return { hit, workerId };
+    if (shown) return { hit, workerId, laptopWorkerId: screens.get(hit.object) ?? null };
   }
   return null;
 }

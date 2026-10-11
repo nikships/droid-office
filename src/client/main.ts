@@ -772,13 +772,17 @@ function castBolt(tip: THREE.Vector3) {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-/** What a shot along `raycaster` would strike first: a worker, something else solid, or nothing. */
+/** What a shot along `raycaster` would strike first: a laptop screen, worker, other solid, or nothing. */
 function aimedShot(): ReturnType<typeof gunHit> {
   if (upTop) return null;
   const byRoot = new Map<THREE.Object3D, string>();
-  for (const [id, v] of workerViews) byRoot.set(v.model.root, id);
+  const screens = new Map<THREE.Object3D, string>();
+  for (const [id, v] of workerViews) {
+    byRoot.set(v.model.root, id);
+    screens.set(v.laptop.screen, id);
+  }
   // Workers sit inside the office; ones still walking in are out in the scene. Players are never targets.
-  return gunHit(raycaster, office.group, byRoot);
+  return gunHit(raycaster, office.group, byRoot, screens);
 }
 
 /** Where a shot strikes something that isn't a worker: dust and a crack, or a spell's mark fizzling out. */
@@ -799,9 +803,10 @@ function missAt(hit: THREE.Intersection) {
  * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
  * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
  * floor sees it go down, its session still running. Shooting it again while it's down confirms the
- * kill. No menu opens anywhere.
+ * kill. A laptop screen instead opens its worker's UI, like E at the desk, without a reach limit.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
+  if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
