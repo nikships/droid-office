@@ -873,6 +873,30 @@ test("a status the hooks left wrong follows the agent's screen once it has settl
   assert.equal(status(), 'needs_input');
 });
 
+test("a finished reply quoting a dialog's key hints above the input box leaves the worker done", async (t) => {
+  const { workers, worker, hook, status } = await liveWorker(t, 'quoted');
+  hook('SessionStart', { source: 'startup' });
+  hook('UserPromptSubmit', { prompt: 'how do I see what it asked to run?' });
+  hook('Stop', {});
+  assert.equal(status(), 'done');
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  await show(workers, worker.id, 'Assistant: Click "inspect approval details" to see what was requested.');
+  await show(workers, worker.id, '[⏱ 6s, context: 4%] ? for help');
+  for (const ms of [0, 4000, 8000]) {
+    t.mock.timers.setTime(start + ms);
+    workers.reconcile();
+  }
+  assert.equal(status(), 'done');
+  // The dialog itself, its key hints where the footer was, still reads as asking.
+  await show(workers, worker.id, '  ↑↓ navigate   Enter select   Esc cancel   Alt/Option+E to inspect approval details');
+  for (const ms of [9000, 13_000]) {
+    t.mock.timers.setTime(start + ms);
+    workers.reconcile();
+  }
+  assert.equal(status(), 'needs_input');
+});
+
 test('a first prompt whose SessionStart never comes is typed in once droid shows its input box', async (t) => {
   const f = carryOnFixture(t);
   const workers = manager(f, []);
@@ -984,6 +1008,37 @@ test('a worker whose terminal outlives the office is picked back up mid-turn, no
   assert.equal(after.get(worker.id)?.status, 'working');
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(launchesOf(f).length, 1);
+});
+
+test('a first message its droid had not taken yet survives a restart that keeps its terminal, and is typed in once', async (t) => {
+  const f = carryOnFixture(t);
+  const before = manager(f, []);
+  await before.start();
+  const worker = before.spawn('desk-1', 'test', 'fix the login');
+  if (typeof worker === 'string') throw new Error(worker);
+  const [launch] = await waitFor(
+    () => launchesOf(f),
+    (x) => x.length > 0,
+  );
+  // The office restarts before droid's SessionStart: the terminal lives on in the host.
+  before.shutdown(true);
+  const savedPrompt = () => JSON.parse(readFileSync(path.join(f.data, 'workers.json'), 'utf8'))[0].pty?.launchPrompt?.text;
+  assert.equal(savedPrompt(), 'fix the login');
+
+  const after = manager(f, []);
+  await after.start();
+  assert.equal(launchesOf(f).length, 1, 'picked back up, not relaunched');
+  assert.equal(await startedWith(f, after, launch, 'first'), 'fix the login');
+  assert.equal(savedPrompt(), undefined, 'saved as typed in at once');
+  assert.equal(await startedWith(f, after, launch, 'first'), undefined, 'a later SessionStart in the same run sends nothing');
+
+  // Another restart once it was typed in sends nothing again.
+  after.shutdown(true);
+  const again = manager(f, []);
+  t.after(() => again.shutdown());
+  await again.start();
+  assert.equal(await startedWith(f, again, launch, 'first'), undefined);
+  assert.deepEqual(pastedInto(f, launch), ['fix the login']);
 });
 
 test('a worker whose terminal was in the host when an older office went down carries on if the host is gone', async (t) => {
@@ -1180,6 +1235,48 @@ test("the office's branch keeps a worker's commits once it has moved on: the dia
   assert.equal(own.note, `Deleted ${c.w.name}'s worktree and branch fix-z, and kept branch ${c.office} — it has 1 unpushed commit`);
   assert.equal(git(f.root, 'branch', '--list', 'fix-z'), '');
   assert.equal(tip(c.office), 'work at desk-3');
+});
+
+test('commits on a detached HEAD count as work: sending the worker home keeps them unless asked to delete', async (t) => {
+  const f = carryOnFixture(t);
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim();
+  git(f.root, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(f.root, 'a.txt'), 'a');
+  git(f.root, 'add', 'a.txt');
+  git(f.root, 'commit', '-qm', 'init');
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const hire = (desk: string) => {
+    const w = workers.spawn(desk, 'test', 'work on a detached HEAD', true);
+    if (typeof w === 'string') throw new Error(w);
+    const cwd = path.join(f.root, w.worktree!.path);
+    git(cwd, 'checkout', '-q', '--detach');
+    return { w, cwd, office: w.worktree!.branch };
+  };
+  const commit = (cwd: string, file: string) => {
+    writeFileSync(path.join(cwd, file), file);
+    git(cwd, 'add', file);
+    git(cwd, 'commit', '-qm', `add ${file}`);
+    return git(cwd, 'rev-parse', 'HEAD');
+  };
+  // A commit only the detached HEAD has: the dialog warns, and sending it home with no choice keeps it all.
+  const a = hire('desk-1');
+  const sha = commit(a.cwd, 'detached.txt');
+  assert.deepEqual(await workers.inspectWorktree(a.w.id), { exists: true, dirty: 0, ahead: 1, unpushed: 1 });
+  assert.equal((await workers.kill(a.w.id)).note, `Kept ${a.w.name}'s worktree and branch ${a.office} — it has 1 unpushed commit`);
+  assert.ok(existsSync(a.cwd));
+  assert.equal(git(a.cwd, 'rev-parse', 'HEAD'), sha);
+  // Detached with nothing of its own: it all goes, as for a worker on its branch.
+  const b = hire('desk-2');
+  assert.deepEqual(await workers.inspectWorktree(b.w.id), { exists: true, dirty: 0, ahead: 0, unpushed: 0 });
+  assert.equal((await workers.kill(b.w.id)).note, `Deleted ${b.w.name}'s worktree and branch ${b.office}`);
+  assert.ok(!existsSync(b.cwd));
+  // Asked to delete everything, after that warning: it does.
+  const c = hire('desk-3');
+  commit(c.cwd, 'asked.txt');
+  assert.equal((await workers.inspectWorktree(c.w.id))?.unpushed, 1);
+  assert.equal((await workers.kill(c.w.id, 'all')).note, `Deleted ${c.w.name}'s worktree and branch ${c.office}`);
+  assert.ok(!existsSync(c.cwd));
 });
 
 test("a worker that renames the office's branch goes home with it; one that deletes it leaves the branch it's on", async (t) => {
