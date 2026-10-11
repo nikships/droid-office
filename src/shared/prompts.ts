@@ -9,7 +9,7 @@ import type { Forge } from './floors.js';
 import { forgeWords } from './floors.js';
 import { STATION_AGENT, type StationKind } from './layout.js';
 
-export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'whiteboard' | 'office';
+export type PromptGroup = 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'stations' | 'subagents' | 'whiteboard' | 'wand' | 'office';
 
 /** The editor's sections, in order. */
 export const PROMPT_GROUPS: Record<PromptGroup, string> = {
@@ -22,6 +22,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   subagents: '🧭 Team lead & subagents',
   whiteboard: '🧑‍🎨 Whiteboard',
   office: 'Worker signs',
+  wand: 'Droid wand',
 };
 
 export interface PromptDef {
@@ -433,6 +434,15 @@ const DEFS = {
       '5. If the README or AGENTS.md documents how to set the project up, mention the file there in a sentence.',
       '6. Commit, push your branch and open a {{pullName}} with `{{cli}}` saying what the setup runs and roughly how long it takes.',
     ].join('\n'),
+  },
+
+  // --- Wand commands ---
+  'wand.ship': {
+    group: 'wand',
+    label: 'Ship it',
+    used: 'A close-range Ship it confetti pop sends this intent to the one worker under the crosshair. The worker chooses how to ship its work.',
+    vars: {},
+    text: 'Ship your current work: commit and push it to main, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it.',
   },
 
   // --- Worker signs ---

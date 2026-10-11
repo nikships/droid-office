@@ -19,7 +19,7 @@ import { RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type GraphicsSetti
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
-  ['magnum', '🔫', '.44 Magnum', 'The original: a gunshot, blood, and paramedics for the body.'],
+  ['magnum', '🔫', '.44 Magnum', 'The original: a gunshot, blood, and a heavenly beam for the body.'],
 ];
 
 const WEBHOOK_NAME: Record<WebhookKind, string> = { slack: 'Slack', discord: 'Discord', other: 'a webhook' };

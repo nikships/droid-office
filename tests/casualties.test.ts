@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BLEED_TIME, Casualties, FADE_TIME, FALL_TIME, LOAD_TIME, POOL_R, SPELL_TIME, type CasualtyLaptop, type CasualtyModel, type Medic } from '../src/client/world/casualties.js';
+import { ASCEND_HEIGHT, ASCEND_TIME, BEAM_TIME, BLEED_TIME, Casualties, FADE_TIME, FALL_TIME, POOL_R, SPELL_TIME, type CasualtyLaptop, type CasualtyModel } from '../src/client/world/casualties.js';
+import { WALL_HEIGHT } from '../src/shared/layout.js';
 
 class Model implements CasualtyModel {
   readonly root = new THREE.Group();
@@ -18,18 +19,6 @@ class Model implements CasualtyModel {
   }
   revive() {
     this.dead = false;
-  }
-  dispose() {
-    this.disposed = true;
-  }
-}
-
-class MedicStub implements Medic {
-  readonly root = new THREE.Group();
-  disposed = false;
-  moved = 0;
-  update(_dt: number, _t: number, moving: boolean, _airborne: boolean) {
-    if (moving) this.moved++;
   }
   dispose() {
     this.disposed = true;
@@ -54,33 +43,25 @@ function rig() {
   seat.position.set(0, 0.4, 5);
   seat.rotation.y = Math.PI;
   parent.add(seat);
-  const medics: MedicStub[] = [];
   const lands: THREE.Vector3[] = [];
   const landLooks: string[] = [];
-  const sirens: THREE.Vector3[] = [];
   const casualties = new Casualties(parent, () => 0, {
-    spawnMedic: () => {
-      const m = new MedicStub();
-      medics.push(m);
-      return m;
-    },
     onLand: (at, look) => {
       lands.push(at.clone());
       landLooks.push(look);
     },
-    onSiren: (at) => void sirens.push(at.clone()),
   });
   const model = new Model();
   seat.add(model.root);
   const frames = (n: number, dt = 1 / 60) => {
     for (let i = 0; i < n; i++) casualties.update(dt, i * dt);
   };
-  return { parent, seat, medics, lands, landLooks, sirens, casualties, model, frames };
+  return { parent, seat, lands, landLooks, casualties, model, frames };
 }
 
 /** What's on the floor under a body: the blood pool or the spell circle (the casualty's only other child of the parent). */
 function under(parent: THREE.Object3D, model: Model): THREE.Object3D | undefined {
-  return parent.children.find((o) => o !== model.root && o.type === 'Group' && o.children.length && o.name !== 'medic-team' && o.position.y > 0);
+  return parent.children.find((o) => o !== model.root && o.type === 'Group' && o.children.length && o.name !== 'heavenly-beam' && o.position.y > 0);
 }
 
 test('the wand puts it to sleep on a spell circle instead of a blood pool, and the rest of the scene is the same', () => {
@@ -180,61 +161,67 @@ test('revival picks the nearest casualty and excludes bodies already being colle
   assert.equal(casualties.nearby(model.root.position), 'w1');
 });
 
-test('a confirmed kill walks the medics in, supports and loads the body, then carries it out', () => {
-  const { seat, medics, sirens, casualties, model, frames } = rig();
+test('a confirmed kill casts a heavenly beam and floats the worker straight through the ceiling', () => {
+  const { parent, seat, casualties, model, frames } = rig();
   assert.equal(casualties.confirm('nobody', new LaptopStub()), false);
   casualties.shoot('w1', model, seat);
   frames(Math.ceil((FALL_TIME + BLEED_TIME) * 60), 1 / 60);
   const laptop = new LaptopStub();
   assert.equal(casualties.confirm('w1', laptop), true);
-  assert.equal(casualties.confirm('w1', laptop), false, 'one team per body');
+  assert.equal(casualties.confirm('w1', laptop), false, 'one beam per body');
   assert.equal(casualties.dying('w1'), false, 'no longer available for revival');
   assert.equal(casualties.revive('w1'), false, 'too late to revive');
-  assert.equal(medics.length, 2);
-  assert.equal(sirens.length, 1);
-  assert.equal(casualties.phaseOf('w1'), 'fetch');
-  assert.deepEqual(casualties.positions().length, 1, 'the team is out for the doors to open');
-
-  // They walk in from the elevator...
-  let guard = 0;
-  while (casualties.phaseOf('w1') === 'fetch' && guard++ < 3000) frames(1);
-  assert.equal(casualties.phaseOf('w1'), 'load');
-  assert.ok(
-    medics.every((m) => m.moved > 0),
-    'both medics walked in',
-  );
-  // The team takes time to stabilize the patient before lifting together.
-  frames(Math.ceil((LOAD_TIME - 0.4) * 60));
-  assert.equal(casualties.phaseOf('w1'), 'load', 'the pickup has several deliberate beats');
-  frames(Math.ceil(0.5 * 60));
-  assert.equal(casualties.phaseOf('w1'), 'carry');
-  assert.equal(model.root.parent?.type, 'Group', 'the body rides the stretcher');
-  // ...carry it back to the elevator and fade, laptop and all.
-  guard = 0;
-  while (casualties.phaseOf('w1') !== null && guard++ < 6000) frames(1);
+  assert.equal(casualties.phaseOf('w1'), 'beam');
+  assert.equal(parent.getObjectByName('medic-team'), undefined);
+  const beam = parent.getObjectByName('heavenly-beam')!;
+  assert.ok(beam);
+  const start = model.root.position.clone();
+  const scale = model.root.scale.clone();
+  frames(Math.ceil(BEAM_TIME * 60) + 1);
+  assert.equal(casualties.phaseOf('w1'), 'ascend');
+  assert.ok(model.root.position.y < start.y + 0.01, 'the beam appears before lifting');
+  let previousY = model.root.position.y;
+  for (let i = 0; i < Math.ceil(ASCEND_TIME * 60) + 1; i++) {
+    frames(1);
+    assert.equal(model.root.position.x, start.x, 'no sideways drift');
+    assert.equal(model.root.position.z, start.z, 'no sideways drift');
+    assert.ok(model.root.position.y >= previousY, 'only rises');
+    assert.ok(model.root.scale.equals(scale), 'no shrinking');
+    assert.equal(model.root.parent, parent);
+    previousY = model.root.position.y;
+  }
+  assert.equal(casualties.phaseOf('w1'), 'fade');
+  assert.ok(model.root.position.y > WALL_HEIGHT + 1, 'the whole body clears the ceiling');
+  assert.ok(Math.abs(model.root.position.y - start.y - ASCEND_HEIGHT) < 1e-9);
+  frames(Math.ceil(FADE_TIME * 60) + 2);
   assert.equal(casualties.phaseOf('w1'), null);
   assert.equal(model.disposed, true);
-  assert.ok(
-    medics.every((m) => m.disposed),
-    'the medics go with the body',
-  );
   assert.ok(laptop.shuts > 3 && laptop.disposed, 'the laptop shut and shrank');
-  assert.deepEqual(casualties.positions(), []);
+  assert.equal(beam.parent, null);
+  assert.equal(under(parent, model), undefined, 'no stain left');
+  assert.equal(casualties.active, false);
 });
 
-test('the fade only takes FADE_TIME once the team is back', () => {
-  const { seat, casualties, model, frames } = rig();
+test('confirming mid-fall lands once, then the empty beam fades in FADE_TIME', () => {
+  const { parent, seat, lands, casualties, model, frames } = rig();
   casualties.shoot('w1', model, seat);
   casualties.confirm('w1', new LaptopStub());
+  assert.equal(lands.length, 1);
+  assert.equal(casualties.phaseOf('w1'), 'beam');
+  const column = parent.getObjectByName('beam-column') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   let guard = 0;
-  while (casualties.phaseOf('w1') !== 'fade' && guard++ < 6000) frames(1);
+  while (casualties.phaseOf('w1') !== 'fade' && guard++ < 400) frames(1);
   assert.equal(casualties.phaseOf('w1'), 'fade');
+  const opacity = column.material.opacity;
+  frames(Math.floor(FADE_TIME * 30));
+  assert.ok(column.material.opacity > 0 && column.material.opacity < opacity);
   frames(Math.ceil(FADE_TIME * 60) + 2);
   assert.equal(casualties.phaseOf('w1'), null, 'gone with the body, no stain left');
+  assert.equal(lands.length, 1, 'no repeated landing');
 });
 
 test('clear ends every scene: the dying go back in their seats, the collected are disposed', () => {
-  const { seat, medics, casualties, model } = rig();
+  const { parent, seat, casualties, model } = rig();
   const seat2 = new THREE.Group();
   seat2.position.set(2, 0.4, 5);
   seat.parent!.add(seat2);
@@ -249,14 +236,15 @@ test('clear ends every scene: the dying go back in their seats, the collected ar
   assert.equal(model.root.parent, seat, 'still the office’s to dispose');
   assert.equal(model.disposed, false);
   assert.equal(model2.disposed, true, 'collected bodies go with the floor');
-  assert.ok(medics.every((m) => m.disposed));
+  assert.equal(parent.getObjectByName('heavenly-beam'), undefined);
   assert.equal(casualties.dying('w1'), false);
 });
 
 test('the blood pool geometry is shared and the constants sanity-check', () => {
   assert.ok(FALL_TIME > 0 && FALL_TIME < 2);
-  assert.ok(LOAD_TIME > 3 && LOAD_TIME < 8, 'time for a supported pickup');
-  assert.ok(BLEED_TIME > LOAD_TIME, 'still spreading when the medics arrive');
+  assert.ok(BEAM_TIME > 0 && BEAM_TIME < 2);
+  assert.ok(ASCEND_TIME > 2 && ASCEND_TIME < 6, 'a short, readable ascent');
+  assert.ok(ASCEND_HEIGHT > WALL_HEIGHT + 1);
   assert.ok(POOL_R > 0.5 && POOL_R < 1.5);
   assert.ok(FADE_TIME > 0 && FADE_TIME < 2);
 });

@@ -14,73 +14,6 @@ import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, to
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
-/** Medic hands in the character's root space; feet stay planted while it crouches. */
-export interface MedicPose {
-  readonly left: THREE.Vector3;
-  readonly right: THREE.Vector3;
-  readonly crouch: number;
-  readonly stride: number;
-}
-
-/** A two-piece limb, created only for medics. Its endpoint is the actual hand/boot mesh. */
-class MedicLimb {
-  private readonly direction = new THREE.Vector3();
-  private readonly bend = new THREE.Vector3();
-  private readonly elbow = new THREE.Vector3();
-  private readonly upperMesh: THREE.Mesh;
-  private readonly originalPosition: THREE.Vector3;
-  private readonly originalScale: THREE.Vector3;
-  readonly lower = new THREE.Group();
-
-  constructor(
-    private readonly upper: THREE.Object3D,
-    readonly endpoint: THREE.Object3D,
-    private readonly a: number,
-    private readonly b: number,
-    originalLength: number,
-    geometry: THREE.BufferGeometry,
-  ) {
-    this.upperMesh = upper.children[0] as THREE.Mesh;
-    this.originalPosition = this.upperMesh.position.clone();
-    this.originalScale = this.upperMesh.scale.clone();
-    this.upperMesh.scale.y = a / originalLength;
-    this.upperMesh.position.y = -a / 2;
-    const material = Array.isArray(this.upperMesh.material) ? this.upperMesh.material[0] : this.upperMesh.material;
-    const lowerMesh = mesh(geometry, material, 0, -b / 2, 0, false);
-    this.lower.add(lowerMesh, endpoint);
-    endpoint.position.set(0, -b, 0);
-    upper.parent!.add(this.lower);
-  }
-
-  /** The bend direction picks the elbow/knee plane, without changing the contact point. */
-  pose(target: THREE.Vector3, bendX: number, bendZ: number) {
-    const d = this.direction.subVectors(target, this.upper.position).length();
-    this.direction.multiplyScalar(1 / Math.max(1e-6, d));
-    const reach = THREE.MathUtils.clamp(d, Math.abs(this.a - this.b) + 0.001, this.a + this.b - 0.001);
-    const along = (reach * reach + this.a * this.a - this.b * this.b) / (2 * reach);
-    this.bend.set(bendX, 0, bendZ).addScaledVector(this.direction, -this.direction.dot(this.bend)).normalize();
-    this.elbow
-      .copy(this.upper.position)
-      .addScaledVector(this.direction, along)
-      .addScaledVector(this.bend, Math.sqrt(Math.max(0, this.a * this.a - along * along)));
-    this.upper.quaternion.setFromUnitVectors(DOWN, this.bend.subVectors(this.elbow, this.upper.position).normalize());
-    this.lower.position.copy(this.elbow);
-    this.lower.quaternion.setFromUnitVectors(DOWN, this.bend.copy(this.upper.position).addScaledVector(this.direction, reach).sub(this.elbow).normalize());
-  }
-
-  restore(hand: boolean) {
-    this.upperMesh.position.copy(this.originalPosition);
-    this.upperMesh.scale.copy(this.originalScale);
-    this.upper.rotation.set(0, 0, 0);
-    if (hand) {
-      this.upper.add(this.endpoint);
-      this.endpoint.position.set(0, -0.38, 0);
-      this.endpoint.name = '';
-    }
-    this.lower.removeFromParent();
-  }
-}
-
 /** How long reaching out to use something takes, in seconds. */
 export const REACH_TIME = 0.42;
 
@@ -105,7 +38,6 @@ export function popCurve(p: number): number {
   return 1 + 2.7 * u * u * u + 1.7 * u * u;
 }
 
-const DOWN = new THREE.Vector3(0, -1, 0);
 /** A full mug of coffee standing on y = 0, with its handle on the -x side. */
 export function coffeeMug(scale = 1): THREE.Group {
   const mug = new THREE.Group();
@@ -403,7 +335,7 @@ export class Person {
   private skin: THREE.MeshToonMaterial;
   private hairMat: THREE.MeshToonMaterial;
   private hair = new THREE.Group();
-  /** Their Factory crew kit (lanyard, card, patches) and work boots, off while they wear a medic's uniform. */
+  /** Their Factory crew kit (lanyard, card, patches) and work boots. */
   private crew: THREE.Group;
   private boots: THREE.Mesh[];
   private look: Look;
@@ -442,7 +374,6 @@ export class Person {
    * it spins round on the trigger finger, the prop and its muzzle flash, and the pose it's in.
    */
   private gun: { mount: THREE.Group; wrist: THREE.Group; pivot: THREE.Group; prop: THREE.Group; muzzle: Muzzle; pose: Readonly<GunPose> } | null = null;
-  private medicRig: { limbs: MedicLimb[]; geometries: THREE.BufferGeometry[]; uniform: THREE.Object3D[]; labelVisible: boolean; inverse: THREE.Quaternion; target: THREE.Vector3 } | null = null;
 
   constructor(name: string, color: string, look: Look) {
     this.look = { ...look };
@@ -776,82 +707,9 @@ export class Person {
 
   /** Takes it out of the scene and frees its sprites (its materials are shared). */
   dispose() {
-    this.medicPose(null);
     this.root.removeFromParent();
     if (this.label) disposeSprite(this.label);
     this.endEmote();
-  }
-
-  /** Overrides ordinary animation for a medic carrying a stretcher. Null restores normal limbs. */
-  medicPose(pose: MedicPose | null) {
-    if (!pose) {
-      if (!this.medicRig) return;
-      this.medicRig.limbs.forEach((limb, i) => limb.restore(i < 2));
-      for (const item of this.medicRig.uniform) item.removeFromParent();
-      for (const geometry of this.medicRig.geometries) geometry.dispose();
-      for (const o of [this.crew, ...this.boots]) o.visible = true;
-      const tag = this.label;
-      if (tag) tag.visible = this.medicRig.labelVisible;
-      this.medicRig = null;
-      this.body.position.set(0, 0, 0);
-      this.body.rotation.set(0, 0, 0);
-      this.head.rotation.set(0, 0, 0);
-      return;
-    }
-    if (!this.medicRig) {
-      const forearm = new THREE.CapsuleGeometry(0.075, 0.14, 3, 8);
-      const shin = new THREE.CapsuleGeometry(0.09, 0.04, 3, 8);
-      const boot = new THREE.BoxGeometry(0.16, 0.09, 0.23);
-      const patch = new THREE.BoxGeometry(1, 1, 1);
-      const cap = new THREE.CylinderGeometry(0.34, 0.35, 0.12, 12);
-      const limbs: MedicLimb[] = [];
-      for (const [i, arm] of [this.armL, this.armR].entries()) {
-        const hand = arm.children[1];
-        hand.name = i ? 'medic-right-hand' : 'medic-left-hand';
-        limbs.push(new MedicLimb(arm, hand, 0.29, 0.29, 0.4, forearm));
-      }
-      for (const [i, leg] of [this.legL, this.legR].entries()) {
-        const foot = mesh(boot, toon('#202936'), 0, 0, 0, false);
-        foot.name = i ? 'medic-right-foot' : 'medic-left-foot';
-        limbs.push(new MedicLimb(leg, foot, 0.22, 0.22, 0.42, shin));
-      }
-      const hat = mesh(cap, this.shirt, 0, 0.39, 0, false);
-      this.head.add(hat);
-      const uniform: THREE.Object3D[] = [hat];
-      for (const [w, h] of [
-        [0.16, 0.045],
-        [0.045, 0.16],
-      ]) {
-        const cross = mesh(patch, toon('#d84a45'), 0, 0.77, 0.265, false);
-        cross.scale.set(w, h, 0.015);
-        this.body.add(cross);
-        uniform.push(cross);
-      }
-      for (const o of [this.crew, ...this.boots]) o.visible = false;
-      this.medicRig = { limbs, geometries: [forearm, shin, boot, patch, cap], uniform, labelVisible: this.label?.visible ?? false, inverse: new THREE.Quaternion(), target: new THREE.Vector3() };
-    }
-    const rig = this.medicRig;
-    // A medic on the job shows no name: its red cross takes the place of a badge.
-    const tag = this.label;
-    if (tag) tag.visible = false;
-    this.body.position.set(0, -0.24 * pose.crouch, 0);
-    this.body.rotation.set(0.4 * pose.crouch, 0, 0);
-    rig.inverse.copy(this.body.quaternion).invert();
-    rig.target.copy(pose.left).sub(this.body.position).applyQuaternion(rig.inverse);
-    rig.limbs[0].pose(rig.target, -1, 0.2);
-    rig.target.copy(pose.right).sub(this.body.position).applyQuaternion(rig.inverse);
-    rig.limbs[1].pose(rig.target, 1, 0.2);
-    for (let i = 0; i < 2; i++) {
-      const step = Math.sin(pose.stride + i * Math.PI) * (1 - pose.crouch);
-      rig.target
-        .set(i ? 0.13 : -0.13, 0.115 + Math.max(0, step) * 0.055, step * 0.12)
-        .sub(this.body.position)
-        .applyQuaternion(rig.inverse);
-      const limb = rig.limbs[i + 2];
-      limb.pose(rig.target, 0, 1);
-      limb.endpoint.quaternion.copy(limb.lower.quaternion).invert().multiply(rig.inverse);
-    }
-    this.head.rotation.set(0.15 * pose.crouch, 0, 0);
   }
 
   /**
@@ -1263,6 +1121,8 @@ const CARD_SCALE = 0.55;
 /** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
 export const FADE_NEAR = 1.4;
 export const FADE_FAR = 6.4;
+export const LEVITATE_TIME = 3;
+export const LEVITATE_HEIGHT = 1.4;
 
 /** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
 export function labelFade(d: number): number {
@@ -1306,13 +1166,15 @@ export class Worker {
   private cheerT = 0;
   /** Up on its desk dancing (a pull request merged): where, and how many seconds in. */
   private dancing: { stage: Stage; t: number } | null = null;
+  /** Swish and flick lifts it briefly without changing its task or status. */
+  private levitating: number | null = null;
   private pupils: THREE.Mesh[] = [];
   private feet: THREE.Mesh[] = [];
   /** Sent home: the box of its things in its arms, and how far into its waddle it is. */
   private leaving: { box: THREE.Group; boxT: number; stride: number } | null = null;
   /** Shot: light out, face slack, flat where it fell while its session keeps running (see die). */
   private dead = false;
-  /** Walking instead of standing, on its way out or while carried by the medics. */
+  /** Walking instead of standing, on its way out. */
   walking = false;
   /** Full-rate motion, rather than a hop enabled but held still beside its finished task card. */
   get animating(): boolean {
@@ -1322,6 +1184,7 @@ export class Worker {
       this.stride > 0 ||
       this.spawnT < 1 ||
       !!this.dancing ||
+      this.levitating !== null ||
       !!this.leaving ||
       this.cheerT > 0 ||
       this.twirlT >= 0 ||
@@ -1481,12 +1344,19 @@ export class Worker {
     this.cheerT = seconds;
   }
 
+  /** A harmless lift above its seat, easing up and back down at full size. */
+  levitate(): boolean {
+    if (this.dead || this.leaving || this.walking || this.dancing || this.levitating !== null || isAsleep(this.status)) return false;
+    this.levitating = 0;
+    return true;
+  }
+
   /**
    * Hops up on to `stage` (its desk), dances for a few seconds with its light flashing like a disco
    * ball, and hops back down into its seat. Asked again mid-dance, it stays up and dances on.
    */
   dance(stage: Stage) {
-    if (this.leaving || this.dead) return;
+    if (this.leaving || this.dead || this.levitating !== null) return;
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1498,10 +1368,11 @@ export class Worker {
     } else d.t = Math.min(d.t, DANCE.up);
   }
 
-  /** Back in its seat at once, mid-dance or not (it's being sent home). */
+  /** Back in its seat at once, mid-dance or levitation (it's being sent home or downed). */
   stopDancing() {
-    if (!this.dancing) return;
+    if (!this.dancing && this.levitating === null) return;
     this.dancing = null;
+    this.levitating = null;
     this.settle();
   }
 
@@ -1524,6 +1395,7 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
     this.bounceT = 0;
@@ -1660,7 +1532,7 @@ export class Worker {
 
   /**
    * Called every frame, since the card is redrawn whenever what it says changes. Opacity only:
-   * `visible` belongs to whoever hides the labels outright (a medic team carrying it off).
+   * `visible` belongs to whoever hides the labels outright (a heavenly ascent).
    */
   private fadeLabels() {
     for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = this.labelAlpha;
@@ -1671,6 +1543,14 @@ export class Worker {
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     if (this.dead) return this.flatline(dt);
+    if (this.levitating !== null) {
+      this.levitating = Math.min(LEVITATE_TIME, this.levitating + dt);
+      this.root.position.y = LEVITATE_HEIGHT * Math.sin((Math.PI * this.levitating) / LEVITATE_TIME) ** 2;
+      if (this.levitating >= LEVITATE_TIME) {
+        this.root.position.y = 0;
+        this.levitating = null;
+      }
+    }
     this.cheerT = Math.max(0, this.cheerT - dt);
     // Waiting on you: a couple of seconds of jumping, then arms crossed and a tapping foot, and round again.
     this.waitT = this.status === 'needs_input' ? this.waitT + dt : 0;

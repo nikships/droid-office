@@ -33,7 +33,16 @@ let quitting = false;
 /** Set while the app itself replaces the page, which the office's "Leave the office?" guard mustn't stop. */
 let replacing = false;
 
-const updates = new Updates({ log: path.join(logDir, 'updates.log'), beforeInstall: () => stopOffice(true) });
+const updates = new Updates({
+  log: path.join(logDir, 'updates.log'),
+  // Squirrel closes the windows before app.quit's before-quit, so the "Leave the office?" guard
+  // has to know now that the app is quitting.
+  beforeInstall: () => {
+    quitting = true;
+    return stopOffice(true);
+  },
+  parent: () => (win && !win.isDestroyed() ? win : undefined),
+});
 
 function page(title: string, detail = ''): string {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
