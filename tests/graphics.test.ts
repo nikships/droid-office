@@ -5,14 +5,15 @@ import { parseIoreg } from '../src/server/gpu-stats.js';
 
 test('graphics settings default to native resolution with MSAA and the overlay on', () => {
   assert.deepEqual(normalizeGraphics(undefined), GRAPHICS_DEFAULTS);
-  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, stats: true });
+  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', stats: true });
 });
 
 test('saved graphics settings are clamped and snapped, bad values fall back', () => {
-  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, stats: false }), { scale: 0.7, taa: true, sharpen: 1, stats: false });
+  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, shadows: 'off', stats: false }), { scale: 0.7, taa: true, sharpen: 1, shadows: 'off', stats: false });
+  assert.equal(normalizeGraphics({ shadows: 'live' }).shadows, 'live');
   assert.equal(normalizeGraphics({ scale: 0.1 }).scale, 0.5);
   assert.equal(normalizeGraphics({ scale: 4 }).scale, 1);
-  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, stats: 'yes' }), GRAPHICS_DEFAULTS);
+  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', stats: 'yes' }), GRAPHICS_DEFAULTS);
   assert.equal(normalizeScale(0.775), 0.8);
 });
 
@@ -48,15 +49,19 @@ test('GPU busy is the share of wall time spent on GPU work, capped at 100%', () 
   assert.equal(gpuBusy(10, 0), 0);
 });
 
-test('the overlay names fps, GPU time, the Mac GPU and how the scene is drawn', () => {
-  const base = { fps: 119.6, frameMs: 8.36, render: { width: 2016, height: 1260 }, output: { width: 2880, height: 1800 } };
-  assert.equal(statsText({ ...base, gpu: { ms: 3.214, busy: 0.384 }, system: 52, scale: 0.7, taa: true }), ['120 FPS · 8.4 ms', 'GPU 3.21 ms/frame · 38% busy', 'Mac GPU 52%', '70% 2016×1260 → 2880×1800 · TAAU'].join('\n'));
+test('the overlay names fps, GPU time, the Mac GPU, how the scene is drawn and its shadows', () => {
+  const base = { fps: 119.6, frameMs: 8.36, render: { width: 2016, height: 1260 }, output: { width: 2880, height: 1800 }, shadows: { mode: 'smart' as const, redrawn: 0.04 } };
   assert.equal(
-    statsText({ ...base, render: base.output, gpu: null, gpuNote: 'timing unavailable in this browser', system: null, scale: 1, taa: false }),
-    ['120 FPS · 8.4 ms', 'GPU timing unavailable in this browser', '100% 2880×1800 · MSAA'].join('\n'),
+    statsText({ ...base, gpu: { ms: 3.214, busy: 0.384 }, system: 52, scale: 0.7, taa: true }),
+    ['120 FPS · 8.4 ms', 'GPU 3.21 ms/frame · 38% busy', 'Mac GPU 52%', '70% 2016×1260 → 2880×1800 · TAAU', 'Shadows smart · redrawn 4% of frames'].join('\n'),
   );
-  assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: true }), /· TAA$/);
-  assert.match(statsText({ ...base, gpu: null, system: null, scale: 0.5, taa: false }), /· bilinear$/);
+  assert.equal(
+    statsText({ ...base, render: base.output, gpu: null, gpuNote: 'timing unavailable in this browser', system: null, scale: 1, taa: false, shadows: { mode: 'live', redrawn: 1 } }),
+    ['120 FPS · 8.4 ms', 'GPU timing unavailable in this browser', '100% 2880×1800 · MSAA', 'Shadows live · redrawn 100% of frames'].join('\n'),
+  );
+  assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: true }), /· TAA\n/);
+  assert.match(statsText({ ...base, gpu: null, system: null, scale: 0.5, taa: false }), /· bilinear\n/);
+  assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: false, shadows: { mode: 'off', redrawn: 0 } }), /\nShadows off$/);
 });
 
 test('ioreg output gives the busiest GPU', () => {

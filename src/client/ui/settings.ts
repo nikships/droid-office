@@ -15,7 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
-import { RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type GraphicsSettings } from '../graphics';
+import { RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type GraphicsSettings, type ShadowMode } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -788,6 +788,17 @@ export function openSettings(
     () => settings.graphics.taa,
     (on) => graphicsSet({ taa: on }),
   );
+  const shadows = radios<ShadowMode>(
+    'Shadows',
+    [
+      ['live', 'Live'],
+      ['smart', 'Smart'],
+      ['off', 'Off'],
+    ],
+    () => settings.graphics.shadows,
+    (mode) => graphicsSet({ shadows: mode }),
+  );
+  const shadowsNote = desc();
   const stats = toggle(
     'Performance overlay',
     () => settings.graphics.stats,
@@ -805,7 +816,13 @@ export function openSettings(
       s.pct.textContent = `${p}%`;
     }
     taa.paint();
+    shadows.paint();
     stats.paint();
+    shadowsNote.textContent = {
+      live: 'The moon’s shadow map is redrawn every frame, whatever moves.',
+      smart: 'The moon’s shadow map is redrawn only on frames where something that casts a shadow moved, came or went. Shadows look the same as Live; a still office skips most of their cost.',
+      off: 'No shadows. Saves about as much as Smart in a still office, and also while workers walk about.',
+    }[g.shadows];
     const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
     scaleNote.textContent =
       g.scale >= 1
@@ -849,10 +866,13 @@ export function openSettings(
         }),
         card('Sharpening', { desc: sharpenNote, control: sharpen.row }),
       ),
+      group('Lighting', card('Shadows', { desc: shadowsNote, control: shadows.row })),
       group(
         'Diagnostics',
         card('Performance overlay', {
-          desc: desc('Bottom right: frames per second, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), and the render resolution.'),
+          desc: desc(
+            'Bottom right: frames per second, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), the render resolution, and how often the shadow map was redrawn.',
+          ),
           control: stats.el,
         }),
       ),
