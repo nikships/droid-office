@@ -245,6 +245,7 @@ export class Surface {
     // Closing the window (Esc in the frame, ✕, another card) removes the frame before its idle save: keep what was typed.
     this.saveTyped(this.slot?.focus);
     this.disposed = true;
+    this.incoming = null;
     this.ro.disconnect();
     for (const off of this.offs) off();
     clearTimeout(this.locateTimer);
@@ -483,7 +484,8 @@ export class Surface {
   }
 
   private swapIn(slot: Slot) {
-    if (this.incoming !== slot) return;
+    // Its timers may still fire after the window closed.
+    if (this.disposed || this.incoming !== slot) return;
     const old = this.slot;
     const hadFocus = !!old && document.activeElement === old.iframe;
     this.incoming = null;

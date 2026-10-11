@@ -675,7 +675,7 @@ export function formatRead(r, { now, full, pngs }) {
 export function refusal(status, body) {
   const said = typeof body?.error === 'string' ? body.error : typeof body?.error?.message === 'string' ? body.error.message : '';
   if (status === 401) return `The office didn't accept this agent's token (401)${said ? `: ${said}` : ''}. Is this the terminal of a Droid Office worker that's still running?`;
-  if (status === 409 && body?.reason === 'expired') return said;
+  if (status === 409 && body?.reason === 'expired') return said || 'The office no longer knows this run (its epoch expired), so it refused the batch rather than risk applying it twice. Nothing was changed: run the command again.';
   if (status === 422) return said || 'The office refused the change. Nothing was changed.';
   return `The office said no (${status})${said ? `: ${said}` : ''}.`;
 }
@@ -706,7 +706,7 @@ async function send(req, fetchImpl, sleep) {
         await sleep(1000);
         continue;
       }
-      throw new Error(`Couldn't reach the office at ${new URL(req.url).origin} (${code ?? err?.message ?? err}). Is it running?`);
+      throw new Unreachable(`Couldn't reach the office at ${new URL(req.url).origin} (${code ?? err?.message ?? err}). Is it running?`);
     }
   }
 }
@@ -722,18 +722,36 @@ function readStdin(stdin) {
 }
 
 class Refused extends Error {}
+/** The office didn't answer: a change may or may not have been applied before it went quiet. */
+class Unreachable extends Error {}
+
+/**
+ * Text from the board (titles, comments, stickies, state) as it is safe to print in a terminal:
+ * without escape sequences or other control characters, which another author could use to rewrite
+ * what this terminal shows.
+ */
+export function printable(s) {
+  return String(s).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}
 
 /** Writes a read's PNGs: `<dir>/<card>.png`, or `<card>-1.png`, `<card>-2.png`… for a tall page in tiles. */
 function writePngs(r, dir) {
   const written = new Map();
-  mkdirSync(dir, { recursive: true });
   for (const c of r.cards) {
     if (!c.png?.ok) continue;
-    const files = c.png.tiles.map((_, i) => path.join(dir, c.png.tiles.length === 1 ? `${c.id}.png` : `${c.id}-${i + 1}.png`));
-    c.png.tiles.forEach((t, i) => writeFileSync(files[i], Buffer.from(t, 'base64')));
-    const fresh = c.png.current ? 'it is the card as it is now' : 'the card has changed since';
-    written.set(c.id, `${files.join(', ')} (${c.png.width}×${c.png.height}, revision ${c.png.rev}, rendered ${ago(c.png.at, Date.now())}; ${fresh}${c.png.capped ? `; cut off at ${c.png.capped.capPx}px` : ''})`);
-    c.png = { ...c.png, tiles: undefined, files };
+    // A card whose image can't be written is reported like one that couldn't be rendered, so the
+    // read of the rest still comes out and that card keeps its read point.
+    try {
+      mkdirSync(dir, { recursive: true });
+      const tiles = c.png.tiles ?? [];
+      const files = tiles.map((_, i) => path.join(dir, tiles.length === 1 ? `${c.id}.png` : `${c.id}-${i + 1}.png`));
+      tiles.forEach((t, i) => writeFileSync(files[i], Buffer.from(t, 'base64')));
+      const fresh = c.png.current ? 'it is the card as it is now' : 'the card has changed since';
+      written.set(c.id, `${files.join(', ')} (${c.png.width}×${c.png.height}, revision ${c.png.rev}, rendered ${ago(c.png.at, Date.now())}; ${fresh}${c.png.capped ? `; cut off at ${c.png.capped.capPx}px` : ''})`);
+      c.png = { ...c.png, tiles: undefined, files };
+    } catch (e) {
+      c.png = { ok: false, error: `Couldn't write its PNG to ${dir}: ${e.message}.` };
+    }
   }
   return written;
 }
@@ -747,8 +765,11 @@ export async function main(argv, io = {}) {
   const env = io.env ?? process.env;
   const stdinStream = io.stdin ?? process.stdin;
   const fetchImpl = io.fetch ?? fetch;
-  const out = io.out ?? ((s) => process.stdout.write(`${s}\n`));
-  const err = io.err ?? ((s) => process.stderr.write(`${s}\n`));
+  const rawOut = io.out ?? ((s) => process.stdout.write(`${s}\n`));
+  // JSON output escapes control characters itself; everything else is cleaned before it's printed.
+  const out = (s, { raw = false } = {}) => rawOut(raw ? s : printable(s));
+  const rawErr = io.err ?? ((s) => process.stderr.write(`${s}\n`));
+  const err = (s) => rawErr(printable(s));
   const sleep = io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const now = io.now ?? Date.now;
   const cwd = io.cwd ?? process.cwd();
@@ -758,6 +779,7 @@ export async function main(argv, io = {}) {
     stdinText = stdinStream.isTTY ? '' : await readStdin(stdinStream);
     return stdinText;
   };
+  let todo;
   try {
     const cmd = parseArgs(argv);
     if (cmd.cmd === 'help') {
@@ -766,7 +788,7 @@ export async function main(argv, io = {}) {
     }
     const json = cmd.opts['--json'] === true;
     const office = officeEnv(env);
-    const todo = await plan(cmd, stdin, cwd);
+    todo = await plan(cmd, stdin, cwd);
     const call = async (body) => {
       const url = new URL(`${office.url}/office/whiteboard`);
       url.searchParams.set('worker', office.worker);
@@ -779,7 +801,7 @@ export async function main(argv, io = {}) {
     const apply = (ops) => call({ action: 'apply', envelope: { epoch: hello.epoch, seq: ++seq, ops } });
 
     if (todo.hello) {
-      if (json) out(JSON.stringify(hello, null, 2));
+      if (json) out(JSON.stringify(hello, null, 2), { raw: true });
       else {
         const r = hello.renderer?.available ? 'Cards render to PNGs.' : (hello.renderer?.reason ?? "Cards don't render to PNGs here.");
         out(`You're ${hello.worker.name} (${hello.worker.id}) on the ${hello.floor.name} floor. Its Whiteboard has ${hello.cards} card${hello.cards === 1 ? '' : 's'} (revision ${hello.rev}). ${r}`);
@@ -789,10 +811,10 @@ export async function main(argv, io = {}) {
     if (todo.read) {
       const r = await call({ action: 'read', ...(todo.read.cards ? { cards: todo.read.cards } : {}), ...(todo.read.png ? { png: true } : {}) });
       const pngs = todo.read.png ? writePngs(r, todo.read.png) : undefined;
-      if (json) out(JSON.stringify(r, null, 2));
+      if (json) out(JSON.stringify(r, null, 2), { raw: true });
       else out(formatRead(r, { now: now(), full: !!todo.read.cards, pngs }));
       // Only once everything is out: a card whose image couldn't be made stays unread.
-      const read = r.returned.filter((id) => !todo.read.png || !r.cards.some((c) => c.id === id && !c.png?.ok));
+      const read = (r.returned ?? []).filter((id) => !todo.read.png || !r.cards.some((c) => c.id === id && !c.png?.ok));
       if (read.length) await apply([{ op: 'read', cards: read, rev: r.rev }]);
       return 0;
     }
@@ -803,12 +825,12 @@ export async function main(argv, io = {}) {
       let v = card.state;
       for (const k of todo.state.path) v = v && typeof v === 'object' && !Array.isArray(v) && Object.hasOwn(v, k) ? v[k] : undefined;
       if (v === undefined) throw new Refused(`${todo.state.card} has nothing at ${todo.state.path.join('.')}`);
-      out(JSON.stringify(v, null, 2));
+      out(JSON.stringify(v, null, 2), { raw: true });
       return 0;
     }
     const res = await apply(todo.ops);
     if (json) {
-      out(JSON.stringify({ ...res, ...(todo.card ? { card: todo.card } : {}), ...(todo.id ? { id: todo.id } : {}) }, null, 2));
+      out(JSON.stringify({ ...res, ...(todo.card ? { card: todo.card } : {}), ...(todo.id ? { id: todo.id } : {}) }, null, 2), { raw: true });
       return 0;
     }
     const at = `revision ${res.rev}${res.duplicate ? ', already applied' : ''}`;
@@ -833,6 +855,10 @@ export async function main(argv, io = {}) {
     return 0;
   } catch (e) {
     err(`office-whiteboard: ${e.message}`);
+    if (e instanceof Unreachable && todo?.ops) {
+      const made = todo.card ? ` If it did, card ${todo.card} exists already.` : '';
+      err(`The office may have applied the change before it went quiet.${made} Run office-whiteboard read to check before you try again.`);
+    }
     if (e instanceof UsageError) err(`\n${USAGE}`);
     return e instanceof UsageError ? 2 : 1;
   }

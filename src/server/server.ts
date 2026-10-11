@@ -350,7 +350,9 @@ export async function startServer(cfg: Config) {
       const r = await handleAgent(floor.whiteboard, agent, { id: floor.id, name: floor.def.name }, body);
       send(res, r.status, r.body);
     } catch (err) {
-      send(res, 500, { error: `The board couldn't be changed: ${(err as Error).message}. Nothing was applied; try again.` });
+      // The batch may have been committed before what failed, so don't promise it wasn't: a retry in
+      // the same epoch is applied once either way.
+      send(res, 500, { error: `The office failed while handling this: ${(err as Error).message}. Run office-whiteboard read to see whether the change is on the board before you try again.` });
     }
   };
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their

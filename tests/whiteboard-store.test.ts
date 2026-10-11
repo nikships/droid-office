@@ -449,6 +449,30 @@ test('a corrupt board.json is set aside and the board starts empty', (t) => {
   assert.ok(readFileSync(path.join(dir, 'key'), 'utf8').length === 64);
 });
 
+test('an unreadable key is kept aside, loudly, and a new one is made', (t) => {
+  const { checkout } = dirs(t);
+  const dir = path.join(checkout, '.droid-office', 'whiteboard');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'key'), 'not hex');
+  const said: string[] = [];
+  const err = console.error;
+  console.error = (s: string) => said.push(s);
+  t.after(() => {
+    console.error = err;
+  });
+  const store = open(checkout);
+  store.stop();
+  const kept = readdirSync(dir).filter((n) => n.startsWith('key.unreadable-'));
+  assert.equal(kept.length, 1);
+  assert.equal(readFileSync(path.join(dir, kept[0]), 'utf8'), 'not hex');
+  assert.match(readFileSync(path.join(dir, 'key'), 'utf8'), /^[0-9a-f]{64}$/);
+  assert.ok(!existsSync(path.join(dir, 'key.tmp')));
+  assert.ok(said.some((s) => s.includes('not a 32-byte hex key')));
+  const again = open(checkout);
+  again.stop();
+  assert.equal(readdirSync(dir).filter((n) => n.startsWith('key.unreadable-')).length, 1, 'a good key is reused');
+});
+
 test('loadPage and loadPackage refuse what they cannot take', (t) => {
   const { work } = dirs(t);
   assert.throws(() => loadPage(path.join(work, 'none.html')));

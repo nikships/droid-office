@@ -285,6 +285,8 @@ type Loaded<T> = { value?: T | null; used: number };
 
 /** How many decoded images the wall keeps; each card's latest thumbnail and the tiles of one view fit with room to spare. */
 const MAX_IMAGES = 32;
+/** How long a failed image or status fetch waits before the wall asks for it again. */
+const LOAD_RETRY_MS = 10_000;
 
 /**
  * Paints the Whiteboard. `render` draws only when what it would show changed; images come in by
@@ -450,7 +452,15 @@ export class WhiteboardTexture {
     get(url)
       .then(
         (v) => (entry.value = v),
-        () => (entry.value = null),
+        () => {
+          entry.value = null;
+          // A failure isn't kept for good: after a pause the next repaint asks again.
+          setTimeout(() => {
+            if (cache.get(url) !== entry) return;
+            cache.delete(url);
+            this.repaint();
+          }, LOAD_RETRY_MS);
+        },
       )
       .finally(() => {
         if (cache.get(url) === entry) this.repaint();

@@ -932,14 +932,32 @@ export class WhiteboardStore {
 
   private loadKey(): Buffer {
     const file = path.join(this.dir, 'key');
-    try {
-      const k = Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
-      if (k.length === 32) return k;
-    } catch {
-      // first start
+    if (existsSync(file)) {
+      let reason: string;
+      try {
+        const k = Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
+        if (k.length === 32) return k;
+        reason = 'it is not a 32-byte hex key';
+      } catch (err) {
+        reason = (err as Error).message;
+      }
+      // A new key ends every card capability and epoch, so say so loudly and keep the old file to look at.
+      const kept = `${file}.unreadable-${Date.now()}`;
+      try {
+        renameSync(file, kept);
+      } catch {}
+      console.error(`[whiteboard] ${file} couldn't be read (${reason}); kept it as ${kept} and made a new key. Open card windows reload, and running office-whiteboard commands must be run again.`);
     }
     const k = randomBytes(32);
-    writeFileSync(file, k.toString('hex'), { mode: 0o600 });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, k.toString('hex'), { mode: 0o600 });
+    const fd = openSync(tmp, 'r');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, file);
     return k;
   }
 

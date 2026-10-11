@@ -101,7 +101,8 @@ step "npm install (builds the office)"
 # folder the service shares. None of this stops the office from starting: a step that fails says so, and
 # the Whiteboard reports renders as unavailable until it is fixed.
 step "Installing Chromium for the Whiteboard"
-BROWSERS="$(node /opt/droid-office/bin/droid-office.js browser path)"
+BROWSERS="$(node /opt/droid-office/bin/droid-office.js browser path 2>/dev/null)" || BROWSERS=""
+[[ -n "$BROWSERS" ]] || echo "    (couldn't ask the office where its browser goes; the steps below use its default)"
 # The libraries Chromium needs, as root through playwright-core's own command (apt, no other changes).
 if ! quiet_soft sudo -E env DEBIAN_FRONTEND=noninteractive node /opt/droid-office/node_modules/playwright-core/cli.js install-deps chromium; then
   echo "    (carrying on without Chromium's libraries: run 'sudo node /opt/droid-office/node_modules/playwright-core/cli.js install-deps chromium' on the box)"
@@ -115,11 +116,15 @@ fi
 # the sandbox off, so this profile is what lets it render there. Older releases have no such rule.
 if [[ -e /etc/apparmor.d/abi/4.0 ]] && command -v apparmor_parser >/dev/null 2>&1; then
   profile=$(mktemp)
-  DROID_OFFICE_BROWSERS_PATH="$BROWSERS" node /opt/droid-office/bin/droid-office.js browser apparmor-profile >"$profile"
-  sudo install -m 644 -o root -g root "$profile" /etc/apparmor.d/droid-office-chromium
+  if ! DROID_OFFICE_BROWSERS_PATH="$BROWSERS" node /opt/droid-office/bin/droid-office.js browser apparmor-profile >"$profile" 2>/dev/null || [[ ! -s "$profile" ]]; then
+    echo "    (couldn't write the AppArmor profile for Chromium; see docs/guide.md)"
+  elif ! quiet_soft sudo install -m 644 -o root -g root "$profile" /etc/apparmor.d/droid-office-chromium; then
+    echo "    (couldn't install the AppArmor profile for Chromium; see docs/guide.md)"
+  else
+    quiet_soft sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium ||
+      echo "    (the AppArmor profile for Chromium didn't load; see docs/guide.md)"
+  fi
   rm -f "$profile"
-  quiet_soft sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium ||
-    echo "    (the AppArmor profile for Chromium didn't load; see docs/guide.md)"
 fi
 
 # The office keeps its data (floors, workers, boards) in ~/droid-office and

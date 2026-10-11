@@ -19,6 +19,8 @@ import { type PinnedCard, type RenderImage, type RenderStatus, type WhiteboardSt
 
 /** How long a read's `--png` waits on each card's render by default. */
 export const READ_RENDER_TIMEOUT_MS = 30_000;
+/** How many of a `read --png`'s cards render at once. */
+export const READ_RENDERS_AT_ONCE = 3;
 const MAX_RENDER_TIMEOUT_MS = 120_000;
 /** The page is sent as text in a read when it is HTML of at most this many bytes; otherwise read its file. */
 const HTML_INLINE_MAX = 2 * 1024 * 1024;
@@ -134,13 +136,18 @@ export async function readBoard(store: WhiteboardStore, reader: string, floor: {
   const unknown = wanted ? wanted.filter((id) => !findCard(board, id) && !removedCards.some((t) => t.id === id)) : [];
   const pins = opts.png ? new Map(onBoard.map((c) => [c.id, store.pin(c.id, board)])) : undefined;
   try {
-    const cards: CardOut[] = [];
-    for (const card of onBoard) {
-      const out = cardOut(store, board, reader, card);
-      const pin = pins?.get(card.id);
-      if (pin) out.png = await png(store, pin, opts.timeoutMs ?? READ_RENDER_TIMEOUT_MS);
-      cards.push(out);
-    }
+    // Every card is pinned to the same snapshot, so a few render side by side, and slow cards don't
+    // each add their whole timeout to the read. A read's renders skip the renderer's queue, so the
+    // pool here is what bounds the browser pages open at once.
+    const cards: CardOut[] = onBoard.map((card) => cardOut(store, board, reader, card));
+    let next = 0;
+    const renderNext = async () => {
+      for (let i = next++; i < onBoard.length; i = next++) {
+        const pin = pins?.get(onBoard[i].id);
+        if (pin) cards[i].png = await png(store, pin, opts.timeoutMs ?? READ_RENDER_TIMEOUT_MS);
+      }
+    };
+    if (pins) await Promise.all(Array.from({ length: Math.min(READ_RENDERS_AT_ONCE, onBoard.length) }, renderNext));
     return {
       rev: board.rev,
       floor,

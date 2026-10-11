@@ -26,7 +26,8 @@ export function routePinged(msg: Pinged) {
 export function openPing(net: Net) {
   const results = new Map<string, { ok: boolean; text: string } | 'sending'>();
   const list = h('ul.list.boxed.wb-ping-list');
-  const body = h('div.body.stack.tight', {}, h('p.wb-dialog-lead', {}, 'The office types a line into the worker’s terminal telling it to read the Whiteboard. Edit the line in ⚙️ Settings → Prompts.'), list);
+  const none = emptyState('🤖', 'No workers on this floor', 'Hire one at a desk first.');
+  const body = h('div.body.stack.tight', {}, h('p.wb-dialog-lead', {}, 'The office types a line into the worker’s terminal telling it to read the Whiteboard. Edit the line in ⚙️ Settings → Prompts.'), list, none);
   const el = h(
     'div.modal.wb-ping',
     { 'aria-label': 'Ping a worker', tabindex: '-1' },
@@ -36,10 +37,11 @@ export function openPing(net: Net) {
   );
   const paint = () => {
     const rows = pingRows(store.workers.values(), STATUS_LABEL);
-    if (!rows.length) {
-      list.replaceWith(emptyState('🤖', 'No workers on this floor', 'Hire one at a desk first.'));
-      return;
-    }
+    // Both stay in the window, so a worker sitting down while the picker is open shows up in it.
+    list.hidden = !rows.length;
+    none.hidden = !!rows.length;
+    for (const id of results.keys()) if (!rows.some((r) => r.id === id)) results.delete(id);
+    if (!rows.length) return;
     list.replaceChildren(
       ...rows.map((r) => {
         const res = results.get(r.id);
