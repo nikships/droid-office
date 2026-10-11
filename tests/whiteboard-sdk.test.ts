@@ -357,8 +357,11 @@ test('a content reload keeps the focused field, its caret and what was typed; ty
   assert.equal((await active(f2))[1], 'helXlo', 'keys go into the field');
 
   // Typing when the content changes: the reload waits for a pause, and nothing typed is lost.
+  // The host only holds the reload once it has heard the unsaved value. Changing the content
+  // before that message lands reloads at once, which races a busy runner.
   await f2.click('textarea[name=notes]');
   await page.keyboard.type('abc');
+  await waitFor(() => page.evaluate('told.some(function (m) { return m.type === "focus" && m.field && m.field.key === "notes" && m.field.value === "abc"; })'), 'the host to hear the unsaved notes');
   await page.evaluate(`changeContent('f3', '${hash(3)}')`);
   for (const k of 'def') {
     await delay(150);
