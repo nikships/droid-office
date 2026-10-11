@@ -69,6 +69,7 @@ import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
 import { type Sidearm, SPELL_CONFETTI, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
 import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
+import { protegoWorkers, wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -576,6 +577,9 @@ let drawnArm: Sidearm = settings.sidearm;
 const gunMotion = new GunMotion();
 /** The wand's draw, casts and spells, played on your hands. */
 const wandMotion = new WandMotion();
+/** Lock the intended worker at the start; aim and reach must still agree when the magic lands. */
+let wandRecipient: { spell: 'ship' | 'leviosa'; id: string } | null = null;
+const lastWandShip = new Map<string, number>();
 /** Lumos: the wand's emitter lit, throwing light round you until you put it out (1 again) or away. */
 let lumos = false;
 /** The light Lumos (and a spell leaving the tip) throws on the room, following the tip. */
@@ -609,6 +613,7 @@ function toggleGun() {
 
 /** Both straight away, no move: what's in your hand is gone this frame. */
 function stowArms() {
+  wandRecipient = null;
   gunMotion.stow();
   wandMotion.stow();
   setLumos(false);
@@ -635,7 +640,65 @@ function gunTrick(id: GunTrickId) {
 }
 function wandSpell(id: WandSpellId) {
   if (!wandMotion.spell(id)) return;
+  wandRecipient = null;
+  if (id === 'ship' || id === 'leviosa') {
+    const target = aimedWandWorker(id === 'ship' ? WAND_SHIP_REACH : Infinity);
+    if (target) wandRecipient = { spell: id, id: target.id };
+  }
   hintKey = 'stale';
+}
+
+/** Only a directly aimed worker body; laptop clicks retain their separate UI-opening behavior. */
+function aimedWandWorker(reach = Infinity): { id: string; point: THREE.Vector3 } | null {
+  raycaster.setFromCamera(CROSSHAIR, camera);
+  const result = aimedShot();
+  const id = wandWorker(result ? { workerId: result.workerId, distance: result.hit.distance } : null, reach);
+  return id && result ? { id, point: result.hit.point.clone() } : null;
+}
+
+/** One close-range confetti pop means one shipping prompt, not a direct publish or merge call. */
+function wandShip() {
+  const recipient = wandRecipient;
+  wandRecipient = null;
+  const target = aimedWandWorker(WAND_SHIP_REACH);
+  if (recipient?.spell !== 'ship' || !target || target.id !== recipient.id) return hintToast(`Aim directly at one worker within ${WAND_SHIP_REACH} meters to Ship it`, 'info');
+  const now = performance.now();
+  if (now - (lastWandShip.get(target.id) ?? -Infinity) < WAND_SHIP_COOLDOWN) return hintToast('That worker just received Ship it', 'info');
+  const worker = store.workers.get(target.id);
+  const request = wandShipRequest(worker, officePrompt('wand.ship'));
+  if (typeof request === 'string') return hintToast(request, 'warn');
+  if (!net.send(request)) return hintToast('Reconnect to the office before asking a worker to ship', 'warn');
+  lastWandShip.set(target.id, now);
+  confetti.spray(target.point, camera.getWorldDirection(blowDir).addScaledVector(UP, 0.35).normalize(), 90, SPELL_CONFETTI);
+  addEffect(new Sparkles(target.point, null, { colors: SPELL_TIP, count: 16, speed: 1.1, size: 0.014, seconds: 0.7, lift: 0.3 }));
+  hintToast(`${request.queue ? 'Queued Ship it for' : 'Asked to ship:'} ${worker!.name}`, 'info');
+}
+
+function wandLevitate() {
+  const recipient = wandRecipient;
+  wandRecipient = null;
+  const target = aimedWandWorker();
+  if (recipient?.spell !== 'leviosa' || !target || target.id !== recipient.id) return hintToast('Aim directly at a worker to lift it', 'info');
+  const view = workerViews.get(target.id);
+  if (!view?.model.levitate()) return hintToast('Swish and flick lifts an awake worker resting at its seat', 'info');
+  addEffect(new Sparkles(target.point, null, { colors: SPELL_TIP, count: 28, speed: 0.6, size: 0.016, seconds: 2, lift: 1.2 }));
+}
+
+/** A rescue ward, not a wake-up call for offline processes or protection from the gun. */
+function wandRevive() {
+  const positions = [...workerViews].flatMap(([id, view]) => {
+    const worker = store.workers.get(id);
+    return worker ? [{ worker, pos: view.model.root.getWorldPosition(new THREE.Vector3()) }] : [];
+  });
+  const ids = protegoWorkers(positions, player.pos, store.officeNow());
+  let sent = 0;
+  for (const id of ids)
+    if (net.send({ t: 'worker.revive', workerId: id })) {
+      sent++;
+      const at = workerViews.get(id)!.model.root.getWorldPosition(new THREE.Vector3());
+      addEffect(new Sparkles(at, null, { colors: SPELL_TIP, count: 24, speed: 0.8, size: 0.016, seconds: 1, lift: 1 }));
+    }
+  hintToast(sent ? `Protego: reviving ${sent} downed worker${sent === 1 ? '' : 's'}` : 'No revivable workers within 6 meters', 'info');
 }
 
 /** Lumos on or off: the tip lights, and so does the room round you. */
@@ -690,6 +753,7 @@ function wandCues(cues: readonly WandCue[]) {
         if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 14, speed: 0.5, size: 0.012, seconds: 0.7, lift: 0.2 }));
         break;
       case 'flick':
+        wandLevitate();
         // Swish and flick: sparks lifting off the tip and floating up, light as a feather.
         if (tip) {
           addEffect(new Sparkles(tip, camera.getWorldDirection(blowDir), { colors: SPELL_TIP, count: 26, speed: 0.9, size: 0.016, seconds: 1.6, lift: 1.6 }));
@@ -700,15 +764,17 @@ function wandCues(cues: readonly WandCue[]) {
         // A sparkler's spit: sparks flung every way that fall away as they fade.
         if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 7, speed: 1.3, size: 0.011, seconds: 0.55, lift: -2.2 }));
         break;
+      case 'party':
+        danceParty();
+        confetti.rain(FLOOR, floorArea(FLOOR) * CONFETTI_DENSITY, 3, ceilingOver);
+        confetti.rain(LOFT, floorArea(LOFT) * CONFETTI_DENSITY, 3, () => LOFT.y + LOFT.height - 0.1);
+        break;
       case 'confetti':
-        if (tip) {
-          const out = camera.getWorldDirection(blowDir).addScaledVector(UP, 0.35).normalize();
-          confetti.spray(tip.clone().addScaledVector(out, 0.08), out, 90, SPELL_CONFETTI);
-          addEffect(new Sparkles(tip, out, { colors: SPELL_TIP, count: 16, speed: 1.6, size: 0.014, seconds: 0.5, lift: 0.2 }));
-        }
+        wandShip();
         break;
       case 'shield':
         hands.ward();
+        wandRevive();
         break;
       case 'done':
         if (tip) addEffect(new Sparkles(tip, null, { colors: SPELL_TIP, count: 10, speed: 0.4, size: 0.01, seconds: 0.6, lift: 0.3 }));
@@ -728,7 +794,10 @@ function addEffect(effect: (typeof puffs)[number]) {
 function fireGun() {
   if (drawnArm === 'wand') {
     // The bolt leaves on the flick's release cue, a tenth of a second on (see wandCues).
-    if (wandMotion.cast()) hintKey = 'stale';
+    if (wandMotion.cast()) {
+      wandRecipient = null;
+      hintKey = 'stale';
+    }
     return;
   }
   gunMotion.fire();
@@ -1414,6 +1483,7 @@ function syncWorkers() {
       v.laptop.dispose();
     }
     sound.removeTypist(id);
+    lastWandShip.delete(id);
     workerViews.delete(id);
   }
   arrangeSeats();

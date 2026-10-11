@@ -1121,6 +1121,8 @@ const CARD_SCALE = 0.55;
 /** Over a worker's head, its card and name tag are gone this close to your eyes (metres) and fully shown from FADE_FAR. */
 export const FADE_NEAR = 1.4;
 export const FADE_FAR = 6.4;
+export const LEVITATE_TIME = 3;
+export const LEVITATE_HEIGHT = 1.4;
 
 /** How opaque a worker's card and name tag are, `d` metres from your eyes: looking over its shoulder, they're out of the way. */
 export function labelFade(d: number): number {
@@ -1164,6 +1166,8 @@ export class Worker {
   private cheerT = 0;
   /** Up on its desk dancing (a pull request merged): where, and how many seconds in. */
   private dancing: { stage: Stage; t: number } | null = null;
+  /** Swish and flick lifts it briefly without changing its task or status. */
+  private levitating: number | null = null;
   private pupils: THREE.Mesh[] = [];
   private feet: THREE.Mesh[] = [];
   /** Sent home: the box of its things in its arms, and how far into its waddle it is. */
@@ -1180,6 +1184,7 @@ export class Worker {
       this.stride > 0 ||
       this.spawnT < 1 ||
       !!this.dancing ||
+      this.levitating !== null ||
       !!this.leaving ||
       this.cheerT > 0 ||
       this.twirlT >= 0 ||
@@ -1339,12 +1344,19 @@ export class Worker {
     this.cheerT = seconds;
   }
 
+  /** A harmless lift above its seat, easing up and back down at full size. */
+  levitate(): boolean {
+    if (this.dead || this.leaving || this.walking || this.dancing || this.levitating !== null || isAsleep(this.status)) return false;
+    this.levitating = 0;
+    return true;
+  }
+
   /**
    * Hops up on to `stage` (its desk), dances for a few seconds with its light flashing like a disco
    * ball, and hops back down into its seat. Asked again mid-dance, it stays up and dances on.
    */
   dance(stage: Stage) {
-    if (this.leaving || this.dead) return;
+    if (this.leaving || this.dead || this.levitating !== null) return;
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1356,10 +1368,11 @@ export class Worker {
     } else d.t = Math.min(d.t, DANCE.up);
   }
 
-  /** Back in its seat at once, mid-dance or not (it's being sent home). */
+  /** Back in its seat at once, mid-dance or levitation (it's being sent home or downed). */
   stopDancing() {
-    if (!this.dancing) return;
+    if (!this.dancing && this.levitating === null) return;
     this.dancing = null;
+    this.levitating = null;
     this.settle();
   }
 
@@ -1382,6 +1395,7 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.stopDancing();
     this.bouncing = false;
     this.cheerT = 0;
     this.bounceT = 0;
@@ -1529,6 +1543,14 @@ export class Worker {
     if (this.leaving) return this.carry(this.leaving, dt, t);
     if (this.dancing) return this.boogie(this.dancing, dt, t);
     if (this.dead) return this.flatline(dt);
+    if (this.levitating !== null) {
+      this.levitating = Math.min(LEVITATE_TIME, this.levitating + dt);
+      this.root.position.y = LEVITATE_HEIGHT * Math.sin((Math.PI * this.levitating) / LEVITATE_TIME) ** 2;
+      if (this.levitating >= LEVITATE_TIME) {
+        this.root.position.y = 0;
+        this.levitating = null;
+      }
+    }
     this.cheerT = Math.max(0, this.cheerT - dt);
     // Waiting on you: a couple of seconds of jumping, then arms crossed and a tapping foot, and round again.
     this.waitT = this.status === 'needs_input' ? this.waitT + dt : 0;

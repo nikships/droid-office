@@ -24,9 +24,9 @@ export type WandMoveId = 'draw' | 'holster' | 'cast' | WandSpellId;
  * What a move sounds like and when its magic happens. main.ts turns these into sound (sound.ts
  * wandCue) and into the spell's effect: `release` sends a cast's bolt off the tip, `lumos` turns
  * the light at the tip on or off, `flick`, `confetti` and `shield` set off their spells, `spark`
- * is one spit of the sparkler, and `tick` is one segment of the progress bar lighting up.
+ * is one spit of the sparkler, `party` starts the office dance, and `tick` is one segment of the progress bar lighting up.
  */
-export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'lumos' | 'swish' | 'flick' | 'spark' | 'confetti' | 'tick' | 'done' | 'shield';
+export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'lumos' | 'swish' | 'flick' | 'spark' | 'party' | 'confetti' | 'tick' | 'done' | 'shield';
 
 export const WAND_CHANNELS = ['out', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'twirl', 'spin', 'glow', 'charge', 'trail'] as const;
 export type WandChannel = (typeof WAND_CHANNELS)[number];
@@ -402,7 +402,7 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
         [1.45, 0],
       ],
     },
-    cues: [[0, 'whoosh'], ...SPARKS],
+    cues: [[0, 'whoosh'], [0.24, 'party'], ...SPARKS],
   },
   // Wound back toward you while the progress bar charges, then snapped forward to pop a burst of
   // confetti out in front of you (CONFETTI_AT).
