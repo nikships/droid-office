@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FRAME_DT_CAP, GONG_RING_MS, IDLE_FRAME_MS, SCENE_MOTIONS, advanceClock, frameDelta, gongRinging, renderPace, skyFalling, stillScene, type RenderClock, type RenderSignals } from '../src/client/render-pace.js';
+import { FRAME_DT_CAP, GONG_RING_MS, IDLE_AFTER_MS, IDLE_FRAME_MS, SCENE_MOTIONS, advanceClock, frameDelta, gongRinging, renderPace, skyFalling, stillScene, type RenderClock, type RenderSignals } from '../src/client/render-pace.js';
 
 function signals(patch: Partial<Omit<RenderSignals, 'motion'>> & { motion?: Partial<RenderSignals['motion']> } = {}): RenderSignals {
-  return { hidden: false, covered: false, ...patch, motion: { ...stillScene(), ...patch.motion } };
+  return { hidden: false, covered: false, quietMs: IDLE_AFTER_MS, ...patch, motion: { ...stillScene(), ...patch.motion } };
 }
 
 const off: RenderClock = { mode: 'off', resume: false };
@@ -19,6 +19,14 @@ test('a visible office with nothing moving idles, and each kind of motion goes b
   for (const key of SCENE_MOTIONS) {
     assert.equal(renderPace(signals({ motion: { [key]: true } })), 'full', key);
   }
+});
+
+test('a still office keeps full rate until it has been quiet for the whole idle delay', () => {
+  assert.equal(renderPace(signals({ quietMs: 0 })), 'full');
+  assert.equal(renderPace(signals({ quietMs: IDLE_AFTER_MS - 1 })), 'full');
+  assert.equal(renderPace(signals({ quietMs: IDLE_AFTER_MS })), 'idle');
+  assert.equal(renderPace(signals({ quietMs: IDLE_AFTER_MS * 10 })), 'idle');
+  assert.equal(renderPace(signals({ hidden: true, quietMs: 0 })), 'paused');
 });
 
 test('rain or snow counts, a clear sky does not, and a gong rings for a few seconds', () => {

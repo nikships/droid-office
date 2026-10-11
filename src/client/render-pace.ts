@@ -10,6 +10,12 @@ export type RenderPace = 'full' | 'idle' | 'paused';
  */
 export const IDLE_FRAME_MS = 200;
 
+/**
+ * How long the office must stay still before it drops to the idle pace. A short pause between
+ * moves, or reading a board, keeps full rate; only a room left alone this long slows down.
+ */
+export const IDLE_AFTER_MS = 30_000;
+
 /** The loop's existing hitch cap, in seconds. A pause must not fast-forward across the gap. */
 export const FRAME_DT_CAP = 0.1;
 
@@ -66,6 +72,8 @@ export interface RenderSignals {
    */
   covered: boolean;
   motion: SceneMotion;
+  /** Milliseconds since something in `motion` was last going, or the page last came into view. */
+  quietMs: number;
 }
 
 /** Rain or snow is actually falling, not just a clear night. */
@@ -83,12 +91,12 @@ export function sceneIsMoving(motion: SceneMotion): boolean {
 }
 
 /**
- * Hidden or covered: draw nothing. Visible and something in `motion` is going: every frame.
- * Visible and quiet: the idle pace.
+ * Hidden or covered: draw nothing. Visible and something in `motion` is going, or was within
+ * `IDLE_AFTER_MS`: every frame. Visible and quiet for longer than that: the idle pace.
  */
 export function renderPace(signals: RenderSignals): RenderPace {
   if (signals.hidden || signals.covered) return 'paused';
-  if (sceneIsMoving(signals.motion)) return 'full';
+  if (sceneIsMoving(signals.motion) || signals.quietMs < IDLE_AFTER_MS) return 'full';
   return 'idle';
 }
 

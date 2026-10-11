@@ -45,7 +45,7 @@ import { guardLeaving } from './leave';
 import { store, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
 import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
-import { gongRinging, renderPace, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
+import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
 import { Caffeine } from './caffeine';
@@ -3255,6 +3255,8 @@ let fpsSince = performance.now();
 let framesDrawn = 0;
 /** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
 let lookedUntil = 0;
+/** When the scene last moved or the page last came into view. Full rate holds for IDLE_AFTER_MS after it. */
+let activeAt = performance.now();
 const renderLoop = new RenderLoop({
   pace: currentPace,
   draw: drawFrame,
@@ -3320,12 +3322,16 @@ function sceneMotion(): SceneMotion {
 }
 
 function currentPace(): RenderPace {
+  const now = performance.now();
+  const motion = sceneMotion();
+  if (sceneIsMoving(motion)) activeAt = now;
   return renderPace({
     hidden: document.visibilityState !== 'visible',
     // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
     // it is also false when this window is visible beside another one.
     covered: false,
-    motion: sceneMotion(),
+    motion,
+    quietMs: now - activeAt,
   });
 }
 
@@ -3495,8 +3501,14 @@ function startLoop() {
 }
 
 // A background tab and a fully covered window both show up as visibilityState "hidden".
-document.addEventListener('visibilitychange', () => renderWake());
-window.addEventListener('pageshow', () => renderWake());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') activeAt = performance.now();
+  renderWake();
+});
+window.addEventListener('pageshow', () => {
+  activeAt = performance.now();
+  renderWake();
+});
 // Typing in a window is the terminal's canvas, not the 3D scene.
 window.addEventListener('keydown', () => {
   if (modalOpen() || isTyping()) return;
