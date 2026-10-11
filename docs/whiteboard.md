@@ -4,11 +4,7 @@ The **🧑‍🎨 Whiteboard** replaces the Services board. It is one shared sur
 
 There is no "send feedback" step, no queue and no delivery receipts. The board is shared state. Either side changes it at any time, and either side reads all of it at any time.
 
-<<<<<<< HEAD
-Status: **implemented**. This was the requirements and plan document, kept current while the work was done, the way [factory.md](factory.md) was kept.
-=======
-Status: **built, in its integration pass** on `feat/whiteboard`; see [Acceptance results](#acceptance-results). This is the requirements and plan document. Keep it current while the work is done, the way [factory.md](factory.md) was kept.
->>>>>>> office/dot-49eb
+Status: **implemented**, apart from the renderer checks on Linux, Windows, the EC2 box and the signed Mac app, which haven't been run yet (see [Acceptance results](#acceptance-results)). This was the requirements and plan document, kept current while the work was done, the way [factory.md](factory.md) was kept.
 
 ## The owner's decisions
 
