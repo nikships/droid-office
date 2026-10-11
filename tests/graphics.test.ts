@@ -1,20 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GRAPHICS_DEFAULTS, gpuBusy, halton, jitterAt, jitterPhases, normalizeGraphics, normalizeScale, renderSize, statsText } from '../src/client/graphics.js';
+import { FPS_CAPS, GRAPHICS_DEFAULTS, gpuBusy, halton, jitterAt, jitterPhases, normalizeGraphics, normalizeScale, renderSize, statsText } from '../src/client/graphics.js';
 import { parseIoreg } from '../src/server/gpu-stats.js';
 
 test('graphics settings default to native resolution with MSAA and the overlay on', () => {
   assert.deepEqual(normalizeGraphics(undefined), GRAPHICS_DEFAULTS);
-  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', stats: true });
+  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', fpsCap: 120, stats: true });
 });
 
 test('saved graphics settings are clamped and snapped, bad values fall back', () => {
-  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, shadows: 'off', stats: false }), { scale: 0.7, taa: true, sharpen: 1, shadows: 'off', stats: false });
+  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, shadows: 'off', fpsCap: 60, stats: false }), { scale: 0.7, taa: true, sharpen: 1, shadows: 'off', fpsCap: 60, stats: false });
   assert.equal(normalizeGraphics({ shadows: 'live' }).shadows, 'live');
   assert.equal(normalizeGraphics({ scale: 0.1 }).scale, 0.5);
   assert.equal(normalizeGraphics({ scale: 4 }).scale, 1);
-  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', stats: 'yes' }), GRAPHICS_DEFAULTS);
+  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', fpsCap: 144, stats: 'yes' }), GRAPHICS_DEFAULTS);
   assert.equal(normalizeScale(0.775), 0.8);
+});
+
+test('the frame rate limit is 40, 60 or 120, and anything else saved is 120', () => {
+  assert.deepEqual(FPS_CAPS, [40, 60, 120]);
+  for (const fps of FPS_CAPS) assert.equal(normalizeGraphics({ fpsCap: fps }).fpsCap, fps);
+  for (const bad of [undefined, null, 0, 30, 59.9, 144, 240, Number.POSITIVE_INFINITY, '60', 'unlimited']) assert.equal(normalizeGraphics({ fpsCap: bad }).fpsCap, 120, String(bad));
+  assert.equal(normalizeGraphics({}).fpsCap, 120);
 });
 
 test('the render target is the drawing buffer times the scale, never empty', () => {
@@ -50,16 +57,17 @@ test('GPU busy is the share of wall time spent on GPU work, capped at 100%', () 
 });
 
 test('the overlay names fps, GPU time, the Mac GPU, how the scene is drawn and its shadows', () => {
-  const base = { fps: 119.6, frameMs: 8.36, render: { width: 2016, height: 1260 }, output: { width: 2880, height: 1800 }, shadows: { mode: 'smart' as const, redrawn: 0.04 } };
+  const base = { fps: 119.6, frameMs: 8.36, fpsCap: 120 as const, render: { width: 2016, height: 1260 }, output: { width: 2880, height: 1800 }, shadows: { mode: 'smart' as const, redrawn: 0.04 } };
   assert.equal(
     statsText({ ...base, gpu: { ms: 3.214, busy: 0.384 }, system: 52, scale: 0.7, taa: true }),
-    ['120 FPS · 8.4 ms', 'GPU 3.21 ms/frame · 38% busy', 'Mac GPU 52%', '70% 2016×1260 → 2880×1800 · TAAU', 'Shadows smart · redrawn 4% of frames'].join('\n'),
+    ['120 FPS · cap 120 · 8.4 ms', 'GPU 3.21 ms/frame · 38% busy', 'Mac GPU 52%', '70% 2016×1260 → 2880×1800 · TAAU', 'Shadows smart · redrawn 4% of frames'].join('\n'),
   );
   assert.equal(
     statsText({ ...base, render: base.output, gpu: null, gpuNote: 'timing unavailable in this browser', system: null, scale: 1, taa: false, shadows: { mode: 'live', redrawn: 1 } }),
-    ['120 FPS · 8.4 ms', 'GPU timing unavailable in this browser', '100% 2880×1800 · MSAA', 'Shadows live · redrawn 100% of frames'].join('\n'),
+    ['120 FPS · cap 120 · 8.4 ms', 'GPU timing unavailable in this browser', '100% 2880×1800 · MSAA', 'Shadows live · redrawn 100% of frames'].join('\n'),
   );
   assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: true }), /· TAA\n/);
+  assert.match(statsText({ ...base, fps: 59.8, fpsCap: 60, gpu: null, system: null, scale: 1, taa: false }), /^60 FPS · cap 60 · /);
   assert.match(statsText({ ...base, gpu: null, system: null, scale: 0.5, taa: false }), /· bilinear\n/);
   assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: false, shadows: { mode: 'off', redrawn: 0 } }), /\nShadows off$/);
 });

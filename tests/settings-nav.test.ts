@@ -24,6 +24,7 @@ test('every setting is in a category', () => {
     ['Render resolution', 'graphics'],
     ['Temporal anti-aliasing', 'graphics'],
     ['Sharpening', 'graphics'],
+    ['Frame rate limit', 'graphics'],
     ['Shadows', 'graphics'],
     ['Performance overlay', 'graphics'],
     ['Desktop notifications', 'notify'],

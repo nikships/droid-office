@@ -15,7 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
-import { RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type GraphicsSettings, type ShadowMode } from '../graphics';
+import { FPS_CAPS, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type FpsCap, type GraphicsSettings, type ShadowMode } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -799,6 +799,12 @@ export function openSettings(
     (mode) => graphicsSet({ shadows: mode }),
   );
   const shadowsNote = desc();
+  const fpsCap = radios<FpsCap>(
+    'Frame rate limit',
+    FPS_CAPS.map((fps) => [fps, `${fps} FPS`] as const),
+    () => settings.graphics.fpsCap,
+    (fps) => graphicsSet({ fpsCap: fps }),
+  );
   const stats = toggle(
     'Performance overlay',
     () => settings.graphics.stats,
@@ -817,6 +823,7 @@ export function openSettings(
     }
     taa.paint();
     shadows.paint();
+    fpsCap.paint();
     stats.paint();
     shadowsNote.textContent = {
       live: 'The moon’s shadow map is redrawn every frame, whatever moves.',
@@ -866,12 +873,21 @@ export function openSettings(
         }),
         card('Sharpening', { desc: sharpenNote, control: sharpen.row }),
       ),
+      group(
+        'Frame rate',
+        card('Frame rate limit', {
+          desc: desc(
+            'The most frames a second the office draws while something moves. 40, 60 and 120 each fit a 120 Hz display evenly. A lower limit costs the GPU less; a 60 Hz display shows at most 60. A still office still drops to a few frames a second.',
+          ),
+          control: fpsCap.row,
+        }),
+      ),
       group('Lighting', card('Shadows', { desc: shadowsNote, control: shadows.row })),
       group(
         'Diagnostics',
         card('Performance overlay', {
           desc: desc(
-            'Bottom right: frames per second, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), the render resolution, and how often the shadow map was redrawn.',
+            'Bottom right: frames per second and the frame rate limit, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), the render resolution, and how often the shadow map was redrawn.',
           ),
           control: stats.el,
         }),

@@ -3396,6 +3396,7 @@ let lookedUntil = 0;
 let activeAt = performance.now();
 const renderLoop = new RenderLoop({
   pace: currentPace,
+  fpsCap: () => settings.graphics.fpsCap,
   draw: drawFrame,
   animation: (callback) => renderer.setAnimationLoop(callback),
   delay: (callback, ms) => window.setTimeout(callback, ms),
@@ -3489,6 +3490,7 @@ function drawFrame(dt: number, t: number) {
       fpsEl.textContent = statsText({
         fps,
         frameMs: windowMs / fpsFrames,
+        fpsCap: settings.graphics.fpsCap,
         // Frames skipped while queries were in flight count at the timed frames' average.
         gpu: gpuMs === null ? null : { ms: gpuMs, busy: gpuBusy(gpuMs * fpsFrames, windowMs) },
         gpuNote: gpuTimer.supported ? 'timing…' : 'timing unavailable in this browser',
