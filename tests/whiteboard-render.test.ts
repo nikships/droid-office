@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { deflateSync } from 'node:zlib';
 import { OWNER_AUTHOR, STICKY_COLORS, type Op } from '../src/shared/whiteboard.js';
 import type { WhiteboardRendererStatus } from '../src/shared/protocol.js';
-import { WhiteboardStore, renderInfo, type PinnedCard } from '../src/server/whiteboard.js';
+import { WhiteboardStore, renderInfo, renderStatus, type PinnedCard } from '../src/server/whiteboard.js';
 import { readBoard } from '../src/server/whiteboard-agent.js';
 import { BrowserError, browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { CANVAS_MARGIN, RenderEngine, THUMB_WIDTH, canvasPlan, type Capture, type CaptureOptions, type FloorRenderer, type RenderEngineOptions } from '../src/server/whiteboard-render.js';
@@ -490,6 +490,9 @@ test('a canvas card renders at the bounds of its marks plus a margin', { skip, t
   if (!out.ok) return;
   assert.deepEqual({ w: out.image.width, h: out.image.height, origin: out.image.origin }, { w: plan.w, h: plan.h, origin: { x: 52, y: 52 } });
   assert.deepEqual(size(out.image.tiles[0]), { w: plan.w, h: plan.h });
+  // The status the wall reads says where the image starts on the canvas, so it can find the owner's view on it.
+  const st = renderStatus(floor, store.board.cards[0], 'c');
+  assert.deepEqual([st.image?.origin, st.image?.tileHeight, st.image?.tiles], [{ x: 52, y: 52 }, 2048, 1]);
   const [one, two, gap] = await pixels(out.image.tiles[0], [
     [CANVAS_MARGIN + 100, CANVAS_MARGIN + 120],
     [CANVAS_MARGIN + 600, CANVAS_MARGIN + 400],

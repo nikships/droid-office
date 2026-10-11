@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { WhiteboardRenderInfo, WhiteboardRendererStatus } from '../../shared/protocol';
-import { OWNER, cardChanged, cardsNewestFirst, findCard, type Author, type Board, type Card, type CardView } from '../../shared/whiteboard';
+import { OWNER, cardChanged, cardsNewestFirst, findCard, type Author, type Board, type Card, type CardView, type Point } from '../../shared/whiteboard';
 import { MONO, SANS } from '../fonts';
 import { withToken } from '../token';
 import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
@@ -120,11 +120,21 @@ export interface TileGrid {
   scale: number;
 }
 
-/** The tile grid of a render, from its status and its first tile's size. */
-export function tileGrid(page: { width: number; height: number; tiles: number }, first: { width: number; height: number }): TileGrid {
+/**
+ * The tile grid of a render, from its status and its first tile's size. A capped page's tiles stop at
+ * the cap, so the grid does too.
+ */
+export function tileGrid(page: { width: number; height: number; tiles: number; tileHeight?: number; capped?: { capPx: number } }, first: { width: number; height: number }): TileGrid {
   const scale = page.width > 0 ? first.width / page.width : 1;
-  const tileHeight = page.tiles <= 1 ? page.height : first.height / scale;
-  return { width: page.width, height: page.height, count: page.tiles, tileHeight, scale };
+  const height = page.capped ? Math.min(page.height, page.capped.capPx) : page.height;
+  const tileHeight = page.tiles <= 1 ? height : (page.tileHeight ?? first.height / scale);
+  return { width: page.width, height, count: page.tiles, tileHeight, scale };
+}
+
+/** A card's view (canonical px) in its render's own coordinates: a canvas's image starts at `origin`, not 0,0. */
+export function viewOnImage(view: CardView | undefined, origin: Point | undefined): CardView | undefined {
+  if (!view || !origin) return view;
+  return { x: view.x - origin.x, y: view.y - origin.y, w: view.w, h: view.h };
 }
 
 /** One drawImage: a slice of tile `tile` (image px) onto the wall (wall units). */
@@ -153,6 +163,9 @@ export function tileDraws(region: Rect, grid: TileGrid, dest: Rect): TileDraw[] 
     const y0 = Math.max(top, region.y);
     const y1 = Math.min(bottom, region.y + region.h);
     if (y1 <= y0) continue;
+    // Two slices meeting at a fractional y each antialias their edge, leaving a faint line on the wall: meet on a whole unit.
+    const dy = Math.round(dest.y + (y0 - region.y) * k);
+    const dBottom = Math.round(dest.y + (y1 - region.y) * k);
     out.push({
       tile: i,
       sx: x0 * grid.scale,
@@ -160,9 +173,9 @@ export function tileDraws(region: Rect, grid: TileGrid, dest: Rect): TileDraw[] 
       sw: (x1 - x0) * grid.scale,
       sh: (y1 - y0) * grid.scale,
       dx: dest.x + (x0 - region.x) * k,
-      dy: dest.y + (y0 - region.y) * k,
+      dy,
       dw: (x1 - x0) * k,
-      dh: (y1 - y0) * k,
+      dh: dBottom - dy,
     });
   }
   return out;
@@ -264,7 +277,7 @@ export interface WallInput {
 
 /** What `/api/whiteboard/render/status` says about a card's latest image (server/whiteboard.ts RenderStatus). */
 interface RenderStatusJson {
-  image?: { width: number; height: number; tiles: number };
+  image?: { width: number; height: number; tiles: number; tileHeight?: number; capped?: { capPx: number }; origin?: Point; scale?: number };
 }
 
 /** A fetched thing: loading, loaded, or failed (null). */
@@ -402,7 +415,7 @@ export class WhiteboardTexture {
     if (tile0 === undefined) return 'loading';
     if (tile0 === null) return 'none';
     const grid = tileGrid(page, tile0);
-    const region = wallRegion(card.view, page);
+    const region = wallRegion(viewOnImage(card.view, page.origin), grid);
     const draws = tileDraws(region, grid, { x: 0, y: 0, w: WALL_W, h: WALL_H });
     const bitmaps: Record<number, ImageBitmap> = { 0: tile0 };
     const urls = [first];

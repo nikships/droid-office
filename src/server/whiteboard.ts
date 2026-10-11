@@ -250,7 +250,11 @@ export interface WhiteboardRenderer {
 
 /** What `/api/whiteboard/render/status` and a read's renders say about a card's images. */
 export interface RenderStatus extends WhiteboardRendererStatus {
-  image?: { rev: number; at: number; ageMs: number; width: number; height: number; tiles: number; current: boolean; capped?: { capPx: number } };
+  /**
+   * The latest image: its page size in canonical px, its tiles (each `tileHeight` canonical px tall but
+   * the last), and for a canvas the canonical point at its top-left and its image px per canonical px.
+   */
+  image?: { rev: number; at: number; ageMs: number; width: number; height: number; tiles: number; tileHeight: number; current: boolean; capped?: { capPx: number }; origin?: Point; scale?: number };
   error?: { message: string; at: number; rev: number };
 }
 
@@ -288,7 +292,19 @@ export function renderStatus(renderer: WhiteboardRenderer, card: Card | undefine
   const last = renderer.latest(cardId);
   if (last.image) {
     const i = last.image;
-    out.image = { rev: i.rev, at: i.at, ageMs: Math.max(0, now - i.at), width: i.width, height: i.height, tiles: i.tiles.length, current: !!card && sameKey(i.key, renderKey(card, i.key.width)), ...(i.capped ? { capped: i.capped } : {}) };
+    out.image = {
+      rev: i.rev,
+      at: i.at,
+      ageMs: Math.max(0, now - i.at),
+      width: i.width,
+      height: i.height,
+      tiles: i.tiles.length,
+      tileHeight: i.tileHeight,
+      current: !!card && sameKey(i.key, renderKey(card, i.key.width)),
+      ...(i.capped ? { capped: i.capped } : {}),
+      ...(i.origin ? { origin: i.origin } : {}),
+      ...(i.scale !== undefined ? { scale: i.scale } : {}),
+    };
   }
   if (last.error) out.error = last.error;
   return out;
