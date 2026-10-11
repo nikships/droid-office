@@ -111,7 +111,6 @@ import { modelBadge, rememberedChoice } from './ui/models';
 import { officeFull, pressureNote } from './world/machine';
 import { CiBoardTexture } from './world/factory-ci';
 import { WhiteboardTexture, gridSummary, wallView } from './world/whiteboard-wall';
-import { openWhiteboard } from './ui/whiteboard';
 import { openCiWindow } from './ui/factory-ci';
 import { ComputeWallTextures, rackCubesOf, wallSummary } from './world/factory-computers';
 import { setRackCubes } from './world/factory-props';
@@ -119,6 +118,7 @@ import { openComputers } from './ui/factory-computers';
 import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu';
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
+import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
 import { Arcade } from './ui/arcade';
 import { Cabinet } from './ui/cabinet';
 import { trackTitle } from '../shared/jukebox';
@@ -880,6 +880,7 @@ net.onMessage((msg) => {
   routePipelinesMessage(msg);
   routeJiraMessage(msg);
   routeElevatorMessage(msg);
+  routeWhiteboardMessage(msg);
   switch (msg.t) {
     case 'welcome': {
       // A few pings, to line this page's clock up with the office's for the jukebox.
@@ -3160,6 +3161,16 @@ const hudActions: HudAction[] = [
     count: () => store.factory.ci.workflows.length,
     title: () => 'Droid in GitHub Actions, from Factory',
     run: () => showCi(),
+  },
+  {
+    id: 'whiteboard',
+    icon: '🧑‍🎨',
+    label: 'Whiteboard',
+    section: 'Open',
+    shown: () => !upTop && !!store.floor,
+    count: whiteboardChanged,
+    title: () => "The floor's Whiteboard: artifacts from workers, your marks on them",
+    run: () => openWhiteboard(net),
   },
   { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
   { id: 'search', icon: '🔎', label: 'Search', section: 'Open', key: '/', title: () => 'Search every terminal', run: showSearch },
