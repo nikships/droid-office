@@ -300,7 +300,7 @@ window.start = function (page, hash) {
   el.className = 'modal wb';
   surface = new WB.Surface(host, WB.findCard(board, 'c1'));
   el.appendChild(surface.el);
-  WB.openModal(el, { size: 'full', onClose: function () { window.shut = true; } });
+  WB.openModal(el, { size: 'full', onClose: function () { surface.dispose(); surface = null; window.shut = true; } });
 };
 window.changeContent = function (page, hash) { version = page; commit([{ op: 'card.content', card: 'c1', content: content(hash) }]); };
 window.remoteSet = function (key, value) { commit([{ op: 'state.set', card: 'c1', path: ['fields', key], value: value }], PIXEL); };
@@ -399,8 +399,13 @@ test('a content reload keeps the focused field, its caret and what was typed; ty
   await f4.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, isComposing: true }))`);
   await delay(300);
   assert.equal(await page.evaluate('shut'), false, 'an Esc during a composition stays in the field');
+  // Typed, then Esc at once, before the frame's own idle save: the window keeps what was typed as it closes.
+  await page.keyboard.press('End');
+  await page.keyboard.type('!');
+  await waitFor(() => page.evaluate('told.some(function (m) { return m.type === "focus" && m.field && m.field.value === "helXlo日本!"; })'), 'the host to hear the unsaved value');
   await page.keyboard.press('Escape');
   await waitFor(() => page.evaluate('shut'), 'Esc in the frame closes the window');
+  await waitFor(async () => (await fields()).email === 'helXlo日本!', 'what was typed just before Esc is saved');
   assert.deepEqual(await page.evaluate('loads'), ['f1', 'f2', 'f3', 'f4'], 'one load per content change');
   assert.deepEqual(errors, []);
 });

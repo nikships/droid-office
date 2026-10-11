@@ -135,9 +135,9 @@ test('the region takes only the tiles it needs, each slice put where it goes on 
     draws.map((d) => d.tile),
     [0, 1],
   );
-  const k = WALL_W / 1280;
-  assert.deepEqual(draws[0], { tile: 0, sx: 0, sy: 3600, sw: 2560, sh: 400, dx: 0, dy: 0, dw: WALL_W, dh: 200 * k });
-  assert.deepEqual(draws[1], { tile: 1, sx: 0, sy: 0, sw: 2560, sh: 880, dx: 0, dy: 200 * k, dw: WALL_W, dh: 440 * k });
+  // The seam falls at 200 × 1200/1280 = 187.5 units; both slices meet on the whole unit 188 so no line shows between them.
+  assert.deepEqual(draws[0], { tile: 0, sx: 0, sy: 3600, sw: 2560, sh: 400, dx: 0, dy: 0, dw: WALL_W, dh: 188 });
+  assert.deepEqual(draws[1], { tile: 1, sx: 0, sy: 0, sw: 2560, sh: 880, dx: 0, dy: 188, dw: WALL_W, dh: 412 });
   assert.equal(draws[0].dh + draws[1].dh, WALL_H, 'the slices fill the wall top to bottom');
   // At the very bottom: only the short last tile, and nothing past the page's end.
   const last = tileDraws({ x: 0, y: 4600, w: 1280, h: 640 }, grid, dest);

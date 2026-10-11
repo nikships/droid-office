@@ -242,6 +242,8 @@ export class Surface {
   }
 
   dispose() {
+    // Closing the window (Esc in the frame, ✕, another card) removes the frame before its idle save: keep what was typed.
+    this.saveTyped(this.slot?.focus);
     this.disposed = true;
     this.ro.disconnect();
     for (const off of this.offs) off();
@@ -496,17 +498,20 @@ export class Surface {
     this.scheduleLocate();
   }
 
+  /** Writes what the frame says was typed in its focused field and not saved yet (the SDK saves after a second idle, or on blur). */
+  private saveTyped(f: FocusedField | null | undefined) {
+    if (f?.key === undefined || f.value === undefined) return;
+    const fields = this.frameState.fields;
+    const saved = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields[f.key] : undefined;
+    if (jsonEqual(saved, f.value)) return;
+    const op = writeOp(this.card.id, { op: 'set', path: ['fields', f.key], value: f.value });
+    this.frameState = this.stateWith(op);
+    void this.host.apply([op], 'Saving the form');
+  }
+
   /** Puts focus back where it was in the frame a reload replaced, with anything typed there since it was last saved. */
   private refocus(slot: Slot, f: FocusedField) {
-    if (f.key !== undefined && f.value !== undefined) {
-      const fields = this.frameState.fields;
-      const saved = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields[f.key] : undefined;
-      if (!jsonEqual(saved, f.value)) {
-        const op = writeOp(this.card.id, { op: 'set', path: ['fields', f.key], value: f.value });
-        this.frameState = this.stateWith(op);
-        void this.host.apply([op], 'Saving the form');
-      }
-    }
+    this.saveTyped(f);
     if (slot.ready) this.post(slot, { type: 'focus', field: f });
     else slot.sendFocus = f;
   }

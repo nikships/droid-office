@@ -163,6 +163,9 @@ export function tileDraws(region: Rect, grid: TileGrid, dest: Rect): TileDraw[] 
     const y0 = Math.max(top, region.y);
     const y1 = Math.min(bottom, region.y + region.h);
     if (y1 <= y0) continue;
+    // Two slices meeting at a fractional y each antialias their edge, leaving a faint line on the wall: meet on a whole unit.
+    const dy = Math.round(dest.y + (y0 - region.y) * k);
+    const dBottom = Math.round(dest.y + (y1 - region.y) * k);
     out.push({
       tile: i,
       sx: x0 * grid.scale,
@@ -170,9 +173,9 @@ export function tileDraws(region: Rect, grid: TileGrid, dest: Rect): TileDraw[] 
       sw: (x1 - x0) * grid.scale,
       sh: (y1 - y0) * grid.scale,
       dx: dest.x + (x0 - region.x) * k,
-      dy: dest.y + (y0 - region.y) * k,
+      dy,
       dw: (x1 - x0) * k,
-      dh: (y1 - y0) * k,
+      dh: dBottom - dy,
     });
   }
   return out;
