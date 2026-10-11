@@ -110,22 +110,58 @@ install_release() {
   TAG="$tag"
 }
 
-# Removes the versions this install replaced, except any still running: an office, or the terminal
-# host that keeps its workers alive across office restarts. Without pgrep nothing is removed.
+# Removes unused releases. Hosts hide their script path with process.title, but keep their working
+# directory inside their release (ptys.ts). Inspect that too, including hosts from older releases.
+# If process inspection isn't available or a live host's directory is unknown, defer cleanup.
 prune_versions() {
-  local keep="$1" dir real rc
-  have pgrep || return 0
-  for dir in "$VERSIONS"/v*; do
-    [ -d "$dir" ] && [ "${dir##*/}" != "$keep" ] || continue
-    real="$(cd "$dir" && pwd -P)"
-    rc=0
-    pgrep -f -- "$dir/" >/dev/null 2>&1 || rc=$?
-    [ "$rc" -eq 1 ] || continue
-    rc=0
-    pgrep -f -- "$real/" >/dev/null 2>&1 || rc=$?
-    [ "$rc" -eq 1 ] || continue
-    rm -rf "$dir"
-  done
+  node - "$VERSIONS" "$1" "$2" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const [versions, keep, installAlias] = process.argv.slice(2);
+const inspect = (file, args) => execFileSync(file, args, {
+  encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
+});
+let processes;
+try {
+  processes = inspect('ps', ['-A', '-ww', '-o', 'pid=', '-o', 'args=']).trim().split('\n').map((line) => {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) throw new Error('unrecognized ps output');
+    return { pid: Number(match[1]), command: match[2] };
+  });
+} catch {
+  process.exit(0);
+}
+const hostDirs = [];
+for (const { pid, command } of processes) {
+  if (!/^droid-office-ptys(?:\s|$)/.test(command) || command.includes('<defunct>')) continue;
+  try {
+    const cwd = process.platform === 'linux'
+      ? fs.readlinkSync(`/proc/${pid}/cwd`)
+      : inspect('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn0'])
+        .split('\0').find((field) => field.startsWith('n'))?.slice(1);
+    if (!cwd || !path.isAbsolute(cwd)) throw new Error('unknown host directory');
+    hostDirs.push(fs.realpathSync(cwd));
+  } catch {
+    // A host can exit during inspection. A still-live or inaccessible one must keep its files.
+    try { process.kill(pid, 0); } catch (error) {
+      if (error.code === 'ESRCH') continue;
+    }
+    process.exit(0);
+  }
+}
+for (const name of fs.readdirSync(versions)) {
+  if (!name.startsWith('v') || name === keep) continue;
+  const dir = path.join(versions, name);
+  // Never follow a release symlink during cleanup.
+  if (!fs.lstatSync(dir).isDirectory()) continue;
+  const real = fs.realpathSync(dir);
+  const alias = path.resolve(installAlias, 'versions', name);
+  const used = processes.some(({ command }) => command.includes(`${alias}/`) || command.includes(`${dir}/`) || command.includes(`${real}/`))
+    || hostDirs.some((cwd) => cwd === real || cwd.startsWith(`${real}/`));
+  if (!used) fs.rmSync(dir, { recursive: true, force: true });
+}
+NODE
 }
 
 # Puts an `droid-office` command on the PATH that starts this version.
@@ -161,6 +197,17 @@ main() {
   trap cleanup EXIT
   check_requirements
 
+  local install_alias="$INSTALL_DIR"
+  # Permanent launchers must not depend on the directory they are invoked from. pwd -P also makes
+  # process-directory checks agree when the install root was reached through a symlink.
+  mkdir -p "$INSTALL_DIR"
+  INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
+  VERSIONS="$INSTALL_DIR/versions"
+  if [ -n "$BIN_DIR" ]; then
+    mkdir -p "$BIN_DIR"
+    BIN_DIR="$(cd "$BIN_DIR" && pwd -P)"
+  fi
+
   local tag="" tarball="${DROID_OFFICE_TARBALL:-}" installed=""
   [ -f "$INSTALL_DIR/current" ] && installed="$(cat "$INSTALL_DIR/current")"
   if [ -n "$tarball" ]; then
@@ -185,7 +232,7 @@ main() {
     tag="$TAG"
   fi
   printf '%s\n' "$tag" >"$INSTALL_DIR/current"
-  prune_versions "$tag"
+  prune_versions "$tag" "$install_alias"
 
   local entry="$VERSIONS/$tag/bin/droid-office.js"
   write_launcher "$tag" "$entry"
