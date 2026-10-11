@@ -100,9 +100,9 @@ export class OfficeSound {
   private master!: GainNode;
   /** The room itself; it goes quiet while the tab is hidden. */
   private ambience!: GainNode;
-  /** The gong (other than a plain hit) and the siren. Still audible in a background tab. */
+  /** The gong (other than a plain hit). Still audible in a background tab. */
   private alerts!: GainNode;
-  /** Needs-you, done, and error. The alert mute is this bus alone, so it leaves the gong and the siren. */
+  /** Needs-you, done, and error. The alert mute is this bus alone, so it leaves the gong. */
   private dings!: GainNode;
   private analyser!: AnalyserNode;
   private buf!: Buffers;
@@ -1129,20 +1129,6 @@ export class OfficeSound {
       .connect(out);
     n.start(t0);
     n.stop(t0 + 0.2);
-  }
-
-  /** The medics coming in: a two-tone siren sting, from the elevator. */
-  siren(at: Pos) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count('siren');
-    const out = this.panner(at, 6, 0.6);
-    out.connect(this.alerts);
-    const t0 = ctx.currentTime + 0.02;
-    for (let i = 0; i < 3; i++) {
-      this.blip(out, t0 + i * 0.42, 660, 1.335, 0.2, 0.16, 'triangle');
-      this.blip(out, t0 + i * 0.42 + 0.21, 880, 0.75, 0.2, 0.16, 'triangle');
-    }
   }
 
   // ---- The arcade -------------------------------------------------------------------------------

@@ -86,7 +86,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
   const seven: HelpRow =
     sidearm === 'wand'
       ? ['Droid wand', 'Draw or put it away; click to flick a spell at the worker under the crosshair and it falls asleep. E wakes it; zap it again to send it home now. The .44 Magnum is in ⚙️ Settings → You', ['7']]
-      : ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and call the medics', ['7']];
+      : ['.44 Magnum', 'Draw or holster it; click to fire at the worker under the crosshair. E revives a downed one; shoot it again to finish it and send it skyward', ['7']];
   const sections: [string, HelpRow[]][] = [
     [
       'Move',

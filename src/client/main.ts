@@ -1,7 +1,6 @@
 import './style.css';
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
-import { randomLook } from '../shared/avatar';
 import {
   BEANBAGS,
   COMPUTE_WALL,
@@ -558,15 +557,9 @@ const departures = new Departures(
   () => arrangeSeats(),
   () => office.stack.state.index > 0,
 );
-// Workers shot with the .44 Magnum or put to sleep by the wand: shared downed state, then revival or a medic pickup.
+// Workers shot with the .44 Magnum or put to sleep by the wand: shared downed state, then revival or a heavenly ascent.
 const casualties = new Casualties(scene, (x, z, y) => groundAt(office.colliders, x, z, y), {
-  spawnMedic: (name) => {
-    const m = new Person(name, '#f2f4f6', randomLook());
-    noOutline(m.root);
-    return m;
-  },
   onLand: (at, look) => (look === 'spell' ? sound.doze(at) : sound.thud(at)),
-  onSiren: (at) => sound.siren(at),
 });
 /** What `7` puts in your hand (Settings → You): the wand unless you opted into the Magnum. */
 const wandOut = () => settings.sidearm === 'wand';
@@ -834,7 +827,7 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const w = store.workers.get(workerId);
   const desk = v ? office.desks.get(v.deskId) : undefined;
   if (!v || !w || !desk) return;
-  // A second shot at a body on the floor confirms the kill: the server dismisses it now and the medics come.
+  // A second shot at a body on the floor confirms the kill: the server dismisses it now and the body ascends.
   net.send({ t: 'worker.shoot', workerId });
 }
 
@@ -1398,7 +1391,7 @@ function syncWorkers() {
   for (const [id, v] of workerViews) {
     if (store.workers.has(id)) continue;
     const desk = office.desks.get(v.deskId);
-    // A shot worker: the medics take the body instead of the send-home walk-out.
+    // A shot worker: the body ascends instead of the send-home walk-out.
     if (casualties.dying(id)) {
       if (desk) casualties.confirm(id, v.laptop);
       else {
@@ -1612,9 +1605,9 @@ function killWorker(id: string) {
   const w = store.workers.get(id);
   if (!w) return;
   if (w.downedUntil !== undefined) {
-    if (wandOut()) return toast(`Walk up to ${w.name} and press E to wake it, or zap it again to send it home now — otherwise the medics carry it off and delete its worktree and branch`, 'warn');
+    if (wandOut()) return toast(`Walk up to ${w.name} and press E to wake it, or zap it again to send it home now — otherwise it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
     const revive = `Walk up to ${w.name} and press E to revive, or shoot it again to finish it now — otherwise`;
-    return toast(`${revive} the medics take it and delete its worktree and branch`, 'warn');
+    return toast(`${revive} it floats away in a heavenly beam and its worktree and branch are deleted`, 'warn');
   }
   if (w.cloud) return sendCloudHome(net, w);
   const where = DESK_BY_ID.get(w.deskId)?.label ?? 'the desk';
@@ -2612,7 +2605,7 @@ function casualtyHint(w: WorkerInfo, near: boolean): Hint {
     k: `downed|${w.id}|${seconds}|${near}|${gunOut}|${settings.sidearm}`,
     parts: [
       h('span.title', {}, `${a.downed} ${w.name} ${a.isDown}`),
-      seconds ? (near ? key('E', a.revive) : aside(`Walk up to ${a.body ? 'the body' : 'it'} to ${a.reviveVerb}`)) : aside('Medics on their way'),
+      seconds ? (near ? key('E', a.revive) : aside(`Walk up to ${a.body ? 'the body' : 'it'} to ${a.reviveVerb}`)) : aside('Ascending to heaven'),
       ...(seconds && gunOut ? [aside(a.again)] : []),
       aside(`${seconds}s · then worktree + branch deleted`),
     ],
@@ -3471,7 +3464,7 @@ function drawFrame(dt: number, t: number) {
     puffs.splice(i, 1);
   }
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...departures.positions(), ...casualties.positions()]);
+    office.update(t, dt, [player.pos, ...departures.positions()]);
     office.stack.update(dt, [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }], camera.position);
     office.jukebox.update(t, dt, sound.beat());
   }
