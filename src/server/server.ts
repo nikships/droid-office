@@ -46,7 +46,8 @@ import { ROOF } from '../shared/rooftop.js';
 import { NO_PIPELINES } from '../shared/pipelines.js';
 import { MAX_ASSET_BYTES, OWNER_AUTHOR, parseEnvelope } from '../shared/whiteboard.js';
 import { pingEligibility } from '../shared/whiteboard-ping.js';
-import { CARD_ROUTE, cardResponse, renderStatus, type CardResponse } from './whiteboard.js';
+import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
+import { RenderEngine } from './whiteboard-render.js';
 import { handleAgent } from './whiteboard-agent.js';
 import { WhiteboardSkill } from './whiteboard-skill.js';
 import { officePrompt } from './prompts.js';
@@ -388,6 +389,22 @@ export async function startServer(cfg: Config) {
   // The Droid skill that tells workers how to use the Whiteboard (Settings).
   const whiteboardSkill = new WhiteboardSkill(cfg.dataDir, (state) => broadcast({ t: 'whiteboardSkill', state }), cfg.skillsDir);
   whiteboardSkill.syncSkill();
+  // Every floor's Whiteboard renders with one headless Chromium, downloaded on the first render if it's missing.
+  const renderer = cfg.renders
+    ? new RenderEngine({
+        onStatus: (status) => broadcast({ t: 'whiteboard.renderer', status }),
+        // A card's requests from the renderer never reach the office itself.
+        office: () => {
+          let port = cfg.port;
+          try {
+            port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
+          } catch {
+            // not listening yet
+          }
+          return { hosts: [...lanIPv4s(), ...tailscaleIPv4s()], ports: [port, hookPort] };
+        },
+      })
+    : undefined;
 
   // Slack / Discord pings for workers that need input or finish (set from ⚙️ Settings or --webhook).
   webhook = new Webhook(
@@ -487,6 +504,7 @@ export async function startServer(cfg: Config) {
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();
     },
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),
+    renderer,
   };
   /** Whether a worker on `from` works in `on`'s project too (see WorkerInfo.repos). */
   const worksIn = (from: Floor, on: Floor) => from.workers.list().some((w) => w.repos?.some((r) => r.floor === on.id));
@@ -744,10 +762,13 @@ export async function startServer(cfg: Config) {
     const card = store.board.cards.find((x) => x.id === cardId);
     if (p === '/api/whiteboard/render/status' && req.method === 'GET') return send(res, 200, renderStatus(store.renderer, card, cardId));
     if (p === '/api/whiteboard/render' && req.method === 'GET') {
-      const status = store.renderer.status();
-      if (!status.available) return send(res, 503, status);
+      // An image made before the renderer went away is still served; x-whiteboard-current says how fresh it is.
       const image = store.renderer.latest(cardId).image;
-      if (!image) return send(res, 404, { error: 'This card has no image yet', status: renderStatus(store.renderer, card, cardId) });
+      if (!image) {
+        const status = store.renderer.status();
+        if (!status.available) return send(res, 503, status);
+        return send(res, 404, { error: 'This card has no image yet', status: renderStatus(store.renderer, card, cardId) });
+      }
       const thumb = url.searchParams.get('size') === 'thumb';
       const tile = Math.max(0, Math.floor(Number(url.searchParams.get('tile')) || 0));
       const body = thumb ? (image.thumb ?? image.tiles[0]) : image.tiles[tile];
@@ -763,6 +784,8 @@ export async function startServer(cfg: Config) {
         'x-whiteboard-age-ms': String(Math.max(0, Date.now() - image.at)),
         'x-whiteboard-current': current ? '1' : '0',
         'x-whiteboard-tiles': String(image.tiles.length),
+        'x-whiteboard-tile-height': String(image.tileHeight),
+        'x-whiteboard-size': `${image.width}x${image.height}`,
       });
       return res.end(body);
     }
@@ -1190,6 +1213,10 @@ export async function startServer(cfg: Config) {
       c.boards.set(floor.id, epoch);
     }
     sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'snapshot', board: store.board, epoch }, caps: store.allCaps(), renderer: store.renderer.status() });
+    for (const card of store.board.cards) {
+      const info = renderInfo(store.renderer, card, card.id);
+      if (info) sendTo(c, { t: 'whiteboard.rendered', floor: floor.id, card: card.id, info });
+    }
   };
   /** The owner's batch from the window, answered to `c` once it's committed (or why it wasn't). */
   const applyBoard = (c: Client, floorId: string, raw: unknown) => {
@@ -2095,6 +2122,7 @@ export async function startServer(cfg: Config) {
     sky.stop();
     factory.stop();
     for (const f of floors.values()) f.shutdown(keep);
+    void renderer?.close();
     for (const c of clients.values()) c.ws.close();
     server.close();
     hookServer.close();

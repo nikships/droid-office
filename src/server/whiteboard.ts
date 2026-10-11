@@ -45,7 +45,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync, writeSync, type FSWatcher } from 'node:fs';
 import path from 'node:path';
-import type { WhiteboardRendererStatus } from '../shared/protocol.js';
+import type { WhiteboardRenderInfo, WhiteboardRendererStatus } from '../shared/protocol.js';
 import {
   OWNER,
   OWNER_AUTHOR,
@@ -65,6 +65,7 @@ import {
   type Op,
   type OpEnvelope,
   type OpError,
+  type Point,
   type ReaderId,
 } from '../shared/whiteboard.js';
 import { LoadError, fileRef, loadImageCard, loadPackage, loadPage, loadPicture, pageFromText, type Loaded } from './whiteboard-assets.js';
@@ -191,6 +192,24 @@ export interface RenderImage {
   capped?: { capPx: number };
   /** A small PNG of the top of the page, for grid thumbnails. */
   thumb?: Buffer;
+  /** The canonical point at the image's top-left (a canvas card's bounds start anywhere); absent is 0,0. */
+  origin?: Point;
+  /** Image px per canonical px (a very wide canvas is scaled down); absent is 1. */
+  scale?: number;
+  /** Where each mark was drawn, in canonical px: what the window and the wall line up with. */
+  marks?: DrawnMark[];
+}
+
+/** A mark as a render drew it: a pin's point (its center), or a sticky's or picture's box. */
+export interface DrawnMark {
+  id: string;
+  kind: 'thread' | 'sticky' | 'picture';
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+  /** Its anchor couldn't be placed, so it's at its fallback point. */
+  detached: boolean;
 }
 
 export type RenderOutcome = { ok: true; image: RenderImage } | { ok: false; error: string };
@@ -273,6 +292,17 @@ export function renderStatus(renderer: WhiteboardRenderer, card: Card | undefine
   }
   if (last.error) out.error = last.error;
   return out;
+}
+
+/** What a `whiteboard.rendered` message says about a card's renders; undefined while it has none. */
+export function renderInfo(renderer: WhiteboardRenderer, card: Card | undefined, cardId: string): WhiteboardRenderInfo | undefined {
+  const { image, error } = renderer.latest(cardId);
+  if (!image && !error) return undefined;
+  return {
+    ...(image ? { rev: image.rev, at: image.at } : {}),
+    current: !!card && !!image && sameKey(image.key, renderKey(card, image.key.width)),
+    ...(error ? { error: error.message } : {}),
+  };
 }
 
 // ---- The store ----
@@ -395,14 +425,35 @@ export class WhiteboardStore {
     this.poll = setInterval(() => this.pollLinks(), ms);
     this.poll.unref?.();
     this.prune();
+    // Images live in memory only: every card is rendered again after a restart.
+    for (const card of this.current.cards) this.renderer.changed(card.id, renderKey(card), () => this.pin(card.id));
   }
 
-  /** The floor closed: watchers and timers stop. Nothing is deleted. */
+  /** The floor closed: watchers, timers and renders stop. Nothing is deleted. */
   stop() {
     this.stopped = true;
     clearInterval(this.poll);
     for (const w of this.links.values()) this.unwatch(w);
     this.links.clear();
+    this.renderer.stop();
+  }
+
+  /**
+   * A render's verdict on which marks' anchors it could place (`marks.resolve`, which stamps nothing).
+   * Applied only while the card still renders as `key` did, since a verdict on older content says
+   * nothing about the card as it is now; marks whose flag already says the same are left out.
+   */
+  resolveMarks(cardId: string, key: RenderKey, marks: { id: string; detached: boolean }[]): ApplyOutcome | undefined {
+    if (this.stopped) return undefined;
+    const card = findCard(this.current, cardId);
+    if (!card || !sameKey(renderKey(card, key.width), key)) return undefined;
+    const all = [...card.threads, ...card.stickies, ...card.pictures];
+    const changed = marks.filter((m) => {
+      const mark = all.find((x) => x.id === m.id);
+      return !!mark && !!mark.detached !== m.detached;
+    });
+    if (!changed.length) return undefined;
+    return this.applyOffice([{ op: 'marks.resolve', card: cardId, marks: changed }]);
   }
 
   // ---- Epochs ----
