@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { DroidModelCatalogue } from '../src/server/droid-models.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
@@ -185,6 +186,91 @@ test('with no Subagents setting, what the lead leaves out comes from the office 
     r.fake.hired.map((h) => h.choice),
     [{}, { model: 'glm-5.3', effort: 'low' }, { model: 'custom:droidproxy:gpt-6-sol', effort: 'max' }],
   );
+});
+
+const CATALOGUE: DroidModelCatalogue = {
+  models: [
+    { id: 'custom:mine', displayName: 'Mine', custom: true, provider: 'generic-chat-completion-api' },
+    { id: 'claude-opus-5-5', displayName: 'Opus 5.5', provider: 'anthropic', tokenMultiplier: 1.6, defaultReasoningEffort: 'medium', supportedReasoningEfforts: ['low', 'medium', 'high'] },
+    { id: 'glm-5.3-flash', displayName: 'GLM-5.3-Flash', provider: 'factory', tokenMultiplier: 0.06, noImages: true, promo: 'Half off' },
+    { id: 'old', displayName: 'Old', legacy: true, tokenMultiplier: 2 },
+  ],
+  defaultModel: 'claude-opus-5-5',
+};
+
+test('models lists what a lead may pick, with credit multipliers and notes, and hire keeps to it', async (t) => {
+  const r = rig(t, { models: () => Promise.resolve(CATALOGUE) });
+  // Nothing picked in Settings: every current model, the legacy ones left out.
+  let res = (await r.call('lead', { action: 'models' })).body;
+  assert.equal(res.restricted, false);
+  assert.equal(res.defaultModel, 'claude-opus-5-5');
+  assert.deepEqual(res.models, [
+    { id: 'custom:mine', name: 'Mine', provider: 'generic-chat-completion-api', custom: true },
+    { id: 'claude-opus-5-5', name: 'Opus 5.5', provider: 'anthropic', multiplier: 1.6, defaultEffort: 'medium', efforts: ['low', 'medium', 'high'], default: true },
+    { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', provider: 'factory', multiplier: 0.06, noImages: true, promo: 'Half off' },
+  ]);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'a', model: 'old' })).status, 200, 'any model goes when Settings picks none');
+
+  // A list in Settings: only those, with the owner's notes, plus the default that always runs.
+  r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }, { id: 'gone' }];
+  res = (await r.call('lead', { action: 'models' })).body;
+  assert.equal(res.restricted, true);
+  assert.deepEqual(
+    res.models.map((m: Record<string, unknown>) => [m.id, m.note, m.default, m.unlisted]),
+    [
+      ['claude-opus-5-5', undefined, true, undefined],
+      ['glm-5.3-flash', 'tests and docs', undefined, undefined],
+      ['gone', undefined, undefined, true],
+    ],
+  );
+  assert.equal((await r.call('lead', { action: 'whoami' })).body.models, 2);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'b', model: 'glm-5.3-flash' })).status, 200);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 200, "droid's default is always allowed");
+  const refused = await r.call('lead', { action: 'hire', task: 'd', model: 'old' });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*office-workers models/);
+  assert.equal((await r.call('lead', { action: 'hire', task: 'e', effort: 'low' })).status, 200, 'leaving --model out is never refused');
+  assert.deepEqual(
+    r.fake.hired.map((h) => h.choice.model),
+    ['old', 'glm-5.3-flash', 'claude-opus-5-5', undefined],
+  );
+  // Only someone who may hire sees the list.
+  const sub = await r.call('sub1', { action: 'models' });
+  assert.equal(sub.status, 403);
+  assert.match(sub.body.error, /subagents can't hire their own/);
+});
+
+test("hire checks droid's own default against a fresh model list, not one a lead had to ask for first", async (t) => {
+  let asks = 0;
+  const r = rig(
+    t,
+    {
+      models: () => {
+        asks++;
+        return Promise.resolve(CATALOGUE);
+      },
+    },
+    { models: [{ id: 'glm-5.3-flash' }] },
+  );
+  assert.equal((await r.call('lead', { action: 'hire', task: 'a', model: 'glm-5.3-flash' })).status, 200);
+  assert.equal(asks, 0, 'a model on the list needs no lookup');
+  assert.equal((await r.call('lead', { action: 'hire', task: 'b', model: 'claude-opus-5-5' })).status, 200, 'droid’s default, with no models call before it');
+  assert.equal(asks, 1);
+  r.fake.officeDefault = { model: 'glm-5.3' };
+  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 400, 'with an office default, droid’s own is not the one subagents run');
+  assert.equal(asks, 1, 'and droid is not asked');
+});
+
+test('models without a model list still names the default and the picks', async (t) => {
+  const r = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
+  const res = (await r.call('lead', { action: 'models' })).body;
+  assert.equal(res.unavailable, true);
+  assert.deepEqual(res.models, [
+    { id: 'glm-5.3', name: 'glm-5.3', default: true },
+    { id: 'glm-5.3-flash', name: 'glm-5.3-flash' },
+  ]);
+  const bare = rig(t);
+  assert.deepEqual((await bare.call('lead', { action: 'models' })).body, { restricted: false, models: [], unavailable: true });
 });
 
 test("hiring is refused when it shouldn't happen, with a reason the agent can act on", async (t) => {

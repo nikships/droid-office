@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SKILL_MARK, SKILL_NAME, Subagents, cleanSettings, subagentSkill } from '../src/server/subagents.js';
-import { SUBAGENT_DEFAULTS, SUBAGENT_MAX_PER_LEAD, type SubagentsState } from '../src/shared/protocol.js';
+import { SUBAGENT_DEFAULTS, SUBAGENT_MAX_PER_LEAD, SUBAGENT_MODEL_NOTE_MAX, SUBAGENT_MODELS_MAX, type SubagentsState } from '../src/shared/protocol.js';
 
 function rig(t: { after(fn: () => void): void }) {
   const root = mkdtempSync(path.join(tmpdir(), 'droid-office-subagents-'));
@@ -32,6 +32,42 @@ test('cleanSettings keeps what is valid, clamps the team size and falls back on 
   const base = { ...SUBAGENT_DEFAULTS, agent: { effort: 'high' as const } };
   assert.deepEqual(cleanSettings({}, base).agent, { effort: 'high' }, 'no agent key keeps the base');
   assert.equal(cleanSettings({ agent: null }, base).agent, undefined, 'null clears it');
+});
+
+test('cleanSettings keeps the models leads may pick: valid ids once each, notes on one short line', () => {
+  const s = cleanSettings({
+    models: [
+      { id: 'glm-5.3-flash', note: '  cheap,\n fine for tests \u0007 ' },
+      'claude-opus-5-5',
+      { id: 'glm-5.3-flash', note: 'duplicate' },
+      { id: 'has a space' },
+      { id: 'gpt-6-sol', note: 'x'.repeat(SUBAGENT_MODEL_NOTE_MAX + 50) },
+      { note: 'no id' },
+      null,
+    ],
+  });
+  assert.deepEqual(s.models, [{ id: 'glm-5.3-flash', note: 'cheap, fine for tests' }, { id: 'claude-opus-5-5' }, { id: 'gpt-6-sol', note: 'x'.repeat(SUBAGENT_MODEL_NOTE_MAX) }]);
+  assert.equal(cleanSettings({ models: [] }).models, undefined, 'an empty list is any model');
+  assert.equal(cleanSettings({ models: Array.from({ length: SUBAGENT_MODELS_MAX + 5 }, (_, i) => `m-${i}`) }).models?.length, SUBAGENT_MODELS_MAX);
+  const base = { ...SUBAGENT_DEFAULTS, models: [{ id: 'glm-5.3' }] };
+  assert.deepEqual(cleanSettings({}, base).models, [{ id: 'glm-5.3' }], 'no models key keeps the base');
+  assert.equal(cleanSettings({ models: null }, base).models, undefined, 'null clears it');
+});
+
+test('saved settings without models let leads pick any model again', (t) => {
+  const r = rig(t);
+  const s = r.make();
+  s.set({ ...s.settings, models: [{ id: 'glm-5.3', note: 'cheap' }] }, 'Nik');
+  assert.deepEqual(r.make().settings.models, [{ id: 'glm-5.3', note: 'cheap' }]);
+  assert.deepEqual(r.states.at(-1)?.models, [{ id: 'glm-5.3', note: 'cheap' }]);
+  // A malformed list keeps what was saved: it never widens what leads may pick.
+  s.set({ ...s.settings, models: 'everything' }, 'Nik');
+  assert.deepEqual(s.settings.models, [{ id: 'glm-5.3', note: 'cheap' }]);
+  s.set({ ...s.settings, models: { id: 'x' } }, 'Nik');
+  assert.deepEqual(s.settings.models, [{ id: 'glm-5.3', note: 'cheap' }]);
+  s.set({ ...s.settings, models: undefined }, 'Nik');
+  assert.equal(s.settings.models, undefined);
+  assert.equal(r.make().settings.models, undefined);
 });
 
 test('the skill only applies inside Droid Office and points at office-workers', () => {

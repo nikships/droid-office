@@ -11,6 +11,7 @@ import path from 'node:path';
 import { DESK_BY_ID, STATION_AGENT, nearestFreeSeat } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
+import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
@@ -39,6 +40,8 @@ export interface TeamOptions {
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
   settings(): SubagentSettings;
+  /** Droid's model list, for `office-workers models`. None: only what the settings name. */
+  models?: () => Promise<DroidModelCatalogue>;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
@@ -84,6 +87,28 @@ export interface TeamMember {
 export interface TeamReply {
   status: number;
   body: Record<string, unknown>;
+}
+
+/** A model as `office-workers models` shows it to a lead choosing one. */
+export interface TeamModel {
+  id: string;
+  name: string;
+  provider?: string;
+  /** Droid's credit multiplier; unset for a model on the owner's own key, or one droid didn't describe. */
+  multiplier?: number;
+  /** On the owner's own API key (BYOK): it costs no Factory credits. */
+  custom?: true;
+  legacy?: true;
+  defaultEffort?: string;
+  efforts?: string[];
+  noImages?: true;
+  promo?: string;
+  /** What the office's owner says it's for. */
+  note?: string;
+  /** What a subagent runs when the lead leaves --model out. */
+  default?: true;
+  /** Allowed in Settings, but droid doesn't list it now. */
+  unlisted?: true;
 }
 
 const TASK_MAX = 20_000;
@@ -186,6 +211,8 @@ export class Team {
         return ok({ ...this.whoami(caller), team: this.teamOf(caller.id).map((w) => this.member(w)) });
       case 'hire':
         return this.hire(caller, b);
+      case 'models':
+        return this.models(caller);
       case 'events':
         return this.events(caller, b);
       case 'read':
@@ -197,7 +224,7 @@ export class Team {
       case 'report':
         return this.report(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, list, hire, events, read, send, dismiss or report');
+        return no(400, 'Unknown action: use whoami, list, hire, models, events, read, send, dismiss or report');
     }
   }
 
@@ -232,7 +259,58 @@ export class Team {
       max: s.maxPerLead,
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
+      ...(s.models?.length ? { models: s.models.length } : {}),
     };
+  }
+
+  /**
+   * The model a subagent runs when its lead leaves --model out: the Subagents setting, else the
+   * office's default worker, else droid's own default (`droidDefault`, from its model list).
+   */
+  private defaultModel(droidDefault?: string): string | undefined {
+    return (this.opts.settings().agent ?? this.workers.officeDefault)?.model ?? droidDefault;
+  }
+
+  /** Droid's model list (cached briefly by the office), or nothing when droid can't say. */
+  private async catalogue(): Promise<DroidModelCatalogue | undefined> {
+    try {
+      return await this.opts.models?.();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The models a lead may give a subagent, with what it needs to choose: credit multiplier,
+   * provider, efforts and the owner's note. With no list in Settings, every current model droid has.
+   */
+  private async models(caller: WorkerInfo): Promise<TeamReply> {
+    const why = this.cannotHire(caller);
+    if (why) return no(403, why);
+    const s = this.opts.settings();
+    const catalogue = await this.catalogue();
+    const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
+    const fallback = this.defaultModel(catalogue?.defaultModel);
+    const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => ({
+      id,
+      name: m?.displayName ?? id,
+      ...(m?.provider ? { provider: m.provider } : {}),
+      ...(m?.tokenMultiplier !== undefined && !m.custom ? { multiplier: m.tokenMultiplier } : {}),
+      ...(m?.custom ? { custom: true as const } : {}),
+      ...(m?.legacy ? { legacy: true as const } : {}),
+      ...(m?.defaultReasoningEffort ? { defaultEffort: m.defaultReasoningEffort } : {}),
+      ...(m?.supportedReasoningEfforts?.length ? { efforts: m.supportedReasoningEfforts } : {}),
+      ...(m?.noImages ? { noImages: true as const } : {}),
+      ...(m?.promo ? { promo: m.promo } : {}),
+      ...(note ? { note } : {}),
+      ...(id === fallback ? { default: true as const } : {}),
+      ...(catalogue && !m ? { unlisted: true as const } : {}),
+    });
+    const allowed = s.models?.length ? s.models : undefined;
+    const models = allowed ? allowed.map((a) => describe(a.id, known.get(a.id), a.note)) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
+    // The default always runs, so the lead sees it even when the list leaves it out.
+    if (fallback && !models.some((m) => m.id === fallback)) models.unshift(describe(fallback, known.get(fallback)));
+    return ok({ restricted: !!allowed, models, ...(fallback ? { defaultModel: fallback } : {}), ...(catalogue ? {} : { unavailable: true }) });
   }
 
   private teamOf(leadId: string): WorkerInfo[] {
@@ -274,12 +352,18 @@ export class Team {
     return `No subagent called ${String(ref)}${team.length ? `: yours are ${team.map((w) => w.name).join(', ')}` : ': you have none'}`;
   }
 
-  /** What a subagent runs: what its lead asked for, else the Subagents setting, else the office default. */
-  private choice(b: Record<string, unknown>): Partial<AgentChoice> | string {
+  /**
+   * What a subagent runs: what its lead asked for, else the Subagents setting, else the office
+   * default. `droidDefault` is droid's own default model, which the model list never refuses.
+   */
+  private choice(b: Record<string, unknown>, droidDefault?: string): Partial<AgentChoice> | string {
     const s = this.opts.settings();
     const model = typeof b.model === 'string' && b.model.trim() ? b.model.trim() : undefined;
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
+    if (model !== undefined && s.models?.length && model !== this.defaultModel(droidDefault) && !s.models.some((m) => m.id === model)) {
+      return `${clip(model, 60)} isn't one of the models this office lets subagents use (⚙️ Settings → Subagents): pick one from office-workers models, or leave --model out for the default`;
+    }
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
     // A worker hired with no model starts on the office default, effort and all, so what the lead
     // leaves out comes from the setting, else from that default.
@@ -294,9 +378,12 @@ export class Team {
     if (why) return no(403, why);
     const task = str(b.task, TASK_MAX).trim();
     if (!task) return no(400, 'The subagent needs a task: give its brief on stdin (office-workers hire --title "…" <<\'EOF\' … EOF)');
-    const choice = this.choice(b);
-    if (typeof choice === 'string') return no(400, choice);
     const s = this.opts.settings();
+    const asked = typeof b.model === 'string' ? b.model.trim() : '';
+    // Only a model outside the list needs droid's own default, which subagents may always run.
+    const outside = asked && s.models?.length && !s.models.some((m) => m.id === asked) && !this.defaultModel();
+    const choice = this.choice(b, outside ? (await this.catalogue())?.defaultModel : undefined);
+    if (typeof choice === 'string') return no(400, choice);
     const full = () => {
       const n = this.teamOf(lead.id).length;
       return n >= s.maxPerLead ? `You have ${n} subagents, the most one lead has at once in this office: dismiss one you're done with first (office-workers dismiss <name>)` : undefined;

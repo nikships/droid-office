@@ -448,6 +448,7 @@ export async function startServer(cfg: Config) {
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
     subagents: () => subagents.settings,
+    droidModels: () => droidModels.get(),
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
       for (const f of floors.values()) if (f !== floor && worksIn(f, floor)) f.sendLandedHome();

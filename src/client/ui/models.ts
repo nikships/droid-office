@@ -25,6 +25,16 @@ export interface DroidModelOption {
   defaultReasoningEffort?: AgentEffort;
   /** The efforts the model takes, when droid says (empty: none the office can pin); the fixed list otherwise. */
   supportedReasoningEfforts?: AgentEffort[];
+  provider?: string;
+  /** Droid's credit multiplier: what a token costs against the base rate. */
+  tokenMultiplier?: number;
+  noImages?: boolean;
+  promo?: string;
+}
+
+/** A credit multiplier as droid's picker says it: ×0.06, ×1.6, ×4. */
+export function multiplierLabel(n: number): string {
+  return `×${Number(n.toFixed(3))}`;
 }
 
 /** The catalogue's groups, in the order the server sends them: your own models, Factory's, then the old ones. */
@@ -40,7 +50,7 @@ export function droidModelGroups(models: DroidModelOption[]): { label: string; m
 const MODEL_MAX = 256;
 
 /** The catalogue of Droid models, as /api/agents/droid/models answers it. */
-interface Catalogue {
+export interface Catalogue {
   models: DroidModelOption[];
   defaultModel?: string;
   defaultReasoningEffort?: AgentEffort;
@@ -69,7 +79,7 @@ function fetchCatalogue(): Promise<Catalogue> {
       const models = Array.isArray(body.models)
         ? body.models.flatMap((m): DroidModelOption[] => {
             if (!m || typeof m !== 'object') return [];
-            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts } = m as Record<string, unknown>;
+            const { id, displayName, custom, legacy, defaultReasoningEffort, supportedReasoningEfforts, provider, tokenMultiplier, noImages, promo } = m as Record<string, unknown>;
             if (typeof id !== 'string' || !id || id.length > MODEL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(id)) return [];
             return [
               {
@@ -79,6 +89,10 @@ function fetchCatalogue(): Promise<Catalogue> {
                 ...(legacy === true ? { legacy: true } : {}),
                 ...(defaultReasoningEffort ? { defaultReasoningEffort: asEffort(defaultReasoningEffort) } : {}),
                 ...(supportedReasoningEfforts ? { supportedReasoningEfforts: asEfforts(supportedReasoningEfforts) } : {}),
+                ...(typeof provider === 'string' && provider ? { provider } : {}),
+                ...(typeof tokenMultiplier === 'number' && Number.isFinite(tokenMultiplier) ? { tokenMultiplier } : {}),
+                ...(noImages === true ? { noImages: true } : {}),
+                ...(typeof promo === 'string' && promo ? { promo } : {}),
               },
             ];
           })
@@ -95,6 +109,11 @@ function fetchCatalogue(): Promise<Catalogue> {
       request = null;
     });
   return request;
+}
+
+/** Every model droid lists, with its default, cached for a minute. */
+export function droidCatalogue(): Promise<Catalogue> {
+  return fetchCatalogue();
 }
 
 /** Droid's own models (Factory's, not the owner's BYOK ones), for a session on a Factory computer. */

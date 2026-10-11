@@ -12,6 +12,7 @@ const USAGE = `Usage:
   office-workers hire --title "…" [--model <id>] [--effort <e>] [--from <ref>] [--no-worktree] <<'EOF'
   …the subagent's brief…                        hires a subagent at the free desk nearest you
   EOF
+  office-workers models                         the models you may give a subagent, with credit costs
   office-workers list                           your subagents and what they last reported
   office-workers wait [<name>…] [--all] [--timeout <s>]
                                                 waits for news from your team and prints it
@@ -42,7 +43,7 @@ COMMANDS
   EOF
       Hires a subagent and gives it the brief. Prints its name, desk and worktree. The title goes
       on the card over its head. Options:
-        --model <id>     an id from droid's model list. Default: what ⚙️ Settings → Subagents
+        --model <id>     an id from office-workers models. Default: what ⚙️ Settings → Subagents
                          picks, else the office's default worker.
         --effort <e>     low, medium, high, xhigh or max.
         --from <ref>     the branch, tag or commit its worktree starts from (origin/main for the
@@ -51,6 +52,11 @@ COMMANDS
         --no-worktree    work in the project's main checkout instead of a fresh worktree: only for
                          read-only work, or when it has to see your uncommitted changes. The office
                          never switches that checkout's branch for a subagent.
+
+  office-workers models
+      The models you may give a subagent with --model: each one's id, provider, credit multiplier,
+      efforts, and what the office's owner wrote about it. The office may limit leads to some of
+      them (⚙️ Settings → Subagents); hire refuses any other.
 
   office-workers list
       Your subagents: status, desk, model, worktree, what each is doing, and what it last reported.
@@ -100,6 +106,22 @@ HOW TO RUN A TEAM
   6. When everything is done, tell whoever asked what each subagent did, with links. Don't dismiss
      your team unless you're asked to: people may want to look at their work first.
 
+CHOOSING A MODEL
+
+  Run office-workers models before you hire, and pick a model for each piece, not one for the
+  whole team. A model's credit multiplier is what its tokens cost against the base rate: x0.2 is a
+  fifth, x4 is four times. A model on the owner's own API key costs no Factory credits.
+  - Mechanical, well-specified work (renames, small fixes, tests or docs to a pattern, lookups):
+    the cheapest model that can do it, x0.5 or less.
+  - Ordinary feature work and bug fixes: a capable mid-priced model, around x1.
+  - Hard design, subtle debugging, concurrency, security, or changes across many files: the
+    strongest model on the list, even at x2 or more. A wrong answer costs more than the tokens.
+  - The owner's note on a model comes first; use what you know of each model's strengths for the
+    rest. Between two models that can both do a piece, take the cheaper one.
+  - A model marked "no images" can't read screenshots or pictures: don't give it visual work.
+  - On a hard piece, a higher --effort on a mid-priced model is often enough before a pricier one.
+  Say in your report which model each subagent ran.
+
 Subagents can't hire subagents of their own. Everything here happens on this floor of the office.`;
 
 /** A mistake in how the command was called: the usage is shown with it. */
@@ -118,6 +140,7 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const OPTIONS = {
   whoami: {},
   list: {},
+  models: {},
   hire: { '--title': true, '--model': true, '--effort': true, '--from': true, '--worktree': false, '--no-worktree': false, '--task': true },
   wait: { '--all': false, '--timeout': true },
   read: { '--lines': true },
@@ -126,8 +149,8 @@ const OPTIONS = {
   report: { '--question': false, '--message': true },
 };
 /** How many names each command takes: [least, most]. */
-const NAMES = { whoami: [0, 0], list: [0, 0], hire: [0, 0], wait: [0, Infinity], read: [1, 1], send: [1, 1], dismiss: [1, 1], report: [0, 0] };
-const ALIASES = { ls: 'list', who: 'whoami', fire: 'dismiss', tail: 'read', ask: 'send' };
+const NAMES = { whoami: [0, 0], list: [0, 0], models: [0, 0], hire: [0, 0], wait: [0, Infinity], read: [1, 1], send: [1, 1], dismiss: [1, 1], report: [0, 0] };
+const ALIASES = { ls: 'list', who: 'whoami', fire: 'dismiss', tail: 'read', ask: 'send', model: 'models' };
 
 /**
  * What the command line asks for: { cmd, names, opts }, or { cmd: 'help' }.
@@ -208,6 +231,7 @@ export function buildBody(cmd, text) {
   switch (cmd.cmd) {
     case 'whoami':
     case 'list':
+    case 'models':
       return { action: cmd.cmd };
     case 'hire': {
       const task = given(o['--task']);
@@ -278,8 +302,51 @@ export function formatWho(view) {
   if (view?.canHire) {
     lines.push(`You can hire. New subagents ${view.worktree ? 'get their own git worktree' : 'work in the main checkout (this floor has no worktrees)'}.`);
     lines.push(view.wakeLead ? 'The office wakes you when your team has news, so you can end your turn while they work.' : "The office doesn't wake you when your team has news: check with office-workers wait.");
+    lines.push(
+      view.models
+        ? `Subagents may run ${view.models} model${view.models === 1 ? '' : 's'} the office picked: see them, with credit costs, in office-workers models.`
+        : 'Subagents may run any model droid has: see them, with credit costs, in office-workers models.',
+    );
   } else lines.push(`You can't hire: ${view?.why ?? 'not allowed'}.`);
   if (view?.lead) lines.push(`When you're done, report to ${view.lead.name} with office-workers report.`);
+  return lines.join('\n');
+}
+
+/** A credit multiplier as people say it: x0.06, x1.6, x4. */
+const times = (n) => `x${Number(n.toFixed(3))}`;
+
+/** What a model costs, in words. */
+function cost(m) {
+  if (m.custom) return 'own API key, no Factory credits';
+  if (typeof m.multiplier === 'number') return `${times(m.multiplier)} credits`;
+  return 'credits unknown';
+}
+
+/** One model from office-workers models, a line or two. */
+export function formatModel(m) {
+  const efforts = m.efforts?.length ? `effort ${m.efforts.join('/')}${m.defaultEffort ? ` (${m.defaultEffort} by default)` : ''}` : '';
+  const facts = [m.name !== m.id ? m.name : '', m.provider, cost(m), m.noImages ? 'no images' : '', efforts, m.promo, m.legacy ? 'legacy' : '', m.unlisted ? "droid doesn't list it now" : ''].filter(Boolean);
+  const lines = [`  ${m.id}${m.default ? ' (default)' : ''}`, `      ${facts.join(' · ')}`];
+  if (m.note) lines.push(`      owner's note: ${m.note}`);
+  return lines.join('\n');
+}
+
+/** What office-workers models prints: cheapest first, the owner's own keys at the top. */
+export function formatModels(res) {
+  const models = [...(res?.models ?? [])];
+  const rank = (m) => (m.custom ? -1 : typeof m.multiplier === 'number' ? m.multiplier : Number.POSITIVE_INFINITY);
+  models.sort((a, b) => rank(a) - rank(b));
+  const lines = [];
+  if (res?.restricted) {
+    lines.push(`The office lets subagents run ${models.length === 1 ? 'only this model' : `these ${models.length} models`}; hire refuses any other:`);
+    if (res.unavailable) lines.push("(Droid couldn't list its models just now, so their credit costs and providers are missing.)");
+  } else if (res?.unavailable) lines.push("Droid couldn't list its models just now, so only the default is known. Any model id droid takes works with --model:");
+  else lines.push('Subagents can run any of droid’s models. The current ones, cheapest first:');
+  if (!models.length) lines.push('  (none known: leave --model out)');
+  else lines.push(models.map(formatModel).join('\n'));
+  const fallback = models.find((m) => m.default);
+  lines.push('', fallback ? `Leave --model out and a subagent runs ${fallback.id}.` : 'Leave --model out and a subagent runs droid’s own default.');
+  lines.push('Pick per piece: cheap models for mechanical work, strong ones for hard work (office-workers help, CHOOSING A MODEL).');
   return lines.join('\n');
 }
 
@@ -412,6 +479,7 @@ export async function main(argv, io = {}) {
     const res = await call(body);
     if (cmd.cmd === 'whoami') out(formatWho(res));
     else if (cmd.cmd === 'list') out(`${formatWho(res)}\n\n${formatTeam(res, now())}`);
+    else if (cmd.cmd === 'models') out(formatModels(res));
     else if (cmd.cmd === 'hire') {
       const w = res.worker ?? {};
       out(`Hired ${w.name} (${w.id}) at ${w.desk}${w.worktree ? `, in its own worktree ${w.worktree.path} on ${w.worktree.branch}` : ', in the main checkout'}.`);

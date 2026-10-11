@@ -38,6 +38,7 @@ test('every setting is in a category', () => {
     ['Worktree setup', 'workers'],
     ['Subagents', 'subagents'],
     ['Subagent worker', 'subagents'],
+    ['Models leads can pick', 'subagents'],
     ['Team size', 'subagents'],
     ['Where subagents work', 'subagents'],
     ['Waking the lead', 'subagents'],

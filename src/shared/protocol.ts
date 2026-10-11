@@ -693,6 +693,11 @@ export interface SubagentSettings {
   skill: boolean;
   /** What a subagent runs when its lead doesn't pick. Unset: the office's default worker. */
   agent?: AgentChoice;
+  /**
+   * The models a lead may give a subagent with --model, each with the owner's note on what it's
+   * good for. Unset: any model droid lists. The subagent worker above is always allowed.
+   */
+  models?: SubagentModel[];
   /** Each subagent gets its own git worktree unless its lead asks for none. */
   worktree: boolean;
   /** The most subagents one lead has on the floor at once. */
@@ -701,8 +706,17 @@ export interface SubagentSettings {
   wakeLead: boolean;
 }
 
+/** A model a lead may give its subagents, and what the office's owner says it's for. */
+export interface SubagentModel {
+  id: string;
+  /** Shown to the lead next to the model, so it routes work by it ("cheap, fine for tests"). */
+  note?: string;
+}
+
 export const SUBAGENT_DEFAULTS: SubagentSettings = { on: true, deskWorkers: true, skill: true, worktree: true, maxPerLead: 4, wakeLead: true };
 export const SUBAGENT_MAX_PER_LEAD = 8;
+export const SUBAGENT_MODELS_MAX = 100;
+export const SUBAGENT_MODEL_NOTE_MAX = 200;
 
 /** The Subagents settings for every floor, with who set them and where the Droid skill is. */
 export interface SubagentsState extends SubagentSettings {

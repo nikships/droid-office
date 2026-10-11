@@ -47,6 +47,7 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Worktree setup' },
   { pane: 'subagents', title: 'Subagents' },
   { pane: 'subagents', title: 'Subagent worker' },
+  { pane: 'subagents', title: 'Models leads can pick' },
   { pane: 'subagents', title: 'Team size' },
   { pane: 'subagents', title: 'Where subagents work' },
   { pane: 'subagents', title: 'Waking the lead' },

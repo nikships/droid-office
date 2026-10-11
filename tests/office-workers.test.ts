@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { UsageError, ago, buildBody, buildRequest, formatEvents, formatMember, formatTeam, formatWho, main, needsText, parseArgs, refusal } from '../bin/office-workers.js';
+import { UsageError, ago, buildBody, buildRequest, formatEvents, formatMember, formatModel, formatModels, formatTeam, formatWho, main, needsText, parseArgs, refusal } from '../bin/office-workers.js';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'office-workers.js');
 const ENV = { DROID_OFFICE_HOOK_URL: 'http://127.0.0.1:4455/', DROID_OFFICE_WORKER_ID: 'w1 &x', DROID_OFFICE_HOOK_TOKEN: 'tok' };
@@ -23,6 +23,8 @@ test('parses every command, its aliases and its options', () => {
   assert.equal(parseArgs(['who']).cmd, 'whoami');
   assert.equal(parseArgs(['fire', 'Pixel']).cmd, 'dismiss');
   assert.equal(parseArgs(['ask', 'Pixel']).cmd, 'send');
+  assert.deepEqual(parseArgs(['models']), { cmd: 'models', names: [], opts: {} });
+  assert.equal(parseArgs(['model']).cmd, 'models');
   assert.deepEqual(parseArgs(['report', '--question']), { cmd: 'report', names: [], opts: { '--question': true } });
   assert.deepEqual(parseArgs([]), { cmd: 'help', full: true });
   assert.deepEqual(parseArgs(['help']), { cmd: 'help', full: true });
@@ -55,6 +57,7 @@ test('builds the /office/workers requests, with the text from stdin', () => {
   const body = (argv: string[], text?: string) => buildBody(parseArgs(argv), text);
   assert.deepEqual(body(['whoami']), { action: 'whoami' });
   assert.deepEqual(body(['list']), { action: 'list' });
+  assert.deepEqual(body(['models']), { action: 'models' });
   assert.deepEqual(body(['hire', '--title', ' Fix login ', '--model', ' opus ', '--effort', 'max', '--worktree'], '  Fix the redirect.\r\nTest it.\n'), {
     action: 'hire',
     task: 'Fix the redirect.\nTest it.',
@@ -109,8 +112,14 @@ test('prints who you are, your team and its news readably', () => {
   assert.equal(ago(0, 7_200_000), '2h ago');
   assert.equal(
     formatWho({ you: { name: 'Nibble', desk: 'Desk 1', role: 'worker' }, canHire: true, max: 4, worktree: true, wakeLead: true }),
-    ["You're Nibble at Desk 1, with no subagents yet (at most 4 at once).", 'You can hire. New subagents get their own git worktree.', 'The office wakes you when your team has news, so you can end your turn while they work.'].join('\n'),
+    [
+      "You're Nibble at Desk 1, with no subagents yet (at most 4 at once).",
+      'You can hire. New subagents get their own git worktree.',
+      'The office wakes you when your team has news, so you can end your turn while they work.',
+      'Subagents may run any model droid has: see them, with credit costs, in office-workers models.',
+    ].join('\n'),
   );
+  assert.match(formatWho({ you: { name: 'Nibble', desk: 'Desk 1', role: 'worker' }, canHire: true, max: 4, models: 3 }), /Subagents may run 3 models the office picked: see them, with credit costs, in office-workers models\./);
   assert.equal(
     formatWho({ you: { name: 'Pixel', desk: 'Desk 3', role: 'subagent' }, lead: { id: 'w1', name: 'Nibble' }, canHire: false, why: "You're a subagent of Nibble" }),
     ["You're Pixel at Desk 3, a subagent of Nibble.", "You can't hire: You're a subagent of Nibble.", "When you're done, report to Nibble with office-workers report."].join('\n'),
@@ -148,6 +157,38 @@ test('prints who you are, your team and its news readably', () => {
       '👋 Fizz left the floor.',
     ].join('\n\n'),
   );
+  assert.equal(
+    formatModel({ id: 'glm-5.3', name: 'GLM-5.3', provider: 'factory', multiplier: 0.56, noImages: true, efforts: ['low', 'high', 'max'], defaultEffort: 'max', note: 'cheap and solid', default: true }),
+    ['  glm-5.3 (default)', '      GLM-5.3 · factory · x0.56 credits · no images · effort low/high/max (max by default)', "      owner's note: cheap and solid"].join('\n'),
+  );
+  assert.equal(formatModel({ id: 'custom:bunny', name: 'Bunny', custom: true, unlisted: true }), ['  custom:bunny', "      Bunny · own API key, no Factory credits · droid doesn't list it now"].join('\n'));
+  assert.equal(formatModel({ id: 'x', name: 'x', legacy: true, promo: 'Half off' }), ['  x', '      credits unknown · Half off · legacy'].join('\n'));
+  const all = formatModels({
+    restricted: false,
+    models: [
+      { id: 'opus', name: 'Opus', multiplier: 1.6, default: true },
+      { id: 'mystery', name: 'Mystery' },
+      { id: 'flash', name: 'Flash', multiplier: 0.06 },
+      { id: 'custom:mine', name: 'Mine', custom: true },
+    ],
+  });
+  assert.deepEqual(
+    all
+      .split('\n')
+      .filter((l) => /^ {2}\S/.test(l))
+      .map((l) => l.trim()),
+    ['custom:mine', 'flash', 'opus (default)', 'mystery'],
+    'own keys first, then cheapest first',
+  );
+  assert.match(all, /^Subagents can run any of droid’s models/);
+  assert.match(all, /Leave --model out and a subagent runs opus\./);
+  assert.match(
+    formatModels({ restricted: true, unavailable: true, models: [{ id: 'a', name: 'a' }] }),
+    /^The office lets subagents run only this model; hire refuses any other:\n\(Droid couldn't list its models just now, so their credit costs and providers are missing\.\)/,
+  );
+  const none = formatModels({ unavailable: true, models: [] });
+  assert.match(none, /^Droid couldn't list its models just now[\s\S]*\(none known: leave --model out\)[\s\S]*runs droid’s own default\./);
+
   assert.match(refusal(401, { error: 'Send your own id' }), /didn't accept this agent's token \(401\): Send your own id/);
   assert.equal(refusal(403, { error: 'Subagents are turned off' }), 'The office said no (403): Subagents are turned off.');
   assert.equal(refusal(500, {}), 'The office said no (500).');
@@ -205,6 +246,10 @@ test('the other commands print what the office sent back', async () => {
   const help = await run(['help']);
   assert.equal(help.code, 0);
   assert.match(help.out, /HOW TO RUN A TEAM/);
+  assert.match(help.out, /CHOOSING A MODEL[\s\S]*credit multiplier/);
+  const models = await run(['models'], { replies: [{ body: { restricted: true, models: [{ id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', multiplier: 0.06 }] } }] });
+  assert.deepEqual(models.sent, [{ action: 'models' }]);
+  assert.match(models.out, /^The office lets subagents run only this model;[\s\S]*glm-5\.3-flash\n {6}GLM-5\.3-Flash · x0\.06 credits/);
   assert.match((await run(['hire', '-h'])).out, /^Usage:/);
 });
 
