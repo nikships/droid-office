@@ -1285,7 +1285,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
         ...actionGroups(
           [h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, 'Ask a worker…')],
           [pickUp],
-          [closeIssue, h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`) }, 'Hand to a worker')],
+          [closeIssue, h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`, it.number) }, 'Hand to a worker')],
         ),
       ),
     ),

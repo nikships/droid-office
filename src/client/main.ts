@@ -2182,8 +2182,8 @@ function turnPage() {
   hands.turnPage();
 }
 
-/** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. */
-function sendToWorker(title: string, text: { context?: string; initial?: string }) {
+/** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With `issue`, that worker takes the issue, as with a carried card. */
+function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number) {
   const desk = freeDesk();
   const awake = [...store.workers.values()].filter((w) => (w.kind === 'agent' || (w.kind === 'cloud' && !w.cloud?.error)) && !w.guest && !isAsleep(w.status));
   if (!desk && !awake.length) {
@@ -2199,15 +2199,15 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     modelOption: true,
     repoOptions: repoChoices(),
     onSubmit: (prompt, to, worktree, model, effort, repos, images) => {
-      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, images: images?.length ? images : undefined });
-      else if (desk) hire(desk, prompt, worktree, model, effort, undefined, repos, images);
+      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, images: images?.length ? images : undefined });
+      else if (desk) hire(desk, prompt, worktree, model, effort, issue, repos, images);
     },
   });
 }
 
 function boardActions() {
   return {
-    assign: (prompt: string, title: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }),
+    assign: (prompt: string, title: string, issue?: number) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue),
     ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
     goToDesk,
     pickUp,
