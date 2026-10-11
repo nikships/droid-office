@@ -6,6 +6,7 @@ import {
   ciEditProblem,
   ciOutcome,
   customWorkflowPath,
+  ciForFloor,
   groupCi,
   runTime,
   triggerLabel,
@@ -15,7 +16,6 @@ import {
   type CiKind,
   type CiOutcome,
   type CiRepoGroup,
-  type CiRepository,
   type FactoryCiJob,
   type FactoryCiRun,
   type FactoryCiWorkflow,
@@ -26,10 +26,10 @@ import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { emptyState, field, toggle } from './kit';
 import { confirmDialog } from './prompt';
 
-// The CI automations window, from the board on the north wall (world/factory-ci.ts): every Droid
-// workflow Factory found in the account's GitHub repositories with all it knows about each, their
-// runs, the workflow pull requests opened through Factory, and adding, changing or removing a
-// workflow, which Factory does by opening a pull request.
+// The CI automations window, from the board on the north wall (world/factory-ci.ts): this floor's
+// Droid workflows only, with all Factory knows about each, their runs, the workflow pull requests
+// opened through Factory, and adding, changing or removing one, which Factory does by opening a
+// pull request. Other repositories are not listed.
 
 type Tab = 'workflows' | 'runs' | 'prs';
 
@@ -88,7 +88,7 @@ let open: { modal: Modal; add: () => void } | undefined;
 
 /**
  * Opens the CI automations window (or brings the open one to `add`). `floorRepo` is this floor's
- * GitHub repository: its workflows come first, and a new workflow goes there unless you pick another.
+ * GitHub repository, and the only one the window shows or writes to.
  */
 export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): Modal {
   if (open) {
@@ -139,11 +139,12 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
 
   const paint = () => {
     const ci = store.factory.ci;
-    const groups = groupCi(ci, opts.floorRepo);
-    const runs = [...ci.runs].sort((a, b) => runTime(b) - runTime(a));
-    tabButtons.workflows.replaceChildren('Workflows', h('span.n', {}, ci.workflows.length));
+    const mine = ciForFloor(ci, opts.floorRepo);
+    const groups = groupCi(mine, opts.floorRepo);
+    const runs = [...mine.runs].sort((a, b) => runTime(b) - runTime(a));
+    tabButtons.workflows.replaceChildren('Workflows', h('span.n', {}, mine.workflows.length));
     tabButtons.runs.replaceChildren('Runs', h('span.n', {}, runs.length));
-    tabButtons.prs.replaceChildren('Workflow PRs', h('span.n', {}, ci.jobs.length));
+    tabButtons.prs.replaceChildren('Workflow PRs', h('span.n', {}, mine.jobs.length));
     for (const [t, b] of Object.entries(tabButtons)) {
       b.classList.toggle('on', !form && t === tab);
       b.setAttribute('aria-selected', String(!form && t === tab));
@@ -154,7 +155,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     status.classList.toggle('bad', !!ci.error);
     rescan.disabled = rescanning || !!why;
     rescan.textContent = rescanning ? 'Scanning…' : 'Rescan';
-    add.disabled = !!why || ci.github === false;
+    add.disabled = !!why || ci.github === false || !opts.floorRepo;
     footActions.replaceChildren(...(form ? formActions : [add]));
     const owners = ci.owners.map((o) => o.login).join(', ');
     note.textContent = form ? '' : ci.fetchedAt ? `Read ${timeAgo(ci.fetchedAt)}${owners ? ` · GitHub: ${owners}` : ''}` : '';
@@ -162,9 +163,11 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     if (form) return;
     if (why === READING) return body.replaceChildren(...[0, 1, 2, 3].map(() => h('div.skeleton.ci-skeleton', { 'aria-label': READING })));
     if (why) return body.replaceChildren(empty('🏭', ci.github === false ? 'GitHub isn’t connected' : 'Nothing to show yet', why));
-    if (tab === 'workflows') body.replaceChildren(...(groups.length ? groups.map((g) => repoSection(g)) : [empty('🤖', 'No Droid workflows yet', 'Add one, and Factory opens a pull request with it.')]));
-    else if (tab === 'runs') body.replaceChildren(runs.length ? runsTable(runs) : empty('▶', 'No runs yet', 'A run shows here once a Droid workflow runs in GitHub Actions.'));
-    else body.replaceChildren(ci.jobs.length ? jobsList(ci.jobs) : empty('⇄', 'No workflow pull requests yet', 'Adding, changing or removing a workflow here opens one.'));
+    if (!opts.floorRepo) return body.replaceChildren(empty('⌂', 'No GitHub repository', 'This floor’s checkout has no GitHub origin. Other repositories are not listed here.'));
+    const repo = opts.floorRepo;
+    if (tab === 'workflows') body.replaceChildren(...(groups.length ? groups.map((g) => repoSection(g)) : [empty('🤖', 'No Droid workflows yet', `Nothing in ${repo} yet. Add one, and Factory opens a pull request there.`)]));
+    else if (tab === 'runs') body.replaceChildren(runs.length ? runsTable(runs) : empty('▶', 'No runs yet', `A run shows here once a Droid workflow runs in ${repo}.`));
+    else body.replaceChildren(mine.jobs.length ? jobsList(mine.jobs) : empty('⇄', 'No workflow pull requests yet', `Adding, changing or removing a workflow in ${repo} opens one.`));
   };
 
   const empty = (icon: string, title: string, text: string) => emptyState(icon, title, text);
@@ -290,9 +293,10 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
     }
   }
 
-  /** Opens the add form (on `repo`), or the change form for `workflow`. */
+  /** Opens the add form (on this floor's repository), or the change form for `workflow`. */
   function startForm(what: { repo?: string; workflow?: FactoryCiWorkflow; kind?: CiKind } = {}) {
     const w = what.workflow;
+    if (!w && !(what.repo ?? opts.floorRepo)) return;
     const editing = w ? ciEditable(w, what.kind ?? 'custom') : undefined;
     const built = buildForm({ ...what, template: editing }, () => {
       form = undefined;
@@ -308,28 +312,8 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
   function buildForm(what: { repo?: string; workflow?: FactoryCiWorkflow; template?: 'code-review' | 'custom' }, close: () => void): { el: HTMLElement; actions: HTMLElement[] } {
     const w = what.workflow;
     let template: 'code-review' | 'custom' = what.template ?? 'code-review';
-    const repo = h('select.select', { 'aria-label': 'Repository', disabled: !!w }) as HTMLSelectElement;
-    const repoNote = h('span');
-    const pick = (fullName: string) => repo.append(h('option', { value: fullName }, fullName));
-    const wanted = w?.repo ?? what.repo ?? opts.floorRepo;
-    if (wanted) pick(wanted);
-    if (!w) {
-      repoNote.textContent = 'Loading the repositories Factory can see…';
-      factoryFetch<{ repositories: CiRepository[] }>('ci', '/repositories')
-        .then(({ repositories }) => {
-          const chosen = repo.value;
-          repo.replaceChildren();
-          const names = repositories.filter((r) => r.writable).map((r) => r.fullName);
-          if (chosen && !names.some((n) => n.toLowerCase() === chosen.toLowerCase())) names.unshift(chosen);
-          for (const n of names) pick(n);
-          const match = names.find((n) => n.toLowerCase() === chosen.toLowerCase());
-          if (match) repo.value = match;
-          repoNote.textContent = `${repositories.length} repositories Factory’s GitHub app can see.`;
-        })
-        .catch((err: Error) => {
-          repoNote.textContent = `Couldn’t list the repositories: ${err.message}`;
-        });
-    }
+    const repoName = w?.repo ?? what.repo ?? opts.floorRepo ?? '';
+    const repo = h('input.input', { type: 'text', readonly: true, 'aria-label': 'Repository', value: repoName }) as HTMLInputElement;
 
     const kindRadio = (value: 'code-review' | 'custom', title: string, sub: string) => {
       const input = h('input', { type: 'radio', name: 'ci-template', value, checked: template === value, disabled: !!w }) as HTMLInputElement;
@@ -388,7 +372,7 @@ export function openCiWindow(opts: { floorRepo?: string; add?: boolean } = {}): 
       'form.ci-form.stack.loose',
       { id: 'ci-form', 'aria-label': w ? `Change ${w.name}` : 'Add a Droid workflow' },
       h('h3.ci-form-title', {}, w ? `Change ${w.name}` : 'Add a Droid workflow'),
-      field('Repository', repo, repoNote),
+      field('Repository', repo, 'This floor’s repository. Other repositories are not shown.'),
       w
         ? null
         : h(

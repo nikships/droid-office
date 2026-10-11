@@ -36,6 +36,7 @@ import type { WorktreeSetupState } from '../shared/worktree-setup';
 import { NO_PIPELINES, type PipelinesState } from '../shared/pipelines';
 import { defaultPresets, normalizePresets, type PromptPreset } from './prompt-recall';
 import { WhiteboardSync } from './whiteboard-sync';
+import { GRAPHICS_DEFAULTS, normalizeGraphics, type GraphicsSettings } from './graphics';
 
 export type Topic =
   | 'workers'
@@ -121,6 +122,8 @@ export interface Settings {
   pins: string[];
   /** What `7` puts in your hand: a magic wand that puts workers to sleep, or the .44 Magnum and its blood (opt-in). */
   sidearm: Sidearm;
+  /** Render resolution, anti-aliasing and the performance overlay, for this browser. */
+  graphics: GraphicsSettings;
 }
 
 export type { Sidearm };
@@ -187,7 +190,7 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, presets: defaultPresets(), hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand' };
+  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, presets: defaultPresets(), hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand', graphics: { ...GRAPHICS_DEFAULTS } };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
@@ -199,6 +202,7 @@ export function loadSettings(): Settings {
     // No `presets` key means the defaults, including for a settings file from before the chips existed. An array is the owner's, even empty.
     if (saved && typeof saved === 'object' && 'presets' in saved) s.presets = normalizePresets(saved.presets);
     if (saved?.sidearm === 'wand' || saved?.sidearm === 'magnum') s.sidearm = saved.sidearm;
+    s.graphics = normalizeGraphics(saved?.graphics);
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
     // Yesterday's people/chat panels can't come back from saved settings: the hud loop only reads today's flags, and pins drop their ids.
     if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string' && p !== 'people' && p !== 'chat').slice(0, 30);

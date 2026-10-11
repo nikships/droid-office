@@ -12,7 +12,7 @@ class TermSizeTest {
     private val keyboard = TermSize(47, 20)
 
     @Test
-    fun phoneModeIsOptInAndRemembersThePreviousSize() {
+    fun phoneModeIsTheDefaultAndRemembersThePreviousSize() {
         val sizing = PhoneSizing()
         assertNull(sizing.restore(desktop))
         assertEquals(phone, sizing.request(desktop, phone))

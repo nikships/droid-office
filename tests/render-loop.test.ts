@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { RenderLoop } from '../src/client/render-loop.js';
 import { IDLE_FRAME_MS, type RenderPace } from '../src/client/render-pace.js';
 
-function rig(initial: RenderPace = 'idle') {
+function rig(initial: RenderPace = 'idle', fpsCap = 120) {
   let now = 1000;
   let pace = initial;
   let animation: ((timestamp: number) => void) | null = null;
@@ -14,6 +14,7 @@ function rig(initial: RenderPace = 'idle') {
   const timers = new Map<number, () => void>();
   const loop = new RenderLoop({
     pace: () => pace,
+    fpsCap: () => fpsCap,
     now: () => now,
     draw: (dt, elapsed) => draws.push({ dt, elapsed }),
     animation: (callback) => {
@@ -134,4 +135,43 @@ test('booting hidden never arms a callback, and showing the page still paints th
   r.loop.wake();
   r.frame();
   assert.deepEqual(r.draws, [{ dt: 0, elapsed: 0 }]);
+});
+
+test('the frame cap skips animation frames without stepping, and a drawn frame covers the time since the last one', () => {
+  const r = rig('full', 60);
+  r.loop.start();
+  for (let i = 0; i < 12; i++) r.frame(1000 / 120);
+  assert.equal(r.draws.length, 7, 'the first draw, then every 2nd refresh');
+  for (const d of r.draws.slice(1)) assert.ok(Math.abs(d.dt - 1 / 60) < 1e-9, `dt ${d.dt}`);
+  assert.deepEqual(r.schedules, [true], 'skipped frames keep the one animation callback');
+});
+
+test('a wake straight after an idle draw waits for the cap before the next frame', () => {
+  const r = rig('idle', 40);
+  r.loop.start();
+  r.idle();
+  const drawn = r.draws.length;
+  r.pace('full');
+  r.loop.wake();
+  r.frame(1000 / 120);
+  r.frame(1000 / 120);
+  assert.equal(r.draws.length, drawn, 'two refreshes after the idle draw is still under 40 FPS');
+  r.frame(1000 / 120);
+  assert.equal(r.draws.length, drawn + 1);
+  assert.ok(Math.abs(r.draws.at(-1)!.dt - 0.025) < 1e-9);
+  r.frame(1000 / 120);
+  assert.equal(r.draws.length, drawn + 1);
+});
+
+test('a long hitch at full pace draws once on the late frame, with the hitch cap, then keeps the cap', () => {
+  const r = rig('full', 60);
+  r.loop.start();
+  r.frame(1000 / 60);
+  r.frame(500);
+  assert.equal(r.draws.at(-1)!.dt, 0.1);
+  const drawn = r.draws.length;
+  r.frame(1000 / 120);
+  assert.equal(r.draws.length, drawn, 'no catch-up burst');
+  r.frame(1000 / 120);
+  assert.equal(r.draws.length, drawn + 1);
 });

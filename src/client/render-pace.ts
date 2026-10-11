@@ -118,6 +118,50 @@ export function frameDelta(rawSeconds: number, pace: RenderPace, resumed: boolea
   return Math.min(rawSeconds, cap);
 }
 
+/** The frame cap's state, on the animation frame clock (ms). */
+export interface FrameGate {
+  /** When the next capped frame is due; null draws the next frame. */
+  due: number | null;
+  /** The last animation frame's timestamp, drawn or skipped. */
+  last: number | null;
+  /** The gaps between the last few animation frames, oldest first. */
+  gaps: readonly number[];
+}
+
+export const OPEN_GATE: FrameGate = { due: null, last: null, gaps: [] };
+
+/** Animation frame gaps kept to measure the display's refresh. The shortest is the refresh: a hitch only makes a gap longer. */
+const REFRESH_GAPS = 8;
+/** The refresh assumed before any gap is measured. */
+const REFRESH_GUESS_MS = 1000 / 120;
+/**
+ * How early, in refreshes, a frame may arrive and still be the one for its due time. Just under a half, so the one
+ * nearest wins and a tie (40 FPS on 60 Hz lands due times halfway between refreshes) always goes to the later frame.
+ */
+const EARLY_REFRESHES = 0.45;
+
+/** The display's refresh period as measured from animation frame gaps, in ms. */
+export function displayRefresh(gate: FrameGate): number {
+  return gate.gaps.length ? Math.min(...gate.gaps) : REFRESH_GUESS_MS;
+}
+
+/**
+ * Whether the animation frame at `now` draws under a cap of `fps`, and the gate after it. Due times sit on a fixed
+ * grid one interval apart and the refresh nearest each one draws, so the average rate is exactly the cap and timestamp
+ * jitter under about half a refresh changes nothing: on 120 Hz, 40 is every 3rd refresh and 60 every 2nd; on 60 Hz,
+ * 40 alternates one and two refreshes. A frame that finds the grid behind (a hitch, or a draw outside the cap) starts
+ * it again from itself, so the loop never bursts to catch up.
+ */
+export function gateFrame(gate: FrameGate, now: number, fps: number): { draw: boolean; gate: FrameGate } {
+  const gap = gate.last === null ? 0 : now - gate.last;
+  const gaps = gap > 0 ? [...gate.gaps, gap].slice(-REFRESH_GAPS) : gate.gaps;
+  const interval = 1000 / fps;
+  const early = Math.min(interval, displayRefresh({ ...gate, gaps })) * EARLY_REFRESHES;
+  if (gate.due !== null && now < gate.due - early) return { draw: false, gate: { due: gate.due, last: now, gaps } };
+  const next = (gate.due ?? now) + interval;
+  return { draw: true, gate: { due: next - early <= now ? now + interval : next, last: now, gaps } };
+}
+
 export type LoopMode = 'off' | 'full' | 'idle' | 'paused';
 
 /** What to do with the animation callback after this step. `keep` leaves a running full-rate loop alone. */

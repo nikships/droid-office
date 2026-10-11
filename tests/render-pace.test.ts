@@ -1,6 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FRAME_DT_CAP, GONG_RING_MS, IDLE_AFTER_MS, IDLE_FRAME_MS, SCENE_MOTIONS, advanceClock, frameDelta, gongRinging, renderPace, skyFalling, stillScene, type RenderClock, type RenderSignals } from '../src/client/render-pace.js';
+import {
+  FRAME_DT_CAP,
+  GONG_RING_MS,
+  IDLE_AFTER_MS,
+  IDLE_FRAME_MS,
+  SCENE_MOTIONS,
+  advanceClock,
+  frameDelta,
+  gateFrame,
+  OPEN_GATE,
+  displayRefresh,
+  type FrameGate,
+  gongRinging,
+  renderPace,
+  skyFalling,
+  stillScene,
+  type RenderClock,
+  type RenderSignals,
+} from '../src/client/render-pace.js';
 
 function signals(patch: Partial<Omit<RenderSignals, 'motion'>> & { motion?: Partial<RenderSignals['motion']> } = {}): RenderSignals {
   return { hidden: false, covered: false, fullRate: false, quietMs: IDLE_AFTER_MS, ...patch, motion: { ...stillScene(), ...patch.motion } };
@@ -110,4 +128,80 @@ test('the first tick draws immediately, so a quiet office still paints once befo
   const moving = advanceClock(off, 'full', 'tick');
   assert.equal(moving.draw, true);
   assert.equal(moving.schedule, 'raf');
+});
+
+/** Refreshes of a `hz` display from 0 ms, each timestamp off by up to `jitter` ms either way (a fixed pseudo-random walk). */
+function refreshes(hz: number, count: number, jitter = 0, from = 0): number[] {
+  let seed = 7;
+  return Array.from({ length: count }, (_, i) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return from + (i * 1000) / hz + (seed / 2147483648 - 0.5) * 2 * jitter;
+  });
+}
+
+/** The refresh indices that draw under a cap of `fps`. */
+function gated(times: readonly number[], fps: number, from: FrameGate = OPEN_GATE): number[] {
+  const drawn: number[] = [];
+  let gate = from;
+  times.forEach((t, i) => {
+    const step = gateFrame(gate, t, fps);
+    if (step.draw) drawn.push(i);
+    gate = step.gate;
+  });
+  return drawn;
+}
+
+const steps = (drawn: readonly number[]) => drawn.slice(1).map((i, k) => i - drawn[k]);
+
+test('on a 120 Hz display 40, 60 and 120 FPS draw every 3rd, 2nd and every refresh, through timestamp jitter', () => {
+  for (const jitter of [0, 0.1, 0.5, 1.5]) {
+    const times = refreshes(120, 1200, jitter);
+    for (const [fps, every] of [
+      [40, 3],
+      [60, 2],
+      [120, 1],
+    ] as const) {
+      const drawn = gated(times, fps);
+      assert.deepEqual(new Set(steps(drawn)), new Set([every]), `${fps} FPS, jitter ${jitter} ms`);
+      assert.equal(drawn.length, 1200 / every, `${fps} FPS holds its rate, jitter ${jitter} ms`);
+    }
+  }
+});
+
+test('a frame 0.1 ms early still draws, and one a whole refresh early does not', () => {
+  let { draw, gate } = gateFrame(OPEN_GATE, 0, 60);
+  assert.ok(draw);
+  ({ draw, gate } = gateFrame(gate, 1000 / 120, 60));
+  assert.equal(draw, false);
+  assert.ok(Math.abs(displayRefresh(gate) - 1000 / 120) < 1e-9, 'the refresh is measured from the frames');
+  ({ draw, gate } = gateFrame(gate, 1000 / 60 - 0.1, 60));
+  assert.ok(draw);
+  assert.equal(gateFrame(gate, (2 * 1000) / 60 - 1000 / 120 - 0.1, 60).draw, false);
+});
+
+test('on a 60 Hz display 60 and 120 FPS draw every refresh, and 40 alternates one and two', () => {
+  const times = refreshes(60, 600, 0.3);
+  assert.deepEqual(new Set(steps(gated(times, 60))), new Set([1]));
+  assert.deepEqual(new Set(steps(gated(times, 120))), new Set([1]));
+  const forty = gated(times, 40);
+  assert.deepEqual(new Set(steps(forty)), new Set([1, 2]));
+  assert.ok(Math.abs(forty.length - 400) <= 1, `${forty.length} frames in 10 s`);
+  for (let i = 2; i < forty.length; i++) assert.equal(forty[i] - forty[i - 2], 3, 'never two long or two short gaps in a row');
+});
+
+test('after a hitch the gate starts again from the late frame instead of bursting to catch up', () => {
+  for (const [fps, every] of [
+    [40, 3],
+    [60, 2],
+    [120, 1],
+  ] as const) {
+    const before = refreshes(120, 120, 0.2);
+    let gate = OPEN_GATE;
+    for (const t of before) gate = gateFrame(gate, t, fps).gate;
+    // Nothing for a quarter of a second, then refreshes again.
+    const after = refreshes(120, 240, 0.2, before.at(-1)! + 250);
+    const drawn = gated(after, fps, gate);
+    assert.equal(drawn[0], 0, 'the first frame after the gap draws');
+    assert.deepEqual(new Set(steps(drawn)), new Set([every]), `${fps} FPS straight back to every ${every}`);
+  }
 });
