@@ -129,7 +129,11 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
     val worker = data.workers[workerId]
-    var phone by rememberSaveable(workerId) { mutableStateOf(false) }
+    // Phone view is the point of a phone: open a worker's terminal readable, sized for this screen.
+    // A cloud worker has no terminal here and no Phone key to leave the mode with, so it keeps the fit.
+    // The worker may not have synced yet, so the default is read live until the owner picks a view.
+    var phoneChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(null) }
+    val phone = phoneChoice ?: (worker?.isCloud == false)
     val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
     val activity = LocalActivity.current
     val ptySize by rememberUpdatedState(worker?.let { TermSize(it.cols, it.rows) })
@@ -178,7 +182,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 // The desktop typed into it and took the size back: show it as the desktop has it.
                 if (sizing.takenOver(currentSize)) {
                     sizing.release()
-                    phone = false
+                    phoneChoice = false
                     return@LaunchedEffect
                 }
                 val target = phoneSize ?: return@LaunchedEffect
@@ -207,7 +211,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             // Snackbars rise above the quick keys and the composer instead of covering them.
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud) {
-                    QuickKeys(workerId, phone) { phone = !phone }
+                    QuickKeys(workerId, phone) { phoneChoice = !phone }
                 }
                 Composer(worker)
             }
