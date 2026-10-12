@@ -15,7 +15,7 @@ import type { Board } from './forge.js';
 import { forgeOf, forgeWords, type Forge, type ForgeWords } from '../shared/floors.js';
 import { floorPipelines, type Pipelines } from './pipelines.js';
 import { stateWord, type PipelineRun } from '../shared/pipelines.js';
-import { HEAL_TRIES, HealWatch, type HealCall } from './auto-heal.js';
+import { AutoHeal, HEAL_TRIES, HealWatch, seedAutoHeal, type HealCall } from './auto-heal.js';
 import { healPromptVars } from '../shared/prompts.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
@@ -65,8 +65,8 @@ export interface FloorContext {
   freshMain(): boolean;
   /** ⚙️ Settings → Subagents: how workers hire subagents. */
   subagents(): SubagentSettings;
-  /** The Pipelines window: a run that fails wakes the Pipeline agent to heal it (see auto-heal.ts). */
-  autoHeal(): boolean;
+  /** The office's .droid-office, so a floor with no auto-heal.json yet can start from the old office-wide file. */
+  officeDataDir: string;
   /** Droid's model list, which leads choose subagents' models from. */
   droidModels?(): Promise<DroidModelCatalogue>;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
@@ -127,6 +127,8 @@ export class Floor {
   readonly jira: FloorJira;
   /** Its repository's GitHub Actions runs, or its GitLab project's pipelines (see pipelines.ts). */
   readonly pipelines: Pipelines;
+  /** Whether a failed run on this floor wakes the Pipeline agent (see auto-heal.ts). */
+  readonly autoHeal: AutoHeal;
   readonly changes: Changes;
   readonly decor: Decor;
   readonly jukebox: Jukebox;
@@ -163,6 +165,8 @@ export class Floor {
     const dataDir = path.join(def.dir, '.droid-office');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     excludeFromGit(def.dir);
+    seedAutoHeal(dataDir, ctx.officeDataDir);
+    this.autoHeal = new AutoHeal(dataDir, (state) => ctx.emit(this, { t: 'autoHeal', state }));
     const forge = forgeOf(def.repo) ?? 'github';
     const words = forgeWords(forge);
     this.words = words;
@@ -267,17 +271,17 @@ export class Floor {
     this.pipelines = floorPipelines(def.dir, forge, def.repo, {
       state: (state) => ctx.emit(this, { t: 'pipelines', state }),
       finished: (run, ours) => {
-        const heal = this.heals.finished(run, ctx.autoHeal());
+        const heal = this.heals.finished(run, this.autoHeal.on);
         if (heal) this.heal(run, heal);
         if (run.state !== 'failure' && !(ours && run.state === 'success')) return;
         const icon = run.state === 'failure' ? '❌' : '✅';
         ctx.toast(this, `${icon} ${run.workflow} #${run.number} ${stateWord(run)} on ${run.branch}: ${run.title}`, run.state === 'failure' ? 'warn' : 'info');
       },
     });
-    // With auto-heal on, a failure is noticed within a minute even when nobody is on the floor.
+    // With auto-heal on for this floor, a failure is noticed within a minute even when nobody is on it.
     this.pipelines.start(
       () => this.ctx.connections(this) > 0,
-      () => ctx.autoHeal(),
+      () => this.autoHeal.on,
     );
 
     const workers = this.workers;

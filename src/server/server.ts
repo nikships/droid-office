@@ -28,7 +28,6 @@ import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
-import { AutoHeal } from './auto-heal.js';
 import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
@@ -372,8 +371,6 @@ export async function startServer(cfg: Config) {
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
   // Whether a fresh worker starts from the latest of the default branch, on every floor (⚙️ Settings).
   const freshMain = new FreshMain(cfg.dataDir, (state) => broadcast({ t: 'freshMain', state }));
-  // Whether a failed run wakes the Pipeline agent to heal it, on every floor (the Pipelines window).
-  const autoHeal = new AutoHeal(cfg.dataDir, (state) => broadcast({ t: 'autoHeal', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => broadcast({ t: 'prompts', state }));
   // How workers hire subagents at the desks, on every floor, and the Droid skill that tells them how (Settings).
@@ -490,7 +487,7 @@ export async function startServer(cfg: Config) {
     },
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
-    autoHeal: () => autoHeal.on,
+    officeDataDir: cfg.dataDir,
     subagents: () => subagents.settings,
     droidModels: () => droidModels.get(),
     floor: (id) => floors.get(id),
@@ -536,6 +533,7 @@ export async function startServer(cfg: Config) {
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
+    autoHeal: floor?.autoHeal.state() ?? { on: false },
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
@@ -1137,7 +1135,6 @@ export async function startServer(cfg: Config) {
       sky: sky.state,
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
-      autoHeal: autoHeal.state(),
       subagents: subagents.state(),
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
@@ -1781,10 +1778,12 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'autoHeal.set': {
+        const floor = here();
+        if (!floor) break;
         const on = msg.on === true;
-        if (on === autoHeal.on) break;
-        autoHeal.set(on, who);
-        toastAll(on ? `🩹 ${who} turned auto-heal on: a run that fails wakes the Pipeline agent to fix it` : `🩹 ${who} turned auto-heal off`);
+        if (on === floor.autoHeal.on) break;
+        floor.autoHeal.set(on, who);
+        toastFloor(floor, on ? `🩹 ${who} turned auto-heal on for this floor: a run that fails wakes the Pipeline agent to fix it` : `🩹 ${who} turned auto-heal off for this floor`);
         break;
       }
       case 'subagents.set': {

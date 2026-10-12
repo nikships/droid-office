@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AutoHeal, HEAL_TRIES, HealWatch } from '../src/server/auto-heal.js';
+import { AutoHeal, HEAL_TRIES, HealWatch, seedAutoHeal } from '../src/server/auto-heal.js';
 import { officePrompt } from '../src/server/prompts.js';
 import { healPromptVars } from '../src/shared/prompts.js';
 import type { PipelineRun } from '../src/shared/pipelines.js';
@@ -39,6 +39,46 @@ test('auto-heal is off until someone turns it on, and stays as it was set', (t) 
   const again = new AutoHeal(dir, () => {});
   assert.equal(again.on, true);
   assert.equal(again.state().by, 'Ada');
+});
+
+test('each floor keeps its own auto-heal, and one with none yet starts from the office file', (t) => {
+  const office = mkdtempSync(path.join(tmpdir(), 'droid-office-heal-office-'));
+  const aDir = mkdtempSync(path.join(tmpdir(), 'droid-office-heal-a-'));
+  const bDir = mkdtempSync(path.join(tmpdir(), 'droid-office-heal-b-'));
+  const cDir = mkdtempSync(path.join(tmpdir(), 'droid-office-heal-c-'));
+  t.after(() => {
+    for (const dir of [office, aDir, bDir, cDir]) rmSync(dir, { recursive: true, force: true });
+  });
+  writeFileSync(path.join(office, 'auto-heal.json'), JSON.stringify({ on: true, by: 'Ada', at: 5 }));
+  seedAutoHeal(aDir, office);
+  seedAutoHeal(bDir, office);
+  const a = new AutoHeal(aDir, () => {});
+  const b = new AutoHeal(bDir, () => {});
+  assert.equal(a.on, true);
+  assert.equal(a.state().by, 'Ada');
+  assert.equal(b.on, true);
+  a.set(false, 'Bea');
+  assert.equal(a.on, false);
+  assert.equal(b.on, true, 'turning one floor off leaves the other on');
+  seedAutoHeal(aDir, office);
+  assert.equal(new AutoHeal(aDir, () => {}).on, false, 'a floor that chose is not copied over');
+  seedAutoHeal(office, office);
+  assert.equal(new AutoHeal(office, () => {}).on, true, 'the office file itself is that floor when they are the same folder');
+  const bare = new AutoHeal(cDir, () => {});
+  assert.equal(bare.on, false, 'no office file: still off');
+  writeFileSync(path.join(office, 'auto-heal.json'), JSON.stringify({ on: true }));
+  const dDir = mkdtempSync(path.join(tmpdir(), 'droid-office-heal-d-'));
+  t.after(() => rmSync(dDir, { recursive: true, force: true }));
+  seedAutoHeal(dDir, office);
+  const seeded = new AutoHeal(dDir, () => {});
+  assert.equal(seeded.on, true);
+  assert.equal(seeded.state().by, 'someone', 'a file with no name still seeds');
+  writeFileSync(path.join(office, 'auto-heal.json'), JSON.stringify({ on: 'yes' }));
+  seedAutoHeal(cDir, office);
+  assert.equal(new AutoHeal(cDir, () => {}).on, false, 'a file that is not a switch is not copied');
+  writeFileSync(path.join(office, 'auto-heal.json'), '{');
+  seedAutoHeal(cDir, office);
+  assert.equal(new AutoHeal(cDir, () => {}).on, false, 'a file that cannot be read is not copied');
 });
 
 test('a failure is healed once, only while auto-heal is on', () => {

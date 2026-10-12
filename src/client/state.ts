@@ -272,7 +272,7 @@ class Store {
   leaveOnMerge: LeaveOnMergeState = { on: false };
   /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
   freshMain: FreshMainState = { on: true };
-  /** Whether a run that fails wakes the Pipeline agent to heal it (the Pipelines window). */
+  /** Whether a run that fails on this floor wakes the Pipeline agent to heal it (the Pipelines window). */
   autoHeal: AutoHealState = { on: false };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
@@ -333,8 +333,9 @@ class Store {
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
     this.setJukebox(v.jukebox);
+    this.autoHeal = v.autoHeal ?? { on: false };
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'jira', 'jiraBoard', 'autoHeal', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -363,13 +364,12 @@ class Store {
         this.sky = msg.sky;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
-        this.autoHeal = msg.autoHeal ?? { on: false };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'autoHeal', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;

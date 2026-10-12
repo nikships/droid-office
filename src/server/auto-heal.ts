@@ -1,14 +1,33 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import type { PipelineRun } from '../shared/pipelines.js';
 import { SavedSwitch, type SwitchState } from './saved-switch.js';
 
 /**
- * Whether a run that fails wakes the Pipeline agent to heal it (find the root cause and hire a
- * worker who pushes the fix), picked on the Pipelines window by anyone and kept in
- * .droid-office/auto-heal.json. The same on every floor; off until someone turns it on.
+ * Whether a run that fails on this floor wakes the Pipeline agent to heal it (find the root cause
+ * and hire a worker who pushes the fix), picked on that floor's Pipelines window and kept in the
+ * floor's .droid-office/auto-heal.json. Off until someone on the floor turns it on.
  */
 export class AutoHeal extends SavedSwitch {
   constructor(dataDir: string, onState: (state: SwitchState) => void) {
     super(dataDir, 'auto-heal.json', false, onState);
+  }
+}
+
+/**
+ * A floor with no auto-heal.json yet starts from the office-wide file this used to be (the same on
+ * every floor), copied in once. After that the floor keeps its own, and the office file is left on disk.
+ */
+export function seedAutoHeal(floorDataDir: string, officeDataDir: string) {
+  const dest = path.join(floorDataDir, 'auto-heal.json');
+  if (floorDataDir === officeDataDir || existsSync(dest)) return;
+  try {
+    const s = JSON.parse(readFileSync(path.join(officeDataDir, 'auto-heal.json'), 'utf8')) as Partial<SwitchState>;
+    if (typeof s.on !== 'boolean') return;
+    const seeded: Required<SwitchState> = { on: s.on, by: typeof s.by === 'string' ? s.by : 'someone', at: typeof s.at === 'number' ? s.at : 0 };
+    writeFileSync(dest, JSON.stringify(seeded, null, 2), { mode: 0o600 });
+  } catch {
+    // no office file, or it can't be read: the floor starts off
   }
 }
 

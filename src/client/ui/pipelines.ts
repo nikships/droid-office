@@ -95,6 +95,11 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     label: '🩹 Auto-heal',
     checked: store.autoHeal.on,
     onChange: (on) => {
+      // The roof and the lobby have no floor, so there is nothing for this switch to turn on.
+      if (!store.currentFloor()) {
+        heal.input.checked = store.autoHeal.on;
+        return;
+      }
       if (store.autoHeal.on !== on) net.send({ t: 'autoHeal.set', on });
     },
   });
@@ -102,7 +107,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     const { on, by, at } = store.autoHeal;
     heal.input.checked = on;
     const set = by ? `\n${on ? 'Turned on' : 'Turned off'} by ${by}${at ? ` ${timeAgo(at)}` : ''}` : '';
-    heal.title = `A run that fails wakes the Pipeline agent: it finds the root cause and hires a worker who fixes it and pushes. On every floor.${set}`;
+    heal.title = `A run that fails wakes the Pipeline agent: it finds the root cause and hires a worker who fixes it and pushes. This floor only.${set}`;
   };
   const el = h(
     'div.modal.xl.pl-window',

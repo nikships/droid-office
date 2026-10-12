@@ -9,8 +9,8 @@ export interface SwitchState {
 }
 
 /**
- * An on/off setting in ⚙️ Settings that anyone can flip, the same on every floor, kept in a file in
- * the office's .droid-office folder.
+ * An on/off setting anyone can flip, kept in one JSON file. Which folder that file lives in, and
+ * whether the setting is the office's or one floor's, is up to the setting.
  */
 export class SavedSwitch {
   private saved?: Required<SwitchState>;

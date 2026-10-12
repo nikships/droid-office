@@ -517,6 +517,8 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
+  /** Whether a failed run on this floor wakes the Pipeline agent. Off until someone on the floor turns it on. */
+  autoHeal: AutoHealState;
 }
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'T' | '?';
@@ -657,8 +659,8 @@ export interface FreshMainState {
 }
 
 /**
- * Whether a run that fails wakes the Pipeline agent to heal it (the Pipelines window), for every
- * floor: it finds the root cause and hires a worker who pushes the fix. Off by default.
+ * Whether a run that fails on one floor wakes the Pipeline agent to heal it (the Pipelines window):
+ * it finds the root cause and hires a worker who pushes the fix. Off by default. Each floor has its own.
  */
 export interface AutoHealState {
   on: boolean;
@@ -892,7 +894,7 @@ export type ClientMsg =
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
   | { t: 'freshMain.set'; on: boolean }
-  /** A run that fails wakes the Pipeline agent to heal it (true), or only toasts. */
+  /** A run that fails on the floor you're on wakes the Pipeline agent to heal it (true), or only toasts. */
   | { t: 'autoHeal.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
@@ -955,7 +957,6 @@ export type ServerMsg =
       sky: SkyState;
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
-      autoHeal: AutoHealState;
       subagents: SubagentsState;
       whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
@@ -1021,6 +1022,7 @@ export type ServerMsg =
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
+  /** To everyone on the floor: whether a failed run there wakes the Pipeline agent. */
   | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
