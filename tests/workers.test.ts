@@ -117,10 +117,11 @@ function fixture(): Fixture {
     droid,
     read() {
       if (!existsSync(log)) return [];
-      return readFileSync(log, 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as Invocation);
+      // A poll can land mid-append. A finished record always ends with a newline, so a trailing segment without one is not a record yet.
+      const text = readFileSync(log, 'utf8');
+      const lines = text.split('\n');
+      if (text.length > 0 && !text.endsWith('\n')) lines.pop();
+      return lines.filter(Boolean).map((line) => JSON.parse(line) as Invocation);
     },
     close() {
       rmSync(root, { recursive: true, force: true });
@@ -1927,4 +1928,16 @@ test('fresh workers start from the latest main, the checkout moved only when nob
   assert.equal(remote.worktree?.base, remoteHead);
   assert.equal(remote.worktree?.from, 'remote-start');
   assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+});
+
+test('a log read ignores a trailing partial line', (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const done = { kind: 'droid', args: ['--settings'], env: {} };
+  const torn = { kind: 'droid', args: [], env: {} };
+  const tornLine = JSON.stringify(torn);
+  writeFileSync(f.log, `${JSON.stringify(done)}\n${tornLine.slice(0, -1)}`);
+  assert.deepEqual(f.read(), [done]);
+  writeFileSync(f.log, `${JSON.stringify(done)}\n${tornLine}\n`);
+  assert.deepEqual(f.read(), [done, torn]);
 });

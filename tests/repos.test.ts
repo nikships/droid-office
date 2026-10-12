@@ -116,11 +116,13 @@ function fixture(t: { after(fn: () => void): void }): Fixture {
     log,
     agent,
     ghState,
-    starts: () =>
-      readFileSync(log, 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => JSON.parse(l)),
+    starts: () => {
+      // A poll can land mid-append. A finished record always ends with a newline, so a trailing segment without one is not a record yet.
+      const text = readFileSync(log, 'utf8');
+      const lines = text.split('\n');
+      if (text.length > 0 && !text.endsWith('\n')) lines.pop();
+      return lines.filter(Boolean).map((l) => JSON.parse(l));
+    },
     prs: () => (existsSync(ghState) ? JSON.parse(readFileSync(ghState, 'utf8')).prs : []),
   };
 }
