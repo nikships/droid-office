@@ -1,5 +1,5 @@
 // What the Whiteboard dialogs need that is not a mark: the Ping a worker rows, and the media types
-// and file list of a folder upload. The card module (whiteboard-place) does not own these.
+// and file list of a folder upload.
 
 import type { WorkerInfo } from '../../shared/protocol';
 import { pingEligibility, type PingHow } from '../../shared/whiteboard-ping';

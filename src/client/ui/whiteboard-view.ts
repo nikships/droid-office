@@ -1,7 +1,7 @@
 // The Whiteboard window's view (docs/whiteboard.md, "The window"): the zoom and pan math for an
 // artifact laid out at CANONICAL_WIDTH and for a canvas, the CardView the wall shows, who made a
-// mark, and the Copy for agent line. Where a mark sits and what changed are the card module
-// (src/shared/whiteboard-place.ts). Ping rows and folder uploads live next to the dialogs. No DOM
+// mark, and the Copy for agent line. Where a mark sits and what changed are
+// src/shared/whiteboard-marks.ts. Ping rows and folder uploads are whiteboard-picker.ts. No DOM
 // here: tests/whiteboard-window.test.ts runs it in Node.
 
 import { CANONICAL_WIDTH, OWNER, changesFor, readPoint, type Author, type Board, type Box, type Card, type CardView, type Point } from '../../shared/whiteboard';

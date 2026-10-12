@@ -34,7 +34,7 @@ import {
   type StickyColor,
   type Thread,
 } from '../../shared/whiteboard';
-import { canvasBounds, commentAddOp, dragBox, dragMarkOps, dragPreview, markRemoveOp, pictureAddOp, pictureSize, placeMark, reattachMarkOps, stickyAddOp, stickyEditOp } from '../../shared/whiteboard-place';
+import { canvasBounds, dragBox, dragMarkOps, dragPreview, pictureSize, reattachMarkOps } from '../../shared/whiteboard-marks';
 import { withToken } from '../token';
 import { claimEscape, h } from './dom';
 import { colorDot } from './kit';
@@ -344,9 +344,9 @@ export class Surface {
     if (!mark) return;
     this.selected = id;
     const p = this.markPoint(mark);
-    const at = placeMark(kind, mark.id, { point: p, detached: false }, kind === 'thread' ? undefined : (mark as Sticky | Picture).box);
-    const cx = at.x + at.w / 2;
-    const cy = at.y + at.h / 2;
+    const box = kind === 'thread' ? { x: 0, y: 0, w: 1, h: 1 } : (mark as Sticky).box;
+    const cx = p.x + box.x + box.w / 2;
+    const cy = p.y + box.y + box.h / 2;
     if (this.card.kind === 'canvas') {
       const z = this.canvas.zoom;
       this.canvas = { zoom: z, x: cx - this.viewport.w / z / 2, y: cy - this.viewport.h / z / 2 };
@@ -414,7 +414,7 @@ export class Surface {
       const topLeft = at ? spot : { x: spot.x - size.w / 2, y: spot.y - size.h / 2 };
       const anchor = await this.anchorAt(topLeft);
       if (this.disposed) return;
-      void this.host.apply([pictureAddOp(this.card.id, newId('p'), file, anchor, size)], 'Adding the picture');
+      void this.host.apply([{ op: 'picture.add', card: this.card.id, id: newId('p'), file, anchor, box: { x: 0, y: 0, w: size.w, h: size.h } }], 'Adding the picture');
       spot = { x: spot.x + 24, y: spot.y + 24 };
     }
   }
@@ -948,8 +948,8 @@ export class Surface {
       this.marks.append(el);
       this.markEls.set(t.id, el);
     }
-    const at = placeMark('thread', t.id, { point: this.markPoint(t), detached: false });
-    this.place(el, at.x, at.y);
+    const p = this.markPoint(t);
+    this.place(el, p.x, p.y);
     el.textContent = String(n);
     const first = t.messages[0];
     el.title = `${first ? `${authorName(first.author)}: ${first.text}` : 'Comment'}${t.messages.length > 1 ? ` (+${t.messages.length - 1})` : ''}`;
@@ -973,8 +973,8 @@ export class Surface {
       this.markEls.set(s.id, el);
     }
     if (el.classList.contains('dragging')) return;
-    const at = placeMark('sticky', s.id, { point: this.markPoint(s), detached: false }, s.box);
-    this.place(el, at.x, at.y, at.w, at.h);
+    const p = this.markPoint(s);
+    this.place(el, p.x + s.box.x, p.y + s.box.y, s.box.w, s.box.h);
     el.style.setProperty('--sticky', STICKY_COLORS[s.color]);
     const text = el.querySelector<HTMLElement>('.wb-sticky-text');
     if (text && this.editing?.id !== s.id) {
@@ -998,7 +998,7 @@ export class Surface {
         b.style.background = STICKY_COLORS[c];
         b.addEventListener('click', (e) => {
           e.stopPropagation();
-          void this.host.apply([stickyEditOp(this.card.id, id, { color: c })], 'Recoloring the sticky');
+          void this.host.apply([{ op: 'sticky.edit', card: this.card.id, id, color: c }], 'Recoloring the sticky');
         });
         return b;
       }),
@@ -1006,7 +1006,7 @@ export class Surface {
     const del = h('button.wb-mark-x', { type: 'button', title: 'Delete the sticky', 'aria-label': 'Delete the sticky' }, '✕');
     del.addEventListener('click', (e) => {
       e.stopPropagation();
-      void this.host.apply([markRemoveOp(this.card.id, 'sticky', id)], 'Deleting the sticky');
+      void this.host.apply([{ op: 'sticky.rm', card: this.card.id, id }], 'Deleting the sticky');
     });
     const bar = h('div.wb-sticky-bar', {}, h('span.wb-sticky-who'), colors, del);
     const text = h('div.wb-sticky-text');
@@ -1040,7 +1040,7 @@ export class Surface {
       this.editing = null;
       const value = ta.value;
       text.textContent = keep ? value : s.text;
-      if (keep && value !== s.text) void this.host.apply([stickyEditOp(this.card.id, id, { text: value })], 'Saving the sticky');
+      if (keep && value !== s.text) void this.host.apply([{ op: 'sticky.edit', card: this.card.id, id, text: value }], 'Saving the sticky');
       this.renderMarks();
     };
     const releaseEsc = claimEscape(this.el, () => {
@@ -1067,7 +1067,7 @@ export class Surface {
       const del = h('button.wb-mark-x', { type: 'button', title: 'Delete the picture', 'aria-label': 'Delete the picture' }, '✕');
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        void this.host.apply([markRemoveOp(this.card.id, 'picture', p.id)], 'Deleting the picture');
+        void this.host.apply([{ op: 'picture.rm', card: this.card.id, id: p.id }], 'Deleting the picture');
       });
       const grip = h('div.wb-resize', { title: 'Resize' });
       el = h('div.wb-picture', { 'data-mark': p.id }, img, del, grip);
@@ -1081,8 +1081,8 @@ export class Surface {
     const img = el.querySelector<HTMLImageElement>('img');
     const src = this.host.fileUrl(p.file.hash);
     if (img && img.getAttribute('src') !== src) img.src = src;
-    const at = placeMark('picture', p.id, { point: this.markPoint(p), detached: false }, p.box);
-    this.place(el, at.x, at.y, at.w, at.h);
+    const at = this.markPoint(p);
+    this.place(el, at.x + p.box.x, at.y + p.box.y, p.box.w, p.box.h);
     el.title = `Picture from ${authorName(p.stamps.file.author)}`;
     this.flags(el, p.id, { detached: this.detached('picture', p.id), changed });
   }
@@ -1258,7 +1258,7 @@ export class Surface {
     const box = dragBox(a, b, STICKY_SIZE);
     const anchor = await this.anchorAt({ x: box.x, y: box.y });
     const id = newId('s');
-    void this.host.apply([stickyAddOp(this.card.id, id, anchor, box)], 'Adding the sticky');
+    void this.host.apply([{ op: 'sticky.add', card: this.card.id, id, anchor, box: { x: 0, y: 0, w: box.w, h: box.h }, text: '', color: 'yellow' }], 'Adding the sticky');
     setTimeout(() => this.editSticky(id), 30);
   }
 
@@ -1283,7 +1283,7 @@ export class Surface {
       if (!text) return ta.focus();
       this.closeComposer();
       const thread = newId('t');
-      void this.host.apply([commentAddOp(this.card.id, thread, newId('m'), await anchorP, text)], 'Adding the comment');
+      void this.host.apply([{ op: 'comment.add', card: this.card.id, thread, message: newId('m'), anchor: await anchorP, text }], 'Adding the comment');
       this.selected = thread;
       this.host.selectMark('thread', thread);
     };

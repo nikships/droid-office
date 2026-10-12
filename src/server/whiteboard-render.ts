@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 import type { Browser, BrowserContext, Frame, Page, Route } from 'playwright-core';
 import type { WhiteboardRendererStatus } from '../shared/protocol.js';
 import { BRIDGE_CHANNEL, parseFrameMsg } from '../shared/whiteboard-bridge.js';
-import { boundsOf, placeMarks } from '../shared/whiteboard-place.js';
+import { boundsOf, placeMarks } from '../shared/whiteboard-marks.js';
 import { CANONICAL_WIDTH, STICKY_COLORS, type Anchor, type Card, type Point } from '../shared/whiteboard.js';
 import { BrowserError, browserStatus, classifyLaunchError, closeBrowser, ensureBrowser, installCommand, launchBrowser, newIsolatedContext, type BrowserStatus, type EnsureOptions, type InstallProgress } from './whiteboard-browser.js';
 import { CARD_HEADERS, CARD_SANDBOX, sameKey, type CardRenders, type DrawnMark, type PinnedCard, type RenderImage, type RenderKey, type RenderOutcome, type WhiteboardRenderer } from './whiteboard.js';

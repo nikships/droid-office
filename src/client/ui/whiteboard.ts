@@ -8,7 +8,7 @@
 // with a button to open that card.
 
 import type { ServerMsg } from '../../shared/protocol';
-import { changesSince, type ChangeItem } from '../../shared/whiteboard-place';
+import { changesSince, type ChangeItem } from '../../shared/whiteboard-marks';
 import { OWNER, cardChanged, cardsNewestFirst, findCard, type Board, type Card, type CardView, type Op, type Selection } from '../../shared/whiteboard';
 import type { Net } from '../net';
 import { store } from '../state';

@@ -3,10 +3,10 @@
 // delete), and the card's stickies and pictures.
 
 import { STICKY_COLORS, type Author, type Card, type Op, type Thread } from '../../shared/whiteboard';
-import { commentReplyOp, commentResolveOp, markRemoveOp, type ChangeItem } from '../../shared/whiteboard-place';
 import { h, timeAgo } from './dom';
 import { colorDot } from './kit';
 import type { MarkKind, Surface } from './whiteboard-surface';
+import type { ChangeItem } from '../../shared/whiteboard-marks';
 import { authorColor, authorName, newId } from './whiteboard-view';
 
 export interface PanelHost {
@@ -145,7 +145,7 @@ export class Panel {
                     h('button.btn.sm.ghost', { type: 'button', title: 'Edit the text', onclick: (e: Event) => (e.stopPropagation(), this.goTo('sticky', s.id), surface?.editSticky(s.id)) }, 'Edit'),
                     h(
                       'button.btn.sm.ghost.icon',
-                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the sticky', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([markRemoveOp(card.id, 'sticky', s.id)], 'Deleting the sticky')) },
+                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the sticky', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'sticky.rm', card: card.id, id: s.id }], 'Deleting the sticky')) },
                       '✕',
                     ),
                   ),
@@ -175,7 +175,7 @@ export class Panel {
                     {},
                     h(
                       'button.btn.sm.ghost.icon',
-                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the picture', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([markRemoveOp(card.id, 'picture', p.id)], 'Deleting the picture')) },
+                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the picture', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'picture.rm', card: card.id, id: p.id }], 'Deleting the picture')) },
                       '✕',
                     ),
                   ),
@@ -220,10 +220,14 @@ export class Panel {
     };
     const resolve = h(
       'button.btn.sm.ghost',
-      { type: 'button', onclick: () => void this.host.apply([commentResolveOp(card.id, t.id, !t.resolved)], t.resolved ? 'Reopening the comment' : 'Resolving the comment') },
+      { type: 'button', onclick: () => void this.host.apply([{ op: t.resolved ? 'comment.reopen' : 'comment.resolve', card: card.id, thread: t.id }], t.resolved ? 'Reopening the comment' : 'Resolving the comment') },
       t.resolved ? 'Reopen' : 'Resolve',
     );
-    const del = h('button.btn.sm.ghost.icon', { type: 'button', title: 'Delete the thread', 'aria-label': 'Delete the thread', onclick: () => void this.host.apply([markRemoveOp(card.id, 'thread', t.id)], 'Deleting the comment') }, '✕');
+    const del = h(
+      'button.btn.sm.ghost.icon',
+      { type: 'button', title: 'Delete the thread', 'aria-label': 'Delete the thread', onclick: () => void this.host.apply([{ op: 'comment.rm', card: card.id, thread: t.id }], 'Deleting the comment') },
+      '✕',
+    );
     const head = h(
       'div.wb-thread-head',
       {},
@@ -256,7 +260,11 @@ export class Panel {
             {},
             who(m.author),
             h('span.wb-thread-when', {}, timeAgo(m.at)),
-            h('button.wb-msg-x', { type: 'button', title: 'Delete this message', 'aria-label': 'Delete this message', onclick: () => void this.host.apply([markRemoveOp(card.id, 'thread', t.id, m.id)], 'Deleting the message') }, '✕'),
+            h(
+              'button.wb-msg-x',
+              { type: 'button', title: 'Delete this message', 'aria-label': 'Delete this message', onclick: () => void this.host.apply([{ op: 'comment.rm', card: card.id, thread: t.id, message: m.id }], 'Deleting the message') },
+              '✕',
+            ),
           ),
           h('div.wb-msg-text', {}, m.text),
         ),
@@ -270,7 +278,7 @@ export class Panel {
       if (!text) return;
       this.drafts.delete(t.id);
       ta.value = '';
-      const ok = await this.host.apply([commentReplyOp(card.id, t.id, newId('m'), text)], 'Replying');
+      const ok = await this.host.apply([{ op: 'comment.reply', card: card.id, thread: t.id, message: newId('m'), text }], 'Replying');
       if (!ok) this.drafts.set(t.id, text);
     };
     ta.addEventListener('keydown', (e) => {

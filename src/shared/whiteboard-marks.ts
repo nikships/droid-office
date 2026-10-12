@@ -1,31 +1,14 @@
-// One mark on a Whiteboard card, shared by the window and the renderer. Where it sits (its anchor's
-// point plus its box), the bounds of a canvas for a margin the caller passes, the operations a place,
-// drag, reply or delete returns, and the change list. The list is the pieces `changesFor` already
-// found, described once. No DOM and no three.js: Node runs it too.
+// The marks on a Whiteboard card (comments, stickies, pictures), shared by the window and the
+// renderer: where each sits (its anchor's point plus its box), the bounds of a canvas for a margin the
+// caller passes, the operations a finished drag or a reattach sends, and the "changed since you
+// looked" list, which phrases the pieces `changesFor` already found. A single operation the window
+// sends as is (a new sticky, a reply, a delete) stays an `Op` literal at its call site. No DOM and no
+// three.js: Node runs it too.
 //
 // The window fits a canvas with 80 pixels of room and the renderer captures one with 48. Those stay
 // two numbers; both call `canvasBounds` / `boundsOf` with the margin they mean.
 
-import {
-  CANONICAL_WIDTH,
-  OWNER,
-  changesFor,
-  findCard,
-  parseStatePathKey,
-  statePathKey,
-  type Anchor,
-  type Author,
-  type Board,
-  type Box,
-  type Card,
-  type FileRef,
-  type Op,
-  type PieceKind,
-  type PieceRef,
-  type Point,
-  type Stamp,
-  type StickyColor,
-} from './whiteboard.js';
+import { CANONICAL_WIDTH, OWNER, changesFor, findCard, parseStatePathKey, statePathKey, type Anchor, type Author, type Board, type Box, type Card, type Op, type PieceKind, type PieceRef, type Point, type Stamp } from './whiteboard.js';
 
 /** A mark's anchor as someone placed it: the page point, and whether that point is a fallback. */
 export interface MarkSpot {
@@ -54,7 +37,7 @@ const DRAG_MIN = 40;
 export const WINDOW_CANVAS_EMPTY: Box = { x: 0, y: 0, w: CANONICAL_WIDTH, h: 720 };
 
 /** One mark's top-left and size. `pin` centers a thread on its point; otherwise a thread is that point. */
-export function placeMark(kind: PlacedMark['kind'], id: string, spot: MarkSpot, box?: Box, pin = 0): PlacedMark {
+function placeMark(kind: PlacedMark['kind'], id: string, spot: MarkSpot, box?: Box, pin = 0): PlacedMark {
   if (kind === 'thread') {
     const size = pin > 0 ? pin : 1;
     const shift = pin > 0 ? pin / 2 : 0;
@@ -146,43 +129,6 @@ export function reattachMarkOps(o: { card: string; kind: 'thread' | 'sticky' | '
   const ops: Op[] = [reattachOne(o.kind, o.card, o.id, o.anchor)];
   if (o.box && (o.box.x !== 0 || o.box.y !== 0)) ops.push(moveOp(o.kind, o.card, o.id, { x: 0, y: 0 }));
   return ops;
-}
-
-/** A new sticky: its anchor is the top-left, so the box offset starts at zero. */
-export function stickyAddOp(card: string, id: string, anchor: Anchor, size: { w: number; h: number }, color: StickyColor = 'yellow'): Op {
-  return { op: 'sticky.add', card, id, anchor, box: { x: 0, y: 0, w: size.w, h: size.h }, text: '', color };
-}
-
-/** A new picture, anchored at its top-left. */
-export function pictureAddOp(card: string, id: string, file: FileRef, anchor: Anchor, size: { w: number; h: number }): Op {
-  return { op: 'picture.add', card, id, file, anchor, box: { x: 0, y: 0, w: size.w, h: size.h } };
-}
-
-/** A new comment thread. */
-export function commentAddOp(card: string, thread: string, message: string, anchor: Anchor, text: string): Op {
-  return { op: 'comment.add', card, thread, message, anchor, text };
-}
-
-/** A sticky's text or color. */
-export function stickyEditOp(card: string, id: string, patch: { text?: string; color?: StickyColor }): Op {
-  return { op: 'sticky.edit', card, id, ...patch };
-}
-
-/** A reply on a thread. */
-export function commentReplyOp(card: string, thread: string, message: string, text: string): Op {
-  return { op: 'comment.reply', card, thread, message, text };
-}
-
-/** Resolve, or reopen, a thread. `resolved` is the state it should have after. */
-export function commentResolveOp(card: string, thread: string, resolved: boolean): Op {
-  return resolved ? { op: 'comment.resolve', card, thread } : { op: 'comment.reopen', card, thread };
-}
-
-/** Delete a sticky, a picture, a whole thread, or one message of a thread. */
-export function markRemoveOp(card: string, kind: 'thread' | 'sticky' | 'picture', id: string, message?: string): Op {
-  if (kind === 'thread') return message ? { op: 'comment.rm', card, thread: id, message } : { op: 'comment.rm', card, thread: id };
-  if (kind === 'sticky') return { op: 'sticky.rm', card, id };
-  return { op: 'picture.rm', card, id };
 }
 
 // ---- What changed, from the pieces changesFor already listed ----
