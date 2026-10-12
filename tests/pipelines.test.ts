@@ -362,6 +362,26 @@ test('the floor’s runs are read, counted, and a run that ends in front of the 
   assert.deepEqual(await p.detail(3), { id: 3, jobs: [githubJob({ id: 30, name: 'build', status: 'in_progress' })] });
 });
 
+test('a run that starts and ends between two looks is told too: new since the last look, or on a new attempt', async () => {
+  const f = fakeForge();
+  const finished: [number, number | undefined][] = [];
+  const p = new Pipelines(f.source, { state() {}, finished: (r) => finished.push([r.id, r.attempt]) });
+  f.runs = [run(30)];
+  await p.refresh();
+  const now = new Date().toISOString();
+  f.runs = [run(31, { state: 'failure', createdAt: now }), run(30)];
+  await p.refresh();
+  assert.deepEqual(finished, [[31, undefined]], 'a lint job that failed in seconds');
+  await p.refresh();
+  assert.equal(finished.length, 1, 'once');
+  f.runs = [run(31, { state: 'failure', createdAt: now, attempt: 2 }), run(30)];
+  await p.refresh();
+  assert.deepEqual(finished.at(-1), [31, 2], 'a re-run that failed as fast');
+  f.runs = [run(31, { state: 'failure', createdAt: now, attempt: 2 }), run(30), run(29, { state: 'failure' })];
+  await p.refresh();
+  assert.equal(finished.length, 2, 'an old run back on the list ran long ago');
+});
+
 test('re-runs, cancels and runs are refused when they make no sense, with a reason', async () => {
   const f = fakeForge();
   const p = new Pipelines(f.source, { state() {}, finished() {} });
