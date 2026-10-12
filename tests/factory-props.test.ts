@@ -13,6 +13,7 @@ function kit() {
     colliders: [] as Collider[],
     interactables: [],
     fixture: (...args: unknown[]) => fixtures.push(args),
+    night: { lamps: [] },
   } as unknown as DressingKit;
   return { k, fixtures };
 }
@@ -42,6 +43,37 @@ test('the rack stands against the west wall under the fleet half of the compute 
   assert.ok(DROID_RACK.top < CW.y - CW.height / 2, 'the cubes stay under the screen');
   // The kitchen counter and fridge start at z 11.7.
   assert.ok(DROID_RACK.maxZ < 11.7);
+});
+
+test('the robot cell has orange neon safety lighting and two local light pools', () => {
+  const { k } = kit();
+  placeFactoryProps(k);
+  const cell = k.group.children[1];
+  const strips = cell.children.filter((o) => o instanceof THREE.Group && o.children.some((c) => c instanceof THREE.Mesh && c.geometry instanceof THREE.PlaneGeometry));
+  assert.equal(strips.length, 4, 'all four safety edges have neon strips');
+  for (const strip of strips) {
+    const core = strip.children[0] as THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
+    const halo = strip.children[1] as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+    assert.equal(core.material.color.getHexString(), 'ee6018');
+    assert.equal(core.material.toneMapped, false);
+    assert.equal(core.castShadow, false);
+    assert.equal(halo.material.blending, THREE.AdditiveBlending);
+    assert.equal(halo.material.depthWrite, false);
+    assert.ok(halo.material.map instanceof THREE.DataTexture);
+    const data = halo.material.map.image.data;
+    assert.equal(data[3], 0, 'the halo fades to transparent at its edge');
+    assert.ok(data[(16 * 64 + 32) * 4 + 3] > 0, 'the halo glows at its centre');
+    const bounds = new THREE.Box3().setFromObject(strip);
+    assert.ok(bounds.min.y > 0.02, 'the lighting stays above the plate');
+  }
+  assert.deepEqual(
+    k.night.lamps.map(({ x, y, z, reach, color, power }) => ({ x, y, z, reach, color, power })),
+    [-1, 1].map((lane) => ({ x: ROBOT_CELL.x, y: 0.55, z: ROBOT_CELL.z + lane * 0.8, reach: 1.65, color: '#ee6018', power: 1.8 })),
+  );
+  assert.ok(
+    k.night.lamps.every((l) => !l.ground),
+    'the cell light stays on its office floor',
+  );
 });
 
 test('the compute wall is on the west wall, clear of its windows, the exit door, the ceiling and the kitchen', () => {

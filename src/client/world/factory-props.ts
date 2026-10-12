@@ -160,6 +160,51 @@ function backGlow(): THREE.MeshBasicMaterial {
   return glowMat;
 }
 
+let neon: THREE.MeshBasicMaterial | null = null;
+let neonHalo: THREE.MeshBasicMaterial | null = null;
+function neonMaterial(): THREE.MeshBasicMaterial {
+  neon ??= flat(new THREE.MeshBasicMaterial({ color: ORANGE, toneMapped: false }));
+  return neon;
+}
+
+/** A feathered strip halo, shared by the cell's LEDs; no canvas or post-processing needed. */
+function neonHaloMaterial(): THREE.MeshBasicMaterial {
+  if (neonHalo) return neonHalo;
+  const w = 64;
+  const h = 32;
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const across = Math.abs((2 * y) / (h - 1) - 1);
+      const ends = Math.min(1, x / 5, (w - 1 - x) / 5);
+      const i = (y * w + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = 255;
+      data[i + 3] = Math.round(95 * (1 - across) ** 3 * ends);
+    }
+  }
+  const tex = new THREE.DataTexture(data, w, h);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  neonHalo = flat(new THREE.MeshBasicMaterial({ map: tex, color: ORANGE, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }));
+  return neonHalo;
+}
+
+/** An orange LED rail along x, with its soft halo facing +z. */
+function neonStrip(length: number): THREE.Group {
+  const strip = new THREE.Group();
+  strip.add(mesh(new THREE.BoxGeometry(length, 0.012, 0.008), neonMaterial(), 0, 0, 0, false));
+  strip.add(mesh(new THREE.PlaneGeometry(length + 0.08, 0.12), neonHaloMaterial(), 0, 0, 0.005, false));
+  return strip;
+}
+
+/** Joint rings are mounted in the joint's own space, so they follow the arm's existing pose. */
+function neonRing(parent: THREE.Object3D, radius: number, x: number, y: number, axis: 'x' | 'y') {
+  const ring = mesh(new THREE.TorusGeometry(radius, 0.004, 6, 32), neonMaterial(), x, y, 0, false);
+  if (axis === 'x') ring.rotation.y = Math.PI / 2;
+  else ring.rotation.x = Math.PI / 2;
+  parent.add(ring);
+}
+
 interface Waiting {
   name: string;
   install: (model: THREE.Object3D) => void;
@@ -418,7 +463,7 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   const cell = new THREE.Group();
   cell.position.set(x, 0, z);
 
-  // The safety floor: a dark plate with an orange edge, and a bollard at each corner.
+  // The safety floor: a dark plate with a neon edge, and a lit bollard at each corner.
   const stat = new THREE.Group();
   stat.add(mesh(roundedBox(width, 0.02, depth, 0.03), toon('#0a0a0a'), 0, 0.01, 0, false));
   const edge = toon(ORANGE, { emissive: '#4a1a04' });
@@ -426,9 +471,17 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   for (const s of [-1, 1]) {
     stat.add(mesh(new THREE.BoxGeometry(width - 0.04, 0.004, e), edge, 0, 0.022, s * (depth / 2 - 0.02 - e / 2), false));
     stat.add(mesh(new THREE.BoxGeometry(e, 0.004, depth - 0.04 - 2 * e), edge, s * (width / 2 - 0.02 - e / 2), 0.022, 0, false));
+    const front = neonStrip(width - 0.08);
+    front.rotation.x = -Math.PI / 2;
+    front.position.set(0, 0.027, s * (depth / 2 - 0.04));
+    cell.add(front);
+    const side = neonStrip(depth - 0.08);
+    side.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+    side.position.set(s * (width / 2 - 0.04), 0.027, 0);
+    cell.add(side);
   }
   const post = toon('#1c1c1c');
-  const band = toon(ORANGE, { emissive: '#4a1a04' });
+  const band = neonMaterial();
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       const px = sx * (width / 2 - 0.12);
@@ -439,6 +492,8 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
     }
   }
   cell.add(mergeByMaterial(stat));
+  // Reuse the office's bounded lamp pools instead of adding scene-wide three.js lights.
+  for (const lane of [-1, 1]) kit.night.lamps.push({ x, y: 0.55, z: z + lane * LANE, reach: 1.65, color: ORANGE, power: 1.8 });
   kit.colliders.push({ minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2, top: ROBOT_CELL.top, fence: true });
 
   // The conveyors: crates come in from code review on the far lane and leave shipped on the near one.
@@ -452,6 +507,16 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
         // Its hood is at its +x end: the in-feed turns round so crates come out of it.
         if (lane < 0) model.rotation.y = Math.PI;
         cell.add(model);
+        for (const side of [-1, 1]) {
+          const rail = neonStrip(2.5);
+          rail.position.set(0, BELT_Y - 0.018, side * 0.217);
+          if (side < 0) rail.rotation.y = Math.PI;
+          model.add(rail);
+          const hood = neonStrip(0.48);
+          hood.position.set(1.05, 0.852, side * 0.252);
+          if (side < 0) hood.rotation.y = Math.PI;
+          model.add(hood);
+        }
         const tex = beltTexture();
         belts[lane < 0 ? 0 : 1] = tex;
         const belt = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.36), flat(new THREE.MeshToonMaterial({ map: tex, gradientMap: gradient() })));
@@ -503,6 +568,13 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
         parent.add(joint);
         parent = joint;
       }
+      neonRing(yaw, 0.188, 0, 0.012, 'y');
+      for (const side of [-1, 1]) {
+        neonRing(yaw, 0.094, side * 0.166, ARM.shoulder, 'x');
+        neonRing(shoulder, 0.072, side * 0.099, ARM.upper, 'x');
+        neonRing(elbow, 0.054, side * 0.071, ARM.fore, 'x');
+      }
+      neonRing(roll, 0.049, 0, 0.008, 'y');
       // The pinwheel on the pedestal's two faces toward the room.
       const mark = toon(ORANGE, { emissive: '#5a2006' });
       const geo = glyphFlat(0.17, 5);

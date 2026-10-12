@@ -12,7 +12,7 @@ import { walkable } from '../src/shared/nav.js';
 /** The office floor and the factory props' own colliders, as world/factory-props.ts builds them. */
 function propColliders(): Collider[] {
   const colliders: Collider[] = [];
-  placeFactoryProps({ group: new THREE.Group(), colliders, interactables: [], fixture() {} } as unknown as DressingKit);
+  placeFactoryProps({ group: new THREE.Group(), colliders, interactables: [], night: { lamps: [] }, fixture() {} } as unknown as DressingKit);
   return colliders;
 }
 
