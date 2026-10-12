@@ -8,11 +8,11 @@ import { glyphFlat } from './glyph3d';
 import { SCREEN_BLACK, screenMaterial } from './screen';
 
 /**
- * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
+ * The terminal's colors: an OLED-black ground with an orange cursor. The ANSI palette keeps its
  * distinct hues — agents paint with it, so only the base, cursor and selection are ours to restyle.
  */
 export const TERM_THEME = {
-  background: '#0a0a0a',
+  background: SCREEN_BLACK,
   foreground: '#eeeeee',
   cursor: '#ee6018',
   selectionBackground: '#2a2a2a',

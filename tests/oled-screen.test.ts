@@ -32,6 +32,32 @@ test('screen textures and brightness survive the OLED material treatment', () =>
   map.dispose();
 });
 
+test('OLED cover glass is glossy without a room environment map or a full-screen reflection', (t) => {
+  const environment = new THREE.CubeTexture();
+  const mat = screenMaterial({ envMap: environment });
+  const inherited = THREE.Material.prototype.onBeforeCompile;
+  let inheritedCalls = 0;
+  THREE.Material.prototype.onBeforeCompile = (shader) => {
+    inheritedCalls++;
+    shader.uniforms.officeGlow = { value: 1 };
+  };
+  t.after(() => {
+    THREE.Material.prototype.onBeforeCompile = inherited;
+    mat.dispose();
+    environment.dispose();
+  });
+  const shader = { vertexShader: THREE.ShaderLib.basic.vertexShader, fragmentShader: THREE.ShaderLib.basic.fragmentShader, uniforms: {} as Record<string, THREE.IUniform> };
+  mat.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+  assert.equal(mat.envMap, null, 'no room reflections can wash out the OLED black');
+  assert.equal(inheritedCalls, 1, 'the office glow and GI-bake hooks are retained');
+  assert.equal(shader.uniforms.officeGlow.value, 1);
+  assert.match(shader.vertexShader, /vScreenView = vec3/);
+  assert.match(shader.fragmentShader, /screenSheenAt.*screenView\.x.*screenView\.y/);
+  assert.match(shader.fragmentShader, /screenSheen = 1\.0 - smoothstep/);
+  assert.match(shader.fragmentShader, /screenEdge = 1\.0 - smoothstep/);
+  assert.match(shader.fragmentShader, /outgoingLight \+=.*screenSheen.*screenEdge/);
+});
+
 function painter() {
   const fills: { color: unknown; args: number[] }[] = [];
   const text: { color: unknown; label: string }[] = [];
@@ -51,13 +77,13 @@ function painter() {
   return { ctx, fills, text };
 }
 
-test('laptop standby and terminal backgrounds are true black without changing the window theme', () => {
+test('laptop standby, terminal backgrounds and the opened terminal theme are true black', () => {
   for (const state of [undefined, { cols: 80, rows: 24, lines: [], cursor: [0, 0], version: 1 } as ScreenState]) {
     const { ctx, fills } = painter();
     paintScreen(ctx, 1024, 680, state);
     assert.deepEqual(fills[0], { color: SCREEN_BLACK, args: [0, 0, 1024, 680] });
   }
-  assert.equal(TERM_THEME.background, '#0a0a0a');
+  assert.equal(TERM_THEME.background, SCREEN_BLACK);
 });
 
 test('OLED terminals preserve explicit ANSI backgrounds and use black for inverse default text', () => {
