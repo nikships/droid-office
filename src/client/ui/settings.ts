@@ -121,6 +121,7 @@ export function openSettings(
   outside?: { now: string; live: boolean },
   first?: SettingsPane,
   hireForSetup?: () => void,
+  renderer?: { remastered: () => boolean; set: (remastered: boolean) => void },
 ) {
   /** A volume slider with its mute button. Dragging it turns the sound back on; letting go plays `preview`. */
   const volumeRow = (label: string, level: 'volume' | 'music', muted: 'muted' | 'musicMuted', preview?: () => void) => {
@@ -842,6 +843,28 @@ export function openSettings(
   };
   paintGraphics();
 
+  const rendererNote = desc();
+  const rendererPick = radios<boolean>(
+    'Renderer',
+    [
+      [false, 'Classic'],
+      [true, 'Remastered'],
+    ],
+    () => renderer?.remastered() ?? false,
+    (on) => {
+      renderer?.set(on);
+      paintRenderer();
+    },
+  );
+  const paintRenderer = () => {
+    rendererPick.paint();
+    rendererNote.textContent = renderer?.remastered()
+      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded and tone mapped, with native HDR on an EDR display. Its presets and every dial are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit, shadows and overlay still apply.'
+      : 'The office the way it has always drawn: toon shading, ink outlines and the resolution and anti-aliasing settings below.';
+  };
+  paintRenderer();
+  const labButton = h('button.btn', { type: 'button' }, 'Open the Graphics Lab');
+  labButton.addEventListener('click', () => window.dispatchEvent(new Event('office:graphics-lab')));
   const character = h('button.btn', { type: 'button' }, 'Change your look & name');
   epicCard = card("This floor's Jira epic", { desc: epicNote, below: [epicRow, epicFail] });
   paintJira();
@@ -864,6 +887,14 @@ export function openSettings(
       ),
     ],
     graphics: [
+      group(
+        'Renderer',
+        card('Renderer', { desc: rendererNote, control: rendererPick.row }),
+        card('Graphics Lab', {
+          desc: desc('Every Remastered setting and its presets, live, in a see-through panel beside the game: 2× MSAA, native HDR, baked probe GI, color, lights and shadows. ` opens and closes it.'),
+          control: labButton,
+        }),
+      ),
       group(
         'Resolution',
         card('Render resolution', { desc: scaleNote, control: scale.row }),

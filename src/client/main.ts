@@ -128,6 +128,9 @@ import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes
 import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
+import { Remaster } from './world/remaster';
+import { GraphicsLab } from './ui/graphics-lab';
+import { loadRemaster, saveRemaster, type RemasterSettings } from './remaster-settings';
 import { ShadowWatch } from './world/shadow-watch';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
@@ -143,7 +146,12 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-const effect = new OutlineEffect(renderer, { defaultThickness: 0.0018, defaultColor: [0.035, 0.035, 0.035] });
+/** The ink outline round every solid. Its thickness and alpha are fixed when it's made, so the Remastered renderer makes a new one to change them. */
+const outlineEffect = (thickness = 1.8, alpha = 1) => new OutlineEffect(renderer, { defaultThickness: thickness / 1000, defaultColor: [0.035, 0.035, 0.035], defaultAlpha: alpha });
+let effect = outlineEffect();
+let outlineKey = '1.8|1';
+// Draw calls and triangles add up over a frame's passes and are cleared once a frame (see drawFrame), for the Graphics Lab.
+renderer.info.autoReset = false;
 const scene = new THREE.Scene();
 // It is always night; the sky's color and the fog change with the weather (world/sky.ts).
 scene.background = new THREE.Color('#0a0720');
@@ -3262,6 +3270,17 @@ const hudActions: HudAction[] = [
     run: () => (hanger.active ? hanger.cancel() : startHanging()),
   },
   { id: 'settings', icon: '⚙️', label: 'Settings', section: 'Office', run: showSettings },
+  {
+    id: 'graphics-lab',
+    icon: '🎛️',
+    label: 'Graphics Lab',
+    section: 'Office',
+    key: '`',
+    // By its element: the HUD is drawn before the lab is made.
+    on: () => document.getElementById('graphics-lab')?.classList.contains('hidden') === false,
+    title: () => 'Every Remastered graphics setting, live, beside the game',
+    run: () => window.dispatchEvent(new Event('office:graphics-lab')),
+  },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
@@ -3320,6 +3339,13 @@ function showSettings(pane?: SettingsPane) {
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
     hireForWorktreeSetup,
+    {
+      remastered: () => remasterSettings.enabled,
+      set: (on) => {
+        changeRemaster({ ...remasterSettings, enabled: on });
+        graphicsLab.paint();
+      },
+    },
   );
 }
 
@@ -3338,7 +3364,10 @@ function resize() {
   camera.aspect = w / hgt;
   camera.updateProjectionMatrix();
   hands.setAspect(w / hgt);
+  // Before the Remastered renderer exists on the first call; it is told of every resize after.
+  remasterResized?.();
 }
+let remasterResized: (() => void) | undefined;
 window.addEventListener('resize', () => {
   resize();
   renderWake();
@@ -3389,6 +3418,7 @@ function applyGraphics() {
   }
 }
 applyGraphics();
+
 /** Frames drawn since the page loaded, so automation commands can wait for the scene to catch up. */
 let framesDrawn = 0;
 /** Pointer or keys just asked the camera to move. Keeps full rate before the player controller has caught up. */
@@ -3408,6 +3438,77 @@ const renderLoop = new RenderLoop({
     fpsFrames = 0;
     fpsSince = performance.now();
   },
+});
+
+// ---- The Remastered renderer and its Graphics Lab (` toggles it) --------------------------------
+let remasterSettings: RemasterSettings = loadRemaster();
+const remaster = new Remaster(renderer, scene, { sun, hemi, ambient }, [hands.scene], remasterSettings, () => {
+  graphicsLab.paint();
+  renderWake();
+});
+let remasterSavedAt = 0;
+let remasterSaveTimer = 0;
+function applyRemaster() {
+  const s = remasterSettings;
+  remaster.configure(s);
+  const key = s.enabled ? `${s.outlineThickness}|${s.outlineOpacity}` : '1.8|1';
+  if (key !== outlineKey) {
+    outlineKey = key;
+    effect = s.enabled ? outlineEffect(s.outlineThickness, s.outlineOpacity) : outlineEffect();
+  }
+  effect.enabled = !s.enabled || s.outlines;
+  // The classic upscaler stands aside while the Remastered pipeline draws.
+  if (s.enabled) upscaler.reset();
+  // A setting changing is the scene changing: back to full rate, so what it costs shows straight away.
+  activeAt = performance.now();
+  renderWake();
+}
+/** Applies and saves Remastered settings, from the Graphics Lab or Settings → Graphics → Renderer. */
+function changeRemaster(s: RemasterSettings) {
+  remasterSettings = s;
+  applyRemaster();
+  // A slider sends a change every step; saved at most a few times a second.
+  window.clearTimeout(remasterSaveTimer);
+  const now = performance.now();
+  if (now - remasterSavedAt > 400) {
+    remasterSavedAt = now;
+    saveRemaster(s);
+  } else remasterSaveTimer = window.setTimeout(() => saveRemaster(remasterSettings), 400);
+}
+const graphicsLab = new GraphicsLab({
+  settings: () => remasterSettings,
+  change: changeRemaster,
+  rebakeGI: () => remaster.gi.rebake(),
+  classicSettings: () => {
+    graphicsLab.hide();
+    showSettings('graphics');
+  },
+  freeMouse: () => player.unlock(),
+  backToGame: () => {
+    if (!modalOpen() && !isTyping()) canvas.focus({ preventScroll: true });
+  },
+  hdrNote: () => {
+    const s = remasterSettings;
+    if (!s.enabled || !s.hdr) return '';
+    const h = remaster.hdr;
+    if (h.state === 'starting') return 'Starting HDR output…';
+    if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
+    return h.reason ? `HDR is on, but ${h.reason}.` : '';
+  },
+});
+$('app').append(graphicsLab.el);
+applyRemaster();
+remasterResized = () => remaster.resized();
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Backquote' || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+  // A backquote typed into a terminal or a text box is a backquote, unless it's typed in the lab itself.
+  if (isTyping(e) && !graphicsLab.el.contains(e.target as Node)) return;
+  e.preventDefault();
+  graphicsLab.toggle();
+});
+window.addEventListener('office:graphics-lab', () => {
+  closeAllModals();
+  graphicsLab.show();
 });
 
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
@@ -3467,6 +3568,9 @@ function currentPace(): RenderPace {
   const now = performance.now();
   const motion = sceneMotion();
   if (sceneIsMoving(motion)) activeAt = now;
+  // A full GI bake runs in slices, one a frame: at the idle pace it would take minutes.
+  // Render pace "full" never idles, but still stops while the window is hidden.
+  if ((remaster.active && remaster.gi.baking && !remaster.gi.paused) || remasterSettings.pace === 'full') activeAt = now;
   return renderPace({
     hidden: document.visibilityState !== 'visible',
     // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
@@ -3485,9 +3589,36 @@ function drawFrame(dt: number, t: number) {
   if (fpsNow - fpsSince >= 500) {
     const windowMs = fpsNow - fpsSince;
     const fps = (fpsFrames * 1000) / windowMs;
+    const timed = settings.graphics.stats || graphicsLab.isOpen;
+    const gpuMs = timed ? gpuTimer.take() : null;
+    const { render, output } = remaster.active ? remaster.sizes() : upscaler.sizes();
+    if (graphicsLab.isOpen) {
+      const info = renderer.info;
+      const gi = remaster.gi;
+      graphicsLab.stats({
+        fps,
+        frameMs: windowMs / fpsFrames,
+        fpsCap: settings.graphics.fpsCap,
+        gpuMs,
+        system: systemGpu,
+        render,
+        output,
+        calls: info.render.calls,
+        triangles: info.render.triangles,
+        textures: info.memory.textures,
+        programs: info.programs?.length ?? 0,
+        hdr: remaster.describe(),
+        gi:
+          !remasterSettings.enabled || !remasterSettings.gi
+            ? 'GI is off'
+            : gi.paused
+              ? 'Paused on the roof'
+              : gi.baking
+                ? `Baking ${gi.probes} probes… ${Math.round(gi.progress * 100)}%`
+                : `${gi.probes} probes${remasterSettings.giRolling ? ', refreshing' : ', baked'}`,
+      });
+    }
     if (settings.graphics.stats) {
-      const gpuMs = gpuTimer.take();
-      const { render, output } = upscaler.sizes();
       fpsEl.textContent = statsText({
         fps,
         frameMs: windowMs / fpsFrames,
@@ -3498,8 +3629,9 @@ function drawFrame(dt: number, t: number) {
         system: systemGpu,
         render,
         output,
-        scale: settings.graphics.scale,
+        scale: remaster.active ? 1 : settings.graphics.scale,
         taa: settings.graphics.taa,
+        mode: remaster.active ? remaster.describe() : undefined,
         shadows: { mode: settings.graphics.shadows, redrawn: shadowFrames / fpsFrames },
       });
     } else fpsEl.textContent = `${Math.round(fps)} FPS`;
@@ -3633,11 +3765,16 @@ function drawFrame(dt: number, t: number) {
   renderHint();
   renderCrosshair();
 
-  const timing = settings.graphics.stats;
+  const timing = settings.graphics.stats || graphicsLab.isOpen;
   if (timing) gpuTimer.begin();
+  renderer.info.reset();
   const shadowMap = renderer.shadowMap;
   if (shadowMap.enabled && (shadowMap.autoUpdate || shadowMap.needsUpdate)) shadowFrames++;
-  upscaler.draw(camera, () => effect.render(scene, camera));
+  if (remaster.active) {
+    remaster.gi.paused = upTop;
+    remaster.gi.setFloor(store.floor ?? '');
+    remaster.draw(() => effect.render(scene, camera));
+  } else upscaler.draw(camera, () => effect.render(scene, camera));
   // Checked once this frame's matrices are current, so a caster that starts moving gets a redrawn map from the next
   // frame on: its shadow lags one frame, once.
   if (settings.graphics.shadows === 'smart') {
@@ -3652,9 +3789,17 @@ function drawFrame(dt: number, t: number) {
     renderer.clearDepth();
     hands.setLight(sky.lightAt(camera.position));
     sky.shading(false);
-    effect.render(hands.scene, hands.camera);
-    sky.shading(true);
+    // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
+    const autoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    try {
+      effect.render(hands.scene, hands.camera);
+    } finally {
+      renderer.autoClear = autoClear;
+      sky.shading(true);
+    }
   }
+  if (remaster.active) remaster.finishFrame();
   if (timing) gpuTimer.end();
   loading.drew();
 }

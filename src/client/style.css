@@ -1916,3 +1916,50 @@ li.cmp-muted:hover { background: none; }
 .wb-ok { color: var(--success); }
 .wb-bad { color: var(--danger); }
 .wb-paste { min-height: 220px; font: 12px/1.5 var(--font-mono); }
+
+/* ---- Graphics Lab (ui/graphics-lab.ts) and the HDR canvas (world/hdr-present.ts) ----
+   The lab is not a window: no backdrop, no blur and no dimming of the office behind it, so the GPU draws the same
+   frame open or closed. It is see-through by its own background alone. */
+.scene-hdr { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+#scene.hdr-under { opacity: 0; }
+.glab { position: fixed; top: 56px; right: var(--space-3); bottom: var(--space-7); z-index: 45; width: 400px; max-width: calc(100vw - 24px); display: flex; flex-direction: column; background: rgba(8, 8, 10, .84); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); color: var(--text); font: 400 var(--text-small)/var(--leading-small) var(--font-sans); }
+/* The corner readout moves beside the open lab rather than over its footer. */
+body:has(#graphics-lab:not(.hidden)) #fps { right: calc(400px + var(--space-3) * 2); }
+.glab-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); border-bottom: 1px solid var(--border); }
+.glab-titles { flex: 1; min-width: 0; }
+.glab-titles h2 { margin: 0; font: 600 var(--text-label)/1.4 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
+.glab-sub { margin: 0; color: var(--text-secondary); }
+.glab-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-1); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.glab-stat { display: flex; flex-direction: column; min-width: 0; }
+.glab-stat span { font: 500 var(--text-label)/1.3 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text-tertiary); }
+.glab-stat b { font: 500 var(--text-small)/1.35 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.glab-presetrow { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.glab-presets { display: flex; width: 100%; }
+.glab-presets > .btn { flex: 1; justify-content: center; padding-left: 0; padding-right: 0; }
+.glab-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--space-3) var(--space-3); overscroll-behavior: contain; }
+.glab-sec { border-bottom: 1px solid var(--border); padding: var(--space-2) 0; }
+.glab-sec > summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style: none; padding: var(--space-1) 0; font: 600 var(--text-label)/1.4 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-secondary); }
+.glab-sec > summary::-webkit-details-marker { display: none; }
+.glab-sec > summary::after { content: '▾'; margin-left: auto; color: var(--text-tertiary); }
+.glab-sec:not([open]) > summary::after { content: '▸'; }
+.glab-icon { width: 20px; text-align: center; font-family: var(--font-sans); letter-spacing: 0; }
+.glab-note { margin: var(--space-1) 0 var(--space-2); color: var(--text-secondary); }
+.glab-live:empty { display: none; }
+.glab-live { color: var(--warning); }
+.glab-row { display: grid; grid-template-columns: minmax(0, 1fr) 168px; align-items: center; gap: var(--space-1) var(--space-3); padding: var(--space-1) 0; transition: opacity var(--duration) var(--ease); }
+.glab-row.off { opacity: .38; }
+.glab-label { display: flex; flex-direction: column; min-width: 0; }
+.glab-label b { font: 500 var(--text-small)/1.35 var(--font-sans); }
+.glab-label small { color: var(--text-tertiary); font-size: var(--text-label); line-height: 1.35; }
+.glab-actions { grid-template-columns: minmax(0, 1fr) auto; }
+.glab-meta { color: var(--text-secondary); font: 500 var(--text-label)/1.4 var(--font-mono); }
+.glab-toggle { justify-self: end; }
+.glab-select { width: 100%; height: var(--control-h-sm); }
+.glab-range { display: flex; align-items: center; gap: var(--space-2); }
+.glab-range input[type=range] { flex: 1; min-width: 0; height: 22px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; --fill: 50%; }
+.glab-range input[type=range]:focus { outline: none; }
+.glab-range input[type=range]::-webkit-slider-runnable-track { height: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: linear-gradient(to right, var(--accent) var(--fill), rgba(255, 255, 255, .06) var(--fill)); }
+.glab-range input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border-radius: 50%; background: var(--text); border: 0; }
+.glab-value { width: 44px; flex: none; text-align: right; font: 500 var(--text-label)/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.glab-foot { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); }
+.glab-foot .grow { flex: 1; }

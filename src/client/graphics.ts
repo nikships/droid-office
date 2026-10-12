@@ -101,6 +101,8 @@ export function statsText(s: {
   output: { width: number; height: number };
   scale: number;
   taa: boolean;
+  /** Overrides the anti-aliasing word worked out from `taa` and `scale` (the Remastered renderer's own). */
+  mode?: string;
   /** The shadow mode, and the share of this window's frames that redrew the shadow map. */
   shadows: { mode: ShadowMode; redrawn: number };
 }): string {
@@ -109,8 +111,9 @@ export function statsText(s: {
   else if (s.gpuNote) lines.push(`GPU ${s.gpuNote}`);
   if (s.system !== null) lines.push(`Mac GPU ${Math.round(s.system)}%`);
   const upscaled = s.scale < 1;
-  const mode = s.taa ? `TAA${upscaled ? 'U' : ''}` : upscaled ? 'bilinear' : 'MSAA';
-  lines.push(`${Math.round(s.scale * 100)}% ${s.render.width}×${s.render.height}${s.scale < 1 ? ` → ${s.output.width}×${s.output.height}` : ''} · ${mode}`);
+  const mode = s.mode ?? (s.taa ? `TAA${upscaled ? 'U' : ''}` : upscaled ? 'bilinear' : 'MSAA');
+  const resized = s.render.width !== s.output.width;
+  lines.push(`${Math.round(s.scale * 100)}% ${s.render.width}×${s.render.height}${resized ? ` → ${s.output.width}×${s.output.height}` : ''} · ${mode}`);
   lines.push(s.shadows.mode === 'off' ? 'Shadows off' : `Shadows ${s.shadows.mode} · redrawn ${Math.round(s.shadows.redrawn * 100)}% of frames`);
   return lines.join('\n');
 }
