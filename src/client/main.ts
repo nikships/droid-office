@@ -1066,6 +1066,13 @@ store.on('upgrade', renderUpgrade);
 
 function renderProject() {
   const p = store.project;
+  const branch = store.floor === ROOF || !p ? undefined : (store.floors.find((f) => f.id === store.floor) ?? p).branch;
+  const branchLabel = branch === 'HEAD' ? 'Detached HEAD' : branch;
+  const indicator = $('project-branch');
+  indicator.classList.toggle('hidden', !branchLabel);
+  indicator.textContent = branchLabel ? `⎇ ${branchLabel}` : '';
+  indicator.title = branchLabel ? `Current checkout branch: ${branchLabel}` : '';
+  indicator.setAttribute('aria-label', indicator.title);
   renderTitle();
   if (store.floor === ROOF) {
     const n = builtFloors().length;
