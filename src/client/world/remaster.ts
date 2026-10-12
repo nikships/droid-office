@@ -238,6 +238,7 @@ export class ProbeGI {
     }
     const ticket = ++this.ticket;
     this.full = false;
+    this.restoring = null;
     this.store.load(key).then(
       (saved) => {
         if (ticket !== this.ticket) return;
@@ -322,7 +323,9 @@ export class ProbeGI {
   /** Reads the finished atlas back from the GPU, one layer at a time, and saves it under the key it was baked for. */
   private save(renderer: THREE.WebGLRenderer, grid: LightProbeGridWebGL) {
     const atlas = grid.texture;
-    if (!this.store || !atlas) return;
+    // A bake started before the key is known ("Rebake now" before the office's version arrives) would replace the
+    // saved bake with one no key ever loads.
+    if (!this.store || !atlas || !this.key) return;
     const { width, height, depth } = atlas.image;
     // three.js only reads pixels from a render target it owns, so the atlas is copied into one first.
     const copy = new THREE.WebGL3DRenderTarget(width, height, depth, { format: THREE.RGBAFormat, type: THREE.FloatType, depthBuffer: false });
