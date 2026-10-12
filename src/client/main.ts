@@ -128,8 +128,8 @@ import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
 import { GraphicsLab } from './ui/graphics-lab';
-import { loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
-import { ShadowWatch } from './world/shadow-watch';
+import { bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
+import { bakeCache } from './gi-cache';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
@@ -142,8 +142,8 @@ const loading = loadingScreen(() => () => {});
 const canvas = $('scene') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+// The office draws no shadows: the moon is dim, and the room's light is the baked bounce light and the lamps.
+renderer.shadowMap.enabled = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 /** The ink outline round every solid. Its thickness and alpha are fixed when it's made, so the Remastered renderer makes a new one to change them. */
 const outlineEffect = (thickness = 1.8, alpha = 1) => new OutlineEffect(renderer, { defaultThickness: thickness / 1000, defaultColor: [0.035, 0.035, 0.035], defaultAlpha: alpha });
@@ -165,12 +165,6 @@ scene.add(hemi, ambient);
 // The moon; the sky sets its light (world/sky.ts).
 const sun = new THREE.DirectionalLight('#8f9cff', 0.18);
 sun.position.set(-8, 18, 10);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-// Wide enough for the office, the garage under it and the balcony and lot out front, from wherever the sun is.
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 30, bottom: -30, near: 1, far: 100 });
-sun.shadow.bias = -0.0008;
-sun.shadow.normalBias = 0.03;
 scene.add(sun);
 
 const office = buildOffice();
@@ -3376,11 +3370,6 @@ let fpsFrames = 0;
 let fpsSince = performance.now();
 const upscaler = new Upscaler(renderer);
 const gpuTimer = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
-const shadowWatch = new ShadowWatch();
-const viewFrustum = new THREE.Frustum();
-const viewProjection = new THREE.Matrix4();
-/** Frames in this overlay window that redrew the shadow map. */
-let shadowFrames = 0;
 const warmup = new WarmupWatch();
 const warmupEl = $('warmup');
 let warmupKey = '';
@@ -3419,18 +3408,10 @@ async function pollSystemGpu() {
 /** Graphics settings to the renderer and the overlay. The counter's text still updates while hidden: recording rigs read it. */
 function applyGraphics() {
   upscaler.configure(settings.graphics);
-  const shadows = settings.graphics.shadows;
-  renderer.shadowMap.enabled = shadows !== 'off';
-  renderer.shadowMap.autoUpdate = shadows === 'live';
-  renderer.shadowMap.needsUpdate = true;
-  shadowWatch.reset();
   const overhead = settings.graphics.overhead;
   sky.setOverhead(overhead);
-  if (appliedOverhead >= 0 && overhead !== appliedOverhead) {
-    // The bounce light baked from the old brightness stays until the probes are baked again.
-    if (remaster.gi.grid) remaster.gi.rebake();
-    renderWake();
-  }
+  // The next frame gives the bounce light its new bake key: the old brightness stays up until it's loaded or baked.
+  if (appliedOverhead >= 0 && overhead !== appliedOverhead) renderWake();
   appliedOverhead = overhead;
   fpsEl.classList.toggle('hidden', !settings.graphics.stats);
   window.clearInterval(systemGpuPoll);
@@ -3466,10 +3447,20 @@ const renderLoop = new RenderLoop({
 // ---- The Remastered renderer and its Graphics Lab (` toggles it) --------------------------------
 let remasterSettings: RemasterSettings = loadRemaster();
 let remasterParams = resolveRemaster(remasterSettings);
-const remaster = new Remaster(renderer, scene, { sun, hemi, ambient }, remasterParams, () => {
-  graphicsLab.paint();
-  renderWake();
-});
+const remaster = new Remaster(
+  renderer,
+  scene,
+  { sun, hemi, ambient },
+  remasterParams,
+  () => {
+    graphicsLab.paint();
+    renderWake();
+  },
+  bakeCache,
+);
+// Who is on this floor (the workers, their laptops, the free-seat signs, the bean bags and team lines) changes from
+// floor to floor; the room around them doesn't, so the bounce light is baked without them and fits every floor.
+remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group];
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
 function applyRemaster() {
@@ -3650,14 +3641,7 @@ function drawFrame(dt: number, t: number) {
         textures: info.memory.textures,
         programs: info.programs?.length ?? 0,
         hdr: remaster.describe(),
-        gi:
-          !remasterParams.enabled || !remasterParams.gi
-            ? 'GI is off'
-            : gi.paused
-              ? 'Paused on the roof'
-              : gi.baking
-                ? `Baking ${gi.probes} probes… ${Math.round(gi.progress * 100)}%`
-                : `${gi.probes} probes${remasterParams.giLive ? ', live' : ', baked'}`,
+        gi: !remasterParams.enabled || !remasterParams.gi ? 'GI is off' : gi.paused ? 'Paused on the roof' : gi.baking ? `Baking ${gi.probes} probes… ${Math.round(gi.progress * 100)}%` : `${gi.probes} probes, baked`,
       });
     }
     if (settings.graphics.stats) {
@@ -3674,11 +3658,9 @@ function drawFrame(dt: number, t: number) {
         scale: remaster.active ? remasterParams.resolution : settings.graphics.scale,
         taa: settings.graphics.taa,
         mode: remaster.active ? remaster.describe() : undefined,
-        shadows: { mode: settings.graphics.shadows, redrawn: shadowFrames / fpsFrames },
       });
     } else fpsEl.textContent = `${Math.round(fps)} FPS`;
     fpsFrames = 0;
-    shadowFrames = 0;
     fpsSince = fpsNow;
   }
   const now = performance.now();
@@ -3809,12 +3791,10 @@ function drawFrame(dt: number, t: number) {
   const timing = settings.graphics.stats || graphicsLab.isOpen;
   if (timing) gpuTimer.begin();
   renderer.info.reset();
-  const shadowMap = renderer.shadowMap;
-  if (shadowMap.enabled && (shadowMap.autoUpdate || shadowMap.needsUpdate)) shadowFrames++;
   const drawStart = performance.now();
   if (remaster.active) {
     remaster.gi.paused = upTop;
-    remaster.gi.setFloor(store.floor ?? '');
+    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, bootVersion));
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
   const gi = remaster.gi;
@@ -3826,12 +3806,6 @@ function drawFrame(dt: number, t: number) {
       bake: remaster.active && gi.baking && !gi.paused ? gi.progress : null,
     }),
   );
-  // Checked once this frame's matrices are current, so a caster that starts moving gets a redrawn map from the next
-  // frame on: its shadow lags one frame, once.
-  if (settings.graphics.shadows === 'smart') {
-    viewFrustum.setFromProjectionMatrix(viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-    if (shadowWatch.update(scene, [sun, sun.target], viewFrustum, now)) shadowMap.needsUpdate = true;
-  }
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor, where the hands would cover the screen.
   if (!arcade.zoomed) {

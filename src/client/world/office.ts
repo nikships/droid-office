@@ -114,6 +114,8 @@ export interface Office {
    * just came out, in case someone is standing there.
    */
   setBeanbags(out: Set<string>): Collider[];
+  /** What shows who is on this floor: every seat's worker, laptop, dance spot and vacancy, and the bean bags. */
+  occupants: THREE.Object3D[];
   boardMeshes: Record<keyof typeof BOARDS, THREE.Mesh>;
   tvScreen: THREE.Mesh;
   /** The monitor on the boss's desk upstairs, where Minesweeper plays (ui/arcade.ts). */
@@ -1502,12 +1504,15 @@ export function buildOffice(): Office {
     for (const d of dressing) d.update(t, dt);
   };
 
+  const occupants = [...desks].flatMap(([id, d]): THREE.Object3D[] => (beanbags.has(id) ? [d.group] : [d.laptopAnchor, d.seatAnchor, d.stage, d.vacancy]));
+
   return {
     group,
     colliders,
     interactables,
     desks,
     setBeanbags,
+    occupants,
     boardMeshes,
     tvScreen,
     bossScreen,

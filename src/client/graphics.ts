@@ -1,11 +1,3 @@
-/**
- * How often the moon's shadow map is redrawn. `live` redraws it every frame. `smart` redraws it only after something
- * that casts a shadow where you can see moved, appeared, vanished or changed shape, at most about 30 times a second
- * (see ShadowWatch). `off` has no shadows.
- */
-export type ShadowMode = 'live' | 'smart' | 'off';
-export const SHADOW_MODES: readonly ShadowMode[] = ['live', 'smart', 'off'];
-
 /** The most frames a second the office draws. Each divides a 120 Hz refresh evenly: every 3rd, 2nd or every refresh. */
 export type FpsCap = 40 | 60 | 120;
 export const FPS_CAPS: readonly FpsCap[] = [40, 60, 120];
@@ -18,7 +10,6 @@ export interface GraphicsSettings {
   taa: boolean;
   /** How hard the upscaled or TAA image is sharpened, 0–1. Unused when the scene draws natively without TAA. */
   sharpen: number;
-  shadows: ShadowMode;
   /** How bright the office's ceiling lights are and how much they light the room, 0 (off) to 1 (as built). */
   overhead: number;
   /** The frame rate limit while the office draws at full pace. */
@@ -32,7 +23,7 @@ export const RENDER_SCALE_STEP = 0.05;
 
 export const OVERHEAD_STEP = 0.05;
 
-export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', overhead: 1, fpsCap: 120, stats: true };
+export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -55,7 +46,6 @@ export function normalizeGraphics(saved: unknown): GraphicsSettings {
   if (typeof s.scale === 'number' && Number.isFinite(s.scale)) g.scale = normalizeScale(s.scale);
   if (typeof s.taa === 'boolean') g.taa = s.taa;
   if (typeof s.sharpen === 'number' && Number.isFinite(s.sharpen)) g.sharpen = clamp(s.sharpen, 0, 1);
-  if (SHADOW_MODES.includes(s.shadows as ShadowMode)) g.shadows = s.shadows as ShadowMode;
   if (typeof s.overhead === 'number' && Number.isFinite(s.overhead)) g.overhead = normalizeOverhead(s.overhead);
   if (FPS_CAPS.includes(s.fpsCap as FpsCap)) g.fpsCap = s.fpsCap as FpsCap;
   if (typeof s.stats === 'boolean') g.stats = s.stats;
@@ -113,8 +103,6 @@ export function statsText(s: {
   taa: boolean;
   /** Overrides the anti-aliasing word worked out from `taa` and `scale` (the Remastered renderer's own). */
   mode?: string;
-  /** The shadow mode, and the share of this window's frames that redrew the shadow map. */
-  shadows: { mode: ShadowMode; redrawn: number };
 }): string {
   const lines = [`${Math.round(s.fps)} FPS · cap ${s.fpsCap} · ${s.frameMs.toFixed(1)} ms`];
   if (s.gpu) lines.push(`GPU ${s.gpu.ms.toFixed(2)} ms/frame · ${Math.round(s.gpu.busy * 100)}% busy`);
@@ -124,6 +112,5 @@ export function statsText(s: {
   const mode = s.mode ?? (s.taa ? `TAA${upscaled ? 'U' : ''}` : upscaled ? 'bilinear' : 'MSAA');
   const resized = s.render.width !== s.output.width;
   lines.push(`${Math.round(s.scale * 100)}% ${s.render.width}×${s.render.height}${resized ? ` → ${s.output.width}×${s.output.height}` : ''} · ${mode}`);
-  lines.push(s.shadows.mode === 'off' ? 'Shadows off' : `Shadows ${s.shadows.mode} · redrawn ${Math.round(s.shadows.redrawn * 100)}% of frames`);
   return lines.join('\n');
 }

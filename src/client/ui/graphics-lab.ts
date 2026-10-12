@@ -459,7 +459,7 @@ export class GraphicsLab {
       () => ({
         title: 'Light probes',
         value: '',
-        text: 'Bakes the global illumination again from scratch. It bakes by itself on another floor and after a quality change.',
+        text: 'Bakes the global illumination again from scratch and saves it. One bake fits every floor and is kept for the next launch; it bakes by itself only after a quality, light or update change.',
         detail: 'The office stays at full frame rate until the bake is done.',
         impact: 'medium',
       }),

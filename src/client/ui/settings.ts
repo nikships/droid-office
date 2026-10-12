@@ -15,7 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
-import { FPS_CAPS, OVERHEAD_STEP, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeOverhead, normalizeScale, type FpsCap, type GraphicsSettings, type ShadowMode } from '../graphics';
+import { FPS_CAPS, OVERHEAD_STEP, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeOverhead, normalizeScale, type FpsCap, type GraphicsSettings } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -790,17 +790,6 @@ export function openSettings(
     () => settings.graphics.taa,
     (on) => graphicsSet({ taa: on }),
   );
-  const shadows = radios<ShadowMode>(
-    'Shadows',
-    [
-      ['live', 'Live'],
-      ['smart', 'Smart'],
-      ['off', 'Off'],
-    ],
-    () => settings.graphics.shadows,
-    (mode) => graphicsSet({ shadows: mode }),
-  );
-  const shadowsNote = desc();
   const fpsCap = radios<FpsCap>(
     'Frame rate limit',
     FPS_CAPS.map((fps) => [fps, `${fps} FPS`] as const),
@@ -825,14 +814,8 @@ export function openSettings(
       s.pct.textContent = `${p}%`;
     }
     taa.paint();
-    shadows.paint();
     fpsCap.paint();
     stats.paint();
-    shadowsNote.textContent = {
-      live: 'The moon’s shadow map is redrawn every frame, whatever moves.',
-      smart: 'The moon’s shadow map is redrawn only on frames where something that casts a shadow moved, came or went. Shadows look the same as Live; a still office skips most of their cost.',
-      off: 'No shadows. Saves about as much as Smart in a still office, and also while workers walk about.',
-    }[g.shadows];
     const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
     scaleNote.textContent =
       g.scale >= 1
@@ -861,7 +844,7 @@ export function openSettings(
   const paintRenderer = () => {
     rendererPick.paint();
     rendererNote.textContent = renderer?.remastered()
-      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded, with native HDR on an EDR display. Its quality, resolution and picture are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit, shadows and overlay still apply.'
+      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded, with native HDR on an EDR display. Its quality, resolution and picture are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit and overlay still apply.'
       : 'The office the way it has always drawn: toon shading, ink outlines and the resolution and anti-aliasing settings below.';
   };
   paintRenderer();
@@ -919,7 +902,6 @@ export function openSettings(
       ),
       group(
         'Lighting',
-        card('Shadows', { desc: shadowsNote, control: shadows.row }),
         card('Overhead lights', {
           desc: desc(
             'How bright the office’s ceiling lights are, and how much they light the room. At 0% they are off and the room is lit only by the moon, the screens and the bounce light. Both renderers; Remastered re-bakes its bounce light after a change.',
@@ -931,7 +913,7 @@ export function openSettings(
         'Diagnostics',
         card('Performance overlay', {
           desc: desc(
-            'Bottom right: frames per second and the frame rate limit, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), the render resolution, and how often the shadow map was redrawn.',
+            'Bottom right: frames per second and the frame rate limit, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), and the render resolution.',
           ),
           control: stats.el,
         }),

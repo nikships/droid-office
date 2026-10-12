@@ -4,7 +4,7 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
 import { probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
-import { remasterUniforms } from './sky';
+import { CLEAR_NIGHT, remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
 
 /*
@@ -144,27 +144,57 @@ function shader(fragmentShader: string, uniforms: Record<string, THREE.IUniform>
 
 /** How long a full bake may take of each frame, in ms of the main thread. */
 const BAKE_BUDGET_MS = 14;
+/** How each probe sees the room. */
+const CAPTURE = { cubemapSize: 16, near: 0.05, far: 60 } as const;
 /** The probe grid's box: the floor, a little in from the walls, from just over the floor to just under the ceiling. */
 const GI_BOX = { minX: FLOOR.minX + 0.3, maxX: FLOOR.maxX - 0.3, minZ: FLOOR.minZ + 0.3, maxZ: FLOOR.maxZ - 0.3, minY: 0.2, maxY: WALL_HEIGHT - 0.6 };
 
-/** The bounce light: a light-probe grid over the floor, baked in slices over a few frames, then kept fresh a few probes at a time. */
+/** A finished bake read back from the GPU: the probe grid's atlas texture, and the bake inputs (`bakeKey`) it came from. */
+export interface SavedBake {
+  key: string;
+  width: number;
+  height: number;
+  depth: number;
+  data: Float32Array;
+}
+
+/** Where a finished bake is kept between launches (`gi-cache.ts`). */
+export interface BakeStore {
+  load(key: string): Promise<SavedBake | null>;
+  save(bake: SavedBake): Promise<void>;
+}
+
+/**
+ * The bounce light: a light-probe grid over the floor, baked in slices over a few frames. Every floor has the same
+ * room, desks and lamps, so the bake leaves out whatever shows who is on this floor (`hideWhileBaking`) and one bake
+ * fits them all. A finished bake is saved, and loaded back instead of baking again while its inputs are the same.
+ */
 export class ProbeGI {
   grid: LightProbeGridWebGL | null = null;
   /** 0–1 through the current full bake; 1 once it's done. */
   progress = 0;
-  /** At least one full bake has finished. */
+  /** The grid holds a finished bake, baked here or loaded. */
   baked = false;
   /** Paused while you're up on the roof, where the floor's probes don't matter. */
   paused = false;
+  /** What changes from one floor to the next: hidden while the probes are baked. */
+  hideWhileBaking: () => THREE.Object3D[] = () => [];
   private spacing: number | null = null;
   private cursor = 0;
   private pass = 0;
   private passes = 1;
   private full = false;
-  private floor = '';
   private msPerProbe = 2;
+  /** The bake inputs the grid's light is from, or is being baked or loaded for; '' for none yet. */
+  private key = '';
+  /** Bumped by each new key and each rebake, so a load that lands after either is dropped. */
+  private ticket = 0;
+  private restoring: SavedBake | null = null;
 
-  constructor(private readonly scene: THREE.Scene) {}
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly store: BakeStore | null,
+  ) {}
 
   get probes(): number {
     const r = this.grid?.resolution;
@@ -181,66 +211,136 @@ export class ProbeGI {
       this.drop();
       return;
     }
-    const passes = 1 + bounces;
-    if (spacing !== this.spacing || !this.grid) {
-      this.drop();
-      const w = GI_BOX.maxX - GI_BOX.minX;
-      const h = GI_BOX.maxY - GI_BOX.minY;
-      const d = GI_BOX.maxZ - GI_BOX.minZ;
-      const grid = new LightProbeGridWebGL(w, h, d, probeCount(w, spacing), probeCount(h, spacing), probeCount(d, spacing));
-      grid.position.set((GI_BOX.minX + GI_BOX.maxX) / 2, (GI_BOX.minY + GI_BOX.maxY) / 2, (GI_BOX.minZ + GI_BOX.maxZ) / 2);
-      grid.updateBoundingBox();
-      this.scene.add(grid);
-      this.grid = grid;
-      this.spacing = spacing;
-      this.passes = passes;
-      this.rebake();
-    } else if (passes !== this.passes) {
-      this.passes = passes;
-      this.rebake();
-    }
+    this.passes = 1 + bounces;
+    if (spacing === this.spacing && this.grid) return;
+    this.drop();
+    const w = GI_BOX.maxX - GI_BOX.minX;
+    const h = GI_BOX.maxY - GI_BOX.minY;
+    const d = GI_BOX.maxZ - GI_BOX.minZ;
+    const grid = new LightProbeGridWebGL(w, h, d, probeCount(w, spacing), probeCount(h, spacing), probeCount(d, spacing));
+    grid.position.set((GI_BOX.minX + GI_BOX.maxX) / 2, (GI_BOX.minY + GI_BOX.maxY) / 2, (GI_BOX.minZ + GI_BOX.maxZ) / 2);
+    grid.updateBoundingBox();
+    this.scene.add(grid);
+    this.grid = grid;
+    this.spacing = spacing;
   }
 
-  /** Bakes the whole grid again over the next frames; the old light stays up until each probe is redone. */
+  /**
+   * What the light depends on (`bakeKey`). A new key loads the bake saved for it, or bakes the grid again when there
+   * is none; the old light stays up meanwhile. '' waits.
+   */
+  setKey(key: string) {
+    if (!this.grid || !key || key === this.key) return;
+    this.key = key;
+    if (!this.store) {
+      this.rebake();
+      return;
+    }
+    const ticket = ++this.ticket;
+    this.full = false;
+    this.store.load(key).then(
+      (saved) => {
+        if (ticket !== this.ticket) return;
+        if (saved) this.restoring = saved;
+        else this.rebake();
+      },
+      () => ticket === this.ticket && this.rebake(),
+    );
+  }
+
+  /** Bakes the whole grid again over the next frames, and saves it once done; the old light stays up until each probe is redone. */
   rebake() {
+    this.ticket++;
+    this.restoring = null;
     this.cursor = 0;
     this.pass = 0;
     this.full = true;
     this.progress = 0;
   }
 
-  /** A different floor (other desks, other people) is a full rebake. */
-  setFloor(key: string) {
-    if (key === this.floor) return;
-    this.floor = key;
-    if (this.grid) this.rebake();
-  }
-
-  /** Bakes this frame's share: as many as fit the budget during a full bake, else `live` probes (0 for none). */
-  step(renderer: THREE.WebGLRenderer, live: number) {
+  /** Puts a loaded bake on the GPU or bakes this frame's share of probes, as many as fit the budget. */
+  step(renderer: THREE.WebGLRenderer) {
     const grid = this.grid;
     if (!grid || this.paused) return;
+    if (this.restoring) {
+      const saved = this.restoring;
+      this.restoring = null;
+      if (this.restore(renderer, grid, saved)) {
+        this.baked = true;
+        this.progress = 1;
+      } else this.rebake();
+      return;
+    }
+    if (!this.full) return;
     const total = this.probes;
-    const want = this.full ? Math.max(1, Math.floor(BAKE_BUDGET_MS / this.msPerProbe)) : live;
-    if (want <= 0) return;
-    const count = Math.min(want, total - this.cursor, 96);
+    const count = Math.min(Math.max(1, Math.floor(BAKE_BUDGET_MS / this.msPerProbe)), total - this.cursor, 96);
     const t0 = performance.now();
-    grid.bake(renderer, this.scene, { start: this.cursor, count, pass: this.pass, cubemapSize: 16, near: 0.05, far: 60 });
+    this.hidden(() => grid.bake(renderer, this.scene, { start: this.cursor, count, pass: this.pass, ...CAPTURE }));
     this.msPerProbe = THREE.MathUtils.lerp(this.msPerProbe, Math.max(0.05, (performance.now() - t0) / count), 0.3);
     this.cursor += count;
     if (this.cursor >= total) {
       this.cursor = 0;
-      if (this.full) {
-        this.pass++;
-        if (this.pass >= this.passes) {
-          this.full = false;
-          this.baked = true;
-          // Kept fresh on the last pass, which reads the light already there: each sweep adds a bounce.
-          this.pass = this.passes - 1;
-        }
+      this.pass++;
+      if (this.pass >= this.passes) {
+        this.full = false;
+        this.baked = true;
+        this.save(renderer, grid);
       }
     }
     this.progress = this.full ? (this.pass * total + this.cursor) / (this.passes * total) : 1;
+  }
+
+  /** Runs `bake` with everything `hideWhileBaking` lists out of sight, then shows it again as it was. */
+  private hidden(bake: () => void) {
+    const hide = this.hideWhileBaking();
+    const was = hide.map((o) => o.visible);
+    for (const o of hide) o.visible = false;
+    try {
+      bake();
+    } finally {
+      hide.forEach((o, i) => {
+        o.visible = was[i];
+      });
+    }
+  }
+
+  /** Copies a saved atlas into the grid's. False when it doesn't fit this grid, and it has to be baked instead. */
+  private restore(renderer: THREE.WebGLRenderer, grid: LightProbeGridWebGL, saved: SavedBake): boolean {
+    // three.js makes the grid's atlas on its first bake: one probe makes it, and the copy covers that probe too.
+    if (!grid.texture?.isRenderTargetTexture) this.hidden(() => grid.bake(renderer, this.scene, { start: 0, count: 1, ...CAPTURE }));
+    const atlas = grid.texture;
+    const { width, height, depth } = atlas?.image ?? {};
+    if (!atlas || width !== saved.width || height !== saved.height || depth !== saved.depth || saved.data.length !== width * height * depth * 4) return false;
+    const src = new THREE.Data3DTexture(saved.data, width, height, depth);
+    src.format = THREE.RGBAFormat;
+    src.type = THREE.FloatType;
+    renderer.copyTextureToTexture(src, atlas);
+    src.dispose();
+    return true;
+  }
+
+  /** Reads the finished atlas back from the GPU, one layer at a time, and saves it under the key it was baked for. */
+  private save(renderer: THREE.WebGLRenderer, grid: LightProbeGridWebGL) {
+    const atlas = grid.texture;
+    if (!this.store || !atlas) return;
+    const { width, height, depth } = atlas.image;
+    // three.js only reads pixels from a render target it owns, so the atlas is copied into one first.
+    const copy = new THREE.WebGL3DRenderTarget(width, height, depth, { format: THREE.RGBAFormat, type: THREE.FloatType, depthBuffer: false });
+    const was = renderer.getRenderTarget();
+    const data = new Float32Array(width * height * depth * 4);
+    const layer = width * height * 4;
+    try {
+      renderer.initRenderTarget(copy);
+      renderer.copyTextureToTexture(atlas, copy.texture);
+      for (let z = 0; z < depth; z++) {
+        renderer.setRenderTarget(copy, z);
+        renderer.readRenderTargetPixels(copy, 0, 0, width, height, data.subarray(z * layer, (z + 1) * layer));
+      }
+    } finally {
+      renderer.setRenderTarget(was);
+      copy.dispose();
+    }
+    void this.store.save({ key: this.key, width, height, depth, data }).catch(() => {});
   }
 
   private drop() {
@@ -253,6 +353,9 @@ export class ProbeGI {
     this.baked = false;
     this.full = false;
     this.progress = 0;
+    this.key = '';
+    this.ticket++;
+    this.restoring = null;
   }
 }
 
@@ -264,11 +367,7 @@ export class Remaster {
   private graded: THREE.WebGLRenderTarget | null = null;
   private readonly quad = new FullScreenQuad();
   private readonly outputSize = new THREE.Vector2();
-  private shadow = { size: 0, radius: -1 };
   private ramp = '';
-  private lastDraw = 0;
-  private giGlow = -1;
-  private liveDue = 0;
   private readonly grade = shader(GRADE, {
     tColor: { value: null },
     exposure: { value: 1 },
@@ -294,10 +393,11 @@ export class Remaster {
     private readonly lights: RemasterLights,
     settings: RenderParams,
     onHdr: () => void,
+    bakes: BakeStore | null,
   ) {
     this.settings = settings;
     this.hdr = new HdrPresenter(renderer.getContext() as WebGL2RenderingContext, renderer.domElement, onHdr);
-    this.gi = new ProbeGI(scene);
+    this.gi = new ProbeGI(scene, bakes);
   }
 
   get active(): boolean {
@@ -327,7 +427,7 @@ export class Remaster {
     return `Remastered · ${aa} · ${hdr}${gi}`;
   }
 
-  /** Applies settings: the shader dials, shadows, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
+  /** Applies settings: the shader dials, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
   configure(s: RenderParams) {
     this.settings = s;
     const on = s.enabled;
@@ -340,13 +440,7 @@ export class Remaster {
     u.gi.value = on && s.gi ? s.giIntensity : 0;
     u.giOnly.value = on && s.gi && s.debug === 'gi' ? 1 : 0;
     this.gi.configure(on && s.gi, s.giSpacing, s.giBounces);
-    // How much glowing surfaces light the room is baked into the probes.
-    if (s.giGlow !== this.giGlow) {
-      if (this.giGlow >= 0 && this.gi.grid) this.gi.rebake();
-      this.giGlow = s.giGlow;
-    }
     this.hdr.set(on && s.hdr);
-    this.applyShadows(on ? Math.min(s.shadowMapSize, this.renderer.capabilities.maxTextureSize) : 2048, on ? s.shadowSoftness : 1);
     const ramp = on ? s.toonRamp : 'classic';
     if (ramp !== this.ramp) {
       this.ramp = ramp;
@@ -361,19 +455,6 @@ export class Remaster {
 
   private msaaSamples(): number {
     return this.settings.msaa;
-  }
-
-  private applyShadows(size: number, radius: number) {
-    if (size === this.shadow.size && radius === this.shadow.radius) return;
-    const sun = this.lights.sun;
-    if (size !== this.shadow.size) {
-      sun.shadow.mapSize.set(size, size);
-      sun.shadow.map?.dispose();
-      sun.shadow.map = null;
-    }
-    sun.shadow.radius = radius;
-    this.shadow = { size, radius };
-    this.renderer.shadowMap.needsUpdate = true;
   }
 
   /** After the canvas changes size. */
@@ -404,23 +485,22 @@ export class Remaster {
     ambient.intensity *= s.ambientFill;
     try {
       if (s.gi) {
-        // Live probes come out of a per-second budget, so the cost doesn't climb with the frame rate.
-        const now = performance.now();
-        const dt = Math.min(0.25, (now - this.lastDraw) / 1000);
-        this.liveDue = s.giLive > 0 ? Math.min(this.liveDue + s.giLive * dt, 16) : 0;
-        const live = Math.floor(this.liveDue);
-        this.liveDue -= live;
         const u = remasterUniforms;
         const glow = [u.bakeGlow.value, u.emissive.value] as const;
+        const now = [sun.intensity, hemi.intensity, ambient.intensity] as const;
         u.bakeGlow.value = s.giGlow;
         u.emissive.value *= s.giGlow;
+        // Baked under a clear night's moon and sky, so the weather and a lightning flash never end up in a saved bake.
+        sun.intensity = CLEAR_NIGHT.moon * s.moon;
+        hemi.intensity = CLEAR_NIGHT.hemi * s.skyFill;
+        ambient.intensity = CLEAR_NIGHT.ambient * s.ambientFill;
         try {
-          this.gi.step(r, live);
+          this.gi.step(r);
         } finally {
           [u.bakeGlow.value, u.emissive.value] = glow;
+          [sun.intensity, hemi.intensity, ambient.intensity] = now;
         }
       }
-      this.lastDraw = performance.now();
       r.setRenderTarget(sceneRT);
       drawScene();
     } finally {
