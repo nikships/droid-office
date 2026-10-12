@@ -6,7 +6,8 @@ import { STICKY_COLORS, type Author, type Card, type Op, type Thread } from '../
 import { h, timeAgo } from './dom';
 import { colorDot } from './kit';
 import type { MarkKind, Surface } from './whiteboard-surface';
-import { authorColor, authorName, newId, type ChangeItem } from './whiteboard-view';
+import type { ChangeItem } from '../../shared/whiteboard-marks';
+import { authorColor, authorName, newId } from './whiteboard-view';
 
 export interface PanelHost {
   apply(ops: Op[], what?: string): Promise<boolean>;

@@ -34,10 +34,12 @@ import {
   type StickyColor,
   type Thread,
 } from '../../shared/whiteboard';
+import { canvasBounds, dragBox, dragMarkOps, dragPreview, pictureSize, reattachMarkOps } from '../../shared/whiteboard-marks';
 import { withToken } from '../token';
 import { claimEscape, h } from './dom';
 import { colorDot } from './kit';
 import {
+  CANVAS_MARGIN,
   type ArtifactView,
   type CanvasView,
   type Size,
@@ -47,15 +49,12 @@ import {
   artifactLayout,
   authorColor,
   authorName,
-  canvasBounds,
   canvasCardView,
   canvasFit,
   canvasFromCardView,
   clampZoom,
-  dragBox,
   fitZoom,
   newId,
-  pictureSize,
   stepZoom,
   wheelNavigation,
   zoomArtifact,
@@ -314,7 +313,7 @@ export class Surface {
   fit() {
     this.flushNavigation();
     this.zoomMode = { fit: true };
-    if (this.card.kind === 'canvas') this.canvas = canvasFit(canvasBounds(this.card), this.viewport);
+    if (this.card.kind === 'canvas') this.canvas = canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport);
     else this.art = { ...this.art, zoom: fitZoom(this.viewport.w), panX: 0 };
     this.applyView(true);
   }
@@ -800,13 +799,13 @@ export class Surface {
     if (this.card.kind === 'canvas') {
       if (saved) {
         this.zoomMode = saved.fit ? { fit: true } : { fit: false, zoom: saved.zoom };
-        this.canvas = saved.fit ? canvasFit(canvasBounds(this.card), this.viewport) : { zoom: clampZoom(saved.zoom), x: saved.a ?? 0, y: saved.b ?? 0 };
+        this.canvas = saved.fit ? canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport) : { zoom: clampZoom(saved.zoom), x: saved.a ?? 0, y: saved.b ?? 0 };
       } else if (cv) {
         this.canvas = canvasFromCardView(this.viewport, cv);
         this.zoomMode = { fit: false, zoom: this.canvas.zoom };
       } else {
         this.zoomMode = { fit: true };
-        this.canvas = canvasFit(canvasBounds(this.card), this.viewport);
+        this.canvas = canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport);
       }
     } else if (saved) {
       this.zoomMode = saved.fit ? { fit: true } : { fit: false, zoom: saved.zoom };
@@ -1108,8 +1107,9 @@ export class Surface {
         if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < DRAG_PX) return;
         moved = true;
         el.classList.add('dragging');
-        if (what === 'move') this.place(el, origin.x + box.x + dx, origin.y + box.y + dy);
-        else this.place(el, origin.x + box.x, origin.y + box.y, Math.max(40, box.w + dx), Math.max(40, box.h + dy));
+        const next = dragPreview(origin, box, dx, dy, what);
+        if (what === 'move') this.place(el, next.x, next.y);
+        else this.place(el, next.x, next.y, next.w, next.h);
       };
       const up = async (ev: PointerEvent) => {
         handle.removeEventListener('pointermove', move);
@@ -1121,21 +1121,9 @@ export class Surface {
         }
         const dx = (ev.clientX - start.x) / this.zoom;
         const dy = (ev.clientY - start.y) / this.zoom;
-        const ops: Op[] = [];
-        const card = this.card.id;
-        if (what === 'resize') {
-          const size = { w: Math.round(Math.max(40, box.w + dx)), h: Math.round(Math.max(40, box.h + dy)) };
-          ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: size } : { op: 'picture.move', card, id, box: size });
-        } else if (this.card.kind === 'canvas' || mark.anchor.kind === 'point') {
-          const at = { x: Math.round(box.x + dx), y: Math.round(box.y + dy) };
-          ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: at } : { op: 'picture.move', card, id, box: at });
-        } else {
-          // On an artifact a moved mark is anchored again where it was dropped, so it follows that element.
-          const anchor = await this.anchorAt({ x: origin.x + box.x + dx, y: origin.y + box.y + dy });
-          const zero = { x: 0, y: 0 };
-          ops.push(kind === 'sticky' ? { op: 'sticky.reattach', card, id, anchor } : { op: 'picture.reattach', card, id, anchor });
-          if (box.x !== 0 || box.y !== 0) ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: zero } : { op: 'picture.move', card, id, box: zero });
-        }
+        // On an artifact a moved mark is anchored again where it was dropped, so it follows that element.
+        const anchor = what === 'move' && this.card.kind !== 'canvas' && mark.anchor.kind !== 'point' ? await this.anchorAt(dragPreview(origin, box, dx, dy, 'move')) : undefined;
+        const ops = dragMarkOps({ card: this.card.id, kind, id, what, box, dx, dy, anchor });
         // The board has it at once (the batch is applied here first), even while it waits to be sent.
         void this.host.apply(ops, what === 'move' ? `Moving the ${kind}` : `Resizing the ${kind}`);
         el.classList.remove('dragging');
@@ -1257,15 +1245,9 @@ export class Surface {
     if (!pick) return;
     this.stopPicking();
     const anchor = await this.anchorAt(p);
-    const card = this.card.id;
     const id = pick.id;
-    const ops: Op[] = [];
-    if (pick.kind === 'thread') ops.push({ op: 'comment.reattach', card, thread: id, anchor });
-    else {
-      const mark = this.findMark(pick.kind, id) as Sticky | Picture | undefined;
-      ops.push(pick.kind === 'sticky' ? { op: 'sticky.reattach', card, id, anchor } : { op: 'picture.reattach', card, id, anchor });
-      if (mark && (mark.box.x !== 0 || mark.box.y !== 0)) ops.push(pick.kind === 'sticky' ? { op: 'sticky.move', card, id, box: { x: 0, y: 0 } } : { op: 'picture.move', card, id, box: { x: 0, y: 0 } });
-    }
+    const mark = pick.kind === 'thread' ? undefined : (this.findMark(pick.kind, id) as Sticky | Picture | undefined);
+    const ops = reattachMarkOps({ card: this.card.id, kind: pick.kind, id, anchor, box: mark?.box });
     this.sentResolve.delete(id);
     this.located.delete(id);
     void this.host.apply(ops, 'Reattaching');

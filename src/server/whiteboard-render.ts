@@ -14,9 +14,9 @@
 //     init with rendering: true, the snapshot's state, mode 'use', width CANONICAL_WIDTH.
 //   - Settling: the SDK's ready, the frame's fonts, network quiet and a quiet period of DOM
 //     mutations, each bounded by the settle limit. Then the frame grows to the page's height.
-//   - Marks: `locate` for every anchor, then stickies, pictures and numbered comment pins drawn over
-//     the frame at the points it answered plus each box's offset. A canvas card has no frame: its
-//     marks are drawn at their bounds plus CANVAS_MARGIN.
+//   - Marks: `locate` for every anchor, then the card module's placement records (point plus box;
+//     a comment is a pin centered on its point) drawn over the frame. A canvas card has no frame:
+//     its marks are drawn at those records' bounds plus CANVAS_MARGIN (48; the window fits with 80).
 //   - Capture: TILE_HEIGHT-tall PNG tiles top to bottom, at most MAX_TILES (the cap), and a thumb of
 //     the top THUMB_SOURCE region at half size, all at device scale 1.
 //
@@ -28,6 +28,7 @@ import { randomBytes } from 'node:crypto';
 import type { Browser, BrowserContext, Frame, Page, Route } from 'playwright-core';
 import type { WhiteboardRendererStatus } from '../shared/protocol.js';
 import { BRIDGE_CHANNEL, parseFrameMsg } from '../shared/whiteboard-bridge.js';
+import { boundsOf, placeMarks } from '../shared/whiteboard-marks.js';
 import { CANONICAL_WIDTH, STICKY_COLORS, type Anchor, type Card, type Point } from '../shared/whiteboard.js';
 import { BrowserError, browserStatus, classifyLaunchError, closeBrowser, ensureBrowser, installCommand, launchBrowser, newIsolatedContext, type BrowserStatus, type EnsureOptions, type InstallProgress } from './whiteboard-browser.js';
 import { CARD_HEADERS, CARD_SANDBOX, sameKey, type CardRenders, type DrawnMark, type PinnedCard, type RenderImage, type RenderKey, type RenderOutcome, type WhiteboardRenderer } from './whiteboard.js';
@@ -1044,21 +1045,31 @@ function drawsFor(card: Card, located: Map<string, Located> | undefined): Draw[]
   return marksAt(card, at);
 }
 
+/** Paint records from the card module: the same point-plus-box the window uses, with a comment drawn as a pin. */
 function marksAt(card: Card, at: (id: string, anchor: Anchor) => { p: Point; detached: boolean }): (Draw & { id: string })[] {
-  const out: (Draw & { id: string })[] = [];
-  for (const p of card.pictures) {
-    const { p: pt, detached } = at(p.id, p.anchor);
-    out.push({ id: p.id, kind: 'picture', x: pt.x + p.box.x, y: pt.y + p.box.y, w: p.box.w, h: p.box.h, detached, src: `/pic/${p.file.hash}` });
-  }
-  for (const s of card.stickies) {
-    const { p: pt, detached } = at(s.id, s.anchor);
-    out.push({ id: s.id, kind: 'sticky', x: pt.x + s.box.x, y: pt.y + s.box.y, w: s.box.w, h: s.box.h, detached, color: STICKY_COLORS[s.color] ?? STICKY_COLORS.yellow, text: s.text });
-  }
-  card.threads.forEach((t, i) => {
-    const { p: pt, detached } = at(t.id, t.anchor);
-    out.push({ id: t.id, kind: 'thread', x: pt.x - PIN_SIZE / 2, y: pt.y - PIN_SIZE / 2, w: PIN_SIZE, h: PIN_SIZE, detached, n: i + 1, resolved: t.resolved });
+  const placed = placeMarks(
+    card,
+    (id, anchor) => {
+      const spot = at(id, anchor);
+      return { point: spot.p, detached: spot.detached };
+    },
+    PIN_SIZE,
+  );
+  const pictures = new Map(card.pictures.map((p) => [p.id, p]));
+  const stickies = new Map(card.stickies.map((s) => [s.id, s]));
+  const threads = new Map(card.threads.map((t, i) => [t.id, { t, n: i + 1 }]));
+  return placed.map((m) => {
+    if (m.kind === 'picture') {
+      const p = pictures.get(m.id);
+      return p ? { ...m, src: `/pic/${p.file.hash}` } : m;
+    }
+    if (m.kind === 'sticky') {
+      const s = stickies.get(m.id);
+      return s ? { ...m, color: STICKY_COLORS[s.color] ?? STICKY_COLORS.yellow, text: s.text } : m;
+    }
+    const t = threads.get(m.id);
+    return t ? { ...m, n: t.n, resolved: t.t.resolved } : m;
   });
-  return out;
 }
 
 interface CanvasPlan {
@@ -1072,18 +1083,15 @@ interface CanvasPlan {
   marks: (Draw & { id: string })[];
 }
 
-/** A canvas card's image: its marks' bounds plus CANVAS_MARGIN (an empty canvas is one blank frame). */
+/** A canvas card's image: the card module's placement, outset by CANVAS_MARGIN (an empty canvas is one blank frame). */
 export function canvasPlan(card: Card): CanvasPlan {
   const marks = marksAt(card, (_id, anchor) => ({ p: anchor.point, detached: false }));
   if (!marks.length) return { x: 0, y: 0, w: CANONICAL_WIDTH, h: FRAME_HEIGHT, scale: 1, marks };
-  const x0 = Math.min(...marks.map((m) => m.x)) - CANVAS_MARGIN;
-  const y0 = Math.min(...marks.map((m) => m.y)) - CANVAS_MARGIN;
-  const x1 = Math.max(...marks.map((m) => m.x + m.w)) + CANVAS_MARGIN;
-  const y1 = Math.max(...marks.map((m) => m.y + m.h)) + CANVAS_MARGIN;
-  const x = Math.floor(x0);
-  const y = Math.floor(y0);
-  const w = Math.ceil(x1 - x);
-  const h = Math.ceil(y1 - y);
+  const bounds = boundsOf(marks, CANVAS_MARGIN, { x: 0, y: 0, w: CANONICAL_WIDTH, h: FRAME_HEIGHT });
+  const x = Math.floor(bounds.x);
+  const y = Math.floor(bounds.y);
+  const w = Math.ceil(bounds.x + bounds.w - x);
+  const h = Math.ceil(bounds.y + bounds.h - y);
   return { x, y, w, h, scale: Math.min(1, MAX_CANVAS_WIDTH / w), marks: marks.map((m) => ({ ...m, x: m.x - x, y: m.y - y })) };
 }
 
