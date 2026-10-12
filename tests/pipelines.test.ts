@@ -503,11 +503,13 @@ if (${JSON.stringify(name)} === 'gh') {
     process.env.PATH = previous;
     rmSync(root, { recursive: true, force: true });
   });
-  const calls = () =>
-    readFileSync(log, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as { cli: string; args: string[] });
+  const calls = () => {
+    // A poll can land mid-append. A finished record always ends with a newline, so a trailing segment without one is not a record yet.
+    const text = readFileSync(log, 'utf8');
+    const lines = text.split('\n');
+    if (text.length > 0 && !text.endsWith('\n')) lines.pop();
+    return lines.filter(Boolean).map((l) => JSON.parse(l) as { cli: string; args: string[] });
+  };
   return { root, repo, calls, fail: () => writeFileSync(path.join(root, 'fail'), '') };
 }
 

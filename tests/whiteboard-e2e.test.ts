@@ -85,8 +85,14 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   // A worker at a desk, with its hook token in its environment.
   send({ t: 'worker.spawn', deskId: 'desk-1', kind: 'agent', worktree: false });
   const launch = await waitFor(() => {
-    const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    return lines.map((l) => JSON.parse(l)).find((r) => r.env?.hookToken) as { env: { workerId: string; hookToken: string; hookUrl: string; path: string } } | undefined;
+    // A poll can land mid-append. A finished record always ends with a newline, so a trailing segment without one is not a record yet.
+    const text = readFileSync(log, 'utf8');
+    const lines = text.split('\n');
+    if (text.length > 0 && !text.endsWith('\n')) lines.pop();
+    return lines
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .find((r) => r.env?.hookToken) as { env: { workerId: string; hookToken: string; hookUrl: string; path: string } } | undefined;
   }, 'the agent to start');
   const bin = launch.env.path.split(path.delimiter)[0];
   assert.ok(existsSync(path.join(bin, 'office-whiteboard')), 'office-whiteboard is on every agent PATH, next to office-workers');
