@@ -1,12 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { gitlabParts } from '../shared/floors.js';
-import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhRepoInfo, GhReviewComment, GhState } from '../shared/protocol.js';
-import { type Board, type BoardListener, type PullRef, Relabels } from './forge.js';
-import { priorityRank } from './github.js';
-
-const REFRESH_MS = 90_000;
-/** How long the project's list of labels is kept before the label picker asks GitLab again. */
-const LABELS_MS = 60_000;
+import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhRepoInfo, GhReviewComment } from '../shared/protocol.js';
+import { BoardList } from './board-list.js';
+import type { Board, BoardListener, PullRef } from './forge.js';
 
 /** Turns glab's stderr into something a person standing at the board can act on. */
 function friendly(raw: string): string {
@@ -255,9 +251,7 @@ function pages<T>(out: string): T[] {
  */
 export class GitLab implements Board {
   readonly forge = 'gitlab' as const;
-  issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: false };
-  pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: false };
-  private timer?: NodeJS.Timeout;
+  private lists: BoardList;
   private info?: Promise<GhRepoInfo & { squashAlways: boolean }>;
   private login?: Promise<string>;
   private host: string;
@@ -265,34 +259,50 @@ export class GitLab implements Board {
   /** The project's id in REST paths (the URL-encoded full path works everywhere an id does). */
   private id: string;
   private projectUrl: string;
-  private labelList?: { at: number; list: Promise<GhLabel[]> };
-  private relabeled = new Relabels();
 
   constructor(
     private dir: string,
     /** host/group/…/project */
     repo: string,
-    private onIssues: BoardListener<GhIssue>,
-    private onPulls: BoardListener<GhPull>,
+    onIssues: BoardListener<GhIssue>,
+    onPulls: BoardListener<GhPull>,
   ) {
     const { host, path } = gitlabParts(repo);
     this.host = host;
     this.path = path;
     this.id = encodeURIComponent(path);
     this.projectUrl = `https://${host}/${path}`;
+    this.lists = new BoardList(
+      {
+        listIssues: () => this.fetchIssues(),
+        listPulls: () => this.fetchPulls(),
+        listLabels: () => this.fetchLabels(),
+        applyLabels: (kind, n, add, remove) => this.changeLabels(kind, n, add, remove),
+      },
+      onIssues,
+      onPulls,
+    );
   }
 
+  get issues() {
+    return this.lists.issues;
+  }
+
+  get pulls() {
+    return this.lists.pulls;
+  }
+
+  /** Its own 90s look. Floor never calls this: the floor's timer calls refresh. */
   start() {
-    void this.refresh();
-    this.timer = setInterval(() => void this.refresh(), REFRESH_MS);
+    this.lists.start();
   }
 
   stop() {
-    clearInterval(this.timer);
+    this.lists.stop();
   }
 
-  async refresh() {
-    await Promise.all([this.refreshIssues(), this.refreshPulls()]);
+  refresh() {
+    return this.lists.refresh();
   }
 
   private api(path: string, args: string[] = [], timeout?: number): Promise<string> {
@@ -419,7 +429,7 @@ export class GitLab implements Board {
     } catch (err) {
       return { error: (err as Error).message };
     }
-    void (kind === 'issue' ? this.refreshIssues() : this.refreshPulls());
+    void this.lists.refreshOne(kind);
     return { comment };
   }
 
@@ -433,7 +443,7 @@ export class GitLab implements Board {
     } catch (err) {
       return (err as Error).message;
     }
-    void this.refreshPulls();
+    void this.lists.refreshOne('pull');
     return undefined;
   }
 
@@ -448,10 +458,7 @@ export class GitLab implements Board {
     } catch (err) {
       return (err as Error).message;
     }
-    const refresh = () => (kind === 'issue' ? this.refreshIssues() : this.refreshPulls());
-    void refresh().then(() => {
-      if ((kind === 'issue' ? this.issues : this.pulls).items.some((i) => i.number === n && i.state === 'OPEN')) setTimeout(() => void refresh(), 3000);
-    });
+    this.lists.closed(kind, n);
     return undefined;
   }
 
@@ -463,55 +470,39 @@ export class GitLab implements Board {
     } catch (err) {
       return (err as Error).message;
     }
-    void this.refreshIssues();
+    void this.lists.refreshOne('issue');
     return undefined;
   }
 
   /** Every label the project can use (its group's too), for the label picker. Asked again after a minute (or a failure). */
   repoLabels(): Promise<GhLabel[]> {
-    if (!this.labelList || Date.now() - this.labelList.at > LABELS_MS) {
-      const list = this.api(`projects/${this.id}/labels?per_page=100`, ['--paginate'], 60_000).then((out) =>
-        pages<{ name?: string; color?: string; description?: string | null }>(out).map((l) => ({ name: String(l.name), color: colorOf(l.color), description: l.description || undefined })),
-      );
-      this.labelList = { at: Date.now(), list };
-      list.catch(() => this.labelList?.list === list && (this.labelList = undefined));
-    }
-    return this.labelList.list;
+    return this.lists.repoLabels();
   }
 
   /**
    * Puts labels on an issue or MR and takes others off, as whoever glab is signed in as. Returns the
    * labels it has now, or why they didn't change.
    */
-  async setLabels(kind: 'issue' | 'pull', n: number, add: string[], remove: string[]): Promise<{ labels?: GhLabel[]; error?: string }> {
-    // GitLab label names can't hold a comma, so the comma-separated lists below are safe.
-    if ([...add, ...remove].some((l) => l.includes(','))) return { error: "GitLab label names can't contain a comma" };
-    let now: GhLabel[];
-    try {
-      const args = ['--method', 'PUT'];
-      if (add.length) args.push('-f', `add_labels=${add.join(',')}`);
-      if (remove.length) args.push('-f', `remove_labels=${remove.join(',')}`);
-      const saved = JSON.parse(await this.api(`projects/${this.id}/${kind === 'issue' ? 'issues' : 'merge_requests'}/${n}`, args)) as { labels?: string[] };
-      // The answer names the labels without their colors; the project's list has those.
-      const known = new Map((await this.repoLabels().catch(() => [] as GhLabel[])).map((l) => [l.name, l.color]));
-      now = (saved.labels ?? []).map((name) => ({ name: String(name), color: known.get(name) ?? '#888888' }));
-    } catch (err) {
-      void (kind === 'issue' ? this.refreshIssues() : this.refreshPulls());
-      return { error: (err as Error).message };
-    }
-    // The board shows them at once, before the next look at GitLab.
-    const at = Date.now();
-    this.relabeled.set(kind, n, now, at);
-    if (kind === 'issue') {
-      this.issues = { ...this.issues, items: this.relabeled.apply('issue', this.issues.items, at).sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels)) };
-      this.onIssues(this.issues);
-      void this.refreshIssues();
-    } else {
-      this.pulls = { ...this.pulls, items: this.relabeled.apply('pull', this.pulls.items, at) };
-      this.onPulls(this.pulls);
-      void this.refreshPulls();
-    }
-    return { labels: now };
+  setLabels(kind: 'issue' | 'pull', n: number, add: string[], remove: string[]): Promise<{ labels?: GhLabel[]; error?: string }> {
+    // A comma would split the list GitLab takes, and a name can't hold one. Nothing changed, so the board is not looked at again.
+    if ([...add, ...remove].some((l) => l.includes(','))) return Promise.resolve({ error: "GitLab label names can't contain a comma" });
+    return this.lists.setLabels(kind, n, add, remove);
+  }
+
+  /** Puts labels on and takes others off. Names can't hold a comma, so the comma-separated lists are safe. */
+  private async changeLabels(kind: 'issue' | 'pull', n: number, add: string[], remove: string[]): Promise<GhLabel[]> {
+    const args = ['--method', 'PUT'];
+    if (add.length) args.push('-f', `add_labels=${add.join(',')}`);
+    if (remove.length) args.push('-f', `remove_labels=${remove.join(',')}`);
+    const saved = JSON.parse(await this.api(`projects/${this.id}/${kind === 'issue' ? 'issues' : 'merge_requests'}/${n}`, args)) as { labels?: string[] };
+    const known = new Map((await this.repoLabels().catch(() => [] as GhLabel[])).map((l) => [l.name, l.color]));
+    return (saved.labels ?? []).map((name) => ({ name: String(name), color: known.get(name) ?? '#888888' }));
+  }
+
+  private fetchLabels(): Promise<GhLabel[]> {
+    return this.api(`projects/${this.id}/labels?per_page=100`, ['--paginate'], 60_000).then((out) =>
+      pages<{ name?: string; color?: string; description?: string | null }>(out).map((l) => ({ name: String(l.name), color: colorOf(l.color), description: l.description || undefined })),
+    );
   }
 
   async createPull(cwd: string, head: string, base: string | undefined, title: string, body: string): Promise<PullRef> {
@@ -539,70 +530,47 @@ export class GitLab implements Board {
     await glab(['mr', 'update', String(ref.number), '--repo', this.projectUrl, '--description', body], cwd);
   }
 
-  private async refreshIssues() {
-    if (this.issues.loading) return;
-    this.issues = { ...this.issues, loading: true };
-    this.onIssues(this.issues);
-    const asked = Date.now();
-    try {
-      const [open, closed] = await Promise.all([this.list('issues', 'opened', 'CREATED_DESC', 300), this.list('issues', 'closed', 'UPDATED_DESC', 40)]);
-      const fetched: GhIssue[] = [...open, ...closed].map((i) => ({
-        number: Number(i.iid),
-        title: String(i.title),
-        state: issueState(i.state),
-        url: String(i.webUrl),
-        author: i.author?.username ?? '',
-        labels: labelsOf(i.labels),
-        assignees: (i.assignees?.nodes ?? []).map((a: any) => String(a.username)),
-        createdAt: i.createdAt,
-        updatedAt: i.updatedAt,
-        body: String(i.description ?? '').slice(0, 4000),
-        comments: Number(i.userNotesCount ?? 0),
-      }));
-      const items = this.relabeled.apply('issue', fetched, asked);
-      items.sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels));
-      this.issues = { items, fetchedAt: Date.now(), loading: false };
-    } catch (err) {
-      this.issues = { ...this.issues, loading: false, error: (err as Error).message, fetchedAt: Date.now() };
-    }
-    this.onIssues(this.issues);
+  private async fetchIssues(): Promise<GhIssue[]> {
+    const [open, closed] = await Promise.all([this.list('issues', 'opened', 'CREATED_DESC', 300), this.list('issues', 'closed', 'UPDATED_DESC', 40)]);
+    return [...open, ...closed].map((i) => ({
+      number: Number(i.iid),
+      title: String(i.title),
+      state: issueState(i.state),
+      url: String(i.webUrl),
+      author: i.author?.username ?? '',
+      labels: labelsOf(i.labels),
+      assignees: (i.assignees?.nodes ?? []).map((a: any) => String(a.username)),
+      createdAt: i.createdAt,
+      updatedAt: i.updatedAt,
+      body: String(i.description ?? '').slice(0, 4000),
+      comments: Number(i.userNotesCount ?? 0),
+    }));
   }
 
-  private async refreshPulls() {
-    if (this.pulls.loading) return;
-    this.pulls = { ...this.pulls, loading: true };
-    this.onPulls(this.pulls);
-    const asked = Date.now();
-    try {
-      const [open, merged, closed] = await Promise.all([this.list('mergeRequests', 'opened', 'CREATED_DESC', 150), this.list('mergeRequests', 'merged', 'MERGED_AT_DESC', 30), this.list('mergeRequests', 'closed', 'UPDATED_DESC', 40)]);
-      const fetched: GhPull[] = [...open, ...merged, ...closed].map((p) => {
-        const body = String(p.description ?? '');
-        return {
-          number: Number(p.iid),
-          title: String(p.title),
-          state: mrState(p.state),
-          isDraft: !!p.draft,
-          url: String(p.webUrl),
-          author: p.author?.username ?? '',
-          labels: labelsOf(p.labels),
-          reviewDecision: reviewDecision(p),
-          headRefName: p.sourceBranch,
-          headRefOid: typeof p.diffHeadSha === 'string' ? p.diffHeadSha : undefined,
-          baseRefName: p.targetBranch,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          additions: Number(p.diffStatsSummary?.additions ?? 0),
-          deletions: Number(p.diffStatsSummary?.deletions ?? 0),
-          checks: pipelineChecks(p.headPipeline?.status),
-          body: body.slice(0, 4000),
-          closes: closesOf(body, this.projectUrl),
-        };
-      });
-      const items = this.relabeled.apply('pull', fetched, asked);
-      this.pulls = { items, fetchedAt: Date.now(), loading: false };
-    } catch (err) {
-      this.pulls = { ...this.pulls, loading: false, error: (err as Error).message, fetchedAt: Date.now() };
-    }
-    this.onPulls(this.pulls);
+  private async fetchPulls(): Promise<GhPull[]> {
+    const [open, merged, closed] = await Promise.all([this.list('mergeRequests', 'opened', 'CREATED_DESC', 150), this.list('mergeRequests', 'merged', 'MERGED_AT_DESC', 30), this.list('mergeRequests', 'closed', 'UPDATED_DESC', 40)]);
+    return [...open, ...merged, ...closed].map((p) => {
+      const body = String(p.description ?? '');
+      return {
+        number: Number(p.iid),
+        title: String(p.title),
+        state: mrState(p.state),
+        isDraft: !!p.draft,
+        url: String(p.webUrl),
+        author: p.author?.username ?? '',
+        labels: labelsOf(p.labels),
+        reviewDecision: reviewDecision(p),
+        headRefName: p.sourceBranch,
+        headRefOid: typeof p.diffHeadSha === 'string' ? p.diffHeadSha : undefined,
+        baseRefName: p.targetBranch,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        additions: Number(p.diffStatsSummary?.additions ?? 0),
+        deletions: Number(p.diffStatsSummary?.deletions ?? 0),
+        checks: pipelineChecks(p.headPipeline?.status),
+        body: body.slice(0, 4000),
+        closes: closesOf(body, this.projectUrl),
+      };
+    });
   }
 }
