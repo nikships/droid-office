@@ -39,5 +39,5 @@ data class ScreenState(
 
 /** The terminal's ground, the office's (TERM_THEME in src/client/world/laptop.ts), as ARGB. */
 object TermPalette {
-    const val BACKGROUND = 0xFF0A0A0A.toInt()
+    const val BACKGROUND = 0xFF000000.toInt()
 }

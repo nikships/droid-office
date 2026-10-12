@@ -1,6 +1,6 @@
 // The office's terminal colours (TERM_THEME in src/client/world/laptop.ts); a test keeps them equal.
 export const THEME = {
-  background: '#0a0a0a',
+  background: '#000000',
   foreground: '#eeeeee',
   cursor: '#ee6018',
   selectionBackground: '#2a2a2a',
