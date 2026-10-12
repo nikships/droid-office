@@ -41,9 +41,9 @@ globalThis.createImageBitmap = async (blob) => {
     if (type === 'IHDR') {
       width = data.readUInt32BE(0);
       height = data.readUInt32BE(4);
-      channels = data[9] === 2 ? 3 : data[9] === 6 ? 4 : 0;
+      channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[data[9]] ?? 0;
       if (data[8] !== 8 || !channels || data[10] || data[11] || data[12]) {
-        throw new Error('verify: only non-interlaced 8-bit RGB/RGBA PNGs are supported');
+        throw new Error('verify: only non-interlaced 8-bit grey, grey-alpha, RGB or RGBA PNGs are supported');
       }
     } else if (type === 'IDAT') {
       compressed.push(data);
@@ -77,9 +77,12 @@ globalThis.createImageBitmap = async (blob) => {
     }
   }
   const data = new Uint8Array(width * height * 4);
+  const grey = channels < 3;
   for (let i = 0; i < width * height; i++) {
-    data.set(pixels.subarray(i * channels, i * channels + 3), i * 4);
-    data[i * 4 + 3] = channels === 4 ? pixels[i * channels + 3] : 255;
+    const p = i * channels;
+    if (grey) data.fill(pixels[p], i * 4, i * 4 + 3);
+    else data.set(pixels.subarray(p, p + 3), i * 4);
+    data[i * 4 + 3] = channels === 2 || channels === 4 ? pixels[p + channels - 1] : 255;
   }
   return { width, height, data, close() {} };
 };
