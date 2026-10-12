@@ -65,7 +65,7 @@ function parachute(color: string): { group: THREE.Group; dome: THREE.Group } {
   const gores = 10;
   for (let i = 0; i < gores; i++) {
     const geo = new THREE.SphereGeometry(R, 3, 5, (i / gores) * Math.PI * 2, (Math.PI * 2) / gores, 0, rim);
-    dome.add(mesh(geo, cloth(i % 2 ? '#fffaf3' : color), 0, 0, 0, false));
+    dome.add(mesh(geo, cloth(i % 2 ? '#fffaf3' : color), 0, 0, 0));
   }
   dome.scale.y = 0.62;
   dome.position.y = 1.25;

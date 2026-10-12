@@ -71,7 +71,6 @@ function groundPlane(w: number, d: number, x: number, y: number, z: number, map:
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
   m.rotation.x = -Math.PI / 2;
   m.position.set(x, y, z);
-  m.receiveShadow = true;
   return m;
 }
 
@@ -142,8 +141,8 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
   ];
   for (const [x0, x1, z0, z1] of walls) {
     parts.add(mesh(box(x1 - x0, wallH, z1 - z0), concrete, (x0 + x1) / 2, G + wallH / 2, (z0 + z1) / 2));
-    parts.add(mesh(box(x1 - x0 + 0.02, 0.06, z1 - z0 + 0.02), yellow, (x0 + x1) / 2, G + 1.1, (z0 + z1) / 2, false));
-    parts.add(mesh(box(x1 - x0 + 0.02, 0.5, z1 - z0 + 0.02), plinth, (x0 + x1) / 2, G + 0.25, (z0 + z1) / 2, false));
+    parts.add(mesh(box(x1 - x0 + 0.02, 0.06, z1 - z0 + 0.02), yellow, (x0 + x1) / 2, G + 1.1, (z0 + z1) / 2));
+    parts.add(mesh(box(x1 - x0 + 0.02, 0.5, z1 - z0 + 0.02), plinth, (x0 + x1) / 2, G + 0.25, (z0 + z1) / 2));
     colliders.push({ minX: x0, maxX: x1, minZ: z0, maxZ: z1, bottom: G, top: ceiling });
   }
   const sign = textPlane('P1  GARAGE', { bg: '#0a0a0a', color: '#eeeeee', size: 64, border: '#2f2f2f' });
@@ -158,14 +157,14 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
   const colMat = toon('#2a2a2a');
   for (const [x, z] of cols) {
     parts.add(mesh(box(0.5, wallH, 0.5), colMat, x, G + wallH / 2, z));
-    parts.add(mesh(box(0.52, 0.5, 0.52), plinth, x, G + 0.25, z, false));
-    parts.add(mesh(box(0.53, 0.05, 0.53), yellow, x, G + 0.52, z, false));
+    parts.add(mesh(box(0.52, 0.5, 0.52), plinth, x, G + 0.25, z));
+    parts.add(mesh(box(0.53, 0.05, 0.53), yellow, x, G + 0.52, z));
     colliders.push({ minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25, bottom: G, top: ceiling });
   }
 
   // Strip lights on the ceiling.
   const light = toon('#ffffff', { emissive: '#f4ecdc' });
-  for (const x of [-13, -4.8, 4.8, 13]) for (const z of [-4.5, 4.5]) parts.add(mesh(box(2.6, 0.07, 0.22), light, x, ceiling - 0.04, z, false));
+  for (const x of [-13, -4.8, 4.8, 13]) for (const z of [-4.5, 4.5]) parts.add(mesh(box(2.6, 0.07, 0.22), light, x, ceiling - 0.04, z));
   group.add(mergeByMaterial(parts));
 
   // The cars: Lambos nose-in along the back wall, Ferraris backed in facing the street.
@@ -263,7 +262,6 @@ function building(w: number, h: number, d: number, color: string, lit: THREE.Mes
   const mats = [sides, sides, toon(color), toon(color), fronts, fronts];
   g.add(new THREE.Mesh(box(w, h, d), mats));
   (g.children[0] as THREE.Mesh).position.y = h / 2;
-  (g.children[0] as THREE.Mesh).castShadow = true;
   g.add(mesh(box(w + 0.4, 0.4, d + 0.4), toon('#121212'), 0, h + 0.2, 0));
   return g;
 }
@@ -373,23 +371,23 @@ export function billboard(copy: BillboardCopy, w: number, h: number, wall = fals
   const legH = wall ? 0 : 1.4;
   // Everything but the face merged (merging drops the face's texture coordinates).
   const rig = new THREE.Group();
-  rig.add(mesh(box(w + 0.3, h + 0.3, 0.3), frame, 0, legH + h / 2, -0.16, false));
-  rig.add(mesh(glyphFlat(h * 0.46, 5), flatColor('#ee6018'), w / 2 - h * 0.36, legH + h * 0.6, 0.012, false));
+  rig.add(mesh(box(w + 0.3, h + 0.3, 0.3), frame, 0, legH + h / 2, -0.16));
+  rig.add(mesh(glyphFlat(h * 0.46, 5), flatColor('#ee6018'), w / 2 - h * 0.36, legH + h * 0.6, 0.012));
   if (!wall) {
     for (const sx of [-0.36, 0.36]) {
       rig.add(mesh(box(0.16, legH + h * 0.6, 0.16), steel, sx * w, (legH + h * 0.6) / 2, -0.4));
-      rig.add(mesh(box(0.1, 0.1, 1.2), steel, sx * w, legH * 0.55, -0.4, false));
+      rig.add(mesh(box(0.1, 0.1, 1.2), steel, sx * w, legH * 0.55, -0.4));
     }
     // A catwalk along the foot, as billboards have.
-    rig.add(mesh(box(w, 0.06, 0.7), steel, 0, legH - 0.1, 0.25, false));
+    rig.add(mesh(box(w, 0.06, 0.7), steel, 0, legH - 0.1, 0.25));
   }
   // The lamps over the top, on arms.
   for (let i = 0; i < 4; i++) {
     const x = -w * 0.375 + (i * w * 0.75) / 3;
-    rig.add(mesh(box(0.05, 0.05, 0.6), steel, x, legH + h + 0.2, 0.15, false));
-    rig.add(mesh(box(0.3, 0.1, 0.22), frame, x, legH + h + 0.2, 0.5, false));
+    rig.add(mesh(box(0.05, 0.05, 0.6), steel, x, legH + h + 0.2, 0.15));
+    rig.add(mesh(box(0.3, 0.1, 0.22), frame, x, legH + h + 0.2, 0.5));
   }
-  g.add(mergeByMaterial(rig), mesh(new THREE.PlaneGeometry(w, h), face, 0, legH + h / 2, 0.001, false));
+  g.add(mergeByMaterial(rig), mesh(new THREE.PlaneGeometry(w, h), face, 0, legH + h / 2, 0.001));
   return g;
 }
 
@@ -408,7 +406,7 @@ export function streetLamp(parts: THREE.Group, night: NightParts, glass: THREE.M
   parts.add(mesh(box(0.08, 0.08, 1.3), ink, x, G + H - 0.05, z + toward * 0.6));
   const hz = z + toward * 1.2;
   parts.add(mesh(new THREE.CylinderGeometry(0.12, 0.42, 0.26, 12), ink, x, G + H - 0.1, hz));
-  parts.add(mesh(new THREE.SphereGeometry(0.22, 12, 8), glass, x, G + H - 0.3, hz, false));
+  parts.add(mesh(new THREE.SphereGeometry(0.22, 12, 8), glass, x, G + H - 0.3, hz));
   colliders.push({ minX: x - 0.2, maxX: x + 0.2, minZ: z - 0.2, maxZ: z + 0.2, bottom: G, top: G + H });
   night.halos.push({ at: new THREE.Vector3(x, G + H - 0.34, hz), size: 2.4, color: '#ffd89a', ground: true });
   night.lamps.push({ x, y: G + H - 0.6, z: hz, reach: 10, color: '#ffcf8a', power: 4, ground: true });
@@ -455,7 +453,6 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
   const lawn = new THREE.Mesh(new THREE.PlaneGeometry(REACH, REACH), toon('#58744f'));
   lawn.rotation.x = -Math.PI / 2;
   lawn.position.y = G - 0.03;
-  lawn.receiveShadow = true;
   group.add(lawn);
   // What you stand on anywhere out there, the lot and the road and the grass alike.
   colliders.push({ minX: -200, maxX: 200, minZ: -200, maxZ: 200, bottom: G - 1, top: G });
@@ -560,7 +557,7 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
       [-5.5, -1.2, 3.6],
       [2.5, 2.4, 3.4],
     ]) {
-      const puff = mesh(new THREE.SphereGeometry(r, 14, 10), cloud, dx, dy, 0, false);
+      const puff = mesh(new THREE.SphereGeometry(r, 14, 10), cloud, dx, dy, 0);
       puff.scale.y = 0.75;
       c.add(puff);
     }

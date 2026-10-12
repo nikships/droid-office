@@ -159,7 +159,6 @@ function frameGeometry(w: number, h: number): THREE.ExtrudeGeometry {
 function buildFrame(w: number, h: number, frame: number): { group: THREE.Group; picture: PictureMesh } {
   const group = new THREE.Group();
   const border = new THREE.Mesh(frameGeometry(w, h), toon((FRAMES[frame] ?? FRAMES[0]).color));
-  border.receiveShadow = true;
   group.add(border);
   const picture: PictureMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), flat({ map: loadingTexture() }));
   picture.position.z = FRAME_DEPTH * 0.35;

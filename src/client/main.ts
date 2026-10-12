@@ -142,8 +142,6 @@ const loading = loadingScreen(() => () => {});
 const canvas = $('scene') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-// The office draws no shadows: the moon is dim, and the room's light is the baked bounce light and the lamps.
-renderer.shadowMap.enabled = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 /** The ink outline round every solid. Its thickness and alpha are fixed when it's made, so the Remastered renderer makes a new one to change them. */
 const outlineEffect = (thickness = 1.8, alpha = 1) => new OutlineEffect(renderer, { defaultThickness: thickness / 1000, defaultColor: [0.035, 0.035, 0.035], defaultAlpha: alpha });

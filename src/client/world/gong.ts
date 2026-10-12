@@ -37,11 +37,11 @@ export function buildGong(): Gong {
   for (const sx of [-half, half]) {
     frame.add(mesh(new THREE.BoxGeometry(0.12, height, 0.12), lacquer, sx, height / 2, 0));
     frame.add(mesh(roundedBox(0.24, 0.05, 0.6, 0.01), ink, sx, 0.025, 0));
-    frame.add(mesh(new THREE.BoxGeometry(0.16, 0.03, 0.16), ink, sx, height + 0.015, 0, false));
+    frame.add(mesh(new THREE.BoxGeometry(0.16, 0.03, 0.16), ink, sx, height + 0.015, 0));
   }
   frame.add(mesh(new THREE.BoxGeometry(width + 0.4, 0.16, 0.16), lacquer, 0, height - 0.08, 0));
-  for (const sx of [-1, 1]) frame.add(mesh(new THREE.BoxGeometry(0.02, 0.18, 0.18), ink, sx * (half + 0.21), height - 0.08, 0, false));
-  frame.add(mesh(new THREE.BoxGeometry(width, 0.07, 0.08), ink, 0, height - 0.32, 0, false));
+  for (const sx of [-1, 1]) frame.add(mesh(new THREE.BoxGeometry(0.02, 0.18, 0.18), ink, sx * (half + 0.21), height - 0.08, 0));
+  frame.add(mesh(new THREE.BoxGeometry(width, 0.07, 0.08), ink, 0, height - 0.32, 0));
   group.add(mergeByMaterial(frame));
   const plaque = textPlane('MERGE GONG', { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 48 });
   plaque.scale.multiplyScalar(0.5);
@@ -61,22 +61,22 @@ export function buildGong(): Gong {
   disc.position.y = -drop;
   pivot.add(disc);
   disc.add(mesh(new THREE.CylinderGeometry(R, R, 0.05, 32).rotateX(Math.PI / 2), brass, 0, 0, 0));
-  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 6, 32), brass, 0, 0, 0, false));
-  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 4, 32), toon('#c0c0c0'), 0, 0, 0.03, false));
-  const boss = mesh(new THREE.SphereGeometry(0.16, 16, 12), brass, 0, 0, 0.02, false);
+  disc.add(mesh(new THREE.TorusGeometry(R, 0.04, 6, 32), brass, 0, 0, 0));
+  disc.add(mesh(new THREE.TorusGeometry(R * 0.55, 0.018, 4, 32), toon('#c0c0c0'), 0, 0, 0.03));
+  const boss = mesh(new THREE.SphereGeometry(0.16, 16, 12), brass, 0, 0, 0.02);
   boss.scale.z = 0.45;
   disc.add(boss);
   for (const sx of [-1, 1]) {
-    const cord = mesh(new THREE.CylinderGeometry(0.012, 0.012, drop - R + 0.08, 5), ink, sx * 0.22, -(drop - R) / 2, 0, false);
+    const cord = mesh(new THREE.CylinderGeometry(0.012, 0.012, drop - R + 0.08, 5), ink, sx * 0.22, -(drop - R) / 2, 0);
     cord.rotation.z = sx * 0.2;
     pivot.add(cord);
   }
 
   // The mallet leans against the right post.
   const mallet = new THREE.Group();
-  mallet.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 6), ink, 0, 0.45, 0, false));
-  mallet.add(mesh(new THREE.SphereGeometry(0.1, 10, 8), toon('#808080'), 0, 0.92, 0, false));
-  mallet.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 6), toon(ACCENT), 0, 0.8, 0, false));
+  mallet.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 6), ink, 0, 0.45, 0));
+  mallet.add(mesh(new THREE.SphereGeometry(0.1, 10, 8), toon('#808080'), 0, 0.92, 0));
+  mallet.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 6), toon(ACCENT), 0, 0.8, 0));
   mallet.position.set(half + 0.18, 0, 0.12);
   mallet.rotation.z = 0.22;
   group.add(mallet);

@@ -206,12 +206,12 @@ const SHINE = new THREE.MeshBasicMaterial({ color: '#eeeeee', transparent: true,
 /** A sheet of glass `w` by `h`, centered, with a couple of cartoon glints so it reads as glass. */
 function glassPane(w: number, h: number): THREE.Group {
   const g = new THREE.Group();
-  g.add(mesh(new THREE.PlaneGeometry(w, h), GLASS, 0, 0, 0, false));
+  g.add(mesh(new THREE.PlaneGeometry(w, h), GLASS, 0, 0, 0));
   for (const [gx, gw] of [
     [-w * 0.2, 0.18],
     [-w * 0.2 + 0.32, 0.08],
   ]) {
-    const glint = mesh(new THREE.PlaneGeometry(gw, h * 0.55), SHINE, gx, h * 0.07, 0.01, false);
+    const glint = mesh(new THREE.PlaneGeometry(gw, h * 0.55), SHINE, gx, h * 0.07, 0.01);
     glint.rotation.z = -0.5;
     g.add(glint);
   }
@@ -316,8 +316,8 @@ function plant(scale = 1): THREE.Group {
   g.add(mesh(new THREE.SphereGeometry(0.42, 10, 8), toon(PALETTE.plant), 0, 0.85, 0));
   g.add(mesh(new THREE.SphereGeometry(0.3, 10, 8), toon(PALETTE.plantDark), 0.22, 1.1, 0.1));
   g.add(mesh(new THREE.SphereGeometry(0.26, 10, 8), toon(PALETTE.plant), -0.2, 1.15, -0.08));
-  g.add(mesh(box(0.54, 0.04, 0.54), toon(PALETTE.steel), 0, 0.48, 0, false));
-  g.add(mesh(box(0.44, 0.02, 0.44), toon('#665f59'), 0, 0.5, 0, false));
+  g.add(mesh(box(0.54, 0.04, 0.54), toon(PALETTE.steel), 0, 0.48, 0));
+  g.add(mesh(box(0.44, 0.02, 0.44), toon('#665f59'), 0, 0.5, 0));
   g.scale.setScalar(scale);
   return g;
 }
@@ -329,10 +329,10 @@ function plant(scale = 1): THREE.Group {
 function ledBar(length: number, drop: number, lit: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   const housing = toon(PALETTE.ink);
-  g.add(mesh(box(length, 0.07, 0.16), housing, 0, 0.035, 0, false));
-  g.add(mesh(box(length - 0.04, 0.02, 0.11), lit, 0, -0.005, 0, false));
-  for (const sx of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.006, 0.006, drop, 3), toon(PALETTE.steel), sx * (length / 2 - 0.3), 0.07 + drop / 2, 0, false));
-  g.add(mesh(box(0.03, 0.02, 0.02), toon(PALETTE.accent, { emissive: PALETTE.accent }), length / 2 - 0.08, 0.045, 0.085, false));
+  g.add(mesh(box(length, 0.07, 0.16), housing, 0, 0.035, 0));
+  g.add(mesh(box(length - 0.04, 0.02, 0.11), lit, 0, -0.005, 0));
+  for (const sx of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.006, 0.006, drop, 3), toon(PALETTE.steel), sx * (length / 2 - 0.3), 0.07 + drop / 2, 0));
+  g.add(mesh(box(0.03, 0.02, 0.02), toon(PALETTE.accent, { emissive: PALETTE.accent }), length / 2 - 0.08, 0.045, 0.085));
   return g;
 }
 
@@ -347,12 +347,12 @@ function overheadLit(night: NightParts): THREE.MeshToonMaterial {
 function highBay(drop: number): THREE.Group {
   const g = new THREE.Group();
   const steel = toon(PALETTE.steel);
-  g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, drop, 4), steel, 0, drop / 2 + 0.3, 0, false));
-  g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 8), toon(PALETTE.ink), 0, 0.26, 0, false));
+  g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, drop, 4), steel, 0, drop / 2 + 0.3, 0));
+  g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 8), toon(PALETTE.ink), 0, 0.26, 0));
   // Both sides, so looking up into the open shade shows its inside rather than through it.
   const shade = toonUnique('#727272');
   shade.side = THREE.DoubleSide;
-  g.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), shade, 0, 0.1, 0, false));
+  g.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), shade, 0, 0.1, 0));
   return g;
 }
 
@@ -370,9 +370,9 @@ function windowIn(o: Opening): THREE.Group {
   const D = WALL_T + 0.04;
   const midY = (o.y0 + o.y1) / 2;
   // Built along x with the outside toward +z, then turned onto its wall.
-  g.add(mesh(box(w, F, D), frame, 0, o.y1 - F / 2, 0, false));
-  g.add(mesh(box(w, F, D), frame, 0, o.y0 + F / 2, 0, false));
-  for (const sx of [-1, 1]) g.add(mesh(box(F, h, D), frame, sx * (w / 2 - F / 2), midY, 0, false));
+  g.add(mesh(box(w, F, D), frame, 0, o.y1 - F / 2, 0));
+  g.add(mesh(box(w, F, D), frame, 0, o.y0 + F / 2, 0));
+  for (const sx of [-1, 1]) g.add(mesh(box(F, h, D), frame, sx * (w / 2 - F / 2), midY, 0));
   g.add(mesh(box(w + 0.2, 0.05, 0.2), sill, 0, o.y0 - 0.025, -(WALL_T / 2 + 0.08)));
   g.add(mesh(box(w + 0.2, 0.05, 0.16), sill, 0, o.y0 - 0.025, WALL_T / 2 + 0.06));
   const at = onWall(o.wall, o.u);
@@ -387,9 +387,9 @@ function doorFrame(o: Opening): THREE.Group {
   const frame = toon('#727272');
   const F = 0.08;
   const D = WALL_T + 0.04;
-  g.add(mesh(box(o.width, F, D), frame, 0, o.y1 - F / 2, 0, false));
-  for (const sx of [-1, 1]) g.add(mesh(box(F, o.y1, D), frame, sx * (o.width / 2 - F / 2), o.y1 / 2, 0, false));
-  g.add(mesh(box(o.width, 0.03, D), toon(PALETTE.steel), 0, 0.015, 0, false));
+  g.add(mesh(box(o.width, F, D), frame, 0, o.y1 - F / 2, 0));
+  for (const sx of [-1, 1]) g.add(mesh(box(F, o.y1, D), frame, sx * (o.width / 2 - F / 2), o.y1 / 2, 0));
+  g.add(mesh(box(o.width, 0.03, D), toon(PALETTE.steel), 0, 0.015, 0));
   return g;
 }
 
@@ -423,11 +423,11 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
   const leaf = new THREE.Group();
   // Darker than the room's other lit greys: the lamp over the stairs outside lights it full on.
   leaf.add(mesh(leafGeo, toon('#3a3a3a'), 0, 0.01, 0));
-  leaf.add(mesh(new THREE.CircleGeometry(port.r, 20), GLASS, port.x, port.y + 0.01, 0, false));
-  leaf.add(mesh(new THREE.TorusGeometry(port.r, 0.035, 6, 20), toon(PALETTE.brushed), port.x, port.y + 0.01, 0, false));
+  leaf.add(mesh(new THREE.CircleGeometry(port.r, 20), GLASS, port.x, port.y + 0.01, 0));
+  leaf.add(mesh(new THREE.TorusGeometry(port.r, 0.035, 6, 20), toon(PALETTE.brushed), port.x, port.y + 0.01, 0));
   // A push bar inside, with an orange stripe along it, and a pull handle outside.
   leaf.add(mesh(box(leafW * 0.7, 0.05, 0.05), toon(PALETTE.brushed), leafW * 0.5, 1.0, -0.07));
-  leaf.add(mesh(box(leafW * 0.7 - 0.06, 0.012, 0.01), toon(PALETTE.accent), leafW * 0.5, 1.0, -0.1, false));
+  leaf.add(mesh(box(leafW * 0.7 - 0.06, 0.012, 0.01), toon(PALETTE.accent), leafW * 0.5, 1.0, -0.1));
   leaf.add(mesh(box(0.05, 0.3, 0.05), toon(PALETTE.brushed), leafW - 0.15, 1.0, 0.07));
   // Hinged on the outer face, so it opens out of the building.
   const hinge = new THREE.Group();
@@ -443,7 +443,7 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
   g.add(exit);
   // A lamp over it outside.
   g.add(mesh(box(0.32, 0.1, 0.18), toon(PALETTE.ink), 0, o.y1 + 0.42, WALL_T / 2 + 0.09));
-  g.add(mesh(box(0.26, 0.03, 0.12), toon('#fff3e0', { emissive: '#ffe3b8' }), 0, o.y1 + 0.36, WALL_T / 2 + 0.1, false));
+  g.add(mesh(box(0.26, 0.03, 0.12), toon('#fff3e0', { emissive: '#ffe3b8' }), 0, o.y1 + 0.36, WALL_T / 2 + 0.1));
 
   const at = onWall(o.wall, o.u);
   // Over the landing, where it lights the way down at night.
@@ -466,12 +466,12 @@ function stringLights(a: THREE.Vector3, b: THREE.Vector3, sag: number, bulbs: [s
   mid.y -= sag * 2;
   const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
   const g = new THREE.Group();
-  g.add(mesh(new THREE.TubeGeometry(curve, 24, 0.012, 4), toon(PALETTE.ink), 0, 0, 0, false));
+  g.add(mesh(new THREE.TubeGeometry(curve, 24, 0.012, 4), toon(PALETTE.ink), 0, 0, 0));
   const n = Math.max(2, Math.round(curve.getLength() / 0.5));
   for (let i = 1; i < n; i++) {
     const p = curve.getPoint(i / n);
     const [color, mat] = bulbs[i % bulbs.length];
-    g.add(mesh(new THREE.SphereGeometry(0.055, 8, 6), mat, p.x, p.y - 0.06, p.z, false));
+    g.add(mesh(new THREE.SphereGeometry(0.055, 8, 6), mat, p.x, p.y - 0.06, p.z));
     night.halos.push({ at: new THREE.Vector3(p.x, p.y - 0.06, p.z), size: 0.55, color });
   }
   return mergeByMaterial(g);
@@ -493,7 +493,6 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   const deck = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshToonMaterial({ map: floorTexture(w, d), color: '#e6e6e6', gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap }));
   deck.rotation.x = -Math.PI / 2;
   deck.position.set(cx, 0.002, cz);
-  deck.receiveShadow = true;
   group.add(deck);
   colliders.push({ minX, maxX, minZ, maxZ, bottom: -SLAB, top: 0 });
 
@@ -514,7 +513,7 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
     const n = Math.ceil(len / 1.6);
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      parts.add(mesh(box(0.06, railH, 0.06), ink, x0 + (x1 - x0) * t, railH / 2, z0 + (z1 - z0) * t, false));
+      parts.add(mesh(box(0.06, railH, 0.06), ink, x0 + (x1 - x0) * t, railH / 2, z0 + (z1 - z0) * t));
     }
     const rail = mesh(alongX ? box(len + 0.1, 0.06, 0.1) : box(0.1, 0.06, len + 0.1), capRail, (x0 + x1) / 2, railH + 0.02, (z0 + z1) / 2);
     parts.add(rail);
@@ -532,7 +531,7 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   const poleH = 2.7;
   const sw = new THREE.Vector3(minX + inset, poleH, maxZ - inset);
   const se = new THREE.Vector3(maxX - inset, poleH, maxZ - inset);
-  for (const p of [sw, se]) parts.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, poleH - railH, 6), ink, p.x, (poleH + railH) / 2, p.z, false));
+  for (const p of [sw, se]) parts.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, poleH - railH, 6), ink, p.x, (poleH + railH) / 2, p.z));
   // Warm white festoon bulbs, with an orange one every so often.
   const bulbs = ['#ffd9a0', '#ffd9a0', '#ffd9a0', '#ef6f2e'].map((c): [string, THREE.Material] => [c, bulb(night, c, 0.4)]);
   parts.add(stringLights(sw, se, 0.35, bulbs, night));
@@ -622,11 +621,11 @@ function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
   group.add(block);
   const tread = toon('#b2b2b2');
   const cx = (minX + maxX) / 2;
-  group.add(mesh(box(width, 0.04, L), tread, cx, -0.015, landingZ0 + L / 2, false));
+  group.add(mesh(box(width, 0.04, L), tread, cx, -0.015, landingZ0 + L / 2));
   colliders.push({ minX, maxX, minZ: landingZ0, maxZ: landingZ1, bottom: STREET_Y, top: 0 });
   for (let i = 1; i <= treads; i++) {
     const z0 = landingZ1 + (i - 1) * run;
-    group.add(mesh(box(width, 0.04, run + 0.02), tread, cx, -i * rise - 0.015, z0 + run / 2, false));
+    group.add(mesh(box(width, 0.04, run + 0.02), tread, cx, -i * rise - 0.015, z0 + run / 2));
     colliders.push({ minX, maxX, minZ: z0, maxZ: z0 + run, bottom: STREET_Y, top: -i * rise });
   }
 
@@ -634,10 +633,10 @@ function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
   const ink = toon(PALETTE.deskLeg);
   const railX = minX + 0.06;
   const railH = 1.0;
-  const post = (x: number, y: number, z: number) => group.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, railH, 6), ink, x, y + railH / 2, z, false));
+  const post = (x: number, y: number, z: number) => group.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, railH, 6), ink, x, y + railH / 2, z));
   const rail = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
     const len = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
-    const r = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 6), ink, (x0 + x1) / 2, (y0 + y1) / 2 + railH, (z0 + z1) / 2, false);
+    const r = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 6), ink, (x0 + x1) / 2, (y0 + y1) / 2 + railH, (z0 + z1) / 2);
     r.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(x1 - x0, y1 - y0, z1 - z0).normalize());
     group.add(r);
   };
@@ -654,9 +653,6 @@ function buildExitStairs(group: THREE.Group, colliders: Collider[]) {
   colliders.push({ minX: minX - 0.05, maxX: minX + 0.1, minZ: landingZ0, maxZ: bottomZ, bottom: STREET_Y, top: 99 });
   colliders.push({ minX, maxX, minZ: landingZ0 - 0.05, maxZ: landingZ0 + 0.1, bottom: STREET_Y, top: 99 });
 }
-
-/** Walls throw shade only this far up: any higher and a low sun's shadow would fill the room. */
-const SHADE_HEIGHT = 4.2;
 
 /**
  * The four outside walls, built in pieces around their windows and doors. Each is painted inside in
@@ -682,18 +678,10 @@ function buildWalls(group: THREE.Group, colliders: Collider[], openings: Opening
     const at = (u: number, y: number) => (alongX ? new THREE.Vector3(u, y, w.at) : new THREE.Vector3(w.at, y, u));
     const piece = (u0: number, u1: number, y0: number, y1: number) => {
       if (u1 - u0 < 0.001 || y1 - y0 < 0.001) return;
-      // Up high the sun shines through, as it does through the ceiling and the loft's roof.
-      if (y0 < SHADE_HEIGHT && y1 > SHADE_HEIGHT) {
-        piece(u0, u1, y0, SHADE_HEIGHT);
-        piece(u0, u1, SHADE_HEIGHT, y1);
-        return;
-      }
       const ends = alongX ? [u0 <= FLOOR.minX - T + 0.001 ? 1 : -1, u1 >= FLOOR.maxX + T - 0.001 ? 0 : -1] : [];
       const mats = Array.from({ length: 6 }, (_, i) => (i === out || ends.includes(i) ? outside : inside));
       const m = new THREE.Mesh(alongX ? box(u1 - u0, y1 - y0, T) : box(T, y1 - y0, u1 - u0), mats);
       m.position.copy(at((u0 + u1) / 2, (y0 + y1) / 2));
-      m.castShadow = y1 <= SHADE_HEIGHT;
-      m.receiveShadow = true;
       group.add(m);
     };
     // Baseboard and collider run between the doors: a black steel kick plate with the floor's trim
@@ -701,9 +689,9 @@ function buildWalls(group: THREE.Group, colliders: Collider[], openings: Opening
     const run = (u0: number, u1: number) => {
       if (u1 - u0 < 0.001) return;
       const p = at((u0 + u1) / 2, 0.11);
-      group.add(mesh(alongX ? box(u1 - u0, 0.22, T + 0.04) : box(T + 0.04, 0.22, u1 - u0), kick, p.x, p.y, p.z, false));
+      group.add(mesh(alongX ? box(u1 - u0, 0.22, T + 0.04) : box(T + 0.04, 0.22, u1 - u0), kick, p.x, p.y, p.z));
       const s = at((u0 + u1) / 2, 0.235);
-      group.add(mesh(alongX ? box(u1 - u0, 0.03, T + 0.03) : box(T + 0.03, 0.03, u1 - u0), trimMat, s.x, s.y, s.z, false));
+      group.add(mesh(alongX ? box(u1 - u0, 0.03, T + 0.03) : box(T + 0.03, 0.03, u1 - u0), trimMat, s.x, s.y, s.z));
       block(u0, u1);
     };
     const block = (u0: number, u1: number, bottom?: number) =>
@@ -741,10 +729,9 @@ function exitPlug(looks: Looks): { group: THREE.Group; collider: Collider } {
   const mats = Array.from({ length: 6 }, (_, i) => (i === 1 ? toon(PALETTE.exterior) : looks.wall));
   const wall = new THREE.Mesh(box(WALL_T, o.y1 - o.y0, o.width), mats);
   wall.position.set(at.x, (o.y0 + o.y1) / 2, at.z);
-  wall.receiveShadow = true;
   group.add(wall);
-  group.add(mesh(box(WALL_T + 0.04, 0.22, o.width), toon(PALETTE.ink), at.x, 0.11, at.z, false));
-  group.add(mesh(box(WALL_T + 0.03, 0.03, o.width), looks.trim, at.x, 0.235, at.z, false));
+  group.add(mesh(box(WALL_T + 0.04, 0.22, o.width), toon(PALETTE.ink), at.x, 0.11, at.z));
+  group.add(mesh(box(WALL_T + 0.03, 0.03, o.width), looks.trim, at.x, 0.235, at.z));
   group.visible = false;
   return { group, collider: { minX: FLOOR.minX - WALL_T, maxX: FLOOR.minX, minZ: o.u - o.width / 2, maxZ: o.u + o.width / 2, top: 99 } };
 }
@@ -769,12 +756,12 @@ function workCells(night: NightParts): THREE.Group {
     [-10.5, 4],
     [-1.5, 4],
   ]) {
-    g.add(mesh(box(W, 0.008, D), pad, x, 0.005, z, false));
+    g.add(mesh(box(W, 0.008, D), pad, x, 0.005, z));
     const inset = 0.08;
     const t = 0.018;
     for (const s of [-1, 1]) {
-      g.add(mesh(box(W - 2 * inset, 0.002, t), hairline, x, 0.0095, z + s * (D / 2 - inset), false));
-      g.add(mesh(box(t, 0.002, D - 2 * inset), hairline, x + s * (W / 2 - inset), 0.0095, z, false));
+      g.add(mesh(box(W - 2 * inset, 0.002, t), hairline, x, 0.0095, z + s * (D / 2 - inset)));
+      g.add(mesh(box(t, 0.002, D - 2 * inset), hairline, x + s * (W / 2 - inset), 0.0095, z));
     }
     const arm = 0.42;
     const bw = 0.05;
@@ -782,13 +769,12 @@ function workCells(night: NightParts): THREE.Group {
       for (const sz of [-1, 1]) {
         const cx = x + sx * (W / 2 - inset);
         const cz = z + sz * (D / 2 - inset);
-        g.add(mesh(box(arm, 0.003, bw), bracket, cx - (sx * (arm - bw)) / 2, 0.0105, cz, false));
-        g.add(mesh(box(bw, 0.003, arm), bracket, cx, 0.0105, cz - (sz * (arm - bw)) / 2, false));
+        g.add(mesh(box(arm, 0.003, bw), bracket, cx - (sx * (arm - bw)) / 2, 0.0105, cz));
+        g.add(mesh(box(bw, 0.003, arm), bracket, cx, 0.0105, cz - (sz * (arm - bw)) / 2));
       }
     }
   }
   const merged = mergeByMaterial(g);
-  for (const m of merged.children) m.receiveShadow = true;
   return merged;
 }
 
@@ -820,17 +806,17 @@ function buildCeiling(night: NightParts): THREE.Group {
     const z0 = overShaft ? FLOOR.minZ + ELEVATOR.depth : FLOOR.minZ;
     const len = FLOOR.maxZ - z0;
     const cz = (z0 + FLOOR.maxZ) / 2;
-    g.add(mesh(box(fw, ft, len), steel, x, H - ft / 2, cz, false));
-    g.add(mesh(box(0.02, BEAM_DEPTH - 2 * ft, len), steel, x, H - BEAM_DEPTH / 2, cz, false));
-    g.add(mesh(box(fw, ft, len), steel, x, H - BEAM_DEPTH + ft / 2, cz, false));
-    if (overShaft) g.add(mesh(box(0.34, BEAM_DEPTH + 0.1, 0.02), dark, x, H - BEAM_DEPTH / 2 - 0.05, z0 + 0.01, false));
+    g.add(mesh(box(fw, ft, len), steel, x, H - ft / 2, cz));
+    g.add(mesh(box(0.02, BEAM_DEPTH - 2 * ft, len), steel, x, H - BEAM_DEPTH / 2, cz));
+    g.add(mesh(box(fw, ft, len), steel, x, H - BEAM_DEPTH + ft / 2, cz));
+    if (overShaft) g.add(mesh(box(0.34, BEAM_DEPTH + 0.1, 0.02), dark, x, H - BEAM_DEPTH / 2 - 0.05, z0 + 0.01));
   }
   const purlinY = H - PURLIN_DEPTH / 2;
   for (const z of PURLIN_ZS) {
     // The middle one starts at the first beam, clear of the hatch over the ladder.
     const x0 = z === 0 ? BEAM_XS[0] : FLOOR.minX;
     const len = FLOOR.maxX - x0;
-    g.add(mesh(box(len, PURLIN_DEPTH, 0.1), dark, (x0 + FLOOR.maxX) / 2, purlinY, z, false));
+    g.add(mesh(box(len, PURLIN_DEPTH, 0.1), dark, (x0 + FLOOR.maxX) / 2, purlinY, z));
   }
 
   // Cable trays under the purlins over the work cells, each with a bundle of black cables and an
@@ -842,13 +828,13 @@ function buildCeiling(night: NightParts): THREE.Group {
   const cable = toon('#535353');
   const signal = toon(PALETTE.accent);
   for (const z of [-4.33, 4.33]) {
-    g.add(mesh(box(trayLen, 0.012, 0.3), steel, trayX, trayY, z, false));
-    for (const s of [-1, 1]) g.add(mesh(box(trayLen, 0.07, 0.012), steel, trayX, trayY + 0.035, z + s * 0.15, false));
-    g.add(mesh(box(trayLen, 0.035, 0.08), cable, trayX, trayY + 0.024, z - 0.06, false));
-    g.add(mesh(box(trayLen, 0.022, 0.022), signal, trayX, trayY + 0.017, z + 0.05, false));
+    g.add(mesh(box(trayLen, 0.012, 0.3), steel, trayX, trayY, z));
+    for (const s of [-1, 1]) g.add(mesh(box(trayLen, 0.07, 0.012), steel, trayX, trayY + 0.035, z + s * 0.15));
+    g.add(mesh(box(trayLen, 0.035, 0.08), cable, trayX, trayY + 0.024, z - 0.06));
+    g.add(mesh(box(trayLen, 0.022, 0.022), signal, trayX, trayY + 0.017, z + 0.05));
     const rodLen = H - PURLIN_DEPTH - trayY;
     for (let x = tray.x0 + 0.5; x <= tray.x1; x += 3) {
-      for (const s of [-1, 1]) g.add(mesh(box(0.012, rodLen, 0.012), steel, x, trayY + rodLen / 2, z + s * 0.14, false));
+      for (const s of [-1, 1]) g.add(mesh(box(0.012, rodLen, 0.012), steel, x, trayY + rodLen / 2, z + s * 0.14));
     }
   }
 
@@ -897,10 +883,10 @@ function chair(color: string): THREE.Group {
   const back = mesh(roundedBox(0.58, 0.09, 0.6, 0.04), mat, 0, 0.86, 0.27);
   back.rotation.x = Math.PI / 2 - 0.12;
   // In the back's own space +y is its outside face and -z its top edge.
-  back.add(mesh(box(0.44, 0.012, 0.018), toon(PALETTE.accent), 0, 0.048, -0.24, false));
+  back.add(mesh(box(0.44, 0.012, 0.018), toon(PALETTE.accent), 0, 0.048, -0.24));
   g.add(back);
   const steel = toon(PALETTE.deskLeg);
-  g.add(mesh(box(0.42, 0.03, 0.04), steel, 0, 0.6, 0.27, false));
+  g.add(mesh(box(0.42, 0.03, 0.04), steel, 0, 0.6, 0.27));
   g.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 6), steel, 0, 0.26, 0));
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
@@ -921,19 +907,19 @@ function buildDesk(def: DeskDef, index: number): DeskView {
   const body = new THREE.Group();
   const top = 0.05;
   body.add(mesh(roundedBox(width - 0.06, top, depth - 0.04, 0.02), toon(PALETTE.desk), 0, height - top / 2, 0));
-  body.add(mesh(box(width - 0.06, 0.012, 0.012), toon('#c0c0c0'), 0, height - top / 2, depth / 2 - 0.022, false));
+  body.add(mesh(box(width - 0.06, 0.012, 0.012), toon('#c0c0c0'), 0, height - top / 2, depth / 2 - 0.022));
   const frame = toon('#6a6a6a');
   const legH = height - top;
   const lx = width / 2 - 0.1;
   const lz = depth / 2 - 0.08;
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) body.add(mesh(box(0.05, legH, 0.05), frame, sx * lx, legH / 2, sz * lz));
-    body.add(mesh(box(0.05, 0.05, 2 * lz), frame, sx * lx, legH - 0.04, 0, false));
-    body.add(mesh(box(0.05, 0.04, 2 * lz), frame, sx * lx, 0.1, 0, false));
+    body.add(mesh(box(0.05, 0.05, 2 * lz), frame, sx * lx, legH - 0.04, 0));
+    body.add(mesh(box(0.05, 0.04, 2 * lz), frame, sx * lx, 0.1, 0));
   }
-  body.add(mesh(box(2 * lx, 0.05, 0.05), frame, 0, legH - 0.04, -lz, false));
+  body.add(mesh(box(2 * lx, 0.05, 0.05), frame, 0, legH - 0.04, -lz));
   body.add(mesh(box(width - 0.3, 0.32, 0.02), toon('#7b7b7b'), 0, height - 0.26, -depth / 2 + 0.07));
-  body.add(mesh(box(0.03, 0.03, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), width / 2 - 0.3, height - 0.17, -depth / 2 + 0.055, false));
+  body.add(mesh(box(0.03, 0.03, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), width / 2 - 0.3, height - 0.17, -depth / 2 + 0.055));
   // Little desk decorations
   const deco = index % 3;
   if (deco === 0) {
@@ -1001,7 +987,7 @@ function buildBeanbag(def: DeskDef, index: number): DeskView {
   const tray = new THREE.Group();
   tray.add(mesh(roundedBox(0.95, 0.04, 0.6, 0.02), toon(PALETTE.desk), 0, 0.42, 0));
   for (const sx of [-1, 1]) tray.add(mesh(box(0.04, 0.4, 0.5), toon('#6a6a6a'), sx * 0.4, 0.2, 0));
-  tray.add(mesh(box(0.03, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0.38, 0.42, -0.305, false));
+  tray.add(mesh(box(0.03, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0.38, 0.42, -0.305));
   tray.position.z = -0.8;
   group.add(tray);
 
@@ -1056,7 +1042,7 @@ function buildKiosk(def: DeskDef): DeskView {
   body.add(mesh(roundedBox(width - 0.16, height - 0.1, depth - 0.12, 0.02), toon('#727272'), 0, (height - 0.1) / 2 + 0.04, 0));
   body.add(mesh(roundedBox(width - 0.02, 0.06, depth + 0.02, 0.02), toon(PALETTE.ink), 0, 0.03, 0));
   body.add(mesh(roundedBox(width, 0.05, depth, 0.02), toon(PALETTE.steel), 0, height - 0.025, 0));
-  body.add(mesh(box(width - 0.24, 0.014, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, height - 0.08, -(depth - 0.12) / 2 - 0.004, false));
+  body.add(mesh(box(width - 0.24, 0.014, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, height - 0.08, -(depth - 0.12) / 2 - 0.004));
   group.add(mergeByMaterial(body));
   const sign = textPlane(KIOSK_SIGN[kind], { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 56 });
   sign.scale.multiplyScalar(0.62);
@@ -1307,7 +1293,7 @@ export function buildOffice(): Office {
   const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(fleetWidth, CW.height), screenMaterial());
   fleetScreen.position.set(CW.width / 2 - fleetWidth / 2, 0, 0.06);
   // The orange seam between the two screens.
-  computeWall.add(machineScreen, fleetScreen, mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + CW.machineWidth + CW.gap / 2, 0, 0.056, false));
+  computeWall.add(machineScreen, fleetScreen, mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + CW.machineWidth + CW.gap / 2, 0, 0.056));
   // Facing +x, its local +x runs toward -z: seen from the room, the machine's screen is the south end, by the kitchen.
   computeWall.position.set(CW.x + 0.07, CW.y, CW.z);
   computeWall.rotation.y = Math.PI / 2;
@@ -1325,7 +1311,7 @@ export function buildOffice(): Office {
   sofa.add(mesh(roundedBox(0.3, 0.86, 4.2, 0.04), couchMat, -0.45, 0.55, 0));
   for (const sz of [-1, 1]) sofa.add(mesh(roundedBox(1, 0.62, 0.3, 0.04), couchMat, 0, 0.43, sz * 2.0));
   sofa.add(mesh(box(0.92, 0.12, 4.1), toon('#626262'), 0, 0.1, 0));
-  sofa.add(mesh(box(0.012, 0.012, 3.5), toon(PALETTE.accent), 0.505, 0.47, 0, false));
+  sofa.add(mesh(box(0.012, 0.012, 3.5), toon(PALETTE.accent), 0.505, 0.47, 0));
   ['#e0e0e0', '#787878'].forEach((c, i) => sofa.add(mesh(roundedBox(0.18, 0.42, 0.5, 0.03), toon(c), -0.22, 0.72, i ? 0.9 : -0.9)));
   const couch = mergeByMaterial(sofa);
   couch.position.set(10.5, 0, 0);
@@ -1338,7 +1324,7 @@ export function buildOffice(): Office {
   low.add(mesh(box(1.5, 0.06, 1.5), toon('#808080'), 0, 0.43, 0));
   const lowFrame = toon('#6a6a6a');
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) low.add(mesh(box(0.05, 0.4, 0.05), lowFrame, sx * 0.68, 0.2, sz * 0.68));
-  for (const sx of [-1, 1]) low.add(mesh(box(0.05, 0.04, 1.36), lowFrame, sx * 0.68, 0.06, 0, false));
+  for (const sx of [-1, 1]) low.add(mesh(box(0.05, 0.04, 1.36), lowFrame, sx * 0.68, 0.06, 0));
   const table = mergeByMaterial(low);
   table.position.set(13, 0, 0);
   group.add(table);
@@ -1348,13 +1334,12 @@ export function buildOffice(): Office {
   const felt = toonUnique('#757575');
   const rugLine = toonUnique('#b2b2b2');
   for (const m of [felt, rugLine]) m.userData.outlineParameters = { visible: false };
-  rug.add(mesh(box(7, 0.008, 7), felt, 13.4, 0.005, 0, false));
+  rug.add(mesh(box(7, 0.008, 7), felt, 13.4, 0.005, 0));
   for (const s of [-1, 1]) {
-    rug.add(mesh(box(6.8, 0.002, 0.018), rugLine, 13.4, 0.0095, s * 3.4, false));
-    rug.add(mesh(box(0.018, 0.002, 6.8), rugLine, 13.4 + s * 3.4, 0.0095, 0, false));
+    rug.add(mesh(box(6.8, 0.002, 0.018), rugLine, 13.4, 0.0095, s * 3.4));
+    rug.add(mesh(box(0.018, 0.002, 6.8), rugLine, 13.4 + s * 3.4, 0.0095, 0));
   }
   const lounge = mergeByMaterial(rug);
-  for (const m of lounge.children) m.receiveShadow = true;
   group.add(lounge);
 
   [
@@ -1388,16 +1373,16 @@ export function buildOffice(): Office {
   counter.add(mesh(box(5, 0.88, 1), toon('#6a6a6a'), 0, 0.54, 0));
   counter.add(mesh(box(4.9, 0.1, 0.9), toon(PALETTE.ink), 0, 0.05, 0.04));
   counter.add(mesh(box(5.1, 0.05, 1.1), toon('#eeeeee'), 0, 1.005, 0));
-  counter.add(mesh(box(4.9, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.96, -0.555, false));
+  counter.add(mesh(box(4.9, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.96, -0.555));
   const pull = toon(PALETTE.brushed);
   for (let i = 0; i < 5; i++) {
     const x = -2.5 + (i + 0.5);
-    if (i) counter.add(mesh(box(0.008, 0.8, 0.01), toon(PALETTE.ink), -2.5 + i, 0.52, -0.505, false));
-    counter.add(mesh(box(0.4, 0.025, 0.03), pull, x, 0.84, -0.52, false));
+    if (i) counter.add(mesh(box(0.008, 0.8, 0.01), toon(PALETTE.ink), -2.5 + i, 0.52, -0.505));
+    counter.add(mesh(box(0.4, 0.025, 0.03), pull, x, 0.84, -0.52));
   }
   const fridgeSteel = toon(PALETTE.brushed);
   counter.add(mesh(roundedBox(1.1, 2.2, 1, 0.03), fridgeSteel, 3.2, 1.1, 0));
-  counter.add(mesh(box(1.06, 0.01, 0.01), toon('#c0c0c0'), 3.2, 1.45, -0.505, false));
+  counter.add(mesh(box(1.06, 0.01, 0.01), toon('#c0c0c0'), 3.2, 1.45, -0.505));
   counter.add(mesh(box(0.04, 0.5, 0.05), toon('#808080'), 2.75, 1.75, -0.53));
   counter.add(mesh(box(0.04, 0.4, 0.05), toon('#808080'), 2.75, 1.05, -0.53));
   kitchen.add(mergeByMaterial(counter));
@@ -1542,7 +1527,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   const T = 0.1;
   const frameMat = toon('#727272');
   const walls = new THREE.Group();
-  const bar = (w: number, h: number, d: number, x: number, y: number, z: number) => walls.add(mesh(box(w, h, d), frameMat, x, y, z, false));
+  const bar = (w: number, h: number, d: number, x: number, y: number, z: number) => walls.add(mesh(box(w, h, d), frameMat, x, y, z));
   /** A run of glass along x (north wall) or z (west wall), from a to b, in panes about `pane` wide. */
   const run = (axis: 'x' | 'z', a: number, b: number, at: number, pane = 2.2) => {
     const len = b - a;
@@ -1583,12 +1568,12 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   for (const side of [-1, 1]) {
     const leaf = new THREE.Group();
     const h = 2.25;
-    for (const y of [0.04, h - 0.04]) leaf.add(mesh(box(half, 0.07, 0.04), alu, 0, y, 0, false));
-    for (const x of [-half / 2 + 0.03, half / 2 - 0.03]) leaf.add(mesh(box(0.06, h, 0.04), alu, x, h / 2, 0, false));
+    for (const y of [0.04, h - 0.04]) leaf.add(mesh(box(half, 0.07, 0.04), alu, 0, y, 0));
+    for (const x of [-half / 2 + 0.03, half / 2 - 0.03]) leaf.add(mesh(box(0.06, h, 0.04), alu, x, h / 2, 0));
     const pane = glassPane(half - 0.12, h - 0.14);
     pane.position.y = h / 2;
     leaf.add(pane);
-    leaf.add(mesh(box(0.03, 0.4, 0.07), toon(PALETTE.brushed), -side * (half / 2 - 0.1), 1.05, 0, false));
+    leaf.add(mesh(box(0.03, 0.4, 0.07), toon(PALETTE.brushed), -side * (half / 2 - 0.1), 1.05, 0));
     const x0 = dx + (side * half) / 2;
     leaf.position.set(x0, 0, R.minZ - T / 2 - 0.04);
     group.add(leaf);
@@ -1614,7 +1599,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   const slab = new THREE.Group();
   const top = GLASS_ROOM_TABLE;
   slab.add(mesh(roundedBox(top.width, 0.06, top.depth, 0.02), toon('#808080'), 0, top.height - 0.03, 0));
-  slab.add(mesh(box(top.width - 0.5, 0.004, 0.014), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, top.height + 0.001, 0, false));
+  slab.add(mesh(box(top.width - 0.5, 0.004, 0.014), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, top.height + 0.001, 0));
   for (const sx of [-1, 1]) {
     slab.add(mesh(box(0.16, top.height - 0.08, 0.5), toon('#6a6a6a'), sx * (top.width / 2 - 0.7), (top.height - 0.08) / 2 + 0.02, 0));
     slab.add(mesh(box(0.9, 0.04, 0.6), toon(PALETTE.deskLeg), sx * (top.width / 2 - 0.7), 0.02, 0));
@@ -1644,15 +1629,15 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   sign.position.set((R.minX + R.door.x0) / 2 + 0.01, 1.45, R.minZ - T / 2 - 0.03);
   sign.rotation.y = Math.PI;
   group.add(sign);
-  const plate = mesh(roundedBox(0.66, 1.03, 0.03, 0.01), toon(PALETTE.ink), sign.position.x, sign.position.y, R.minZ - T / 2 - 0.012, false);
+  const plate = mesh(roundedBox(0.66, 1.03, 0.03, 0.01), toon(PALETTE.ink), sign.position.x, sign.position.y, R.minZ - T / 2 - 0.012);
   group.add(plate);
 
   // Linear lights set in the loft's floor over the table: a hanging lamp would be in front of the board.
   const recessed = new THREE.Group();
   const lit = overheadLit(night);
   for (const dx of [-0.95, 0.95]) {
-    recessed.add(mesh(box(1.5, 0.03, 0.24), toon('#727272'), top.x + dx, H - 0.012, top.z, false));
-    recessed.add(mesh(box(1.4, 0.02, 0.14), lit, top.x + dx, H - 0.03, top.z, false));
+    recessed.add(mesh(box(1.5, 0.03, 0.24), toon('#727272'), top.x + dx, H - 0.012, top.z));
+    recessed.add(mesh(box(1.4, 0.02, 0.14), lit, top.x + dx, H - 0.03, top.z));
   }
   group.add(mergeByMaterial(recessed));
 }
@@ -1689,35 +1674,34 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   // Floor slab, poured like downstairs, with a steel fascia you see from below and an orange line
   // along the fascia's lower edge.
   frame.add(mesh(box(w, SLAB, d), toon('#7b7b7b'), cx, floorY - SLAB / 2, cz));
-  frame.add(mesh(box(w, 0.016, 0.01), edge, cx, floorY - SLAB + 0.03, minZ - 0.006, false));
-  frame.add(mesh(box(0.01, 0.016, STAIRS.minZ - minZ - 0.1), edge, minX - 0.006, floorY - SLAB + 0.03, (minZ + STAIRS.minZ - 0.1) / 2, false));
+  frame.add(mesh(box(w, 0.016, 0.01), edge, cx, floorY - SLAB + 0.03, minZ - 0.006));
+  frame.add(mesh(box(0.01, 0.016, STAIRS.minZ - minZ - 0.1), edge, minX - 0.006, floorY - SLAB + 0.03, (minZ + STAIRS.minZ - 0.1) / 2));
   const slabTex = floorTexture(w, d);
   looks.slabs.push(slabTex);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshToonMaterial({ map: slabTex, gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap }));
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(cx, floorY + 0.005, cz);
-  floor.receiveShadow = true;
   group.add(floor);
   colliders.push({ minX, maxX, minZ, maxZ, bottom: floorY - SLAB, top: floorY });
 
   // Square steel columns holding up the open corner.
   for (const x of [minX + 0.15, cx]) {
     frame.add(mesh(box(0.22, floorY - SLAB, 0.22), steelMat, x, (floorY - SLAB) / 2, minZ + 0.15));
-    frame.add(mesh(box(0.34, 0.03, 0.34), frameMat, x, floorY - SLAB - 0.015, minZ + 0.15, false));
-    frame.add(mesh(box(0.3, 0.02, 0.3), frameMat, x, 0.01, minZ + 0.15, false));
+    frame.add(mesh(box(0.34, 0.03, 0.34), frameMat, x, floorY - SLAB - 0.015, minZ + 0.15));
+    frame.add(mesh(box(0.3, 0.02, 0.3), frameMat, x, 0.01, minZ + 0.15));
     colliders.push({ minX: x - 0.14, maxX: x + 0.14, minZ: minZ + 0.01, maxZ: minZ + 0.29, top: floorY - SLAB });
   }
 
-  // The outside walls carry on up behind the loft (buildWalls); the sun shines through them and the roof.
+  // The outside walls carry on up behind the loft (buildWalls).
   // The roof runs into them, stopping short of their outside face.
   const into = WALL_T - 0.03;
-  const roof = mesh(box(w + into, 0.2, d + into), wallMat, cx + into / 2, roofY + 0.1, cz + into / 2, false);
+  const roof = mesh(box(w + into, 0.2, d + into), wallMat, cx + into / 2, roofY + 0.1, cz + into / 2);
   group.add(roof);
-  frame.add(mesh(box(w + 0.02 + into, 0.24, 0.04), frameMat, cx + (into - 0.02) / 2, roofY + 0.1, minZ - 0.02, false));
-  frame.add(mesh(box(0.04, 0.24, d + 0.02 + into), frameMat, minX - 0.02, roofY + 0.1, cz + (into - 0.02) / 2, false));
+  frame.add(mesh(box(w + 0.02 + into, 0.24, 0.04), frameMat, cx + (into - 0.02) / 2, roofY + 0.1, minZ - 0.02));
+  frame.add(mesh(box(0.04, 0.24, d + 0.02 + into), frameMat, minX - 0.02, roofY + 0.1, cz + (into - 0.02) / 2));
   colliders.push({ minX, maxX, minZ, maxZ, bottom: roofY, top: roofY + 0.2 });
-  frame.add(mesh(box(w, 0.22, 0.04), toon(PALETTE.ink), cx, floorY + 0.11, maxZ - 0.02, false));
-  frame.add(mesh(box(0.04, 0.22, d), toon(PALETTE.ink), maxX - 0.02, floorY + 0.11, cz, false));
+  frame.add(mesh(box(w, 0.22, 0.04), toon(PALETTE.ink), cx, floorY + 0.11, maxZ - 0.02));
+  frame.add(mesh(box(0.04, 0.22, d), toon(PALETTE.ink), maxX - 0.02, floorY + 0.11, cz));
 
   // Floor-to-ceiling glass on the north and west sides, so you can look down on everyone working.
   const doorZ = STAIRS.minZ;
@@ -1727,7 +1711,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
     g.rotation.y = rotY;
     frame.add(g);
   };
-  const bar = (bw: number, bh: number, bd: number, x: number, y: number, z: number) => frame.add(mesh(box(bw, bh, bd), frameMat, x, y, z, false));
+  const bar = (bw: number, bh: number, bd: number, x: number, y: number, z: number) => frame.add(mesh(box(bw, bh, bd), frameMat, x, y, z));
   const northZ = minZ + T / 2;
   const westX = minX + T / 2;
   for (let i = 0; i < 6; i++) pane(w / 6, minX + (i + 0.5) * (w / 6), northZ, 0);
@@ -1743,7 +1727,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   colliders.push({ minX, maxX: minX + T, minZ, maxZ: doorZ, bottom: floorY, top: 99 });
   // Over the door at the top of the stairs.
   const doorTop = floorY + 2.3;
-  group.add(mesh(box(T + 0.04, roofY - doorTop, maxZ - doorZ), wallMat, westX, (roofY + doorTop) / 2, (doorZ + maxZ) / 2, false));
+  group.add(mesh(box(T + 0.04, roofY - doorTop, maxZ - doorZ), wallMat, westX, (roofY + doorTop) / 2, (doorZ + maxZ) / 2));
   colliders.push({ minX, maxX: minX + T, minZ: doorZ, maxZ, bottom: doorTop, top: roofY });
 
   // Stairs: a solid run of steps up the south wall, wood treads, a handrail on the open side.
@@ -1763,19 +1747,19 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   frame.add(mesh(new THREE.ExtrudeGeometry(profile, { depth: sw, bevelEnabled: false }), toon('#7b7b7b'), fromX, 0, STAIRS.minZ));
   const nosing = toon(PALETTE.accent);
   for (let i = 1; i <= steps; i++) {
-    frame.add(mesh(box(run + 0.04, 0.05, sw), steelMat, fromX + (i - 0.5) * run - 0.02, i * rise - 0.025, STAIRS.minZ + sw / 2, false));
-    frame.add(mesh(box(0.035, 0.012, sw - 0.1), nosing, fromX + (i - 1) * run + 0.0, i * rise + 0.001, STAIRS.minZ + sw / 2, false));
+    frame.add(mesh(box(run + 0.04, 0.05, sw), steelMat, fromX + (i - 0.5) * run - 0.02, i * rise - 0.025, STAIRS.minZ + sw / 2));
+    frame.add(mesh(box(0.035, 0.012, sw - 0.1), nosing, fromX + (i - 1) * run + 0.0, i * rise + 0.001, STAIRS.minZ + sw / 2));
     colliders.push({ minX: fromX + (i - 1) * run, maxX: fromX + i * run, minZ: STAIRS.minZ, maxZ: STAIRS.maxZ, top: i * rise });
   }
   const railZ = STAIRS.minZ + 0.06;
   const railH = 0.9;
   const inkMat = toon(PALETTE.deskLeg);
   for (let i = 1; i <= steps; i += 2) {
-    frame.add(mesh(box(0.04, railH, 0.04), inkMat, fromX + (i - 0.5) * run, i * rise + railH / 2, railZ, false));
+    frame.add(mesh(box(0.04, railH, 0.04), inkMat, fromX + (i - 0.5) * run, i * rise + railH / 2, railZ));
   }
   const x0 = fromX + 0.5 * run;
   const x1 = fromX + (steps - 0.5) * run;
-  const handrail = mesh(box(Math.hypot(x1 - x0, (x1 - x0) * (rise / run)) + 0.1, 0.05, 0.06), toon(PALETTE.ink), (x0 + x1) / 2, (rise + floorY) / 2 + railH, railZ, false);
+  const handrail = mesh(box(Math.hypot(x1 - x0, (x1 - x0) * (rise / run)) + 0.1, 0.05, 0.06), toon(PALETTE.ink), (x0 + x1) / 2, (rise + floorY) / 2 + railH, railZ);
   handrail.rotation.z = Math.atan2(rise, run);
   frame.add(handrail);
   group.add(mergeByMaterial(frame));
@@ -1789,7 +1773,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   const desk = new THREE.Group();
   const deskBody = new THREE.Group();
   deskBody.add(mesh(roundedBox(2.6, 0.08, 1.2, 0.02), woodMat, 0, 0.79, 0));
-  deskBody.add(mesh(box(2.4, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.76, -0.605, false));
+  deskBody.add(mesh(box(2.4, 0.012, 0.01), toon(PALETTE.accent, { emissive: PALETTE.accent }), 0, 0.76, -0.605));
   deskBody.add(mesh(box(2.4, 0.66, 0.06), toon('#6a6a6a'), 0, 0.4, -0.5));
   for (const sx of [-1, 1]) deskBody.add(mesh(box(0.08, 0.75, 1.0), toon('#6a6a6a'), sx * 1.15, 0.375, 0));
   deskBody.add(mesh(roundedBox(0.9, 0.55, 0.06, 0.01), toon(PALETTE.ink), 0, 1.18, -0.2));
@@ -1797,7 +1781,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   deskBody.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon('#eeeeee'), 0.9, 0.89, 0.15));
   desk.add(mergeByMaterial(deskBody));
   // Minesweeper plays on it (ui/arcade.ts).
-  const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165, false);
+  const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165);
   desk.add(screen);
   const plate = textPlane('BOSS', { bg: '#0a0a0a', color: '#ee6018', border: '#2f2f2f', size: 48 });
   plate.scale.multiplyScalar(0.55);
@@ -1830,7 +1814,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
 
   const felt = toonUnique('#757575');
   felt.userData.outlineParameters = { visible: false };
-  const rug = mesh(box(4.6, 0.008, 3.2), felt, deskX - 0.3, floorY + 0.01, cz + 0.1, false);
+  const rug = mesh(box(4.6, 0.008, 3.2), felt, deskX - 0.3, floorY + 0.01, cz + 0.1);
   group.add(rug);
 
   const scope = new THREE.Group();

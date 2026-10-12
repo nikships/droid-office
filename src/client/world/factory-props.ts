@@ -192,14 +192,14 @@ function neonHaloMaterial(): THREE.MeshBasicMaterial {
 /** An orange LED rail along x, with its soft halo facing +z. */
 function neonStrip(length: number): THREE.Group {
   const strip = new THREE.Group();
-  strip.add(mesh(new THREE.BoxGeometry(length, 0.012, 0.008), neonMaterial(), 0, 0, 0, false));
-  strip.add(mesh(new THREE.PlaneGeometry(length + 0.08, 0.12), neonHaloMaterial(), 0, 0, 0.005, false));
+  strip.add(mesh(new THREE.BoxGeometry(length, 0.012, 0.008), neonMaterial(), 0, 0, 0));
+  strip.add(mesh(new THREE.PlaneGeometry(length + 0.08, 0.12), neonHaloMaterial(), 0, 0, 0.005));
   return strip;
 }
 
 /** Joint rings are mounted in the joint's own space, so they follow the arm's existing pose. */
 function neonRing(parent: THREE.Object3D, radius: number, x: number, y: number, axis: 'x' | 'y') {
-  const ring = mesh(new THREE.TorusGeometry(radius, 0.004, 6, 32), neonMaterial(), x, y, 0, false);
+  const ring = mesh(new THREE.TorusGeometry(radius, 0.004, 6, 32), neonMaterial(), x, y, 0);
   if (axis === 'x') ring.rotation.y = Math.PI / 2;
   else ring.rotation.x = Math.PI / 2;
   parent.add(ring);
@@ -257,10 +257,10 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
   stat.add(mesh(roundedBox(depth, PLINTH_H - 0.01, length, 0.02), toon('#141414'), minX + depth / 2, (PLINTH_H - 0.01) / 2, cz));
   stat.add(mesh(roundedBox(depth + 0.01, 0.012, length + 0.01, 0.02), toon('#2a2a2a'), minX + depth / 2, PLINTH_H - 0.006, cz));
   // A shadow gap along the foot of the plinth, so it reads as standing off the floor.
-  stat.add(mesh(new THREE.BoxGeometry(0.02, 0.025, length - 0.04), toon('#020202'), maxX - 0.006, 0.0125, cz, false));
+  stat.add(mesh(new THREE.BoxGeometry(0.02, 0.025, length - 0.04), toon('#020202'), maxX - 0.006, 0.0125, cz));
   // The backboard the cubes' glow washes onto, against the wall.
-  stat.add(mesh(new THREE.BoxGeometry(0.02, BOARD_TOP, length), toon('#0e0e0e'), minX + 0.01, BOARD_TOP / 2, cz, false));
-  stat.add(mesh(new THREE.BoxGeometry(0.024, 0.012, length + 0.004), toon('#2a2a2a'), minX + 0.012, BOARD_TOP, cz, false));
+  stat.add(mesh(new THREE.BoxGeometry(0.02, BOARD_TOP, length), toon('#0e0e0e'), minX + 0.01, BOARD_TOP / 2, cz));
+  stat.add(mesh(new THREE.BoxGeometry(0.024, 0.012, length + 0.004), toon('#2a2a2a'), minX + 0.012, BOARD_TOP, cz));
   root.add(mergeByMaterial(stat));
 
   kit.colliders.push({ ...DROID_RACK });
@@ -465,12 +465,12 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
 
   // The safety floor: a dark plate with a neon edge, and a lit bollard at each corner.
   const stat = new THREE.Group();
-  stat.add(mesh(roundedBox(width, 0.02, depth, 0.03), toon('#0a0a0a'), 0, 0.01, 0, false));
+  stat.add(mesh(roundedBox(width, 0.02, depth, 0.03), toon('#0a0a0a'), 0, 0.01, 0));
   const edge = toon(ORANGE, { emissive: '#4a1a04' });
   const e = 0.035;
   for (const s of [-1, 1]) {
-    stat.add(mesh(new THREE.BoxGeometry(width - 0.04, 0.004, e), edge, 0, 0.022, s * (depth / 2 - 0.02 - e / 2), false));
-    stat.add(mesh(new THREE.BoxGeometry(e, 0.004, depth - 0.04 - 2 * e), edge, s * (width / 2 - 0.02 - e / 2), 0.022, 0, false));
+    stat.add(mesh(new THREE.BoxGeometry(width - 0.04, 0.004, e), edge, 0, 0.022, s * (depth / 2 - 0.02 - e / 2)));
+    stat.add(mesh(new THREE.BoxGeometry(e, 0.004, depth - 0.04 - 2 * e), edge, s * (width / 2 - 0.02 - e / 2), 0.022, 0));
     const front = neonStrip(width - 0.08);
     front.rotation.x = -Math.PI / 2;
     front.position.set(0, 0.027, s * (depth / 2 - 0.04));
@@ -522,12 +522,11 @@ function buildCell(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
         const belt = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.36), flat(new THREE.MeshToonMaterial({ map: tex, gradientMap: gradient() })));
         belt.rotation.x = -Math.PI / 2;
         belt.position.set(0, BELT_Y + 0.0015, lane * LANE);
-        belt.receiveShadow = true;
         cell.add(belt);
         const hx = lane * 1.05;
         const lamp = flat(new THREE.MeshBasicMaterial({ color: '#2a1206', toneMapped: false }));
         beacons[lane < 0 ? 0 : 1] = lamp;
-        cell.add(mesh(new THREE.CylinderGeometry(0.022, 0.024, 0.04, 12), lamp, hx, 0.93, lane * LANE, false));
+        cell.add(mesh(new THREE.CylinderGeometry(0.022, 0.024, 0.04, 12), lamp, hx, 0.93, lane * LANE));
         const text = lane < 0 ? ['03', 'CODE REVIEW'] : ['\u2192', 'SHIPPED'];
         for (const side of [-1, 1]) {
           const plaque = hoodLabel(text[0], text[1]);

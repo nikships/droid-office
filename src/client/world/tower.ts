@@ -151,18 +151,18 @@ export function buildStack(night: NightParts): { parts: THREE.Group; mouth: THRE
   const light = toon('#8c8c8c');
   const { x, z, r, height: H, plinth: P } = STACK;
   parts.add(mesh(new THREE.BoxGeometry(P, 0.9, P), steel, x, 0.45, z));
-  parts.add(mesh(new THREE.BoxGeometry(P + 0.12, 0.08, P + 0.12), light, x, 0.94, z, false));
+  parts.add(mesh(new THREE.BoxGeometry(P + 0.12, 0.08, P + 0.12), light, x, 0.94, z));
   parts.add(mesh(new THREE.CylinderGeometry(r * 0.82, r, H - 0.9, 20), black, x, 0.9 + (H - 0.9) / 2, z));
-  for (const y of [3.2, 6.4, 9.2]) parts.add(mesh(new THREE.CylinderGeometry(r * (1 - (y / H) * 0.18) + 0.05, r * (1 - (y / H) * 0.18) + 0.05, 0.16, 20), steel, x, y, z, false));
+  for (const y of [3.2, 6.4, 9.2]) parts.add(mesh(new THREE.CylinderGeometry(r * (1 - (y / H) * 0.18) + 0.05, r * (1 - (y / H) * 0.18) + 0.05, 0.16, 20), steel, x, y, z));
   const lipR = r * 0.82 + 0.08;
-  parts.add(mesh(new THREE.CylinderGeometry(lipR, lipR, 0.4, 20), steel, x, H - 0.1, z, false));
+  parts.add(mesh(new THREE.CylinderGeometry(lipR, lipR, 0.4, 20), steel, x, H - 0.1, z));
   const ring = bulb(night, '#ee6018', 0.6);
   ring.userData.outlineParameters = { visible: false };
-  parts.add(mesh(new THREE.CylinderGeometry(lipR + 0.01, lipR + 0.01, 0.06, 20), ring, x, H - 0.36, z, false));
+  parts.add(mesh(new THREE.CylinderGeometry(lipR + 0.01, lipR + 0.01, 0.06, 20), ring, x, H - 0.36, z));
   // A ladder up the side facing the street.
   const lz = z + r + 0.12;
-  for (const sx of [-0.22, 0.22]) parts.add(mesh(new THREE.BoxGeometry(0.04, H - 1.6, 0.04), light, x + sx, 1 + (H - 1.6) / 2, lz, false));
-  for (let y = 1.3; y < H - 0.6; y += 0.4) parts.add(mesh(new THREE.BoxGeometry(0.44, 0.03, 0.03), light, x, y, lz, false));
+  for (const sx of [-0.22, 0.22]) parts.add(mesh(new THREE.BoxGeometry(0.04, H - 1.6, 0.04), light, x + sx, 1 + (H - 1.6) / 2, lz));
+  for (let y = 1.3; y < H - 0.6; y += 0.4) parts.add(mesh(new THREE.BoxGeometry(0.44, 0.03, 0.03), light, x, y, lz));
   return { parts, mouth: new THREE.Vector3(x, H + 0.15, z) };
 }
 
@@ -173,7 +173,7 @@ export function stackBeacon(mouth: THREE.Vector3): THREE.Mesh {
   mat.userData.outlineParameters = { visible: false };
   const on = new THREE.Color('#ef6f2e');
   const off = new THREE.Color('#3a1a08');
-  const m = mesh(new THREE.BoxGeometry(0.36, 0.26, 0.36), mat, mouth.x + STACK.r * 0.82 + 0.05, mouth.y + 0.12, mouth.z, false);
+  const m = mesh(new THREE.BoxGeometry(0.36, 0.26, 0.36), mat, mouth.x + STACK.r * 0.82 + 0.05, mouth.y + 0.12, mouth.z);
   m.onBeforeRender = () => {
     const t = (performance.now() / 1000) % 1.5;
     mat.color.copy(t < 0.28 ? on : off);
@@ -246,7 +246,6 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       m.position.copy(f.at(mid, (y1 + y2) / 2, off));
       m.rotation.y = f.rotY;
       if (mat) {
-        m.castShadow = false;
         parts.add(m);
       } else {
         m.updateMatrix();
@@ -270,10 +269,10 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
   /** The hairline of light round the building at the slab `y0` up. */
   const slabLine = (parts: THREE.Group, y: number, mat: THREE.Material, h = 0.035) => {
     const t = 0.03;
-    parts.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX + 2 * t, h, t), mat, 0, y, B.maxZ + OWN_OFF + t / 2, false));
-    parts.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX + 2 * t, h, t), mat, 0, y, B.minZ - OWN_OFF - t / 2, false));
-    parts.add(mesh(new THREE.BoxGeometry(t, h, B.maxZ - B.minZ), mat, B.maxX + OWN_OFF + t / 2, y, (B.minZ + B.maxZ) / 2, false));
-    parts.add(mesh(new THREE.BoxGeometry(t, h, B.maxZ - B.minZ), mat, B.minX - OWN_OFF - t / 2, y, (B.minZ + B.maxZ) / 2, false));
+    parts.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX + 2 * t, h, t), mat, 0, y, B.maxZ + OWN_OFF + t / 2));
+    parts.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX + 2 * t, h, t), mat, 0, y, B.minZ - OWN_OFF - t / 2));
+    parts.add(mesh(new THREE.BoxGeometry(t, h, B.maxZ - B.minZ), mat, B.maxX + OWN_OFF + t / 2, y, (B.minZ + B.maxZ) / 2));
+    parts.add(mesh(new THREE.BoxGeometry(t, h, B.maxZ - B.minZ), mat, B.minX - OWN_OFF - t / 2, y, (B.minZ + B.maxZ) / 2));
   };
 
   /** Glass in a hole: set back a little, with a slim black steel frame round it, a bar down the middle and a sill. */
@@ -284,18 +283,18 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     const F = 0.06;
     const glass = random() < 0.62 ? lit[Math.floor(random() * lit.length)] : dark;
     const mid = y0 + (o.y0 + o.y1) / 2;
-    g.add(mesh(new THREE.PlaneGeometry(w - 2 * F, h - 2 * F), glass, 0, mid, -0.06, false));
-    const s = mesh(new THREE.PlaneGeometry(0.12, h * 0.5), glint, -w * 0.2, mid + h * 0.05, -0.05, false);
+    g.add(mesh(new THREE.PlaneGeometry(w - 2 * F, h - 2 * F), glass, 0, mid, -0.06));
+    const s = mesh(new THREE.PlaneGeometry(0.12, h * 0.5), glint, -w * 0.2, mid + h * 0.05, -0.05);
     s.rotation.z = -0.5;
     g.add(s);
-    g.add(mesh(new THREE.BoxGeometry(w, F, 0.12), frame, 0, y0 + o.y1 - F / 2, -0.04, false));
-    g.add(mesh(new THREE.BoxGeometry(w, F, 0.12), frame, 0, y0 + o.y0 + F / 2, -0.04, false));
-    for (const sx of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(F, h, 0.12), frame, sx * (w / 2 - F / 2), mid, -0.04, false));
-    g.add(mesh(new THREE.BoxGeometry(F * 0.6, h - 2 * F, 0.06), frame, 0, mid, -0.05, false));
+    g.add(mesh(new THREE.BoxGeometry(w, F, 0.12), frame, 0, y0 + o.y1 - F / 2, -0.04));
+    g.add(mesh(new THREE.BoxGeometry(w, F, 0.12), frame, 0, y0 + o.y0 + F / 2, -0.04));
+    for (const sx of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(F, h, 0.12), frame, sx * (w / 2 - F / 2), mid, -0.04));
+    g.add(mesh(new THREE.BoxGeometry(F * 0.6, h - 2 * F, 0.06), frame, 0, mid, -0.05));
     if (!door) {
-      g.add(mesh(new THREE.BoxGeometry(F * 0.6, 0.04, 0.06), frame, 0, mid, -0.05, false));
-      g.add(mesh(new THREE.BoxGeometry(w - 2 * F, 0.035, 0.06), frame, 0, y0 + o.y0 + h * 0.72, -0.05, false));
-      g.add(mesh(new THREE.BoxGeometry(w + 0.12, 0.05, 0.14), sill, 0, y0 + o.y0 - 0.025, 0.05, false));
+      g.add(mesh(new THREE.BoxGeometry(F * 0.6, 0.04, 0.06), frame, 0, mid, -0.05));
+      g.add(mesh(new THREE.BoxGeometry(w - 2 * F, 0.035, 0.06), frame, 0, y0 + o.y0 + h * 0.72, -0.05));
+      g.add(mesh(new THREE.BoxGeometry(w + 0.12, 0.05, 0.14), sill, 0, y0 + o.y0 - 0.025, 0.05));
     }
     parts.add(onFace(g, o.wall, o.u));
   };
@@ -305,8 +304,8 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     const { minX, maxX, minZ, maxZ } = BALCONY;
     const w = maxX - minX;
     const d = maxZ - minZ;
-    parts.add(mesh(new THREE.BoxGeometry(w, SLAB - 0.01, d), deck, (minX + maxX) / 2, y0 - SLAB / 2 - 0.005, (minZ + maxZ) / 2, false));
-    parts.add(mesh(new THREE.BoxGeometry(w + 0.02, 0.03, 0.03), strip, (minX + maxX) / 2, y0 - SLAB / 2, maxZ + 0.01, false));
+    parts.add(mesh(new THREE.BoxGeometry(w, SLAB - 0.01, d), deck, (minX + maxX) / 2, y0 - SLAB / 2 - 0.005, (minZ + maxZ) / 2));
+    parts.add(mesh(new THREE.BoxGeometry(w + 0.02, 0.03, 0.03), strip, (minX + maxX) / 2, y0 - SLAB / 2, maxZ + 0.01));
     const railH = 1.05;
     const inset = 0.06;
     const sides: [number, number, number, number][] = [
@@ -318,9 +317,9 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       const len = Math.hypot(x1 - x0, z1 - z0);
       const alongX = z0 === z1;
       const n = Math.ceil(len / 1.6);
-      for (let i = 0; i <= n; i++) parts.add(mesh(new THREE.BoxGeometry(0.05, railH, 0.05), ink, x0 + ((x1 - x0) * i) / n, y0 + railH / 2, z0 + ((z1 - z0) * i) / n, false));
-      parts.add(mesh(alongX ? new THREE.BoxGeometry(len + 0.1, 0.05, 0.08) : new THREE.BoxGeometry(0.08, 0.05, len + 0.1), railTop, (x0 + x1) / 2, y0 + railH + 0.02, (z0 + z1) / 2, false));
-      const pane = mesh(new THREE.PlaneGeometry(len - 0.1, railH - 0.2), railGlass, (x0 + x1) / 2, y0 + (railH - 0.2) / 2 + 0.08, (z0 + z1) / 2, false);
+      for (let i = 0; i <= n; i++) parts.add(mesh(new THREE.BoxGeometry(0.05, railH, 0.05), ink, x0 + ((x1 - x0) * i) / n, y0 + railH / 2, z0 + ((z1 - z0) * i) / n));
+      parts.add(mesh(alongX ? new THREE.BoxGeometry(len + 0.1, 0.05, 0.08) : new THREE.BoxGeometry(0.08, 0.05, len + 0.1), railTop, (x0 + x1) / 2, y0 + railH + 0.02, (z0 + z1) / 2));
+      const pane = mesh(new THREE.PlaneGeometry(len - 0.1, railH - 0.2), railGlass, (x0 + x1) / 2, y0 + (railH - 0.2) / 2 + 0.08, (z0 + z1) / 2);
       pane.rotation.y = alongX ? 0 : Math.PI / 2;
       parts.add(pane);
     }
@@ -334,7 +333,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       const f = FACES[side];
       const g = new THREE.Group();
       const len = f.u1 - f.u0 + 2 * out;
-      g.add(mesh(new THREE.BoxGeometry(len, H, WALL_T + out), parapet, 0, top + H / 2, out / 2 - WALL_T / 2 - OFF, false));
+      g.add(mesh(new THREE.BoxGeometry(len, H, WALL_T + out), parapet, 0, top + H / 2, out / 2 - WALL_T / 2 - OFF));
       parts.add(onFace(g, side, (f.u0 + f.u1) / 2));
     }
     slabLine(parts, top + 0.02, crownStrip, 0.03);
@@ -354,7 +353,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     const x0 = -6.6 - width / 2;
     const yb = y0 + 3.95;
     const z = B.maxZ + OWN_OFF;
-    parts.add(mesh(new THREE.BoxGeometry(width + 0.8, 0.14, 0.12), raceway, x0 + width / 2, yb - 0.25, z + 0.06, false));
+    parts.add(mesh(new THREE.BoxGeometry(width + 0.8, 0.14, 0.12), raceway, x0 + width / 2, yb - 0.25, z + 0.06));
     const g = pixelText(word, p, 0.1);
     g.translate(x0 + mark + gap, yb, z + 0.17);
     parts.add(new THREE.Mesh(g, letters));
@@ -374,10 +373,10 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     const W = 3.4;
     const y = y0 + EXIT_DOOR.y1 + 0.65;
     const T = 0.3;
-    g.add(mesh(new THREE.BoxGeometry(W, T, D), raceway, 0, y + T / 2, OWN_OFF + D / 2, false));
-    g.add(mesh(new THREE.BoxGeometry(W - 0.3, 0.02, 0.05), letters, 0, y - 0.005, OWN_OFF + D - 0.15, false));
+    g.add(mesh(new THREE.BoxGeometry(W, T, D), raceway, 0, y + T / 2, OWN_OFF + D / 2));
+    g.add(mesh(new THREE.BoxGeometry(W - 0.3, 0.02, 0.05), letters, 0, y - 0.005, OWN_OFF + D - 0.15));
     for (const sx of [-1, 1]) {
-      const rod = mesh(new THREE.BoxGeometry(0.03, 0.03, Math.hypot(D - 0.1, 1.1)), sill, sx * (W / 2 - 0.15), y + T + 0.55, OWN_OFF + (D - 0.1) / 2, false);
+      const rod = mesh(new THREE.BoxGeometry(0.03, 0.03, Math.hypot(D - 0.1, 1.1)), sill, sx * (W / 2 - 0.15), y + T + 0.55, OWN_OFF + (D - 0.1) / 2);
       rod.rotation.x = Math.atan2(1.1, D - 0.1);
       g.add(rod);
     }
@@ -410,7 +409,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
    * the elevator's housing, and the stack.
    */
   const roofTop = (parts: THREE.Group, y: number) => {
-    const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y0: number, z: number) => parts.add(mesh(new THREE.BoxGeometry(w, h, d), mat, x, y0 + h / 2, z, false));
+    const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y0: number, z: number) => parts.add(mesh(new THREE.BoxGeometry(w, h, d), mat, x, y0 + h / 2, z));
     const edges: [number, number, number, number][] = [
       [B.minX, B.maxX, B.minZ, FLOOR.minZ],
       [B.minX, B.maxX, FLOOR.maxZ, B.maxZ],
@@ -423,7 +422,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       const alongX = x1 - x0 > z1 - z0;
       const len = alongX ? x1 - x0 : z1 - z0;
       box(x1 - x0, 0.45, z1 - z0, curb, ex, y, ez);
-      const pane = mesh(new THREE.PlaneGeometry(len, 0.72), railGlass, ex, y + 0.81, ez, false);
+      const pane = mesh(new THREE.PlaneGeometry(len, 0.72), railGlass, ex, y + 0.81, ez);
       if (!alongX) pane.rotation.y = Math.PI / 2;
       parts.add(pane);
       box(alongX ? len : 0.07, 0.07, alongX ? 0.07 : len, steel, ex, y + 1.155, ez);
@@ -434,7 +433,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
     const hz = (B.minZ + ELEVATOR_FRONT) / 2;
     box(ELEVATOR.width, WALL_HEIGHT, ELEVATOR_FRONT - B.minZ, steelDark, ELEVATOR.x, y, hz);
     box(ELEVATOR.width + 0.3, 0.3, ELEVATOR_FRONT - B.minZ + 0.2, black, ELEVATOR.x, y + WALL_HEIGHT, hz + 0.05);
-    parts.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, y + WALL_HEIGHT + 0.38, hz, false));
+    parts.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, y + WALL_HEIGHT + 0.38, hz));
 
     // The stack, and its steam and beacon (which move, so they aren't merged).
     const stack = buildStack(night);
@@ -485,7 +484,7 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       balcony(parts, y0);
       if (k === 0) {
         // Dark behind the exit door, through its porthole.
-        const back = mesh(new THREE.PlaneGeometry(EXIT_DOOR.width, EXIT_DOOR.y1), behind, FLOOR.minX - 0.02, y0 + EXIT_DOOR.y1 / 2, EXIT_DOOR.u, false);
+        const back = mesh(new THREE.PlaneGeometry(EXIT_DOOR.width, EXIT_DOOR.y1), behind, FLOOR.minX - 0.02, y0 + EXIT_DOOR.y1 / 2, EXIT_DOOR.u);
         back.rotation.y = -Math.PI / 2;
         parts.add(back);
       }
@@ -500,18 +499,12 @@ export function buildTower(colliders: Collider[], night: NightParts): Tower {
       steam.push(s);
       moving.add(s.group, stackBeacon(mouth));
     }
-    // None of it casts a shadow (the sun lights the office through where its roof would be), and none
-    // takes one from the floor you're on, which would fall on it as though nothing were in between.
     const merged = mergeByMaterial(parts);
     if (clad.length) {
       merged.add(new THREE.Mesh(mergeGeometries(clad)!, panel));
       for (const c of clad) c.dispose();
       clad = [];
     }
-    merged.traverse((o) => {
-      o.receiveShadow = false;
-      o.castShadow = false;
-    });
     group.add(merged, moving);
     built.push(merged, moving);
 

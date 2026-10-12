@@ -44,7 +44,6 @@ function issueCard(card: CarriedIssue, width: number): THREE.Mesh {
   const back = toon('#0a0a0a');
   // Box faces go +x, -x, +y, -y, +z, -z: the note is on the front.
   const m = new THREE.Mesh(new THREE.BoxGeometry(width, (width * H) / W, width * 0.02), [back, back, back, back, face, back]);
-  m.castShadow = true;
   return m;
 }
 

@@ -187,15 +187,15 @@ function trapdoor(down: boolean): Trapdoor {
   const lid = new THREE.Group();
   const t = 0.06;
   // Flush with the floor (a touch proud of it, so it reads as a hatch), or with the ceiling.
-  lid.add(mesh(new THREE.BoxGeometry(w - 0.02, t, d - 0.02), toon(down ? '#6a6a6a' : '#808080'), -w / 2, down ? t / 2 : -t / 2 + 0.012, 0, false));
+  lid.add(mesh(new THREE.BoxGeometry(w - 0.02, t, d - 0.02), toon(down ? '#6a6a6a' : '#808080'), -w / 2, down ? t / 2 : -t / 2 + 0.012, 0));
   // A frame round it, and a ring to pull it by, on the side you see.
   const rim = toon(down ? '#535353' : '#a6a6a6');
   const y = down ? -0.012 : 0.022;
   for (const s of [-1, 1]) {
-    lid.add(mesh(new THREE.BoxGeometry(w - 0.02, 0.025, 0.05), rim, -w / 2, y, (s * (d - 0.07)) / 2, false));
-    lid.add(mesh(new THREE.BoxGeometry(0.05, 0.025, d - 0.02), rim, -w / 2 + (s * (w - 0.07)) / 2, y, 0, false));
+    lid.add(mesh(new THREE.BoxGeometry(w - 0.02, 0.025, 0.05), rim, -w / 2, y, (s * (d - 0.07)) / 2));
+    lid.add(mesh(new THREE.BoxGeometry(0.05, 0.025, d - 0.02), rim, -w / 2 + (s * (w - 0.07)) / 2, y, 0));
   }
-  const ring = mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 16), toon('#eaeaea'), -w + 0.16, down ? -0.02 : 0.03, 0, false);
+  const ring = mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 16), toon('#eaeaea'), -w + 0.16, down ? -0.02 : 0.03, 0);
   ring.rotation.x = Math.PI / 2;
   lid.add(ring);
   pivot.add(lid);
@@ -288,9 +288,9 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   const railX = FLOOR.minX + 0.16;
   const ladderPart = (y0: number, y1: number) => {
     const g = new THREE.Group();
-    for (const s of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(0.07, y1 - y0, 0.07), steel, railX, (y0 + y1) / 2, LADDER.z + (s * LADDER.width) / 2, false));
+    for (const s of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(0.07, y1 - y0, 0.07), steel, railX, (y0 + y1) / 2, LADDER.z + (s * LADDER.width) / 2));
     for (let y = Math.ceil((y0 + 0.15) / 0.3) * 0.3; y < y1 - 0.05; y += 0.3) {
-      const rung = mesh(new THREE.CylinderGeometry(0.03, 0.03, LADDER.width, 8), rungMat, railX, y, LADDER.z, false);
+      const rung = mesh(new THREE.CylinderGeometry(0.03, 0.03, LADDER.width, 8), rungMat, railX, y, LADDER.z);
       rung.rotation.x = Math.PI / 2;
       g.add(rung);
     }
@@ -299,14 +299,14 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   const ladder = new THREE.Group();
   const ladderMain = ladderPart(0, WALL_HEIGHT);
   // Brackets holding it off the wall.
-  for (let y = 0.9; y < WALL_HEIGHT - 0.4; y += 1.5) for (const s of [-1, 1]) ladderMain.add(mesh(new THREE.BoxGeometry(0.18, 0.05, 0.05), steel, FLOOR.minX + 0.08, y, LADDER.z + (s * LADDER.width) / 2, false));
+  for (let y = 0.9; y < WALL_HEIGHT - 0.4; y += 1.5) for (const s of [-1, 1]) ladderMain.add(mesh(new THREE.BoxGeometry(0.18, 0.05, 0.05), steel, FLOOR.minX + 0.08, y, LADDER.z + (s * LADDER.width) / 2));
   const ladderBelow = ladderPart(-2.2, 0);
   const ladderAbove = ladderPart(WALL_HEIGHT, WALL_HEIGHT + 2.2);
   ladder.add(ladderMain, ladderBelow, ladderAbove);
   // A stripe of hazard paint on the floor in front of it.
   const stripe = new THREE.Group();
   for (let i = 0; i < 5; i++) {
-    const s = mesh(new THREE.PlaneGeometry(0.1, 0.34), toon(i % 2 ? '#484848' : ACCENT), LADDER.hatch.maxX + 0.08, 0.006, LADDER.z - 0.4 + i * 0.2, false);
+    const s = mesh(new THREE.PlaneGeometry(0.1, 0.34), toon(i % 2 ? '#484848' : ACCENT), LADDER.hatch.maxX + 0.08, 0.006, LADDER.z - 0.4 + i * 0.2);
     s.rotation.x = -Math.PI / 2;
     s.rotation.z = 0.6;
     stripe.add(s);
@@ -335,17 +335,17 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
   const poles: PoleView[] = POLES.map((spot, index) => {
     const g = new THREE.Group();
     const r = POLE.radius;
-    g.add(mesh(new THREE.CylinderGeometry(r, r, WALL_HEIGHT, 14), chrome, spot.x, WALL_HEIGHT / 2, spot.z, false));
-    const below = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, -1.15, spot.z, false);
-    const above = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, WALL_HEIGHT + 1.15, spot.z, false);
+    g.add(mesh(new THREE.CylinderGeometry(r, r, WALL_HEIGHT, 14), chrome, spot.x, WALL_HEIGHT / 2, spot.z));
+    const below = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, -1.15, spot.z);
+    const above = mesh(new THREE.CylinderGeometry(r, r, 2.3, 14), chrome, spot.x, WALL_HEIGHT + 1.15, spot.z);
     g.add(below, above);
 
     // Going down: a railing round three sides of the hole, rail with chrome caps, open on the fourth.
     const down = new THREE.Group();
     const half = POLE.rail;
     const post = (x: number, z: number) => {
-      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), rail, x, RAIL_TOP / 2, z, false));
-      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), chrome, x, RAIL_TOP + 0.03, z, false));
+      down.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, RAIL_TOP, 10), rail, x, RAIL_TOP / 2, z));
+      down.add(mesh(new THREE.SphereGeometry(RAIL_CAP, 10, 8), chrome, x, RAIL_TOP + 0.03, z));
     };
     // The sides, as [dx0, dz0, dx1, dz1] from the pole, turned so the open one faces `open`.
     const c = Math.round(Math.cos(spot.open));
@@ -361,7 +361,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       const [x1, z1] = turn(bx, bz);
       const len = Math.hypot(x1 - x0, z1 - z0);
       for (const y of [RAIL_TOP, RAIL_TOP * 0.55]) {
-        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? chrome : rail, (x0 + x1) / 2, y, (z0 + z1) / 2, false);
+        const bar = mesh(new THREE.CylinderGeometry(RAIL_BAR, RAIL_BAR, len, 8), y === RAIL_TOP ? chrome : rail, (x0 + x1) / 2, y, (z0 + z1) / 2);
         bar.rotation.z = Math.PI / 2;
         bar.rotation.y = -Math.atan2(z1 - z0, x1 - x0);
         down.add(bar);
@@ -370,25 +370,25 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
       post(x1, z1);
     }
     // The rim of the hole.
-    const rim = mesh(new THREE.TorusGeometry(POLE.hole, 0.035, 6, 32), toon(ACCENT), spot.x, 0.005, spot.z, false);
+    const rim = mesh(new THREE.TorusGeometry(POLE.hole, 0.035, 6, 32), toon(ACCENT), spot.x, 0.005, spot.z);
     rim.rotation.x = Math.PI / 2;
     down.add(rim);
     g.add(down);
     const downShaft = shaft('round', POLE.hole, 0, -2.3, spot);
     g.add(downShaft);
     // At the top, a steel flange where it's bolted to the ceiling.
-    const flange = mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.08, 16), chrome, spot.x, WALL_HEIGHT - 0.04, spot.z, false);
+    const flange = mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.08, 16), chrome, spot.x, WALL_HEIGHT - 0.04, spot.z);
     g.add(flange);
 
     // At the bottom, a fat black landing mat with an orange ring to aim for.
     const landing = new THREE.Group();
-    landing.add(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.07, 24), rail, spot.x, 0.035, spot.z, false));
-    const ring = mesh(new THREE.TorusGeometry(0.62, 0.025, 4, 24), toon(ACCENT), spot.x, 0.07, spot.z, false);
+    landing.add(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.07, 24), rail, spot.x, 0.035, spot.z));
+    const ring = mesh(new THREE.TorusGeometry(0.62, 0.025, 4, 24), toon(ACCENT), spot.x, 0.07, spot.z);
     ring.rotation.x = Math.PI / 2;
     landing.add(ring);
     g.add(landing);
     // Coming down from above: a steel collar round the hole it comes out of.
-    const collar = mesh(new THREE.TorusGeometry(POLE.hole, 0.06, 8, 32), chrome, spot.x, WALL_HEIGHT - 0.02, spot.z, false);
+    const collar = mesh(new THREE.TorusGeometry(POLE.hole, 0.06, 8, 32), chrome, spot.x, WALL_HEIGHT - 0.02, spot.z);
     collar.rotation.x = Math.PI / 2;
     g.add(collar);
     const upShaft = shaft('round', POLE.hole, WALL_HEIGHT, WALL_HEIGHT + 2.3, spot);
@@ -440,8 +440,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     const floorHoles: Hole[] = [];
     if (below) floorHoles.push(LADDER.hatch);
     for (const p of holes) floorHoles.push({ x: p.x, z: p.z, r: POLE.hole });
-    const floor = take(new THREE.Mesh(surface(rectOutline(FLOOR), floorHoles, -1, FLOOR), planks));
-    floor.receiveShadow = true;
+    take(new THREE.Mesh(surface(rectOutline(FLOOR), floorHoles, -1, FLOOR), planks));
 
     // The slab under it (the garage's ceiling): concrete underneath, a peach band between the floors
     // outside. Where a hole goes through, the garage sees a lid of concrete, not up into the office.
@@ -452,9 +451,8 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     // Its top and bottom are concrete (group 0); its edges are the band.
     take(mesh(slabGeo, concrete)).material = [concrete, band];
     for (const h of slabHoles.map((h) => ('r' in h ? around(h, h.r) : h))) {
-      const lid = take(mesh(new THREE.PlaneGeometry(h.maxX - h.minX, h.maxZ - h.minZ), concrete, (h.minX + h.maxX) / 2, -SLAB - 0.002, (h.minZ + h.maxZ) / 2, false));
+      const lid = take(mesh(new THREE.PlaneGeometry(h.maxX - h.minX, h.maxZ - h.minZ), concrete, (h.minX + h.maxX) / 2, -SLAB - 0.002, (h.minZ + h.maxZ) / 2));
       lid.rotation.x = Math.PI / 2;
-      lid.receiveShadow = false;
     }
     // You can walk over the ladder's hatch (its trapdoor), but not over a pole's hole: that's how you go down it.
     const floorCut = holes.map((p) => around(p, POLE.hole - 0.1));
@@ -466,7 +464,7 @@ export function buildStack(colliders: Collider[], planks: THREE.Material): Stack
     const ceilingHoles: Hole[] = [];
     if (above) ceilingHoles.push(LADDER.hatch);
     if (above) for (const p of POLES) ceilingHoles.push({ x: p.x, z: p.z, r: POLE.hole });
-    take(mesh(surface(rectOutline(FLOOR), ceilingHoles, 1), ceilingMat, 0, WALL_HEIGHT, 0, false)).receiveShadow = false;
+    take(mesh(surface(rectOutline(FLOOR), ceilingHoles, 1), ceilingMat, 0, WALL_HEIGHT, 0));
     mine.push({ ...FLOOR, bottom: WALL_HEIGHT, top: WALL_HEIGHT + SLAB });
 
     // The ladder, when there's anywhere to climb to.
