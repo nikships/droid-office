@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { deflateSync } from 'node:zlib';
-import { OWNER_AUTHOR, STICKY_COLORS, type Op } from '../src/shared/whiteboard.js';
+import { OWNER_AUTHOR, STICKY_COLORS, applyOps, emptyBoard, type Op } from '../src/shared/whiteboard.js';
 import type { WhiteboardRendererStatus } from '../src/shared/protocol.js';
 import { WhiteboardStore, renderInfo, renderStatus, type PinnedCard } from '../src/server/whiteboard.js';
 import { readBoard } from '../src/server/whiteboard-agent.js';
@@ -631,4 +631,33 @@ test('a linked page with relative images and CSS, and a --dir package with a mod
     const got = await pixels(out.image.tiles[0], points as unknown as [number, number][]);
     got.forEach((px, i) => assert.ok(near(px, want[i] as unknown as number[]), `${id} at ${points[i]}: ${px}, want ${want[i]}`));
   }
+});
+
+test('canvasPlan places marks with the renderer margin, not the window fit', () => {
+  let board = emptyBoard();
+  const applied = applyOps(
+    board,
+    [
+      { op: 'card.create', card: 'c', kind: 'canvas', title: 'Sketch' },
+      { op: 'sticky.add', card: 'c', id: 's1', anchor: { kind: 'point', point: { x: 100, y: 100 } }, box: { w: 200, h: 160 }, color: 'pink', text: 'one' },
+      { op: 'sticky.add', card: 'c', id: 's2', anchor: { kind: 'point', point: { x: 600, y: 400 } }, box: { w: 200, h: 160 }, color: 'blue', text: 'two' },
+    ],
+    OWNER_AUTHOR,
+    1,
+    1,
+  );
+  assert.equal(applied.ok, true);
+  if (!applied.ok) return;
+  board = applied.board;
+  const plan = canvasPlan(board.cards[0]);
+  assert.deepEqual({ x: plan.x, y: plan.y, w: plan.w, h: plan.h }, { x: 100 - CANVAS_MARGIN, y: 100 - CANVAS_MARGIN, w: 700 + 2 * CANVAS_MARGIN, h: 460 + 2 * CANVAS_MARGIN });
+  assert.equal(CANVAS_MARGIN, 48);
+  assert.deepEqual(
+    plan.marks.map((m) => [m.id, m.x, m.y, m.w, m.h]),
+    [
+      ['s1', CANVAS_MARGIN, CANVAS_MARGIN, 200, 160],
+      ['s2', CANVAS_MARGIN + 500, CANVAS_MARGIN + 300, 200, 160],
+    ],
+  );
+  assert.deepEqual(canvasPlan({ ...board.cards[0], stickies: [], threads: [], pictures: [] }), { x: 0, y: 0, w: 1280, h: 800, scale: 1, marks: [] });
 });

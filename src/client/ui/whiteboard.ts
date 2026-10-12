@@ -8,6 +8,7 @@
 // with a button to open that card.
 
 import type { ServerMsg } from '../../shared/protocol';
+import { changesSince, type ChangeItem } from '../../shared/whiteboard-place';
 import { OWNER, cardChanged, cardsNewestFirst, findCard, type Board, type Card, type CardView, type Op, type Selection } from '../../shared/whiteboard';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -18,7 +19,7 @@ import { colorDot, emptyState } from './kit';
 import { confirmDelete, openAddHtml, openPing, routePinged } from './whiteboard-dialogs';
 import { Panel } from './whiteboard-panel';
 import { Surface } from './whiteboard-surface';
-import { authorColor, authorName, changedCount, changesSince, copyForAgent, newId, ownerReadPoint, viewMoved, zoomLabel, type ChangeItem } from './whiteboard-view';
+import { authorColor, authorName, changedCount, copyForAgent, newId, ownerReadPoint, viewMoved, zoomLabel } from './whiteboard-view';
 
 interface WindowCtl {
   floor: string;

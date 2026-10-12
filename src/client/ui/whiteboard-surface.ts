@@ -34,10 +34,12 @@ import {
   type StickyColor,
   type Thread,
 } from '../../shared/whiteboard';
+import { canvasBounds, commentAddOp, dragBox, dragMarkOps, dragPreview, markRemoveOp, pictureAddOp, pictureSize, placeMark, reattachMarkOps, stickyAddOp, stickyEditOp } from '../../shared/whiteboard-place';
 import { withToken } from '../token';
 import { claimEscape, h } from './dom';
 import { colorDot } from './kit';
 import {
+  CANVAS_MARGIN,
   type ArtifactView,
   type CanvasView,
   type Size,
@@ -47,15 +49,12 @@ import {
   artifactLayout,
   authorColor,
   authorName,
-  canvasBounds,
   canvasCardView,
   canvasFit,
   canvasFromCardView,
   clampZoom,
-  dragBox,
   fitZoom,
   newId,
-  pictureSize,
   stepZoom,
   wheelNavigation,
   zoomArtifact,
@@ -314,7 +313,7 @@ export class Surface {
   fit() {
     this.flushNavigation();
     this.zoomMode = { fit: true };
-    if (this.card.kind === 'canvas') this.canvas = canvasFit(canvasBounds(this.card), this.viewport);
+    if (this.card.kind === 'canvas') this.canvas = canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport);
     else this.art = { ...this.art, zoom: fitZoom(this.viewport.w), panX: 0 };
     this.applyView(true);
   }
@@ -345,9 +344,9 @@ export class Surface {
     if (!mark) return;
     this.selected = id;
     const p = this.markPoint(mark);
-    const box = kind === 'thread' ? { x: 0, y: 0, w: 1, h: 1 } : (mark as Sticky).box;
-    const cx = p.x + box.x + box.w / 2;
-    const cy = p.y + box.y + box.h / 2;
+    const at = placeMark(kind, mark.id, { point: p, detached: false }, kind === 'thread' ? undefined : (mark as Sticky | Picture).box);
+    const cx = at.x + at.w / 2;
+    const cy = at.y + at.h / 2;
     if (this.card.kind === 'canvas') {
       const z = this.canvas.zoom;
       this.canvas = { zoom: z, x: cx - this.viewport.w / z / 2, y: cy - this.viewport.h / z / 2 };
@@ -415,7 +414,7 @@ export class Surface {
       const topLeft = at ? spot : { x: spot.x - size.w / 2, y: spot.y - size.h / 2 };
       const anchor = await this.anchorAt(topLeft);
       if (this.disposed) return;
-      void this.host.apply([{ op: 'picture.add', card: this.card.id, id: newId('p'), file, anchor, box: { x: 0, y: 0, w: size.w, h: size.h } }], 'Adding the picture');
+      void this.host.apply([pictureAddOp(this.card.id, newId('p'), file, anchor, size)], 'Adding the picture');
       spot = { x: spot.x + 24, y: spot.y + 24 };
     }
   }
@@ -800,13 +799,13 @@ export class Surface {
     if (this.card.kind === 'canvas') {
       if (saved) {
         this.zoomMode = saved.fit ? { fit: true } : { fit: false, zoom: saved.zoom };
-        this.canvas = saved.fit ? canvasFit(canvasBounds(this.card), this.viewport) : { zoom: clampZoom(saved.zoom), x: saved.a ?? 0, y: saved.b ?? 0 };
+        this.canvas = saved.fit ? canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport) : { zoom: clampZoom(saved.zoom), x: saved.a ?? 0, y: saved.b ?? 0 };
       } else if (cv) {
         this.canvas = canvasFromCardView(this.viewport, cv);
         this.zoomMode = { fit: false, zoom: this.canvas.zoom };
       } else {
         this.zoomMode = { fit: true };
-        this.canvas = canvasFit(canvasBounds(this.card), this.viewport);
+        this.canvas = canvasFit(canvasBounds(this.card, CANVAS_MARGIN), this.viewport);
       }
     } else if (saved) {
       this.zoomMode = saved.fit ? { fit: true } : { fit: false, zoom: saved.zoom };
@@ -949,8 +948,8 @@ export class Surface {
       this.marks.append(el);
       this.markEls.set(t.id, el);
     }
-    const p = this.markPoint(t);
-    this.place(el, p.x, p.y);
+    const at = placeMark('thread', t.id, { point: this.markPoint(t), detached: false });
+    this.place(el, at.x, at.y);
     el.textContent = String(n);
     const first = t.messages[0];
     el.title = `${first ? `${authorName(first.author)}: ${first.text}` : 'Comment'}${t.messages.length > 1 ? ` (+${t.messages.length - 1})` : ''}`;
@@ -974,8 +973,8 @@ export class Surface {
       this.markEls.set(s.id, el);
     }
     if (el.classList.contains('dragging')) return;
-    const p = this.markPoint(s);
-    this.place(el, p.x + s.box.x, p.y + s.box.y, s.box.w, s.box.h);
+    const at = placeMark('sticky', s.id, { point: this.markPoint(s), detached: false }, s.box);
+    this.place(el, at.x, at.y, at.w, at.h);
     el.style.setProperty('--sticky', STICKY_COLORS[s.color]);
     const text = el.querySelector<HTMLElement>('.wb-sticky-text');
     if (text && this.editing?.id !== s.id) {
@@ -999,7 +998,7 @@ export class Surface {
         b.style.background = STICKY_COLORS[c];
         b.addEventListener('click', (e) => {
           e.stopPropagation();
-          void this.host.apply([{ op: 'sticky.edit', card: this.card.id, id, color: c }], 'Recoloring the sticky');
+          void this.host.apply([stickyEditOp(this.card.id, id, { color: c })], 'Recoloring the sticky');
         });
         return b;
       }),
@@ -1007,7 +1006,7 @@ export class Surface {
     const del = h('button.wb-mark-x', { type: 'button', title: 'Delete the sticky', 'aria-label': 'Delete the sticky' }, '✕');
     del.addEventListener('click', (e) => {
       e.stopPropagation();
-      void this.host.apply([{ op: 'sticky.rm', card: this.card.id, id }], 'Deleting the sticky');
+      void this.host.apply([markRemoveOp(this.card.id, 'sticky', id)], 'Deleting the sticky');
     });
     const bar = h('div.wb-sticky-bar', {}, h('span.wb-sticky-who'), colors, del);
     const text = h('div.wb-sticky-text');
@@ -1041,7 +1040,7 @@ export class Surface {
       this.editing = null;
       const value = ta.value;
       text.textContent = keep ? value : s.text;
-      if (keep && value !== s.text) void this.host.apply([{ op: 'sticky.edit', card: this.card.id, id, text: value }], 'Saving the sticky');
+      if (keep && value !== s.text) void this.host.apply([stickyEditOp(this.card.id, id, { text: value })], 'Saving the sticky');
       this.renderMarks();
     };
     const releaseEsc = claimEscape(this.el, () => {
@@ -1068,7 +1067,7 @@ export class Surface {
       const del = h('button.wb-mark-x', { type: 'button', title: 'Delete the picture', 'aria-label': 'Delete the picture' }, '✕');
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        void this.host.apply([{ op: 'picture.rm', card: this.card.id, id: p.id }], 'Deleting the picture');
+        void this.host.apply([markRemoveOp(this.card.id, 'picture', p.id)], 'Deleting the picture');
       });
       const grip = h('div.wb-resize', { title: 'Resize' });
       el = h('div.wb-picture', { 'data-mark': p.id }, img, del, grip);
@@ -1082,8 +1081,8 @@ export class Surface {
     const img = el.querySelector<HTMLImageElement>('img');
     const src = this.host.fileUrl(p.file.hash);
     if (img && img.getAttribute('src') !== src) img.src = src;
-    const at = this.markPoint(p);
-    this.place(el, at.x + p.box.x, at.y + p.box.y, p.box.w, p.box.h);
+    const at = placeMark('picture', p.id, { point: this.markPoint(p), detached: false }, p.box);
+    this.place(el, at.x, at.y, at.w, at.h);
     el.title = `Picture from ${authorName(p.stamps.file.author)}`;
     this.flags(el, p.id, { detached: this.detached('picture', p.id), changed });
   }
@@ -1108,8 +1107,9 @@ export class Surface {
         if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < DRAG_PX) return;
         moved = true;
         el.classList.add('dragging');
-        if (what === 'move') this.place(el, origin.x + box.x + dx, origin.y + box.y + dy);
-        else this.place(el, origin.x + box.x, origin.y + box.y, Math.max(40, box.w + dx), Math.max(40, box.h + dy));
+        const next = dragPreview(origin, box, dx, dy, what);
+        if (what === 'move') this.place(el, next.x, next.y);
+        else this.place(el, next.x, next.y, next.w, next.h);
       };
       const up = async (ev: PointerEvent) => {
         handle.removeEventListener('pointermove', move);
@@ -1121,21 +1121,9 @@ export class Surface {
         }
         const dx = (ev.clientX - start.x) / this.zoom;
         const dy = (ev.clientY - start.y) / this.zoom;
-        const ops: Op[] = [];
-        const card = this.card.id;
-        if (what === 'resize') {
-          const size = { w: Math.round(Math.max(40, box.w + dx)), h: Math.round(Math.max(40, box.h + dy)) };
-          ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: size } : { op: 'picture.move', card, id, box: size });
-        } else if (this.card.kind === 'canvas' || mark.anchor.kind === 'point') {
-          const at = { x: Math.round(box.x + dx), y: Math.round(box.y + dy) };
-          ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: at } : { op: 'picture.move', card, id, box: at });
-        } else {
-          // On an artifact a moved mark is anchored again where it was dropped, so it follows that element.
-          const anchor = await this.anchorAt({ x: origin.x + box.x + dx, y: origin.y + box.y + dy });
-          const zero = { x: 0, y: 0 };
-          ops.push(kind === 'sticky' ? { op: 'sticky.reattach', card, id, anchor } : { op: 'picture.reattach', card, id, anchor });
-          if (box.x !== 0 || box.y !== 0) ops.push(kind === 'sticky' ? { op: 'sticky.move', card, id, box: zero } : { op: 'picture.move', card, id, box: zero });
-        }
+        // On an artifact a moved mark is anchored again where it was dropped, so it follows that element.
+        const anchor = what === 'move' && this.card.kind !== 'canvas' && mark.anchor.kind !== 'point' ? await this.anchorAt(dragPreview(origin, box, dx, dy, 'move')) : undefined;
+        const ops = dragMarkOps({ card: this.card.id, kind, id, what, box, dx, dy, anchor });
         // The board has it at once (the batch is applied here first), even while it waits to be sent.
         void this.host.apply(ops, what === 'move' ? `Moving the ${kind}` : `Resizing the ${kind}`);
         el.classList.remove('dragging');
@@ -1257,15 +1245,9 @@ export class Surface {
     if (!pick) return;
     this.stopPicking();
     const anchor = await this.anchorAt(p);
-    const card = this.card.id;
     const id = pick.id;
-    const ops: Op[] = [];
-    if (pick.kind === 'thread') ops.push({ op: 'comment.reattach', card, thread: id, anchor });
-    else {
-      const mark = this.findMark(pick.kind, id) as Sticky | Picture | undefined;
-      ops.push(pick.kind === 'sticky' ? { op: 'sticky.reattach', card, id, anchor } : { op: 'picture.reattach', card, id, anchor });
-      if (mark && (mark.box.x !== 0 || mark.box.y !== 0)) ops.push(pick.kind === 'sticky' ? { op: 'sticky.move', card, id, box: { x: 0, y: 0 } } : { op: 'picture.move', card, id, box: { x: 0, y: 0 } });
-    }
+    const mark = pick.kind === 'thread' ? undefined : (this.findMark(pick.kind, id) as Sticky | Picture | undefined);
+    const ops = reattachMarkOps({ card: this.card.id, kind: pick.kind, id, anchor, box: mark?.box });
     this.sentResolve.delete(id);
     this.located.delete(id);
     void this.host.apply(ops, 'Reattaching');
@@ -1276,7 +1258,7 @@ export class Surface {
     const box = dragBox(a, b, STICKY_SIZE);
     const anchor = await this.anchorAt({ x: box.x, y: box.y });
     const id = newId('s');
-    void this.host.apply([{ op: 'sticky.add', card: this.card.id, id, anchor, box: { x: 0, y: 0, w: box.w, h: box.h }, text: '', color: 'yellow' }], 'Adding the sticky');
+    void this.host.apply([stickyAddOp(this.card.id, id, anchor, box)], 'Adding the sticky');
     setTimeout(() => this.editSticky(id), 30);
   }
 
@@ -1301,7 +1283,7 @@ export class Surface {
       if (!text) return ta.focus();
       this.closeComposer();
       const thread = newId('t');
-      void this.host.apply([{ op: 'comment.add', card: this.card.id, thread, message: newId('m'), anchor: await anchorP, text }], 'Adding the comment');
+      void this.host.apply([commentAddOp(this.card.id, thread, newId('m'), await anchorP, text)], 'Adding the comment');
       this.selected = thread;
       this.host.selectMark('thread', thread);
     };

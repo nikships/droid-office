@@ -8,7 +8,8 @@ import { store } from '../state';
 import { STATUS_LABEL, h, openModal } from './dom';
 import { colorDot, emptyState, field, windowHeader } from './kit';
 import { uploadBlob } from './whiteboard-surface';
-import { folderFiles, mimeFor, newId, pingRows, pingedText } from './whiteboard-view';
+import { folderFiles, mimeFor, pingRows, pingedText } from './whiteboard-picker';
+import { newId } from './whiteboard-view';
 
 const MB = 1024 * 1024;
 

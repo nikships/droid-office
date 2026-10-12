@@ -3,29 +3,39 @@ import assert from 'node:assert/strict';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { CANONICAL_WIDTH, OWNER_AUTHOR, applyOps, emptyBoard, type Author, type Board, type Op } from '../src/shared/whiteboard.js';
 import {
+  canvasBounds,
+  changesSince,
+  commentAddOp,
+  commentReplyOp,
+  commentResolveOp,
+  dragBox,
+  dragMarkOps,
+  markRemoveOp,
+  pictureAddOp,
+  pictureSize,
+  placeMarks,
+  reattachMarkOps,
+  stickyAddOp,
+  stickyEditOp,
+} from '../src/shared/whiteboard-place.js';
+import { folderFiles, mimeFor, pingRows, pingedText } from '../src/client/ui/whiteboard-picker.js';
+import {
+  CANVAS_MARGIN,
   ZOOM_MAX,
   ZOOM_MIN,
   artifactCardView,
   artifactFromCardView,
   artifactLayout,
   authorName,
-  canvasBounds,
   canvasCardView,
   canvasFit,
   canvasFromCardView,
   changedCount,
-  changesSince,
   clampZoom,
   copyForAgent,
-  dragBox,
   fitZoom,
-  folderFiles,
-  mimeFor,
   newId,
   ownerReadPoint,
-  pictureSize,
-  pingRows,
-  pingedText,
   stepZoom,
   viewMoved,
   wheelNavigation,
@@ -144,17 +154,26 @@ test('artifact: the CardView is the region in view, and opening from it gives th
 
 test('canvas: bounds round the marks, fit, zoom about a point, and its CardView', () => {
   const anchor = (x: number, y: number) => ({ kind: 'point' as const, point: { x, y } });
-  const blank = canvasBounds({ threads: [], stickies: [], pictures: [] });
+  const blank = canvasBounds({ threads: [], stickies: [], pictures: [] }, CANVAS_MARGIN);
   assert.deepEqual(blank, { x: 0, y: 0, w: CANONICAL_WIDTH, h: 720 });
-  const b = canvasBounds(
-    {
-      threads: [{ id: 't', anchor: anchor(-100, 50), resolved: false, messages: [], stamps: {} as never }],
-      stickies: [{ id: 's', text: '', color: 'yellow', anchor: anchor(400, 300), box: { x: 10, y: 10, w: 200, h: 160 }, stamps: {} as never }],
-      pictures: [],
-    },
-    0,
-  );
+  const card = {
+    threads: [{ id: 't', anchor: anchor(-100, 50), resolved: false, messages: [], stamps: {} as never }],
+    stickies: [{ id: 's', text: '', color: 'yellow', anchor: anchor(400, 300), box: { x: 10, y: 10, w: 200, h: 160 }, stamps: {} as never }],
+    pictures: [],
+  };
+  const b = canvasBounds(card, 0);
   assert.deepEqual(b, { x: -100, y: 50, w: 710, h: 420 });
+  // The window's fit margin is 80. The renderer passes 48 into the same bounds; it is not this number.
+  assert.deepEqual(canvasBounds(card, CANVAS_MARGIN), { x: -180, y: -30, w: 870, h: 580 });
+  const placed = placeMarks(card);
+  assert.deepEqual(
+    placed.map((m) => [m.kind, m.x, m.y, m.w, m.h]),
+    [
+      ['sticky', 410, 310, 200, 160],
+      ['thread', -100, 50, 1, 1],
+    ],
+  );
+  assert.equal(placeMarks(card, undefined, 28).find((m) => m.kind === 'thread')?.x, -114);
   const vp = { w: 800, h: 600 };
   const fit = canvasFit({ x: 0, y: 0, w: 1600, h: 600 }, vp);
   assert.equal(fit.zoom, 0.5);
@@ -180,6 +199,31 @@ test('a drag becomes a sticky box; a short one gets the default size', () => {
   assert.deepEqual(dragBox({ x: 0, y: 0 }, { x: 100, y: 5 }, { w: 200, h: 160 }), { x: 0, y: 0, w: 100, h: 40 }, 'at least the minimum');
   assert.deepEqual(pictureSize({ w: 1920, h: 1080 }), { w: 480, h: 270 });
   assert.deepEqual(pictureSize({ w: 100, h: 50 }), { w: 100, h: 50 });
+  const point = { kind: 'point' as const, point: { x: 1, y: 2 } };
+  const box = { x: 0, y: 0, w: 200, h: 160 };
+  assert.deepEqual(stickyAddOp('c', 's', point, box), { op: 'sticky.add', card: 'c', id: 's', anchor: point, box: { x: 0, y: 0, w: 200, h: 160 }, text: '', color: 'yellow' });
+  assert.deepEqual(stickyEditOp('c', 's', { text: 'hi' }), { op: 'sticky.edit', card: 'c', id: 's', text: 'hi' });
+  assert.deepEqual(pictureAddOp('c', 'p', { hash: 'a'.repeat(64), size: 4, mime: 'image/png' }, point, { w: 40, h: 20 }), {
+    op: 'picture.add',
+    card: 'c',
+    id: 'p',
+    file: { hash: 'a'.repeat(64), size: 4, mime: 'image/png' },
+    anchor: point,
+    box: { x: 0, y: 0, w: 40, h: 20 },
+  });
+  assert.deepEqual(commentAddOp('c', 't', 'm', point, 'note'), { op: 'comment.add', card: 'c', thread: 't', message: 'm', anchor: point, text: 'note' });
+  assert.deepEqual(commentReplyOp('c', 't', 'm2', 'yes'), { op: 'comment.reply', card: 'c', thread: 't', message: 'm2', text: 'yes' });
+  assert.deepEqual(commentResolveOp('c', 't', false), { op: 'comment.reopen', card: 'c', thread: 't' });
+  assert.deepEqual(markRemoveOp('c', 'thread', 't', 'm'), { op: 'comment.rm', card: 'c', thread: 't', message: 'm' });
+  assert.deepEqual(markRemoveOp('c', 'picture', 'p'), { op: 'picture.rm', card: 'c', id: 'p' });
+  assert.deepEqual(dragMarkOps({ card: 'c', kind: 'sticky', id: 's', what: 'resize', box: { x: 1, y: 2, w: 100, h: 80 }, dx: 10.2, dy: -100 }), [{ op: 'sticky.move', card: 'c', id: 's', box: { w: 110, h: 40 } }]);
+  assert.deepEqual(dragMarkOps({ card: 'c', kind: 'picture', id: 'p', what: 'move', box: { x: 5, y: 6, w: 10, h: 10 }, dx: 1.2, dy: 2.8 }), [{ op: 'picture.move', card: 'c', id: 'p', box: { x: 6, y: 9 } }]);
+  const anchor = { kind: 'element' as const, selector: '#a', offset: { x: 0, y: 0 }, point: { x: 3, y: 4 } };
+  assert.deepEqual(dragMarkOps({ card: 'c', kind: 'sticky', id: 's', what: 'move', box: { x: 2, y: 0, w: 10, h: 10 }, dx: 0, dy: 0, anchor }), [
+    { op: 'sticky.reattach', card: 'c', id: 's', anchor },
+    { op: 'sticky.move', card: 'c', id: 's', box: { x: 0, y: 0 } },
+  ]);
+  assert.deepEqual(reattachMarkOps({ card: 'c', kind: 'thread', id: 't', anchor }), [{ op: 'comment.reattach', card: 'c', thread: 't', anchor }]);
 });
 
 test('changed since you looked: one line per thing someone else did, newest first', () => {
