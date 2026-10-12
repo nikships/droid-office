@@ -6,6 +6,7 @@ import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesStat
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { Worktrees } from './worktrees.js';
+import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
@@ -373,14 +374,12 @@ export class Changes {
       const s = await this.compute(w, t);
       if (s.error) return s.error;
       if (!s.branch || !s.prBase) return "This checkout isn't on a branch of its own";
+      // The board already said whether one is open (see compute). Don't ask the forge a second time.
       if (s.pr) return `There's already a pull request for ${s.branch}: ${s.pr.url}`;
       // Never trust the cached or capped display list to decide whether a checkout is safe to push.
-      if (await git(['status', '--porcelain=v1', '-z', '-uall'], t.cwd)) return 'Commit the changes first';
+      if (await checkoutDirty(t.cwd)) return 'Commit the changes first';
       if (!s.ahead) return `${s.branch} has no commits that ${s.prBase} lacks`;
-      const remotes = (await git(['remote'], t.cwd)).split('\n').filter(Boolean);
-      const remote = remotes.includes('origin') ? 'origin' : remotes[0];
-      if (!remote) return 'This project has no git remote to push to';
-      await git(['push', '-u', remote, s.branch], t.cwd, 120_000);
+      await pushBranch(t.cwd, s.branch, 120_000);
       const { number, url } = await this.pulls.createPull(t.cwd, s.branch, s.prBase, title.trim(), body);
       this.opened.set(openedKey(repo, s.branch), { number, url });
       this.events.toast(`${who} opened a pull request for ${t.name}: ${url}`, 'info');
@@ -510,8 +509,11 @@ export class Changes {
     // With two refs, git takes the merge base with a merge of them both: the newer one's, as a rule.
     const commit = (refs.length && (await gitMaybe(['merge-base', 'HEAD', ...refs], t.cwd))) || head;
     const trees = new Worktrees(t.cwd);
-    const fallback = t.prBaseFallback === undefined ? this.baseBranch : (t.prBaseFallback ?? undefined);
-    const prBase = onBranch && branch !== baseBranch ? await trees.pushedBranch([baseBranch, fallback, trees.defaultBranch()], branch) : undefined;
+    const named = (b: string | null | undefined) => (b && b !== 'HEAD' ? b : undefined);
+    // A target with its own openPull is another floor's repository: the branch this floor opened on
+    // names nothing there, so that slot stays blank (as desk O leaves it for those repositories).
+    const configured = t.openPull ? undefined : this.baseBranch;
+    const prBase = onBranch && branch !== baseBranch ? await choosePullBase(trees, branch, { from: named(t.baseBranch), configured, current: named(t.prBaseFallback), defaultBranch: trees.defaultBranch() }) : undefined;
     return { commit, label, branch: onBranch ? branch : undefined, prBase };
   }
 
