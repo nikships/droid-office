@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gitlabParts, type Forge } from '../shared/floors.js';
-import { githubState, gitlabState, isLive, NO_PIPELINES, type PipelineDetail, type PipelineJob, type PipelineRun, type PipelinesState, type PipelineWorkflow, type WorkflowInput } from '../shared/pipelines.js';
+import { githubState, gitlabState, isLive, NO_PIPELINES, pipelinePolicy, type PipelineDetail, type PipelineJob, type PipelineRun, type PipelinesState, type PipelineWorkflow, type WorkflowInput } from '../shared/pipelines.js';
 import { gh } from './github.js';
 import { gitlabApi, glab } from './gitlab.js';
 
@@ -133,9 +133,10 @@ export class Pipelines {
   private noticeFinished(runs: PipelineRun[], at: number) {
     const live = new Set(runs.filter((r) => isLive(r.state)).map((r) => r.id));
     // The first look only learns what's going; nothing has finished in front of anyone yet.
-    // A run of a workflow the office just started: that workflow, on that branch, made since.
+    // A run of a workflow the office just started: that branch, made since, and (on GitHub) that workflow file.
+    const policy = pipelinePolicy(this.source.forge);
     for (const s of this.started.splice(0)) {
-      const run = runs.find((r) => !this.ours.has(r.id) && (r.path?.endsWith(`/${s.workflow}`) || this.source.forge === 'gitlab') && r.branch === s.branch && Date.parse(r.createdAt) >= s.at - 10_000);
+      const run = runs.find((r) => !this.ours.has(r.id) && (policy.startedBy === 'branch' || !!r.path?.endsWith(`/${s.workflow}`)) && r.branch === s.branch && Date.parse(r.createdAt) >= s.at - 10_000);
       if (run) this.ours.add(run.id);
       else if (Date.now() - s.at < 5 * 60_000) this.started.push(s);
     }
@@ -172,8 +173,9 @@ export class Pipelines {
     if (!run) return 'That run is no longer on the list';
     if (isLive(run.state)) return 'It is still going: cancel it first, or wait for it to finish';
     const err = await this.act(() => this.source.rerun(run, failedOnly));
-    // GitHub and GitLab's retry run the same run again; GitLab's run-it-all is a new pipeline.
-    if (!err && (failedOnly || this.source.forge === 'github')) this.ours.add(run.id);
+    // Retrying the failed jobs keeps this run's id. A full re-run keeps it only when the policy says so.
+    const policy = pipelinePolicy(this.source.forge);
+    if (!err && (failedOnly || policy.fullRerunKeepsId)) this.ours.add(run.id);
     else if (!err) this.started.push({ workflow: 'pipeline', branch: run.branch, at: Date.now() });
     return err;
   }

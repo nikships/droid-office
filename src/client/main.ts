@@ -94,7 +94,7 @@ import { openAsk } from './ui/ask';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
-import { isLive, stateWord } from '../shared/pipelines';
+import { isLive, pipelinePolicy, stateWord } from '../shared/pipelines';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
@@ -252,7 +252,7 @@ store.on('workers', () => {
   renderPullsBoard();
 });
 const pipelinesTex = new PipelinesBoardTexture();
-const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
+const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge, Date.now());
 mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
 // Running runs' clocks and spinners move each second; the texture skips a redraw that would look the same.
 setInterval(() => {
@@ -2054,7 +2054,7 @@ function paletteEntries(): PaletteEntry[] {
       icon: '🚀',
       kind: 'Board',
       title: 'Pipelines board',
-      detail: store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions runs: running, waiting and recent',
+      detail: pipelinePolicy(store.project?.forge).copy.paletteDetail,
       keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
       open: () => showPipelines(),
     }),
@@ -2063,7 +2063,7 @@ function paletteEntries(): PaletteEntry[] {
     atSpot('actions', 'the Pipelines board', {
       icon: '▶',
       kind: 'Action',
-      title: store.project?.forge === 'gitlab' ? 'Run a pipeline' : 'Run a workflow',
+      title: pipelinePolicy(store.project?.forge).copy.runAction,
       detail: 'Start CI by hand on a branch',
       keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
       open: () => showPipelines({ run: true }),
@@ -2597,7 +2597,7 @@ function hintFor(it: Interactable): Hint {
       if (run) return { k: `run:${run.id}:${run.state}`, parts: [title(clip(`🚀 ${run.workflow} #${run.number} · ${run.title}`, 60)), aside(stateWord(run)), key('E', 'Open the run')] };
       const live = p.runs.filter((r) => isLive(r.state)).length;
       const about = p.error ? "can't read the runs" : live ? `${live} running or waiting` : p.runs.length ? 'all quiet' : '';
-      return { k: about, parts: [title(store.project?.forge === 'gitlab' ? '🚀 GitLab pipelines' : '🚀 GitHub Actions'), about ? aside(about) : '', key('E', 'Open')] };
+      return { k: about, parts: [title(pipelinePolicy(store.project?.forge).copy.hint), about ? aside(about) : '', key('E', 'Open')] };
     }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
@@ -3208,7 +3208,7 @@ const hudActions: HudAction[] = [
     label: 'Pipelines',
     section: 'Open',
     count: () => store.pipelines.runs.filter((r) => isLive(r.state)).length,
-    title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
+    title: () => pipelinePolicy(store.project?.forge).copy.menuTitle,
     run: () => showPipelines(),
   },
   {
