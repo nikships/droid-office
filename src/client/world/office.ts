@@ -337,23 +337,16 @@ function ledBar(length: number, drop: number, lit: THREE.Material): THREE.Group 
   return g;
 }
 
-/** A caged high-bay lamp, its lit lens at 0, on a rod `drop` meters up to the ceiling. */
-function highBay(drop: number, lit: THREE.Material): THREE.Group {
+/** A high-bay lamp shade, its open mouth at 0, on a rod `drop` meters up to the ceiling. */
+function highBay(drop: number): THREE.Group {
   const g = new THREE.Group();
   const steel = toon(PALETTE.steel);
   g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, drop, 4), steel, 0, drop / 2 + 0.3, 0, false));
   g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 8), toon(PALETTE.ink), 0, 0.26, 0, false));
-  g.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), toon('#727272'), 0, 0.1, 0, false));
-  g.add(mesh(new THREE.CircleGeometry(0.38, 10).rotateX(Math.PI / 2), lit, 0, 0.0, 0, false));
-  // The guard: a ring and a few bars under the lens.
-  const ring = mesh(new THREE.TorusGeometry(0.34, 0.008, 3, 10), steel, 0, -0.14, 0, false);
-  ring.rotation.x = Math.PI / 2;
-  g.add(ring);
-  for (let i = 0; i < 4; i++) {
-    const bar = mesh(new THREE.BoxGeometry(0.68, 0.012, 0.012), steel, 0, -0.14, 0, false);
-    bar.rotation.y = (i * Math.PI) / 4;
-    g.add(bar);
-  }
+  // Both sides, so looking up into the open shade shows its inside rather than through it.
+  const shade = toonUnique('#727272');
+  shade.side = THREE.DoubleSide;
+  g.add(mesh(new THREE.CylinderGeometry(0.16, 0.4, 0.22, 10, 1, true), shade, 0, 0.1, 0, false));
   return g;
 }
 
@@ -927,7 +920,6 @@ function buildCeiling(night: NightParts): THREE.Group {
       const bar = ledBar(3.6, H - barY - 0.07, lit);
       bar.position.set(cx, barY, cz + dz);
       g.add(bar);
-      night.halos.push({ at: new THREE.Vector3(cx, barY - 0.04, cz + dz), size: 1.0, color: '#fff1dc' });
     }
   }
   // High-bay lamps: a pair over the lounge, hung from the purlins either side of the east wall's
@@ -938,10 +930,9 @@ function buildCeiling(night: NightParts): THREE.Group {
     [13, PURLIN_ZS[3], H - PURLIN_DEPTH],
     [-14.5, 10.4, H],
   ]) {
-    const lamp = highBay(top - bayY - 0.3, lit);
+    const lamp = highBay(top - bayY - 0.3);
     lamp.position.set(x, bayY, z);
     g.add(lamp);
-    night.halos.push({ at: new THREE.Vector3(x, bayY - 0.05, z), size: 1.3, color: '#fff1dc' });
   }
   return mergeByMaterial(g);
 }
@@ -1506,7 +1497,7 @@ export function buildOffice(): Office {
 
   const bossScreen = buildLoft(group, colliders, interactables, looks);
   // Under the loft: the unused glass room.
-  buildGlassRoom(group, colliders, doors, night);
+  buildGlassRoom(group, colliders, doors);
   fixture('south', GLASS_ROOM_BOARD.x, GLASS_ROOM_BOARD.y, GLASS_ROOM_BOARD.width + 0.4, GLASS_ROOM_BOARD.height + 0.4);
 
   // The elevator to the other floors, against the north wall between the PR board and the gong.
@@ -1608,7 +1599,7 @@ export function buildOffice(): Office {
 /**
  * Scenery under the loft: glass walls, a sliding door, a table, chairs and static screens.
  */
-function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[], night: NightParts): void {
+function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]): void {
   const R = GLASS_ROOM;
   const H = R.height;
   const T = 0.1;
@@ -1724,7 +1715,6 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   for (const dx of [-0.95, 0.95]) {
     recessed.add(mesh(box(1.5, 0.03, 0.24), toon('#727272'), top.x + dx, H - 0.012, top.z, false));
     recessed.add(mesh(box(1.4, 0.02, 0.14), toon('#fff3e0', { emissive: '#ffe3b8' }), top.x + dx, H - 0.03, top.z, false));
-    night.halos.push({ at: new THREE.Vector3(top.x + dx, H - 0.08, top.z), size: 0.9, color: '#fff1dc' });
   }
   group.add(mergeByMaterial(recessed));
 }
