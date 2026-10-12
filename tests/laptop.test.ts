@@ -123,6 +123,16 @@ test('a laptop opens its procedural stand-in lid and paints its screen', (t) => 
   const inner = laptop as unknown as { baseModel: THREE.Group; lidModel: THREE.Group; lid: THREE.Group };
   assert.equal(inner.baseModel.children.length, 3);
   assert.equal(inner.lidModel.children.length, 3);
+  const pinwheel = inner.lidModel.getObjectByName('pinwheel-decal') as THREE.Mesh;
+  assert.ok(pinwheel?.isMesh, 'the pinwheel is the emblem, not a group with a light behind it');
+  assert.equal(pinwheel.children.length, 0);
+  const mark = pinwheel.material as THREE.MeshBasicMaterial;
+  assert.equal(mark.isMeshBasicMaterial, true);
+  assert.equal(mark.toneMapped, false, 'the blades are unlit, so the emblem glows');
+  assert.equal(mark.blending, THREE.NormalBlending);
+  assert.equal(mark.transparent, false);
+  assert.equal(mark.map, null);
+  assert.ok(mark.color.equals(new THREE.Color('#ee6018')));
   assert.equal(laptop.screen.parent, inner.lidModel);
   assert.equal(laptop.screen.geometry.type, 'PlaneGeometry');
   const closed = inner.lid.rotation.x;
