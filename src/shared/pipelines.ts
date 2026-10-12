@@ -2,6 +2,10 @@
 // server/pipelines.ts through gh or glab, drawn on the 02 PIPELINES board on the north wall
 // (world/boards.ts) and listed in the Pipelines window (ui/pipelines.ts). Both forges speak these
 // shapes; what each one calls a status is kept in `status`, and `state` is the office's word for it.
+// What differs between the forges (which run was just started, whether a full re-run keeps its id,
+// and the words on the window, the wall and the station) is `PIPELINE_POLICIES` below.
+
+import type { Forge } from './floors.js';
 
 /** Where a run stands: waiting to start, running, or how it ended. */
 export type RunState = 'pending' | 'running' | 'success' | 'failure' | 'cancelled' | 'skipped';
@@ -231,4 +235,114 @@ export function stateWord(run: Pick<PipelineRun, 'state' | 'status'>): string {
     return 'queued';
   }
   return STATE_WORD[run.state];
+}
+
+/** The words one forge uses for its pipelines, kept as they are shown today. */
+export interface PipelineCopy {
+  /** Pipelines window title. */
+  windowTitle: string;
+  /** The header button that opens the run form. */
+  runButton: string;
+  /** Run form heading. */
+  runTitle: string;
+  /** Run form explanation. */
+  runBlurb: string;
+  /** Empty Pipelines window, with its period. */
+  emptyWindow: string;
+  /** Empty wall, without a period. */
+  emptyWall: string;
+  /** Wall title, mono uppercase. */
+  wallTitle: string;
+  /** The command in the wall's window bar. */
+  wallCommand: string;
+  /** Crosshair hint at the board, emoji included. */
+  hint: string;
+  /** ☰ menu title for the board. */
+  menuTitle: string;
+  /** Command palette detail for the board. */
+  paletteDetail: string;
+  /** Command palette title for starting one by hand. */
+  runAction: string;
+  /** Link under a job. */
+  jobLog: string;
+  /** Button that re-runs the failed jobs. */
+  retryLabel: string;
+  retryTitle: string;
+  /** Button that runs the whole thing again. */
+  rerunLabel: string;
+  rerunTitle: string;
+}
+
+/**
+ * How the office treats one forge's pipelines. The adapters still do the I/O; this is the policy
+ * around a run the office started, a full re-run, and the words.
+ */
+export interface PipelinePolicy {
+  /**
+   * How a run started from the office is recognized, besides the branch and the time (10s of slack).
+   * `workflow-file`: its path ends with `/${workflow}`. `branch`: the branch and the time are enough.
+   */
+  startedBy: 'workflow-file' | 'branch';
+  /** A full re-run keeps the same run id. Retrying only the failed jobs keeps the id on either forge. */
+  fullRerunKeepsId: boolean;
+  /** The run form: CI variables for one pipeline, or a workflow and the inputs it declares. */
+  form: 'variables' | 'workflow';
+  copy: PipelineCopy;
+}
+
+export const GITHUB_PIPELINES: PipelinePolicy = {
+  startedBy: 'workflow-file',
+  fullRerunKeepsId: true,
+  form: 'workflow',
+  copy: {
+    windowTitle: 'GitHub Actions',
+    runButton: '▶ Run workflow',
+    runTitle: 'Run a workflow',
+    runBlurb: 'Starts a workflow that has a workflow_dispatch trigger, on a branch or tag.',
+    emptyWindow: 'Runs of the workflows in .github/workflows show up here as they run.',
+    emptyWall: 'Workflows in .github/workflows show up here as they run',
+    wallTitle: 'GITHUB ACTIONS',
+    wallCommand: 'gh run list -- 02 pipelines',
+    hint: '🚀 GitHub Actions',
+    menuTitle: 'GitHub Actions: running, waiting and recent',
+    paletteDetail: 'GitHub Actions runs: running, waiting and recent',
+    runAction: 'Run a workflow',
+    jobLog: 'Logs ↗',
+    retryLabel: 'Re-run failed jobs',
+    retryTitle: 'Run only the jobs that failed (and what needs them) again',
+    rerunLabel: 'Re-run all jobs',
+    rerunTitle: 'Run every job again',
+  },
+};
+
+export const GITLAB_PIPELINES: PipelinePolicy = {
+  startedBy: 'branch',
+  fullRerunKeepsId: false,
+  form: 'variables',
+  copy: {
+    windowTitle: 'GitLab pipelines',
+    runButton: '▶ Run pipeline',
+    runTitle: 'Run a pipeline',
+    runBlurb: 'Starts a new pipeline from .gitlab-ci.yml on a branch or tag.',
+    emptyWindow: 'Pipelines from .gitlab-ci.yml show up here as they run.',
+    emptyWall: 'Pipelines from .gitlab-ci.yml show up here as they run',
+    wallTitle: 'GITLAB PIPELINES',
+    wallCommand: 'glab ci list -- 02 pipelines',
+    hint: '🚀 GitLab pipelines',
+    menuTitle: 'GitLab pipelines: running, waiting and recent',
+    paletteDetail: 'GitLab pipelines: running, waiting and recent',
+    runAction: 'Run a pipeline',
+    jobLog: 'Job log ↗',
+    retryLabel: 'Retry failed jobs',
+    retryTitle: 'Retry the jobs that failed',
+    rerunLabel: 'Run again',
+    rerunTitle: 'Start a new pipeline on the same commit',
+  },
+};
+
+/** The two forges. An unknown forge reads as GitHub, which is what the boards did before a project loaded. */
+export const PIPELINE_POLICIES: Record<Forge, PipelinePolicy> = { github: GITHUB_PIPELINES, gitlab: GITLAB_PIPELINES };
+
+export function pipelinePolicy(forge: Forge | undefined): PipelinePolicy {
+  return forge ? PIPELINE_POLICIES[forge] : PIPELINE_POLICIES.github;
 }

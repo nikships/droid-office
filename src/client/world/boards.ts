@@ -3,7 +3,7 @@ import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
 import { DESK_BY_ID } from '../../shared/layout';
 import type { GhIssue, GhPull, GhState, WorkerInfo } from '../../shared/protocol';
 import type { Forge } from '../../shared/floors';
-import { pipelineGroups, type PipelinesState, type RunState } from '../../shared/pipelines';
+import { pipelineGroups, pipelinePolicy, type PipelinesState, type RunState } from '../../shared/pipelines';
 import { runRows } from './pipeline-rows';
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
 import { words, workerForPull } from '../state';
@@ -581,7 +581,7 @@ export class PipelinesBoardTexture {
   /** The rows as they were last drawn, for pointing at. */
   private rows: { id: number; y: number; h: number }[] = [];
   private hovered: number | null = null;
-  private last: [PipelinesState, Forge, number] | null = null;
+  private last: [PipelinesState, Forge | undefined, number] | null = null;
 
   constructor() {
     this.canvas.width = BOARD_W * SCREEN_SCALE;
@@ -608,7 +608,7 @@ export class PipelinesBoardTexture {
     if (this.last) this.render(...this.last);
   }
 
-  render(state: PipelinesState, forge: Forge, now = Date.now()) {
+  render(state: PipelinesState, forge: Forge | undefined, now = Date.now()) {
     this.last = [state, forge, now];
     const rows = runRows(state, now);
     const shown = rows.slice(0, 6);
@@ -618,6 +618,7 @@ export class PipelinesBoardTexture {
     const live = groups.running.length > 0;
     // The spinner on a running row turns a step each second.
     const phase = live ? Math.floor(now / 1000) % 8 : 0;
+    const copy = pipelinePolicy(forge).copy;
     const key = JSON.stringify([shown, rows.length, finished.map((r) => r.state), state.error, state.fetchedAt > 0, forge, this.hovered, phase]);
     if (key === this.drawn) return;
     this.drawn = key;
@@ -642,14 +643,14 @@ export class PipelinesBoardTexture {
     g.textBaseline = 'middle';
     mono(g, 500, 16, 0.06);
     g.fillStyle = FAINT;
-    g.fillText(forge === 'gitlab' ? 'glab ci list -- 02 pipelines' : 'gh run list -- 02 pipelines', W / 2, 21);
+    g.fillText(copy.wallCommand, W / 2, 21);
 
     // The title row: the pinwheel and the forge's CI in orange, what's going on the right.
     g.textAlign = 'left';
     g.fillStyle = ORANGE;
     paintGlyph(g, 52, 78, 30);
     mono(g, 600, 30, 0.08);
-    g.fillText(forge === 'gitlab' ? 'GITLAB PIPELINES' : 'GITHUB ACTIONS', 80, 79);
+    g.fillText(copy.wallTitle, 80, 79);
     const counts = [groups.running.length && `${groups.running.length} running`, groups.pending.length && `${groups.pending.length} waiting`].filter(Boolean).join('  \u00B7  ');
     g.textAlign = 'right';
     mono(g, 500, 20, 0.02);
@@ -692,7 +693,7 @@ export class PipelinesBoardTexture {
       g.fillText(head, W / 2, (150 + H) / 2 - 10);
       g.fillStyle = MUTED;
       mono(g, 500, 22, 0.02);
-      const why = state.error ?? (loading ? '' : forge === 'gitlab' ? 'Pipelines from .gitlab-ci.yml show up here as they run' : 'Workflows in .github/workflows show up here as they run');
+      const why = state.error ?? (loading ? '' : copy.emptyWall);
       wrap(g, why.replace(/`/g, ''), W - 160, 2).forEach((line, i) => g.fillText(line, W / 2, (150 + H) / 2 + 36 + i * 30));
       g.textAlign = 'left';
       track(g, 0);
