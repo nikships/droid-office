@@ -262,6 +262,7 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && e.
 function surfaceHost(bundled: string, css: string): string {
   return `<!doctype html><html><head><style>${css}
 .wb-surface { width: 1280px; height: 760px; }
+.modal { animation: none; }
 </style></head><body><div id="modal-root"></div><div id="toasts"></div>
 <script>${bundled}</script>
 <script>
@@ -272,6 +273,7 @@ var PIXEL = { kind: 'worker', id: 'w-pixel', name: 'Pixel', color: '#ff8800' };
 window.applied = [];
 window.shut = false;
 window.loads = [];
+window.views = [];
 function commit(ops, actor) {
   var r = WB.applyOps(board, ops, actor || WB.OWNER_AUTHOR, board.rev + 1, Date.now());
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -279,9 +281,9 @@ function commit(ops, actor) {
   if (surface) surface.update(WB.findCard(board, 'c1'));
 }
 function content(hash) { return { entry: 'index.html', files: { 'index.html': { hash: hash, size: 100, mime: 'text/html; charset=utf-8' } } }; }
-window.start = function (page, hash) {
+window.start = function (page, hash, kind) {
   version = page;
-  commit([{ op: 'card.create', card: 'c1', kind: 'html', title: 'Form', content: content(hash) }]);
+  commit([{ op: 'card.create', card: 'c1', kind: kind || 'html', title: 'Form', content: kind === 'canvas' ? undefined : content(hash) }]);
   var host = {
     floor: 'f',
     apply: function (ops) { applied.push(ops); setTimeout(function () { commit(ops); }, 0); return Promise.resolve(true); },
@@ -292,7 +294,7 @@ window.start = function (page, hash) {
     selectMark: function () {},
     changed: function () {},
     located: function () {},
-    view: function () {},
+    view: function (v) { views.push(v); },
     changedMarks: function () { return new Set(); },
     render: function () { return undefined; }
   };
@@ -309,6 +311,156 @@ window.fields = function () { var c = WB.findCard(board, 'c1'); return (c && c.s
 }
 
 const hash = (n: number) => n.toString(16).padStart(64, 'a');
+
+test('trackpad and drag navigation crosses the live iframe without breaking forms, nested scroll or markup', { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1440, height: 900 } });
+  t.after(() => context.close().catch(() => {}));
+  const html = `<!doctype html><style>
+    html { scroll-behavior: smooth; } body { margin: 0; height: 6000px; font: 18px sans-serif; }
+    h1 { margin: 0; padding: 32px; } #nested { width: 250px; height: 120px; overflow: auto; }
+    #nested div { height: 500px; } input { margin: 24px; }
+    </style><h1>Navigation test</h1><input name="answer"><div id="nested"><div>Scrollable content</div></div>`;
+  const css = readFileSync('src/client/style.css', 'utf8').replace(/^@import[^\n]*\n/m, '');
+  const bundled = bundle(SURFACE_ENTRY, 'WB');
+  await serve(context, () => surfaceHost(bundled, css), new Map([['nav', html]]));
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  await page.evaluate(`start('nav', '${hash(1)}'); surface.el.style.width = '800px'; surface.el.style.height = '550px'`);
+  const frame = await waitFor(() => frameOf(page, 'nav'), 'the live frame');
+  await frame.waitForFunction('whiteboard.card.id === "c1"');
+  await waitFor(() => page.evaluate('surface.zoom === 0.625 && surface.slot.layout.height === 6000'), 'Fit at the final viewport size');
+
+  // Real diagonal wheel input over the iframe pans in device pixels, not zoomed page pixels.
+  const rect = await page.locator('.wb-surface').boundingBox();
+  assert.ok(rect);
+  const px = rect.x + 350;
+  const py = rect.y + 300;
+  await page.mouse.move(px, py);
+  await page.mouse.wheel(0, 180);
+  await waitFor(() => frame.evaluate('Math.abs(scrollY - 288) < 2'), 'two-finger page pan');
+  assert.equal(await page.evaluate('surface.zoom'), 0.625);
+
+  // Native Ctrl-wheel is how Chromium delivers a trackpad pinch. It zooms the board, not the browser.
+  const cdp = await context.newCDPSession(page);
+  const before = (await page.evaluate('({ x: 350 / surface.zoom, y: surface.art.scrollY + 300 / surface.zoom })')) as { x: number; y: number };
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: px, y: py, deltaX: 0, deltaY: -30, modifiers: 2 });
+  await waitFor(() => page.evaluate('surface.zoom > 0.8'), 'pinch zoom from inside the iframe');
+  const after = (await page.evaluate(`({ x: (350 - surface.stage.getBoundingClientRect().left + surface.el.getBoundingClientRect().left) / surface.zoom, y: surface.art.scrollY + 300 / surface.zoom })`)) as { x: number; y: number };
+  assert.ok(Math.abs(before.x - after.x) < 0.01, 'the page point under the pointer stays put horizontally');
+  assert.ok(Math.abs(before.y - after.y) < 2, `and vertically, within native scroll rounding: ${JSON.stringify({ before, after })}`);
+  assert.equal(await page.evaluate('visualViewport.scale'), 1, 'the office itself is not pinch-zoomed');
+
+  // A burst of fractional gestures keeps accumulating despite asynchronous layout acknowledgements.
+  await page.evaluate('surface.zoomTo(2); surface.scrollFrame(1000)');
+  await waitFor(() => frame.evaluate('scrollY === 1000'), 'scroll at 200%');
+  await frame.evaluate(`for (var i = 0; i < 30; i++) window.dispatchEvent(new WheelEvent('wheel', { clientX: 400, clientY: 200, deltaX: 2.5, deltaY: 3.5, cancelable: true }));`);
+  await waitFor(() => frame.evaluate('Math.abs(scrollY - 1052.5) < 2'), 'every fractional scroll delta was retained');
+  const panX = (await page.evaluate('surface.art.panX')) as number;
+  assert.ok(panX > 37, 'horizontal wheel motion reaches the board');
+  await frame.evaluate(`parent.postMessage({ channel: 'droid-office-whiteboard', nonce: /wb=([^&]+)/.exec(location.hash)[1], type: 'layout', width: 1280, height: 6000, scrollX: 0, scrollY: 0, seq: 0 }, '*')`);
+  await delay(50);
+  assert.ok(((await page.evaluate('surface.art.scrollY')) as number) > 1050, 'an old layout cannot rewind the gesture');
+
+  // Middle-button drag over live HTML, with no need to switch modes.
+  await page.mouse.move(px, py);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(px - 100, py - 100, { steps: 5 });
+  await page.mouse.up({ button: 'middle' });
+  await waitFor(() => page.evaluate('!surface.el.classList.contains("panning") && surface.art.scrollY > 1100'), 'middle-button drag released');
+
+  // The Pan tool covers both content and marks, without producing markup.
+  await page.evaluate('surface.setMode("markup"); surface.setPan(true)');
+  const count = (await page.evaluate('applied.length')) as number;
+  await page.mouse.move(px, py);
+  await page.mouse.down();
+  await page.mouse.move(px + 120, py + 80, { steps: 5 });
+  await page.mouse.up();
+  assert.equal(await page.evaluate('applied.length'), count);
+  assert.equal(await page.locator('.wb-composer').count(), 0);
+  assert.equal(await page.locator('.wb-ghost').count(), 0);
+
+  // Space from inside a frame is temporary; Space while typing remains a literal space.
+  await page.evaluate('surface.setMode("use"); surface.fit(); surface.scrollFrame(0)');
+  await waitFor(() => frame.evaluate('scrollY === 0'), 'back at the top');
+  await frame.locator('h1').click();
+  await page.keyboard.down('Space');
+  await waitFor(() => page.evaluate('surface.el.classList.contains("pan-tool")'), 'Space crossed the iframe');
+  await page.mouse.move(px, py);
+  await page.mouse.down();
+  await page.mouse.move(px, py - 100, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up('Space');
+  await waitFor(() => page.evaluate('!surface.el.classList.contains("pan-tool")'), 'temporary pan released');
+  await page.evaluate('surface.scrollFrame(0)');
+  await waitFor(() => frame.evaluate('scrollY === 0'), 'top for the form');
+  await frame.locator('input').fill('hello');
+  await page.keyboard.press('Space');
+  await page.keyboard.type('world');
+  assert.equal(await frame.locator('input').inputValue(), 'hello world');
+  assert.equal(await page.evaluate('surface.el.classList.contains("pan-tool")'), false);
+  await frame.locator('h1').click();
+  await page.keyboard.press('h');
+  await waitFor(() => page.evaluate('surface.pan'), 'Pan shortcut from the live page');
+  await page.keyboard.press('h');
+  await waitFor(() => page.evaluate('!surface.pan'), 'Pan shortcut toggles back');
+  await page.keyboard.press('1');
+  await waitFor(() => page.evaluate('surface.zoom === 1'), 'actual-size shortcut from the live page');
+  await page.keyboard.press('0');
+  await waitFor(() => page.evaluate('surface.zoomMode.fit'), 'Fit shortcut from the live page');
+  await page.evaluate('surface.scrollFrame(0)');
+  await waitFor(() => frame.evaluate('scrollY === 0'), 'Fit settled before nested scrolling');
+
+  // A nested scroll area remains native until its edge, and pinch still reaches the board there.
+  await frame.locator('#nested').hover();
+  await page.mouse.wheel(0, 80);
+  await waitFor(() => frame.evaluate('document.querySelector("#nested").scrollTop > 0'), 'nested content scrolls');
+  assert.equal(await frame.evaluate('scrollY'), 0);
+  await frame.evaluate('document.querySelector("#nested").scrollTop = 380');
+  await page.mouse.wheel(0, 80);
+  await waitFor(() => frame.evaluate('scrollY > 100'), 'scroll continues on the page at the nested edge');
+  await waitFor(() => page.evaluate('views.length > 0 && localStorage.getItem("droid-office.wb-view")'), 'the view is saved');
+
+  // Close/reopen keeps the region. The same gestures work on a blank canvas without making marks.
+  const saved = (await page.evaluate('JSON.parse(localStorage.getItem("droid-office.wb-view"))["f/c1"]')) as { zoom: number; b: number };
+  await page.reload();
+  await page.evaluate(`start('nav', '${hash(1)}'); surface.el.style.width = '800px'; surface.el.style.height = '550px'`);
+  const restored = await waitFor(() => frameOf(page, 'nav'), 'restored frame');
+  await waitFor(() => restored.evaluate(`Math.abs(scrollY - ${saved.b}) < 2`), 'remembered region');
+  await page.reload();
+  await page.evaluate(`localStorage.clear(); start('canvas', '${hash(2)}', 'canvas'); surface.el.style.width = '800px'; surface.el.style.height = '550px'`);
+  await waitFor(() => page.evaluate('surface.viewport.w === 800'), 'canvas measured');
+  const canvasRect = await page.locator('.wb-surface').boundingBox();
+  assert.ok(canvasRect);
+  await page.mouse.move(canvasRect.x + 300, canvasRect.y + 250);
+  const origin = (await page.evaluate('({ ...surface.canvas })')) as { x: number; y: number; zoom: number };
+  await page.mouse.wheel(90, 120);
+  await waitFor(() => page.evaluate('!surface.zoomMode.fit'), 'canvas pan leaves automatic Fit');
+  const panned = (await page.evaluate('({ ...surface.canvas })')) as typeof origin;
+  assert.ok(Math.abs(panned.x - origin.x - 90 / origin.zoom) < 0.01);
+  assert.ok(Math.abs(panned.y - origin.y - 120 / origin.zoom) < 0.01);
+  await page.evaluate('surface.setPan(true)');
+  await page.mouse.down();
+  await page.mouse.move(canvasRect.x + 400, canvasRect.y + 350, { steps: 5 });
+  await page.mouse.up();
+  assert.equal(await page.locator('.wb-composer').count(), 0);
+  await page.mouse.down();
+  await page.evaluate(`surface.el.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }))`);
+  assert.equal(await page.evaluate('surface.el.classList.contains("panning")'), false, 'pointer cancellation clears the drag');
+  await page.mouse.up();
+  await page.mouse.down();
+  await page.evaluate('window.dispatchEvent(new Event("blur"))');
+  const stopped = await page.evaluate('surface.stage.style.transform');
+  await page.mouse.move(canvasRect.x + 450, canvasRect.y + 380);
+  await page.mouse.up();
+  assert.equal(await page.evaluate('surface.stage.style.transform'), stopped, 'focus loss ends the drag, not just its cursor');
+  await page.evaluate('surface.fit()');
+  assert.equal(await page.evaluate('surface.zoomMode.fit'), true);
+  assert.deepEqual(errors, []);
+});
 
 test('a content reload keeps the focused field, its caret and what was typed; typing and IME compositions hold it off; Esc reaches the window', { skip, timeout: 110_000 }, async (t) => {
   const browser = await launchBrowser();

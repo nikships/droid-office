@@ -59,7 +59,7 @@ export type HostMsg =
   | { type: 'locate'; req: number; anchors: { id: string; anchor: Anchor }[] }
   | { type: 'mode'; mode: BridgeMode }
   /** Restores a scroll position, when the frame scrolls itself. */
-  | { type: 'scrollTo'; x: number; y: number }
+  | { type: 'scrollTo'; x: number; y: number; seq?: number }
   /**
    * After a content reload, focuses what had focus in the frame it replaced (its value and caret too).
    * Sent when the new frame is swapped in and focused, not with `init`: the new frame loads hidden
@@ -78,7 +78,13 @@ export type FrameMsg =
   /** The answer to `locate`: each anchor's page point, or detached when it can't be placed. */
   | { type: 'positions'; req: number; positions: { id: string; point: Point | null; detached: boolean }[] }
   /** The page's laid-out size and scroll, sent on load and whenever either changes. */
-  | { type: 'layout'; width: number; height: number; scrollX: number; scrollY: number }
+  | { type: 'layout'; width: number; height: number; scrollX: number; scrollY: number; seq?: number }
+  /** Wheel deltas are device CSS pixels, but the pointer is in the frame's canonical coordinates. */
+  | { type: 'wheel'; point: Point; dx: number; dy: number; deltaMode: number; zoom: boolean; shift: boolean }
+  | { type: 'space'; pressed: boolean }
+  | { type: 'shortcut'; key: 'm' | 'h' | '+' | '-' | '0' | '1' }
+  /** Middle-button drag coordinates are screen pixels, unaffected by the frame's transform. */
+  | { type: 'pan'; phase: 'start' | 'move' | 'end'; point: Point }
   /** What has focus in the frame now, sent whenever it, its caret or its unsaved value changes; null when nothing does. */
   | { type: 'focus'; field: FocusedField | null }
   /**
@@ -124,7 +130,7 @@ export function parseHostMsg(data: unknown, nonce: string): HostMsg | undefined 
     case 'mode':
       return isMode(d.mode) ? { type: 'mode', mode: d.mode } : undefined;
     case 'scrollTo':
-      return isNum(d.x) && isNum(d.y) ? { type: 'scrollTo', x: d.x, y: d.y } : undefined;
+      return isNum(d.x) && isNum(d.y) && (d.seq === undefined || (isReq(d.seq) && d.seq >= 0)) ? { type: 'scrollTo', x: d.x, y: d.y, ...(d.seq === undefined ? {} : { seq: d.seq }) } : undefined;
     case 'focus': {
       const field = focusedField(d.field);
       return field ? { type: 'focus', field } : undefined;
@@ -165,7 +171,19 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
       if (!d.positions.every((p: unknown) => isObject(p) && typeof p.id === 'string' && (p.point === null || isPoint(p.point)) && typeof p.detached === 'boolean')) return undefined;
       return { type: 'positions', req: d.req, positions: d.positions };
     case 'layout':
-      return isNum(d.width) && isNum(d.height) && isNum(d.scrollX) && isNum(d.scrollY) ? { type: 'layout', width: d.width, height: d.height, scrollX: d.scrollX, scrollY: d.scrollY } : undefined;
+      return isNum(d.width) && isNum(d.height) && isNum(d.scrollX) && isNum(d.scrollY) && (d.seq === undefined || (isReq(d.seq) && d.seq >= 0))
+        ? { type: 'layout', width: d.width, height: d.height, scrollX: d.scrollX, scrollY: d.scrollY, ...(d.seq === undefined ? {} : { seq: d.seq }) }
+        : undefined;
+    case 'wheel':
+      return isPoint(d.point) && isNum(d.dx) && isNum(d.dy) && [0, 1, 2].includes(d.deltaMode) && typeof d.zoom === 'boolean' && typeof d.shift === 'boolean'
+        ? { type: 'wheel', point: d.point, dx: d.dx, dy: d.dy, deltaMode: d.deltaMode, zoom: d.zoom, shift: d.shift }
+        : undefined;
+    case 'space':
+      return typeof d.pressed === 'boolean' ? { type: 'space', pressed: d.pressed } : undefined;
+    case 'shortcut':
+      return ['m', 'h', '+', '-', '0', '1'].includes(d.key) ? { type: 'shortcut', key: d.key } : undefined;
+    case 'pan':
+      return ['start', 'move', 'end'].includes(d.phase) && isPoint(d.point) ? { type: 'pan', phase: d.phase, point: d.point } : undefined;
     case 'focus': {
       if (d.field === null) return { type: 'focus', field: null };
       const field = focusedField(d.field);

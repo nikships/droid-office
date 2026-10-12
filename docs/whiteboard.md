@@ -71,7 +71,10 @@ Two kinds of desk occupant are excluded, and the window and the guide say so:
 - **Grid:** cards newest-first, with their thumbnail, title, author, an "updated 2m ago" time and a changed dot. Actions: **New canvas**, **Add HTML** (paste, or upload a `.html` file or a folder with its assets), and **Ping a worker**.
 - **Artifact:** the card large in its sandbox, a toolbar and a side panel.
   - Modes: **Use** (the default: click, type, press the artifact's buttons) and **Mark up** (a click pins a comment; drag places a sticky). One key toggles them, shown as a `.key`.
-  - Zoom: **Fit**, **100%**, zoom in and out, and pan. The view is remembered per card, and the wall shows what you were looking at.
+  - Navigation: pinch to zoom at the pointer and two-finger pan in both axes, over a live HTML page as well as its marks or a canvas. Ctrl/Cmd + scroll zooms; Shift + scroll pans sideways. Gestures are accumulated once per animation frame without rounding the transform, and old frame layout acknowledgements cannot rewind an in-flight scroll. Nested scrolling areas remain native until their edge.
+  - Pan: **Pan** (**H**) drags anywhere without interacting with the page or moving marks. **Space** holds temporary pan (except while typing or activating a button); a middle-button drag pans in any mode. Pointer release, cancellation and focus loss clear drag cursors.
+  - Zoom controls: **Fit** (**0**, page width or all canvas marks), **100%** (**1**), zoom in/out (**+**/**−**). Navigation shortcuts also cross the sandbox bridge when the page hasn't handled them and the owner isn't typing. The view is remembered per card, and the wall shows what you were looking at.
+  - Workspace: **Marks** hides or shows the side panel, letting the viewport fill the window; a quiet on-surface hint makes the trackpad and Space gestures discoverable.
   - **Comment:** pinned to an element or a spot. It's a thread: the owner and agents add replies, and either side resolves or reopens it. Each message shows its author (a worker's name with its color dot, or "You").
   - **Sticky note:** text in one of a few colors. Move it, resize it, edit it, delete it.
   - **Picture:** paste, drop or pick a PNG, JPEG, WebP or GIF, placed like a sticky.
@@ -281,6 +284,7 @@ From the integration pass. "By test" names the suite in `tests/`; "by hand" was 
 | Ping | Passed by test (`whiteboard-sync`: every status, kind and condition; `whiteboard-e2e`: refused while starting, typed when idle, queued behind a working turn). By hand, the picker refused plain shells and two workers in `needs_input`, each with its reason. |
 | Renderer | Passed by test on macOS from a checkout (`whiteboard-browser`: a real launch with the sandbox on; `whiteboard-render`: install progress, failed downloads, a browser that can't start, no renderer). **Not run:** the packaged signed Mac app, fresh Linux and Windows source checkouts, and an Ubuntu 24.04 EC2 checkout through `deploy/aws.sh`. |
 | UI | Passed by hand at 1440×900 and 1024×700: the grid, Fit and 100% on a long page, the wall's view of it at the last viewport (top and bottom of the page, across tile seams), Esc from inside the frame and on the stack (the ping picker first, then the window), and walking away mid-edit. Passed by test (`whiteboard-window`, `whiteboard-wall`: the view and region math). |
+| Viewport navigation | Passed by test (`whiteboard-sdk`, real Chromium wheel/Ctrl-wheel and pointer input): pointer-anchored pinch, two-axis pan, fractional gesture bursts, stale layout acknowledgements, middle-button drag, Pan while marking up, temporary Space-pan, form typing, navigation shortcuts inside HTML, nested-scroll handoff, remembered views, and canvas navigation. `whiteboard-window` checks subpixel anchors and device delta normalization; `whiteboard-model` checks bridge validation. |
 
 ## Risks and open questions
 

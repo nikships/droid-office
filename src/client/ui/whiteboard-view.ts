@@ -47,6 +47,13 @@ export function zoomLabel(z: number): string {
   return `${Math.round(z * 100)}%`;
 }
 
+/** Normalize device deltas without scaling pixel-based trackpad input by the artifact's zoom. */
+export function wheelNavigation(dx: number, dy: number, deltaMode: number, shift: boolean, zoom: boolean, viewportH: number): { x: number; y: number; factor: number } {
+  const unit = deltaMode === 1 ? 16 : deltaMode === 2 ? viewportH : 1;
+  if (zoom) return { x: 0, y: 0, factor: Math.exp(-Math.max(-240, Math.min(240, dy * unit)) * 0.01) };
+  return { x: (shift && !dx ? dy : dx) * unit, y: (shift && !dx ? 0 : dy) * unit, factor: 1 };
+}
+
 /**
  * An artifact's view: the frame is CANONICAL_WIDTH wide and as tall as the viewport at this zoom, and
  * scrolls itself vertically (its `scrollY`); `panX` is how far its left edge is scrolled out of view
@@ -62,10 +69,10 @@ export interface ArtifactView {
 export function artifactLayout(viewport: Size, zoom: number, panX: number): { frameH: number; left: number; panX: number } {
   const shown = CANONICAL_WIDTH * zoom;
   const frameH = Math.max(1, Math.ceil(viewport.h / zoom));
-  if (shown <= viewport.w) return { frameH, left: Math.round((viewport.w - shown) / 2), panX: 0 };
+  if (shown <= viewport.w) return { frameH, left: (viewport.w - shown) / 2, panX: 0 };
   const max = CANONICAL_WIDTH - viewport.w / zoom;
   const x = Math.min(max, Math.max(0, panX));
-  return { frameH, left: -Math.round(x * zoom), panX: x };
+  return { frameH, left: -x * zoom, panX: x };
 }
 
 /** A new zoom for an artifact, keeping the page point under the screen x `atX` (viewport px) where it is. */

@@ -78,6 +78,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   let dismissedError: unknown = null;
   let readTimer = 0;
   let lastView: CardView | undefined;
+  let marksVisible = true;
 
   const board = (): Board | null => sync.board(floor);
   const fileUrl = (hash: string) => withToken(`/api/whiteboard/file?${new URLSearchParams({ floor, card: card ?? '', hash })}`);
@@ -247,13 +248,13 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       },
       c,
     );
-    main.replaceChildren(buildToolbar(surface), h('div.wb-art', {}, surface.el, panel.el));
+    main.replaceChildren(buildToolbar(surface), h('div.wb-art', { class: marksVisible ? '' : 'marks-hidden' }, surface.el, panel.el));
     paintToolbar();
     panel.render(c);
     surface.el.focus({ preventScroll: true });
   }
 
-  let tb: { use: HTMLElement; markup: HTMLElement; fit: HTMLElement; actual: HTMLElement; label: HTMLElement; hint: HTMLElement } | null = null;
+  let tb: { use: HTMLElement; markup: HTMLElement; pan: HTMLElement; marks: HTMLElement; fit: HTMLElement; actual: HTMLElement; label: HTMLElement; hint: HTMLElement } | null = null;
 
   /** The toolbar, made once per card; paintToolbar keeps it current, so a click never lands on a button being replaced. */
   function buildToolbar(s: Surface): HTMLElement {
@@ -266,6 +267,20 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     tb = {
       use: modeBtn('use', 'Use'),
       markup: modeBtn('markup', 'Mark up'),
+      pan: h('button.btn.sm', { type: 'button', role: 'radio', title: 'Pan without interacting with the page (H). Hold Space for temporary pan.', onclick: () => s.setPan(true) }, 'Pan'),
+      marks: h(
+        'button.btn.sm',
+        {
+          type: 'button',
+          title: 'Show or hide comments and marks',
+          onclick: () => {
+            marksVisible = !marksVisible;
+            main.querySelector('.wb-art')?.classList.toggle('marks-hidden', !marksVisible);
+            paintToolbar();
+          },
+        },
+        'Marks',
+      ),
       fit: h('button.btn.sm', { type: 'button', title: 'Fit to the window (0)', onclick: () => s.fit() }, 'Fit'),
       actual: h('button.btn.sm', { type: 'button', title: 'Actual size (1)', onclick: () => s.actual() }, '100%'),
       label: h('span.wb-zoom-label', { title: 'Zoom' }),
@@ -274,11 +289,12 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     return h(
       'div.wb-toolbar',
       {},
-      h('div.seg', { role: 'radiogroup', 'aria-label': 'Mode' }, tb.use, tb.markup),
+      h('div.seg', { role: 'radiogroup', 'aria-label': 'Mode' }, tb.use, tb.markup, tb.pan),
       h('span.wb-key-hint', {}, h('span.key', { title: 'Switches between Use and Mark up' }, 'M'), tb.hint),
       h('span.grow'),
       h('button.btn.sm', { type: 'button', title: 'Add a PNG, JPEG, WebP or GIF (or paste or drop one)', onclick: () => pick.click() }, '🖼 Picture'),
       pick,
+      tb.marks,
       h(
         'div.seg.wb-zoom',
         { role: 'group', 'aria-label': 'Zoom' },
@@ -299,13 +315,23 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       [tb.use, 'use'],
       [tb.markup, 'markup'],
     ] as const) {
-      btn.classList.toggle('on', s.mode === m);
-      btn.setAttribute('aria-checked', String(s.mode === m));
+      btn.classList.toggle('on', !s.pan && s.mode === m);
+      btn.setAttribute('aria-checked', String(!s.pan && s.mode === m));
     }
+    tb.pan.classList.toggle('on', s.pan);
+    tb.pan.setAttribute('aria-checked', String(s.pan));
+    tb.marks.classList.toggle('on', marksVisible);
+    tb.marks.setAttribute('aria-pressed', String(marksVisible));
     tb.fit.classList.toggle('on', s.zoomMode.fit);
     tb.actual.classList.toggle('on', !s.zoomMode.fit && Math.abs(s.zoom - 1) < 0.001);
     tb.label.textContent = zoomLabel(s.zoom);
-    tb.hint.textContent = s.mode === 'use' ? (canvas ? 'Drag to pan. Mark up adds comments and stickies.' : 'Click, type and press its buttons. Mark up adds comments and stickies.') : 'Click to pin a comment. Drag to place a sticky.';
+    tb.hint.textContent = s.pan
+      ? 'Drag anywhere to pan. Use returns to the page.'
+      : s.mode === 'use'
+        ? canvas
+          ? 'Drag to pan. Mark up adds comments and stickies.'
+          : 'Click, type and press its buttons.'
+        : 'Click to pin a comment. Drag to place a sticky.';
   }
 
   // ---- Header, bars ----
@@ -516,6 +542,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     const s = surface;
     const k = e.key;
     if (k === 'm' || k === 'M') s.setMode(s.mode === 'use' ? 'markup' : 'use');
+    else if (k === 'h' || k === 'H') s.setPan(!s.pan);
     else if (k === '+' || k === '=') s.zoomBy(1);
     else if (k === '-' || k === '_') s.zoomBy(-1);
     else if (k === '0') s.fit();

@@ -6,7 +6,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '2';
+export const SDK_VERSION = '3';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -362,6 +362,75 @@ export const SDK_SCRIPT = String.raw`(function () {
     }, 0);
   });
 
+  // Navigation must cross the iframe boundary. Pinches always belong to the board; ordinary
+  // scrolling stays inside a nested scroller while it has room, then continues across the page.
+  function editable(el) { return el && el.closest && el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'); }
+  var space = false;
+  window.addEventListener('keydown', function (e) {
+    if (!started || rendering || e.code !== 'Space' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target) || (e.target.closest && e.target.closest('button, a, [role="button"]'))) return;
+    e.preventDefault();
+    if (!space) { space = true; post({ type: 'space', pressed: true }); }
+  }, true);
+  function releaseSpace() {
+    if (!space) return;
+    space = false;
+    post({ type: 'space', pressed: false });
+  }
+  window.addEventListener('keyup', function (e) { if (e.code === 'Space') releaseSpace(); }, true);
+  window.addEventListener('blur', releaseSpace);
+  window.addEventListener('keydown', function (e) {
+    if (!started || rendering || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || editable(e.target)) return;
+    var key = e.key.toLowerCase();
+    if (key === '=') key = '+';
+    if (key === '_') key = '-';
+    if (['m', 'h', '+', '-', '0', '1'].indexOf(key) < 0 || (e.repeat && (key === 'm' || key === 'h'))) return;
+    e.preventDefault();
+    post({ type: 'shortcut', key: key });
+  });
+
+  function nestedScroll(e) {
+    var el = e.target;
+    var dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    var dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
+    while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
+      var css = getComputedStyle(el);
+      var y = /auto|scroll/.test(css.overflowY) && el.scrollHeight > el.clientHeight;
+      var x = /auto|scroll/.test(css.overflowX) && el.scrollWidth > el.clientWidth;
+      if (y && ((dy > 0 && el.scrollTop + el.clientHeight < el.scrollHeight - 1) || (dy < 0 && el.scrollTop > 0))) return true;
+      if (x && ((dx > 0 && el.scrollLeft + el.clientWidth < el.scrollWidth - 1) || (dx < 0 && el.scrollLeft > 0))) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+  window.addEventListener('wheel', function (e) {
+    if (!started || rendering || e.defaultPrevented) return;
+    var zoom = e.ctrlKey || e.metaKey;
+    if (!zoom && nestedScroll(e)) return;
+    e.preventDefault();
+    post({ type: 'wheel', point: { x: e.clientX, y: e.clientY }, dx: e.deltaX, dy: e.deltaY, deltaMode: e.deltaMode, zoom: zoom, shift: e.shiftKey });
+  }, { passive: false });
+
+  var panPointer = null;
+  function panEvent(e, phase) { post({ type: 'pan', phase: phase, point: { x: e.screenX, y: e.screenY } }); }
+  window.addEventListener('pointerdown', function (e) {
+    if (!started || rendering || e.button !== 1) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    panPointer = e.pointerId;
+    e.target.setPointerCapture(e.pointerId);
+    panEvent(e, 'start');
+  }, true);
+  window.addEventListener('pointermove', function (e) { if (e.pointerId === panPointer) { e.stopImmediatePropagation(); panEvent(e, 'move'); } }, true);
+  function endPan(e) {
+    if (e.pointerId !== panPointer) return;
+    e.stopImmediatePropagation();
+    panPointer = null;
+    panEvent(e, 'end');
+  }
+  window.addEventListener('pointerup', endPan, true);
+  window.addEventListener('pointercancel', endPan, true);
+  window.addEventListener('auxclick', function (e) { if (started && !rendering && e.button === 1) e.preventDefault(); }, true);
+
   // ---- Buttons and forms ----
 
   function dataOf(el) {
@@ -582,13 +651,14 @@ export const SDK_SCRIPT = String.raw`(function () {
   // ---- Layout ----
 
   var queued = false;
+  var scrollSeq = 0;
   function layout() {
     if (queued) return;
     queued = true;
     requestAnimationFrame(function () {
       queued = false;
       var size = pageSize();
-      post({ type: 'layout', width: size.w, height: size.h, scrollX: window.scrollX, scrollY: window.scrollY });
+      post({ type: 'layout', width: size.w, height: size.h, scrollX: window.scrollX, scrollY: window.scrollY, seq: scrollSeq });
     });
   }
   window.addEventListener('scroll', layout, { passive: true });
@@ -646,7 +716,11 @@ export const SDK_SCRIPT = String.raw`(function () {
       document.documentElement.setAttribute('data-wb-mode', mode);
       fire('mode', mode);
     } else if (d.type === 'scrollTo') {
-      if (num(d.x) && num(d.y)) window.scrollTo(d.x, d.y);
+      if (num(d.x) && num(d.y)) {
+        if (Number.isSafeInteger(d.seq) && d.seq >= 0) scrollSeq = d.seq;
+        window.scrollTo({ left: d.x, top: d.y, behavior: 'instant' });
+        layout();
+      }
     } else if (d.type === 'focus') {
       if (isObj(d.field) && !rendering) restoreFocus(d.field);
     }

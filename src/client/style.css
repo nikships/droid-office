@@ -1842,18 +1842,27 @@ li.cmp-muted:hover { background: none; }
 .wb-toolbar > .grow { flex: 1; min-width: 0; }
 .wb-zoom-label { flex: none; min-width: 44px; text-align: right; font: 500 11px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .wb-art { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+.wb-art.marks-hidden { grid-template-columns: minmax(0, 1fr); }
+.wb-art.marks-hidden > .wb-panel { display: none; }
 @media (max-width: 1100px) { .wb-art { grid-template-columns: minmax(0, 1fr) 280px; } .wb-key-hint .wb-hint-text { display: none; } }
 
-.wb-surface { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #1a1a1a; outline: none; touch-action: none; }
+.wb-surface { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #1a1a1a; outline: none; touch-action: none; overscroll-behavior: contain; }
+.wb-navigation-hint { position: absolute; bottom: var(--space-3); left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: rgba(20, 20, 20, .92); box-shadow: var(--shadow-pop); color: var(--text-secondary); font-size: var(--text-small); white-space: nowrap; pointer-events: none; user-select: none; }
+.wb-navigation-hint > span:not(.key) { color: var(--text-tertiary); }
+@media (max-width: 1100px) { .wb-navigation-hint { font-size: 11px; gap: var(--space-1); } }
 .wb-surface.canvas { background-color: #141414; background-image: radial-gradient(rgba(255, 255, 255, .1) 1px, transparent 1.5px); cursor: grab; }
 .wb-surface.canvas.markup, .wb-surface.canvas.picking { cursor: crosshair; }
 .wb-surface.panning, .wb-surface.panning * { cursor: grabbing !important; }
-.wb-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.wb-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .wb-page { position: relative; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08); }
 .wb-frame { position: absolute; left: 0; top: 0; display: block; border: 0; background: #fff; }
 .wb-frame.incoming { visibility: hidden; }
 .wb-catcher { position: absolute; inset: 0; z-index: 1; display: none; cursor: crosshair; }
 .wb-surface:is(.markup, .picking, .dropping) .wb-catcher { display: block; }
+.wb-surface.pan-tool, .wb-surface.pan-tool .wb-catcher { cursor: grab; }
+.wb-surface.pan-tool .wb-catcher { display: block; }
+.wb-surface.pan-tool .wb-marks { pointer-events: none; }
+.wb-surface.pan-tool .wb-marks > * { pointer-events: none; }
 .wb-surface.dropping .wb-page::after { content: 'Drop a picture to put it here'; position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; border: 3px dashed var(--accent); background: rgba(10, 10, 10, .4); color: #fff; font: 500 calc(18px * var(--wb-unzoom, 1)) var(--font-sans); pointer-events: none; }
 .wb-marks { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2; pointer-events: none; }
 .wb-marks > * { pointer-events: auto; }

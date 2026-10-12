@@ -57,6 +57,7 @@ import {
   newId,
   pictureSize,
   stepZoom,
+  wheelNavigation,
   zoomArtifact,
   zoomCanvas,
 } from './whiteboard-view';
@@ -95,7 +96,8 @@ interface Slot {
   nonce: string;
   contentRev: number;
   ready: boolean;
-  layout?: { width: number; height: number; scrollX: number; scrollY: number };
+  layout?: { width: number; height: number; scrollX: number; scrollY: number; seq?: number };
+  scrollSeq?: number;
   restore?: Point;
   loadedAt: number;
   /** What has focus in the frame, as it last said. */
@@ -188,6 +190,11 @@ export class Surface {
   card: Card;
   mode: Mode = 'use';
   zoomMode: ZoomMode = { fit: true };
+  pan = false;
+  private spacePan = false;
+  private framePan: Point | null = null;
+  private navigationFrame = 0;
+  private navigation: { at: Point; x: number; y: number; factor: number }[] = [];
   private host: SurfaceHost;
   private stage = h('div.wb-stage');
   private page = h('div.wb-page');
@@ -224,7 +231,14 @@ export class Surface {
     this.host = host;
     this.card = card;
     this.frameState = card.state;
-    this.el = h('div.wb-surface', { class: card.kind === 'canvas' ? 'canvas' : 'html', tabindex: '-1' }, this.stage, this.banner, this.placeholder);
+    this.el = h(
+      'div.wb-surface',
+      { class: card.kind === 'canvas' ? 'canvas' : 'html', tabindex: '-1', 'aria-label': 'Whiteboard viewport' },
+      this.stage,
+      this.banner,
+      this.placeholder,
+      h('div.wb-navigation-hint', {}, 'Pinch to zoom', h('span', {}, '·'), 'Two fingers to pan', h('span', {}, '·'), h('span.key', {}, 'Space'), ' + drag'),
+    );
     if (card.kind === 'canvas') this.stage.append(this.marks);
     else {
       this.page.append(this.catcher, this.marks);
@@ -242,6 +256,8 @@ export class Surface {
   }
 
   dispose() {
+    this.flushNavigation();
+    cancelAnimationFrame(this.navigationFrame);
     // Closing the window (Esc in the frame, ✕, another card) removes the frame before its idle save: keep what was typed.
     this.saveTyped(this.slot?.focus);
     this.disposed = true;
@@ -276,6 +292,7 @@ export class Surface {
   }
 
   setMode(mode: Mode) {
+    this.setPan(false);
     if (this.mode === mode) return;
     this.mode = mode;
     this.el.classList.toggle('markup', mode === 'markup');
@@ -283,7 +300,19 @@ export class Surface {
     this.host.changed();
   }
 
+  setPan(pan: boolean) {
+    this.pan = pan;
+    this.el.classList.toggle('pan-tool', this.pan || this.spacePan);
+    this.host.changed();
+  }
+
+  private setSpacePan(pressed: boolean) {
+    this.spacePan = pressed;
+    this.el.classList.toggle('pan-tool', this.pan || this.spacePan);
+  }
+
   fit() {
+    this.flushNavigation();
     this.zoomMode = { fit: true };
     if (this.card.kind === 'canvas') this.canvas = canvasFit(canvasBounds(this.card), this.viewport);
     else this.art = { ...this.art, zoom: fitZoom(this.viewport.w), panX: 0 };
@@ -299,6 +328,7 @@ export class Surface {
   }
 
   zoomTo(z: number, at?: Point) {
+    this.flushNavigation();
     const zoom = clampZoom(z);
     this.zoomMode = { fit: false, zoom };
     const c = at ?? { x: this.viewport.w / 2, y: this.viewport.h / 2 };
@@ -310,6 +340,7 @@ export class Surface {
 
   /** Brings a mark into view and flashes it. */
   focusMark(kind: MarkKind, id: string) {
+    this.flushNavigation();
     const mark = this.findMark(kind, id);
     if (!mark) return;
     this.selected = id;
@@ -551,9 +582,38 @@ export class Surface {
         // Esc in the frame, as if it had been pressed in the office: the window stack's own handling runs.
         if (slot === this.slot) slot.iframe.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
         break;
+      case 'wheel': {
+        if (slot !== this.slot) break;
+        const lay = artifactLayout(this.viewport, this.art.zoom, this.art.panX);
+        this.queueNavigation({ x: lay.left + msg.point.x * this.zoom, y: msg.point.y * this.zoom }, msg.dx, msg.dy, msg.deltaMode, msg.shift, msg.zoom);
+        break;
+      }
+      case 'space':
+        if (slot === this.slot) this.setSpacePan(msg.pressed);
+        break;
+      case 'shortcut':
+        if (slot !== this.slot || this.el.closest('.backdrop')?.nextElementSibling) break;
+        if (msg.key === 'm') this.setMode(this.mode === 'use' ? 'markup' : 'use');
+        else if (msg.key === 'h') this.setPan(!this.pan);
+        else if (msg.key === '0') this.fit();
+        else if (msg.key === '1') this.actual();
+        else this.zoomBy(msg.key === '+' ? 1 : -1);
+        break;
+      case 'pan':
+        if (slot !== this.slot) break;
+        if (msg.phase === 'start') {
+          this.flushNavigation();
+          this.framePan = msg.point;
+          this.el.classList.add('panning');
+        } else if (this.framePan) {
+          this.panBy(this.framePan.x - msg.point.x, this.framePan.y - msg.point.y);
+          this.framePan = msg.phase === 'end' ? null : msg.point;
+          this.el.classList.toggle('panning', msg.phase !== 'end');
+        }
+        break;
       case 'layout': {
         const first = !slot.layout;
-        slot.layout = { width: msg.width, height: msg.height, scrollX: msg.scrollX, scrollY: msg.scrollY };
+        slot.layout = { width: msg.width, height: msg.height, scrollX: msg.scrollX, scrollY: msg.scrollY, seq: msg.seq };
         if (first && slot.restore && (slot.restore.y > 0 || slot.restore.x > 0)) this.post(slot, { type: 'scrollTo', x: slot.restore.x, y: slot.restore.y });
         if (slot === this.incoming) {
           if (first) {
@@ -599,14 +659,14 @@ export class Surface {
   private lastSize = { w: 0, h: 0 };
 
   private onLayout(slot: Slot, l: NonNullable<Slot['layout']>, first = false) {
-    this.art = { ...this.art, scrollY: l.scrollY };
+    // A resize or an earlier scroll acknowledgement must not rewind an in-flight gesture.
+    if ((l.seq ?? 0) >= (slot.scrollSeq ?? 0)) this.art = { ...this.art, scrollY: l.scrollY };
     this.positionMarks();
     if (first || l.width !== this.lastSize.w || l.height !== this.lastSize.h) {
       this.lastSize = { w: l.width, h: l.height };
       this.scheduleLocate();
     }
     if (slot === this.slot) this.scheduleView();
-    this.host.changed();
   }
 
   private scrollFrame(y: number) {
@@ -615,7 +675,10 @@ export class Surface {
     const maxY = Math.max(0, (s.layout?.height ?? 0) - artifactLayout(this.viewport, this.art.zoom, this.art.panX).frameH);
     const ny = Math.max(0, Math.min(maxY, y));
     this.art = { ...this.art, scrollY: ny };
-    if (s.ready) this.post(s, { type: 'scrollTo', x: 0, y: ny });
+    if (s.ready) {
+      s.scrollSeq = (s.scrollSeq ?? 0) + 1;
+      this.post(s, { type: 'scrollTo', x: 0, y: ny, seq: s.scrollSeq });
+    }
     this.positionMarks();
     this.scheduleView();
   }
@@ -1028,6 +1091,7 @@ export class Surface {
   /** Moving or resizing a sticky or picture by a handle; it's sent when the drag ends. */
   private dragMark(handle: HTMLElement, el: HTMLElement, kind: 'sticky' | 'picture', id: string, what: 'move' | 'resize') {
     handle.addEventListener('pointerdown', (e) => {
+      if (this.pan || this.spacePan) return;
       if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1086,6 +1150,40 @@ export class Surface {
   // ---- Mark up: a click pins a comment, a drag places a sticky ----
 
   private wire() {
+    // Capture navigation before mark handles. The Pan tool/Space catcher also covers live HTML.
+    this.el.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.button !== 1 && !(e.button === 0 && (this.pan || this.spacePan))) return;
+        if ((e.target as HTMLElement).closest('.wb-composer, .wb-navigation-hint')) return;
+        e.stopImmediatePropagation();
+        this.panDrag(e);
+      },
+      true,
+    );
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (e.type === 'keyup') return this.setSpacePan(false);
+      if (!this.el.isConnected || this.el.closest('.backdrop')?.nextElementSibling || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('input, textarea, select, button, [contenteditable]')) return;
+      if (target !== document.body && !this.el.closest('.modal')?.contains(target)) return;
+      e.preventDefault();
+      this.setSpacePan(true);
+    };
+    const blur = () => {
+      this.setSpacePan(false);
+      this.framePan = null;
+      this.el.classList.remove('panning');
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKey, true);
+    window.addEventListener('blur', blur);
+    this.offs.push(() => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKey, true);
+      window.removeEventListener('blur', blur);
+    });
     // The catcher takes clicks over the page in Mark up (and while picking a spot); on a canvas it's the whole background.
     this.catcher.addEventListener('pointerdown', (e) => this.pressBackground(e));
     if (this.card.kind === 'canvas') this.el.addEventListener('pointerdown', (e) => e.target === this.el && this.pressBackground(e));
@@ -1235,50 +1333,74 @@ export class Surface {
   // ---- Panning and zooming by hand ----
 
   private panDrag(e: PointerEvent) {
+    this.flushNavigation();
     e.preventDefault();
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
-    const start = { x: e.clientX, y: e.clientY };
-    const from = { canvas: { ...this.canvas }, art: { ...this.art } };
+    let last = { x: e.clientX, y: e.clientY };
     this.el.classList.add('panning');
     const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - start.x;
-      const dy = ev.clientY - start.y;
-      if (this.card.kind === 'canvas') {
-        this.canvas = { ...from.canvas, x: from.canvas.x - dx / from.canvas.zoom, y: from.canvas.y - dy / from.canvas.zoom };
-        this.applyView(true);
-      } else {
-        this.art = { ...this.art, panX: from.art.panX - dx / from.art.zoom };
-        this.applyView(true);
-        this.scrollFrame(from.art.scrollY - dy / from.art.zoom);
-      }
+      this.queueNavigation({ x: 0, y: 0 }, last.x - ev.clientX, last.y - ev.clientY, 0, false, false);
+      last = { x: ev.clientX, y: ev.clientY };
     };
     const up = () => {
+      this.flushNavigation();
       this.el.classList.remove('panning');
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      target.removeEventListener('lostpointercapture', up);
+      window.removeEventListener('blur', up);
+      if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+      this.offs = this.offs.filter((off) => off !== up);
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+    target.addEventListener('lostpointercapture', up);
+    window.addEventListener('blur', up);
+    this.offs.push(up);
   }
 
   private onWheel(e: WheelEvent) {
+    if (!e.ctrlKey && !e.metaKey && (e.target as HTMLElement).closest('.wb-composer, .wb-sticky-edit')) return;
     e.preventDefault();
     const r = this.el.getBoundingClientRect();
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport.h : 1;
-    const dx = (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * unit;
-    const dy = (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * unit;
-    if (e.ctrlKey || e.metaKey) return this.zoomTo(this.zoom * Math.exp(-e.deltaY * unit * 0.0025), at);
+    this.queueNavigation(at, e.deltaX, e.deltaY, e.deltaMode, e.shiftKey, e.ctrlKey || e.metaKey);
+  }
+
+  private queueNavigation(at: Point, dx: number, dy: number, deltaMode: number, shift: boolean, zoom: boolean) {
+    if (this.disposed) return;
+    this.navigation.push({ at, ...wheelNavigation(dx, dy, deltaMode, shift, zoom, this.viewport.h) });
+    if (!this.navigationFrame) this.navigationFrame = requestAnimationFrame(() => this.flushNavigation());
+  }
+
+  private flushNavigation() {
+    cancelAnimationFrame(this.navigationFrame);
+    this.navigationFrame = 0;
+    if (!this.navigation.length) return;
+    for (const { at, x, y, factor } of this.navigation) {
+      if (factor !== 1) {
+        const zoom = clampZoom(this.zoom * factor);
+        this.zoomMode = { fit: false, zoom };
+        if (this.card.kind === 'canvas') this.canvas = zoomCanvas(this.canvas, zoom, at);
+        else this.art = zoomArtifact(this.art, this.viewport, zoom, at);
+      } else this.moveView(x, y);
+    }
+    this.navigation = [];
+    this.applyView(true);
+    if (this.card.kind === 'html') this.scrollFrame(this.art.scrollY);
+  }
+
+  private moveView(dx: number, dy: number) {
     if (this.card.kind === 'canvas') {
-      this.canvas = { ...this.canvas, x: this.canvas.x + dx / this.canvas.zoom, y: this.canvas.y + dy / this.canvas.zoom };
-      this.applyView(true);
-      return;
-    }
-    if (dx) {
-      this.art = { ...this.art, panX: this.art.panX + dx / this.art.zoom };
-      this.applyView(true);
-    }
-    if (dy) this.scrollFrame(this.art.scrollY + dy / this.art.zoom);
+      this.zoomMode = { fit: false, zoom: this.zoom };
+      this.canvas = { ...this.canvas, x: this.canvas.x + dx / this.zoom, y: this.canvas.y + dy / this.zoom };
+    } else this.art = { ...this.art, panX: this.art.panX + dx / this.zoom, scrollY: this.art.scrollY + dy / this.zoom };
+  }
+
+  private panBy(dx: number, dy: number) {
+    this.queueNavigation({ x: 0, y: 0 }, dx, dy, 0, false, false);
   }
 }

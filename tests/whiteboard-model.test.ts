@@ -46,6 +46,31 @@ const PIXEL: Author = { kind: 'worker', id: 'a1b2c3d4e5f6', name: 'Pixel', color
 const NIBBLE: Author = { kind: 'worker', id: '0f9e8d7c6b5a', name: 'Nibble', color: '#00aaff' };
 const ME = OWNER_AUTHOR;
 
+test('bridge navigation validates gestures, sequence numbers and load nonces', () => {
+  const nonce = 'navigation-nonce-000000';
+  const wheel = { type: 'wheel' as const, point: { x: 200.5, y: 100 }, dx: 12, dy: -3, deltaMode: 0, zoom: true, shift: false };
+  assert.deepEqual(parseFrameMsg(wrap(wheel, nonce), nonce), wheel);
+  for (const bad of [{ dx: NaN }, { dy: Infinity }, { point: { x: 'x', y: 1 } }, { deltaMode: 3 }, { zoom: 1 }, { shift: null }]) {
+    assert.equal(parseFrameMsg({ ...wrap(wheel, nonce), ...bad }, nonce), undefined);
+  }
+  assert.equal(parseFrameMsg(wrap(wheel, nonce), 'wrong-nonce-000000'), undefined);
+  for (const pressed of [true, false]) assert.deepEqual(parseFrameMsg(wrap({ type: 'space', pressed }, nonce), nonce), { type: 'space', pressed });
+  assert.equal(parseFrameMsg({ ...wrap({ type: 'space', pressed: true }, nonce), pressed: 'true' }, nonce), undefined);
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'shortcut', key: 'h' }, nonce), nonce), { type: 'shortcut', key: 'h' });
+  assert.equal(parseFrameMsg({ ...wrap({ type: 'shortcut', key: 'h' }, nonce), key: 'Escape' }, nonce), undefined);
+  for (const phase of ['start', 'move', 'end'] as const) {
+    const pan = { type: 'pan' as const, phase, point: { x: -20, y: 90 } };
+    assert.deepEqual(parseFrameMsg(wrap(pan, nonce), nonce), pan);
+  }
+  assert.equal(parseFrameMsg({ ...wrap({ type: 'pan', phase: 'start', point: { x: 0, y: 0 } }, nonce), phase: 'wrong' }, nonce), undefined);
+  const scroll = { type: 'scrollTo' as const, x: 0, y: 100, seq: 7 };
+  assert.deepEqual(parseHostMsg(wrap(scroll, nonce), nonce), scroll);
+  assert.equal(parseHostMsg({ ...wrap(scroll, nonce), seq: -1 }, nonce), undefined);
+  const layout = { type: 'layout' as const, width: 1280, height: 5000, scrollX: 0, scrollY: 100, seq: 7 };
+  assert.deepEqual(parseFrameMsg(wrap(layout, nonce), nonce), layout);
+  assert.equal(parseFrameMsg({ ...wrap(layout, nonce), seq: 0.5 }, nonce), undefined);
+});
+
 let hashes = 0;
 /** A fresh sha256-shaped hash. */
 const hash = () => (++hashes).toString(16).padStart(64, '0');

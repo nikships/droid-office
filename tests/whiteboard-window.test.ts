@@ -28,6 +28,7 @@ import {
   pingedText,
   stepZoom,
   viewMoved,
+  wheelNavigation,
   zoomArtifact,
   zoomCanvas,
   zoomLabel,
@@ -62,6 +63,33 @@ test('zoom: clamps, steps between the stops, and labels', () => {
   assert.equal(zoomLabel(0.666), '67%');
   assert.equal(fitZoom(640), 0.5);
   assert.equal(fitZoom(0), 1);
+});
+
+test('navigation: pixel, line, page, Shift and pinch deltas retain device-space motion', () => {
+  assert.deepEqual(wheelNavigation(12.5, 30.25, 0, false, false, 600), { x: 12.5, y: 30.25, factor: 1 });
+  assert.deepEqual(wheelNavigation(0, 3, 1, true, false, 600), { x: 48, y: 0, factor: 1 });
+  assert.deepEqual(wheelNavigation(1, -1, 2, false, false, 600), { x: 600, y: -600, factor: 1 });
+  assert.deepEqual(wheelNavigation(2, 3, 0, true, false, 600), { x: 2, y: 3, factor: 1 });
+  const pinch = wheelNavigation(0, -5, 0, false, true, 600);
+  assert.ok(pinch.factor > 1 && pinch.factor < 1.1);
+  assert.equal(pinch.x, 0);
+  assert.equal(pinch.y, 0);
+  assert.ok(Math.abs(wheelNavigation(0, 5, 0, false, true, 600).factor - 1 / pinch.factor) < 1e-12);
+  assert.ok(Number.isFinite(wheelNavigation(0, -100000, 0, false, true, 600).factor));
+});
+
+test('artifact: fractional zoom and pan never snap the pointer to rounded screen pixels', () => {
+  const vp = { w: 853, h: 571 };
+  let view = { zoom: fitZoom(vp.w), panX: 0, scrollY: 450.25 };
+  const at = { x: 337.4, y: 279.2 };
+  const pageX = at.x / view.zoom;
+  const pageY = view.scrollY + at.y / view.zoom;
+  for (let i = 0; i < 80; i++) {
+    view = zoomArtifact(view, vp, view.zoom * 1.007, at);
+    const lay = artifactLayout(vp, view.zoom, view.panX);
+    assert.ok(Math.abs((at.x - lay.left) / view.zoom - pageX) < 1e-8);
+    assert.ok(Math.abs(view.scrollY + at.y / view.zoom - pageY) < 1e-8);
+  }
 });
 
 test('artifact: Fit centres the page and makes the frame as tall as the window in page px', () => {
