@@ -130,7 +130,7 @@ import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
 import { GraphicsLab } from './ui/graphics-lab';
-import { loadRemaster, saveRemaster, type RemasterSettings } from './remaster-settings';
+import { loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { ShadowWatch } from './world/shadow-watch';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
@@ -3278,7 +3278,7 @@ const hudActions: HudAction[] = [
     key: '`',
     // By its element: the HUD is drawn before the lab is made.
     on: () => document.getElementById('graphics-lab')?.classList.contains('hidden') === false,
-    title: () => 'Every Remastered graphics setting, live, beside the game',
+    title: () => 'Graphics quality, resolution and picture, live, beside the game',
     run: () => window.dispatchEvent(new Event('office:graphics-lab')),
   },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
@@ -3442,14 +3442,15 @@ const renderLoop = new RenderLoop({
 
 // ---- The Remastered renderer and its Graphics Lab (` toggles it) --------------------------------
 let remasterSettings: RemasterSettings = loadRemaster();
-const remaster = new Remaster(renderer, scene, { sun, hemi, ambient }, [hands.scene], remasterSettings, () => {
+let remasterParams = resolveRemaster(remasterSettings);
+const remaster = new Remaster(renderer, scene, { sun, hemi, ambient }, remasterParams, () => {
   graphicsLab.paint();
   renderWake();
 });
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
 function applyRemaster() {
-  const s = remasterSettings;
+  const s = (remasterParams = resolveRemaster(remasterSettings));
   remaster.configure(s);
   const key = s.enabled ? `${s.outlineThickness}|${s.outlineOpacity}` : '1.8|1';
   if (key !== outlineKey) {
@@ -3467,7 +3468,7 @@ function applyRemaster() {
 function changeRemaster(s: RemasterSettings) {
   remasterSettings = s;
   applyRemaster();
-  // A slider sends a change every step; saved at most a few times a second.
+  // The resolution slider sends a change every step; saved at most a few times a second.
   window.clearTimeout(remasterSaveTimer);
   const now = performance.now();
   if (now - remasterSavedAt > 400) {
@@ -3495,7 +3496,24 @@ const graphicsLab = new GraphicsLab({
     if (h.state === 'unsupported') return `HDR is off: ${h.reason}.`;
     return h.reason ? `HDR is on, but ${h.reason}.` : '';
   },
+  renderSize: (resolution) => remaster.sizes(resolution).render,
+  fpsCap: () => settings.graphics.fpsCap,
+  setFpsCap: (fpsCap) => {
+    settings.graphics = { ...settings.graphics, fpsCap };
+    saveSettings(settings);
+    renderWake();
+  },
+  profile: () => {
+    const { output } = remaster.sizes(1);
+    return { gpu: gpuRendererName(), pixels: output.width * output.height, fpsCap: settings.graphics.fpsCap };
+  },
 });
+/** WebGL's name for the GPU. Chromium gives the real one as RENDERER; others only through the debug extension. */
+function gpuRendererName(): string {
+  const gl = renderer.getContext();
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
+}
 $('app').append(graphicsLab.el);
 applyRemaster();
 remasterResized = () => remaster.resized();
@@ -3609,13 +3627,13 @@ function drawFrame(dt: number, t: number) {
         programs: info.programs?.length ?? 0,
         hdr: remaster.describe(),
         gi:
-          !remasterSettings.enabled || !remasterSettings.gi
+          !remasterParams.enabled || !remasterParams.gi
             ? 'GI is off'
             : gi.paused
               ? 'Paused on the roof'
               : gi.baking
                 ? `Baking ${gi.probes} probes… ${Math.round(gi.progress * 100)}%`
-                : `${gi.probes} probes${remasterSettings.giRolling ? ', refreshing' : ', baked'}`,
+                : `${gi.probes} probes${remasterParams.giLive ? ', live' : ', baked'}`,
       });
     }
     if (settings.graphics.stats) {
@@ -3629,7 +3647,7 @@ function drawFrame(dt: number, t: number) {
         system: systemGpu,
         render,
         output,
-        scale: remaster.active ? 1 : settings.graphics.scale,
+        scale: remaster.active ? remasterParams.resolution : settings.graphics.scale,
         taa: settings.graphics.taa,
         mode: remaster.active ? remaster.describe() : undefined,
         shadows: { mode: settings.graphics.shadows, redrawn: shadowFrames / fpsFrames },

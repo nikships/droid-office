@@ -859,7 +859,7 @@ export function openSettings(
   const paintRenderer = () => {
     rendererPick.paint();
     rendererNote.textContent = renderer?.remastered()
-      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded and tone mapped, with native HDR on an EDR display. Its presets and every dial are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit, shadows and overlay still apply.'
+      ? 'Drawn in high dynamic range, lit by baked global illumination, then graded, with native HDR on an EDR display. Its quality, resolution and picture are in the Graphics Lab. It replaces the resolution, anti-aliasing and sharpening settings below; the frame rate limit, shadows and overlay still apply.'
       : 'The office the way it has always drawn: toon shading, ink outlines and the resolution and anti-aliasing settings below.';
   };
   paintRenderer();
@@ -891,7 +891,9 @@ export function openSettings(
         'Renderer',
         card('Renderer', { desc: rendererNote, control: rendererPick.row }),
         card('Graphics Lab', {
-          desc: desc('Every Remastered setting and its presets, live, in a see-through panel beside the game: 2× MSAA, native HDR, baked probe GI, color, lights and shadows. ` opens and closes it.'),
+          desc: desc(
+            'The Remastered renderer’s graphics menu, live, in a see-through panel beside the game: an overall quality from Low to Ultra or Auto, each quality setting, resolution from 0.5× to 1.5×, HDR and the picture. ` opens and closes it.',
+          ),
           control: labButton,
         }),
       ),

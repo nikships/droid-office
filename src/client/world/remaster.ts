@@ -2,17 +2,17 @@ import * as THREE from 'three';
 import { LightProbeGridWebGL } from 'three/examples/jsm/lighting/LightProbeGridWebGL.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
-import { GI_SPACING, type GiDensity, probeCount, type RemasterSettings, type ToneMap, whiteBalance } from '../remaster-settings';
+import { probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
 import { remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
 
 /*
- * The Remastered renderer: the office drawn at the screen's resolution into a float (HDR, linear) target, with 2×
- * MSAA when it's on, then exposure, white balance, contrast, saturation and tone mapping to the display's range (up to
- * the HDR peak on an EDR display), then contrast-adaptive sharpening. Global illumination is a light-probe grid over
- * the floor that three.js's own lighting reads (see the probe lines in world/sky.ts). With the renderer off, none of
- * this runs and the office draws as it always has.
+ * The Remastered renderer: the office drawn at a share of the screen's resolution (0.5× to 1.5×) into a float (HDR,
+ * linear) target, with 2× or 4× MSAA when it's on, then exposure, white balance, contrast, saturation and tone mapping
+ * to the display's range (up to the HDR peak on an EDR display), then contrast-adaptive sharpening on the way to the
+ * screen's resolution. Global illumination is a light-probe grid over the floor that three.js's own lighting reads
+ * (see the probe lines in world/sky.ts). With the renderer off, none of this runs and the office draws as it always has.
  */
 
 export interface RemasterLights {
@@ -125,7 +125,7 @@ void main() {
 `;
 
 const TONE_INDEX: Record<ToneMap, number> = { neutral: 0, agx: 1, aces: 2, reinhard: 3, cineon: 4, linear: 5 };
-const VIEW_INDEX: Record<RemasterSettings['debug'], number> = { final: 0, gi: 0, hdr: 1 };
+const VIEW_INDEX: Record<RenderParams['debug'], number> = { final: 0, gi: 0, hdr: 1 };
 /** three.js's own tone mapping for what draws straight to the screen after the pipeline (your hands). */
 const THREE_TONE: Record<ToneMap, THREE.ToneMapping> = {
   neutral: THREE.NeutralToneMapping,
@@ -154,7 +154,7 @@ export class ProbeGI {
   baked = false;
   /** Paused while you're up on the roof, where the floor's probes don't matter. */
   paused = false;
-  private density: GiDensity | null = null;
+  private spacing: number | null = null;
   private cursor = 0;
   private pass = 0;
   private passes = 1;
@@ -173,15 +173,15 @@ export class ProbeGI {
     return this.full;
   }
 
-  configure(on: boolean, density: GiDensity, bounces: number) {
+  /** `spacing` is the meters between probes. */
+  configure(on: boolean, spacing: number, bounces: number) {
     if (!on) {
       this.drop();
       return;
     }
     const passes = 1 + bounces;
-    if (density !== this.density || !this.grid) {
+    if (spacing !== this.spacing || !this.grid) {
       this.drop();
-      const spacing = GI_SPACING[density];
       const w = GI_BOX.maxX - GI_BOX.minX;
       const h = GI_BOX.maxY - GI_BOX.minY;
       const d = GI_BOX.maxZ - GI_BOX.minZ;
@@ -190,7 +190,7 @@ export class ProbeGI {
       grid.updateBoundingBox();
       this.scene.add(grid);
       this.grid = grid;
-      this.density = density;
+      this.spacing = spacing;
       this.passes = passes;
       this.rebake();
     } else if (passes !== this.passes) {
@@ -247,7 +247,7 @@ export class ProbeGI {
       this.grid.dispose();
     }
     this.grid = null;
-    this.density = null;
+    this.spacing = null;
     this.baked = false;
     this.full = false;
     this.progress = 0;
@@ -255,14 +255,14 @@ export class ProbeGI {
 }
 
 export class Remaster {
-  settings: RemasterSettings;
+  settings: RenderParams;
   readonly hdr: HdrPresenter;
   readonly gi: ProbeGI;
   private sceneRT: THREE.WebGLRenderTarget | null = null;
   private graded: THREE.WebGLRenderTarget | null = null;
   private readonly quad = new FullScreenQuad();
   private readonly outputSize = new THREE.Vector2();
-  private shadow = { type: -1 as number, size: 0, radius: -1 };
+  private shadow = { size: 0, radius: -1 };
   private ramp = '';
   private lastDraw = 0;
   private giGlow = -1;
@@ -288,11 +288,9 @@ export class Remaster {
 
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
-    private readonly scene: THREE.Scene,
+    scene: THREE.Scene,
     private readonly lights: RemasterLights,
-    /** Scenes besides the office whose materials need rebuilding when the shadow filter changes (your hands). */
-    private readonly others: THREE.Object3D[],
-    settings: RemasterSettings,
+    settings: RenderParams,
     onHdr: () => void,
   ) {
     this.settings = settings;
@@ -304,12 +302,13 @@ export class Remaster {
     return this.settings.enabled;
   }
 
-  /** What the scene is drawn at and what it is shown at, in device pixels: the same, unless the GPU's texture limit is smaller. */
-  sizes(): { render: { width: number; height: number }; output: { width: number; height: number } } {
+  /** What the scene is drawn at and what it is shown at, in device pixels: the output at the resolution scale, within the GPU's texture limit. */
+  sizes(resolution = this.settings.resolution): { render: { width: number; height: number }; output: { width: number; height: number } } {
     this.renderer.getDrawingBufferSize(this.outputSize);
     const output = { width: this.outputSize.x, height: this.outputSize.y };
-    const fit = Math.min(1, this.renderer.capabilities.maxTextureSize / Math.max(output.width, output.height));
-    return { render: { width: Math.max(1, Math.floor(output.width * fit)), height: Math.max(1, Math.floor(output.height * fit)) }, output };
+    const longest = Math.max(output.width, output.height) * resolution;
+    const scale = Math.min(resolution, (resolution * this.renderer.capabilities.maxTextureSize) / Math.max(1, longest));
+    return { render: { width: Math.max(1, Math.round(output.width * scale)), height: Math.max(1, Math.round(output.height * scale)) }, output };
   }
 
   /** The peak the image is tone mapped to: the HDR peak once HDR is on screen, else white. */
@@ -320,14 +319,14 @@ export class Remaster {
   /** The corner readout's pipeline line. */
   describe(): string {
     const s = this.settings;
-    const aa = s.msaa ? '2× MSAA' : 'no AA';
+    const aa = s.msaa ? `${s.msaa}× MSAA` : 'no AA';
     const hdr = s.hdr ? (this.hdr.active ? `HDR ${s.hdrPeak}×` : this.hdr.state === 'starting' ? 'HDR starting' : 'SDR (HDR unavailable)') : 'SDR';
     const gi = s.gi ? (this.gi.baking ? ` · GI ${Math.round(this.gi.progress * 100)}%` : ' · GI') : '';
     return `Remastered · ${aa} · ${hdr}${gi}`;
   }
 
   /** Applies settings: the shader dials, shadows, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
-  configure(s: RemasterSettings) {
+  configure(s: RenderParams) {
     this.settings = s;
     const on = s.enabled;
     const u = remasterUniforms;
@@ -338,14 +337,14 @@ export class Remaster {
     u.lamps.value = on ? s.lampLight : 1;
     u.gi.value = on && s.gi ? s.giIntensity : 0;
     u.giOnly.value = on && s.gi && s.debug === 'gi' ? 1 : 0;
-    this.gi.configure(on && s.gi, s.giDensity, s.giBounces);
+    this.gi.configure(on && s.gi, s.giSpacing, s.giBounces);
     // How much glowing surfaces light the room is baked into the probes.
     if (s.giGlow !== this.giGlow) {
       if (this.giGlow >= 0 && this.gi.grid) this.gi.rebake();
       this.giGlow = s.giGlow;
     }
     this.hdr.set(on && s.hdr);
-    this.applyShadows(on ? (s.shadowFilter === 'vsm' ? THREE.VSMShadowMap : THREE.PCFShadowMap) : THREE.PCFShadowMap, on ? Number(s.shadowMapSize) : 2048, on ? s.shadowSoftness : 1);
+    this.applyShadows(on ? Math.min(s.shadowMapSize, this.renderer.capabilities.maxTextureSize) : 2048, on ? s.shadowSoftness : 1);
     const ramp = on ? s.toonRamp : 'classic';
     if (ramp !== this.ramp) {
       this.ramp = ramp;
@@ -359,31 +358,20 @@ export class Remaster {
   }
 
   private msaaSamples(): number {
-    return this.settings.msaa ? 2 : 0;
+    return this.settings.msaa;
   }
 
-  private applyShadows(type: THREE.ShadowMapType, size: number, radius: number) {
-    const sm = this.renderer.shadowMap;
+  private applyShadows(size: number, radius: number) {
+    if (size === this.shadow.size && radius === this.shadow.radius) return;
     const sun = this.lights.sun;
-    if (type !== this.shadow.type) {
-      sm.type = type;
-      // Which filter the shadows use is compiled into every lit material.
-      for (const root of [this.scene, ...this.others])
-        root.traverse((o) => {
-          const m = (o as THREE.Mesh).material;
-          if (!m) return;
-          for (const mat of Array.isArray(m) ? m : [m]) mat.needsUpdate = true;
-        });
-    }
-    if (size !== this.shadow.size || type !== this.shadow.type) {
+    if (size !== this.shadow.size) {
       sun.shadow.mapSize.set(size, size);
       sun.shadow.map?.dispose();
       sun.shadow.map = null;
     }
     sun.shadow.radius = radius;
-    sun.shadow.blurSamples = Math.max(4, Math.round(radius * 4));
-    this.shadow = { type, size, radius };
-    sm.needsUpdate = true;
+    this.shadow = { size, radius };
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   /** After the canvas changes size. */
@@ -417,7 +405,7 @@ export class Remaster {
         // Live probes come out of a per-second budget, so the cost doesn't climb with the frame rate.
         const now = performance.now();
         const dt = Math.min(0.25, (now - this.lastDraw) / 1000);
-        this.liveDue = s.giRolling ? Math.min(this.liveDue + s.giSpeed * dt, 16) : 0;
+        this.liveDue = s.giLive > 0 ? Math.min(this.liveDue + s.giLive * dt, 16) : 0;
         const live = Math.floor(this.liveDue);
         this.liveDue -= live;
         const u = remasterUniforms;

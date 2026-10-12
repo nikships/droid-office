@@ -1,44 +1,386 @@
 /**
- * The Remastered renderer's settings: what each one is, its range, the presets, and how a saved copy is read back.
- * The Graphics Lab panel is built from REMASTER_SECTIONS, so a setting added here shows up there by itself.
+ * The Remastered renderer's settings, laid out the way a game's graphics menu is: an overall quality from Low to Ultra,
+ * a level for each setting that costs the GPU, a few picture choices that only change the look, and the render
+ * resolution. `resolveRemaster` turns them into the numbers the renderer draws with. The Graphics Lab is built from the
+ * setting lists here, so a setting added to one shows up there by itself.
  * Nothing here touches the DOM or WebGL; localStorage is only read inside try.
  */
 
-export type ToneMap = 'neutral' | 'agx' | 'aces' | 'reinhard' | 'cineon' | 'linear';
-export type ShadowFilter = 'pcf' | 'vsm';
-export type ShadowMapSize = '1024' | '2048' | '4096' | '8192';
-export type ToonRamp = 'classic' | 'bands5' | 'soft' | 'smooth';
-export type GiDensity = 'low' | 'medium' | 'high';
+export const LEVELS = ['low', 'medium', 'high', 'veryHigh', 'ultra'] as const;
+export type Level = (typeof LEVELS)[number];
+/** The overall quality: the preset every quality setting matches, or Custom when they match none. */
+export type Quality = Level | 'custom';
+export const LEVEL_LABELS: Record<Level, string> = { low: 'Low', medium: 'Medium', high: 'High', veryHigh: 'Very High', ultra: 'Ultra' };
+
+export type Brightness = 'darker' | 'dark' | 'normal' | 'bright' | 'brighter';
+export type ColorLook = 'natural' | 'rich' | 'vivid' | 'warm' | 'cool';
+export type LightLook = 'subtle' | 'normal' | 'strong' | 'neon';
+export type ArtStyle = 'smooth' | 'soft' | 'toon';
+export type Sharpness = 'off' | 'low' | 'medium' | 'high';
+export type HdrHighlights = 'subtle' | 'normal' | 'bright' | 'max';
 export type DebugView = 'final' | 'hdr' | 'gi';
 export type PaceMode = 'adaptive' | 'full';
 
 export interface RemasterSettings {
+  /** Off draws the office the classic way; the same switch as Settings → Graphics → Renderer. */
   enabled: boolean;
-  preset: string;
-  // Image
-  msaa: boolean;
+  /** The scene's render resolution as a share of the screen's: below 1 it is upscaled, above 1 supersampled. */
+  resolution: number;
+  antiAliasing: Level;
+  shadowQuality: Level;
+  giQuality: Level;
+  liveGi: Level;
+  brightness: Brightness;
+  color: ColorLook;
+  lights: LightLook;
+  style: ArtStyle;
+  sharpness: Sharpness;
+  hdr: boolean;
+  hdrHighlights: HdrHighlights;
+  debug: DebugView;
+  pace: PaceMode;
+}
+
+export type QualityKey = 'antiAliasing' | 'shadowQuality' | 'giQuality' | 'liveGi';
+/** Every setting picked from a list (everything but the resolution). Booleans are listed as 'on' and 'off'. */
+export type ChoiceKey = Exclude<keyof RemasterSettings, 'resolution'>;
+/** What a setting costs the GPU, shown beside its description. */
+export type Impact = 'none' | 'low' | 'medium' | 'high';
+
+export interface ChoiceOption {
+  value: string;
+  label: string;
+  /** What this choice draws, in a sentence. */
+  detail: string;
+}
+
+export interface ChoiceSetting {
+  key: ChoiceKey;
+  label: string;
+  hint: string;
+  impact: Impact;
+  options: readonly ChoiceOption[];
+  /** Greyed out unless this holds, for a setting that depends on another. */
+  needs?: (s: RemasterSettings) => boolean;
+}
+
+export const RESOLUTION_MIN = 0.5;
+export const RESOLUTION_MAX = 1.5;
+export const RESOLUTION_STEP = 0.1;
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** A resolution scale snapped to a tenth and clamped to 0.5–1.5, so 0.7 is saved as 0.7 and not 0.7000000000000001. */
+export function snapResolution(v: number): number {
+  return clamp(Math.round(v * 10) / 10, RESOLUTION_MIN, RESOLUTION_MAX);
+}
+
+const level = (value: Level, detail: string): ChoiceOption => ({ value, label: LEVEL_LABELS[value], detail });
+
+export const QUALITY_SETTINGS: readonly ChoiceSetting[] = [
+  {
+    key: 'antiAliasing',
+    label: 'Anti-aliasing',
+    hint: 'Smooths the jagged, stair-stepped edges of everything drawn.',
+    impact: 'high',
+    options: [level('low', 'Off. Edges are jagged; nothing extra is drawn.'), level('medium', '2× MSAA: two samples at every edge pixel.'), level('high', '4× MSAA: four samples at every edge pixel, the smoothest edges.')],
+  },
+  {
+    key: 'shadowQuality',
+    label: 'Shadows',
+    hint: 'How much detail the moon’s shadows have. The shadow map is only redrawn when something that casts a shadow moves.',
+    impact: 'low',
+    options: [
+      level('low', '1024² shadow map. Small things cast blocky shadows.'),
+      level('medium', '2048² shadow map.'),
+      level('high', '3072² shadow map: desks, chairs and people cast clean shadows.'),
+      level('veryHigh', '4096² shadow map: chair legs and cables cast crisp shadows.'),
+      level('ultra', '8192² shadow map, 256 MB of video memory. The slowest to redraw while workers walk about.'),
+    ],
+  },
+  {
+    key: 'giQuality',
+    label: 'Global illumination',
+    hint: 'Bounce light: the glow of the screens, lamps and moon carried across the room by a grid of light probes, baked when you arrive on a floor.',
+    impact: 'medium',
+    options: [
+      level('low', 'Off. Direct light only: flatter, with darker corners.'),
+      level('medium', 'A probe every 3 m; light bounces once.'),
+      level('high', 'A probe every 2 m, with one extra bounce.'),
+      level('veryHigh', 'A probe every 1.4 m, with one extra bounce: small pools of light under every desk.'),
+      level('ultra', 'A probe every 1.4 m, with two extra bounces. The longest bake.'),
+    ],
+  },
+  {
+    key: 'liveGi',
+    label: 'Live global illumination',
+    hint: 'Keeps re-baking light probes, so people walking past and screens changing show up in the bounce light. Needs global illumination.',
+    impact: 'high',
+    needs: (s) => s.giQuality !== 'low',
+    options: [
+      level('low', 'Off. The bounce light is baked once when you arrive on a floor.'),
+      level('medium', '15 probes re-baked a second.'),
+      level('high', '30 probes re-baked a second.'),
+      level('veryHigh', '60 probes re-baked a second.'),
+      level('ultra', '120 probes re-baked a second. Each probe draws the office six more times.'),
+    ],
+  },
+];
+
+export const DISPLAY_SETTINGS: readonly ChoiceSetting[] = [
+  {
+    key: 'enabled',
+    label: 'Renderer',
+    hint: 'Remastered draws in high dynamic range, lit by global illumination. Classic is the office as it always drew, with its own settings in Settings → Graphics.',
+    impact: 'none',
+    options: [
+      { value: 'on', label: 'Remastered', detail: 'Everything in this panel applies.' },
+      { value: 'off', label: 'Classic', detail: 'Toon shading and ink outlines, with the resolution and anti-aliasing in Settings → Graphics.' },
+    ],
+  },
+  {
+    key: 'hdr',
+    label: 'HDR',
+    hint: 'Highlights brighter than white on an EDR display such as the MacBook Pro’s XDR panel. Everything at or below white looks as it does in SDR.',
+    impact: 'low',
+    options: [
+      { value: 'off', label: 'Off', detail: 'Standard dynamic range.' },
+      { value: 'on', label: 'On', detail: 'Extended-range output through a float16 WebGPU canvas. Stays SDR where the display or browser can’t.' },
+    ],
+  },
+  {
+    key: 'hdrHighlights',
+    label: 'HDR highlights',
+    hint: 'How far past white the brightest screens, signs and lamps may go.',
+    impact: 'none',
+    needs: (s) => s.hdr,
+    options: [
+      { value: 'subtle', label: 'Subtle', detail: 'Up to 2× white.' },
+      { value: 'normal', label: 'Normal', detail: 'Up to 4× white.' },
+      { value: 'bright', label: 'Bright', detail: 'Up to 8× white.' },
+      { value: 'max', label: 'Max', detail: 'Up to 16× white, about what the XDR panel shows in a dim room.' },
+    ],
+  },
+];
+
+export const PICTURE_SETTINGS: readonly ChoiceSetting[] = [
+  {
+    key: 'brightness',
+    label: 'Brightness',
+    hint: 'How bright the whole picture is.',
+    impact: 'none',
+    options: [
+      { value: 'darker', label: 'Darker', detail: 'A dim, late-night office.' },
+      { value: 'dark', label: 'Dark', detail: 'A little darker than normal.' },
+      { value: 'normal', label: 'Normal', detail: 'The office as it is meant to look.' },
+      { value: 'bright', label: 'Bright', detail: 'A little brighter than normal.' },
+      { value: 'brighter', label: 'Brighter', detail: 'For a bright room or a dim screen.' },
+    ],
+  },
+  {
+    key: 'color',
+    label: 'Color',
+    hint: 'The color grade over the whole picture.',
+    impact: 'none',
+    options: [
+      { value: 'natural', label: 'Natural', detail: 'No grade: the colors as they are lit.' },
+      { value: 'rich', label: 'Rich', detail: 'A touch more contrast, and the muted colors lifted.' },
+      { value: 'vivid', label: 'Vivid', detail: 'Saturated neon and punchy contrast.' },
+      { value: 'warm', label: 'Warm', detail: 'Rich, leaning amber.' },
+      { value: 'cool', label: 'Cool', detail: 'Rich, leaning moonlit blue.' },
+    ],
+  },
+  {
+    key: 'lights',
+    label: 'Light sources',
+    hint: 'How strongly the laptop screens, lamps, signs and lit windows glow and light what is around them.',
+    impact: 'none',
+    options: [
+      { value: 'subtle', label: 'Subtle', detail: 'Soft screens and lamps; the night stays dark.' },
+      { value: 'normal', label: 'Normal', detail: 'Screens throw pools of light over the desks.' },
+      { value: 'strong', label: 'Strong', detail: 'Brighter screens, lamps and windows.' },
+      { value: 'neon', label: 'Neon', detail: 'Everything that glows, glows hard.' },
+    ],
+  },
+  {
+    key: 'style',
+    label: 'Art style',
+    hint: 'How light falls across every surface.',
+    impact: 'none',
+    options: [
+      { value: 'smooth', label: 'Smooth', detail: 'Smooth shading, no outlines.' },
+      { value: 'soft', label: 'Soft toon', detail: 'Three soft cartoon light bands, no outlines.' },
+      { value: 'toon', label: 'Toon', detail: 'Three hard cartoon bands and ink outlines, like the Classic renderer. The outlines draw the office a second time.' },
+    ],
+  },
+  {
+    key: 'sharpness',
+    label: 'Sharpness',
+    hint: 'Contrast-adaptive sharpening on the final image, to win back what a lower resolution softens.',
+    impact: 'low',
+    options: [
+      { value: 'off', label: 'Off', detail: 'No sharpening, and one pass fewer at 1.0× resolution.' },
+      { value: 'low', label: 'Low', detail: 'A light touch.' },
+      { value: 'medium', label: 'Medium', detail: 'Crisper edges and text.' },
+      { value: 'high', label: 'High', detail: 'The crispest; can look gritty at 1.0×.' },
+    ],
+  },
+];
+
+export const ADVANCED_SETTINGS: readonly ChoiceSetting[] = [
+  {
+    key: 'debug',
+    label: 'Debug view',
+    hint: 'Look at one stage of the pipeline.',
+    impact: 'none',
+    options: [
+      { value: 'final', label: 'Final image', detail: 'The picture as it is shown.' },
+      { value: 'gi', label: 'GI only', detail: 'Only the bounce light from the probes.' },
+      { value: 'hdr', label: 'HDR heatmap', detail: 'Grey is SDR; blue to red is 1× to 8× white.' },
+    ],
+  },
+  {
+    key: 'pace',
+    label: 'Render pace',
+    hint: 'How often the office draws while nothing moves.',
+    impact: 'none',
+    options: [
+      { value: 'adaptive', label: 'Adaptive', detail: 'Drops to a few frames a second after 30 s of stillness.' },
+      { value: 'full', label: 'Always full', detail: 'Every frame, so FPS and GPU readings stay comparable.' },
+    ],
+  },
+];
+
+export const CHOICE_SETTINGS: readonly ChoiceSetting[] = [...DISPLAY_SETTINGS, ...QUALITY_SETTINGS, ...PICTURE_SETTINGS, ...ADVANCED_SETTINGS];
+
+/**
+ * Each overall quality's settings. They are not one level across the board: what is cheap for what it shows (baked
+ * GI, a bigger shadow map, which is only redrawn when something moves) climbs first, and what costs every frame (4×
+ * MSAA, live GI) comes in last. Ultra leaves the 8192² shadow map and 120 live probes a second for Custom.
+ */
+export const QUALITY_PRESETS: Record<Level, Record<QualityKey, Level>> = {
+  low: { antiAliasing: 'low', shadowQuality: 'low', giQuality: 'medium', liveGi: 'low' },
+  medium: { antiAliasing: 'medium', shadowQuality: 'medium', giQuality: 'high', liveGi: 'low' },
+  high: { antiAliasing: 'medium', shadowQuality: 'high', giQuality: 'veryHigh', liveGi: 'low' },
+  veryHigh: { antiAliasing: 'high', shadowQuality: 'veryHigh', giQuality: 'veryHigh', liveGi: 'medium' },
+  ultra: { antiAliasing: 'high', shadowQuality: 'veryHigh', giQuality: 'ultra', liveGi: 'veryHigh' },
+};
+
+export const QUALITY_HINTS: Record<Level, string> = {
+  low: 'For integrated graphics: no anti-aliasing, a small shadow map and sparse bounce light.',
+  medium: '2× MSAA, 2048² shadows and bounce light every 2 m.',
+  high: '2× MSAA, 3072² shadows and dense bounce light with an extra bounce.',
+  veryHigh: '4× MSAA, 4096² shadows, dense bounce light kept slowly live.',
+  ultra: '4× MSAA, 4096² shadows, two extra bounces and live bounce light at 60 probes a second.',
+};
+
+/** The classic renderer until Remastered is turned on; then High, Normal brightness, Rich color, at 1.0×. */
+export const REMASTER_DEFAULTS: RemasterSettings = {
+  enabled: false,
+  resolution: 1,
+  ...QUALITY_PRESETS.high,
+  brightness: 'normal',
+  color: 'rich',
+  lights: 'normal',
+  style: 'smooth',
+  sharpness: 'low',
+  hdr: false,
+  hdrHighlights: 'normal',
+  debug: 'final',
+  pace: 'adaptive',
+};
+
+/** A setting's value as its options list it: booleans as 'on' and 'off'. */
+export function choiceValue(s: RemasterSettings, key: ChoiceKey): string {
+  const v = s[key];
+  return typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
+}
+
+/** `s` with one setting changed. A value its options don't list leaves it as it was. */
+export function withChoice(s: RemasterSettings, key: ChoiceKey, value: string): RemasterSettings {
+  const c = CHOICE_SETTINGS.find((x) => x.key === key);
+  if (!c?.options.some((o) => o.value === value)) return s;
+  return { ...s, [key]: typeof REMASTER_DEFAULTS[key] === 'boolean' ? value === 'on' : value };
+}
+
+/** Whether a setting does anything right now. */
+export function choiceLive(c: ChoiceSetting, s: RemasterSettings): boolean {
+  return c.needs ? c.needs(s) : true;
+}
+
+/** The overall quality the settings add up to: the preset they all match, or Custom. */
+export function qualityOf(s: RemasterSettings): Quality {
+  for (const lv of LEVELS) {
+    const p = QUALITY_PRESETS[lv];
+    if ((Object.keys(p) as QualityKey[]).every((k) => s[k] === p[k])) return lv;
+  }
+  return 'custom';
+}
+
+/** `s` at an overall quality, with Remastered on. The picture, display and resolution settings are yours, not the preset's. */
+export function applyQuality(lv: Level, s: RemasterSettings): RemasterSettings {
+  return { ...s, ...QUALITY_PRESETS[lv], enabled: true };
+}
+
+/** Everything back to the defaults, with the renderer left as it is. */
+export function resetRemaster(current: RemasterSettings): RemasterSettings {
+  return { ...REMASTER_DEFAULTS, enabled: current.enabled };
+}
+
+/** Settings saved before the levels, when each dial was its own number: their preset becomes the nearest quality. */
+function fromOldPreset(s: Record<string, unknown>): Partial<RemasterSettings> {
+  const preset = s.preset;
+  if (preset === 'performance') return QUALITY_PRESETS.medium;
+  if (preset === 'ultra') return QUALITY_PRESETS.ultra;
+  if (preset === 'toon') return { style: 'toon' };
+  return {};
+}
+
+/** Saved settings, with anything missing, of the wrong type or not among its options back at its default. */
+export function normalizeRemaster(saved: unknown): RemasterSettings {
+  const out: RemasterSettings = { ...REMASTER_DEFAULTS };
+  if (!saved || typeof saved !== 'object') return out;
+  const s = saved as Record<string, unknown>;
+  if (!('shadowQuality' in s) && typeof s.preset === 'string') Object.assign(out, fromOldPreset(s));
+  for (const c of CHOICE_SETTINGS) {
+    const v = s[c.key];
+    const want = typeof REMASTER_DEFAULTS[c.key] === 'boolean' ? (typeof v === 'boolean' ? (v ? 'on' : 'off') : null) : v;
+    if (typeof want === 'string' && c.options.some((o) => o.value === want)) Object.assign(out, withChoice(out, c.key, want));
+  }
+  if (typeof s.resolution === 'number' && Number.isFinite(s.resolution)) out.resolution = snapResolution(s.resolution);
+  return out;
+}
+
+// ---- What the renderer draws with --------------------------------------------------------------
+
+export type ToneMap = 'neutral' | 'agx' | 'aces' | 'reinhard' | 'cineon' | 'linear';
+export type ToonRamp = 'classic' | 'bands5' | 'soft' | 'smooth';
+
+/** The numbers `world/remaster.ts` draws with, worked out from the settings by resolveRemaster. */
+export interface RenderParams {
+  enabled: boolean;
+  resolution: number;
+  /** MSAA samples on the scene target: 0, 2 or 4. */
+  msaa: number;
   sharpen: number;
-  // HDR and tone
   hdr: boolean;
   hdrPeak: number;
   paperWhite: number;
   toneMap: ToneMap;
   exposure: number;
-  // Global illumination
   gi: boolean;
   giIntensity: number;
   giGlow: number;
-  giDensity: GiDensity;
-  giRolling: boolean;
-  giSpeed: number;
+  /** Meters between light probes. */
+  giSpacing: number;
   giBounces: number;
-  // Color
+  /** Probes re-baked a second once the bake is done; 0 keeps the bake as it is. */
+  giLive: number;
   saturation: number;
   vibrance: number;
   contrast: number;
   temperature: number;
   tint: number;
-  // Lights
   moon: number;
   skyFill: number;
   ambientFill: number;
@@ -47,376 +389,93 @@ export interface RemasterSettings {
   lampLight: number;
   emissive: number;
   screenGlow: number;
-  // Shadows
-  shadowFilter: ShadowFilter;
-  shadowMapSize: ShadowMapSize;
+  shadowMapSize: number;
+  /** PCF filter radius in shadow-map texels. */
   shadowSoftness: number;
-  // Look
   toonRamp: ToonRamp;
   outlines: boolean;
   outlineThickness: number;
   outlineOpacity: number;
-  // Diagnostics
   debug: DebugView;
   pace: PaceMode;
 }
 
-export type RemasterKey = keyof RemasterSettings;
-
-interface Base<K extends RemasterKey> {
-  key: K;
-  label: string;
-  hint: string;
-  /** Greyed out unless this is true (its master switch). */
-  needs?: RemasterKey;
-}
-export type RangeControl = Base<RemasterKey> & { kind: 'range'; min: number; max: number; step: number; unit?: '%' | '×' | 'px' | 'm' | 'K' | ''; percent?: boolean };
-export type ToggleControl = Base<RemasterKey> & { kind: 'toggle' };
-export type SelectControl = Base<RemasterKey> & { kind: 'select'; options: readonly (readonly [string, string])[] };
-export type RemasterControl = RangeControl | ToggleControl | SelectControl;
-
-export interface RemasterSection {
-  id: string;
-  title: string;
-  icon: string;
-  note?: string;
-  controls: RemasterControl[];
-}
-
-/** The classic renderer, and once Remastered is turned on, the Nik preset: 2× MSAA, baked high-density GI, smooth shading, no outlines. */
-export const REMASTER_DEFAULTS: RemasterSettings = {
-  enabled: false,
-  preset: 'nik',
-  msaa: true,
-  sharpen: 0.25,
-  hdr: false,
-  hdrPeak: 4,
-  paperWhite: 1,
-  toneMap: 'linear',
-  exposure: 1.25,
-  gi: true,
-  giIntensity: 0.25,
-  giGlow: 0.4,
-  giDensity: 'high',
-  giRolling: false,
-  giSpeed: 30,
-  giBounces: 1,
-  saturation: 1.05,
-  vibrance: 0.15,
-  contrast: 1.06,
-  temperature: 0,
-  tint: 0,
-  moon: 1,
-  skyFill: 1,
-  ambientFill: 0.95,
-  officeFill: 1.05,
-  screenLight: 1.4,
-  lampLight: 1.2,
-  emissive: 1.4,
-  screenGlow: 1,
-  shadowFilter: 'pcf',
-  shadowMapSize: '1024',
-  shadowSoftness: 0.5,
-  toonRamp: 'smooth',
-  outlines: false,
-  outlineThickness: 1.8,
-  outlineOpacity: 1,
-  debug: 'final',
-  pace: 'adaptive',
+const MSAA: Record<Level, number> = { low: 0, medium: 2, high: 4, veryHigh: 4, ultra: 4 };
+/** The filter radius grows with the map, so the shadow's soft edge stays the same width in the room. */
+const SHADOWS: Record<Level, { size: number; softness: number }> = {
+  low: { size: 1024, softness: 0.5 },
+  medium: { size: 2048, softness: 1 },
+  high: { size: 3072, softness: 1.5 },
+  veryHigh: { size: 4096, softness: 2 },
+  ultra: { size: 8192, softness: 4 },
 };
+const GI: Record<Level, { spacing: number; bounces: number } | null> = {
+  low: null,
+  medium: { spacing: 3, bounces: 0 },
+  high: { spacing: 2, bounces: 1 },
+  veryHigh: { spacing: 1.4, bounces: 1 },
+  ultra: { spacing: 1.4, bounces: 2 },
+};
+const LIVE_GI: Record<Level, number> = { low: 0, medium: 15, high: 30, veryHigh: 60, ultra: 120 };
+const EXPOSURE: Record<Brightness, number> = { darker: 0.9, dark: 1.05, normal: 1.25, bright: 1.45, brighter: 1.7 };
+const GRADES: Record<ColorLook, Pick<RenderParams, 'saturation' | 'vibrance' | 'contrast' | 'temperature' | 'tint'>> = {
+  natural: { saturation: 1, vibrance: 0, contrast: 1, temperature: 0, tint: 0 },
+  rich: { saturation: 1.05, vibrance: 0.15, contrast: 1.06, temperature: 0, tint: 0 },
+  vivid: { saturation: 1.2, vibrance: 0.3, contrast: 1.1, temperature: 0, tint: 0 },
+  warm: { saturation: 1.05, vibrance: 0.15, contrast: 1.06, temperature: 0.25, tint: 0.05 },
+  cool: { saturation: 1, vibrance: 0.1, contrast: 1.06, temperature: -0.25, tint: 0 },
+};
+const LIGHTS: Record<LightLook, Pick<RenderParams, 'officeFill' | 'screenLight' | 'lampLight' | 'emissive' | 'screenGlow' | 'giGlow'>> = {
+  subtle: { officeFill: 0.95, screenLight: 1, lampLight: 0.9, emissive: 1, screenGlow: 1, giGlow: 0.25 },
+  normal: { officeFill: 1.05, screenLight: 1.4, lampLight: 1.2, emissive: 1.4, screenGlow: 1, giGlow: 0.4 },
+  strong: { officeFill: 1.1, screenLight: 1.9, lampLight: 1.6, emissive: 1.9, screenGlow: 1.25, giGlow: 0.55 },
+  neon: { officeFill: 1.15, screenLight: 2.6, lampLight: 2.1, emissive: 2.6, screenGlow: 1.6, giGlow: 0.75 },
+};
+const STYLES: Record<ArtStyle, { toonRamp: ToonRamp; outlines: boolean }> = {
+  smooth: { toonRamp: 'smooth', outlines: false },
+  soft: { toonRamp: 'soft', outlines: false },
+  toon: { toonRamp: 'classic', outlines: true },
+};
+const SHARPEN: Record<Sharpness, number> = { off: 0, low: 0.25, medium: 0.5, high: 0.8 };
+const HDR_PEAK: Record<HdrHighlights, number> = { subtle: 2, normal: 4, bright: 8, max: 16 };
+/** In HDR, screens and signs glow past white by this much more. */
+const HDR_GLOW = 1.6;
 
-const TONE_MAPS = [
-  ['neutral', 'Neutral (Khronos PBR)'],
-  ['agx', 'AgX (filmic)'],
-  ['aces', 'ACES filmic'],
-  ['reinhard', 'Reinhard'],
-  ['cineon', 'Cineon'],
-  ['linear', 'Linear (clip)'],
-] as const;
-
-export const REMASTER_SECTIONS: RemasterSection[] = [
-  {
-    id: 'image',
-    title: 'Image',
-    icon: '🖥️',
-    controls: [
-      { key: 'enabled', kind: 'toggle', label: 'Remastered renderer', hint: 'Off draws the office the classic way, with the resolution and anti-aliasing in Settings → Graphics. The same switch as Settings → Graphics → Renderer.' },
-      { key: 'msaa', kind: 'toggle', label: 'Anti-aliasing (2× MSAA)', hint: 'Smooths the edges of everything drawn, at the screen’s full resolution.', needs: 'enabled' },
-      { key: 'sharpen', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Sharpening (CAS)', hint: 'Contrast-adaptive sharpening on the final image. At 0% one pass fewer is drawn.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'hdr',
-    title: 'HDR and tone',
-    icon: '☀️',
-    note: 'Native HDR draws highlights brighter than white on an EDR display such as the MacBook Pro’s XDR panel. Everything at or below white looks as it does in SDR.',
-    controls: [
-      { key: 'hdr', kind: 'toggle', label: 'Native HDR (EDR)', hint: 'Extended-range output through a float16 WebGPU canvas. Falls back to SDR where the display or browser can’t.', needs: 'enabled' },
-      { key: 'hdrPeak', kind: 'range', min: 1, max: 16, step: 0.25, unit: '×', label: 'HDR peak', hint: 'How many times brighter than white the brightest highlight may go. The XDR panel shows up to about 16× in a dim room.', needs: 'hdr' },
-      { key: 'paperWhite', kind: 'range', min: 0.5, max: 2, step: 0.05, unit: '×', label: 'Paper white', hint: 'Brightness of everything that isn’t a highlight, relative to the desktop’s white.', needs: 'hdr' },
-      { key: 'toneMap', kind: 'select', label: 'Tone mapping', hint: 'How highlights roll off to the display’s peak. Neutral leaves colors below the knee untouched.', needs: 'enabled', options: TONE_MAPS },
-      { key: 'exposure', kind: 'range', min: 0.25, max: 4, step: 0.05, unit: '×', label: 'Exposure', hint: 'Scene brightness before tone mapping.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'gi',
-    title: 'Global illumination',
-    icon: '💡',
-    note: 'A grid of light probes through the floor captures the light bouncing off every surface (the orange of the laptop screens, the lamps, the moon) and lights the room with it.',
-    controls: [
-      { key: 'gi', kind: 'toggle', label: 'Probe GI', hint: 'Diffuse bounce light from a baked light-probe grid.', needs: 'enabled' },
-      { key: 'giIntensity', kind: 'range', min: 0, max: 3, step: 0.05, unit: '×', label: 'Intensity', hint: 'How strong the bounce light is.', needs: 'gi' },
-      {
-        key: 'giGlow',
-        kind: 'range',
-        min: 0,
-        max: 1,
-        step: 0.05,
-        percent: true,
-        label: 'Glowing surfaces as light',
-        hint: 'How much screens, signs, ceiling tubes and lit windows light the room through the probes. In the classic office they light nothing; at 100% the tubes flood it. Takes effect as probes rebake.',
-        needs: 'gi',
-      },
-      {
-        key: 'giDensity',
-        kind: 'select',
-        label: 'Probe density',
-        hint: 'Probes every 3 m, 2 m or 1.4 m. Denser catches smaller pools of light; a rebake takes longer.',
-        needs: 'gi',
-        options: [
-          ['low', 'Low (3 m)'],
-          ['medium', 'Medium (2 m)'],
-          ['high', 'High (1.4 m)'],
-        ],
-      },
-      { key: 'giBounces', kind: 'range', min: 0, max: 3, step: 1, label: 'Extra bounces', hint: 'Light that bounced off one surface lights the next. Each one is another bake pass.', needs: 'gi' },
-      { key: 'giRolling', kind: 'toggle', label: 'Live GI', hint: 'Keeps re-baking a few probes every frame, so screens, people and weather show up in the bounce light.', needs: 'gi' },
-      {
-        key: 'giSpeed',
-        kind: 'range',
-        min: 5,
-        max: 600,
-        step: 5,
-        label: 'Live probes per second',
-        hint: 'How many probes are re-baked each second while Live GI is on, spread over the frames. Each one draws the office six more times.',
-        needs: 'giRolling',
-      },
-    ],
-  },
-  {
-    id: 'color',
-    title: 'Color',
-    icon: '🎨',
-    controls: [
-      { key: 'saturation', kind: 'range', min: 0, max: 2, step: 0.01, unit: '×', label: 'Saturation', hint: 'Every color, evenly.', needs: 'enabled' },
-      { key: 'vibrance', kind: 'range', min: -1, max: 1, step: 0.01, label: 'Vibrance', hint: 'Lifts the muted colors more than the vivid ones.', needs: 'enabled' },
-      { key: 'contrast', kind: 'range', min: 0.5, max: 1.5, step: 0.01, unit: '×', label: 'Contrast', hint: 'Around middle grey, before tone mapping.', needs: 'enabled' },
-      { key: 'temperature', kind: 'range', min: -1, max: 1, step: 0.01, label: 'Temperature', hint: 'Cooler (blue) to warmer (amber).', needs: 'enabled' },
-      { key: 'tint', kind: 'range', min: -1, max: 1, step: 0.01, label: 'Tint', hint: 'Green to magenta.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'lights',
-    title: 'Lights',
-    icon: '🔦',
-    controls: [
-      { key: 'moon', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Moonlight', hint: 'The moon, the one light that casts shadows.', needs: 'enabled' },
-      { key: 'skyFill', kind: 'range', min: 0, max: 3, step: 0.05, unit: '×', label: 'Sky fill', hint: 'Light from the night sky above and the ground below.', needs: 'enabled' },
-      { key: 'ambientFill', kind: 'range', min: 0, max: 3, step: 0.05, unit: '×', label: 'Ambient', hint: 'Flat light everywhere.', needs: 'enabled' },
-      { key: 'officeFill', kind: 'range', min: 0, max: 3, step: 0.05, unit: '×', label: 'Office fill', hint: 'The neon fill inside the office and the garage.', needs: 'enabled' },
-      { key: 'screenLight', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Laptop screen light', hint: 'The pools of light the laptop screens throw over the desks.', needs: 'enabled' },
-      { key: 'lampLight', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Street lamps', hint: 'The lamps and string lights outside.', needs: 'enabled' },
-      { key: 'emissive', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Emissive surfaces', hint: 'Lit windows across the city, bulbs and glowing trim.', needs: 'enabled' },
-      { key: 'screenGlow', kind: 'range', min: 0.5, max: 4, step: 0.05, unit: '×', label: 'Screen and sign brightness', hint: 'Laptop screens, signs and LEDs. Above 1 they glow past white in HDR.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'shadows',
-    title: 'Shadows',
-    icon: '🌗',
-    controls: [
-      {
-        key: 'shadowMapSize',
-        kind: 'select',
-        label: 'Shadow resolution',
-        hint: 'The moon’s shadow map. Smart shadows only redraw it when a caster moves, so a big one costs little.',
-        needs: 'enabled',
-        options: [
-          ['1024', '1024²'],
-          ['2048', '2048²'],
-          ['4096', '4096²'],
-          ['8192', '8192²'],
-        ],
-      },
-      {
-        key: 'shadowFilter',
-        kind: 'select',
-        label: 'Filter',
-        hint: 'PCF is crisp. VSM is soft and smooth but can leak light where shadows overlap.',
-        needs: 'enabled',
-        options: [
-          ['pcf', 'PCF'],
-          ['vsm', 'VSM'],
-        ],
-      },
-      { key: 'shadowSoftness', kind: 'range', min: 0, max: 8, step: 0.25, label: 'Softness', hint: 'Blur radius at the edge of a shadow.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'look',
-    title: 'Look',
-    icon: '🖍️',
-    controls: [
-      {
-        key: 'toonRamp',
-        kind: 'select',
-        label: 'Shading',
-        hint: 'The cartoon light bands on every surface.',
-        needs: 'enabled',
-        options: [
-          ['classic', 'Toon, 3 bands'],
-          ['bands5', 'Toon, 5 bands'],
-          ['soft', 'Toon, soft bands'],
-          ['smooth', 'Smooth'],
-        ],
-      },
-      { key: 'outlines', kind: 'toggle', label: 'Ink outlines', hint: 'The cartoon outline round every solid.', needs: 'enabled' },
-      { key: 'outlineThickness', kind: 'range', min: 0.5, max: 5, step: 0.1, label: 'Outline thickness', hint: 'How thick the ink line is.', needs: 'outlines' },
-      { key: 'outlineOpacity', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Outline opacity', hint: 'How dark the ink line is.', needs: 'outlines' },
-    ],
-  },
-  {
-    id: 'debug',
-    title: 'Diagnostics',
-    icon: '🧪',
-    controls: [
-      {
-        key: 'debug',
-        kind: 'select',
-        label: 'View',
-        hint: 'Look at one stage of the pipeline. HDR heatmap: grey is SDR, blue to red is 1× to 8× white.',
-        needs: 'enabled',
-        options: [
-          ['final', 'Final image'],
-          ['gi', 'GI only'],
-          ['hdr', 'HDR heatmap'],
-        ],
-      },
-      {
-        key: 'pace',
-        kind: 'select',
-        label: 'Render pace',
-        hint: 'Adaptive drops to a few frames a second after 30 s of stillness. Always full keeps every frame, so FPS and GPU readings stay comparable.',
-        options: [
-          ['adaptive', 'Adaptive'],
-          ['full', 'Always full rate'],
-        ],
-      },
-    ],
-  },
-];
-
-export const REMASTER_CONTROLS: RemasterControl[] = REMASTER_SECTIONS.flatMap((s) => s.controls);
-
-export interface RemasterPreset {
-  id: string;
-  label: string;
-  hint: string;
-  values: Partial<RemasterSettings>;
+/** The numbers the renderer draws with for these settings. */
+export function resolveRemaster(s: RemasterSettings): RenderParams {
+  const gi = GI[s.giQuality];
+  const shadows = SHADOWS[s.shadowQuality];
+  const lights = LIGHTS[s.lights];
+  return {
+    enabled: s.enabled,
+    resolution: s.resolution,
+    msaa: MSAA[s.antiAliasing],
+    sharpen: SHARPEN[s.sharpness],
+    hdr: s.hdr,
+    hdrPeak: HDR_PEAK[s.hdrHighlights],
+    paperWhite: 1,
+    toneMap: 'linear',
+    exposure: EXPOSURE[s.brightness],
+    gi: !!gi,
+    giIntensity: 0.25,
+    giSpacing: gi?.spacing ?? 3,
+    giBounces: gi?.bounces ?? 0,
+    giLive: gi ? LIVE_GI[s.liveGi] : 0,
+    ...GRADES[s.color],
+    moon: 1,
+    skyFill: 1,
+    ambientFill: 0.95,
+    ...lights,
+    screenGlow: lights.screenGlow * (s.hdr ? HDR_GLOW : 1),
+    shadowMapSize: shadows.size,
+    shadowSoftness: shadows.softness,
+    ...STYLES[s.style],
+    outlineThickness: 1.8,
+    outlineOpacity: 1,
+    debug: s.debug,
+    pace: s.pace,
+  };
 }
-
-export const REMASTER_PRESETS: RemasterPreset[] = [
-  { id: 'classic', label: 'Classic', hint: 'The normal Droid Office renderer.', values: { enabled: false } },
-  {
-    id: 'performance',
-    label: 'Performance',
-    hint: 'The Nik look for less GPU: no MSAA or sharpening, and probes every 2 m with no extra bounce.',
-    values: { enabled: true, msaa: false, sharpen: 0, giDensity: 'medium', giBounces: 0 },
-  },
-  {
-    id: 'toon',
-    label: 'Toon',
-    hint: 'The classic cartoon look, three-band shading and ink outlines, lit by the baked GI.',
-    values: { enabled: true, toonRamp: 'classic', outlines: true, outlineThickness: 1.8, outlineOpacity: 1, exposure: 1, shadowMapSize: '2048', shadowSoftness: 1.5 },
-  },
-  {
-    id: 'nik',
-    label: 'Nik',
-    hint: 'Native resolution, 2× MSAA, baked GI every 1.4 m with one extra bounce, smooth shading and no outlines, in SDR.',
-    values: { ...REMASTER_DEFAULTS, enabled: true },
-  },
-  {
-    id: 'hdr',
-    label: 'HDR',
-    hint: 'Nik in native HDR on an EDR display such as the XDR panel: highlights up to 4× white, screens and signs glowing past it.',
-    values: { enabled: true, hdr: true, hdrPeak: 4, screenGlow: 1.6 },
-  },
-  {
-    id: 'ultra',
-    label: 'Ultra',
-    hint: 'Nik with 4096² shadows, two extra GI bounces, and Live GI re-baking 60 probes a second so people and screens show up in the bounce light.',
-    values: { enabled: true, shadowMapSize: '4096', shadowSoftness: 1, giBounces: 2, giRolling: true, giSpeed: 60 },
-  },
-];
-
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-/** A range value snapped to its control's step and clamped to its range. */
-export function snapRange(c: RangeControl, v: number): number {
-  const snapped = c.min + Math.round((v - c.min) / c.step) * c.step;
-  // Rounded to the step's decimals, so 0.35 is saved as 0.35 and not 0.35000000000000003.
-  const decimals = Math.max(0, -Math.floor(Math.log10(c.step)) + 1);
-  return clamp(Number(snapped.toFixed(decimals)), c.min, c.max);
-}
-
-/** Saved settings, with anything missing, of the wrong type or out of range back at its default. */
-export function normalizeRemaster(saved: unknown): RemasterSettings {
-  const out: RemasterSettings = { ...REMASTER_DEFAULTS };
-  if (!saved || typeof saved !== 'object') return out;
-  const s = saved as Record<string, unknown>;
-  const o = out as unknown as Record<string, unknown>;
-  for (const c of REMASTER_CONTROLS) {
-    const v = s[c.key];
-    if (c.kind === 'toggle' && typeof v === 'boolean') o[c.key] = v;
-    else if (c.kind === 'range' && typeof v === 'number' && Number.isFinite(v)) o[c.key] = snapRange(c, v);
-    else if (c.kind === 'select' && typeof v === 'string' && c.options.some(([value]) => value === v)) o[c.key] = v;
-  }
-  if (typeof s.preset === 'string' && (s.preset === 'custom' || REMASTER_PRESETS.some((p) => p.id === s.preset))) out.preset = s.preset;
-  return out;
-}
-
-/** `settings` with a preset's values applied over the defaults. */
-export function applyPreset(id: string, current: RemasterSettings): RemasterSettings {
-  const preset = REMASTER_PRESETS.find((p) => p.id === id);
-  if (!preset) return current;
-  // Classic only turns the renderer off, so switching back on returns to what you had, preset and all.
-  if (id === 'classic') return { ...current, enabled: false };
-  // The diagnostics view and render pace are yours, not the preset's.
-  return normalizeRemaster({ ...REMASTER_DEFAULTS, ...preset.values, debug: current.debug, pace: current.pace, preset: id });
-}
-
-/** Whether a control does anything right now: its master switch (and that one's) is on. */
-export function controlLive(c: RemasterControl, s: RemasterSettings): boolean {
-  let need = c.needs;
-  const seen = new Set<RemasterKey>();
-  while (need && !seen.has(need)) {
-    if (!s[need]) return false;
-    seen.add(need);
-    need = REMASTER_CONTROLS.find((x) => x.key === need)?.needs;
-  }
-  return true;
-}
-
-/** How a range control shows its value. */
-export function formatRange(c: RangeControl, v: number): string {
-  if (c.percent) return `${Math.round(v * 100)}%`;
-  const decimals = c.step >= 1 ? 0 : c.step >= 0.1 ? 1 : 2;
-  const unit = c.unit === undefined ? '' : c.unit === '×' ? '×' : c.unit ? ` ${c.unit}` : '';
-  return `${v.toFixed(decimals)}${unit}`;
-}
-
-/** Spacing between probes for a density, in meters. */
-export const GI_SPACING: Record<GiDensity, number> = { low: 3, medium: 2, high: 1.4 };
 
 /** How many probes fit along a span at a spacing: at least 2, so the grid has two ends. */
 export function probeCount(span: number, spacing: number): number {
@@ -435,6 +494,127 @@ export function whiteBalance(temperature: number, tint: number): [number, number
   const gg = 1 - g;
   const norm = 3 / (r + gg + b);
   return [r * norm, gg * norm, b * norm];
+}
+
+// ---- Auto ----------------------------------------------------------------------------------------
+
+/** What Auto knows about the machine. */
+export interface SystemProfile {
+  /** WebGL's unmasked renderer string, e.g. "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)". */
+  gpu: string;
+  /** Device pixels the scene covers at 1.0× resolution. */
+  pixels: number;
+  /** The frame rate limit it should hold. */
+  fpsCap: number;
+}
+
+export interface GpuGuess {
+  /** The GPU's name with the driver noise taken out. */
+  name: string;
+  /** Rough drawing speed, with an Apple M1's 8-core GPU as 1. */
+  score: number;
+}
+
+export interface AutoPick {
+  quality: Level;
+  resolution: number;
+  gpu: GpuGuess;
+}
+
+/** The GPU's name out of a WebGL renderer string: ANGLE's wrapping, device ids, API names and (R)/(TM) taken out. */
+export function gpuName(renderer: string): string {
+  let n = renderer.replace(/\s+/g, ' ').trim();
+  const angle = n.match(/^ANGLE \((.*)\)$/);
+  if (angle) {
+    const parts = angle[1].split(', ');
+    n = parts[1] ?? parts[0];
+  }
+  return n
+    .replace(/^ANGLE Metal Renderer: /, '')
+    .replace(/\((R|TM)\)/gi, '')
+    .replace(/ \(0x[0-9a-f]+\).*$/i, '')
+    .replace(/ (Direct3D|OpenGL|Vulkan|vs_\d|ps_\d).*$/i, '')
+    .replace(/\/PCIe.*$|\/SSE2.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const APPLE_GEN = [1, 1.25, 1.45, 1.7, 2.2];
+const APPLE_VARIANT: Record<string, number> = { '': 1, pro: 2, max: 4, ultra: 8 };
+const NVIDIA_GEN: Record<number, number> = { 9: 0.7, 10: 1, 16: 1.1, 20: 1.6, 30: 2.3, 40: 3.3, 50: 4.2 };
+const NVIDIA_TIER: Record<number, number> = { 30: 0.6, 50: 1, 60: 1.6, 70: 2.4, 80: 3.2, 90: 4 };
+const AMD_GEN: Record<number, number> = { 5: 1.4, 6: 2, 7: 2.8, 9: 3.6 };
+const AMD_TIER: Record<number, number> = { 4: 0.6, 5: 0.8, 6: 1.2, 7: 1.8, 8: 2.6, 9: 3.4 };
+
+function gpuScore(name: string): number {
+  const n = name.toLowerCase();
+  if (/swiftshader|llvmpipe|softpipe|software|basic render/.test(n)) return 0.05;
+  const apple = n.match(/apple m(\d+)(?: (pro|max|ultra))?/);
+  if (apple) {
+    const gen = Number(apple[1]);
+    const g = APPLE_GEN[gen - 1] ?? APPLE_GEN[APPLE_GEN.length - 1] * 1.25 ** (gen - APPLE_GEN.length);
+    return g * APPLE_VARIANT[apple[2] ?? ''];
+  }
+  // Safari names every Apple GPU the same.
+  if (n === 'apple gpu') return 1.5;
+  const laptop = /laptop|max-q|mobile/.test(n) ? 0.65 : 1;
+  const nv = n.match(/(?:gtx|rtx) ?(\d{1,2})(\d{2})\b/);
+  if (nv) {
+    const gen = Number(nv[1]);
+    const genMul = NVIDIA_GEN[gen] ?? (gen > 50 ? NVIDIA_GEN[50] * 1.25 ** ((gen - 50) / 10) : 0.6);
+    const tier = NVIDIA_TIER[Number(nv[2])] ?? 1;
+    return genMul * tier * (/\bti\b|super/.test(n) ? 1.15 : 1) * laptop;
+  }
+  if (/rtx a\d{4}|quadro rtx/.test(n)) return 4 * laptop;
+  if (/geforce mx/.test(n)) return 0.4;
+  const rx = n.match(/rx ?(\d)(\d)\d0(m?)\b/);
+  if (rx) {
+    const genMul = AMD_GEN[Number(rx[1])] ?? 3.6;
+    return genMul * (AMD_TIER[Number(rx[2])] ?? 1) * (/xtx?\b/.test(n) ? 1.1 : 1) * (rx[3] ? 0.7 : 1);
+  }
+  if (/rx ?5\d0\b/.test(n)) return 1.4;
+  const apu = n.match(/radeon (\d{3})m\b/);
+  if (apu) return ({ 890: 1.8, 880: 1.6, 780: 1.4, 760: 1.1, 680: 1.1, 660: 0.8 } as Record<string, number>)[apu[1]] ?? 0.6;
+  if (/radeon|vega/.test(n)) return 0.6;
+  const arc = n.match(/arc.* ([ab])(\d)\d0/);
+  if (arc) return arc[1] === 'b' ? (arc[2] === '7' ? 4.5 : 3.8) : (({ 7: 3.5, 5: 2.5, 3: 1.2 } as Record<string, number>)[arc[2]] ?? 1.2);
+  if (/\barc\b/.test(n)) return 1;
+  if (/iris xe/.test(n)) return 0.5;
+  if (/iris/.test(n)) return 0.35;
+  if (/uhd/.test(n)) return 0.25;
+  if (/intel/.test(n)) return 0.2;
+  if (/adreno.*x1/.test(n)) return 1.5;
+  if (/adreno|mali|powervr/.test(n)) return 0.25;
+  return 1;
+}
+
+/** The GPU a WebGL renderer string names, and how fast it draws. Unknown GPUs count as an M1. */
+export function gpuGuess(renderer: string): GpuGuess {
+  const name = gpuName(renderer) || 'Unknown GPU';
+  return { name, score: gpuScore(name) };
+}
+
+/**
+ * How much of an M1's speed each overall quality needs to hold 60 FPS at 1080p. Each step asks for about half as much
+ * again as the one below it. Below what Low needs, Auto lowers the resolution instead of the quality.
+ */
+export const AUTO_NEEDS: Record<Level, number> = { low: 0.35, medium: 0.55, high: 0.8, veryHigh: 1.15, ultra: 1.6 };
+const FULL_HD = 1920 * 1080;
+
+/**
+ * The quality and resolution to start from on this machine, the way a game's auto-detect picks them: the GPU's
+ * speed over the pixels and frames a second it has to draw. Below what Low needs, the resolution comes down instead,
+ * to 0.5× at the least; it never goes above 1.0×.
+ */
+export function autoQuality(p: SystemProfile): AutoPick {
+  const gpu = gpuGuess(p.gpu);
+  const load = (Math.max(1, p.pixels) / FULL_HD) * (clamp(p.fpsCap, 30, 240) / 60);
+  const speed = gpu.score / load;
+  let quality: Level = 'low';
+  for (const lv of LEVELS) if (speed >= AUTO_NEEDS[lv]) quality = lv;
+  // Pixels go with the square of the resolution scale.
+  const resolution = speed >= AUTO_NEEDS.low ? 1 : Math.max(RESOLUTION_MIN, Math.floor(Math.sqrt(speed / AUTO_NEEDS.low) * 10) / 10);
+  return { quality, resolution, gpu };
 }
 
 export const REMASTER_KEY = 'droid-office.remaster';
