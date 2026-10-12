@@ -28,46 +28,38 @@ const DRAG_LOOK_SPEED = 0.005;
  */
 export const SETTLE_REST = 100;
 export const SETTLE_MAX = 150;
-/**
- * One move this big, after a click gives the mouse back, is the browser reporting the distance from
- * the button. A menu higher on the screen is well past it; a frame of looking usually is not.
- * That one move is dropped even after the hand has rested, and only for this long (ms).
- */
-export const RELOCK_JUMP = 80;
-export const RELOCK_JUMP_FOR = 500;
-
-/** How long a click's relock holds the view: follow-through until `settleUntil`, and one warp until `jumpUntil`. */
+/** A click's relock: short follow-through, and the first nonzero move that rebases the captured cursor. */
 export interface Relock {
   settleUntil: number;
-  jumpUntil: number;
+  firstMove: boolean;
 }
 
-/** A click just closed a window: hold the follow-through, and watch for the warp from the button. */
+/** A click just closed a window: hold the follow-through and rebase the cursor on its first movement. */
 export function relockAt(now: number): Relock {
-  return { settleUntil: now + SETTLE_MAX, jumpUntil: now + RELOCK_JUMP_FOR };
+  return { settleUntil: now + SETTLE_MAX, firstMove: true };
 }
 
 /** No relock in progress: every move looks. */
 export function idleRelock(): Relock {
-  return { settleUntil: 0, jumpUntil: 0 };
+  return { settleUntil: 0, firstMove: false };
 }
 
 /**
- * Whether this locked move turns the camera. Small moves wait until the hand rests. One large move
- * inside the jump window is the distance from the click (a higher menu) and is dropped once; the
- * move after it looks, so the mouse does not feel gone.
+ * The first nonzero move can report the distance from the button, however small or late it arrives.
+ * Drop it once, not later deliberate flicks. Follow-through still waits briefly for the hand to rest.
  */
 export function takeRelockMove(relock: Relock, move: { dx: number; dy: number; now: number; rested: number }): { relock: Relock; look: boolean } {
-  if (relock.jumpUntil && move.now < relock.jumpUntil && Math.hypot(move.dx, move.dy) >= RELOCK_JUMP) {
-    return { relock: { settleUntil: relock.settleUntil, jumpUntil: 0 }, look: false };
+  if (relock.firstMove) {
+    // Some lock transitions send zero-delta moves before the cursor actually moves.
+    if (move.dx === 0 && move.dy === 0) return { relock, look: false };
+    return { relock: { settleUntil: move.now < relock.settleUntil ? relock.settleUntil : 0, firstMove: false }, look: false };
   }
   let settleUntil = relock.settleUntil;
   if (settleUntil) {
     if (move.rested < SETTLE_REST && move.now < settleUntil) return { relock, look: false };
     settleUntil = 0;
   }
-  const jumpUntil = relock.jumpUntil && move.now < relock.jumpUntil ? relock.jumpUntil : 0;
-  return { relock: { settleUntil, jumpUntil }, look: true };
+  return { relock: { settleUntil, firstMove: false }, look: true };
 }
 
 export class PlayerController {
@@ -208,7 +200,7 @@ export class PlayerController {
       if (this.locked) {
         // Held for a moment under a window (see yieldMouse), the mouse doesn't turn your head.
         if (!this.enabled) return;
-        // Taken back from a click, the hand's follow-through is not a look, and neither is one warp from the button.
+        // Taken back from a click, rebase the cursor before looking and hold the hand's follow-through briefly.
         const step = takeRelockMove(this.relock, { dx: e.movementX, dy: e.movementY, now, rested });
         this.relock = step.relock;
         if (!step.look) return;
@@ -293,11 +285,13 @@ export class PlayerController {
 
   /**
    * Captures the mouse for looking around, as the first click on the scene does. With `settle` (a
-   * click just closed a window), the view holds still until the mouse comes to rest, and one warp
-   * from that click (a button higher on the screen) is dropped, so neither swings the view.
+   * click just closed a window), rebase the cursor on its first movement and briefly hold the
+   * hand's follow-through, so neither swings the view.
    */
   lock(settle = false) {
-    this.settleNext = settle;
+    if (this.hasMouse) return;
+    // Deferred releases, Esc keyup and fallback requests must not clear a click's pending guard.
+    this.settleNext ||= settle;
     // Still being let go of, for a window that closed again at once: taken back once it's free.
     if (this.locked && this.letting) this.lockAfter = true;
     if (this.locked || this.lockPending) return;

@@ -189,6 +189,91 @@ test('only actual pointer-driven camera changes wake rendering, not unlocked hov
 
 const desk: Collider = { minX: -1.05, maxX: 1.05, minZ: -0.53, maxZ: 0.53, top: 0.78 };
 
+/** Pointer-lock events land asynchronously; callers choose when each request or release lands. */
+function pointerLock(t: TestContext) {
+  const rig = controller(t, []);
+  let now = 10_000;
+  t.mock.method(performance, 'now', () => now);
+  let locked = false;
+  Object.defineProperty(rig.doc, 'pointerLockElement', { get: () => (locked ? rig.dom : null) });
+  const request = t.mock.fn(() => undefined);
+  Object.defineProperty(rig.dom, 'requestPointerLock', { value: request });
+  Object.defineProperty(rig.doc, 'exitPointerLock', { value: t.mock.fn() });
+  return {
+    ...rig,
+    request,
+    land(value: boolean) {
+      locked = value;
+      rig.doc.dispatchEvent(new Event('pointerlockchange'));
+    },
+    move(dx: number, dy: number, elapsed: number) {
+      now += elapsed;
+      rig.win.dispatchEvent(Object.assign(new Event('pointermove'), { movementX: dx, movementY: dy }));
+    },
+  };
+}
+
+test('a click relock keeps the view still on the first delayed warp, then looks right and up normally', (t) => {
+  const { player, land, move } = pointerLock(t);
+  const pitch = player.lookPitch;
+  player.lock(true);
+  land(true);
+  move(0, 0, 600);
+  move(40, -320, 1000);
+  assert.equal(player.camYaw, 0);
+  assert.equal(player.lookPitch, pitch);
+  move(10, -6, 10);
+  assert.ok(Math.abs(player.camYaw + 0.022) < 1e-12, 'moving right turns right');
+  assert.ok(Math.abs(player.lookPitch - pitch - 0.0132) < 1e-12, 'moving up looks up');
+});
+
+test('a click relock survives a pending window release and a repeated lock request', (t) => {
+  const { player, land, move, request } = pointerLock(t);
+  player.lock();
+  land(true);
+  player.enabled = false;
+  player.yieldMouse();
+  player.enabled = true;
+  player.lock(true);
+  land(false); // The queued relock must keep the click guard.
+  player.lock(); // A fallback key while that request is pending must not clear it.
+  assert.equal(request.mock.callCount(), 2);
+  land(true);
+  move(40, -320, 120);
+  assert.equal(player.camYaw, 0);
+  move(10, 0, 100);
+  assert.ok(Math.abs(player.camYaw + 0.022) < 1e-12);
+});
+
+test('a click relock deferred until Escape comes up still drops its first movement', (t) => {
+  const { player, win, land, move, request } = pointerLock(t);
+  win.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', code: 'Escape' }));
+  player.lock(true);
+  assert.equal(request.mock.callCount(), 0);
+  win.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Escape', code: 'Escape' }));
+  assert.equal(request.mock.callCount(), 1);
+  land(true);
+  move(40, -320, 120);
+  assert.equal(player.camYaw, 0);
+  move(10, 0, 100);
+  assert.ok(Math.abs(player.camYaw + 0.022) < 1e-12);
+});
+
+test('keyboard and scene-click locks look immediately, with no stale click guard from an existing lock', (t) => {
+  const { player, land, move } = pointerLock(t);
+  player.lock();
+  land(true);
+  move(10, 0, 10);
+  assert.ok(Math.abs(player.camYaw + 0.022) < 1e-12);
+  player.lock(true); // Already held: there is no cursor to rebase.
+  player.unlock();
+  land(false);
+  player.lock();
+  land(true);
+  move(10, 0, 10);
+  assert.ok(Math.abs(player.camYaw + 0.044) < 1e-12);
+});
+
 test('can walk away from a loft post overlapping the randomized spawn area', (t) => {
   const post: Collider = { minX: 9.01, maxX: 9.29, minZ: 8.01, maxZ: 8.29, top: 2.75 };
   const { player, keys, frames } = controller(t, [post]);
