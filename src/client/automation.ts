@@ -4,9 +4,10 @@
 // targets, picks where to stand, waits for things to finish and builds the state snapshot. It stays
 // loadable in Node (tests/automation.test.ts): no window, document or WebGL at import time.
 
-import { DESK_BY_ID, deskSeat, STATION_AGENT, type DeskDef } from '../shared/layout';
+import { DESK_BY_ID, STATION_AGENT, type DeskDef } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
+import { deskApproach, type ApproachPose } from './approach';
 import { waitingOnSomeone } from './notify';
 import { EYE_HEIGHT } from './player';
 import type { InteractKind, Interactable } from './world/office';
@@ -138,24 +139,27 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
 }
 
 /**
- * Where to stand for a target, and what to look at: behind a worker looking over its shoulder at
- * the laptop, in front of a kiosk, or (anywhere else) on the interactable's spot, stepping out
- * from it when something stands there. `center` is the thing itself, when the scene knows it.
+ * Where to stand for a target, which way to face, and the pitch: behind a worker (the desk pose),
+ * in front of a kiosk, or (anywhere else) on the interactable's spot, stepping out from it when
+ * something stands there. `center` is the thing itself, when the scene knows it. A desk's pitch is
+ * fixed; anything else is pitchToward its face from eye height.
  */
-export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: number) => boolean, center?: Point3 | null): { at: Point3; face: Point3 } | null {
+export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: number) => boolean, center?: Point3 | null): ApproachPose | null {
   const desk = t.deskId ? DESK_BY_ID.get(t.deskId) : undefined;
   if (desk) {
-    // The same spot goToDesk and the N key stand you on (main.ts standAt).
-    const s = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
-    return { at: { x: s.x, y: 0, z: s.z }, face: center ?? { x: desk.x, y: 0.9, z: desk.z } };
+    const pose = deskApproach(desk);
+    // The same pose N and go-to-desk use. A later aim must not pitchToward over it.
+    if (!center) return pose;
+    return { ...pose, face: center, facing: facingToward(pose.at, center) };
   }
   const spot = t.spot;
   if (!spot) return null;
   const y = spot.y ?? 0;
-  const at = freeSpotNear({ x: spot.x, z: spot.z }, y, Math.max(0.6, spot.radius - 0.2), blocked);
-  if (!at) return null;
+  const free = freeSpotNear({ x: spot.x, z: spot.z }, y, Math.max(0.6, spot.radius - 0.2), blocked);
+  if (!free) return null;
+  const at = { x: free.x, y, z: free.z };
   const face = center ?? { x: spot.x, y: y + 1.2, z: spot.z };
-  return { at: { x: at.x, y, z: at.z }, face };
+  return { at, facing: facingToward(at, face), lookPitch: pitchToward({ x: at.x, y: at.y + EYE_HEIGHT, z: at.z }, face), face, pitchFixed: false };
 }
 
 /** The free spot to stand on nearest `p`, no further than `radius` from it, or null. */
@@ -316,10 +320,10 @@ export interface AutomationHost {
   blocked(x: number, z: number, y: number): boolean;
   /** The middle of the thing an interactable is for (a board, a machine), from the scene. */
   centerOf(spot: Interactable): Point3 | null;
-  /** On your feet at `at`, facing and looking at `face`, with whatever you were doing stopped. */
-  place(at: Point3, face: Point3): void;
-  /** Faces and looks at `face` from where you stand. */
-  aim(face: Point3): void;
+  /** On your feet at the pose, with whatever you were doing stopped. A desk keeps the pose's pitch. */
+  place(pose: ApproachPose): void;
+  /** Faces the pose from where you stand. A desk keeps its pitch; anything else uses pitchToward. */
+  aim(pose: ApproachPose): void;
   /** Walks you to `at` the way the palette's Shift+Enter does; `done` says how it ended. */
   walk(at: Point3, label: string, done: (why: 'arrived' | 'cancelled' | 'stuck') => void): void;
   /** What E would use where you stand, by distance (no crosshair involved). */
@@ -437,7 +441,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     const stand = standFor(t, host.blocked, spot && !t.deskId ? host.centerOf(spot) : null);
     if (!stand) throw new Error(`Nowhere free to stand at ${t.label}`);
     if (!opts.walk) {
-      host.place(stand.at, stand.face);
+      host.place(stand);
       at = { id: t.id, spot, x: stand.at.x, z: stand.at.z };
       return settle();
     }
@@ -456,7 +460,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
         else reject(new Error(why === 'stuck' ? `Stuck on the way to ${t.label}` : `The walk to ${t.label} was cancelled`));
       });
     });
-    host.aim(stand.face);
+    host.aim(stand);
     const p = host.raw().player;
     at = { id: t.id, spot, x: p.x, z: p.z };
     return settle();
