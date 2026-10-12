@@ -60,10 +60,11 @@ test('range values snap to their step without float noise', () => {
 });
 
 test('presets: Classic only turns the renderer off; the others start from the defaults and keep the diagnostics', () => {
-  const tuned = { ...REMASTER_DEFAULTS, exposure: 2, debug: 'hdr' as const, pace: 'full' as const };
+  const tuned = { ...REMASTER_DEFAULTS, enabled: true, preset: 'hdr', exposure: 2, debug: 'hdr' as const, pace: 'full' as const };
   const classic = applyPreset('classic', tuned);
   assert.equal(classic.enabled, false);
   assert.equal(classic.exposure, 2);
+  assert.equal(classic.preset, 'hdr', 'switching back on returns to the preset you had');
   for (const p of REMASTER_PRESETS) {
     if (p.id === 'classic') continue;
     const s = applyPreset(p.id, tuned);
@@ -79,15 +80,17 @@ test('presets: Classic only turns the renderer off; the others start from the de
   assert.equal(applyPreset('nope', tuned), tuned);
 });
 
-test('the Nik preset is the defaults, and Reset and a double click go back to it', () => {
+test('a fresh install draws the classic way; turning Remastered on starts at Nik, the preset Reset and a double click go back to', () => {
+  assert.equal(normalizeRemaster(null).enabled, false);
   assert.equal(REMASTER_DEFAULTS.preset, 'nik');
-  assert.deepEqual(applyPreset('nik', { ...REMASTER_DEFAULTS, preset: 'custom', msaa: false, exposure: 3 }), REMASTER_DEFAULTS);
+  assert.deepEqual({ ...REMASTER_DEFAULTS, enabled: true }, applyPreset('nik', REMASTER_DEFAULTS));
+  assert.deepEqual(applyPreset('nik', { ...REMASTER_DEFAULTS, preset: 'custom', msaa: false, exposure: 3 }), { ...REMASTER_DEFAULTS, enabled: true });
 });
 
 test('a control is live only while its master switches are on', () => {
   const giSpeed = REMASTER_CONTROLS.find((c) => c.key === 'giSpeed')!;
-  assert.equal(controlLive(giSpeed, { ...REMASTER_DEFAULTS, gi: true, giRolling: true }), true);
-  assert.equal(controlLive(giSpeed, { ...REMASTER_DEFAULTS, gi: true, giRolling: false }), false);
+  assert.equal(controlLive(giSpeed, { ...REMASTER_DEFAULTS, enabled: true, gi: true, giRolling: true }), true);
+  assert.equal(controlLive(giSpeed, { ...REMASTER_DEFAULTS, enabled: true, gi: true, giRolling: false }), false);
   assert.equal(controlLive(giSpeed, { ...REMASTER_DEFAULTS, gi: true, giRolling: true, enabled: false }), false);
   const enabled = REMASTER_CONTROLS.find((c) => c.key === 'enabled')!;
   assert.equal(controlLive(enabled, { ...REMASTER_DEFAULTS, enabled: false }), true);

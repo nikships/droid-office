@@ -133,7 +133,7 @@ export class GraphicsLab {
     const s = this.host.settings();
     for (const { paint } of this.rows.values()) paint(s);
     for (const [id, b] of this.presetBtns) {
-      const on = s.preset === id || (id === 'classic' && !s.enabled);
+      const on = s.enabled ? s.preset === id : id === 'classic';
       b.classList.toggle('on', on);
       b.setAttribute('aria-checked', String(on));
     }

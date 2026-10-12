@@ -3339,6 +3339,13 @@ function showSettings(pane?: SettingsPane) {
     store.sky ? { now: describeSky(store.sky), live: !!store.sky.city } : undefined,
     pane,
     hireForWorktreeSetup,
+    {
+      remastered: () => remasterSettings.enabled,
+      set: (on) => {
+        changeRemaster({ ...remasterSettings, enabled: on });
+        graphicsLab.paint();
+      },
+    },
   );
 }
 
@@ -3456,21 +3463,26 @@ function applyRemaster() {
   activeAt = performance.now();
   renderWake();
 }
+/** Applies and saves Remastered settings, from the Graphics Lab or Settings → Graphics → Renderer. */
+function changeRemaster(s: RemasterSettings) {
+  remasterSettings = s;
+  applyRemaster();
+  // A slider sends a change every step; saved at most a few times a second.
+  window.clearTimeout(remasterSaveTimer);
+  const now = performance.now();
+  if (now - remasterSavedAt > 400) {
+    remasterSavedAt = now;
+    saveRemaster(s);
+  } else remasterSaveTimer = window.setTimeout(() => saveRemaster(remasterSettings), 400);
+}
 const graphicsLab = new GraphicsLab({
   settings: () => remasterSettings,
-  change: (s) => {
-    remasterSettings = s;
-    applyRemaster();
-    // A slider sends a change every step; saved at most a few times a second.
-    window.clearTimeout(remasterSaveTimer);
-    const now = performance.now();
-    if (now - remasterSavedAt > 400) {
-      remasterSavedAt = now;
-      saveRemaster(s);
-    } else remasterSaveTimer = window.setTimeout(() => saveRemaster(remasterSettings), 400);
-  },
+  change: changeRemaster,
   rebakeGI: () => remaster.gi.rebake(),
-  classicSettings: () => showSettings('graphics'),
+  classicSettings: () => {
+    graphicsLab.hide();
+    showSettings('graphics');
+  },
   freeMouse: () => player.unlock(),
   backToGame: () => {
     if (!modalOpen() && !isTyping()) canvas.focus({ preventScroll: true });

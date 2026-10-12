@@ -83,9 +83,9 @@ export interface RemasterSection {
   controls: RemasterControl[];
 }
 
-/** The Nik preset: native resolution, 2× MSAA, baked high-density GI, smooth shading, no outlines. */
+/** The classic renderer, and once Remastered is turned on, the Nik preset: 2× MSAA, baked high-density GI, smooth shading, no outlines. */
 export const REMASTER_DEFAULTS: RemasterSettings = {
-  enabled: true,
+  enabled: false,
   preset: 'nik',
   msaa: true,
   sharpen: 0.25,
@@ -140,7 +140,7 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
     title: 'Image',
     icon: '🖥️',
     controls: [
-      { key: 'enabled', kind: 'toggle', label: 'Remastered renderer', hint: 'Off draws the office exactly the way Droid Office does, with the classic Graphics settings.' },
+      { key: 'enabled', kind: 'toggle', label: 'Remastered renderer', hint: 'Off draws the office the classic way, with the resolution and anti-aliasing in Settings → Graphics. The same switch as Settings → Graphics → Renderer.' },
       { key: 'msaa', kind: 'toggle', label: 'Anti-aliasing (2× MSAA)', hint: 'Smooths the edges of everything drawn, at the screen’s full resolution.', needs: 'enabled' },
       { key: 'sharpen', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Sharpening (CAS)', hint: 'Contrast-adaptive sharpening on the final image. At 0% one pass fewer is drawn.', needs: 'enabled' },
     ],
@@ -343,7 +343,7 @@ export const REMASTER_PRESETS: RemasterPreset[] = [
     id: 'nik',
     label: 'Nik',
     hint: 'Native resolution, 2× MSAA, baked GI every 1.4 m with one extra bounce, smooth shading and no outlines, in SDR.',
-    values: { ...REMASTER_DEFAULTS },
+    values: { ...REMASTER_DEFAULTS, enabled: true },
   },
   {
     id: 'hdr',
@@ -389,8 +389,8 @@ export function normalizeRemaster(saved: unknown): RemasterSettings {
 export function applyPreset(id: string, current: RemasterSettings): RemasterSettings {
   const preset = REMASTER_PRESETS.find((p) => p.id === id);
   if (!preset) return current;
-  // Classic only turns the renderer off, so switching back on returns to what you had.
-  if (id === 'classic') return { ...current, enabled: false, preset: id };
+  // Classic only turns the renderer off, so switching back on returns to what you had, preset and all.
+  if (id === 'classic') return { ...current, enabled: false };
   // The diagnostics view and render pace are yours, not the preset's.
   return normalizeRemaster({ ...REMASTER_DEFAULTS, ...preset.values, debug: current.debug, pace: current.pace, preset: id });
 }
