@@ -217,8 +217,12 @@ test('a laptop swaps its stand-in for the MacBook GLBs once they are cached', as
   // Request, which also refuses relative URLs without a base.
   const realFetch = globalThis.fetch;
   const realRequest = globalThis.Request;
+  const cacheModes: Record<string, RequestCache | undefined> = {};
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    if (typeof input === 'string' && input.startsWith('/')) return realFetch(new URL(input, base), init);
+    if (typeof input === 'string' && input.startsWith('/')) {
+      cacheModes[input] = init?.cache;
+      return realFetch(new URL(input, base), init);
+    }
     return realFetch(input as string, init);
   }) as typeof fetch;
   globalThis.Request = class extends realRequest {
@@ -235,6 +239,9 @@ test('a laptop swaps its stand-in for the MacBook GLBs once they are cached', as
   await loadPropManifest();
   await preloadProps(['macbook-base', 'macbook-lid']);
   assert.ok(propReady('macbook-base') && propReady('macbook-lid'), 'the test GLBs preload');
+  // An older release cached these as immutable under the same names; only `no-cache` makes the
+  // app ask for the updated model instead of trusting that copy.
+  for (const url of ['/props/manifest.json', ...Object.keys(glbs)]) assert.equal(cacheModes[url], 'no-cache', `${url} is revalidated, never read from an immutable cache`);
   const laptop = new Laptop();
   laptop.update(0.016, undefined, 0);
   const inner = laptop as unknown as { baseModel: THREE.Group; lidModel: THREE.Group; screenMat: THREE.Material };

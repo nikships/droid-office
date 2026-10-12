@@ -10,6 +10,7 @@
  */
 
 import type * as THREE from 'three';
+import { LoaderUtils } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
@@ -83,30 +84,31 @@ async function load(name: string): Promise<Entry> {
   const info = propManifest()[name];
   if (!info) throw new Error(`unknown prop "${name}" - run tools/props/generate.py`);
 
-  const job = new Promise<Entry>((resolve, reject) => {
-    gltfLoader().load(
-      info.url,
-      (gltf) => {
-        // The GLB is authored with its base on y=0 and its origin at the footprint
-        // centre, so it drops straight onto a floor with no per-prop offset.
-        const entry: Entry = { info, gltf: gltf.scene };
-        entry.gltf.traverse((o) => {
-          const m = o as THREE.Mesh;
-          if (!m.isMesh) return;
-          m.castShadow = true;
-          m.receiveShadow = true;
-        });
-        cache.set(name, entry);
-        inFlight.delete(name);
-        resolve(entry);
-      },
-      undefined,
-      (err) => {
-        inFlight.delete(name);
-        reject(err);
-      },
-    );
-  });
+  const job = (async () => {
+    try {
+      // Made first so the Draco decoder warms up while the GLB downloads.
+      const loader = gltfLoader();
+      // Releases before the server revalidated /props/ cached each GLB as immutable for a year
+      // under the name it still has. GLTFLoader.load fetches in the default cache mode, which
+      // trusts that copy forever, so an updated model never showed; `no-cache` always asks.
+      const res = await fetch(info.url, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`prop "${name}": ${res.status} ${res.statusText}`);
+      const gltf = await loader.parseAsync(await res.arrayBuffer(), LoaderUtils.extractUrlBase(info.url));
+      // The GLB is authored with its base on y=0 and its origin at the footprint
+      // centre, so it drops straight onto a floor with no per-prop offset.
+      const entry: Entry = { info, gltf: gltf.scene };
+      entry.gltf.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.castShadow = true;
+        m.receiveShadow = true;
+      });
+      cache.set(name, entry);
+      return entry;
+    } finally {
+      inFlight.delete(name);
+    }
+  })();
 
   inFlight.set(name, job);
   return job;
