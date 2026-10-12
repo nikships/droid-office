@@ -909,9 +909,10 @@ export class WorkerManager {
     w.term?.dispose();
     this.scrollback.remove(id);
     this.drops.remove(id);
-    if (w.info.kind === 'agent' && (w.info.model !== undefined || w.info.effort !== undefined)) {
+    if (w.info.kind === 'agent') {
       try {
-        rmSync(path.join(this.dataDir, `droid-${id}.json`), { force: true });
+        rmSync(path.join(this.dataDir, `system-${id}.md`), { force: true });
+        if (w.info.model !== undefined || w.info.effort !== undefined) rmSync(path.join(this.dataDir, `droid-${id}.json`), { force: true });
       } catch {
         // a leftover overlay is harmless: the next launch rewrites it
       }
@@ -1761,7 +1762,8 @@ export class WorkerManager {
     const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : [...this.agentArgs];
     if (!isShell) {
       // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
-      args.unshift('--settings', this.droidSettings(info));
+      const system = this.systemPromptFile(info);
+      args.unshift('--settings', this.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []));
       if (resumeSessionId) args.push('--resume', resumeSessionId);
     }
     // Typed in at SessionStart rather than passed as `droid -- <prompt>`: droid started with a
@@ -2076,6 +2078,26 @@ process.stdin.on('end', () => {
     if (info.effort !== undefined) sessionDefaultSettings.reasoningEffort = info.effort;
     writeFileSync(file, JSON.stringify({ hooks: this.droidHooks, sessionDefaultSettings }, null, 2), { mode: 0o600 });
     return file;
+  }
+
+  /**
+   * Writes the worker.system prompt for `info` into the data dir and returns the file, or nothing when
+   * the prompt is empty or can't be written (the worker then starts without it). Rewritten on every
+   * launch, so a resume picks up the prompt as it is now.
+   */
+  private systemPromptFile(info: WorkerInfo): string | undefined {
+    const file = path.join(this.dataDir, `system-${info.id}.md`);
+    const text = officePrompt(this.prompts, 'worker.system', { name: info.name });
+    try {
+      if (!text) {
+        rmSync(file, { force: true });
+        return undefined;
+      }
+      writeFileSync(file, `${text}\n`, { mode: 0o600 });
+      return file;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
