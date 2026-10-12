@@ -2087,7 +2087,7 @@ process.stdin.on('end', () => {
    */
   private systemPromptFile(info: WorkerInfo): string | undefined {
     const file = path.join(this.dataDir, `system-${info.id}.md`);
-    const text = officePrompt(this.prompts, 'worker.system', { name: info.name, where: this.whereBrief(info) });
+    const text = officePrompt(this.prompts, 'worker.system', { name: info.name });
     try {
       if (!text) {
         rmSync(file, { force: true });
@@ -2098,13 +2098,6 @@ process.stdin.on('end', () => {
     } catch {
       return undefined;
     }
-  }
-
-  private whereBrief(info: WorkerInfo): string {
-    const wt = info.worktree;
-    if (wt && info.repos?.length) return `You work in a workspace across several repositories, ${this.cwd(info)}, every folder in it a git worktree on the branch ${wt.branch}: its AGENTS.md says which project each folder is.`;
-    if (wt) return `You work in your own git worktree, ${path.join(this.dir, wt.path)}, on the branch ${wt.branch}: commit your work there, not in the project's main checkout.`;
-    return `You work in the project's main checkout, ${this.dir}, which other workers may use too: don't switch branches, stash or reset it unless your task says to.`;
   }
 
   /**

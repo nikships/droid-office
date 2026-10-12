@@ -210,7 +210,6 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
   const system = readFileSync(systemFile, 'utf8');
   assert.match(system, new RegExp(`^You're ${worker.name}, a worker in Droid Office`));
-  assert.ok(system.includes(`You work in the project's main checkout, ${f.root},`), 'it says where the worker works');
   assert.match(system, /office-workers/);
   assert.match(system, /office-whiteboard/);
   assert.doesNotMatch(system, /\{\{/, 'every placeholder is filled in');
@@ -405,7 +404,7 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
     else process.env.FAKE_AGENT_LOG = previousLog;
     f.close();
   });
-  let system = 'You are {{name}}. {{where}}';
+  let system = 'You are {{name}}, at a desk.';
   const prompts: PromptSource = { text: (id) => (id === 'worker.system' ? system : PROMPTS[id].text), agent: () => undefined };
   const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
   t.after(() => workers.shutdown());
@@ -422,7 +421,7 @@ test('the worker system prompt is the office’s as rewritten, filled in for eac
   const file = path.join(f.data, `system-${a.id}.md`);
   const first = await launchOf(a.id);
   assert.equal(first.args[first.args.indexOf('--append-system-prompt-file') + 1], file);
-  assert.equal(readFileSync(file, 'utf8'), `You are ${a.name}. You work in the project's main checkout, ${f.root}, which other workers may use too: don't switch branches, stash or reset it unless your task says to.\n`);
+  assert.equal(readFileSync(file, 'utf8'), `You are ${a.name}, at a desk.\n`);
   await workers.kill(a.id);
   assert.equal(existsSync(file), false, 'a worker going home takes its system prompt with it');
 
