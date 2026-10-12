@@ -72,7 +72,7 @@ test('list() names the desks, kiosks, boards, places and floors you can go to fr
 
 test('the Whiteboard on the east wall is a board to go to, by id or name', () => {
   const b = BOARDS.whiteboard;
-  assert.deepEqual(b, { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' });
+  assert.deepEqual(b, { x: FLOOR.maxX - 0.08, y: 3.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 4.8, label: 'WHITEBOARD' });
   // Its spot, the way world/office.ts lays every board's out: 1.6 m into the room from its face.
   const spot: Interactable = { kind: 'whiteboard', x: b.x + Math.sin(b.rotY) * 1.6, z: b.z + Math.cos(b.rotY) * 1.6, radius: 2.4 };
   assert.ok(spot.x < b.x, 'the spot is in the room, west of the east wall');

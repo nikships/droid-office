@@ -200,8 +200,9 @@ export const BOARDS = {
   issues: { x: -11.7, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '01 TRIAGE' },
   actions: { x: -3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '02 PIPELINES' },
   pulls: { x: 3.9, y: 2.1, z: FLOOR.minZ + 0.08, rotY: 0, width: 6, height: 3, label: '03 CODE REVIEW' },
-  // East wall, north of the lounge TV.
-  whiteboard: { x: FLOOR.maxX - 0.08, y: 2.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 3, label: 'WHITEBOARD' },
+  // East wall, north of the lounge TV, as tall as the wall allows: the purlin at z -8.67 meets the wall
+  // right over it, 0.18 m under the ceiling, and the sign's top (0.87 m over the board) stays under that.
+  whiteboard: { x: FLOOR.maxX - 0.08, y: 3.1, z: -8.2, rotY: -Math.PI / 2, width: 6, height: 4.8, label: 'WHITEBOARD' },
   // North wall, between the gong and the north-east corner, under the Factory mural: Factory's CI
   // automations (world/factory-ci.ts). Low enough to clear the mural, so its title is on the board
   // itself rather than a sign over it.

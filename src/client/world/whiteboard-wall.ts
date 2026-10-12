@@ -13,15 +13,15 @@ import { SCREEN_BLACK } from './screen';
 // draws no marks of its own. The layout math is pure and exported for tests; the DOM is only touched
 // when a WhiteboardTexture is made, so Node can import this module.
 
-/** The wall is painted on this many units (BOARDS.whiteboard is 6 × 3 m); the canvas holds SCREEN_SCALE times as many. */
+/** The wall is painted on this many units (BOARDS.whiteboard is 6 × 4.8 m); the canvas holds SCREEN_SCALE times as many. */
 export const WALL_W = 1200;
-export const WALL_H = 600;
+export const WALL_H = 960;
 /** The wall's shape, which a card's region is cropped or grown to. */
 export const WALL_ASPECT = WALL_W / WALL_H;
 
 /** How many cards the grid shows; with more, the last tile reads +N. */
 export const GRID_COLS = 3;
-export const GRID_ROWS = 2;
+export const GRID_ROWS = 3;
 export const GRID_MAX = GRID_COLS * GRID_ROWS;
 
 const PAD = 28;
@@ -64,7 +64,7 @@ export function wallView(board: Board): WallView {
 
 export type GridTile<C> = { kind: 'card'; card: C; rect: Rect } | { kind: 'more'; count: number; rect: Rect };
 
-/** The grid's tiles, left to right then top to bottom: up to six cards, or five and a +N for the rest. */
+/** The grid's tiles, left to right then top to bottom: up to GRID_MAX cards, or one fewer and a +N for the rest. */
 export function gridTiles<C>(cards: readonly C[]): GridTile<C>[] {
   const top = HEADER_H + 8;
   const w = (WALL_W - 2 * PAD - (GRID_COLS - 1) * GAP) / GRID_COLS;
@@ -82,9 +82,9 @@ export function thumbRect(tile: Rect): Rect {
 }
 
 /**
- * The region of a page (canonical px) the artifact view shows, in the wall's 2:1 shape. Without a view,
- * the top of the page across its width. With one, all of what the owner was looking at, grown to 2:1
- * around its middle, at least MIN_REGION_W wide, then slid onto the page. It is cut to 2:1 from the
+ * The region of a page (canonical px) the artifact view shows, in the wall's shape (`aspect`, 5:4). Without
+ * a view, the top of the page across its width. With one, all of what the owner was looking at, grown to
+ * that shape around its middle, at least MIN_REGION_W wide, then slid onto the page. It is cut to it from the
  * view's top instead when growing would make it hard to read (a view taller than it is wide) or add
  * blank margins past the page's sides. A region still wider than the page is centered on it; one
  * taller than the page starts at its top.

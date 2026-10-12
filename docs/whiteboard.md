@@ -53,9 +53,9 @@ Two kinds of desk occupant are excluded, and the window and the guide say so:
 
 ### On the wall
 
-- The east-wall slot keeps the Services board's position and size (`BOARDS.services` in `src/shared/layout.ts`, renamed `whiteboard`), with the label `WHITEBOARD`.
-- **Grid view:** up to six thumbnails (3×2), each with its title, its author's color and name, and a dot when it changed since the owner last opened it. When there are more cards, the last tile reads `+N`. An empty board says how to start: ask a worker to put something on it.
-- **Artifact view:** the selected card fills the wall, blown up and readable: the region of the page the owner last looked at in the window (their scroll and zoom, cropped to the wall's 2:1 shape), or the top of the page at a readable scale if they never did. It comes from the latest render, with stickies, pictures and comment pins drawn on it, and refreshes when the card or its marks change. Agents still get the full page.
+- The east-wall slot is where the Services board was (`BOARDS.services` in `src/shared/layout.ts`, renamed `whiteboard`), with the label `WHITEBOARD`. It is 6 m wide and 4.8 m tall, as tall as the wall allows under the ceiling purlin over it.
+- **Grid view:** up to nine thumbnails (3×3), each with its title, its author's color and name, and a dot when it changed since the owner last opened it. When there are more cards, the last tile reads `+N`. An empty board says how to start: ask a worker to put something on it.
+- **Artifact view:** the selected card fills the wall, blown up and readable: the region of the page the owner last looked at in the window (their scroll and zoom, cropped to the wall's 5:4 shape), or the top of the page at a readable scale if they never did. It comes from the latest render, with stickies, pictures and comment pins drawn on it, and refreshes when the card or its marks change. Agents still get the full page.
 - Walking up and pressing **E** opens the window on whatever the wall shows.
 
 ### What the wall shows
