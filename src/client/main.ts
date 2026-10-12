@@ -20,7 +20,6 @@ import {
   STOREY,
   WALL_HEIGHT,
   beanbagsOut,
-  deskSeat,
   inElevator,
   nextFreeSeat,
   roofDrop,
@@ -78,6 +77,7 @@ import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
+import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
@@ -1105,7 +1105,7 @@ function placeInCar(at?: { x: number; z: number }) {
   placeAt({ x: spot.x, y: 0, z: spot.z, rotY: 0 });
 }
 
-/** On your feet at `at`, facing `rotY` and looking straight ahead. */
+/** On your feet at `at`, facing `rotY` and looking straight ahead. The elevator arrives this way, level, not at a desk's pitch. */
 function placeAt(at: { x: number; y: number; z: number; rotY: number }) {
   if (player.seat) standUp();
   player.pos.set(at.x, at.y, at.z);
@@ -1349,8 +1349,8 @@ function noticeWaiting() {
 }
 
 // ---- Walking over to a spot -----------------------------------------------------------------------
-/** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
-let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void; end?: (why: WalkEnd) => void } | null = null;
+/** What you're on your way to from the command palette: where to stand, what it's called, the pose to arrive in and what to do there. */
+let errand: { at: { x: number; z: number }; what: string; pose?: ApproachPose; then: () => void; end?: (why: WalkEnd) => void } | null = null;
 type WalkEnd = 'arrived' | 'cancelled' | 'stuck';
 
 function stopWalking() {
@@ -1360,12 +1360,12 @@ function stopWalking() {
   e?.end?.('cancelled');
 }
 
-/** There: stop, and turn to it. */
-function arrivedAt(at: { x: number; z: number }) {
+/** There: stop, and take the pose, pitch included. A desk arrives at DESK_LOOK_PITCH, not a fresh pitchToward. */
+function arrivedAt(pose: ApproachPose) {
   stopWalking();
-  const yaw = Math.atan2(at.x - player.pos.x, at.z - player.pos.z);
-  player.facing = yaw;
-  player.camYaw = yaw - Math.PI;
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 player.onPathEnd = (why) => {
@@ -1377,7 +1377,7 @@ player.onPathEnd = (why) => {
  * to be done (up on the roof, riding the elevator, on the ladder) it just does it.
  * A key of yours takes over, and then it doesn't happen. `end` hears how the walk ended.
  */
-function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }, end?: (why: WalkEnd) => void) {
+function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, pose?: ApproachPose, end?: (why: WalkEnd) => void) {
   const now = () => {
     then();
     end?.('arrived');
@@ -1390,7 +1390,7 @@ function walkThen(at: { x: number; y?: number; z: number }, what: string, then: 
   const to = { x: at.x, y: at.y ?? 0, z: at.z };
   const path = wayTo(player.pos, to);
   if (!path.length) return now();
-  errand = { at, what, face, then, end };
+  errand = { at, what, pose, then, end };
   toast(`🚶 Walking over to ${what}`);
   player.walkPath(path);
 }
@@ -1400,7 +1400,7 @@ function errandEnd(why: WalkEnd) {
   errand = null;
   if (why === 'cancelled') return e.end?.(why);
   if (why === 'stuck') toast(`🚧 Couldn't find a way over to ${e.what}, so here it is from where you are`, 'warn');
-  else if (e.face) arrivedAt(e.face);
+  else if (e.pose) arrivedAt(e.pose);
   else stopWalking();
   e.then();
   e.end?.(why);
@@ -1867,12 +1867,12 @@ function standAt(desk: DeskDef) {
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (errand) stopWalking();
-  const spot = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
-  player.pos.set(spot.x, 0, spot.z);
+  const pose = deskApproach(desk);
+  player.pos.set(pose.at.x, pose.at.y, pose.at.z);
   player.vy = 0;
-  player.facing = Math.atan2(desk.x - spot.x, desk.z - spot.z);
-  player.camYaw = player.facing - Math.PI;
-  player.lookPitch = -0.2;
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 // ---- Who's waiting on you: N, the count in the Workers panel, and the compass --------------------------
@@ -1990,11 +1990,6 @@ function spotOf(kind: InteractKind): Interactable | undefined {
   return office.interactables.find((it) => it.kind === kind && !it.off);
 }
 
-/** Where you stand at a desk: behind the worker, or in front of a kiosk. */
-function deskSpot(desk: DeskDef): { x: number; z: number } | undefined {
-  return deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
-}
-
 /** The free desk nearest you, for hiring from the palette. A bean bag counts once it's out. */
 function nearestFreeDesk(): DeskDef | undefined {
   let best: DeskDef | undefined;
@@ -2022,7 +2017,7 @@ function paletteEntries(): PaletteEntry[] {
   const out: PaletteEntry[] = [];
   for (const w of store.workers.values()) {
     const desk = DESK_BY_ID.get(w.deskId);
-    const spot = desk && deskSpot(desk);
+    const pose = desk && deskApproach(desk);
     const open = () => openWorkerTerminal(w.id);
     out.push({
       icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
@@ -2031,12 +2026,12 @@ function paletteEntries(): PaletteEntry[] {
       detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office', w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
       open,
-      walk: desk && spot ? () => walkThen(spot, `${w.name} at ${desk.label}`, open, desk) : undefined,
+      walk: desk && pose ? () => walkThen(pose.at, `${w.name} at ${desk.label}`, open, pose) : undefined,
     });
   }
 
   const free = nearestFreeDesk();
-  const hireSpot = free && deskSpot(free);
+  const hirePose = free && deskApproach(free);
   const hireAt = (d: DeskDef) => () => hireAtDesk(d.id);
   out.push({
     icon: '✨',
@@ -2045,7 +2040,7 @@ function paletteEntries(): PaletteEntry[] {
     detail: free ? `At ${free.label}, the free desk nearest you` : 'Every desk is taken',
     keywords: ['new worker', 'spawn an agent'],
     open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
-    walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
+    walk: free && hirePose ? () => walkThen(hirePose.at, free.label, hireAt(free), hirePose) : undefined,
   });
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
@@ -3914,12 +3909,19 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
   return { x: c.x, y: c.y, z: c.z };
 }
 
-/** Faces and looks at `face` from where you stand. */
-function aimAt(face: { x: number; y: number; z: number }) {
-  player.facing = facingToward(player.pos, face);
+/** Faces the pose from where you stand. A desk keeps its pitch; anything else looks with pitchToward. */
+function aimAt(pose: ApproachPose) {
+  if (pose.pitchFixed) {
+    player.facing = pose.facing;
+    player.camYaw = pose.facing - Math.PI;
+    player.lookPitch = pose.lookPitch;
+    player.updateCamera();
+    return;
+  }
+  player.facing = facingToward(player.pos, pose.face);
   player.camYaw = player.facing - Math.PI;
   player.updateCamera();
-  player.lookPitch = pitchToward(camera.position, face);
+  player.lookPitch = pitchToward(camera.position, pose.face);
   player.updateCamera();
 }
 
@@ -3963,19 +3965,19 @@ const automation = createAutomation({
   busy: () => (trip ? 'riding to another floor' : climber.grip === 'ladder' ? 'on the ladder: interact("E") gets off it' : climber.active ? 'on a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
   centerOf,
-  place: (at, face) => {
+  place: (pose) => {
     closeAllModals();
     if (player.seat) standUp();
     if (hanger.active) hanger.cancel();
     if (climber.active) climber.abort();
     if (errand) stopWalking();
-    player.pos.set(at.x, at.y, at.z);
+    player.pos.set(pose.at.x, pose.at.y, pose.at.z);
     player.vy = 0;
-    aimAt(face);
+    aimAt(pose);
     renderWake();
   },
-  aim: (face) => {
-    aimAt(face);
+  aim: (pose) => {
+    aimAt(pose);
     renderWake();
   },
   walk: (at, label, done) => {
