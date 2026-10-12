@@ -3792,9 +3792,12 @@ function drawFrame(dt: number, t: number) {
     // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
     const autoClear = renderer.autoClear;
     renderer.autoClear = false;
-    effect.render(hands.scene, hands.camera);
-    renderer.autoClear = autoClear;
-    sky.shading(true);
+    try {
+      effect.render(hands.scene, hands.camera);
+    } finally {
+      renderer.autoClear = autoClear;
+      sky.shading(true);
+    }
   }
   if (remaster.active) remaster.finishFrame();
   if (timing) gpuTimer.end();

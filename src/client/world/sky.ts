@@ -332,9 +332,11 @@ THREE.Material.prototype.onBeforeCompile = function (this: THREE.Material, shade
   }
 };
 // Every material shares the function above, so three.js's default key (its source) can't tell a glowing screen from
-// a plain decal of the same kind once both draw into a render target, where neither is tone mapped.
+// a plain decal of the same kind once both draw into a render target, where neither is tone mapped. A material given
+// an onBeforeCompile of its own keeps that source in its key, as three.js's default would.
 THREE.Material.prototype.customProgramCacheKey = function (this: THREE.Material) {
-  return this.toneMapped === false ? 'sky:glow' : 'sky';
+  const own = Object.hasOwn(this, 'onBeforeCompile') ? `|${this.onBeforeCompile.toString()}` : '';
+  return `${this.toneMapped === false ? 'sky:glow' : 'sky'}${own}`;
 };
 
 // ---- The sky ------------------------------------------------------------------------------------

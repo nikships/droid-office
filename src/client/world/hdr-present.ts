@@ -147,7 +147,7 @@ export class HdrPresenter {
 
   /** After a resize: the drawing buffer is reallocated, so it is asked for in float16 again. */
   resized() {
-    if (this.state === 'on') this.storage(true);
+    if (this.state === 'on' && this.gl.drawingBufferWidth > 0 && this.gl.drawingBufferHeight > 0) this.storage(true);
   }
 
   /** Copies the frame just drawn to the HDR canvas. Called once a frame, after everything is drawn. */
@@ -155,6 +155,8 @@ export class HdrPresenter {
     if (this.state !== 'on' || !this.device || !this.ctx || !this.overlay) return;
     const w = this.source.width;
     const h = this.source.height;
+    // A minimized or zero-sized window has nothing to copy, and copying nothing is a WebGPU error, not a failure.
+    if (w === 0 || h === 0) return;
     if (this.overlay.width !== w || this.overlay.height !== h) {
       this.overlay.width = w;
       this.overlay.height = h;

@@ -442,6 +442,8 @@ export class Remaster {
     const g = this.grade.uniforms;
     g.tColor.value = sceneRT.texture;
     g.exposure.value = s.exposure * (this.peak > 1 ? s.paperWhite : 1);
+    // Paper white only counts once HDR is on screen, which configure() can't know, so your hands get it here.
+    r.toneMappingExposure = g.exposure.value;
     g.balance.value.set(...whiteBalance(s.temperature, s.tint));
     g.contrast.value = s.contrast;
     g.saturation.value = s.saturation;
