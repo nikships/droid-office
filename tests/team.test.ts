@@ -525,3 +525,19 @@ test('a team reads as one block: each lead with its subagents under it, and a su
   assert.equal(teamSummary([team[0]]), '🧭 1 subagent · 1 working');
   assert.equal(teamSummary(teamOf(ws, 'lone')), undefined);
 });
+
+test('the Pipeline agent hires the worker that heals a failed run, even when only the Team lead hires', async (t) => {
+  const r = rig(t, {}, { deskWorkers: false });
+  r.fake.add(worker({ id: 'pipes', deskId: 'station-actions', name: 'Pipeline agent' }));
+  const who = (await r.call('pipes', { action: 'whoami' })).body;
+  assert.equal(who.canHire, true);
+  const res = await r.call('pipes', { action: 'hire', task: 'Fix the failing lint step', title: 'Fix CI on main', from: 'origin/main' });
+  assert.equal(res.status, 200);
+  assert.equal(r.fake.hired[0].lead, 'pipes');
+  assert.equal(r.fake.hired[0].from, 'origin/main');
+  assert.ok(r.fake.hired[0].worktree);
+  r.settings.on = false;
+  const off = await r.call('pipes', { action: 'hire', task: 'again' });
+  assert.equal(off.status, 403);
+  assert.match(off.body.error, /Subagents are turned off/);
+});

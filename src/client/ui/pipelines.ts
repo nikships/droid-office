@@ -91,12 +91,25 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   const pane = h('div.pl-pane');
   const foot = h('span.grow.pl-foot');
   const ask = h('button.btn', { type: 'button', title: 'Ask the Pipeline agent at the kiosk by the board' }, '🚀 Ask the Pipeline agent');
+  const heal = toggle({
+    label: '🩹 Auto-heal',
+    checked: store.autoHeal.on,
+    onChange: (on) => {
+      if (store.autoHeal.on !== on) net.send({ t: 'autoHeal.set', on });
+    },
+  });
+  const paintHeal = () => {
+    const { on, by, at } = store.autoHeal;
+    heal.input.checked = on;
+    const set = by ? `\n${on ? 'Turned on' : 'Turned off'} by ${by}${at ? ` ${timeAgo(at)}` : ''}` : '';
+    heal.title = `A run that fails wakes the Pipeline agent: it finds the root cause and hires a worker who fixes it and pushes. On every floor.${set}`;
+  };
   const el = h(
     'div.modal.xl.pl-window',
     { role: 'dialog', 'aria-label': 'Pipelines' },
     h('header', {}, h('div.titles', {}, h2, sub), h('div.actions', {}, refresh, runBtn)),
     h('div.body.flush.split.pl-split', {}, side, pane),
-    h('footer', {}, foot, ask),
+    h('footer', {}, foot, heal, ask),
   );
 
   refresh.addEventListener('click', () => {
@@ -446,7 +459,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   };
   el.addEventListener('keydown', onKey);
 
-  const unsubs = [store.on('pipelines', render), store.on('project', render)];
+  const unsubs = [store.on('pipelines', render), store.on('project', render), store.on('autoHeal', paintHeal)];
   // Clocks tick on running and waiting runs, without rebuilding what you might be clicking.
   const tick = setInterval(() => {
     const now = Date.now();
@@ -470,6 +483,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
   // Opening the window is a good moment to look again.
   if (Date.now() - store.pipelines.fetchedAt > 10_000) net.send({ t: 'pipelines.refresh' });
   render();
+  paintHeal();
   el.tabIndex = -1;
   if (!form) setTimeout(() => el.focus(), 30);
 }

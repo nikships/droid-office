@@ -23,6 +23,8 @@ const WORKFLOWS_MS = 5 * 60_000;
 /** At most this many live runs get their jobs counted on each look. */
 const LIVE_JOBS = 6;
 const TICK_MS = 2_000;
+/** The forge's clock and ours may disagree by this much about when a run was made. */
+const BETWEEN_SLACK_MS = 60_000;
 
 export interface PipelineEvents {
   state(state: PipelinesState): void;
@@ -52,6 +54,10 @@ export class Pipelines {
   private workflowsAt = 0;
   /** Live at the last look, by id: one that isn't any more has finished. */
   private live = new Set<number>();
+  /** Every run at the last look, by id, with its attempt: a run new since then, or on a new attempt, ran in between. */
+  private listed = new Map<number, number>();
+  /** When the last look that read the runs started. */
+  private listedAt = 0;
   private seen = false;
   private timer?: NodeJS.Timeout;
   private looking?: Promise<void>;
@@ -69,9 +75,13 @@ export class Pipelines {
     return this.source.forge;
   }
 
-  start(active: () => boolean) {
+  /** `active`: someone is on the floor. `watching`: something acts on runs ending even when nobody is. */
+  start(active: () => boolean, watching: () => boolean = () => false) {
     this.timer = setInterval(() => {
-      const wait = this.state.runs.some((r) => isLive(r.state)) && active() ? LIVE_MS : active() ? ACTIVE_MS : IDLE_MS;
+      const here = active();
+      let wait = IDLE_MS;
+      if (here && this.state.runs.some((r) => isLive(r.state))) wait = LIVE_MS;
+      else if (here || watching()) wait = ACTIVE_MS;
       if (Date.now() - this.lastLook >= wait) void this.refresh();
     }, TICK_MS);
   }
@@ -87,7 +97,8 @@ export class Pipelines {
   }
 
   private async look() {
-    this.lastLook = Date.now();
+    const at = Date.now();
+    this.lastLook = at;
     this.state = { ...this.state, loading: true };
     this.events.state(this.state);
     try {
@@ -111,7 +122,7 @@ export class Pipelines {
             }
           }),
       );
-      this.noticeFinished(runs);
+      this.noticeFinished(runs, at);
       this.state = { runs, workflows, defaultBranch, fetchedAt: Date.now(), loading: false };
     } catch (err) {
       this.state = { ...this.state, loading: false, error: (err as Error).message, fetchedAt: Date.now() };
@@ -119,7 +130,7 @@ export class Pipelines {
     this.events.state(this.state);
   }
 
-  private noticeFinished(runs: PipelineRun[]) {
+  private noticeFinished(runs: PipelineRun[], at: number) {
     const live = new Set(runs.filter((r) => isLive(r.state)).map((r) => r.id));
     // The first look only learns what's going; nothing has finished in front of anyone yet.
     // A run of a workflow the office just started: that workflow, on that branch, made since.
@@ -130,13 +141,25 @@ export class Pipelines {
     }
     if (this.seen) {
       for (const r of runs) {
-        if (!this.live.has(r.id) || live.has(r.id)) continue;
+        if (live.has(r.id) || !(this.live.has(r.id) || this.ranBetween(r))) continue;
         this.events.finished(r, this.ours.has(r.id));
         this.ours.delete(r.id);
       }
     }
     this.seen = true;
     this.live = live;
+    this.listed = new Map(runs.map((r) => [r.id, r.attempt ?? 1]));
+    this.listedAt = at;
+  }
+
+  /**
+   * It started and ended between two looks, so no look saw it going: a run that's new to the list
+   * and made since the last look (a lint job that fails in seconds), or one re-run to a new attempt.
+   */
+  private ranBetween(r: PipelineRun): boolean {
+    const before = this.listed.get(r.id);
+    if (before !== undefined) return (r.attempt ?? 1) > before;
+    return Date.parse(r.createdAt) >= this.listedAt - BETWEEN_SLACK_MS;
   }
 
   detail(id: number): Promise<PipelineDetail> {

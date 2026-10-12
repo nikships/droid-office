@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// office-workers: subagents from inside Droid Office, for any agent at a desk and the Team lead (see
+// office-workers: subagents from inside Droid Office, for any agent at a desk, the Team lead and the
+// Pipeline agent, which hires the worker that heals a failed run (see
 // src/server/team.ts). The office puts it on every agent's PATH and gives it its own address and token
 // in DROID_OFFICE_HOOK_URL, DROID_OFFICE_WORKER_ID and DROID_OFFICE_HOOK_TOKEN; this talks to the
 // /office/workers endpoint with them. Plain Node, no build step, no dependencies.

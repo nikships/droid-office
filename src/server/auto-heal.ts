@@ -1,0 +1,52 @@
+import type { PipelineRun } from '../shared/pipelines.js';
+import { SavedSwitch, type SwitchState } from './saved-switch.js';
+
+/**
+ * Whether a run that fails wakes the Pipeline agent to heal it (find the root cause and hire a
+ * worker who pushes the fix), picked on the Pipelines window by anyone and kept in
+ * .droid-office/auto-heal.json. The same on every floor; off until someone turns it on.
+ */
+export class AutoHeal extends SavedSwitch {
+  constructor(dataDir: string, onState: (state: SwitchState) => void) {
+    super(dataDir, 'auto-heal.json', false, onState);
+  }
+}
+
+/**
+ * How many failures in a row of one workflow on one branch wake the Pipeline agent. A fix that keeps
+ * failing is left to a person after that, so a red pipeline can't keep hiring workers forever.
+ */
+export const HEAL_TRIES = 3;
+/** Failed runs remembered so a run seen ending twice (a lost poll, say) isn't healed twice. */
+const SEEN_MAX = 200;
+
+export type HealCall = 'heal' | 'gaveUp';
+
+/** One floor's failed runs, and which of them the Pipeline agent is sent to heal. */
+export class HealWatch {
+  /** Failures in a row since the last pass, by workflow and branch. */
+  private streak = new Map<string, number>();
+  /** Failed runs already counted, by id and attempt: a re-run of the same run is a new attempt. */
+  private seen = new Set<string>();
+
+  /**
+   * A run the office watched has ended. A pass clears its workflow's streak on that branch. A failure
+   * while `on` is `heal`, or `gaveUp` once, the first time it has failed more than HEAL_TRIES times in a row.
+   */
+  finished(run: PipelineRun, on: boolean): HealCall | undefined {
+    const key = `${run.workflow}\n${run.branch}`;
+    if (run.state === 'success') {
+      this.streak.delete(key);
+      return undefined;
+    }
+    if (run.state !== 'failure' || !on) return undefined;
+    const id = `${run.id}#${run.attempt ?? 1}`;
+    if (this.seen.has(id)) return undefined;
+    this.seen.add(id);
+    if (this.seen.size > SEEN_MAX) this.seen.delete(this.seen.values().next().value as string);
+    const n = (this.streak.get(key) ?? 0) + 1;
+    this.streak.set(key, n);
+    if (n <= HEAL_TRIES) return 'heal';
+    return n === HEAL_TRIES + 1 ? 'gaveUp' : undefined;
+  }
+}

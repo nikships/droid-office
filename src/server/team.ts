@@ -239,6 +239,8 @@ export class Team {
       return `You're a subagent of ${boss}, and subagents can't hire their own: do your task yourself, or ask ${boss} with office-workers report --question`;
     }
     const station = DESK_BY_ID.get(w.deskId)?.station;
+    // The Pipeline agent hires the worker that heals a failed run.
+    if (station === 'actions') return undefined;
     if (station && station !== 'lead') return `The ${STATION_AGENT[station].name} doesn't hire subagents: suggest the Team lead at the kiosk on the east wall for work that needs a team`;
     if (!station && !s.deskWorkers) return `Only the ${lead} hires subagents in this office (⚙️ Settings → Subagents)`;
     return undefined;

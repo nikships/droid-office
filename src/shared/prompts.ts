@@ -134,6 +134,46 @@ export function mergeCommand(forge: Forge | undefined, n: number, method: 'merge
   return `gh pr merge ${n} --${method}${deleteBranch ? ' --delete-branch' : ''} --repo ${repo}`;
 }
 
+/** A failed run, for the prompt that wakes the Pipeline agent to heal it. */
+export interface FailedRunForPrompt {
+  id: number;
+  number: number;
+  workflow: string;
+  title: string;
+  branch: string;
+  sha: string;
+  event: string;
+  url: string;
+  /** GitHub: its workflow file, `.github/workflows/release.yml`. */
+  path?: string;
+}
+
+/** What the heal prompt fills in for a failed run on a floor whose default branch is `defaultBranch`. */
+export function healPromptVars(forge: Forge | undefined, run: FailedRunForPrompt, defaultBranch: string | undefined) {
+  const lab = forge === 'gitlab';
+  const vars = forgeVars(forge);
+  const b = run.branch;
+  const file = run.path?.split('/').pop();
+  const onDefault = !!defaultBranch && b === defaultBranch;
+  return {
+    ...vars,
+    id: run.id,
+    number: run.number,
+    workflow: run.workflow,
+    title: run.title,
+    branch: b,
+    sha: run.sha.slice(0, 7),
+    event: run.event,
+    url: run.url,
+    logs: lab ? `\`glab ci get --pipeline-id ${run.id} --with-job-details\` and \`glab ci trace <job id>\` for each failed job` : `\`gh run view ${run.id} --log-failed\``,
+    rerun: lab ? `\`glab api --method POST projects/:id/pipelines/${run.id}/retry\`` : `\`gh run rerun ${run.id} --failed\``,
+    watch: lab ? `\`glab ci status --branch ${b} --live\`` : `find it with \`gh run list --branch ${b}${file ? ` --workflow ${file}` : ''} --limit 3\`, then \`gh run watch <id> --exit-status\``,
+    finish: onDefault
+      ? `commit the fix on a new branch, push it, and open a ${vars.pullName} against \`${b}\` with \`${vars.cli}\` (don't push straight to \`${b}\`), then report its link`
+      : `commit the fix and push it to \`${b}\` (\`git push origin HEAD:${b}\`), which updates any ${vars.pullName} open for it, then report the commit`,
+  };
+}
+
 // --- Board agents ---------------------------------------------------------------------------------
 
 type BoardKind = Exclude<StationKind, 'lead'>;
@@ -339,6 +379,37 @@ const DEFS = {
   'station.issues': station('issues'),
   'station.pulls': station('pulls'),
   'station.actions': station('actions'),
+  'pipeline.heal': {
+    group: 'stations',
+    label: 'Heal a failed run',
+    used: 'Typed to the Pipeline agent when a run fails while auto-heal is on (the Pipelines window): it hires the agent when nobody is at the kiosk, wakes it when it is asleep, and waits behind its turn when it is busy.',
+    vars: {
+      workflow: 'The workflow (on GitLab, the pipeline) that failed',
+      number: 'The run number as people say it',
+      id: "The run's id, which gh and glab take",
+      title: 'What it ran for: the commit or pull request title',
+      branch: 'The branch it ran on',
+      sha: 'The commit it ran on, short',
+      event: 'What started it: push, pull_request, schedule…',
+      url: 'The run on GitHub or GitLab',
+      logs: 'The commands that print what failed, in backticks',
+      rerun: 'The command that re-runs only what failed, in backticks',
+      watch: 'How to watch the run that follows the fix, in backticks',
+      finish: 'How the worker hands in the fix: push to the branch, or a pull request when the branch is the default one',
+      ...PULL_WORDS,
+      ...FORGE_VARS,
+    },
+    needs: ['url'],
+    text: [
+      '{{workflow}} #{{number}} failed on `{{branch}}` ({{url}}): "{{title}}", commit {{sha}}, started by {{event}}. Auto-heal is on, so heal it now, without waiting to be asked.',
+      '',
+      "1. Find the root cause. Read what failed with {{logs}}, then the code and the commits it points at (`git fetch origin {{branch}}`, then `git log` and `git show` on `origin/{{branch}}`). Don't stop at the first error line: work out why it happens.",
+      "2. If it isn't the code (a flaky test, a runner or network outage, a rate limit), re-run what failed with {{rerun}} and say why. If only a person can fix it (a secret, a setting, a permission), stop and say what they need to do.",
+      '3. Otherwise, run `office-workers list` first: if one of your workers is already fixing `{{branch}}`, send it this failure with `office-workers send`. If not, hire one with `office-workers hire --title "Fix {{workflow}} on {{branch}}" --from origin/{{branch}}` and a brief on stdin in a quoted heredoc: the failing job and its error, the root cause and the files it is in, how to reproduce it and check the fix the way this project does (its build, lint, typecheck and tests), and how to finish: {{finish}}. Pick its model from `office-workers models`, a strong one when the cause is hard.',
+      "4. Wait with `office-workers wait`, look at what it changed (`git -C <its worktree> diff origin/{{branch}}`), and send it back when the fix isn't right. Once it has pushed, watch the run that follows to the end: {{watch}}. If that fails too, give the worker the new failure.",
+      "5. Then say in a few lines what broke, why, what fixed it, and the links. If office-workers can't hire anyone, say why and give the brief someone can hand to a worker at a desk instead.",
+    ].join('\n'),
+  },
 
   // --- Team lead & subagents ---
   'station.lead': {

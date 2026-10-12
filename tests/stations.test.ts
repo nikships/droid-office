@@ -53,3 +53,13 @@ test('on a GitLab floor the Pipeline agent drives pipelines with glab', () => {
   assert.match(brief, /merge request/);
   assert.doesNotMatch(brief, /\bgh (run|workflow)\b/);
 });
+
+test('the Pipeline agent heals a failed run by hiring a worker with office-workers, on both forges', () => {
+  for (const forge of ['github', 'gitlab'] as const) {
+    const brief = stationBrief('actions', forge);
+    assert.match(brief, /Healing a failed run/, forge);
+    assert.match(brief, /auto-heal is on/, forge);
+    assert.match(brief, /office-workers/, forge);
+  }
+  for (const kind of ['issues', 'pulls'] as const) assert.doesNotMatch(stationBrief(kind), /office-workers|auto-heal/, kind);
+});
