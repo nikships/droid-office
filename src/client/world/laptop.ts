@@ -209,19 +209,42 @@ function retone(root: THREE.Object3D) {
   });
 }
 
-let decal: { geo: THREE.BufferGeometry; mat: THREE.MeshToonMaterial } | null = null;
-/** The orange Factory pinwheel on the back of the lid, where the badge is, facing out the back (-z). */
-function pinwheelDecal(): THREE.Mesh {
+let decal: { geo: THREE.BufferGeometry; mat: THREE.MeshToonMaterial; haloGeo: THREE.BufferGeometry; haloMat: THREE.MeshBasicMaterial } | null = null;
+
+/** A feathered radial falloff for the pinwheel's halo; no post-processing needed. */
+function haloTexture(): THREE.DataTexture {
+  const n = 64;
+  const data = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const d = Math.hypot(x + 0.5 - n / 2, y + 0.5 - n / 2) / (n / 2);
+      const i = (y * n + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = 255;
+      data[i + 3] = Math.round(70 * Math.max(0, 1 - d) ** 2);
+    }
+  const tex = new THREE.DataTexture(data, n, n);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** The orange Factory pinwheel on the back of the lid, where the badge is, facing out the back (-z), with a faint glow around it. */
+function pinwheelDecal(): THREE.Group {
   if (!decal) {
     const mat = toonUnique('#ee6018');
-    mat.emissive.set('#3a1404');
+    mat.emissive.set('#6a2408');
     // A cartoon outline would swallow its thin blades.
     mat.userData.outlineParameters = { visible: false };
-    decal = { geo: glyphFlat(0.11, 3).rotateY(Math.PI), mat };
+    const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), color: '#ee6018', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    haloMat.userData.outlineParameters = { visible: false };
+    decal = { geo: glyphFlat(0.11, 3).rotateY(Math.PI), mat, haloGeo: new THREE.PlaneGeometry(0.26, 0.26).rotateY(Math.PI), haloMat };
   }
-  const m = mesh(decal.geo, decal.mat, 0, 0.26, -0.0135, false);
-  m.name = 'pinwheel-decal';
-  return m;
+  const g = new THREE.Group();
+  g.name = 'pinwheel-decal';
+  // Between the lid's back face and the pinwheel, so the halo shows only around the blades.
+  g.add(mesh(decal.haloGeo, decal.haloMat, 0, 0.26, -0.0132, false));
+  g.add(mesh(decal.geo, decal.mat, 0, 0.26, -0.0135, false));
+  return g;
 }
 
 export class Laptop {
