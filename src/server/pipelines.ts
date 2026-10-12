@@ -69,9 +69,10 @@ export class Pipelines {
     return this.source.forge;
   }
 
-  start(active: () => boolean) {
+  /** `active`: someone is on the floor. `watching`: something acts on runs ending even when nobody is. */
+  start(active: () => boolean, watching: () => boolean = () => false) {
     this.timer = setInterval(() => {
-      const wait = this.state.runs.some((r) => isLive(r.state)) && active() ? LIVE_MS : active() ? ACTIVE_MS : IDLE_MS;
+      const wait = this.state.runs.some((r) => isLive(r.state)) && active() ? LIVE_MS : active() || watching() ? ACTIVE_MS : IDLE_MS;
       if (Date.now() - this.lastLook >= wait) void this.refresh();
     }, TICK_MS);
   }

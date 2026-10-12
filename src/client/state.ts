@@ -6,6 +6,7 @@ import type {
   GhPull,
   GhState,
   LeaveOnMergeState,
+  AutoHealState,
   FreshMainState,
   MachineState,
   NotifyState,
@@ -57,6 +58,7 @@ export type Topic =
   | 'sky'
   | 'leaveOnMerge'
   | 'freshMain'
+  | 'autoHeal'
   | 'subagents'
   | 'cabinet'
   | 'cabinetFrame'
@@ -277,6 +279,8 @@ class Store {
   leaveOnMerge: LeaveOnMergeState = { on: false };
   /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
   freshMain: FreshMainState = { on: true };
+  /** Whether a run that fails wakes the Pipeline agent to heal it (the Pipelines window). */
+  autoHeal: AutoHealState = { on: false };
   /** How workers hire subagents (⚙️ Settings → Subagents), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** Whether the droid-office-whiteboard skill is installed (⚙️ Settings), and where. */
@@ -368,12 +372,13 @@ class Store {
         this.sky = msg.sky;
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
+        this.autoHeal = msg.autoHeal ?? { on: false };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.whiteboardSkill = msg.whiteboardSkill ?? { on: true };
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
         this.enter(msg);
-        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'leaveOnMerge', 'freshMain', 'autoHeal', 'subagents', 'whiteboardSkill', 'prompts', 'factory'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -479,6 +484,10 @@ class Store {
       case 'freshMain':
         this.freshMain = msg.state;
         this.emit('freshMain');
+        break;
+      case 'autoHeal':
+        this.autoHeal = msg.state;
+        this.emit('autoHeal');
         break;
       case 'subagents':
         this.subagents = msg.state;

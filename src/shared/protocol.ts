@@ -659,6 +659,17 @@ export interface FreshMainState {
   at?: number;
 }
 
+/**
+ * Whether a run that fails wakes the Pipeline agent to heal it (the Pipelines window), for every
+ * floor: it finds the root cause and hires a worker who pushes the fix. Off by default.
+ */
+export interface AutoHealState {
+  on: boolean;
+  /** Who set it, and when. Unset for the default (off). */
+  by?: string;
+  at?: number;
+}
+
 /** What ⚙️ Settings → Subagents sets: how workers hire subagents with office-workers (see server/team.ts). */
 export interface SubagentSettings {
   /** Workers may hire subagents at all. Off: `office-workers hire` is refused; a team already working carries on. */
@@ -896,6 +907,8 @@ export type ClientMsg =
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
   | { t: 'freshMain.set'; on: boolean }
+  /** A run that fails wakes the Pipeline agent to heal it (true), or only toasts. */
+  | { t: 'autoHeal.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
@@ -957,6 +970,7 @@ export type ServerMsg =
       sky: SkyState;
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
+      autoHeal: AutoHealState;
       subagents: SubagentsState;
       whiteboardSkill: WhiteboardSkillState;
       /** The office's prompts, and the worker a new one starts on when nobody picks. */
@@ -1024,6 +1038,7 @@ export type ServerMsg =
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
+  | { t: 'autoHeal'; state: AutoHealState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'whiteboardSkill'; state: WhiteboardSkillState }
   /**
