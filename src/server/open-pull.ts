@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { PullHost, PullRef } from './forge.js';
 import type { Worktrees } from './worktrees.js';
 
 const execFileP = promisify(execFile);
@@ -31,24 +30,14 @@ export async function checkoutDirty(cwd: string): Promise<boolean> {
 }
 
 /**
- * An open pull request for `head`. `known` null means the caller already looked and there isn't one;
- * left out, the forge is asked once.
+ * Pushes `head` and sets it to track `origin`, or the checkout's first remote when it has no origin.
+ * Rejects when there is no remote, or with the remote's complaint.
  */
-export async function existingPull(pulls: PullHost, head: string, cwd: string, known?: PullRef | null): Promise<PullRef | undefined> {
-  if (known) return known;
-  if (known === null) return undefined;
-  return pulls.findOpenPull(head, cwd);
-}
-
-/** `origin` when the checkout has it, otherwise its first remote. Undefined when it has none. */
-export async function pushRemote(cwd: string): Promise<string | undefined> {
+export async function pushBranch(cwd: string, head: string, timeoutMs: number): Promise<void> {
   const remotes = (await git(['remote'], cwd)).split('\n').filter(Boolean);
-  return remotes.includes('origin') ? 'origin' : remotes[0];
-}
-
-/** Pushes `head` and sets it to track `remote`. Rejects with the remote's complaint. */
-export function pushHead(cwd: string, remote: string, head: string, timeoutMs: number): Promise<void> {
-  return git(['push', '-u', remote, head], cwd, timeoutMs).then(() => undefined);
+  const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+  if (!remote) throw new Error('This project has no git remote to push to');
+  await git(['push', '-u', remote, head], cwd, timeoutMs);
 }
 
 /** The last line git printed, which is the one that says what's wrong. */

@@ -159,7 +159,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
       keep(label, `${work} — --force removes it anyway`);
       continue;
     }
-    await drop(label, work ? `${work} (forced)` : 'clean, nothing unpushed', () => trees.remove(ref, wt.branch ? 'all' : 'worktree'));
+    await drop(label, work ? `${work} (forced)` : 'clean, nothing unpushed', async () => (await trees.sendHome(ref, wt.branch ? 'all' : 'worktree')).error);
     if (path.dirname(path.normalize(wt.path)) !== path.normalize(WORKTREES_DIR)) emptied.add(path.dirname(wt.path));
   }
   // This project's worktrees in another floor's workspace, made for a worker there across repositories.
@@ -188,7 +188,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
       keep(branch, `${work}, in ${abs} — --force removes it anyway`);
       continue;
     }
-    await drop(branch, `${work ? `${work} (forced)` : 'clean, nothing unpushed'}, in ${abs}`, () => trees.remove(ref, 'all'));
+    await drop(branch, `${work ? `${work} (forced)` : 'clean, nothing unpushed'}, in ${abs}`, async () => (await trees.sendHome(ref, 'all')).error);
   }
   for (const branch of branches) {
     if (withWorktree.has(branch)) continue;
@@ -202,7 +202,7 @@ export async function prune(argv: string[], agents: () => Promise<AgentProcess[]
       keep(branch, `${work} — --force removes it anyway`);
       continue;
     }
-    await drop(branch, work ? `${work} (forced); its worktree was already gone` : 'branch only, its worktree was already gone', () => trees.remove({ branch }, 'all'));
+    await drop(branch, work ? `${work} (forced); its worktree was already gone` : 'branch only, its worktree was already gone', async () => (await trees.sendHome({ branch }, 'all')).error);
   }
   for (const rel of [...strays, ...[...emptied].filter((e) => !strays.includes(e) && workspaceLeft(path.join(dir, e)) === 'empty')]) {
     const owner = ownerOfPath.get(path.normalize(rel));

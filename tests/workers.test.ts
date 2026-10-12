@@ -1425,7 +1425,7 @@ test("only a branch the worker made is its own to delete, and the office's stays
   assert.equal(await trees.madeSince('fix-y', made.branch), true);
   assert.equal(await trees.madeSince('release', made.branch), false);
   assert.equal(await trees.madeSince('main', made.branch), false);
-  assert.equal(await trees.remove({ ...made, branch: 'fix-y', made: made.branch }, 'all'), undefined);
+  assert.equal((await trees.sendHome({ ...made, branch: 'fix-y', made: made.branch }, 'all')).error, undefined);
   assert.equal(git('branch', '--list', 'fix-y'), '');
   assert.equal(git('branch', '--list', made.branch).replace(/^\*?\s+/, ''), made.branch);
 });

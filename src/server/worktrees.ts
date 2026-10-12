@@ -536,7 +536,9 @@ export class Worktrees {
    * Sends one worktree home: decides which branch dies, deletes it, and says what was kept.
    * `worktree` removes only the folder. `all` also removes the office's branch and a branch the worker
    * made, but never one that was already there, and never the office's branch while it still has
-   * commits no remote, the project's checkout or the branch it's on has. One `wouldLose` check.
+   * commits no remote, the project's checkout or the branch it's on has. One `wouldLose` check, and
+   * only for a ref that remembers the office's branch in `made`: a ref without one (prune's, after its
+   * own `describeWork` and `--force` check) loses the branch it names under 'all'.
    * Gun dismissal (`dismiss`) does not come through here.
    */
   async sendHome(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<SentHome> {
@@ -597,15 +599,6 @@ export class Worktrees {
     } catch (err) {
       return { error: gitError(err) };
     }
-  }
-
-  /**
-   * Deletes what `sendHome` decides. Returns git's complaint, if any.
-   * Prune calls this after its own keep-or-force check (`describeWork`); a ref with no `made` still
-   * loses the branch it names when `cleanup` is 'all'. This does not replace that check with `wouldLose`.
-   */
-  async remove(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<string | undefined> {
-    return (await this.sendHome(wt, cleanup)).error;
   }
 
   /** Gun dismissal: discard owned work, never a project checkout or a branch that predates this worker. */

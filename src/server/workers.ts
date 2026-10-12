@@ -12,7 +12,7 @@ import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentE
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
-import { checkoutDirty, choosePullBase, existingPull, pushHead, pushRemote } from './open-pull.js';
+import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
@@ -707,7 +707,7 @@ export class WorkerManager {
     const fail = (why: string) => {
       // Fresh branches with nothing on them: nothing is lost taking them out again.
       void (async () => {
-        for (const m of made.reverse()) await m.trees.remove(m.ref, 'all');
+        for (const m of made.reverse()) await m.trees.sendHome(m.ref, 'all');
         clearWorkspace(path.join(this.dir, WORKTREES_DIR, slug));
       })();
       return why;
@@ -1316,15 +1316,13 @@ export class WorkerManager {
       const commits = (await run('git', ['log', '--reverse', '--format=%h %s', `${wt.base}..${branch}`], cwd)).split('\n').filter(Boolean);
       const dirty = await checkoutDirty(cwd);
       if (!commits.length) return dirty ? `${info.name} hasn't committed anything yet — ask it to commit first` : `${info.name} has no commits on ${branch} yet`;
-      const open = await existingPull(this.pulls, branch, cwd);
+      const open = await this.pulls.findOpenPull(branch, cwd);
       if (open) {
         info.pr = open;
         this.persist();
         return { prs: [{ ...open, existed: true, dirty }], failed: [] };
       }
-      const remote = await pushRemote(cwd);
-      if (!remote) throw new Error('This project has no git remote to push to');
-      await pushHead(cwd, remote, branch, 90_000);
+      await pushBranch(cwd, branch, 90_000);
       const base = await choosePullBase(this.trees, branch, { from: wt.from, configured: this.configuredBase, current: this.trees.currentBranch(), defaultBranch: this.trees.defaultBranch() });
       const { title, body } = draftPr(info, commits, by);
       const { number, url } = await this.pulls.createPull(cwd, branch, base, title, body);
@@ -1366,7 +1364,7 @@ export class WorkerManager {
         const cwd = path.join(this.dir, p.path);
         try {
           const dirty = await checkoutDirty(cwd);
-          const known = await existingPull(this.pulls, p.branch, cwd, p.pr);
+          const known = p.pr ?? (await this.pulls.findOpenPull(p.branch, cwd));
           if (known) {
             p.set(known);
             prs.push({ repo: p.name, ...known, existed: true, dirty, cwd });
@@ -1377,9 +1375,7 @@ export class WorkerManager {
             if (dirty) uncommitted.push(p.name);
             continue;
           }
-          const remote = await pushRemote(cwd);
-          if (!remote) throw new Error('This project has no git remote to push to');
-          await pushHead(cwd, remote, p.branch, 90_000);
+          await pushBranch(cwd, p.branch, 90_000);
           const repo = new Worktrees(p.dir);
           const base = await choosePullBase(repo, p.branch, { from: p.from, configured: p.own ? this.configuredBase : undefined, current: repo.currentBranch(), defaultBranch: repo.defaultBranch() });
           const { title, body } = draftPr(info, commits, by, p.own ? undefined : { home });

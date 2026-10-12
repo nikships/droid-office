@@ -6,7 +6,7 @@ import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesStat
 import { githubPulls } from './github.js';
 import type { PullHost } from './forge.js';
 import { Worktrees } from './worktrees.js';
-import { checkoutDirty, choosePullBase, existingPull, pushHead, pushRemote } from './open-pull.js';
+import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the newer of the branch the office was opened on and its origin copy. While anyone has the window open, the office polls
@@ -375,14 +375,11 @@ export class Changes {
       if (s.error) return s.error;
       if (!s.branch || !s.prBase) return "This checkout isn't on a branch of its own";
       // The board already said whether one is open (see compute). Don't ask the forge a second time.
-      const open = await existingPull(this.pulls, s.branch, t.cwd, s.pr ?? null);
-      if (open) return `There's already a pull request for ${s.branch}: ${open.url}`;
+      if (s.pr) return `There's already a pull request for ${s.branch}: ${s.pr.url}`;
       // Never trust the cached or capped display list to decide whether a checkout is safe to push.
       if (await checkoutDirty(t.cwd)) return 'Commit the changes first';
       if (!s.ahead) return `${s.branch} has no commits that ${s.prBase} lacks`;
-      const remote = await pushRemote(t.cwd);
-      if (!remote) return 'This project has no git remote to push to';
-      await pushHead(t.cwd, remote, s.branch, 120_000);
+      await pushBranch(t.cwd, s.branch, 120_000);
       const { number, url } = await this.pulls.createPull(t.cwd, s.branch, s.prBase, title.trim(), body);
       this.opened.set(openedKey(repo, s.branch), { number, url });
       this.events.toast(`${who} opened a pull request for ${t.name}: ${url}`, 'info');
