@@ -62,6 +62,7 @@ interface Stub {
   sawStandard: boolean;
   sawFloatPass: boolean;
   hiddenWhile: boolean;
+  shownUnculled: boolean;
   target: () => THREE.WebGLRenderTarget | null;
   tone: () => THREE.ToneMapping;
 }
@@ -76,6 +77,7 @@ function stub(t: TestContext, fail?: 'compile' | 'draw'): Stub {
   let sawStandard = false;
   let sawFloatPass = false;
   let hiddenWhile = false;
+  let shownUnculled = false;
   let compiles = 0;
   let draws = 0;
   const lightsOf = (scene: THREE.Object3D) => {
@@ -85,6 +87,7 @@ function stub(t: TestContext, fail?: 'compile' | 'draw'): Stub {
       if (object.name === 'shader-warmup-light' && object.visible) n++;
       if ((object as { isLightProbeGrid?: boolean }).isLightProbeGrid && object.visible) grid = true;
       if (object.name === 'hidden-probe' && object.visible) hiddenWhile = true;
+      if (object.name === 'shown-probe' && !object.frustumCulled) shownUnculled = true;
       const mesh = object as THREE.Mesh;
       if (mesh.isMesh && !Array.isArray(mesh.material) && mesh.material.type === 'MeshStandardMaterial') sawStandard = true;
       if (mesh.isMesh && !Array.isArray(mesh.material) && mesh.material.name === 'grade-pass' && target?.texture.type === THREE.HalfFloatType) sawFloatPass = true;
@@ -143,6 +146,9 @@ function stub(t: TestContext, fail?: 'compile' | 'draw'): Stub {
     get hiddenWhile() {
       return hiddenWhile;
     },
+    get shownUnculled() {
+      return shownUnculled;
+    },
     target: () => target,
     tone: () => toneMapping,
   };
@@ -157,6 +163,7 @@ function officeScene() {
   hidden.frustumCulled = true;
   scene.add(hidden);
   const shown = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  shown.name = 'shown-probe';
   shown.frustumCulled = true;
   scene.add(shown);
   return { scene, hidden, shown };
@@ -205,6 +212,7 @@ test('warmup compiles the hidden office, the props and both grids, then puts the
   assert.equal(env.target(), null);
   assert.equal(env.tone(), THREE.ACESFilmicToneMapping);
   assert.ok(env.hiddenWhile);
+  assert.ok(env.shownUnculled);
   assert.ok(env.sawStandard);
   assert.ok(env.sawFloatPass);
   assert.ok(pulses > 0);

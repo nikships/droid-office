@@ -170,23 +170,30 @@ function isDrawable(object: THREE.Object3D): boolean {
   return drawable.isMesh === true || drawable.isPoints === true || drawable.isLine === true || drawable.isSprite === true;
 }
 
-/** Lights and probe grids are left as the combo set them. Everything else hidden is shown, and drawn even if it sits outside the camera. */
+/**
+ * Lights and probe grids are left as the combo set them. Everything else hidden is shown for the pass.
+ * Outlines are compiled by a real draw, which skips whatever sits outside the camera, and the camera has
+ * not been placed yet, so every drawable is drawn for this pass and then put back.
+ */
 function reveal(root: THREE.Object3D): () => void {
   const shown: THREE.Object3D[] = [];
   const culled: { object: THREE.Object3D; frustumCulled: boolean }[] = [];
+  const seen = new Set<THREE.Object3D>();
   const skip = (object: THREE.Object3D) => (object as THREE.Light).isLight === true || (object as { isLightProbeGrid?: boolean }).isLightProbeGrid === true;
   const unculled = (object: THREE.Object3D) => {
-    if (!isDrawable(object) || culled.some((entry) => entry.object === object)) return;
+    if (!isDrawable(object) || seen.has(object)) return;
+    seen.add(object);
     culled.push({ object, frustumCulled: object.frustumCulled });
     object.frustumCulled = false;
   };
   root.traverse((object) => {
-    if (skip(object) || object.visible) return;
-    shown.push(object);
-    object.visible = true;
+    if (skip(object)) return;
+    if (!object.visible) {
+      shown.push(object);
+      object.visible = true;
+    }
     unculled(object);
   });
-  for (const object of shown) object.traverse((child) => !skip(child) && unculled(child));
   return () => {
     for (const entry of culled) entry.object.frustumCulled = entry.frustumCulled;
     for (const object of shown) object.visible = false;
