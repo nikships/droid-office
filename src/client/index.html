@@ -47,6 +47,11 @@
         </aside>
         <div id="crosshair" class="crosshair hidden"><span class="look-hint">Click to look around</span></div>
         <div id="hint" class="hint hidden"></div>
+        <div id="warmup" class="warmup panel" role="status" aria-live="polite" aria-hidden="true">
+          <div class="warmup-head"><span id="warmup-say"></span><span id="warmup-pct" class="warmup-pct"></span></div>
+          <div class="warmup-bar"><span id="warmup-fill"></span></div>
+          <p id="warmup-note" class="warmup-note">The frame rate is lower until this is done.</p>
+        </div>
         <div id="toasts"></div>
         <div id="caffeine" class="caffeine panel hidden" aria-label="Coffee buzz left">
           <span id="caffeine-cups"></span>

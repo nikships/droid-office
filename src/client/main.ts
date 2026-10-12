@@ -135,6 +135,7 @@ import { ShadowWatch } from './world/shadow-watch';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
+import { WarmupWatch, type WarmupStatus } from './warmup';
 
 // Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
 const loading = loadingScreen(() => () => {});
@@ -3395,6 +3396,26 @@ const viewFrustum = new THREE.Frustum();
 const viewProjection = new THREE.Matrix4();
 /** Frames in this overlay window that redrew the shadow map. */
 let shadowFrames = 0;
+const warmup = new WarmupWatch();
+const warmupEl = $('warmup');
+let warmupKey = '';
+/** The warm-up line at the bottom of the view: what is costing frame rate for now, and how far through it is. */
+function renderWarmup(s: WarmupStatus | null) {
+  const pct = s?.progress == null ? null : Math.floor(s.progress * 100);
+  const k = s ? `${s.say}|${pct}|${s.done}` : '';
+  if (k === warmupKey) return;
+  warmupKey = k;
+  warmupEl.classList.toggle('on', !!s);
+  warmupEl.setAttribute('aria-hidden', s ? 'false' : 'true');
+  // Fading out, it keeps the last words it had.
+  if (!s) return;
+  warmupEl.classList.toggle('indeterminate', pct === null);
+  warmupEl.classList.toggle('done', s.done);
+  $('warmup-say').textContent = s.say;
+  $('warmup-pct').textContent = pct === null || s.done ? '' : `${pct}%`;
+  $('warmup-fill').style.width = pct === null ? '' : `${pct}%`;
+  $('warmup-note').textContent = s.done ? 'Done.' : 'The frame rate is lower until this is done.';
+}
 /** The Mac's whole-GPU load from the office's server, when this page runs on the office's own Mac. */
 let systemGpu: number | null = null;
 let systemGpuPoll = 0;
@@ -3606,6 +3627,8 @@ function currentPace(): RenderPace {
   // A full GI bake runs in slices, one a frame: at the idle pace it would take minutes.
   // Render pace "full" never idles, but still stops while the window is hidden.
   if ((remaster.active && remaster.gi.baking && !remaster.gi.paused) || remasterSettings.pace === 'full') activeAt = now;
+  // The warm-up line goes once a frame says the work is done; at the idle pace it would hang about.
+  if (warmup.showing) activeAt = now;
   return renderPace({
     hidden: document.visibilityState !== 'visible',
     // Occlusion arrives as visibilityState "hidden" (see RenderSignals). hasFocus() is not used:
@@ -3805,11 +3828,21 @@ function drawFrame(dt: number, t: number) {
   renderer.info.reset();
   const shadowMap = renderer.shadowMap;
   if (shadowMap.enabled && (shadowMap.autoUpdate || shadowMap.needsUpdate)) shadowFrames++;
+  const drawStart = performance.now();
   if (remaster.active) {
     remaster.gi.paused = upTop;
     remaster.gi.setFloor(store.floor ?? '');
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
+  const gi = remaster.gi;
+  renderWarmup(
+    warmup.update({
+      now: performance.now(),
+      programs: renderer.info.programs?.length ?? 0,
+      drawMs: performance.now() - drawStart,
+      bake: remaster.active && gi.baking && !gi.paused ? gi.progress : null,
+    }),
+  );
   // Checked once this frame's matrices are current, so a caster that starts moving gets a redrawn map from the next
   // frame on: its shadow lags one frame, once.
   if (settings.graphics.shadows === 'smart') {

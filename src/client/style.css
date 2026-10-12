@@ -253,6 +253,28 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .hint .title { color: var(--accent); }
 .hint .cost { color: var(--info); }
 
+/* Warm-up (warmup.ts): the GI bake or a shader compile costing frame rate, above where the hint sits. */
+.warmup {
+  position: absolute; left: 50%; bottom: 96px; width: min(300px, calc(100vw - 32px)); padding: var(--space-2) var(--space-3);
+  display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow-pop);
+  opacity: 0; transform: translate(-50%, 6px); transition: opacity .25s var(--ease), transform .25s var(--ease); pointer-events: none !important;
+}
+.warmup.on { opacity: 1; transform: translate(-50%, 0); }
+.warmup-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font: 500 var(--text-label)/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; color: var(--text); }
+.warmup-head span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warmup-pct { flex: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.warmup-bar { position: relative; height: 4px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.warmup-bar span { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: var(--accent); transition: width .3s linear; }
+/* No telling how far a shader compile is: a sliver that sweeps across. */
+.warmup.indeterminate .warmup-bar span { width: 35%; transition: none; animation: warmup-sweep 1.1s var(--ease) infinite; }
+@keyframes warmup-sweep { from { left: -35%; } to { left: 100%; } }
+.warmup.done .warmup-bar span { background: var(--success); }
+.warmup-note { margin: 0; font-size: var(--text-small); line-height: var(--leading-small); color: var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) {
+  .warmup, .warmup-bar span { transition: none; }
+  .warmup.indeterminate .warmup-bar span { animation: none; width: 100%; opacity: .5; }
+}
+
 .crosshair {
   position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
   border-radius: 50%; background: var(--text); border: 1px solid var(--bg); opacity: .85;
@@ -824,6 +846,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
   .side { width: min(250px, calc(100vw - 24px)); max-height: calc(100vh - 290px); }
   .dock-btn .lbl { display: none; }
   .hint { max-width: calc(100vw - 24px); bottom: 190px; }
+  .warmup { bottom: 258px; }
 }
 
 /* The jukebox */
