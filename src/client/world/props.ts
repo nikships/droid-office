@@ -97,12 +97,6 @@ async function load(name: string): Promise<Entry> {
       // The GLB is authored with its base on y=0 and its origin at the footprint
       // centre, so it drops straight onto a floor with no per-prop offset.
       const entry: Entry = { info, gltf: gltf.scene };
-      entry.gltf.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true;
-        m.receiveShadow = true;
-      });
       cache.set(name, entry);
       return entry;
     } finally {
@@ -184,12 +178,6 @@ function install(node: THREE.Object3D, gltf: THREE.Group): void {
   model.position.set(0, 0, 0);
   model.rotation.set(0, 0, 0);
   model.scale.set(1, 1, 1);
-  model.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
-    m.castShadow = true;
-    m.receiveShadow = true;
-  });
   node.clear();
   node.add(model);
 }

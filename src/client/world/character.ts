@@ -44,9 +44,9 @@ export function coffeeMug(scale = 1): THREE.Group {
   const r = 0.05 * scale;
   const height = 0.1 * scale;
   const china = toon('#fffaf3');
-  mug.add(mesh(new THREE.CylinderGeometry(r, r * 0.88, height, 16), china, 0, height / 2, 0, false));
-  mug.add(mesh(new THREE.CylinderGeometry(r * 0.8, r * 0.8, height * 0.04, 16), toon('#6f4518'), 0, height, 0, false));
-  mug.add(mesh(new THREE.TorusGeometry(height * 0.28, r * 0.2, 6, 12), china, -r, height / 2, 0, false));
+  mug.add(mesh(new THREE.CylinderGeometry(r, r * 0.88, height, 16), china, 0, height / 2, 0));
+  mug.add(mesh(new THREE.CylinderGeometry(r * 0.8, r * 0.8, height * 0.04, 16), toon('#6f4518'), 0, height, 0));
+  mug.add(mesh(new THREE.TorusGeometry(height * 0.28, r * 0.2, 6, 12), china, -r, height / 2, 0));
   return mug;
 }
 
@@ -67,7 +67,7 @@ export function boxOfStuff(): THREE.Group {
     g.add(mesh(new THREE.BoxGeometry(T, H, D - 2 * T), card, (s * (W - T)) / 2, H / 2, 0));
   }
   // Full to the brim.
-  g.add(mesh(new THREE.BoxGeometry(W - 2 * T, 0.01, D - 2 * T), toon('#8b6a47'), 0, H * 0.7, 0, false));
+  g.add(mesh(new THREE.BoxGeometry(W - 2 * T, 0.01, D - 2 * T), toon('#8b6a47'), 0, H * 0.7, 0));
   // Flaps: the front one hangs down over the front, the side ones stick up and out.
   const flapMat = toon('#b5824c');
   const front = new THREE.Group();
@@ -84,27 +84,27 @@ export function boxOfStuff(): THREE.Group {
   }
 
   // A potted plant in the back corner.
-  g.add(mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.11, 10), toon('#e76f51'), -0.15, H - 0.03, -0.04, false));
+  g.add(mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.11, 10), toon('#e76f51'), -0.15, H - 0.03, -0.04));
   for (const [x, y, z, r, c] of [
     [-0.15, 0.1, -0.04, 0.07, '#5fb760'],
     [-0.2, 0.07, 0.0, 0.05, '#3f8f45'],
     [-0.11, 0.15, -0.07, 0.05, '#6fcf6a'],
   ] as const)
-    g.add(mesh(new THREE.SphereGeometry(r, 10, 8), toon(c), x, H + y, z, false));
+    g.add(mesh(new THREE.SphereGeometry(r, 10, 8), toon(c), x, H + y, z));
   // Papers sticking up at the back.
   for (const [x, rz] of [
     [-0.01, 0.16],
     [0.05, -0.1],
   ]) {
-    const paper = mesh(new THREE.BoxGeometry(0.17, 0.22, 0.004), toon('#fffaf3'), x, H - 0.01, -0.1, false);
+    const paper = mesh(new THREE.BoxGeometry(0.17, 0.22, 0.004), toon('#fffaf3'), x, H - 0.01, -0.1);
     paper.rotation.set(-0.1, 0, rz);
     g.add(paper);
   }
   // A framed photo, leaning back.
   const photo = new THREE.Group();
-  photo.add(mesh(new THREE.BoxGeometry(0.16, 0.13, 0.02), toon('#2b2d42'), 0, 0, 0, false));
-  photo.add(mesh(new THREE.BoxGeometry(0.12, 0.09, 0.005), toon('#8ecae6'), 0, 0, 0.011, false));
-  photo.add(mesh(new THREE.SphereGeometry(0.018, 8, 6), toon('#ffd166'), 0.03, 0.02, 0.014, false));
+  photo.add(mesh(new THREE.BoxGeometry(0.16, 0.13, 0.02), toon('#2b2d42'), 0, 0, 0));
+  photo.add(mesh(new THREE.BoxGeometry(0.12, 0.09, 0.005), toon('#8ecae6'), 0, 0, 0.011));
+  photo.add(mesh(new THREE.SphereGeometry(0.018, 8, 6), toon('#ffd166'), 0.03, 0.02, 0.014));
   photo.position.set(0.1, H + 0.04, -0.05);
   photo.rotation.set(-0.3, 0, -0.12);
   g.add(photo);
@@ -113,11 +113,11 @@ export function boxOfStuff(): THREE.Group {
   mug.position.set(0.0, H - 0.07, 0.07);
   g.add(mug);
   const duck = new THREE.Group();
-  const duckBody = mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ffd166'), 0, 0, 0, false);
+  const duckBody = mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ffd166'), 0, 0, 0);
   duckBody.scale.y = 0.8;
   duck.add(duckBody);
-  duck.add(mesh(new THREE.SphereGeometry(0.032, 10, 8), toon('#ffd166'), 0, 0.055, 0.02, false));
-  duck.add(mesh(new THREE.ConeGeometry(0.014, 0.03, 6).rotateX(Math.PI / 2), toon('#f4a261'), 0, 0.05, 0.06, false));
+  duck.add(mesh(new THREE.SphereGeometry(0.032, 10, 8), toon('#ffd166'), 0, 0.055, 0.02));
+  duck.add(mesh(new THREE.ConeGeometry(0.014, 0.03, 6).rotateX(Math.PI / 2), toon('#f4a261'), 0, 0.05, 0.06));
   duck.position.set(0.16, H + 0.01, 0.06);
   duck.rotation.y = -0.4;
   g.add(duck);
@@ -271,7 +271,7 @@ function kit(key: string, make: () => THREE.BufferGeometry[]): THREE.Group {
   const mats = kitMaterials();
   const g = new THREE.Group();
   g.name = 'crew-kit';
-  g.add(mesh(geo.plain, mats.plain, 0, 0, 0, false), mesh(geo.signal, mats.signal, 0, 0, 0, false));
+  g.add(mesh(geo.plain, mats.plain, 0, 0, 0), mesh(geo.signal, mats.signal, 0, 0, 0));
   return g;
 }
 
@@ -396,10 +396,10 @@ export class Person {
     head.add(this.hair);
     this.buildHair();
     for (const sx of [-1, 1]) {
-      head.add(mesh(new THREE.SphereGeometry(0.055, 10, 8), ink, sx * 0.12, 0.02, 0.3, false));
-      head.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ff9f9f'), sx * 0.2, -0.08, 0.27, false));
+      head.add(mesh(new THREE.SphereGeometry(0.055, 10, 8), ink, sx * 0.12, 0.02, 0.3));
+      head.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ff9f9f'), sx * 0.2, -0.08, 0.27));
     }
-    const smile = mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12, Math.PI), ink, 0, -0.08, 0.32, false);
+    const smile = mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12, Math.PI), ink, 0, -0.08, 0.32);
     smile.rotation.z = Math.PI;
     head.add(smile);
     this.body.add(head);
@@ -441,8 +441,8 @@ export class Person {
     this.body.add(this.bookHolder);
     // Along the arm (the fist's -y) the finger points; the thumb sticks out of the front of the fist,
     // which is up once the arm is out in front.
-    this.thumb = mesh(new THREE.CapsuleGeometry(0.035, 0.07, 4, 8).rotateX(Math.PI / 2), skin, 0, -0.38, 0.1, false);
-    this.finger = mesh(new THREE.CapsuleGeometry(0.03, 0.09, 4, 8), skin, 0, -0.5, 0.02, false);
+    this.thumb = mesh(new THREE.CapsuleGeometry(0.035, 0.07, 4, 8).rotateX(Math.PI / 2), skin, 0, -0.38, 0.1);
+    this.finger = mesh(new THREE.CapsuleGeometry(0.03, 0.09, 4, 8), skin, 0, -0.5, 0.02);
     for (const m of [this.thumb, this.finger]) {
       m.visible = false;
       this.armL.add(m);
@@ -539,7 +539,6 @@ export class Person {
       case 'Bald':
         break;
     }
-    this.hair.traverse((o) => ((o as THREE.Mesh).castShadow = true));
   }
 
   setLabel(name: string) {
@@ -1057,20 +1056,20 @@ function papers(): { group: THREE.Group } {
   const paper = toon('#fffaf3');
   const ink = toon('#8d99ae');
   ['#f1ece2', '#f7f3ea', '#fffaf3'].forEach((c, i) => {
-    const sheet = mesh(new THREE.BoxGeometry(W, H, 0.008), toon(c), (i - 1) * 0.012, -H / 2 - i * 0.006, 0.02 - i * 0.012, false);
+    const sheet = mesh(new THREE.BoxGeometry(W, H, 0.008), toon(c), (i - 1) * 0.012, -H / 2 - i * 0.006, 0.02 - i * 0.012);
     sheet.rotation.z = (i - 1) * 0.04;
     group.add(sheet);
   });
   const lines = (on: THREE.Object3D, z: number) => {
     for (let i = 0; i < 6; i++) {
       const short = i % 3 === 2;
-      on.add(mesh(new THREE.BoxGeometry(W * (short ? 0.45 : 0.72), 0.018, 0.004), ink, short ? -W * 0.135 : 0, -0.07 - i * 0.055, z, false));
+      on.add(mesh(new THREE.BoxGeometry(W * (short ? 0.45 : 0.72), 0.018, 0.004), ink, short ? -W * 0.135 : 0, -0.07 - i * 0.055, z));
     }
   };
   lines(group, -0.01);
-  group.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016, false));
+  group.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016));
   lines(group, -0.022);
-  group.add(mesh(new THREE.BoxGeometry(W * 0.5, 0.05, 0.05), toon('#adb5bd'), 0, 0, 0, false));
+  group.add(mesh(new THREE.BoxGeometry(W * 0.5, 0.05, 0.05), toon('#adb5bd'), 0, 0, 0));
   return { group };
 }
 
@@ -1079,7 +1078,7 @@ function globe(): { group: THREE.Group; ball: THREE.Group; ring: THREE.Mesh } {
   const group = new THREE.Group();
   const ball = new THREE.Group();
   const r = 0.26;
-  ball.add(mesh(new THREE.SphereGeometry(r, 20, 14), toon('#4cc9f0'), 0, 0, 0, false));
+  ball.add(mesh(new THREE.SphereGeometry(r, 20, 14), toon('#4cc9f0'), 0, 0, 0));
   const land = toon('#6fcf6a');
   for (const [lat, lon, size] of [
     [0.5, 0.2, 0.5],
@@ -1090,13 +1089,13 @@ function globe(): { group: THREE.Group; ball: THREE.Group; ring: THREE.Mesh } {
     [0.6, 4.4, 0.45],
     [-0.5, 5.2, 0.35],
   ]) {
-    const blob = mesh(new THREE.SphereGeometry(size * r, 10, 8), land, Math.cos(lat) * Math.sin(lon) * r * 0.86, Math.sin(lat) * r * 0.86, Math.cos(lat) * Math.cos(lon) * r * 0.86, false);
+    const blob = mesh(new THREE.SphereGeometry(size * r, 10, 8), land, Math.cos(lat) * Math.sin(lon) * r * 0.86, Math.sin(lat) * r * 0.86, Math.cos(lat) * Math.cos(lon) * r * 0.86);
     blob.scale.set(1.2, 0.8, 1.2);
     ball.add(blob);
   }
   ball.rotation.z = 0.41;
   group.add(ball);
-  const ring = mesh(new THREE.TorusGeometry(r * 1.35, 0.016, 6, 32), toon('#ffd166', { emissive: '#7a5b00' }), 0, 0, 0, false);
+  const ring = mesh(new THREE.TorusGeometry(r * 1.35, 0.016, 6, 32), toon('#ffd166', { emissive: '#7a5b00' }), 0, 0, 0);
   ring.rotation.x = Math.PI / 2 - 0.2;
   group.add(ring);
   return { group, ball, ring };
@@ -1231,27 +1230,27 @@ export class Worker {
     this.body.add(bean);
     // Big cartoon eyes
     for (const sx of [-1, 1]) {
-      const eye = mesh(new THREE.SphereGeometry(0.09, 12, 10), white, sx * 0.11, 0.7, 0.23, false);
+      const eye = mesh(new THREE.SphereGeometry(0.09, 12, 10), white, sx * 0.11, 0.7, 0.23);
       eye.scale.z = 0.6;
       this.body.add(eye);
-      const pupil = mesh(new THREE.SphereGeometry(0.045, 10, 8), ink, sx * 0.11, 0.7, 0.29, false);
+      const pupil = mesh(new THREE.SphereGeometry(0.045, 10, 8), ink, sx * 0.11, 0.7, 0.29);
       this.body.add(pupil);
       this.eyes.push(eye, pupil);
       this.pupils.push(pupil);
     }
     // Headset: band, ear cups and a mic with Factory's orange LED on it.
-    this.body.add(mesh(headset(), toon(CREW.graphite), 0, 0, 0, false));
-    const led = mesh(new THREE.SphereGeometry(0.024, 8, 6), ledMaterial(), MIC.x, MIC.y, MIC.z, false);
+    this.body.add(mesh(headset(), toon(CREW.graphite), 0, 0, 0));
+    const led = mesh(new THREE.SphereGeometry(0.024, 8, 6), ledMaterial(), MIC.x, MIC.y, MIC.z);
     led.name = 'headset-led';
     this.body.add(led);
     // Its crew kit: lanyard, ID card and patches.
     this.crew = workerKit();
     this.body.add(this.crew);
     // Antenna with status bulb.
-    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon(CREW.graphite), 0, 1.07, 0, false));
+    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon(CREW.graphite), 0, 1.07, 0));
     const mat = toonUnique(STATUS_BULB.starting);
     mat.emissive = new THREE.Color(STATUS_BULB.starting).multiplyScalar(0.6);
-    this.bulb = { mat, mesh: mesh(new THREE.SphereGeometry(0.075, 12, 10), mat, 0, 1.2, 0, false) };
+    this.bulb = { mat, mesh: mesh(new THREE.SphereGeometry(0.075, 12, 10), mat, 0, 1.2, 0) };
     this.body.add(this.bulb.mesh);
 
     const arm = (x: number) => {
@@ -1418,7 +1417,7 @@ export class Worker {
     // Looking down, brows up in the middle.
     for (const p of this.pupils) p.position.y -= 0.035;
     for (const sx of [-1, 1]) {
-      const brow = mesh(new THREE.CapsuleGeometry(0.014, 0.08, 4, 6), toon('#1d1d1d'), sx * 0.11, 0.83, 0.228, false);
+      const brow = mesh(new THREE.CapsuleGeometry(0.014, 0.08, 4, 6), toon('#1d1d1d'), sx * 0.11, 0.83, 0.228);
       brow.rotation.z = Math.PI / 2 - sx * 0.4;
       this.body.add(brow);
     }

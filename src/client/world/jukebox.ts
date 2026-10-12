@@ -45,8 +45,8 @@ export function buildJukebox(): JukeboxView {
   neon.emissive = new THREE.Color('#5a2208');
   const tubeR = r - 0.1;
   const legLen = H - r - 0.3;
-  group.add(mesh(new THREE.TorusGeometry(tubeR, 0.045, 8, 36, Math.PI), neon, 0, H - r, front, false));
-  for (const sx of [-1, 1]) group.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, legLen, 8), neon, sx * tubeR, 0.3 + legLen / 2, front, false));
+  group.add(mesh(new THREE.TorusGeometry(tubeR, 0.045, 8, 36, Math.PI), neon, 0, H - r, front));
+  for (const sx of [-1, 1]) group.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, legLen, 8), neon, sx * tubeR, 0.3 + legLen / 2, front));
 
   // The display in the arch: what's playing.
   const canvas = document.createElement('canvas');
@@ -60,9 +60,9 @@ export function buildJukebox(): JukeboxView {
   group.add(screen);
 
   // Selector buttons, and the speaker grille below them.
-  ['#3a3a3a', '#3a3a3a', '#ee6018', '#3a3a3a', '#3a3a3a'].forEach((c, i) => group.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.008), toon(c), (i - 2) * 0.14, 0.98, front, false)));
-  group.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#0a0a0a'), 0, 0.58, front - 0.01, false));
-  for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#2a2a2a'), 0, 0.38 + i * 0.1, front + 0.01, false));
+  ['#3a3a3a', '#3a3a3a', '#ee6018', '#3a3a3a', '#3a3a3a'].forEach((c, i) => group.add(mesh(roundedBox(0.1, 0.05, 0.05, 0.008), toon(c), (i - 2) * 0.14, 0.98, front)));
+  group.add(mesh(new THREE.BoxGeometry(0.82, 0.52, 0.03), toon('#0a0a0a'), 0, 0.58, front - 0.01));
+  for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.78, 0.035, 0.03), toon('#2a2a2a'), 0, 0.38 + i * 0.1, front + 0.01));
 
   // Notes drift up out of the top while it plays.
   const notes = NOTES.map((n, i) => {

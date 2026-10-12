@@ -132,7 +132,7 @@ export function buildBookshelf(): BookshelfModel {
     const vh = wikiRoom * 0.9;
     volumes.add(mesh(new THREE.BoxGeometry(t, vh, d), spine, vx + t / 2, wikiFloor + vh / 2, front - d / 2));
     volumes.add(mesh(new THREE.BoxGeometry(t + 0.004, 0.03, d + 0.004), band, vx + t / 2, wikiFloor + vh * 0.8, front - d / 2));
-    volumes.add(mesh(new THREE.BoxGeometry(t * 0.5, vh * 0.42, 0.004), glow, vx + t / 2, wikiFloor + vh * 0.42, front + 0.001, false));
+    volumes.add(mesh(new THREE.BoxGeometry(t * 0.5, vh * 0.42, 0.004), glow, vx + t / 2, wikiFloor + vh * 0.42, front + 0.001));
     const pt = 0.03 + rand() * 0.018;
     const ph = wikiRoom * (0.65 + rand() * 0.3);
     if (vx - startX < WIKI_RUN - 0.06) plain.add(mesh(new THREE.BoxGeometry(pt, ph, 0.2), toon(pick(['#2a2a2a', '#3a3a3a', '#5a5a5a', '#1c1c1c', '#8c8c8c'])), startX + i * 0.052 + pt / 2, wikiFloor + ph / 2, front - 0.1));

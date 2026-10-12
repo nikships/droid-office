@@ -382,6 +382,8 @@ const C = {
 
 /** How dim the night is: the moon's, the sky's and the room fill's light, against a clear day's (FULL_DAY). */
 const NIGHT = { moon: 0.18, hemi: 0.3, ambient: 0.1, office: 1.6, garage: 1.4 } as const;
+/** The moon's, the sky's and the room fill's light on a clear night with no lightning: what the bounce light is baked under. */
+export const CLEAR_NIGHT = { moon: NIGHT.moon, hemi: NIGHT.hemi, ambient: NIGHT.ambient } as const;
 /** Where the moon hangs, all night: low in the south-south-west, in sight through the south windows. */
 const MOON_AT = { el: 35 * DEG, az: 200 * DEG } as const;
 /** How lit your hands are inside (see Sky.lightAt): the room is dim, so they are too. */

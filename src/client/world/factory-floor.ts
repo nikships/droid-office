@@ -322,10 +322,9 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
   const brushed = toon('#8c8c8c');
   const plate = toon(INK);
   const led = new THREE.MeshBasicMaterial({ color: ORANGE });
-  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, m: THREE.Matrix4, cast = false) => {
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, m: THREE.Matrix4) => {
     const mesh = new THREE.Mesh(geo, mat);
     place(mesh, m);
-    mesh.castShadow = cast;
     statics.add(mesh);
     return mesh;
   };
@@ -350,7 +349,7 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
   for (const { line, region } of blades) {
     const x = line.x + (line.z < 0 ? -2.85 : 2.85);
     const z = line.z < 0 ? -1.95 : 1.95;
-    add(new THREE.BoxGeometry(region.width, region.height, 0.04), plate, at(x, bladeY, z), true);
+    add(new THREE.BoxGeometry(region.width, region.height, 0.04), plate, at(x, bladeY, z));
     faces.push({ geo: atlas.plane(region), at: at(x, bladeY, z + 0.0205) });
     faces.push({ geo: atlas.plane(region), at: at(x, bladeY, z - 0.0205, Math.PI) });
     const top = bladeY + region.height / 2;
@@ -480,7 +479,6 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
   }
   const floorPaint = mergeByMaterial(paint);
   for (const m of floorPaint.children) {
-    m.castShadow = false;
     m.renderOrder = 1;
   }
   root.add(floorPaint);
@@ -502,7 +500,6 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
     at: new THREE.Matrix4().compose(new THREE.Vector3(l.x + PAD.width / 2 - 0.47, PAD.top + 0.004, l.z), lay, new THREE.Vector3(1, 1, 1)),
   }));
   const stencilMesh = new THREE.Mesh(mergeFaces(stencilFaces), stencilMat);
-  stencilMesh.receiveShadow = true;
   stencilMesh.renderOrder = 1;
   root.add(stencilMesh);
 

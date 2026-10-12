@@ -223,7 +223,7 @@ function pinwheelDecal(): THREE.Mesh {
     mat.userData.outlineParameters = { visible: false };
     decal = { geo: glyphFlat(0.11, 3).rotateY(Math.PI), mat };
   }
-  const m = mesh(decal.geo, decal.mat, 0, 0.26, -0.0135, false);
+  const m = mesh(decal.geo, decal.mat, 0, 0.26, -0.0135);
   m.name = 'pinwheel-decal';
   return m;
 }
@@ -265,8 +265,8 @@ export class Laptop {
     // Base with keyboard and trackpad, where the GLB has them
     this.root.add(this.baseModel);
     this.baseModel.add(mesh(roundedBox(0.78, 0.026, 0.52, 0.02), shell, 0, 0.017, 0.02));
-    this.baseModel.add(mesh(new THREE.BoxGeometry(0.612, 0.004, 0.243), dark, 0, 0.029, -0.0865, false));
-    this.baseModel.add(mesh(new THREE.BoxGeometry(0.356, 0.004, 0.202), toon('#2a2a2a'), 0, 0.029, 0.163, false));
+    this.baseModel.add(mesh(new THREE.BoxGeometry(0.612, 0.004, 0.243), dark, 0, 0.029, -0.0865));
+    this.baseModel.add(mesh(new THREE.BoxGeometry(0.356, 0.004, 0.202), toon('#2a2a2a'), 0, 0.029, 0.163));
     // Lid, hinged along the deck's top back edge
     this.lid.position.set(0, 0.03, -0.24);
     this.root.add(this.lid);

@@ -86,7 +86,6 @@ export class OpenBook {
       // Box faces go +x, -x, +y, -y, +z, -z: the print is on the front.
       const block = new THREE.Mesh(new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.024), [edge, edge, edge, edge, print, edge]);
       block.position.x = side * (PAGE_W / 2 + 0.002);
-      block.castShadow = true;
       half.add(block);
       this.group.add(half);
     }
@@ -111,7 +110,6 @@ export class OpenBook {
     this.leaf = new THREE.Mesh(geo, leaf);
     this.leaf.position.z = 0.014;
     this.leaf.visible = false;
-    this.leaf.castShadow = false;
     this.group.add(this.leaf);
     this.wait = 0.4 + Math.random() * 1.2;
   }

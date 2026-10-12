@@ -56,7 +56,6 @@ test('the robot cell has orange neon safety lighting and two local light pools',
     const halo = strip.children[1] as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
     assert.equal(core.material.color.getHexString(), 'ee6018');
     assert.equal(core.material.toneMapped, false);
-    assert.equal(core.castShadow, false);
     assert.equal(halo.material.blending, THREE.AdditiveBlending);
     assert.equal(halo.material.depthWrite, false);
     assert.ok(halo.material.map instanceof THREE.DataTexture);

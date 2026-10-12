@@ -226,8 +226,8 @@ function groundTexture(): THREE.CanvasTexture {
 function tree(r: () => number): THREE.Group {
   const t = new THREE.Group();
   const s = 0.8 + r() * 0.7;
-  t.add(mesh(new THREE.CylinderGeometry(0.25 * s, 0.32 * s, 2.4 * s, 6), toon('#3b3029'), 0, 1.2 * s, 0, false));
-  t.add(mesh(new THREE.SphereGeometry(1.9 * s, 8, 6), toon(r() < 0.5 ? '#3d6b45' : '#2f5a39'), 0, 3.4 * s, 0, false));
+  t.add(mesh(new THREE.CylinderGeometry(0.25 * s, 0.32 * s, 2.4 * s, 6), toon('#3b3029'), 0, 1.2 * s, 0));
+  t.add(mesh(new THREE.SphereGeometry(1.9 * s, 8, 6), toon(r() < 0.5 ? '#3d6b45' : '#2f5a39'), 0, 3.4 * s, 0));
   return t;
 }
 
@@ -306,7 +306,6 @@ export function buildCity(night: NightParts): City {
   // Line the texture up with the streets: a road down its middle falls on x = STREET_X, z = STREET_Z.
   for (let i = 0; i < uv.count; i++) uv.setXY(i, (gp.getX(i) - STREET_X) / PERIOD + 0.5, (gp.getZ(i) - STREET_Z) / PERIOD + 0.5);
   const ground = new THREE.Mesh(groundGeo, new THREE.MeshToonMaterial({ map: groundTexture(), gradientMap: (toon('#fff') as THREE.MeshToonMaterial).gradientMap }));
-  ground.receiveShadow = false;
   street.add(ground);
 
   // The blocks: parks now and then, and lots with a building on each, laid out once. How tall the
@@ -325,7 +324,7 @@ export function buildCity(night: NightParts): City {
       if (i === 0 && j === 0) continue;
       // Now and then a park, with trees.
       if (r() < 0.1 && dist > 60) {
-        const park = mesh(new THREE.PlaneGeometry(inner, inner).rotateX(-Math.PI / 2), toon('#3f5b3a'), bx, 0.03, bz, false);
+        const park = mesh(new THREE.PlaneGeometry(inner, inner).rotateX(-Math.PI / 2), toon('#3f5b3a'), bx, 0.03, bz);
         parks.add(park);
         for (let k = 0; k < 7; k++) {
           const t = tree(r);
@@ -414,15 +413,15 @@ export function buildCity(night: NightParts): City {
   const garage = new THREE.Group();
   const garageH = -STREET_Y - SLAB;
   const concrete = toon('#3a3a3a');
-  garage.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX, garageH, WALL_T), concrete, (B.minX + B.maxX) / 2, garageH / 2, B.minZ + WALL_T / 2, false));
-  garage.add(mesh(new THREE.BoxGeometry(WALL_T, garageH, B.maxZ - B.minZ), concrete, B.minX + WALL_T / 2, garageH / 2, (B.minZ + B.maxZ) / 2, false));
+  garage.add(mesh(new THREE.BoxGeometry(B.maxX - B.minX, garageH, WALL_T), concrete, (B.minX + B.maxX) / 2, garageH / 2, B.minZ + WALL_T / 2));
+  garage.add(mesh(new THREE.BoxGeometry(WALL_T, garageH, B.maxZ - B.minZ), concrete, B.minX + WALL_T / 2, garageH / 2, (B.minZ + B.maxZ) / 2));
   const column = new THREE.BoxGeometry(0.5, garageH, 0.5);
-  for (const x of [B.maxX - 0.25, -9.6, 0, 9.6]) garage.add(mesh(column, toon('#2a2a2a'), x, garageH / 2, B.maxZ - 0.25, false));
-  for (const z of [-6.5, 6.5, B.minZ + 0.25]) garage.add(mesh(column, toon('#2a2a2a'), B.maxX - 0.25, garageH / 2, z, false));
-  garage.add(mesh(new THREE.PlaneGeometry(B.maxX - B.minX, B.maxZ - B.minZ).rotateX(-Math.PI / 2), toon('#2c2c2c'), (B.minX + B.maxX) / 2, 0.03, (B.minZ + B.maxZ) / 2, false));
+  for (const x of [B.maxX - 0.25, -9.6, 0, 9.6]) garage.add(mesh(column, toon('#2a2a2a'), x, garageH / 2, B.maxZ - 0.25));
+  for (const z of [-6.5, 6.5, B.minZ + 0.25]) garage.add(mesh(column, toon('#2a2a2a'), B.maxX - 0.25, garageH / 2, z));
+  garage.add(mesh(new THREE.PlaneGeometry(B.maxX - B.minX, B.maxZ - B.minZ).rotateX(-Math.PI / 2), toon('#2c2c2c'), (B.minX + B.maxX) / 2, 0.03, (B.minZ + B.maxZ) / 2));
   street.add(mergeByMaterial(garage));
   // Its plaza, with a few trees in front.
-  parks.add(mesh(new THREE.PlaneGeometry(inner, inner).rotateX(-Math.PI / 2), toon('#353535'), blockAt(0, 0).x, 0.02, blockAt(0, 0).z, false));
+  parks.add(mesh(new THREE.PlaneGeometry(inner, inner).rotateX(-Math.PI / 2), toon('#353535'), blockAt(0, 0).x, 0.02, blockAt(0, 0).z));
   for (const [x, z] of [
     [-16, 18],
     [-6, 18],
@@ -495,7 +494,7 @@ export function buildCity(night: NightParts): City {
       tops.top(lot.x, lot.z, tw, td, topY);
       const top = lot.top;
       if (top?.kind === 'mast') {
-        extras.add(mesh(mastGeo, toon('#3a3a3a'), lot.x, topY + 6, lot.z, false));
+        extras.add(mesh(mastGeo, toon('#3a3a3a'), lot.x, topY + 6, lot.z));
         beacons.push(lot.x, topY + 12.3, lot.z);
       } else if (top?.kind === 'tank') {
         const wt = new THREE.Group();
@@ -505,13 +504,13 @@ export function buildCity(night: NightParts): City {
           [-1, 1],
           [1, 1],
         ])
-          wt.add(mesh(legGeo, toon('#1c1c1c'), sx * 1.1, 1.2, sz * 1.1, false));
-        wt.add(mesh(tankGeo, toon('#2e2e2e'), 0, 4, 0, false));
-        wt.add(mesh(capGeo, toon('#1a1a1a'), 0, 6.25, 0, false));
+          wt.add(mesh(legGeo, toon('#1c1c1c'), sx * 1.1, 1.2, sz * 1.1));
+        wt.add(mesh(tankGeo, toon('#2e2e2e'), 0, 4, 0));
+        wt.add(mesh(capGeo, toon('#1a1a1a'), 0, 6.25, 0));
         wt.position.set(top.x, topY, top.z);
         extras.add(wt);
       } else if (top?.kind === 'plant') {
-        const unit = mesh(unitGeo, toon('#4a4a4a'), top.x, topY + 0.8, top.z, false);
+        const unit = mesh(unitGeo, toon('#4a4a4a'), top.x, topY + 0.8, top.z);
         unit.scale.set(top.w, 1, top.d);
         extras.add(unit);
       }
@@ -611,7 +610,7 @@ export function buildCity(night: NightParts): City {
       [-10, -2, 6.5],
       [4, 4, 6],
     ]) {
-      const puff = mesh(new THREE.SphereGeometry(rad, 12, 9), cloud, dx, dy, 0, false);
+      const puff = mesh(new THREE.SphereGeometry(rad, 12, 9), cloud, dx, dy, 0);
       puff.scale.y = 0.7;
       c.add(puff);
     }

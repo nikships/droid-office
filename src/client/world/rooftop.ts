@@ -89,9 +89,8 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   deckMat.userData.outlineParameters = { visible: false };
   const deck = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), deckMat);
   deck.position.set(cx, 0.002, cz);
-  deck.receiveShadow = true;
   group.add(deck);
-  statics.add(mesh(new THREE.BoxGeometry(w, 0.3, d), toon('#1c1c1c'), cx, -0.15, cz, false));
+  statics.add(mesh(new THREE.BoxGeometry(w, 0.3, d), toon('#1c1c1c'), cx, -0.15, cz));
   colliders.push({ minX: B.minX, maxX: B.maxX, minZ: B.minZ, maxZ: B.maxZ, bottom: -0.3, top: 0 });
 
   // Round the edge: a concrete curb with glass panels on it and a steel rail on top. Nobody goes over it.
@@ -110,16 +109,16 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
     const alongX = x1 - x0 > z1 - z0;
     statics.add(mesh(new THREE.BoxGeometry(x1 - x0, 0.45, z1 - z0), curb, ex, 0.225, ez));
     const len = alongX ? x1 - x0 : z1 - z0;
-    const pane = mesh(new THREE.PlaneGeometry(len, 0.72), glassMat, ex, 0.81, ez, false);
+    const pane = mesh(new THREE.PlaneGeometry(len, 0.72), glassMat, ex, 0.81, ez);
     if (!alongX) pane.rotation.y = Math.PI / 2;
     group.add(pane);
-    const rail = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 8), steel, ex, 1.19, ez, false);
+    const rail = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 8), steel, ex, 1.19, ez);
     rail.rotation.set(alongX ? 0 : Math.PI / 2, 0, alongX ? Math.PI / 2 : 0);
     statics.add(rail);
     for (let a = 0; a <= len + 0.01; a += 2.4) {
       const px = alongX ? x0 + a : ex;
       const pz = alongX ? ez : z0 + a;
-      statics.add(mesh(new THREE.BoxGeometry(0.06, 0.75, 0.06), steel, px, 0.8, pz, false));
+      statics.add(mesh(new THREE.BoxGeometry(0.06, 0.75, 0.06), steel, px, 0.8, pz));
     }
     colliders.push({ minX: x0, maxX: x1, minZ: z0, maxZ: z1, top: 99 });
   }
@@ -135,7 +134,7 @@ export function buildRooftop(night: NightParts, floors: number): Rooftop {
   statics.add(mesh(new THREE.BoxGeometry(ELEVATOR.width, WALL_HEIGHT + 0.3, WALL_T), housing, ELEVATOR.x, (WALL_HEIGHT + 0.3) / 2, FLOOR.minZ - WALL_T / 2));
   statics.add(mesh(new THREE.BoxGeometry(ELEVATOR.width + 0.3, 0.3, ELEVATOR_FRONT - B.minZ + 0.2), toon('#0e0e0e'), ELEVATOR.x, WALL_HEIGHT + 0.15, (B.minZ + ELEVATOR_FRONT) / 2 + 0.05));
   const beacon = bulb(night, '#ee6018', 0.6);
-  statics.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, WALL_HEIGHT + 0.38, (B.minZ + ELEVATOR_FRONT) / 2, false));
+  statics.add(mesh(new THREE.BoxGeometry(0.2, 0.16, 0.2), beacon, ELEVATOR.x, WALL_HEIGHT + 0.38, (B.minZ + ELEVATOR_FRONT) / 2));
   colliders.push({ minX: ELEVATOR.x - hw, maxX: ELEVATOR.x + hw, minZ: B.minZ, maxZ: FLOOR.minZ, top: 99 });
 
   // The factory's stack in the north-west corner, steaming, with its beacon blinking on top.

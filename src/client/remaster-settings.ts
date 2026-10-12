@@ -27,9 +27,7 @@ export interface RemasterSettings {
   /** The scene's render resolution as a share of the screen's: below 1 it is upscaled, above 1 supersampled. */
   resolution: number;
   antiAliasing: Level;
-  shadowQuality: Level;
   giQuality: Level;
-  liveGi: Level;
   brightness: Brightness;
   color: ColorLook;
   lights: LightLook;
@@ -41,7 +39,7 @@ export interface RemasterSettings {
   pace: PaceMode;
 }
 
-export type QualityKey = 'antiAliasing' | 'shadowQuality' | 'giQuality' | 'liveGi';
+export type QualityKey = 'antiAliasing' | 'giQuality';
 /** Every setting picked from a list (everything but the resolution). Booleans are listed as 'on' and 'off'. */
 export type ChoiceKey = Exclude<keyof RemasterSettings, 'resolution'>;
 /** What a setting costs the GPU, shown beside its description. */
@@ -86,22 +84,9 @@ export const QUALITY_SETTINGS: readonly ChoiceSetting[] = [
     options: [level('low', 'Off. Edges are jagged; nothing extra is drawn.'), level('medium', '2× MSAA: two samples at every edge pixel.'), level('high', '4× MSAA: four samples at every edge pixel, the smoothest edges.')],
   },
   {
-    key: 'shadowQuality',
-    label: 'Shadows',
-    hint: 'How much detail the moon’s shadows have. The shadow map is only redrawn when something that casts a shadow moves.',
-    impact: 'low',
-    options: [
-      level('low', '1024² shadow map. Small things cast blocky shadows.'),
-      level('medium', '2048² shadow map.'),
-      level('high', '3072² shadow map: desks, chairs and people cast clean shadows.'),
-      level('veryHigh', '4096² shadow map: chair legs and cables cast crisp shadows.'),
-      level('ultra', '8192² shadow map, 256 MB of video memory. The slowest to redraw while workers walk about.'),
-    ],
-  },
-  {
     key: 'giQuality',
     label: 'Global illumination',
-    hint: 'Bounce light: the glow of the screens, lamps and moon carried across the room by a grid of light probes, baked when you arrive on a floor.',
+    hint: 'Bounce light: the glow of the lamps, the moon and the room’s screens and signs carried across the room by a grid of light probes. It is baked once for every floor and kept for the next launch.',
     impact: 'medium',
     options: [
       level('low', 'Off. Direct light only: flatter, with darker corners.'),
@@ -109,20 +94,6 @@ export const QUALITY_SETTINGS: readonly ChoiceSetting[] = [
       level('high', 'A probe every 2 m, with one extra bounce.'),
       level('veryHigh', 'A probe every 1.4 m, with one extra bounce: small pools of light under every desk.'),
       level('ultra', 'A probe every 1.4 m, with two extra bounces. The longest bake.'),
-    ],
-  },
-  {
-    key: 'liveGi',
-    label: 'Live global illumination',
-    hint: 'Keeps re-baking light probes, so people walking past and screens changing show up in the bounce light. Needs global illumination.',
-    impact: 'high',
-    needs: (s) => s.giQuality !== 'low',
-    options: [
-      level('low', 'Off. The bounce light is baked once when you arrive on a floor.'),
-      level('medium', '15 probes re-baked a second.'),
-      level('high', '30 probes re-baked a second.'),
-      level('veryHigh', '60 probes re-baked a second.'),
-      level('ultra', '120 probes re-baked a second. Each probe draws the office six more times.'),
     ],
   },
 ];
@@ -254,24 +225,23 @@ export const ADVANCED_SETTINGS: readonly ChoiceSetting[] = [
 export const CHOICE_SETTINGS: readonly ChoiceSetting[] = [...DISPLAY_SETTINGS, ...QUALITY_SETTINGS, ...PICTURE_SETTINGS, ...ADVANCED_SETTINGS];
 
 /**
- * Each overall quality's settings. They are not one level across the board: what is cheap for what it shows (baked
- * GI, a bigger shadow map, which is only redrawn when something moves) climbs first, and what costs every frame (4×
- * MSAA, live GI) comes in last. Ultra leaves the 8192² shadow map and 120 live probes a second for Custom.
+ * Each overall quality's settings. They are not one level across the board: baked GI, which costs nothing once it
+ * is baked, climbs first, and 4× MSAA, which costs every frame, comes in last.
  */
 export const QUALITY_PRESETS: Record<Level, Record<QualityKey, Level>> = {
-  low: { antiAliasing: 'low', shadowQuality: 'low', giQuality: 'medium', liveGi: 'low' },
-  medium: { antiAliasing: 'medium', shadowQuality: 'medium', giQuality: 'high', liveGi: 'low' },
-  high: { antiAliasing: 'medium', shadowQuality: 'high', giQuality: 'veryHigh', liveGi: 'low' },
-  veryHigh: { antiAliasing: 'high', shadowQuality: 'veryHigh', giQuality: 'veryHigh', liveGi: 'medium' },
-  ultra: { antiAliasing: 'high', shadowQuality: 'veryHigh', giQuality: 'ultra', liveGi: 'veryHigh' },
+  low: { antiAliasing: 'low', giQuality: 'medium' },
+  medium: { antiAliasing: 'medium', giQuality: 'high' },
+  high: { antiAliasing: 'medium', giQuality: 'veryHigh' },
+  veryHigh: { antiAliasing: 'high', giQuality: 'veryHigh' },
+  ultra: { antiAliasing: 'high', giQuality: 'ultra' },
 };
 
 export const QUALITY_HINTS: Record<Level, string> = {
-  low: 'For integrated graphics: no anti-aliasing, a small shadow map and sparse bounce light.',
-  medium: '2× MSAA, 2048² shadows and bounce light every 2 m.',
-  high: '2× MSAA, 3072² shadows and dense bounce light with an extra bounce.',
-  veryHigh: '4× MSAA, 4096² shadows, dense bounce light kept slowly live.',
-  ultra: '4× MSAA, 4096² shadows, two extra bounces and live bounce light at 60 probes a second.',
+  low: 'For integrated graphics: no anti-aliasing and sparse bounce light.',
+  medium: '2× MSAA and bounce light every 2 m.',
+  high: '2× MSAA and dense bounce light with an extra bounce.',
+  veryHigh: '4× MSAA and dense bounce light with an extra bounce.',
+  ultra: '4× MSAA and dense bounce light with two extra bounces.',
 };
 
 /** The classic renderer until Remastered is turned on; then High, Normal brightness, Rich color, at 1.0×. */
@@ -341,7 +311,7 @@ export function normalizeRemaster(saved: unknown): RemasterSettings {
   const out: RemasterSettings = { ...REMASTER_DEFAULTS };
   if (!saved || typeof saved !== 'object') return out;
   const s = saved as Record<string, unknown>;
-  if (!('shadowQuality' in s) && typeof s.preset === 'string') Object.assign(out, fromOldPreset(s));
+  if (!('giQuality' in s) && typeof s.preset === 'string') Object.assign(out, fromOldPreset(s));
   for (const c of CHOICE_SETTINGS) {
     const v = s[c.key];
     const want = typeof REMASTER_DEFAULTS[c.key] === 'boolean' ? (typeof v === 'boolean' ? (v ? 'on' : 'off') : null) : v;
@@ -374,8 +344,6 @@ export interface RenderParams {
   /** Meters between light probes. */
   giSpacing: number;
   giBounces: number;
-  /** Probes re-baked a second once the bake is done; 0 keeps the bake as it is. */
-  giLive: number;
   saturation: number;
   vibrance: number;
   contrast: number;
@@ -389,9 +357,6 @@ export interface RenderParams {
   lampLight: number;
   emissive: number;
   screenGlow: number;
-  shadowMapSize: number;
-  /** PCF filter radius in shadow-map texels. */
-  shadowSoftness: number;
   toonRamp: ToonRamp;
   outlines: boolean;
   outlineThickness: number;
@@ -401,14 +366,6 @@ export interface RenderParams {
 }
 
 const MSAA: Record<Level, number> = { low: 0, medium: 2, high: 4, veryHigh: 4, ultra: 4 };
-/** The filter radius grows with the map, so the shadow's soft edge stays the same width in the room. */
-const SHADOWS: Record<Level, { size: number; softness: number }> = {
-  low: { size: 1024, softness: 0.5 },
-  medium: { size: 2048, softness: 1 },
-  high: { size: 3072, softness: 1.5 },
-  veryHigh: { size: 4096, softness: 2 },
-  ultra: { size: 8192, softness: 4 },
-};
 const GI: Record<Level, { spacing: number; bounces: number } | null> = {
   low: null,
   medium: { spacing: 3, bounces: 0 },
@@ -416,7 +373,6 @@ const GI: Record<Level, { spacing: number; bounces: number } | null> = {
   veryHigh: { spacing: 1.4, bounces: 1 },
   ultra: { spacing: 1.4, bounces: 2 },
 };
-const LIVE_GI: Record<Level, number> = { low: 0, medium: 15, high: 30, veryHigh: 60, ultra: 120 };
 const EXPOSURE: Record<Brightness, number> = { darker: 0.9, dark: 1.05, normal: 1.25, bright: 1.45, brighter: 1.7 };
 const GRADES: Record<ColorLook, Pick<RenderParams, 'saturation' | 'vibrance' | 'contrast' | 'temperature' | 'tint'>> = {
   natural: { saturation: 1, vibrance: 0, contrast: 1, temperature: 0, tint: 0 },
@@ -444,7 +400,6 @@ const HDR_GLOW = 1.6;
 /** The numbers the renderer draws with for these settings. */
 export function resolveRemaster(s: RemasterSettings): RenderParams {
   const gi = GI[s.giQuality];
-  const shadows = SHADOWS[s.shadowQuality];
   const lights = LIGHTS[s.lights];
   return {
     enabled: s.enabled,
@@ -460,21 +415,32 @@ export function resolveRemaster(s: RemasterSettings): RenderParams {
     giIntensity: 0.25,
     giSpacing: gi?.spacing ?? 3,
     giBounces: gi?.bounces ?? 0,
-    giLive: gi ? LIVE_GI[s.liveGi] : 0,
     ...GRADES[s.color],
     moon: 1,
     skyFill: 1,
     ambientFill: 0.95,
     ...lights,
     screenGlow: lights.screenGlow * (s.hdr ? HDR_GLOW : 1),
-    shadowMapSize: shadows.size,
-    shadowSoftness: shadows.softness,
     ...STYLES[s.style],
     outlineThickness: 1.8,
     outlineOpacity: 1,
     debug: s.debug,
     pace: s.pace,
   };
+}
+
+/** Bumped when a change to how the probes bake makes saved bakes wrong in a way the other inputs don't show. */
+export const BAKE_FORMAT = 1;
+
+/**
+ * Everything the baked bounce light depends on: the grid, the lights the probes see and the shading they see it with,
+ * the ceiling lights' brightness (Settings → Graphics) and the office's build. A saved bake is used only under the same
+ * key. '' (no GI, or no build yet) means nothing to bake.
+ */
+export function bakeKey(p: RenderParams, overhead: number, build: string): string {
+  if (!p.enabled || !p.gi || !build) return '';
+  const inputs = [p.giSpacing, p.giBounces, p.giIntensity, p.giGlow, p.moon, p.skyFill, p.ambientFill, p.officeFill, p.screenLight, p.lampLight, p.emissive, p.screenGlow, p.toonRamp, overhead];
+  return `gi${BAKE_FORMAT}|${build}|${inputs.join('|')}`;
 }
 
 /** How many probes fit along a span at a spacing: at least 2, so the grid has two ends. */

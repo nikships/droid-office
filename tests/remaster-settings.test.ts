@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   applyQuality,
   autoQuality,
+  BAKE_FORMAT,
+  bakeKey,
   CHOICE_SETTINGS,
   choiceLive,
   choiceValue,
@@ -49,9 +51,8 @@ test('a fresh install is Classic at High, and the presets mix levels instead of 
   assert.equal(qualityOf(REMASTER_DEFAULTS), 'high');
   assert.equal(QUALITY_PRESETS.high.antiAliasing, 'medium');
   assert.equal(QUALITY_PRESETS.high.giQuality, 'veryHigh');
-  assert.equal(QUALITY_PRESETS.high.liveGi, 'low');
-  assert.equal(QUALITY_PRESETS.ultra.shadowQuality, 'veryHigh');
-  assert.equal(QUALITY_PRESETS.ultra.liveGi, 'veryHigh');
+  assert.equal(QUALITY_PRESETS.veryHigh.antiAliasing, 'high');
+  assert.equal(QUALITY_PRESETS.veryHigh.giQuality, 'veryHigh');
   for (const lv of LEVELS) assert.equal(qualityOf({ ...REMASTER_DEFAULTS, ...QUALITY_PRESETS[lv] }), lv);
 });
 
@@ -82,7 +83,7 @@ test('saved settings come back normalized: junk, wrong types and a resolution of
 
 test('settings saved before the levels become the nearest quality, and a new save keeps its own levels', () => {
   const performance = normalizeRemaster({ preset: 'performance', exposure: 1.5, hdr: true });
-  assert.deepEqual({ antiAliasing: performance.antiAliasing, shadowQuality: performance.shadowQuality, giQuality: performance.giQuality, liveGi: performance.liveGi }, QUALITY_PRESETS.medium);
+  assert.deepEqual({ antiAliasing: performance.antiAliasing, giQuality: performance.giQuality }, QUALITY_PRESETS.medium);
   assert.equal(performance.hdr, true);
   assert.equal(performance.brightness, 'normal');
   const ultra = normalizeRemaster({ preset: 'ultra' });
@@ -90,10 +91,14 @@ test('settings saved before the levels become the nearest quality, and a new sav
   assert.equal(normalizeRemaster({ preset: 'toon' }).style, 'toon');
   assert.equal(qualityOf(normalizeRemaster({ preset: 'nik' })), 'high');
   assert.equal(qualityOf(normalizeRemaster({ preset: 'crisp' })), 'high');
-  const kept = normalizeRemaster({ shadowQuality: 'low', preset: 'ultra', resolution: 0.74 });
-  assert.equal(kept.shadowQuality, 'low');
+  const kept = normalizeRemaster({ giQuality: 'medium', preset: 'ultra', resolution: 0.74 });
+  assert.equal(kept.giQuality, 'medium');
   assert.equal(kept.resolution, 0.7);
   assert.equal(qualityOf(kept), 'custom');
+  // Shadows and live GI were taken out: a save that still has them loads without them.
+  const old = normalizeRemaster({ antiAliasing: 'high', shadowQuality: 'ultra', giQuality: 'ultra', liveGi: 'ultra' });
+  assert.equal('shadowQuality' in old || 'liveGi' in old, false);
+  assert.equal(qualityOf(old), 'ultra');
 });
 
 test('resolution snaps to a tenth inside 0.5×–1.5×', () => {
@@ -104,7 +109,7 @@ test('resolution snaps to a tenth inside 0.5×–1.5×', () => {
   assert.equal(snapResolution(1.1 + 0.2), 1.3);
 });
 
-test('a quality sets the four cost settings and turns Remastered on; picture, display and resolution stay', () => {
+test('a quality sets the cost settings and turns Remastered on; picture, display and resolution stay', () => {
   const tuned: RemasterSettings = { ...REMASTER_DEFAULTS, enabled: false, resolution: 0.8, brightness: 'bright', hdr: true, debug: 'hdr', pace: 'full', style: 'toon' };
   for (const lv of LEVELS) {
     const s = applyQuality(lv, tuned);
@@ -118,55 +123,45 @@ test('a quality sets the four cost settings and turns Remastered on; picture, di
     assert.equal(s.style, 'toon');
     assert.deepEqual(normalizeRemaster(s), s, `${lv} survives a save and load`);
   }
-  const custom = withChoice(applyQuality('high', tuned), 'shadowQuality', 'ultra');
+  const custom = withChoice(applyQuality('high', tuned), 'giQuality', 'ultra');
   assert.equal(qualityOf(custom), 'custom');
   assert.equal(withChoice(tuned, 'brightness', 'nope'), tuned);
   assert.equal(choiceValue({ ...tuned, hdr: true }, 'hdr'), 'on');
 });
 
 test('reset goes back to High at 1.0× and leaves the renderer as it is', () => {
-  const on = resetRemaster({ ...REMASTER_DEFAULTS, enabled: true, resolution: 1.5, brightness: 'darker', shadowQuality: 'ultra' });
+  const on = resetRemaster({ ...REMASTER_DEFAULTS, enabled: true, resolution: 1.5, brightness: 'darker', giQuality: 'ultra' });
   assert.deepEqual(on, { ...REMASTER_DEFAULTS, enabled: true });
   const off = resetRemaster({ ...REMASTER_DEFAULTS, enabled: false, color: 'vivid' });
   assert.deepEqual(off, REMASTER_DEFAULTS);
 });
 
 test('a setting is live only while the setting it depends on is on', () => {
-  const liveGi = CHOICE_SETTINGS.find((c) => c.key === 'liveGi')!;
   const highlights = CHOICE_SETTINGS.find((c) => c.key === 'hdrHighlights')!;
   const enabled = CHOICE_SETTINGS.find((c) => c.key === 'enabled')!;
-  assert.equal(choiceLive(liveGi, { ...REMASTER_DEFAULTS, giQuality: 'high' }), true);
-  assert.equal(choiceLive(liveGi, { ...REMASTER_DEFAULTS, giQuality: 'low' }), false);
   assert.equal(choiceLive(highlights, { ...REMASTER_DEFAULTS, hdr: true }), true);
   assert.equal(choiceLive(highlights, { ...REMASTER_DEFAULTS, hdr: false }), false);
   assert.equal(choiceLive(enabled, { ...REMASTER_DEFAULTS, enabled: false }), true);
 });
 
-test('each quality resolves to the samples, shadow map, probe spacing and live rate it names', () => {
-  const expect: Record<(typeof LEVELS)[number], { msaa: number; shadow: number; spacing: number; bounces: number; live: number }> = {
-    low: { msaa: 0, shadow: 1024, spacing: 3, bounces: 0, live: 0 },
-    medium: { msaa: 2, shadow: 2048, spacing: 2, bounces: 1, live: 0 },
-    high: { msaa: 2, shadow: 3072, spacing: 1.4, bounces: 1, live: 0 },
-    veryHigh: { msaa: 4, shadow: 4096, spacing: 1.4, bounces: 1, live: 15 },
-    ultra: { msaa: 4, shadow: 4096, spacing: 1.4, bounces: 2, live: 60 },
+test('each quality resolves to the samples and probe spacing it names', () => {
+  const expect: Record<(typeof LEVELS)[number], { msaa: number; spacing: number; bounces: number }> = {
+    low: { msaa: 0, spacing: 3, bounces: 0 },
+    medium: { msaa: 2, spacing: 2, bounces: 1 },
+    high: { msaa: 2, spacing: 1.4, bounces: 1 },
+    veryHigh: { msaa: 4, spacing: 1.4, bounces: 1 },
+    ultra: { msaa: 4, spacing: 1.4, bounces: 2 },
   };
   for (const lv of LEVELS) {
     const p = resolveRemaster(applyQuality(lv, REMASTER_DEFAULTS));
     const e = expect[lv];
     assert.equal(p.msaa, e.msaa, lv);
-    assert.equal(p.shadowMapSize, e.shadow, lv);
     assert.equal(p.gi, true, lv);
     assert.equal(p.giSpacing, e.spacing, lv);
     assert.equal(p.giBounces, e.bounces, lv);
-    assert.equal(p.giLive, e.live, lv);
   }
-  const hand = resolveRemaster({ ...applyQuality('ultra', REMASTER_DEFAULTS), shadowQuality: 'ultra', liveGi: 'ultra' });
-  assert.equal(hand.shadowMapSize, 8192);
-  assert.equal(hand.shadowSoftness, 4);
-  assert.equal(hand.giLive, 120);
-  const flat = resolveRemaster({ ...REMASTER_DEFAULTS, giQuality: 'low', liveGi: 'ultra' });
+  const flat = resolveRemaster({ ...REMASTER_DEFAULTS, giQuality: 'low' });
   assert.equal(flat.gi, false);
-  assert.equal(flat.giLive, 0);
   const look = resolveRemaster({ ...REMASTER_DEFAULTS, brightness: 'brighter', color: 'warm', style: 'toon', sharpness: 'off', hdr: true, hdrHighlights: 'max' });
   assert.equal(look.exposure, 1.7);
   assert.equal(look.temperature, 0.25);
@@ -187,6 +182,39 @@ test('white balance keeps brightness and leans warm, cool, green or magenta', ()
   const magenta = whiteBalance(0, 1);
   assert.ok(magenta[1] < magenta[0]);
   for (const w of [warm, cool, magenta, whiteBalance(5, -5)]) assert.ok(Math.abs(w[0] + w[1] + w[2] - 3) < 1e-9);
+});
+
+test('the bake key changes with what the bounce light is baked from, and not with the grade', () => {
+  const on = { ...REMASTER_DEFAULTS, enabled: true };
+  const key = (s: RemasterSettings, overhead = 1, build = '0.1.900') => bakeKey(resolveRemaster(s), overhead, build);
+  const base = key(on);
+  assert.ok(base.startsWith(`gi${BAKE_FORMAT}|0.1.900|`));
+  assert.equal(key(on), base);
+  // Picture settings applied after the scene is drawn don't touch the bake.
+  for (const [k, v] of [
+    ['brightness', 'brighter'],
+    ['color', 'vivid'],
+    ['sharpness', 'high'],
+    ['antiAliasing', 'high'],
+    ['debug', 'gi'],
+    ['pace', 'full'],
+  ] as const)
+    assert.equal(key(withChoice(on, k, v)), base, k);
+  assert.equal(key({ ...on, resolution: 0.5 }), base);
+  // What the probes see does.
+  for (const [k, v] of [
+    ['giQuality', 'ultra'],
+    ['lights', 'neon'],
+    ['style', 'toon'],
+    ['hdr', 'on'],
+  ] as const)
+    assert.notEqual(key(withChoice(on, k, v)), base, k);
+  assert.notEqual(key(on, 0.5), base);
+  assert.notEqual(key(on, 1, '0.1.901'), base);
+  // Nothing to bake: Classic, GI off, or no build yet.
+  assert.equal(key(REMASTER_DEFAULTS), '');
+  assert.equal(key({ ...on, giQuality: 'low' }), '');
+  assert.equal(key(on, 1, ''), '');
 });
 
 test('a probe grid has at least two probes along each side', () => {

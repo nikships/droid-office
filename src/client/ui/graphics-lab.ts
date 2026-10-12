@@ -50,7 +50,7 @@ export interface LabHost {
   /** Applies and saves. Called on every resolution step, so it must be cheap. */
   change(s: RemasterSettings): void;
   rebakeGI(): void;
-  /** The classic Settings → Graphics pane (the Classic renderer's resolution, shadow updates, the overlay). */
+  /** The classic Settings → Graphics pane (the Classic renderer's resolution and the overlay). */
   classicSettings(): void;
   /** The mouse back from the game, so the panel can be used. Nothing else about the game changes. */
   freeMouse(): void;
@@ -199,7 +199,7 @@ export class GraphicsLab {
       this.commit(resetRemaster(this.host.settings()));
       this.host.backToGame();
     });
-    const classic = h('button.btn.sm', { type: 'button', title: 'The Classic renderer’s resolution, shadow updates and the performance overlay' }, 'Classic settings…');
+    const classic = h('button.btn.sm', { type: 'button', title: 'The Classic renderer’s resolution and the performance overlay' }, 'Classic settings…');
     classic.addEventListener('click', () => this.host.classicSettings());
     const foot = h('footer.glab-foot', {}, this.statusEl, h('span.grow'), reset, classic);
 
@@ -459,7 +459,7 @@ export class GraphicsLab {
       () => ({
         title: 'Light probes',
         value: '',
-        text: 'Bakes the global illumination again from scratch. It bakes by itself on another floor and after a quality change.',
+        text: 'Bakes the global illumination again from scratch and saves it. One bake fits every floor and is kept for the next launch; it bakes by itself only after a quality, light or update change.',
         detail: 'The office stays at full frame rate until the bake is done.',
         impact: 'medium',
       }),
