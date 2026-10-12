@@ -57,6 +57,7 @@ test('bridge navigation validates gestures, sequence numbers and load nonces', (
   for (const pressed of [true, false]) assert.deepEqual(parseFrameMsg(wrap({ type: 'space', pressed }, nonce), nonce), { type: 'space', pressed });
   assert.equal(parseFrameMsg({ ...wrap({ type: 'space', pressed: true }, nonce), pressed: 'true' }, nonce), undefined);
   assert.deepEqual(parseFrameMsg(wrap({ type: 'shortcut', key: 'h' }, nonce), nonce), { type: 'shortcut', key: 'h' });
+  assert.deepEqual(parseFrameMsg(wrap({ type: 'shortcut', key: 'f' }, nonce), nonce), { type: 'shortcut', key: 'f' });
   assert.equal(parseFrameMsg({ ...wrap({ type: 'shortcut', key: 'h' }, nonce), key: 'Escape' }, nonce), undefined);
   for (const phase of ['start', 'move', 'end'] as const) {
     const pan = { type: 'pan' as const, phase, point: { x: -20, y: 90 } };

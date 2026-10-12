@@ -6,6 +6,8 @@
 // marks layer sits over it in page coordinates, moved by the frame's scroll from its `layout`
 // messages. Each load gets a fresh nonce in the frame URL (#wb=), and a message counts only when it
 // comes from that frame's contentWindow with that nonce: its writes and actions apply to this card.
+// Full screen promotes this element to the top layer, fits the card to that size, and puts the zoom
+// and scroll back on the way out. The wall keeps the view from before, not the temporary fit.
 
 import type { WhiteboardRenderInfo } from '../../shared/protocol';
 import { actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
@@ -225,6 +227,15 @@ export class Surface {
   private disposed = false;
   private ro: ResizeObserver;
   private offs: (() => void)[] = [];
+  /** Zoom and scroll from before full screen, and the box they were laid out in. */
+  private fsHold: { mode: ZoomMode; art: ArtifactView; canvas: CanvasView; viewport: Size } | null = null;
+  private fsSeq = 0;
+  private fsPending = false;
+  /** Set when we asked to leave, so the Esc the browser already used isn't swallowed twice. */
+  private leavingFs = false;
+  /** The frame forwards Esc after the browser has already left full screen. Swallow that one. */
+  private swallowEsc = false;
+  private swallowTimer = 0;
 
   constructor(host: SurfaceHost, card: Card) {
     this.host = host;
@@ -237,6 +248,7 @@ export class Surface {
       this.banner,
       this.placeholder,
       h('div.wb-navigation-hint', {}, 'Pinch to zoom', h('span', {}, '·'), 'Two fingers to pan', h('span', {}, '·'), h('span.key', {}, 'Space'), ' + drag'),
+      h('button.btn.sm.wb-fs-exit', { type: 'button', title: 'Exit full screen', onclick: () => this.leaveFullscreen() }, 'Exit full screen', h('span.key', {}, 'Esc')),
     );
     if (card.kind === 'canvas') this.stage.append(this.marks);
     else {
@@ -249,6 +261,24 @@ export class Surface {
     window.addEventListener('message', onMsg);
     this.offs.push(() => window.removeEventListener('message', onMsg));
     this.wire();
+    const onFs = () => this.onFullscreenChange();
+    document.addEventListener('fullscreenchange', onFs);
+    this.offs.push(() => document.removeEventListener('fullscreenchange', onFs));
+    this.offs.push(
+      claimEscape(this.el, () => {
+        if (document.fullscreenElement === this.el) {
+          this.leaveFullscreen();
+          return true;
+        }
+        // Esc inside the page makes the browser leave full screen before the frame can forward the key.
+        if (this.swallowEsc) {
+          this.swallowEsc = false;
+          clearTimeout(this.swallowTimer);
+          return true;
+        }
+        return false;
+      }),
+    );
     this.measure(true);
     if (card.kind === 'html') this.load();
     this.renderMarks();
@@ -269,6 +299,11 @@ export class Surface {
       clearTimeout(this.viewTimer);
       this.emitView();
     }
+    const exitFs = document.fullscreenElement === this.el;
+    this.fsHold = null;
+    this.fsSeq++;
+    clearTimeout(this.swallowTimer);
+    if (exitFs) void document.exitFullscreen();
     if (this.reloadWait) clearInterval(this.reloadWait.poll);
     this.picking?.release();
     this.composer?.release();
@@ -335,6 +370,107 @@ export class Surface {
     else this.art = zoomArtifact(this.art, this.viewport, zoom, c);
     this.applyView(true);
     if (this.card.kind === 'html') this.scrollFrame(this.art.scrollY);
+  }
+
+  /** Whether this card is the element on the top layer. */
+  get fullscreen(): boolean {
+    return document.fullscreenElement === this.el;
+  }
+
+  /** Fills the screen with this card, or leaves it. The view from before comes back on the way out. */
+  async toggleFullscreen(): Promise<void> {
+    if (this.fsPending) return;
+    if (document.fullscreenElement === this.el) {
+      this.leaveFullscreen();
+      return;
+    }
+    if (!this.el.requestFullscreen) {
+      this.host.notify('Full screen isn’t available in this browser');
+      return;
+    }
+    this.holdFullscreen();
+    this.fsPending = true;
+    try {
+      await this.el.requestFullscreen({ navigationUI: 'hide' });
+    } catch {
+      this.fsHold = null;
+      this.el.classList.remove('fs');
+      this.host.notify('Full screen isn’t available in this browser');
+    } finally {
+      this.fsPending = false;
+    }
+  }
+
+  private leaveFullscreen() {
+    if (document.fullscreenElement !== this.el) return;
+    this.leavingFs = true;
+    void document.exitFullscreen();
+  }
+
+  private holdFullscreen() {
+    if (this.fsHold) return;
+    this.fsHold = {
+      mode: this.zoomMode.fit ? { fit: true } : { fit: false, zoom: this.zoomMode.zoom },
+      art: { zoom: this.art.zoom, panX: this.art.panX, scrollY: this.art.scrollY },
+      canvas: { zoom: this.canvas.zoom, x: this.canvas.x, y: this.canvas.y },
+      viewport: { w: this.viewport.w, h: this.viewport.h },
+    };
+  }
+
+  /** Fit once the top layer has a real box, and put the held view back once it doesn't. */
+  private onFullscreenChange() {
+    const on = document.fullscreenElement === this.el;
+    this.el.classList.toggle('fs', on);
+    if (!on && this.fsHold && !this.leavingFs) {
+      this.swallowEsc = true;
+      clearTimeout(this.swallowTimer);
+      this.swallowTimer = window.setTimeout(() => {
+        this.swallowEsc = false;
+      }, 500);
+    }
+    this.leavingFs = false;
+    const seq = ++this.fsSeq;
+    const settle = (attempt: number) => {
+      if (this.disposed || seq !== this.fsSeq) return;
+      const r = this.el.getBoundingClientRect();
+      const held = this.fsHold;
+      if (document.fullscreenElement === this.el) {
+        if (!held) this.holdFullscreen();
+        const base = this.fsHold?.viewport ?? this.viewport;
+        const grown = r.width > base.w + 8 || r.height > base.h + 8;
+        if ((!grown || r.width < 2) && attempt < 8) {
+          requestAnimationFrame(() => settle(attempt + 1));
+          return;
+        }
+        if (r.width > 0 && r.height > 0) this.viewport = { w: Math.max(200, Math.round(r.width)), h: Math.max(160, Math.round(r.height)) };
+        this.fit();
+        return;
+      }
+      if (!held) return;
+      // Wait until the card is back in the window. Laying the old zoom out at the screen size would clamp the pan.
+      if (r.width > held.viewport.w + 48 && attempt < 8) {
+        requestAnimationFrame(() => settle(attempt + 1));
+        return;
+      }
+      this.restoreFullscreen();
+    };
+    requestAnimationFrame(() => settle(0));
+  }
+
+  private restoreFullscreen() {
+    const held = this.fsHold;
+    if (!held) return;
+    this.fsHold = null;
+    const r = this.el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) this.viewport = { w: Math.max(200, Math.round(r.width)), h: Math.max(160, Math.round(r.height)) };
+    else this.viewport = { ...held.viewport };
+    this.art = { ...held.art };
+    this.canvas = { ...held.canvas };
+    this.zoomMode = held.mode.fit ? { fit: true } : { fit: false, zoom: held.mode.zoom };
+    if (held.mode.fit) this.fit();
+    else this.applyView(true);
+    // Fit keeps an artifact's scroll in the model; the frame still has to be told, or a taller full-screen box leaves it where it scrolled.
+    if (this.card.kind === 'html') this.scrollFrame(held.art.scrollY);
   }
 
   /** Brings a mark into view and flashes it. */
@@ -594,6 +730,7 @@ export class Surface {
         if (slot !== this.slot || this.el.closest('.backdrop')?.nextElementSibling) break;
         if (msg.key === 'm') this.setMode(this.mode === 'use' ? 'markup' : 'use');
         else if (msg.key === 'h') this.setPan(!this.pan);
+        else if (msg.key === 'f') void this.toggleFullscreen();
         else if (msg.key === '0') this.fit();
         else if (msg.key === '1') this.actual();
         else this.zoomBy(msg.key === '+' ? 1 : -1);
@@ -786,6 +923,8 @@ export class Surface {
       return;
     }
     if (same) return;
+    // Leaving full screen: the held view is put back once the box has shrunk. A layout at the screen size would zero the pan.
+    if (this.fsHold && document.fullscreenElement !== this.el) return;
     if (this.zoomMode.fit) this.fit();
     else this.applyView(false);
   }
@@ -858,13 +997,19 @@ export class Surface {
 
   private emitView() {
     this.viewTimer = 0;
-    const fit = this.zoomMode.fit;
+    // Full screen is temporary. The wall and the remembered view stay what they were before it.
+    const held = this.fsHold;
+    const fit = held ? held.mode.fit : this.zoomMode.fit;
     if (this.card.kind === 'canvas') {
-      save(this.host.floor, this.card.id, { fit, zoom: this.canvas.zoom, a: Math.round(this.canvas.x), b: Math.round(this.canvas.y) });
-      this.host.view(canvasCardView(this.viewport, this.canvas));
+      const view = held ? held.canvas : this.canvas;
+      const viewport = held ? held.viewport : this.viewport;
+      save(this.host.floor, this.card.id, { fit, zoom: view.zoom, a: Math.round(view.x), b: Math.round(view.y) });
+      this.host.view(canvasCardView(viewport, view));
     } else {
-      save(this.host.floor, this.card.id, { fit, zoom: this.art.zoom, a: Math.round(this.art.panX), b: Math.round(this.art.scrollY) });
-      this.host.view(artifactCardView(this.viewport, this.art, this.slot?.layout?.height));
+      const view = held ? held.art : this.art;
+      const viewport = held ? held.viewport : this.viewport;
+      save(this.host.floor, this.card.id, { fit, zoom: view.zoom, a: Math.round(view.panX), b: Math.round(view.scrollY) });
+      this.host.view(artifactCardView(viewport, view, this.slot?.layout?.height));
     }
   }
 
@@ -1143,7 +1288,7 @@ export class Surface {
       'pointerdown',
       (e) => {
         if (e.button !== 1 && !(e.button === 0 && (this.pan || this.spacePan))) return;
-        if ((e.target as HTMLElement).closest('.wb-composer, .wb-navigation-hint')) return;
+        if ((e.target as HTMLElement).closest('.wb-composer, .wb-navigation-hint, .wb-fs-exit')) return;
         e.stopImmediatePropagation();
         this.panDrag(e);
       },

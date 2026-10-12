@@ -564,3 +564,151 @@ test('a content reload keeps the focused field, its caret and what was typed; ty
   assert.deepEqual(await page.evaluate('loads'), ['f1', 'f2', 'f3', 'f4'], 'one load per content change');
   assert.deepEqual(errors, []);
 });
+
+function fullscreenHost(bundled: string): string {
+  return `<!doctype html><html><head><style>
+.wb-surface { width: 640px; height: 400px; position: relative; overflow: hidden; }
+.wb-fs-exit { display: none; }
+.wb-surface:is(:fullscreen, .fs) .wb-fs-exit { display: inline-flex; }
+</style></head><body><div id="modal-root"></div><button id="enter" type="button">Full screen</button>
+<script>${bundled}</script>
+<script>
+var board = WB.emptyBoard();
+var surface = null;
+window.shut = false;
+window.note = '';
+function commit(ops) {
+  var r = WB.applyOps(board, ops, WB.OWNER_AUTHOR, board.rev + 1, Date.now());
+  if (!r.ok) throw new Error(JSON.stringify(r.error));
+  board = r.board;
+  if (surface) surface.update(WB.findCard(board, 'c1'));
+}
+window.start = function () {
+  commit([{ op: 'card.create', card: 'c1', kind: 'canvas', title: 'Board' }]);
+  var host = {
+    floor: 'f', apply: function () { return Promise.resolve(true); }, notify: function (text) { window.note = text; },
+    cardUrl: function () { return undefined; }, fileUrl: function () { return ''; }, live: function () { return true; },
+    selectMark: function () {}, changed: function () {}, located: function () {}, view: function () {},
+    changedMarks: function () { return new Set(); }, render: function () { return undefined; }
+  };
+  var el = document.createElement('div');
+  el.className = 'modal wb';
+  surface = new WB.Surface(host, WB.findCard(board, 'c1'));
+  el.appendChild(surface.el);
+  WB.openModal(el, { size: 'full', onClose: function () { if (surface) surface.dispose(); window.shut = true; } });
+  document.getElementById('enter').onclick = function () { surface.toggleFullscreen(); };
+};
+</script></body></html>`;
+}
+
+test('full screen fits the card, and Esc restores the zoom without closing the window', { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1280, height: 800 } });
+  t.after(() => context.close().catch(() => {}));
+  await serve(context, () => fullscreenHost(bundle(SURFACE_ENTRY, 'WB')), new Map());
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  await page.evaluate('start()');
+  await page.waitForFunction('surface && surface.el.isConnected');
+  await page.evaluate('surface.zoomTo(2)');
+  assert.equal(await page.evaluate('surface.zoom'), 2);
+  assert.equal(await page.evaluate('surface.zoomMode.fit'), false);
+  await page.click('#enter');
+  try {
+    await page.waitForFunction('document.fullscreenElement === surface.el', undefined, { timeout: 5_000 });
+  } catch {
+    assert.fail(`did not enter full screen (${await page.evaluate('window.note')})`);
+  }
+  await page.waitForFunction('surface.zoomMode.fit && surface.zoom !== 2');
+  assert.equal(await page.evaluate('getComputedStyle(surface.el.querySelector(".wb-fs-exit")).display'), 'inline-flex');
+  assert.equal(await page.evaluate('document.fullscreenElement.querySelector(".wb-panel")'), null, 'the side panel is not part of the full screen element');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction('!document.fullscreenElement');
+  await page.waitForFunction('surface.zoom === 2 && surface.zoomMode.fit === false');
+  assert.equal(await page.evaluate('window.shut'), false, 'Esc leaves full screen and leaves the window open');
+  // The usual way in: already at Fit. Full screen fits the screen, and the exit button puts Fit back.
+  await page.evaluate('surface.fit()');
+  await page.waitForFunction('surface.zoomMode.fit');
+  const fitZoom = await page.evaluate('surface.zoom');
+  await page.click('#enter');
+  await page.waitForFunction('document.fullscreenElement === surface.el');
+  await page.waitForFunction(`Math.abs(surface.zoom - ${fitZoom}) > 0.05`);
+  await page.click('.wb-fs-exit');
+  await page.waitForFunction('!document.fullscreenElement');
+  await page.waitForFunction(`surface.zoomMode.fit && Math.abs(surface.zoom - ${fitZoom}) < 0.02`);
+  assert.equal(await page.evaluate('window.shut'), false);
+  await page.keyboard.press('Escape');
+  await waitFor(() => page.evaluate('shut'), 'Esc closes the window once full screen is gone');
+  assert.deepEqual(errors, []);
+});
+
+function livePageHost(bundled: string): string {
+  return `<!doctype html><html><head><style>
+.wb-surface { width: 640px; height: 400px; position: relative; overflow: hidden; }
+</style></head><body><div id="modal-root"></div><button id="enter" type="button">Full screen</button>
+<script>${bundled}</script>
+<script>
+var board = WB.emptyBoard();
+var surface = null;
+window.shut = false;
+function commit(ops) {
+  var r = WB.applyOps(board, ops, WB.OWNER_AUTHOR, board.rev + 1, Date.now());
+  if (!r.ok) throw new Error(JSON.stringify(r.error));
+  board = r.board;
+  if (surface) surface.update(WB.findCard(board, 'c1'));
+}
+window.start = function () {
+  var content = { entry: 'index.html', files: { 'index.html': { hash: '${'c'.repeat(64)}', size: 100, mime: 'text/html' } } };
+  commit([{ op: 'card.create', card: 'c1', kind: 'html', title: 'Page', content: content }]);
+  var host = {
+    floor: 'f', apply: function () { return Promise.resolve(true); }, notify: function () {},
+    cardUrl: function (n) { return '/card/tall/#wb=' + n; }, fileUrl: function () { return ''; }, live: function () { return true; },
+    selectMark: function () {}, changed: function () {}, located: function () {}, view: function () {},
+    changedMarks: function () { return new Set(); }, render: function () { return undefined; }
+  };
+  var el = document.createElement('div');
+  el.className = 'modal wb';
+  surface = new WB.Surface(host, WB.findCard(board, 'c1'));
+  el.appendChild(surface.el);
+  WB.openModal(el, { size: 'full', onClose: function () { if (surface) surface.dispose(); window.shut = true; } });
+};
+</script></body></html>`;
+}
+
+test('F inside a live page enters full screen, and Esc puts the zoom and scroll back', { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1280, height: 800 } });
+  t.after(() => context.close().catch(() => {}));
+  const pages = new Map([['tall', '<!doctype html><body style="margin:0"><h1>Tall page</h1><div style="height:4000px"></div></body>']]);
+  await serve(context, () => livePageHost(bundle(SURFACE_ENTRY, 'WB')), pages);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  await page.evaluate('start()');
+  const frame = await waitFor(() => page.frames().find((f) => f.url().includes('/card/tall/')), 'the card frame');
+  await frame.waitForFunction('window.whiteboard && whiteboard.card.id === "c1"');
+  await page.evaluate('surface.zoomTo(1.5)');
+  await page.evaluate('surface.scrollFrame(600)');
+  await waitFor(async () => (await frame.evaluate('scrollY')) > 500, 'scrolled down');
+  const before = Math.round(await frame.evaluate('scrollY'));
+  // Click the visible page. A locator click on the heading scrolls it back to the top first.
+  const box = await page.locator('.wb-surface').boundingBox();
+  assert.ok(box);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  assert.ok(Math.abs(Math.round(await frame.evaluate('scrollY')) - before) < 2);
+  await page.keyboard.press('f');
+  await page.waitForFunction('document.fullscreenElement === surface.el');
+  await page.waitForFunction('surface.zoomMode.fit && surface.zoom !== 1.5');
+  assert.equal(await page.evaluate('window.shut'), false);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction('!document.fullscreenElement');
+  await page.waitForFunction('surface.zoom === 1.5 && surface.zoomMode.fit === false');
+  await waitFor(async () => Math.abs((await frame.evaluate('scrollY')) - before) < 2, 'scroll is back where it was');
+  assert.equal(await page.evaluate('window.shut'), false, 'Esc leaves full screen and leaves the window open');
+  assert.deepEqual(errors, []);
+});
