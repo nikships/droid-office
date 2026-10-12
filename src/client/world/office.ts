@@ -337,6 +337,13 @@ function ledBar(length: number, drop: number, lit: THREE.Material): THREE.Group 
   return g;
 }
 
+/** The warm diffuser of a ceiling light that is always fully on, dimmed with the other overhead lights. */
+function overheadLit(night: NightParts): THREE.MeshToonMaterial {
+  const mat = bulb(night, '#fff3e0', 1, true);
+  mat.emissive.set('#ffe3b8');
+  return mat;
+}
+
 /** A high-bay lamp shade, its open mouth at 0, on a rod `drop` meters up to the ceiling. */
 function highBay(drop: number): THREE.Group {
   const g = new THREE.Group();
@@ -866,7 +873,7 @@ function buildCeiling(night: NightParts): THREE.Group {
   const g = new THREE.Group();
   const steel = toon(PALETTE.steel);
   const dark = toon('#727272');
-  const lit = bulb(night, '#fff3e0', 0.7);
+  const lit = bulb(night, '#fff3e0', 0.7, true);
 
   const ft = 0.03;
   const fw = 0.22;
@@ -1495,9 +1502,9 @@ export function buildOffice(): Office {
   // light fixtures hung from them.
   group.add(buildCeiling(night));
 
-  const bossScreen = buildLoft(group, colliders, interactables, looks);
+  const bossScreen = buildLoft(group, colliders, interactables, looks, night);
   // Under the loft: the unused glass room.
-  buildGlassRoom(group, colliders, doors);
+  buildGlassRoom(group, colliders, doors, night);
   fixture('south', GLASS_ROOM_BOARD.x, GLASS_ROOM_BOARD.y, GLASS_ROOM_BOARD.width + 0.4, GLASS_ROOM_BOARD.height + 0.4);
 
   // The elevator to the other floors, against the north wall between the PR board and the gong.
@@ -1599,7 +1606,7 @@ export function buildOffice(): Office {
 /**
  * Scenery under the loft: glass walls, a sliding door, a table, chairs and static screens.
  */
-function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]): void {
+function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[], night: NightParts): void {
   const R = GLASS_ROOM;
   const H = R.height;
   const T = 0.1;
@@ -1712,9 +1719,10 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
 
   // Linear lights set in the loft's floor over the table: a hanging lamp would be in front of the board.
   const recessed = new THREE.Group();
+  const lit = overheadLit(night);
   for (const dx of [-0.95, 0.95]) {
     recessed.add(mesh(box(1.5, 0.03, 0.24), toon('#727272'), top.x + dx, H - 0.012, top.z, false));
-    recessed.add(mesh(box(1.4, 0.02, 0.14), toon('#fff3e0', { emissive: '#ffe3b8' }), top.x + dx, H - 0.03, top.z, false));
+    recessed.add(mesh(box(1.4, 0.02, 0.14), lit, top.x + dx, H - 0.03, top.z, false));
   }
   group.add(mergeByMaterial(recessed));
 }
@@ -1731,7 +1739,7 @@ interface Looks {
  * The upstairs office: a loft on posts in the south-east corner, with glass on the two sides that
  * face the desks, reached by stairs along the south wall.
  */
-function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Interactable[], looks: Looks): THREE.Mesh {
+function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Interactable[], looks: Looks, night: NightParts): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, y: floorY, height } = LOFT;
   const w = maxX - minX;
   const d = maxZ - minZ;
@@ -1925,7 +1933,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
     colliders.push({ minX: px - r, maxX: px + r, minZ: pz - r, maxZ: pz + r, bottom: floorY, top: floorY + 0.5 * s });
   }
 
-  const lamp = mergeByMaterial(ledBar(2.2, 0.32, toon('#fff3e0', { emissive: '#ffe3b8' })));
+  const lamp = mergeByMaterial(ledBar(2.2, 0.32, overheadLit(night)));
   lamp.position.set(deskX, roofY - 0.4, cz);
   group.add(lamp);
 

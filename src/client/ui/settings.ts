@@ -15,7 +15,7 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
-import { FPS_CAPS, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeScale, type FpsCap, type GraphicsSettings, type ShadowMode } from '../graphics';
+import { FPS_CAPS, OVERHEAD_STEP, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeOverhead, normalizeScale, type FpsCap, type GraphicsSettings, type ShadowMode } from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -782,6 +782,7 @@ export function openSettings(
   };
   const scale = percentSlider('Render resolution', RENDER_SCALE_MIN * 100, RENDER_SCALE_STEP * 100, (v) => graphicsSet({ scale: normalizeScale(v) }));
   const sharpen = percentSlider('Sharpening', 0, 5, (v) => graphicsSet({ sharpen: v }));
+  const overhead = percentSlider('Overhead lights', 0, OVERHEAD_STEP * 100, (v) => graphicsSet({ overhead: normalizeOverhead(v) }));
   const scaleNote = desc();
   const sharpenNote = desc();
   const taa = toggle(
@@ -816,6 +817,7 @@ export function openSettings(
     for (const [s, v] of [
       [scale, g.scale],
       [sharpen, g.sharpen],
+      [overhead, g.overhead],
     ] as const) {
       const p = Math.round(v * 100);
       s.slider.value = String(p);
@@ -915,7 +917,16 @@ export function openSettings(
           control: fpsCap.row,
         }),
       ),
-      group('Lighting', card('Shadows', { desc: shadowsNote, control: shadows.row })),
+      group(
+        'Lighting',
+        card('Shadows', { desc: shadowsNote, control: shadows.row }),
+        card('Overhead lights', {
+          desc: desc(
+            'How bright the office’s ceiling lights are, and how much they light the room. At 0% they are off and the room is lit only by the moon, the screens and the bounce light. Both renderers; Remastered re-bakes its bounce light after a change.',
+          ),
+          control: overhead.row,
+        }),
+      ),
       group(
         'Diagnostics',
         card('Performance overlay', {

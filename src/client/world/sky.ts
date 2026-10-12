@@ -452,6 +452,8 @@ export class Sky {
   snow = 0;
   /** How far the lamps are on, 0–1: always all the way, it is always night. */
   readonly lampsOn = 1;
+  /** The office's ceiling lights, 0–1 (Settings → Graphics): their glow, and the fill light they give the room. */
+  private overhead = 1;
   /** Up on the roof: out in the open, over the whole city (see setRoof). */
   private roof = false;
   /** Where the street is from up there (the roof is at 0), for the haze. */
@@ -496,7 +498,7 @@ export class Sky {
     this.state = { ...here, utcOffset: -new Date().getTimezoneOffset(), weather: 'clear', intensity: 0 };
     scene.fog ??= new THREE.Fog(C.night, 40, 90);
     if (!(scene.background instanceof THREE.Color)) scene.background = new THREE.Color(C.night);
-    uniforms.skyOffice.value.copy(C.officeNight).multiplyScalar(NIGHT.office);
+    this.setOverhead(this.overhead);
     uniforms.skyGarage.value.copy(C.garage).multiplyScalar(NIGHT.garage);
 
     this.placeLamps();
@@ -598,6 +600,12 @@ export class Sky {
       lo.min(new THREE.Vector3(l.x - l.reach, y - l.reach, l.z - l.reach));
       hi.max(new THREE.Vector3(l.x + l.reach, y + l.reach, l.z + l.reach));
     });
+  }
+
+  /** Dims the office's ceiling lights, 0 (off) to 1 (as built): the fixtures' glow and the room's fill light. */
+  setOverhead(k: number) {
+    this.overhead = clamp01(k);
+    uniforms.skyOffice.value.copy(C.officeNight).multiplyScalar(NIGHT.office * this.overhead);
   }
 
   /**
@@ -712,7 +720,7 @@ export class Sky {
       const l = this.night.lamps[i];
       lampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
     }
-    for (const b of this.night.bulbs) b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn);
+    for (const b of this.night.bulbs) b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn) * (b.overhead ? this.overhead : 1);
     for (const m of this.night.windows) m.emissiveIntensity = this.lampsOn * 1.1;
     for (const h of this.halos) {
       h.material.opacity = this.lampsOn * 0.85;

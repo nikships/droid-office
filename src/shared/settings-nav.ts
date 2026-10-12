@@ -38,6 +38,7 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Sharpening' },
   { pane: 'graphics', title: 'Frame rate limit' },
   { pane: 'graphics', title: 'Shadows' },
+  { pane: 'graphics', title: 'Overhead lights' },
   { pane: 'graphics', title: 'Performance overlay' },
   { pane: 'notify', title: 'Desktop notifications' },
   { pane: 'notify', title: 'Channel notifications (Slack / Discord)' },

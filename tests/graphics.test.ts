@@ -1,20 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FPS_CAPS, GRAPHICS_DEFAULTS, gpuBusy, halton, jitterAt, jitterPhases, normalizeGraphics, normalizeScale, renderSize, statsText } from '../src/client/graphics.js';
+import { FPS_CAPS, GRAPHICS_DEFAULTS, gpuBusy, halton, jitterAt, jitterPhases, normalizeGraphics, normalizeOverhead, normalizeScale, renderSize, statsText } from '../src/client/graphics.js';
 import { parseIoreg } from '../src/server/gpu-stats.js';
 
 test('graphics settings default to native resolution with MSAA and the overlay on', () => {
   assert.deepEqual(normalizeGraphics(undefined), GRAPHICS_DEFAULTS);
-  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', fpsCap: 120, stats: true });
+  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', overhead: 1, fpsCap: 120, stats: true });
 });
 
 test('saved graphics settings are clamped and snapped, bad values fall back', () => {
-  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, shadows: 'off', fpsCap: 60, stats: false }), { scale: 0.7, taa: true, sharpen: 1, shadows: 'off', fpsCap: 60, stats: false });
+  assert.deepEqual(normalizeGraphics({ scale: 0.72, taa: true, sharpen: 3, shadows: 'off', overhead: 0.42, fpsCap: 60, stats: false }), {
+    scale: 0.7,
+    taa: true,
+    sharpen: 1,
+    shadows: 'off',
+    overhead: 0.4,
+    fpsCap: 60,
+    stats: false,
+  });
   assert.equal(normalizeGraphics({ shadows: 'live' }).shadows, 'live');
   assert.equal(normalizeGraphics({ scale: 0.1 }).scale, 0.5);
   assert.equal(normalizeGraphics({ scale: 4 }).scale, 1);
-  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', fpsCap: 144, stats: 'yes' }), GRAPHICS_DEFAULTS);
+  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', overhead: '50%', fpsCap: 144, stats: 'yes' }), GRAPHICS_DEFAULTS);
   assert.equal(normalizeScale(0.775), 0.8);
+});
+
+test('the overhead lights go from off to as built, in 5% steps', () => {
+  assert.equal(normalizeGraphics({ overhead: 0 }).overhead, 0);
+  assert.equal(normalizeGraphics({ overhead: -1 }).overhead, 0);
+  assert.equal(normalizeGraphics({ overhead: 2 }).overhead, 1);
+  assert.equal(normalizeGraphics({ overhead: Number.NaN }).overhead, 1);
+  assert.equal(normalizeOverhead(0.37), 0.35);
+  assert.equal(normalizeOverhead(0.7), 0.7);
 });
 
 test('the frame rate limit is 40, 60 or 120, and anything else saved is 120', () => {

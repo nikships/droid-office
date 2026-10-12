@@ -3391,6 +3391,8 @@ let shadowFrames = 0;
 /** The Mac's whole-GPU load from the office's server, when this page runs on the office's own Mac. */
 let systemGpu: number | null = null;
 let systemGpuPoll = 0;
+/** The overhead lights' brightness last applied; -1 before the first time, when the renderer isn't set up yet. */
+let appliedOverhead = -1;
 async function pollSystemGpu() {
   try {
     const res = await fetch(withToken('/api/gpu'), { credentials: 'same-origin', cache: 'no-store' });
@@ -3409,6 +3411,14 @@ function applyGraphics() {
   renderer.shadowMap.autoUpdate = shadows === 'live';
   renderer.shadowMap.needsUpdate = true;
   shadowWatch.reset();
+  const overhead = settings.graphics.overhead;
+  sky.setOverhead(overhead);
+  if (appliedOverhead >= 0 && overhead !== appliedOverhead) {
+    // The bounce light baked from the old brightness stays until the probes are baked again.
+    if (remaster.gi.grid) remaster.gi.rebake();
+    renderWake();
+  }
+  appliedOverhead = overhead;
   fpsEl.classList.toggle('hidden', !settings.graphics.stats);
   window.clearInterval(systemGpuPoll);
   systemGpu = null;

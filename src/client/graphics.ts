@@ -19,6 +19,8 @@ export interface GraphicsSettings {
   /** How hard the upscaled or TAA image is sharpened, 0–1. Unused when the scene draws natively without TAA. */
   sharpen: number;
   shadows: ShadowMode;
+  /** How bright the office's ceiling lights are and how much they light the room, 0 (off) to 1 (as built). */
+  overhead: number;
   /** The frame rate limit while the office draws at full pace. */
   fpsCap: FpsCap;
   /** The FPS, GPU time and render resolution readout in the bottom-right corner. */
@@ -28,7 +30,9 @@ export interface GraphicsSettings {
 export const RENDER_SCALE_MIN = 0.5;
 export const RENDER_SCALE_STEP = 0.05;
 
-export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', fpsCap: 120, stats: true };
+export const OVERHEAD_STEP = 0.05;
+
+export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, shadows: 'smart', overhead: 1, fpsCap: 120, stats: true };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -36,6 +40,11 @@ export function normalizeScale(v: number): number {
   // Snapped in whole percent, so 0.7 is saved as 0.7 and not 0.7000000000000001.
   const step = Math.round(RENDER_SCALE_STEP * 100);
   return clamp(Math.round((v * 100) / step) * step, RENDER_SCALE_MIN * 100, 100) / 100;
+}
+
+export function normalizeOverhead(v: number): number {
+  const step = Math.round(OVERHEAD_STEP * 100);
+  return clamp(Math.round((v * 100) / step) * step, 0, 100) / 100;
 }
 
 /** Saved graphics settings, with anything missing or out of range back at its default. */
@@ -47,6 +56,7 @@ export function normalizeGraphics(saved: unknown): GraphicsSettings {
   if (typeof s.taa === 'boolean') g.taa = s.taa;
   if (typeof s.sharpen === 'number' && Number.isFinite(s.sharpen)) g.sharpen = clamp(s.sharpen, 0, 1);
   if (SHADOW_MODES.includes(s.shadows as ShadowMode)) g.shadows = s.shadows as ShadowMode;
+  if (typeof s.overhead === 'number' && Number.isFinite(s.overhead)) g.overhead = normalizeOverhead(s.overhead);
   if (FPS_CAPS.includes(s.fpsCap as FpsCap)) g.fpsCap = s.fpsCap as FpsCap;
   if (typeof s.stats === 'boolean') g.stats = s.stats;
   return g;

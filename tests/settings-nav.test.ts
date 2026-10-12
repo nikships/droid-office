@@ -28,6 +28,7 @@ test('every setting is in a category', () => {
     ['Sharpening', 'graphics'],
     ['Frame rate limit', 'graphics'],
     ['Shadows', 'graphics'],
+    ['Overhead lights', 'graphics'],
     ['Performance overlay', 'graphics'],
     ['Desktop notifications', 'notify'],
     ['Channel notifications (Slack / Discord)', 'notify'],
