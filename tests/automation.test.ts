@@ -141,7 +141,9 @@ test('standing at a desk puts you behind the worker, looking at its laptop', () 
   assert.ok(Math.abs(look.z - (desk.z - stand.at.z) / len) < 1e-9);
   // desk-1 is in the north row of its pod (rotY PI): its worker sits on the −z side, so you stand north of it.
   assert.ok(stand.at.z < desk.z);
-  assert.ok(pitchToward({ ...stand.at, y: 1.4 }, stand.face) < 0, 'looking down at the laptop');
+  assert.equal(stand.lookPitch, -0.2, 'a desk arrival uses the desk pitch, not pitchToward');
+  assert.equal(stand.pitchFixed, true);
+  assert.ok(pitchToward({ ...stand.at, y: 1.4 }, stand.face) < 0, 'the laptop is still below eye level');
 });
 
 test('standing at a kiosk puts you in front of it, on the room side', () => {
@@ -151,6 +153,8 @@ test('standing at a kiosk puts you in front of it, on the room side', () => {
   const kiosk = DESK_BY_ID.get('station-issues')!;
   assert.ok(stand.at.z > kiosk.z + 1, 'out from the north wall');
   assert.ok(Math.abs(stand.at.x - kiosk.x) < 1e-9);
+  assert.equal(stand.lookPitch, -0.2);
+  assert.equal(stand.pitchFixed, true);
 });
 
 test('standing at a board or a place uses its spot, stepping out of anything in the way', () => {
@@ -163,7 +167,9 @@ test('standing at a board or a place uses its spot, stepping out of anything in 
   // The board hangs on the north wall and higher than your eyes: you face −z and look up at it.
   const facing = facingToward(stand.at, stand.face);
   assert.ok(Math.abs(Math.abs(facing) - Math.PI) < 1e-9);
-  assert.ok(pitchToward({ ...stand.at, y: 1.4 }, stand.face) > 0);
+  assert.equal(stand.pitchFixed, false);
+  assert.equal(stand.lookPitch, pitchToward({ ...stand.at, y: 1.4 }, stand.face));
+  assert.ok(stand.lookPitch > 0);
 
   const coffee = resolveTarget('coffee', context());
   assert.ok(coffee.ok);
@@ -286,11 +292,11 @@ function fakeOffice() {
     busy: () => s.busy,
     blocked: () => false,
     centerOf: (spot) => ({ x: spot.x, y: 2.1, z: spot.z - 1.6 }),
-    place: (at, face) => {
-      log.push(`place ${at.x.toFixed(2)},${at.z.toFixed(2)}`);
-      s.raw = { ...s.raw, player: { ...s.raw.player, x: at.x, y: at.y, z: at.z, facing: facingToward(at, face) } };
+    place: (pose) => {
+      log.push(`place ${pose.at.x.toFixed(2)},${pose.at.z.toFixed(2)}`);
+      s.raw = { ...s.raw, player: { ...s.raw.player, x: pose.at.x, y: pose.at.y, z: pose.at.z, facing: facingToward(pose.at, pose.face), ...(pose.pitchFixed ? { lookPitch: pose.lookPitch } : {}) } };
     },
-    aim: (face) => log.push(`aim ${face.x.toFixed(2)}`),
+    aim: (pose) => log.push(`aim ${pose.face.x.toFixed(2)}`),
     walk: (at, label, done) => {
       log.push(`walk ${label}`);
       if (s.walk === 'never') return;

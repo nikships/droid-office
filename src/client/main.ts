@@ -20,7 +20,6 @@ import {
   STOREY,
   WALL_HEIGHT,
   beanbagsOut,
-  deskSeat,
   inElevator,
   nextFreeSeat,
   roofDrop,
@@ -33,6 +32,7 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
+import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
@@ -78,8 +78,9 @@ import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
+import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
-import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -94,7 +95,7 @@ import { openAsk } from './ui/ask';
 import { paletteOpen, togglePalette, type PaletteEntry } from './ui/palette';
 import { loadingScreen } from './ui/loading';
 import { openPipelines, routePipelinesMessage, type PipelinesOpen } from './ui/pipelines';
-import { isLive, stateWord } from '../shared/pipelines';
+import { isLive, pipelinePolicy, stateWord } from '../shared/pipelines';
 import { openUpgrade, restarting, showRestarting, showUpgraded } from './ui/upgrade';
 import { openHelp, renderCaffeine, renderWorkers } from './ui/hud';
 import { cloudLine, hireCloud, openCloudWindow, runsOnPicker, sendCloudHome } from './ui/factory-cloud';
@@ -120,7 +121,7 @@ import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu'
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
 import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
-import { Arcade } from './ui/arcade';
+import { MonitorScreen } from './world/monitor';
 import { trackTitle } from '../shared/jukebox';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
@@ -252,7 +253,7 @@ store.on('workers', () => {
   renderPullsBoard();
 });
 const pipelinesTex = new PipelinesBoardTexture();
-const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge === 'gitlab' ? 'gitlab' : 'github', Date.now());
+const renderPipelinesBoard = () => pipelinesTex.render(store.pipelines, store.project?.forge, Date.now());
 mountBoard(office.boardMeshes.actions, pipelinesTex.texture, renderPipelinesBoard, ['pipelines', 'project']);
 // Running runs' clocks and spinners move each second; the texture skips a redraw that would look the same.
 setInterval(() => {
@@ -362,8 +363,8 @@ void loadFonts().then(() => {
   renderTv(true);
   redrawText();
 });
-// The boss's monitor upstairs: Minesweeper, from the boss's chair.
-const arcade = new Arcade(office.bossScreen);
+// The boss's monitor upstairs: a login shell, always on, with nobody sitting at the desk.
+const bossMonitor = new MonitorScreen(office.bossScreen);
 
 // ---- The rooftop ---------------------------------------------------------------------------------
 /** Up on the roof: built the first time anyone goes up there. */
@@ -980,7 +981,8 @@ net.onMessage((msg) => {
       } else if (!store.floor) arrive();
       // After a reconnect the server has forgotten which terminal we had open.
       const openId = openTerminalFor();
-      if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
+      if (openId === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
+      else if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
       const following = changesLogFor();
@@ -994,6 +996,8 @@ net.onMessage((msg) => {
       break;
     }
     case 'floor.enter':
+      // A trip of yours keeps the shell window: it is this floor's shell now. Being taken away closes it.
+      if (trip && openTerminalFor() === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
       // Not a trip of yours: the floor you were on was taken off the building, and the elevator took you away.
       if (!trip) takenAway();
       // The card belongs to the board downstairs (or up): the office already put it back there.
@@ -1105,7 +1109,7 @@ function placeInCar(at?: { x: number; z: number }) {
   placeAt({ x: spot.x, y: 0, z: spot.z, rotY: 0 });
 }
 
-/** On your feet at `at`, facing `rotY` and looking straight ahead. */
+/** On your feet at `at`, facing `rotY` and looking straight ahead. The elevator arrives this way, level, not at a desk's pitch. */
 function placeAt(at: { x: number; y: number; z: number; rotY: number }) {
   if (player.seat) standUp();
   player.pos.set(at.x, at.y, at.z);
@@ -1349,8 +1353,8 @@ function noticeWaiting() {
 }
 
 // ---- Walking over to a spot -----------------------------------------------------------------------
-/** What you're on your way to from the command palette: where to stand, what it's called, what to turn to and what to do there. */
-let errand: { at: { x: number; z: number }; what: string; face?: { x: number; z: number }; then: () => void; end?: (why: WalkEnd) => void } | null = null;
+/** What you're on your way to from the command palette: where to stand, what it's called, the pose to arrive in and what to do there. */
+let errand: { at: { x: number; z: number }; what: string; pose?: ApproachPose; then: () => void; end?: (why: WalkEnd) => void } | null = null;
 type WalkEnd = 'arrived' | 'cancelled' | 'stuck';
 
 function stopWalking() {
@@ -1360,12 +1364,12 @@ function stopWalking() {
   e?.end?.('cancelled');
 }
 
-/** There: stop, and turn to it. */
-function arrivedAt(at: { x: number; z: number }) {
+/** There: stop, and take the pose, pitch included. A desk arrives at DESK_LOOK_PITCH, not a fresh pitchToward. */
+function arrivedAt(pose: ApproachPose) {
   stopWalking();
-  const yaw = Math.atan2(at.x - player.pos.x, at.z - player.pos.z);
-  player.facing = yaw;
-  player.camYaw = yaw - Math.PI;
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 player.onPathEnd = (why) => {
@@ -1377,7 +1381,7 @@ player.onPathEnd = (why) => {
  * to be done (up on the roof, riding the elevator, on the ladder) it just does it.
  * A key of yours takes over, and then it doesn't happen. `end` hears how the walk ended.
  */
-function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, face?: { x: number; z: number }, end?: (why: WalkEnd) => void) {
+function walkThen(at: { x: number; y?: number; z: number }, what: string, then: () => void, pose?: ApproachPose, end?: (why: WalkEnd) => void) {
   const now = () => {
     then();
     end?.('arrived');
@@ -1390,7 +1394,7 @@ function walkThen(at: { x: number; y?: number; z: number }, what: string, then: 
   const to = { x: at.x, y: at.y ?? 0, z: at.z };
   const path = wayTo(player.pos, to);
   if (!path.length) return now();
-  errand = { at, what, face, then, end };
+  errand = { at, what, pose, then, end };
   toast(`🚶 Walking over to ${what}`);
   player.walkPath(path);
 }
@@ -1400,7 +1404,7 @@ function errandEnd(why: WalkEnd) {
   errand = null;
   if (why === 'cancelled') return e.end?.(why);
   if (why === 'stuck') toast(`🚧 Couldn't find a way over to ${e.what}, so here it is from where you are`, 'warn');
-  else if (e.face) arrivedAt(e.face);
+  else if (e.pose) arrivedAt(e.pose);
   else stopWalking();
   e.then();
   e.end?.(why);
@@ -1867,12 +1871,12 @@ function standAt(desk: DeskDef) {
   if (hanger.active) hanger.cancel();
   if (climber.active) climber.abort();
   if (errand) stopWalking();
-  const spot = deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
-  player.pos.set(spot.x, 0, spot.z);
+  const pose = deskApproach(desk);
+  player.pos.set(pose.at.x, pose.at.y, pose.at.z);
   player.vy = 0;
-  player.facing = Math.atan2(desk.x - spot.x, desk.z - spot.z);
-  player.camYaw = player.facing - Math.PI;
-  player.lookPitch = -0.2;
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 // ---- Who's waiting on you: N, the count in the Workers panel, and the compass --------------------------
@@ -1990,11 +1994,6 @@ function spotOf(kind: InteractKind): Interactable | undefined {
   return office.interactables.find((it) => it.kind === kind && !it.off);
 }
 
-/** Where you stand at a desk: behind the worker, or in front of a kiosk. */
-function deskSpot(desk: DeskDef): { x: number; z: number } | undefined {
-  return deskSeat(desk, desk.station ? -1.6 : desk.beanbag ? 1.6 : 2.4);
-}
-
 /** The free desk nearest you, for hiring from the palette. A bean bag counts once it's out. */
 function nearestFreeDesk(): DeskDef | undefined {
   let best: DeskDef | undefined;
@@ -2022,7 +2021,7 @@ function paletteEntries(): PaletteEntry[] {
   const out: PaletteEntry[] = [];
   for (const w of store.workers.values()) {
     const desk = DESK_BY_ID.get(w.deskId);
-    const spot = desk && deskSpot(desk);
+    const pose = desk && deskApproach(desk);
     const open = () => openWorkerTerminal(w.id);
     out.push({
       icon: desk?.station ? STATION_INFO[desk.station].icon : w.kind === 'shell' ? '🐚' : w.cloud ? '☁️' : '🧑‍💻',
@@ -2031,12 +2030,12 @@ function paletteEntries(): PaletteEntry[] {
       detail: [w.task?.name, desk?.label, statusWord(w, STATUS_LABEL), w.guest && 'outside the office', w.cloud && cloudBadge(w.cloud)].filter(Boolean).join(' · '),
       keywords: [w.title, w.worktree?.branch],
       open,
-      walk: desk && spot ? () => walkThen(spot, `${w.name} at ${desk.label}`, open, desk) : undefined,
+      walk: desk && pose ? () => walkThen(pose.at, `${w.name} at ${desk.label}`, open, pose) : undefined,
     });
   }
 
   const free = nearestFreeDesk();
-  const hireSpot = free && deskSpot(free);
+  const hirePose = free && deskApproach(free);
   const hireAt = (d: DeskDef) => () => hireAtDesk(d.id);
   out.push({
     icon: '✨',
@@ -2045,7 +2044,7 @@ function paletteEntries(): PaletteEntry[] {
     detail: free ? `At ${free.label}, the free desk nearest you` : 'Every desk is taken',
     keywords: ['new worker', 'spawn an agent'],
     open: free ? hireAt(free) : () => toast('Every desk on this floor is taken', 'warn'),
-    walk: free && hireSpot ? () => walkThen(hireSpot, free.label, hireAt(free), free) : undefined,
+    walk: free && hirePose ? () => walkThen(hirePose.at, free.label, hireAt(free), hirePose) : undefined,
   });
   out.push({ icon: '⚙️', kind: 'Action', title: 'Settings', keywords: ['preferences', 'options'], open: () => showSettings() });
   out.push({ icon: '📱', kind: 'Action', title: 'Pair a phone', detail: 'Droid Office for Android', keywords: ['android', 'mobile', 'qr code', 'tailscale'], open: () => openPhone() });
@@ -2059,7 +2058,7 @@ function paletteEntries(): PaletteEntry[] {
       icon: '🚀',
       kind: 'Board',
       title: 'Pipelines board',
-      detail: store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions runs: running, waiting and recent',
+      detail: pipelinePolicy(store.project?.forge).copy.paletteDetail,
       keywords: ['ci', 'actions', 'workflows', 'pipelines', 'builds', 'runs'],
       open: () => showPipelines(),
     }),
@@ -2068,7 +2067,7 @@ function paletteEntries(): PaletteEntry[] {
     atSpot('actions', 'the Pipelines board', {
       icon: '▶',
       kind: 'Action',
-      title: store.project?.forge === 'gitlab' ? 'Run a pipeline' : 'Run a workflow',
+      title: pipelinePolicy(store.project?.forge).copy.runAction,
       detail: 'Start CI by hand on a branch',
       keywords: ['kick off', 'dispatch', 'trigger', 'ci', 'deploy', 'release'],
       open: () => showPipelines({ run: true }),
@@ -2373,12 +2372,12 @@ function freePlace(seat: SeatDef): SeatPlace | null {
   return best;
 }
 
-/** E at a seat: sit down on it. Sitting there already, get up (or play, where the seat offers it). */
+/** E at a seat: sit down on it. Sitting there already, get up (or open the shell, in the boss's chair). */
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
-    if (seat.game) arcade.play();
+    if (seat.shell) openOfficeShell(net);
     else standUp();
     return;
   }
@@ -2602,7 +2601,7 @@ function hintFor(it: Interactable): Hint {
       if (run) return { k: `run:${run.id}:${run.state}`, parts: [title(clip(`🚀 ${run.workflow} #${run.number} · ${run.title}`, 60)), aside(stateWord(run)), key('E', 'Open the run')] };
       const live = p.runs.filter((r) => isLive(r.state)).length;
       const about = p.error ? "can't read the runs" : live ? `${live} running or waiting` : p.runs.length ? 'all quiet' : '';
-      return { k: about, parts: [title(store.project?.forge === 'gitlab' ? '🚀 GitLab pipelines' : '🚀 GitHub Actions'), about ? aside(about) : '', key('E', 'Open')] };
+      return { k: about, parts: [title(pipelinePolicy(store.project?.forge).copy.hint), about ? aside(about) : '', key('E', 'Open')] };
     }
     case 'coffee': {
       const buzzed = caffeine.buzzed(performance.now() / 1000);
@@ -2632,11 +2631,11 @@ function hintFor(it: Interactable): Hint {
       const seat = SEATING_BY_ID.get(it.seatId ?? '');
       if (!seat) return { k: '', parts: [] };
       if (player.seat?.seatId === seat.id) {
-        const use = seat.game ? 'Play Minesweeper' : '';
-        return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
+        if (seat.shell) return { k: `${seat.id}|sitting|shell`, parts: [title(seat.label), aside('sitting'), key('E', 'Open the shell'), key('W A S D', 'Get up')] };
+        return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), key('E', 'Get up')] };
       }
       const full = !freePlace(seat);
-      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.game ? aside('💣 Minesweeper on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
+      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.shell ? aside('shell on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
     }
     case 'ladder': {
       const up = floorThere(1)?.name;
@@ -3213,7 +3212,7 @@ const hudActions: HudAction[] = [
     label: 'Pipelines',
     section: 'Open',
     count: () => store.pipelines.runs.filter((r) => isLive(r.state)).length,
-    title: () => (store.project?.forge === 'gitlab' ? 'GitLab pipelines: running, waiting and recent' : 'GitHub Actions: running, waiting and recent'),
+    title: () => pipelinePolicy(store.project?.forge).copy.menuTitle,
     run: () => showPipelines(),
   },
   {
@@ -3570,7 +3569,6 @@ function sceneMotion(): SceneMotion {
     !!gunMotion.doing ||
     !!wandMotion.doing ||
     !!me.emoteId ||
-    arcade.animating ||
     readingNow() ||
     now < lookedUntil;
   return {
@@ -3672,10 +3670,10 @@ function drawFrame(dt: number, t: number) {
   hands.holdMug(mug);
   renderCaffeine(caffeine, secs);
   player.update(dt);
+  bossMonitor.update(store.screens.get(OFFICE_SHELL_ID));
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
-  arcade.update(camera, dt);
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
   me.root.position.copy(player.pos);
@@ -3744,6 +3742,9 @@ function drawFrame(dt: number, t: number) {
     glow.power = v.laptop.glow(glow.pos, glow.dir);
     if (glow.power > 0.01) screens++;
   }
+  const bossGlow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
+  bossGlow.power = bossMonitor.glow(bossGlow.pos, bossGlow.dir);
+  if (bossGlow.power > 0.01) screens++;
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
@@ -3803,22 +3804,19 @@ function drawFrame(dt: number, t: number) {
     }),
   );
   pointToWaiting(now);
-  // Not while the camera's up at the boss's monitor, where the hands would cover the screen.
-  if (!arcade.zoomed) {
-    // Hands go on top of everything, so they never clip into a desk you walk up to. They have
-    // lights of their own, turned down to match wherever you're standing.
-    renderer.clearDepth();
-    hands.setLight(sky.lightAt(camera.position));
-    sky.shading(false);
-    // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
-    const autoClear = renderer.autoClear;
-    renderer.autoClear = false;
-    try {
-      effect.render(hands.scene, hands.camera);
-    } finally {
-      renderer.autoClear = autoClear;
-      sky.shading(true);
-    }
+  // Hands go on top of everything, so they never clip into a desk you walk up to. They have
+  // lights of their own, turned down to match wherever you're standing.
+  renderer.clearDepth();
+  hands.setLight(sky.lightAt(camera.position));
+  sky.shading(false);
+  // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
+  const autoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  try {
+    effect.render(hands.scene, hands.camera);
+  } finally {
+    renderer.autoClear = autoClear;
+    sky.shading(true);
   }
   if (remaster.active) remaster.finishFrame();
   if (timing) gpuTimer.end();
@@ -3914,12 +3912,19 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
   return { x: c.x, y: c.y, z: c.z };
 }
 
-/** Faces and looks at `face` from where you stand. */
-function aimAt(face: { x: number; y: number; z: number }) {
-  player.facing = facingToward(player.pos, face);
+/** Faces the pose from where you stand. A desk keeps its pitch; anything else looks with pitchToward. */
+function aimAt(pose: ApproachPose) {
+  if (pose.pitchFixed) {
+    player.facing = pose.facing;
+    player.camYaw = pose.facing - Math.PI;
+    player.lookPitch = pose.lookPitch;
+    player.updateCamera();
+    return;
+  }
+  player.facing = facingToward(player.pos, pose.face);
   player.camYaw = player.facing - Math.PI;
   player.updateCamera();
-  player.lookPitch = pitchToward(camera.position, face);
+  player.lookPitch = pitchToward(camera.position, pose.face);
   player.updateCamera();
 }
 
@@ -3963,19 +3968,19 @@ const automation = createAutomation({
   busy: () => (trip ? 'riding to another floor' : climber.grip === 'ladder' ? 'on the ladder: interact("E") gets off it' : climber.active ? 'on a fire pole' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),
   centerOf,
-  place: (at, face) => {
+  place: (pose) => {
     closeAllModals();
     if (player.seat) standUp();
     if (hanger.active) hanger.cancel();
     if (climber.active) climber.abort();
     if (errand) stopWalking();
-    player.pos.set(at.x, at.y, at.z);
+    player.pos.set(pose.at.x, pose.at.y, pose.at.z);
     player.vy = 0;
-    aimAt(face);
+    aimAt(pose);
     renderWake();
   },
-  aim: (face) => {
-    aimAt(face);
+  aim: (pose) => {
+    aimAt(pose);
     renderWake();
   },
   walk: (at, label, done) => {
@@ -4014,7 +4019,6 @@ const automation = createAutomation({
   player,
   caffeine,
   camera,
-  arcade,
   workerViews,
   departures,
   casualties,

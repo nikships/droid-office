@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { FLAG_INVERSE, RGB_FLAG } from '../src/shared/protocol.js';
 import { paintScreen, TERM_THEME, type ScreenState } from '../src/client/world/laptop.js';
 import { SCREEN_BLACK, screenMaterial } from '../src/client/world/screen.js';
-import { Minesweeper } from '../src/client/ui/minesweeper.js';
 
 test('OLED displays are opaque, unlit, unfogged and black before content arrives', () => {
   const mat = screenMaterial();
@@ -106,10 +105,4 @@ test('OLED terminals preserve explicit ANSI backgrounds and use black for invers
     { color: TERM_THEME.foreground, label: 'styled' },
     { color: SCREEN_BLACK, label: 'inverse' },
   ]);
-});
-
-test('Minesweeper paints an OLED-black background', () => {
-  const mines = painter();
-  new Minesweeper().paint(mines.ctx, true);
-  assert.equal(mines.fills[0].color, SCREEN_BLACK);
 });

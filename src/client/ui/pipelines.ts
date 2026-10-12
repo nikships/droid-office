@@ -1,4 +1,4 @@
-import { clock, isLive, pipelineGroups, runTime, stateWord, waitTime, type PipelineDetail, type PipelineJob, type PipelineRun, type PipelineWorkflow, type RunState, eventLabel } from '../../shared/pipelines';
+import { clock, eventLabel, isLive, pipelineGroups, pipelinePolicy, runTime, stateWord, waitTime, type PipelineDetail, type PipelineJob, type PipelineRun, type PipelineWorkflow, type RunState } from '../../shared/pipelines';
 import type { ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store, words } from '../state';
@@ -71,8 +71,10 @@ function runClock(r: PipelineRun, now: number): string {
 }
 
 export function openPipelines(net: Net, actions: PipelinesActions, opts: PipelinesOpen = {}) {
-  const gitlab = () => store.project?.forge === 'gitlab';
-  const title = () => (gitlab() ? 'GitLab pipelines' : 'GitHub Actions');
+  const policy = () => pipelinePolicy(store.project?.forge);
+  const title = () => policy().copy.windowTitle;
+  /** GitLab's form is variables for one pipeline; GitHub's picks a workflow and its inputs. */
+  const variables = () => policy().form === 'variables';
   let picked: number | null = opts.runId ?? null;
   let form = !!opts.run;
   /** Each run's jobs as last read, with the run's updatedAt then, so a change reads them again. */
@@ -221,7 +223,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
       render();
     });
     const steps = open ? h('ol.pl-steps', {}, ...j.steps.map((s) => h('li.pl-step', { class: s.state }, mark(s.state), h('span.pl-step-no', {}, String(s.number)), h('span.pl-step-name', { title: s.name }, s.name), timeEl(s, now)))) : null;
-    return h('li.pl-job', { class: j.state }, head, steps, j.url ? h('div.pl-job-link', {}, link(j.url, gitlab() ? 'Job log ↗' : 'Logs ↗')) : null);
+    return h('li.pl-job', { class: j.state }, head, steps, j.url ? h('div.pl-job-link', {}, link(j.url, policy().copy.jobLog)) : null);
   };
 
   const paintRun = (r: PipelineRun, now: number) => {
@@ -254,21 +256,8 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
         net.send({ t: 'pipelines.rerun', id: r.id, failed });
         render();
       };
-      if (r.state === 'failure' || r.state === 'cancelled')
-        buttons.push(
-          h(
-            'button.btn.sm',
-            { type: 'button', disabled: !!wait, title: gitlab() ? 'Retry the jobs that failed' : 'Run only the jobs that failed (and what needs them) again', onclick: () => rerun(true) },
-            wait ?? (gitlab() ? 'Retry failed jobs' : 'Re-run failed jobs'),
-          ),
-        );
-      buttons.push(
-        h(
-          'button.btn.sm.primary',
-          { type: 'button', disabled: !!wait, title: gitlab() ? 'Start a new pipeline on the same commit' : 'Run every job again', onclick: () => rerun(false) },
-          wait && r.state !== 'failure' ? wait : gitlab() ? 'Run again' : 'Re-run all jobs',
-        ),
-      );
+      if (r.state === 'failure' || r.state === 'cancelled') buttons.push(h('button.btn.sm', { type: 'button', disabled: !!wait, title: policy().copy.retryTitle, onclick: () => rerun(true) }, wait ?? policy().copy.retryLabel));
+      buttons.push(h('button.btn.sm.primary', { type: 'button', disabled: !!wait, title: policy().copy.rerunTitle, onclick: () => rerun(false) }, wait && r.state !== 'failure' ? wait : policy().copy.rerunLabel));
     }
     const facts: [string, Node | string][] = [
       ['Branch', r.branch || '—'],
@@ -330,7 +319,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     }
     if (!manual.some((w) => w.id === formWorkflow)) formWorkflow = manual[0].id;
     const branches = [...new Set([p.defaultBranch, ...p.runs.map((r) => r.branch)].filter((b): b is string => !!b))];
-    const select = h('select.select', {}, ...manual.map((w) => h('option', { value: w.id, selected: w.id === formWorkflow }, gitlab() ? w.name : `${w.name} · ${w.id}`))) as HTMLSelectElement;
+    const select = h('select.select', {}, ...manual.map((w) => h('option', { value: w.id, selected: w.id === formWorkflow }, variables() ? w.name : `${w.name} · ${w.id}`))) as HTMLSelectElement;
     const ref = h('input.input', { type: 'text', value: p.defaultBranch ?? '', placeholder: p.defaultBranch ?? 'main', list: 'pl-branches', spellcheck: false, autocomplete: 'off' }) as HTMLInputElement;
     const datalist = h('datalist', { id: 'pl-branches' }, ...branches.map((b) => h('option', { value: b })));
     const inputsBox = h('div.stack.pl-inputs');
@@ -338,7 +327,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     const paintInputs = () => {
       const wf = manual.find((w) => w.id === select.value) as PipelineWorkflow;
       formWorkflow = wf.id;
-      if (gitlab()) {
+      if (variables()) {
         const vars = h('textarea.input.pl-vars', { rows: 4, placeholder: 'DEPLOY=staging\nDEBUG=1', spellcheck: false }) as HTMLTextAreaElement;
         inputsBox.replaceChildren(field('Variables', vars, 'One KEY=value a line, passed to the pipeline as CI/CD variables.'));
         read = () => Object.fromEntries(vars.value.split('\n').flatMap((l) => (l.includes('=') ? [[l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]] : [])));
@@ -377,13 +366,8 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     const f = h(
       'form.stack.pl-form',
       {},
-      h(
-        'div.pl-form-head',
-        {},
-        h('h3', {}, gitlab() ? 'Run a pipeline' : 'Run a workflow'),
-        h('p', {}, gitlab() ? 'Starts a new pipeline from .gitlab-ci.yml on a branch or tag.' : 'Starts a workflow that has a workflow_dispatch trigger, on a branch or tag.'),
-      ),
-      gitlab() ? null : field('Workflow', select),
+      h('div.pl-form-head', {}, h('h3', {}, policy().copy.runTitle), h('p', {}, policy().copy.runBlurb)),
+      variables() ? null : field('Workflow', select),
       field('Branch or tag', ref, p.defaultBranch ? `Empty runs it on ${p.defaultBranch}.` : undefined),
       datalist,
       inputsBox,
@@ -401,7 +385,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     });
     formEl = f;
     pane.replaceChildren(f);
-    setTimeout(() => (gitlab() ? ref : select).focus(), 30);
+    setTimeout(() => (variables() ? ref : select).focus(), 30);
   };
 
   // --- All of it ----------------------------------------------------------------------------------
@@ -418,7 +402,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     refresh.disabled = p.loading;
     refresh.textContent = p.loading ? 'Reading…' : 'Refresh';
     runBtn.classList.toggle('on', form);
-    runBtn.textContent = gitlab() ? '▶ Run pipeline' : '▶ Run workflow';
+    runBtn.textContent = policy().copy.runButton;
     foot.textContent = p.fetchedAt ? `Read ${timeAgo(p.fetchedAt)} · every few seconds while something runs` : '';
     if (pickNewest && p.runs.length) {
       const newest = [...p.runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
@@ -437,11 +421,7 @@ export function openPipelines(net: Net, actions: PipelinesActions, opts: Pipelin
     const run = current();
     if (!run) {
       const loading = p.loading && !p.fetchedAt;
-      pane.replaceChildren(
-        loading
-          ? h('div.stack.tight', {}, ...[0, 1, 2, 3].map(() => h('div.skeleton.pl-skeleton')))
-          : emptyState('🚀', p.error ? "Can't read the runs" : 'No runs yet', p.error ?? (gitlab() ? 'Pipelines from .gitlab-ci.yml show up here as they run.' : 'Runs of the workflows in .github/workflows show up here as they run.')),
-      );
+      pane.replaceChildren(loading ? h('div.stack.tight', {}, ...[0, 1, 2, 3].map(() => h('div.skeleton.pl-skeleton'))) : emptyState('🚀', p.error ? "Can't read the runs" : 'No runs yet', p.error ?? policy().copy.emptyWindow));
       return;
     }
     fetchDetail(run.id);

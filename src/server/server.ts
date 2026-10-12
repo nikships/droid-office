@@ -32,6 +32,7 @@ import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
+import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
@@ -538,7 +539,10 @@ export async function startServer(cfg: Config) {
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
   const screensOf = (c: Client, floor: Floor | undefined) => {
-    for (const { workerId, frame } of [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? [])]) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
+    const frames = [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? [])];
+    const shell = floor?.shell.fullScreen();
+    if (shell) frames.push({ workerId: OFFICE_SHELL_ID, frame: shell });
+    for (const { workerId, frame } of frames) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
   const images = new ImageProxy();
 
@@ -932,7 +936,8 @@ export async function startServer(cfg: Config) {
         if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
         if (!floor) return send(res, 404, { error: 'No such floor' });
         const workerId = str(url.searchParams.get('worker'), 32);
-        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
+        const shellDrop = workerId === OFFICE_SHELL_ID;
+        if (!shellDrop && !floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
         const tooBig = `That file is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
         if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
         let body: Buffer;
@@ -941,7 +946,9 @@ export async function startServer(cfg: Config) {
         } catch (err) {
           return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
         }
-        const file = floor.workers.drop(workerId, str(url.searchParams.get('name'), 256), str(req.headers['content-type'], 128), body);
+        const name = str(url.searchParams.get('name'), 256);
+        const type = str(req.headers['content-type'], 128);
+        const file = shellDrop ? floor.shell.drop(name, type, body) : floor.workers.drop(workerId, name, type, body);
         return file ? send(res, 200, { path: file }) : send(res, 500, { error: 'The office could not keep that file' });
       }
       if (p === '/api/prompt/image') {
@@ -1166,6 +1173,7 @@ export async function startServer(cfg: Config) {
       for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
       for (const f of floors.values()) {
         f.workers.detachAll(id);
+        f.shell.detach(id);
         f.guests.detachAll(id);
         f.cloud.detachAll(id);
         f.changes.unwatchAll(id);
@@ -1299,6 +1307,7 @@ export async function startServer(cfg: Config) {
     const was = floorOf(c);
     if (was) {
       was.workers.detachAll(c.id);
+      was.shell.detach(c.id);
       was.guests.detachAll(c.id);
       was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
@@ -1560,6 +1569,24 @@ export async function startServer(cfg: Config) {
         guestFloor(wid)?.guests.detach(wid, c.id);
         break;
       }
+      case 'shell.attach': {
+        const floor = here();
+        const snap = floor?.shell.attach(c.id);
+        if (!snap) break;
+        c.attached.add(OFFICE_SHELL_ID);
+        sendTo(c, { t: 'term.snapshot', workerId: OFFICE_SHELL_ID, data: snap.data, cols: snap.cols, rows: snap.rows, shared: snap.shared });
+        break;
+      }
+      case 'shell.detach':
+        c.attached.delete(OFFICE_SHELL_ID);
+        floorOf(c)?.shell.detach(c.id);
+        break;
+      case 'shell.input':
+        if (c.attached.has(OFFICE_SHELL_ID)) floorOf(c)?.shell.write(str(msg.data, 64 * 1024));
+        break;
+      case 'shell.resize':
+        if (c.attached.has(OFFICE_SHELL_ID)) floorOf(c)?.shell.resize(num(msg.cols), num(msg.rows));
+        break;
       case 'worker.prompt': {
         const w = worker(msg.workerId);
         const images = imageIds(msg.images);
