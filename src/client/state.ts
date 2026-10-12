@@ -28,7 +28,6 @@ import type { Sidearm } from './world/wand';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
-import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
@@ -60,8 +59,6 @@ export type Topic =
   | 'freshMain'
   | 'autoHeal'
   | 'subagents'
-  | 'cabinet'
-  | 'cabinetFrame'
   | 'prompts'
   | 'jira'
   | 'jiraBoard'
@@ -259,10 +256,6 @@ class Store {
   jukebox: JukeboxState & { since: number } = { on: false, track: JUKEBOX_TUNES[0].id, startedAt: 0, elapsed: 0, since: 0 };
   /** The office's clock minus performance.now(), from the quickest ping (see 'pong'); for the jukebox. */
   private clock?: { offset: number; rtt: number };
-  /** Your game on the arcade cabinet on your floor, and the building's high scores. */
-  cabinet: CabinetState = { player: null, scores: [] };
-  /** Your game on the cabinet as you last sent it; null while you're not playing. */
-  cabinetFrame: CabinetFrame | null = null;
   /** The floor's GitHub Actions runs, or its GitLab pipelines. */
   pipelines: PipelinesState = NO_PIPELINES;
   /** The office's Jira connection and this floor's epic. */
@@ -339,11 +332,9 @@ class Store {
     this.jira = v.jira ?? {};
     this.jiraBoard = v.jiraBoard ?? null;
     this.decor = v.decor;
-    this.cabinet = { player: v.cabinet.player, scores: v.cabinet.scores };
-    this.cabinetFrame = v.cabinet.frame;
     this.setJukebox(v.jukebox);
     this.worktreeSetup = null;
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'cabinet', 'cabinetFrame', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jukebox', 'jira', 'jiraBoard', 'worktreeSetup'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -436,12 +427,6 @@ class Store {
       case 'jukebox':
         this.setJukebox(msg.state);
         this.emit('jukebox');
-        break;
-      case 'cabinet':
-        // No game of yours any more, or a new one: the last game's screen goes with it.
-        if (!msg.state.player || msg.state.player.game !== this.cabinet.player?.game) this.cabinetFrame = null;
-        this.cabinet = msg.state;
-        this.emit('cabinet');
         break;
       case 'pong': {
         // The answer that came back quickest says best how the two clocks line up.

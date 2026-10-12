@@ -121,9 +121,7 @@ import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
 import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
 import { Arcade } from './ui/arcade';
-import { Cabinet } from './ui/cabinet';
 import { trackTitle } from '../shared/jukebox';
-import { GAME, scoreText } from '../shared/cabinet';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
 import { wayTo } from './walkto';
@@ -434,8 +432,6 @@ store.on('jukebox', () => {
   sound.setJukebox(j.on ? { track: j.track, url: j.url, startedAt: j.startedAt, since: j.since } : null);
   office.jukebox.show(j.on, trackTitle(j));
 });
-// The arcade cabinet next to it: BLOCKFALL up close, and on its screen.
-const cabinet = new Cabinet(office.cabinet.screen, net, { openTerminal: (id) => openWorkerTerminal(id), sound: (kind, lines) => sound.arcade(kind, lines) });
 const notifier = new DesktopNotifier(
   () => settings.notify,
   (id) => openWorkerTerminal(id),
@@ -1450,8 +1446,6 @@ function syncWorkers() {
       if (waitingOnSomeone(w) && v.status !== '' && w.status !== v.status) {
         sound.ding(w.status);
         notifier.alert(w);
-        // Playing at the arcade: a worker waiting on input stops the game.
-        if (w.status === 'needs_input') cabinet.needsYou(w);
       }
       // Finished what it was on: a little spin and a puff of confetti.
       if (w.status === 'done' && (v.status === 'working' || v.status === 'needs_input')) {
@@ -2284,7 +2278,6 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'coffee') drinkCoffee();
   else if (target.kind === 'gong') hitGong();
-  else if (target.kind === 'cabinet') cabinet.play();
   else if (target.kind === 'ladder') grabLadder();
   else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
 }
@@ -2629,13 +2622,6 @@ function hintFor(it: Interactable): Hint {
       const j = store.jukebox;
       const what = j.on ? trackTitle(j) : '';
       return { k: `${j.on}|${what}`, parts: [title('🎵 Jukebox'), aside(j.on ? `♪ ${clip(what, 40)}` : 'off'), key('E', j.on ? 'Change the song' : 'Put on a song')] };
-    }
-    case 'cabinet': {
-      const c = store.cabinet;
-      const left = cabinet.leftAt;
-      const best = c.scores[0];
-      const about = left !== null ? `your game's paused at ${scoreText(left)}` : best ? `🏆 ${clip(best.name, 24)} · ${scoreText(best.score)}` : 'no high score yet';
-      return { k: `${left}|${best?.name}|${best?.score}`, parts: [title(`🕹️ ${GAME}`), aside(about), key('E', left !== null ? 'Carry on' : 'Play')] };
     }
     case 'bookshelf': {
       const wiki = store.factory.connection.connected && store.floor ? wikiShelfLine(store.factory.wiki.floors[store.floor]) : '';
@@ -3130,7 +3116,6 @@ const REACH: Record<InteractKind, number> = {
   gong: 3.5,
   jukebox: 4,
   seat: 3,
-  cabinet: 4,
   ladder: 3,
   pole: 4,
   bookshelf: 4,
@@ -3599,7 +3584,6 @@ function sceneMotion(): SceneMotion {
     !!wandMotion.doing ||
     !!me.emoteId ||
     arcade.animating ||
-    cabinet.animating ||
     readingNow() ||
     now < lookedUntil;
   return {
@@ -3714,7 +3698,6 @@ function drawFrame(dt: number, t: number) {
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
   arcade.update(camera, dt);
-  cabinet.update(camera, dt);
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
   me.root.position.copy(player.pos);
@@ -3850,8 +3833,8 @@ function drawFrame(dt: number, t: number) {
     if (shadowWatch.update(scene, [sun, sun.target], viewFrustum, now)) shadowMap.needsUpdate = true;
   }
   pointToWaiting(now);
-  // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (!arcade.zoomed && !cabinet.zoomed) {
+  // Not while the camera's up at the boss's monitor, where the hands would cover the screen.
+  if (!arcade.zoomed) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();
@@ -4056,7 +4039,6 @@ const automation = createAutomation({
   caffeine,
   camera,
   arcade,
-  cabinet,
   workerViews,
   departures,
   casualties,

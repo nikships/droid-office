@@ -60,7 +60,7 @@ EOF
 | Command | Use |
 | --- | --- |
 | `office.list()` | Every target `goTo` accepts here: `{id, kind, label, worker?}` |
-| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `cabinet`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
+| `office.goTo(target, {walk?, timeout?})` | Desk id (`desk-3`), `station-*`, worker id or name, desk label, board agent name, board or place kind (`issues`, `pulls`, `actions`, `coffee`, `elevator`, `gong`, `jukebox`, `bookshelf`, `tv`, `ladder`, `bar`, `dj`), floor id or name, `roof`. `{walk: true}` walks the office paths instead of teleporting |
 | `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at the `goTo` target, or else at the nearest thing in reach. E at a worker opens its terminal |
 | `office.open(id)` | Runs a ☰ menu command (`issues`, `pulls`, `pipelines`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting`) |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
@@ -88,7 +88,7 @@ curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: applicati
 
 ### Input the API doesn't cover
 
-Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells, and the arcade's keys. To test those, load the movement rig from [`office-choreography`](../office-choreography/SKILL.md) into the test tab. Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
+Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells. To test those, load the movement rig from [`office-choreography`](../office-choreography/SKILL.md) into the test tab. Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
 
 ```bash
 AGENT_BROWSER_SESSION=office-test .agents/skills/office-choreography/scripts/run.sh \

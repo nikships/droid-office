@@ -225,8 +225,6 @@ export const DROID_RACK = { minX: FLOOR.minX, maxX: FLOOR.minX + 0.7, minZ: FLEE
 export const ROBOT_CELL = { x: 5, z: -6, width: 3, depth: 2.5, top: 1.6 } as const;
 /** The lounge jukebox, against the east wall south of the TV, facing into the room. `y` is its speaker. */
 export const JUKEBOX = { x: FLOOR.maxX - 0.42, y: 0.75, z: 5.4, width: 1.3, depth: 0.72, height: 1.85 } as const;
-/** The arcade cabinet, against the east wall between the jukebox and the loft, facing into the room. `width` runs along the wall. */
-export const CABINET = { x: FLOOR.maxX - 0.42, z: 7.05, width: 0.8, depth: 0.8, height: 1.9 } as const;
 
 /**
  * The bookshelf of the project's docs (every Markdown file in it, see shared/docs.ts): against the

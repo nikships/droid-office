@@ -1513,10 +1513,6 @@ a.when:hover { text-decoration: underline; }
 .arcade-bar .tip { color: var(--text-secondary); font-size: 10px; }
 /* Its ✕ hangs off the screen's top right corner rather than over the game. */
 .arcade > .close.corner { top: 0; right: auto; left: calc(100% + 10px); }
-/* The arcade cabinet in the lounge (ui/cabinet.ts) plays on the keyboard, and says so over the game when a worker of yours needs input. */
-.arcade.cabinet canvas { cursor: default; }
-.cabinet-call { position: absolute; bottom: calc(100% + 10px); left: 50%; translate: -50% 0; display: flex; align-items: center; gap: 10px; white-space: nowrap; padding: 6px 6px 6px 14px; background: var(--surface); border: 1px solid rgba(242, 184, 75, .5); border-radius: var(--radius); color: var(--warning); font: 500 12px var(--font-mono); text-transform: uppercase; letter-spacing: .07em; animation: pop .18s var(--ease); }
-
 /* ---------- The ☰ menu (ui/menu.ts): it hangs under its button, and the office stays in view ---------- */
 .backdrop.menu-backdrop { background: none; display: block; padding: 0; animation: none; }
 .hud-menu {

@@ -9,7 +9,7 @@
  * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
  * which has a volume of its own.
  */
-import { CABINET, FLOOR, GONG, JUKEBOX } from '../shared/layout';
+import { FLOOR, GONG, JUKEBOX } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
 import { soundCloudUrl } from '../shared/soundcloud';
@@ -43,8 +43,6 @@ export interface Listener extends Pos {
 const COFFEE_MACHINE: Pos = { x: -15.7, y: 1.4, z: 12.2 };
 /** The middle of the gong's disc. */
 const GONG_AT: Pos = { x: GONG.x, y: GONG.height - 1.36, z: GONG.z };
-/** The arcade cabinet's speaker, under its screen. */
-const CABINET_AT: Pos = { x: CABINET.x - 0.2, y: 1.2, z: CABINET.z };
 /** A gong's overtones don't line up like a string's: [ratio to the lowest, loudness, seconds to die away]. */
 const GONG_PARTIALS: [number, number, number][] = [
   [1, 0.8, 7],
@@ -1129,21 +1127,6 @@ export class OfficeSound {
       .connect(out);
     n.start(t0);
     n.stop(t0 + 0.2);
-  }
-
-  // ---- The arcade -------------------------------------------------------------------------------
-
-  /** The arcade cabinet's chip bleeps: a piece landing, lines clearing (a longer run up for more at once), the game ending. */
-  arcade(kind: 'land' | 'clear' | 'over', lines = 1) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.count(`arcade.${kind}`);
-    const out = this.panner(CABINET_AT, 1.5, 1.2);
-    out.connect(this.ambience);
-    const t0 = ctx.currentTime + 0.02;
-    if (kind === 'land') this.blip(out, t0, 160, 0.55, 0.07, 0.1, 'square');
-    else if (kind === 'clear') [523, 659, 784, 1047, 1319].slice(0, lines + 1).forEach((f, i) => this.blip(out, t0 + i * 0.07, f, 1.02, 0.1, 0.09, 'square'));
-    else [392, 330, 262, 196].forEach((f, i) => this.blip(out, t0 + i * 0.18, f, 0.97, 0.17, 0.14, 'triangle'));
   }
 
   // ---- Alerts ----------------------------------------------------------------------------------

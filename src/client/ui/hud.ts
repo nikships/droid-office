@@ -142,7 +142,6 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ],
         seven,
         ['Coffee', 'At the kitchen machine: a minute of quicker walking and higher jumps. Three cups in a row gives you the jitters', ['E']],
-        ['Arcade cabinet', 'BLOCKFALL, in the lounge: arrows or WASD move and turn, Space drops, C holds, P pauses. E watches whoever plays; a worker needing input pauses it', ['E']],
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
         ['Rooftop', 'Up the elevator: an empty deck, and the city all around', ['E']],
       ],

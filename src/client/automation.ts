@@ -38,7 +38,6 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   elevator: 'Elevator',
   gong: 'Merge gong',
   jukebox: 'Jukebox',
-  cabinet: 'Arcade cabinet',
   ladder: 'Ladder',
   bookshelf: 'Bookshelf',
 };

@@ -2,7 +2,6 @@
 
 import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
-import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { CloudWorker } from './factory-cloud.js';
@@ -514,8 +513,6 @@ export interface FloorView {
   decor: Decoration[];
   /** What the lounge jukebox is playing. */
   jukebox: JukeboxState;
-  /** Who's at the arcade cabinet, what's on its screen, and the building's high scores. */
-  cabinet: CabinetView;
   /** The office's Jira connection and this floor's epic. */
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
@@ -880,18 +877,6 @@ export type ClientMsg =
   | { t: 'jukebox.skip' }
   | { t: 'jukebox.stop' }
   /**
-   * Step up to the arcade cabinet on your floor to carry on with `game` (one the office started for
-   * this connection), or to start a new game, even while you're at it; the office answers with
-   * `cabinet`, naming your game. Each connection plays its own game.
-   */
-  | { t: 'cabinet.play'; game?: string }
-  | { t: 'cabinet.leave' }
-  /**
-   * Your game as it looks now. It's how your score gets on the high-score table: the office follows
-   * the game frame by frame.
-   */
-  | { t: 'cabinet.frame'; frame: CabinetFrame }
-  /**
    * Go to another floor; the server answers with `floor.enter`. By elevator you arrive in the car;
    * `at` is where you arrive instead: the same spot on the other floor (switching floors from the
    * floor list), or the ladder or fire pole you came by.
@@ -1016,8 +1001,6 @@ export type ServerMsg =
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'decor'; items: Decoration[] }
   | { t: 'jukebox'; state: JukeboxState }
-  /** Your game on the arcade cabinet on your floor now, and the building's high scores. */
-  | { t: 'cabinet'; state: CabinetState }
   /** The floor's GitHub Actions runs or GitLab pipelines changed: all of them, to everyone on it. */
   | { t: 'pipelines'; state: PipelinesState }
   /** To whoever asked: a run's jobs, or why they couldn't be read. */

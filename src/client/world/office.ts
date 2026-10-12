@@ -5,7 +5,6 @@ import {
   BEANBAGS,
   BOARDS,
   BOOKSHELF,
-  CABINET,
   COMPUTE_WALL,
   DESKS,
   DESK_SIZE,
@@ -50,7 +49,6 @@ import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
 import { buildBookshelf, type ShelfWiki } from './bookshelf';
-import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { buildCoffeeMachine } from './coffee';
@@ -71,7 +69,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'cabinet' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
+export type InteractKind = 'desk' | 'station' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'coffee' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'pole' | 'bookshelf' | 'computers';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -129,8 +127,6 @@ export interface Office {
   /** The merge gong by the PR board. */
   gong: Gong;
   jukebox: JukeboxView;
-  /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
-  cabinet: CabinetModel;
   /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
   setShelfWiki(state: ShelfWiki): void;
   /** The ceiling, the floor, and the ladder and fire poles between the floors of the building. */
@@ -1350,7 +1346,7 @@ export function buildOffice(): Office {
     fixture(wall, wall === 'north' || wall === 'south' ? b.x : b.z, (bottom + WALL_HEIGHT) / 2, b.width + 0.3, WALL_HEIGHT - bottom);
   }
 
-  // Lounge: TV, couch, coffee table, beanbags, and the jukebox and the arcade in the corner
+  // Lounge: TV, couch, coffee table, beanbags, and the jukebox in the corner
   const tvGroup = new THREE.Group();
   tvGroup.add(mesh(roundedBox(TV.width + 0.3, 0.14, TV.height + 0.3, 0.03), toon(PALETTE.ink), 0, 0, 0));
   (tvGroup.children[0] as THREE.Mesh).rotation.x = Math.PI / 2;
@@ -1440,11 +1436,6 @@ export function buildOffice(): Office {
   colliders.push(jukebox.collider);
   interactables.push(jukebox.interactable);
   fixture('east', JUKEBOX.z, JUKEBOX.height / 2, JUKEBOX.width + 0.1, JUKEBOX.height);
-  const cabinet = buildCabinet();
-  group.add(cabinet.group);
-  colliders.push(cabinet.collider);
-  interactables.push(cabinet.interactable);
-  fixture('east', CABINET.z, CABINET.height / 2, CABINET.width + 0.1, CABINET.height);
 
   // The bookshelf of the project's docs, on the south wall between the middle window and the balcony doors.
   const shelf = buildBookshelf();
@@ -1592,7 +1583,6 @@ export function buildOffice(): Office {
     elevator,
     gong,
     jukebox,
-    cabinet,
     setShelfWiki: shelf.setWiki,
     stack,
     setProjectName,

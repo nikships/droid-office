@@ -33,13 +33,11 @@ import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
-import { Arcade, HighScores } from './cabinet.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { resolveSoundCloudStation } from './soundcloud.js';
-import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
@@ -96,10 +94,6 @@ interface Client {
   /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
   stale: Set<string>;
   lastGongAt: number;
-  /** At the arcade cabinet on their floor, playing their own `game` (see Arcade); `frame` is it as it looks now. */
-  playing: boolean;
-  game?: string;
-  frame?: CabinetFrame;
   /** Cleared at each heartbeat ping and set again by the pong; still clear at the next one means gone. */
   isAlive: boolean;
   /** The paired phone this connection came in with (its device token), if it did. */
@@ -208,13 +202,6 @@ export async function startServer(cfg: Config) {
   const tailscale = new TailscaleWatch();
   void tailscale.get();
   const clients = new Map<string, Client>();
-  // The arcade's high scores: one table for the whole building, on every floor's cabinet. The office
-  // follows every game and puts the scores up itself (see Arcade).
-  const highScores = new HighScores(cfg.dataDir);
-  const arcade = new Arcade(highScores, (first) => {
-    cabinetScoresChanged();
-    if (first) toastFloor(floors.get(first.floor), `🏆 ${first.score.name} set a new arcade high score: ${scoreText(first.score.score)}`);
-  });
   /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
@@ -537,27 +524,8 @@ export async function startServer(cfg: Config) {
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));
 
-  /** The cabinet as `c` sees it: their own game (or none), plus the building's high scores. */
-  const cabinetState = (c: Client): CabinetState => {
-    return { player: c.playing && c.game ? { game: c.game } : null, scores: highScores.top() };
-  };
-  const sendCabinet = (c: Client) => sendTo(c, { t: 'cabinet', state: cabinetState(c) });
-  /** The high-score table changed: every connection gets its own game plus the new scores. */
-  const cabinetScoresChanged = () => {
-    for (const c of clients.values()) sendCabinet(c);
-  };
-  /** `c` stepped away from the cabinet (or left the floor, or the office): their game waits, with its score so far on the table. */
-  const stopPlaying = (c: Client, floor = floorOf(c)) => {
-    if (!c.playing) return;
-    if (floor) arcade.leave(c.game, floor.id);
-    c.playing = false;
-    c.game = undefined;
-    c.frame = undefined;
-    sendCabinet(c);
-  };
-
   /** Everything on a floor, for whoever just arrived there. */
-  const floorView = (floor: Floor | undefined, c: Client): FloorView => ({
+  const floorView = (floor: Floor | undefined): FloorView => ({
     floor: floor?.id ?? null,
     project: floor?.project ?? null,
     workers: floor?.everyone() ?? [],
@@ -568,10 +536,9 @@ export async function startServer(cfg: Config) {
     jukebox: floor?.jukebox.state() ?? { on: false, track: JUKEBOX_TUNES[0].id, startedAt: Date.now(), elapsed: 0 },
     jira: floor?.jira.state() ?? { connection: jira.connection() },
     jiraBoard: floor?.jira.board ?? null,
-    cabinet: { ...cabinetState(c), frame: c.frame ?? null },
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
-  const roofView = (c: Client): FloorView => ({ ...floorView(undefined, c), floor: ROOF });
+  const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
   const screensOf = (c: Client, floor: Floor | undefined) => {
     for (const { workerId, frame } of [...(floor?.workers.fullScreens() ?? []), ...(floor?.cloud.fullScreens() ?? [])]) sendTo(c, { t: 'screen', workerId, ...frame, full: true });
   };
@@ -1149,7 +1116,6 @@ export async function startServer(cfg: Config) {
       attached: new Set(),
       stale: new Set(),
       lastGongAt: 0,
-      playing: false,
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
       ...(device ? { device, phoneSizes: new PhoneSizes() } : {}),
@@ -1176,7 +1142,7 @@ export async function startServer(cfg: Config) {
       whiteboardSkill: whiteboardSkill.state(),
       prompts: prompts.state(),
       factory: factory.state(),
-      ...(onRoof ? roofView(client) : floorView(floor, client)),
+      ...(onRoof ? roofView() : floorView(floor)),
     });
     screensOf(client, floor);
     if (floor) sendBoard(client, floor);
@@ -1201,7 +1167,6 @@ export async function startServer(cfg: Config) {
       clients.delete(id);
       for (const r of client.phoneSizes?.restores((wid) => workerFloor(wid)?.workers.get(wid)) ?? []) workerFloor(r.workerId)?.workers.resize(r.workerId, r.size.cols, r.size.rows);
       for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
-      stopPlaying(client);
       for (const f of floors.values()) {
         f.workers.detachAll(id);
         f.guests.detachAll(id);
@@ -1284,7 +1249,7 @@ export async function startServer(cfg: Config) {
     const left = leave(c, at);
     c.floor = floor.id;
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor, c) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: floor.id, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: at ? 'requested' : 'elevator' }, ...floorView(floor) });
     screensOf(c, floor);
     sendBoard(c, floor);
     floor.arrived();
@@ -1298,7 +1263,7 @@ export async function startServer(cfg: Config) {
     const left = leave(c);
     c.floor = ROOF;
     const spot = left.spot;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView(c) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView() });
     floorsChanged();
   };
 
@@ -1306,7 +1271,7 @@ export async function startServer(cfg: Config) {
   const toLobby = (c: Client) => {
     leave(c);
     c.floor = null;
-    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined, c) });
+    sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined) });
   };
 
   /**
@@ -1343,7 +1308,6 @@ export async function startServer(cfg: Config) {
     }
     c.attached.clear();
     c.stale.clear();
-    stopPlaying(c, was);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
     return { spot };
   };
@@ -2047,32 +2011,6 @@ export async function startServer(cfg: Config) {
         toastFloor(floor, `⏭️ ${who} skipped to “${floor.jukebox.title()}”`);
         break;
       }
-      case 'cabinet.play': {
-        const floor = here();
-        if (!floor || (c.playing && msg.game === c.game)) break;
-        // Already at it: that game's over, and this is the next one.
-        if (c.playing) arcade.leave(c.game, floor.id);
-        // Score names come from the connection's display provenance (see Client.peer).
-        c.game = arcade.start({ owner: c.id, name: who, color: c.peer.color }, msg.game);
-        if (typeof msg.game === 'string' && msg.game && c.game !== msg.game) warn(c, "🕹️ Your paused game didn't survive the restart, so here's a new one");
-        if (c.game !== msg.game && !arcade.counts(c.game)) warn(c, "🕹️ That's a lot of new games in a row, so this one won't go on the high-score table");
-        c.playing = true;
-        c.frame = undefined;
-        sendCabinet(c);
-        break;
-      }
-      case 'cabinet.leave':
-        stopPlaying(c);
-        break;
-      case 'cabinet.frame': {
-        const floor = floorOf(c);
-        const frame = checkFrame(msg.frame);
-        if (!c.playing || !floor || !frame) break;
-        // Every frame counts towards the score: the office follows the game frame by frame.
-        if (arcade.frame(c.game, frame, floor.id) === 'void') warn(c, "🕹️ The office couldn't follow this game, so its score won't go on the high-score table");
-        c.frame = frame;
-        break;
-      }
       case 'jukebox.stop': {
         const floor = here();
         if (!floor?.jukebox.stop(who)) break;
@@ -2134,7 +2072,6 @@ export async function startServer(cfg: Config) {
     clearInterval(heartbeat);
     clearInterval(resync);
     clearTimeout(floorsTimer);
-    arcade.flush();
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     guestScanner.stop();

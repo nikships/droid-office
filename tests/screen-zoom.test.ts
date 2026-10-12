@@ -2,8 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Arcade, ScreenZoom } from '../src/client/ui/arcade.js';
-import { Cabinet } from '../src/client/ui/cabinet.js';
-import { Blocks } from '../src/client/ui/blocks.js';
 
 function zoom() {
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.9));
@@ -28,30 +26,16 @@ test('a settled screen zoom remains zoomed but stops counting as camera motion',
   assert.equal(view.moving(false), false);
 });
 
-test('Minesweeper idles at its screen, while BLOCKFALL stays full rate only during play or a zoom', () => {
+test('Minesweeper idles once the camera has settled on its screen', () => {
   const { view, settle } = zoom();
   const arcade = Object.create(Arcade.prototype) as Arcade;
-  const cabinet = Object.create(Cabinet.prototype) as Cabinet;
-  for (const game of [arcade, cabinet]) {
-    Reflect.set(game, 'view', view);
-    Reflect.set(game, 'modal', {});
-  }
+  Reflect.set(arcade, 'view', view);
+  Reflect.set(arcade, 'modal', {});
   assert.equal(arcade.animating, true);
   settle(true);
   assert.equal(arcade.animating, false);
-  Reflect.set(cabinet, 'mode', 'play');
-  const game = new Blocks();
-  Reflect.set(cabinet, 'game', game);
-  assert.equal(cabinet.animating, true);
-  game.pause(true);
-  assert.equal(cabinet.animating, false);
-  game.state = 'over';
-  assert.equal(cabinet.animating, false);
-  for (const game of [arcade, cabinet]) {
-    Reflect.set(game, 'modal', null);
-    assert.equal(game.animating, true, 'the trip back from the screen is still moving');
-  }
+  Reflect.set(arcade, 'modal', null);
+  assert.equal(arcade.animating, true, 'the trip back from the screen is still moving');
   settle(false);
   assert.equal(arcade.animating, false);
-  assert.equal(cabinet.animating, false);
 });
