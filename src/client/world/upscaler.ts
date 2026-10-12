@@ -182,6 +182,17 @@ export class Upscaler {
     return this.settings.taa || this.settings.scale < 1;
   }
 
+  /**
+   * The full-screen passes and the target each one draws to. The resolve writes the half-float history;
+   * the present draws to the canvas. The scene target itself matches the canvas's shader key.
+   */
+  shaderPasses(): { material: THREE.ShaderMaterial; pipeline: 'float' | 'canvas' }[] {
+    return [
+      { material: this.resolve, pipeline: 'float' },
+      { material: this.present, pipeline: 'canvas' },
+    ];
+  }
+
   configure(g: Pick<GraphicsSettings, 'scale' | 'taa' | 'sharpen'>) {
     const rebuild = g.scale !== this.settings.scale || g.taa !== this.settings.taa;
     this.settings = { scale: g.scale, taa: g.taa, sharpen: g.sharpen };

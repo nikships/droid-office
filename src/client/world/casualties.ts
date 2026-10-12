@@ -170,6 +170,20 @@ function heavenlyBeam(height: number) {
   return { root, materials, geometries, light };
 }
 
+/**
+ * Blood, the spell circle and a heavenly beam, for shader warmup. The beam's light is left out: the
+ * warmup adds its own lights so it can choose the count, and a real ascent adds the beam's later.
+ */
+export function casualtyMarkers(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'casualty-markers';
+  group.add(bloodPool(), spellCircle());
+  const beam = heavenlyBeam(4);
+  beam.light.removeFromParent();
+  group.add(beam.root);
+  return group;
+}
+
 interface Casualty {
   model: CasualtyModel;
   look: CasualtyLook;

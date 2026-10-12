@@ -46,6 +46,13 @@ test('the first frame, which compiles everything, counts', () => {
   assert.equal(w.update(frame(0, { programs: 40, drawMs: 400 }))?.say, 'Compiling shaders');
 });
 
+test('a seeded count is the office after shader warmup: the same count on a slow frame says nothing', () => {
+  const w = new WarmupWatch();
+  w.seed(40);
+  assert.equal(w.update(frame(0, { programs: 40, drawMs: 400 })), null);
+  assert.equal(w.update(frame(16, { programs: 41, drawMs: 80 }))?.say, 'Compiling shaders');
+});
+
 test('a bake shows how far through it is, clamped, then says it is baked', () => {
   const w = new WarmupWatch();
   assert.deepEqual(w.update(frame(0, { bake: 0.42 })), { say: 'Baking light', progress: 0.42, done: false });

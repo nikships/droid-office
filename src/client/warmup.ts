@@ -39,6 +39,14 @@ export class WarmupWatch {
   private last: WarmupStatus | null = null;
   private busyAt = Number.NEGATIVE_INFINITY;
 
+  /**
+   * The office already compiled this many programs (shader warmup, or a later outline rebuild). The next
+   * frame is not a first compile unless it adds more.
+   */
+  seed(programs: number) {
+    this.programs = programs;
+  }
+
   /** What to show after this frame, or null for nothing. */
   update(f: WarmupFrame): WarmupStatus | null {
     if (f.programs > this.programs && f.drawMs >= COMPILE_STALL_MS) this.compiledAt = f.now;
