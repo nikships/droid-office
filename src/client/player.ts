@@ -12,12 +12,13 @@ const RUN = 7.5;
 const JUMP_V = 6.4;
 
 export const GRAVITY = 18;
-/** Camera height above your feet (the Person's eyes). */
+/** Default and minimum camera height above your feet (the Person's eyes). */
 export const EYE_HEIGHT = 1.4;
+export const MAX_EYE_HEIGHT = EYE_HEIGHT * 3;
 /** The Person's hips above their feet, standing. Sitting puts them on the seat, and your eyes move with them. */
 export const HIPS = 0.42;
 /** Keys that get you up off a seat: walking away, or jumping up. */
-const GET_UP = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+const GET_UP = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'];
 const LOOK_SPEED = 0.0022; // radians per pixel of mouse movement while the pointer is locked
 const DRAG_LOOK_SPEED = 0.005;
 /**
@@ -82,6 +83,8 @@ export class PlayerController {
   /** Walk cycle phase, shared by the camera bob and the first-person hands. */
   walkPhase = 0;
   private bob = 0;
+  private height = EYE_HEIGHT;
+  private heightTarget = EYE_HEIGHT;
   /** Eased out after a step up or down, so the camera glides up stairs instead of popping. */
   stepOffset = 0;
   /** Walking and running speed, as a multiple of normal (a coffee's buzz). */
@@ -152,7 +155,7 @@ export class PlayerController {
     window.addEventListener('keydown', (e) => {
       if (!this.enabled || isTyping(e)) return;
       this.keys.add(e.code);
-      if (e.code === 'Space') e.preventDefault();
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
@@ -390,9 +393,35 @@ export class PlayerController {
     return this.seat ? this.seat.hips - HIPS : 0;
   }
 
+  get eyeHeight(): number {
+    return this.height;
+  }
+
+  /** Keep drawing at full speed while the view rises or lowers, including its eased finish. */
+  get changingHeight(): boolean {
+    if (!this.enabled) return false;
+    const dir = Number(this.holding('ArrowUp')) - Number(this.holding('ArrowDown'));
+    return this.height !== this.heightTarget || (dir > 0 && this.heightTarget < MAX_EYE_HEIGHT) || (dir < 0 && this.heightTarget > EYE_HEIGHT);
+  }
+
+  /** Smoothly change eye height without moving your feet or changing walking collisions. */
+  setHeight(scale: number) {
+    if (!Number.isFinite(scale) || scale < 1 || scale > 3) throw new Error('Height takes a scale from 1 to 3');
+    this.heightTarget = EYE_HEIGHT * scale;
+  }
+
+  private updateHeight(dt: number) {
+    if (!this.enabled) return;
+    const dir = Number(this.holding('ArrowUp')) - Number(this.holding('ArrowDown'));
+    this.heightTarget = THREE.MathUtils.clamp(this.heightTarget + dir * EYE_HEIGHT * dt, EYE_HEIGHT, MAX_EYE_HEIGHT);
+    this.height += (this.heightTarget - this.height) * (1 - Math.exp(-dt * 12));
+    if (Math.abs(this.heightTarget - this.height) < 0.0001) this.height = this.heightTarget;
+  }
+
   update(dt: number) {
     dt = Math.min(dt, 0.05);
     const k = this.keys;
+    this.updateHeight(dt);
     if (this.rig) {
       this.rig(dt);
       this.vy = 0;
@@ -417,10 +446,10 @@ export class PlayerController {
     let ix = 0;
     let iz = 0;
     if (this.enabled) {
-      if (k.has('KeyW') || k.has('ArrowUp')) iz -= 1;
-      if (k.has('KeyS') || k.has('ArrowDown')) iz += 1;
-      if (k.has('KeyA') || k.has('ArrowLeft')) ix -= 1;
-      if (k.has('KeyD') || k.has('ArrowRight')) ix += 1;
+      if (k.has('KeyW')) iz -= 1;
+      if (k.has('KeyS')) iz += 1;
+      if (k.has('KeyA')) ix -= 1;
+      if (k.has('KeyD')) ix += 1;
     }
     const steering = ix !== 0 || iz !== 0;
     this.moving = steering;
@@ -513,7 +542,7 @@ export class PlayerController {
   }
 
   updateCamera() {
-    this.camera.position.set(this.pos.x, this.pos.y + EYE_HEIGHT + this.bob + this.stepOffset + this.lift, this.pos.z);
+    this.camera.position.set(this.pos.x, this.pos.y + this.height + this.bob + this.stepOffset + this.lift, this.pos.z);
     this.camera.rotation.set(this.lookPitch, this.camYaw, 0);
     this.shake();
   }

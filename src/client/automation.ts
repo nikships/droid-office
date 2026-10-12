@@ -8,6 +8,7 @@ import { DESK_BY_ID, deskSeat, STATION_AGENT, type DeskDef } from '../shared/lay
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import { waitingOnSomeone } from './notify';
+import { EYE_HEIGHT } from './player';
 import type { InteractKind, Interactable } from './world/office';
 
 /** The keys that use what you stand at (see DESK_KEYS in main.ts). */
@@ -19,7 +20,7 @@ export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
-export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'camera', 'state', 'list', 'commands'] as const;
+export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'camera', 'height', 'state', 'list', 'commands'] as const;
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
@@ -198,7 +199,7 @@ export interface RawState {
   floors: Pick<FloorInfo, 'id' | 'name' | 'waiting'>[];
   /** On the way to another floor (the elevator, the ladder, a pole). */
   riding: boolean;
-  player: { x: number; y: number; z: number; facing: number; lookPitch: number; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
+  player: { x: number; y: number; z: number; eyeHeight: number; facing: number; lookPitch: number; seat: string | null; enabled: boolean; walking: boolean; climbing: boolean };
   camera: { x: number; y: number; z: number };
   /** What E would use where you stand. */
   using: Interactable | null;
@@ -223,6 +224,7 @@ export interface Snapshot {
     x: number;
     y: number;
     z: number;
+    eyeHeight: number;
     facing: number;
     lookPitch: number;
     seat: string | null;
@@ -264,6 +266,7 @@ export function buildSnapshot(raw: RawState): Snapshot {
       x: r2(p.x),
       y: r2(p.y),
       z: r2(p.z),
+      eyeHeight: r2(p.eyeHeight),
       facing: angle(p.facing),
       lookPitch: r2(p.lookPitch),
       seat: p.seat,
@@ -330,6 +333,7 @@ export interface AutomationHost {
   closeAll(): void;
   ride(floor: string): void;
   setCamera(pose: CameraPose): void;
+  setHeight(scale: number): void;
   /** Frames drawn so far. */
   frames(): number;
   wait(ms: number): Promise<void>;
@@ -355,6 +359,8 @@ export interface OfficeAutomation {
   ride(floor: string, opts?: { timeout?: number }): Promise<Snapshot>;
   /** Puts the camera at one of the fixed presets. */
   camera(preset: CameraPreset): Promise<Snapshot>;
+  /** Smoothly changes eye height to 1–3 times the default, resolving once it settles. */
+  height(scale: number): Promise<Snapshot>;
   state(): Snapshot;
   list(): TargetInfo[];
   commands(): CommandInfo[];
@@ -503,6 +509,14 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     return settle();
   }
 
+  async function height(scale: number): Promise<Snapshot> {
+    if (!Number.isFinite(scale) || scale < 1 || scale > 3) throw new Error('Height takes a scale from 1 to 3');
+    if (!host.raw().player.enabled) throw new Error('Height needs the player controls');
+    host.setHeight(scale);
+    if (!(await until(() => Math.abs(host.raw().player.eyeHeight - scale * EYE_HEIGHT) < 0.0001, 5000))) throw new Error('Height did not settle');
+    return settle();
+  }
+
   return {
     goTo,
     interact,
@@ -510,6 +524,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     closeAll,
     ride,
     camera,
+    height,
     state,
     list: () => listTargets(host.context()),
     commands: () => host.commands(),

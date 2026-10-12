@@ -204,7 +204,7 @@ function raw(over: Partial<RawState> = {}): RawState {
       { id: 'f2', name: 'website', waiting: 0 },
     ],
     riding: false,
-    player: { x: 1.23456, y: 0, z: -2.0049, facing: Math.PI * 3, lookPitch: -0.2049, seat: null, enabled: true, walking: false, climbing: false },
+    player: { x: 1.23456, y: 0, z: -2.0049, eyeHeight: 1.4, facing: Math.PI * 3, lookPitch: -0.2049, seat: null, enabled: true, walking: false, climbing: false },
     camera: { x: 1.23456, y: 1.4, z: -2.0049 },
     using: null,
     modals: [],
@@ -328,11 +328,27 @@ function fakeOffice() {
     setCamera: (pose) => {
       log.push(`camera ${pose.lookPitch}`);
     },
+    setHeight: (scale) => {
+      log.push(`height ${scale}`);
+      setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, eyeHeight: 1.4 * scale } }), 15);
+    },
     frames: () => s.frames++,
     wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
   };
   return { s, log, office: createAutomation(host) };
 }
+
+test('height waits for the camera to settle and is available through the server relay', async () => {
+  const { office, log, s } = fakeOffice();
+  const state = await office.height(3);
+  assert.equal(state.player.eyeHeight, 4.2);
+  assert.equal(log[0], 'height 3');
+  const reset = (await runCommand(office, 'height', [1])) as typeof state;
+  assert.equal(reset.player.eyeHeight, 1.4);
+  for (const scale of [0, 3.1, NaN, Infinity, '2']) await assert.rejects(office.height(scale as number), /1 to 3/);
+  s.raw.player.enabled = false;
+  await assert.rejects(office.height(2), /player controls/);
+});
 
 test('goTo a desk, open its terminal, go to the Issues board and open it, all without steering', async () => {
   const { s, log, office } = fakeOffice();

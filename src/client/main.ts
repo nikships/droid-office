@@ -44,7 +44,7 @@ import { removedFloorNotice, standSpot } from './arrival';
 import { guardLeaving } from './leave';
 import { store, connectWhiteboard, lastFloor, lastSpot, loadProfile, loadSettings, rememberSpot, saveSettings, words, workerForPull, type Profile, type Spot, type Topic } from './state';
 import { officeTitle } from './tab-title';
-import { EYE_HEIGHT, PlayerController, groundAt, isTyping } from './player';
+import { PlayerController, groundAt, isTyping } from './player';
 import { gongRinging, renderPace, sceneIsMoving, skyFalling, type RenderPace, type SceneMotion } from './render-pace';
 import { RenderLoop } from './render-loop';
 import { Climber, type Arrival, type Grip, type Way } from './climb';
@@ -3112,12 +3112,9 @@ const REACH: Record<InteractKind, number> = {
   pole: 4,
   bookshelf: 4,
 };
-const eye = new THREE.Vector3();
-
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
 function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
   raycaster.setFromCamera(ndc, camera);
-  eye.set(player.pos.x, player.pos.y + EYE_HEIGHT, player.pos.z);
   for (const hit of raycaster.intersectObjects(upTop && roof ? roof.pickables : [office.group], true)) {
     let it: Interactable | undefined;
     let shown = true;
@@ -3127,7 +3124,7 @@ function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boole
     }
     if (!shown) continue;
     if (!it) return null; // a wall, the floor, a plant… is in the way
-    return { it, near: hit.point.distanceTo(eye) <= REACH[it.kind] + slack, hit };
+    return { it, near: hit.point.distanceTo(camera.position) <= REACH[it.kind] + slack, hit };
   }
   return null;
 }
@@ -3562,6 +3559,7 @@ function sceneMotion(): SceneMotion {
   const secs = now / 1000;
   const playerBusy =
     player.moving ||
+    player.changingHeight ||
     !player.grounded ||
     player.vy !== 0 ||
     player.jitter > 0 ||
@@ -3721,7 +3719,7 @@ function drawFrame(dt: number, t: number) {
   }
   whoosh.style.opacity = rush > 0.02 ? String(rush * 0.85) : '0';
   camera.getWorldDirection(lookDir);
-  sound.update({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z, fx: lookDir.x, fz: lookDir.z });
+  sound.update({ x: camera.position.x, y: camera.position.y, z: camera.position.z, fx: lookDir.x, fz: lookDir.z });
 
   // Where you are, to come back to next time.
   if (now - spotSavedAt > 1000) {
@@ -3920,7 +3918,8 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
 function aimAt(face: { x: number; y: number; z: number }) {
   player.facing = facingToward(player.pos, face);
   player.camYaw = player.facing - Math.PI;
-  player.lookPitch = pitchToward({ x: player.pos.x, y: player.pos.y + EYE_HEIGHT, z: player.pos.z }, face);
+  player.updateCamera();
+  player.lookPitch = pitchToward(camera.position, face);
   player.updateCamera();
 }
 
@@ -3942,6 +3941,7 @@ const automation = createAutomation({
       x: player.pos.x,
       y: player.pos.y,
       z: player.pos.z,
+      eyeHeight: player.eyeHeight,
       facing: player.facing,
       lookPitch: player.lookPitch,
       seat: player.seat?.seatId ?? null,
@@ -3998,6 +3998,10 @@ const automation = createAutomation({
     renderWake();
   },
   setCamera,
+  setHeight: (scale) => {
+    player.setHeight(scale);
+    renderWake();
+  },
   frames: () => framesDrawn,
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });

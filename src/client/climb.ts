@@ -250,7 +250,7 @@ export class Climber {
     let dir = 0;
     if (s.waiting) dir = 0;
     else if (s.auto) dir = s.auto;
-    else dir = (p.holding('KeyW', 'ArrowUp') ? 1 : 0) - (p.holding('KeyS', 'ArrowDown') ? 1 : 0);
+    else dir = (p.holding('KeyW') ? 1 : 0) - (p.holding('KeyS') ? 1 : 0);
     const up = this.hooks.floorThere(1);
     const down = this.hooks.floorThere(-1);
     let y = p.pos.y + dir * CLIMB * dt;

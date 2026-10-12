@@ -1,7 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { PlayerController } from '../src/client/player.js';
+import { EYE_HEIGHT, MAX_EYE_HEIGHT, PlayerController } from '../src/client/player.js';
 import type { Collider } from '../src/client/world/office.js';
 import { BALCONY, FLOOR, LOFT, SEATING_BY_ID, SLAB, STAIRS, seatAt, seatPlace } from '../src/shared/layout.js';
 
@@ -23,7 +23,8 @@ function controller(t: TestContext, colliders: Collider[]) {
     });
   }
   const dom = new EventTarget();
-  const player = new PlayerController(new THREE.PerspectiveCamera(), dom as unknown as HTMLElement, [officeFloor, ...colliders]);
+  const camera = new THREE.PerspectiveCamera();
+  const player = new PlayerController(camera, dom as unknown as HTMLElement, [officeFloor, ...colliders]);
   player.camYaw = 0;
   function keys(...codes: string[]) {
     player.clearKeys();
@@ -36,8 +37,125 @@ function controller(t: TestContext, colliders: Collider[]) {
   function frames(count: number, dt = 1 / 60) {
     for (let i = 0; i < count; i++) player.update(dt);
   }
-  return { player, keys, frames, win, doc, dom };
+  return { player, camera, keys, frames, win, doc, dom };
 }
+
+test('arrow keys smoothly change eye height within 1–3x without walking or jumping', (t) => {
+  const { player, camera, keys, frames } = controller(t, []);
+  frames(1);
+  assert.equal(player.eyeHeight, EYE_HEIGHT);
+  assert.equal(camera.position.y, EYE_HEIGHT);
+  keys('ArrowDown');
+  frames(60);
+  assert.equal(player.eyeHeight, EYE_HEIGHT, 'normal is the minimum');
+  assert.equal(player.changingHeight, false);
+  keys('ArrowUp');
+  assert.equal(player.changingHeight, true, 'holding Up wakes the render loop before the next update');
+  frames(1);
+  assert.ok(player.eyeHeight > EYE_HEIGHT && player.eyeHeight < EYE_HEIGHT + 0.01, 'eases in, without a camera jump');
+  const first = player.eyeHeight;
+  frames(30);
+  assert.ok(player.eyeHeight > first && player.eyeHeight < MAX_EYE_HEIGHT);
+  assert.equal(camera.position.y, player.eyeHeight);
+  frames(240);
+  assert.equal(player.eyeHeight, MAX_EYE_HEIGHT);
+  assert.equal(player.changingHeight, false, 'holding at the limit does not keep rendering busy');
+  keys('ArrowDown');
+  frames(1);
+  assert.ok(player.eyeHeight < MAX_EYE_HEIGHT && player.eyeHeight > MAX_EYE_HEIGHT - 0.01);
+  frames(300);
+  assert.equal(player.eyeHeight, EYE_HEIGHT);
+  for (const code of ['ArrowLeft', 'ArrowRight']) {
+    keys(code);
+    frames(30);
+  }
+  assert.deepEqual(player.pos.toArray(), [0, 0, 0]);
+  assert.equal(player.moving, false);
+  assert.equal(player.vy, 0);
+});
+
+test('height eases to a stop on release and opposing arrows cancel without cancelling a walking path', (t) => {
+  const { player, keys, frames } = controller(t, []);
+  keys('ArrowUp');
+  frames(30);
+  const held = player.eyeHeight;
+  keys();
+  assert.equal(player.changingHeight, true, 'keeps rendering the eased finish after release');
+  frames(120);
+  assert.ok(player.eyeHeight > held && player.eyeHeight < EYE_HEIGHT * 2);
+  assert.equal(player.changingHeight, false);
+  const stopped = player.eyeHeight;
+  keys('ArrowUp', 'ArrowDown');
+  frames(120);
+  assert.equal(player.eyeHeight, stopped);
+  keys('ArrowUp');
+  player.walkPath([{ x: 0, z: -3 }]);
+  let cancelled = false;
+  player.onPathEnd = (why) => (cancelled = why === 'cancelled');
+  frames(30);
+  assert.ok(player.pos.z < -1);
+  assert.equal(cancelled, false);
+});
+
+test('height changes work while seated without getting up, and stay paused with controls disabled', (t) => {
+  const { player, camera, keys, frames } = controller(t, []);
+  const place = seatPlace(SEATING_BY_ID.get('couch')!, 0);
+  player.sit(place);
+  frames(1);
+  const sittingEye = camera.position.y;
+  for (const code of ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp']) {
+    keys(code);
+    frames(10);
+    assert.equal(player.seat, place);
+    assert.deepEqual(player.pos.toArray(), [place.x, place.y, place.z]);
+  }
+  assert.ok(camera.position.y > sittingEye);
+  assert.ok(Math.abs(camera.position.y - sittingEye - (player.eyeHeight - EYE_HEIGHT)) < 1e-12);
+  player.enabled = false;
+  const paused = player.eyeHeight;
+  frames(120);
+  assert.equal(player.eyeHeight, paused);
+  assert.equal(player.changingHeight, false);
+});
+
+test('height keys leave typing alone, prevent page scrolling and clear on keyup or blur', (t) => {
+  const { player, win, frames } = controller(t, []);
+  const down = (code: string, tagName?: string) => {
+    const event = new Event('keydown', { cancelable: true });
+    Object.defineProperty(event, 'code', { value: code });
+    if (tagName) Object.defineProperty(event, 'target', { value: { tagName } });
+    win.dispatchEvent(event);
+    return event;
+  };
+  for (const tagName of ['INPUT', 'TEXTAREA', 'SELECT']) {
+    assert.equal(down('ArrowUp', tagName).defaultPrevented, false);
+    frames(10);
+    assert.equal(player.eyeHeight, EYE_HEIGHT);
+  }
+  assert.equal(down('ArrowUp').defaultPrevented, true);
+  assert.equal(player.holding('ArrowUp'), true);
+  win.dispatchEvent(Object.assign(new Event('keyup'), { code: 'ArrowUp' }));
+  assert.equal(player.holding('ArrowUp'), false);
+  down('ArrowDown');
+  win.dispatchEvent(new Event('blur'));
+  assert.equal(player.holding('ArrowDown'), false);
+  player.enabled = false;
+  assert.equal(down('ArrowUp').defaultPrevented, false);
+  assert.equal(player.holding('ArrowUp'), false);
+});
+
+test('height targets ease without overshoot and reject values outside the bounds', (t) => {
+  const { player, frames } = controller(t, []);
+  player.setHeight(3);
+  frames(1);
+  assert.ok(player.eyeHeight > EYE_HEIGHT && player.eyeHeight < MAX_EYE_HEIGHT);
+  frames(120);
+  assert.equal(player.eyeHeight, MAX_EYE_HEIGHT);
+  player.setHeight(1);
+  frames(120);
+  assert.equal(player.eyeHeight, EYE_HEIGHT);
+  for (const scale of [0, 0.9, 3.1, NaN, Infinity]) assert.throws(() => player.setHeight(scale), /1 to 3/);
+});
 
 test('only actual pointer-driven camera changes wake rendering, not unlocked hover or ignored input', (t) => {
   const { player, win, doc, dom } = controller(t, []);

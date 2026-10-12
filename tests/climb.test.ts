@@ -60,6 +60,25 @@ test('W climbs the ladder; E drops, gravity lands', (t) => {
   assert.equal(player.grounded, true);
 });
 
+test('arrow keys adjust eye height on the ladder without climbing it', (t) => {
+  const { player, climber, frames, key } = rig(t, {});
+  player.pos.set(LADDER.x, 1, LADDER.z);
+  climber.grabLadder();
+  const y = player.pos.y;
+  const height = player.eyeHeight;
+  key('keydown', 'ArrowUp');
+  frames(30);
+  assert.equal(player.pos.y, y);
+  assert.ok(player.eyeHeight > height);
+  assert.equal(player.moving, false);
+  key('keyup', 'ArrowUp');
+  key('keydown', 'ArrowDown');
+  frames(120);
+  assert.equal(player.pos.y, y);
+  assert.equal(climber.grip, 'ladder');
+  assert.equal(player.eyeHeight, height);
+});
+
 test('climbing back down to the floor steps off onto it', (t) => {
   const { player, climber, dones, key } = rig(t, {});
   player.pos.set(LADDER.x + 0.4, 0, LADDER.z);
