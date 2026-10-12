@@ -6,6 +6,8 @@ import { isBusy } from '../shared/status.js';
 import { DESK_BY_ID, STATIONS } from '../shared/layout.js';
 import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
+import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
+import { OfficeShell } from './office-shell.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
 import { Guests, attribute, stopGuest, type AgentProcess } from './guests.js';
 import { CloudWorkers } from './cloud-workers.js';
@@ -121,6 +123,8 @@ export class Floor {
   readonly dir: string;
   readonly project: ProjectInfo;
   readonly workers: WorkerManager;
+  /** The login shell on the boss's monitor. Not a worker. */
+  readonly shell: OfficeShell;
   /** The issue and PR boards, on GitHub or GitLab as the floor's repository is. */
   readonly board: Board;
   /** The floor's Jira epic, as the issue board's Jira tab (see jira.ts). */
@@ -373,6 +377,12 @@ export class Floor {
       }),
       onPatch: (patch, { origin, caps }) => ctx.emit(this, { t: 'whiteboard', floor: this.id, update: { kind: 'patch', patch }, ...(origin ? { origin } : {}), ...(Object.keys(caps).length ? { caps } : {}) }),
     });
+    this.shell = new OfficeShell(def.dir, dataDir, this.workers.terminals, {
+      screen: (frame) => ctx.emit(this, { t: 'screen', workerId: OFFICE_SHELL_ID, ...frame }, true),
+      data: (data, ids) => ctx.termData(OFFICE_SHELL_ID, data, ids),
+    });
+    // Started with the workers, so a shell the host kept is claimed before leftover sessions are ended.
+    this.workers.officeShell = this.shell;
     this.ready = this.workers.start();
     // Pruning counts the workers' read points, so it waits for the workers to be back.
     const startBoard = () => this.whiteboard.start();

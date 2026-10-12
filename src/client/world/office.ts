@@ -118,7 +118,7 @@ export interface Office {
   occupants: THREE.Object3D[];
   boardMeshes: Record<keyof typeof BOARDS, THREE.Mesh>;
   tvScreen: THREE.Mesh;
-  /** The monitor on the boss's desk upstairs, where Minesweeper plays (ui/arcade.ts). */
+  /** The monitor on the boss's desk upstairs, which shows the floor's shell (world/monitor.ts). */
   bossScreen: THREE.Mesh;
   /** The compute wall's two screens on the west wall: the office's machine, and the Droid Computers (world/factory-computers.ts). */
   machineScreen: THREE.Mesh;
@@ -1780,7 +1780,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   deskBody.add(mesh(box(0.08, 0.2, 0.08), toon(PALETTE.steel), 0, 0.93, -0.2));
   deskBody.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon('#eeeeee'), 0.9, 0.89, 0.15));
   desk.add(mergeByMaterial(deskBody));
-  // Minesweeper plays on it (ui/arcade.ts).
+  // The floor's shell plays on it (world/monitor.ts).
   const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165);
   desk.add(screen);
   const plate = textPlane('BOSS', { bg: '#0a0a0a', color: '#ee6018', border: '#2f2f2f', size: 48 });
@@ -1793,7 +1793,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   bossChair.position.set(0, 0, 1.0);
   desk.add(bossChair);
   seatable(bossChair, 'boss-chair', 1.2, interactables);
-  // Clicking the screen is using the chair: sit down, then play.
+  // Clicking the screen is using the chair: sit down, then E opens the shell.
   screen.userData.interact = bossChair.userData.interact;
   desk.position.set(deskX, floorY, deskZ);
   group.add(desk);

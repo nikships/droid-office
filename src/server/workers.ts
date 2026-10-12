@@ -8,7 +8,8 @@ import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import type { AgentChoice, AgentEffort, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
+import { WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
+import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
@@ -28,7 +29,7 @@ import { DroidSessionReader } from './droid-session.js';
 import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, searchTerminal, terminalTail } from './history.js';
 import { DropStore } from './drops.js';
-import { screenSnapshot } from './screen.js';
+import { screenSnapshot, snapshotScreen } from './screen.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
 import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
@@ -267,6 +268,16 @@ export class WorkerManager {
   private statusTimer: NodeJS.Timeout;
   /** Runs the workers' terminals outside the office, so they outlive a restart of it (see ptys.ts). */
   private host: PtyHost;
+  /**
+   * The boss monitor's shell, set by the floor before start(). It claims its terminal in this host
+   * before unclaimed sessions are ended. A WorkerManager built on its own (tests) leaves it unset.
+   */
+  officeShell?: { start(): Promise<void>; shutdown(keep: boolean): void };
+
+  /** The terminal host this floor's workers and the boss shell share. */
+  get terminals(): PtyHost {
+    return this.host;
+  }
   /** Each worker's terminal on disk, so a restart doesn't wipe it (see history.ts). */
   private scrollback: ScrollbackStore;
   private drops: DropStore;
@@ -323,7 +334,8 @@ export class WorkerManager {
     this.restore();
     for (const w of this.workers.values()) if (w.info.downedUntil !== undefined) this.scheduleDismissal(w);
     this.scrollback.prune(new Set(this.workers.keys()));
-    this.drops.prune(new Set(this.workers.keys()));
+    // The boss shell's drops live in the same folder and are not a worker's.
+    this.drops.prune(new Set([...this.workers.keys(), OFFICE_SHELL_ID]));
     for (const w of this.workers.values()) this.refreshDroidModel(w);
     this.screenTimer = setInterval(() => this.flushScreens(), SCREEN_INTERVAL_MS);
     this.watchTimer = setInterval(() => {
@@ -361,6 +373,8 @@ export class WorkerManager {
         }
       }),
     );
+    // Before unclaimed sessions are ended, so a shell the host kept is not taken for a leftover.
+    if (this.officeShell) await this.officeShell.start();
     // Terminals nobody saved a claim on (their worker was sent home as the office went down).
     this.host.killUnclaimed();
     // Whoever's worktree was deleted while the office was down stays asleep, marked lost, rather than failing to start.
@@ -1676,6 +1690,7 @@ export class WorkerManager {
   shutdown(keep = false) {
     this.closing = true;
     this.stopping = !keep;
+    this.officeShell?.shutdown(keep);
     clearInterval(this.screenTimer);
     clearInterval(this.watchTimer);
     clearInterval(this.statusTimer);
@@ -2266,57 +2281,6 @@ export function childEnv(): Record<string, string> {
 function validTask(t: unknown): WorkerTask | undefined {
   const v = t as Partial<WorkerTask> | undefined;
   return typeof v?.name === 'string' && typeof v.summary === 'string' ? { name: v.name, summary: v.summary } : undefined;
-}
-
-function snapshotScreen(term: HeadlessTerminal, last: string[]) {
-  const buf = term.buffer.active;
-  const cols = term.cols;
-  const rows = term.rows;
-  const full = last.length !== rows;
-  const lines: Record<number, Run[]> = {};
-  let changed = false;
-  const cell = buf.getNullCell();
-  for (let y = 0; y < rows; y++) {
-    const line = buf.getLine(buf.viewportY + y);
-    const runs: Run[] = [];
-    if (line) {
-      let cur: Run | null = null;
-      for (let x = 0; x < cols; x++) {
-        line.getCell(x, cell);
-        const width = cell.getWidth();
-        if (width === 0) continue;
-        const ch = cell.getChars() || ' ';
-        const fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
-        const bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
-        const flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
-        if (cur && cur[1] === fg && cur[2] === bg && cur[3] === flags) cur[0] += ch;
-        else {
-          cur = [ch, fg, bg, flags];
-          runs.push(cur);
-        }
-      }
-    }
-    // Trim trailing default-styled whitespace to keep frames small.
-    while (runs.length) {
-      const r = runs[runs.length - 1];
-      if (r[2] !== -1 || r[3] & FLAG_INVERSE) break;
-      const trimmed = r[0].replace(/\s+$/, '');
-      if (trimmed) {
-        r[0] = trimmed;
-        break;
-      }
-      runs.pop();
-    }
-    const key = JSON.stringify(runs);
-    if (full || last[y] !== key) {
-      lines[y] = runs;
-      last[y] = key;
-      changed = true;
-    }
-  }
-  last.length = rows;
-  if (!changed) return null;
-  return { cols, rows, lines, full, cursor: [buf.cursorX, buf.cursorY] as [number, number] };
 }
 
 /** bin/<name>.js in the install this office runs from (src/server under tsx, dist/server/server built). */

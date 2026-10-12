@@ -8,6 +8,7 @@ import { withToken } from '../token';
 import { TERM_THEME } from '../world/laptop';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { colorDot } from './kit';
+import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { PROVIDER_LABEL, outsideNote, statusWord } from '../../shared/guests';
 import { teamSummary } from '../../shared/team';
@@ -413,6 +414,227 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     ro.observe(host);
     adoptSharedSize = store.workers.get(workerId)?.open === true;
     net.send({ t: 'worker.attach', workerId });
+    setTimeout(() => {
+      if (current?.modal === modal) term.focus();
+    }, 50);
+  });
+}
+
+/**
+ * The boss monitor's shell. The same kind of terminal as a shell worker's, but there is no worker:
+ * no status, no changes, no team. `OFFICE_SHELL_ID` is what `openTerminalFor` reports while it's open,
+ * so a reconnect can attach again.
+ */
+export function openOfficeShell(net: Net) {
+  if (current?.workerId === OFFICE_SHELL_ID) return;
+  current?.modal.close();
+  const where = store.project?.name || 'this floor';
+  const title = h('h2', {}, 'Shell');
+  const sub = h('p.sub', {}, where);
+  const pill = h('span.pill', {}, 'shell');
+  const smaller = h('button.btn.icon', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text' }, 'A−');
+  const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text' }, 'A+');
+  const zoom = h('span.seg.term-zoom', { role: 'group', 'aria-label': 'Terminal text size' }, smaller, bigger);
+  const closeBtn = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close' }, '✕');
+  const host = h('div.term-host', { 'data-drop': 'Drop screenshots or files to put them in the shell' });
+  const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
+
+  const term = new Terminal({
+    fontFamily: TERM_FONT,
+    fontSize: termFontSize(),
+    lineHeight: 1.1,
+    theme: TERM_THEME,
+    cursorBlink: true,
+    scrollback: 5000,
+    allowProposedApi: true,
+    macOptionIsMeta: true,
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.loadAddon(
+    new WebLinksAddon((event, uri) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      window.open(uri, '_blank', 'noopener,noreferrer');
+    }),
+  );
+  const unicode = new Unicode11Addon();
+  term.loadAddon(unicode);
+  term.unicode.activeVersion = '11';
+
+  let ready = false;
+  let opened = false;
+  let shared = false;
+  let lastSentSize = '';
+  let ptyCols = 0;
+  let ptyRows = 0;
+
+  const sendSize = (typing = false) => {
+    if (!ready || !opened) return;
+    if (!typing && shared) {
+      if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
+      return;
+    }
+    try {
+      fit.fit();
+    } catch {
+      return;
+    }
+    const key = `${term.cols}x${term.rows}`;
+    if ((ptyCols !== term.cols || ptyRows !== term.rows) && key !== lastSentSize) {
+      lastSentSize = key;
+      shared = false;
+      net.send({ t: 'shell.resize', cols: term.cols, rows: term.rows });
+    }
+  };
+
+  const onMsg = (msg: ServerMsg) => {
+    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) term.write(msg.data);
+    else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
+      shared = msg.shared === true;
+      ptyCols = msg.cols;
+      ptyRows = msg.rows;
+      term.reset();
+      term.resize(msg.cols, msg.rows);
+      term.write(msg.data, () => {
+        ready = true;
+        sendSize();
+        term.scrollToBottom();
+      });
+    }
+  };
+  listeners.add(onMsg);
+  // Another window typed and changed the size: follow it, unless this one just sent that size.
+  const unsub = store.on('screens', () => {
+    const s = store.screens.get(OFFICE_SHELL_ID);
+    if (!s || !ready) return;
+    if (s.cols === ptyCols && s.rows === ptyRows) return;
+    ptyCols = s.cols;
+    ptyRows = s.rows;
+    if (`${ptyCols}x${ptyRows}` === lastSentSize) return;
+    term.resize(ptyCols, ptyRows);
+    lastSentSize = '';
+  });
+  const ro = new ResizeObserver(() => sendSize());
+
+  const modal = openModal(el, {
+    backdropCloses: true,
+    escCloses: (e) => {
+      if (e.shiftKey || !host.contains(document.activeElement)) return true;
+      if (!escHinted) {
+        escHinted = true;
+        hintToast('Esc went to the terminal. Shift+Esc or Ctrl+] leaves it');
+      }
+      return false;
+    },
+    doing: '💻 in the shell',
+    onClose: () => {
+      listeners.delete(onMsg);
+      unsub();
+      offFont();
+      ro.disconnect();
+      net.send({ t: 'shell.detach' });
+      term.dispose();
+      if (current?.modal === modal) current = null;
+    },
+  });
+  current = { workerId: OFFICE_SHELL_ID, modal, find: () => {} };
+  const paintZoom = (px: number) => {
+    smaller.toggleAttribute('disabled', px <= TERM_FONT_MIN);
+    bigger.toggleAttribute('disabled', px >= TERM_FONT_MAX);
+    zoom.title = `Text size ${px} px`;
+  };
+  paintZoom(termFontSize());
+  const offFont = onTermFontSize((px) => {
+    term.options.fontSize = px;
+    paintZoom(px);
+    sendSize();
+  });
+  const zoomBy = (dir: 1 | -1) => {
+    setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
+    term.focus();
+  };
+  smaller.addEventListener('click', () => zoomBy(-1));
+  bigger.addEventListener('click', () => zoomBy(1));
+  closeBtn.addEventListener('click', () => modal.close());
+
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === 'keydown' && e.ctrlKey && e.key === ']') {
+      modal.close();
+      return false;
+    }
+    const enter = enterKeyAction(false, e);
+    if (enter.do === 'default') return true;
+    if (enter.do === 'send') {
+      e.preventDefault();
+      term.input(enter.data);
+    }
+    return false;
+  });
+  term.onData((data) => {
+    sendSize(true);
+    net.send({ t: 'shell.input', data });
+  });
+
+  let uploading = 0;
+  const insertFiles = async (files: File[]) => {
+    if (!files.length) return;
+    el.classList.toggle('uploading', ++uploading > 0);
+    try {
+      const paths = await Promise.all(files.map((f) => uploadDrop(OFFICE_SHELL_ID, f)));
+      if (current?.modal !== modal) return;
+      sendSize(true);
+      term.paste(droppedPaths(paths));
+      term.focus();
+    } catch (err) {
+      toast((err as Error).message, 'warn');
+    } finally {
+      el.classList.toggle('uploading', --uploading > 0);
+    }
+  };
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+  let dragDepth = 0;
+  const dragEnd = () => {
+    dragDepth = 0;
+    el.classList.remove('dropping');
+  };
+  modal.backdrop.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    el.classList.add('dropping');
+  });
+  modal.backdrop.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'copy';
+  });
+  modal.backdrop.addEventListener('dragleave', (e) => {
+    if (hasFiles(e) && --dragDepth <= 0) dragEnd();
+  });
+  modal.backdrop.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragEnd();
+    void insertFiles([...e.dataTransfer!.files]);
+  });
+  host.addEventListener(
+    'paste',
+    (e) => {
+      const files = [...(e.clipboardData?.files ?? [])];
+      if (!files.length || e.clipboardData?.getData('text/plain')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void insertFiles(files);
+    },
+    true,
+  );
+
+  void loadFonts().then(() => {
+    if (current?.modal !== modal) return;
+    term.open(host);
+    opened = true;
+    ro.observe(host);
+    net.send({ t: 'shell.attach' });
     setTimeout(() => {
       if (current?.modal === modal) term.focus();
     }, 50);

@@ -352,8 +352,8 @@ export interface SeatDef {
   depth: number;
   /** Getting up, you step off this far in front of where you sat (negative: behind, away from a desk or a table). */
   out: number;
-  /** It faces the boss's monitor: E there, sitting down, plays Minesweeper on it. */
-  game?: boolean;
+  /** The boss's chair: E while sitting opens the shell on the monitor in front of it. */
+  shell?: boolean;
   /** Up on the roof, not in the office. */
   roof?: boolean;
 }
@@ -370,7 +370,7 @@ export const SEATING: SeatDef[] = [
   { id: 'lounge-beanbag-2', label: '🫘 Beanbag', x: 14.5, y: 0, z: -3.4, rotY: Math.atan2(TV.x - 14.5, TV.z + 3.4), places: [0], hips: 0.42, depth: -0.1, out: 1.2 },
   // Up in the boss office: the couch against the east wall, and the chair at the big desk, facing the glass.
   { id: 'loft-couch', label: '🛋️ Couch', x: LOFT.maxX - 0.65, y: LOFT.y, z: (LOFT.minZ + LOFT.maxZ) / 2, rotY: -Math.PI / 2, places: [-0.5, 0.5], hips: 0.5, depth: -0.05, out: 0.9 },
-  { id: 'boss-chair', label: "🪑 Boss's chair", x: (LOFT.minX + LOFT.maxX) / 2 + 0.5, y: LOFT.y, z: (LOFT.minZ + LOFT.maxZ) / 2 + 0.7, rotY: Math.PI, places: [0], hips: 0.62, depth: -0.05, out: -0.8, game: true },
+  { id: 'boss-chair', label: "🪑 Boss's chair", x: (LOFT.minX + LOFT.maxX) / 2 + 0.5, y: LOFT.y, z: (LOFT.minZ + LOFT.maxZ) / 2 + 0.7, rotY: Math.PI, places: [0], hips: 0.62, depth: -0.05, out: -0.8, shell: true },
   // Out on the balcony: the bench under the window, looking out over the street, and a stool either side of the bistro table.
   { id: 'bench', label: '🪑 Bench', x: -9, y: 0, z: BALCONY.minZ + 0.3, rotY: 0, places: [-0.5, 0.5], hips: 0.47, depth: 0, out: 0.8 },
   { id: 'stool-1', label: '🪑 Stool', x: -0.6, y: 0, z: (BALCONY.minZ + BALCONY.maxZ) / 2 + 0.2, rotY: Math.PI / 2, places: [0], hips: 0.5, depth: 0, out: -0.7 },

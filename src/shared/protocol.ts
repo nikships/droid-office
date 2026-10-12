@@ -809,6 +809,11 @@ export type ClientMsg =
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
+  /** Open the boss monitor's shell (see OFFICE_SHELL_ID). It is not a worker. */
+  | { t: 'shell.attach' }
+  | { t: 'shell.detach' }
+  | { t: 'shell.input'; data: string }
+  | { t: 'shell.resize'; cols: number; rows: number }
   | { t: 'gh.refresh' }
   /** Merge a pull request; the answer comes back as gh.merged. */
   | { t: 'gh.merge'; number: number; method: GhMergeMethod; deleteBranch: boolean; auto?: boolean }
@@ -977,7 +982,8 @@ export type ServerMsg =
   | { t: 'worker.remove'; workerId: string }
   | { t: 'worker.worktree'; workerId: string; state: WorktreeState }
   | { t: 'screen'; workerId: string; cols: number; rows: number; lines: Record<number, Run[]>; full: boolean; cursor: [number, number] }
-  | { t: 'term.snapshot'; workerId: string; data: string; cols: number; rows: number }
+  /** `shared`: someone already had this terminal open, so the new window takes its size instead of changing it. */
+  | { t: 'term.snapshot'; workerId: string; data: string; cols: number; rows: number; shared?: boolean }
   | { t: 'term.data'; workerId: string; data: string }
   | { t: 'gh.issues'; state: GhState<GhIssue> }
   | { t: 'gh.pulls'; state: GhState<GhPull> }

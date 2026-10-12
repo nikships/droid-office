@@ -32,6 +32,7 @@ import {
   type StationKind,
 } from '../shared/layout';
 import { floorPalette, forgeOf, forgeWords, normalizeRepo, repoWebUrl } from '../shared/floors';
+import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
@@ -79,7 +80,7 @@ import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { $, h, clip, closeAllModals, hintToast, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
-import { onBringIn, onOpenTeammate, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
+import { onBringIn, onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, routeTerminalMessage, type TerminalFind } from './ui/terminal';
 import { openSearch } from './ui/search';
 import { changesLogFor, openChanges, openChangesFor, routeChangesMessage } from './ui/changes';
 import { openRepoPulls, workerRepos } from './ui/repos';
@@ -120,7 +121,7 @@ import { actionLabel, actionOffered, mountHud, type HudAction } from './ui/menu'
 import { openJukebox } from './ui/jukebox';
 import { openBookshelf, type ShelfTab } from './ui/bookshelf';
 import { openWhiteboard, routeWhiteboardMessage, whiteboardChanged } from './ui/whiteboard';
-import { Arcade } from './ui/arcade';
+import { MonitorScreen } from './world/monitor';
 import { trackTitle } from '../shared/jukebox';
 import { EMOTES, EMOTE_BY_ID, EmoteBucket, type EmoteId } from '../shared/emotes';
 import { EmoteWheel } from './ui/emotes';
@@ -362,8 +363,8 @@ void loadFonts().then(() => {
   renderTv(true);
   redrawText();
 });
-// The boss's monitor upstairs: Minesweeper, from the boss's chair.
-const arcade = new Arcade(office.bossScreen);
+// The boss's monitor upstairs: a login shell, always on, with nobody sitting at the desk.
+const bossMonitor = new MonitorScreen(office.bossScreen);
 
 // ---- The rooftop ---------------------------------------------------------------------------------
 /** Up on the roof: built the first time anyone goes up there. */
@@ -980,7 +981,8 @@ net.onMessage((msg) => {
       } else if (!store.floor) arrive();
       // After a reconnect the server has forgotten which terminal we had open.
       const openId = openTerminalFor();
-      if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
+      if (openId === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
+      else if (openId && store.workers.has(openId)) net.send({ t: 'worker.attach', workerId: openId });
       const watching = openChangesFor();
       if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
       const following = changesLogFor();
@@ -994,6 +996,8 @@ net.onMessage((msg) => {
       break;
     }
     case 'floor.enter':
+      // A trip of yours keeps the shell window: it is this floor's shell now. Being taken away closes it.
+      if (trip && openTerminalFor() === OFFICE_SHELL_ID) net.send({ t: 'shell.attach' });
       // Not a trip of yours: the floor you were on was taken off the building, and the elevator took you away.
       if (!trip) takenAway();
       // The card belongs to the board downstairs (or up): the office already put it back there.
@@ -2368,12 +2372,12 @@ function freePlace(seat: SeatDef): SeatPlace | null {
   return best;
 }
 
-/** E at a seat: sit down on it. Sitting there already, get up (or play, where the seat offers it). */
+/** E at a seat: sit down on it. Sitting there already, get up (or open the shell, in the boss's chair). */
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
   if (player.seat?.seatId === seatId) {
-    if (seat.game) arcade.play();
+    if (seat.shell) openOfficeShell(net);
     else standUp();
     return;
   }
@@ -2627,11 +2631,11 @@ function hintFor(it: Interactable): Hint {
       const seat = SEATING_BY_ID.get(it.seatId ?? '');
       if (!seat) return { k: '', parts: [] };
       if (player.seat?.seatId === seat.id) {
-        const use = seat.game ? 'Play Minesweeper' : '';
-        return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), ...(use ? [key('E', use), key('W A S D', 'Get up')] : [key('E', 'Get up')])] };
+        if (seat.shell) return { k: `${seat.id}|sitting|shell`, parts: [title(seat.label), aside('sitting'), key('E', 'Open the shell'), key('W A S D', 'Get up')] };
+        return { k: `${seat.id}|sitting`, parts: [title(seat.label), aside('sitting'), key('E', 'Get up')] };
       }
       const full = !freePlace(seat);
-      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.game ? aside('💣 Minesweeper on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
+      return { k: `${seat.id}|${full}`, parts: [title(seat.label), seat.shell ? aside('shell on the monitor') : '', full ? aside('no room') : key('E', 'Sit down')] };
     }
     case 'ladder': {
       const up = floorThere(1)?.name;
@@ -3565,7 +3569,6 @@ function sceneMotion(): SceneMotion {
     !!gunMotion.doing ||
     !!wandMotion.doing ||
     !!me.emoteId ||
-    arcade.animating ||
     readingNow() ||
     now < lookedUntil;
   return {
@@ -3667,10 +3670,10 @@ function drawFrame(dt: number, t: number) {
   hands.holdMug(mug);
   renderCaffeine(caffeine, secs);
   player.update(dt);
+  bossMonitor.update(store.screens.get(OFFICE_SHELL_ID));
   // Walked into a pole's hole: you grab the pole on your way down it.
   const hole = office.stack.polesGoDown() ? office.stack.poles().find((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < POLE.hole - 0.15) : undefined;
   if (hole && !climber.active && !trip && !player.seat && player.enabled && player.pos.y > -1.35 && player.pos.y < 0.6) climber.slide(hole);
-  arcade.update(camera, dt);
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
   me.root.position.copy(player.pos);
@@ -3739,6 +3742,9 @@ function drawFrame(dt: number, t: number) {
     glow.power = v.laptop.glow(glow.pos, glow.dir);
     if (glow.power > 0.01) screens++;
   }
+  const bossGlow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
+  bossGlow.power = bossMonitor.glow(bossGlow.pos, bossGlow.dir);
+  if (bossGlow.power > 0.01) screens++;
   sky.setScreens(screenGlows, screens, camPos);
   for (const a of idleAgents) if (a.view.vacancy.visible) a.model.update(dt, t);
   departures.update(dt, t);
@@ -3798,22 +3804,19 @@ function drawFrame(dt: number, t: number) {
     }),
   );
   pointToWaiting(now);
-  // Not while the camera's up at the boss's monitor, where the hands would cover the screen.
-  if (!arcade.zoomed) {
-    // Hands go on top of everything, so they never clip into a desk you walk up to. They have
-    // lights of their own, turned down to match wherever you're standing.
-    renderer.clearDepth();
-    hands.setLight(sky.lightAt(camera.position));
-    sky.shading(false);
-    // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
-    const autoClear = renderer.autoClear;
-    renderer.autoClear = false;
-    try {
-      effect.render(hands.scene, hands.camera);
-    } finally {
-      renderer.autoClear = autoClear;
-      sky.shading(true);
-    }
+  // Hands go on top of everything, so they never clip into a desk you walk up to. They have
+  // lights of their own, turned down to match wherever you're standing.
+  renderer.clearDepth();
+  hands.setLight(sky.lightAt(camera.position));
+  sky.shading(false);
+  // The outline effect draws without clearing, but with outlines turned off it is a plain render, which would.
+  const autoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  try {
+    effect.render(hands.scene, hands.camera);
+  } finally {
+    renderer.autoClear = autoClear;
+    sky.shading(true);
   }
   if (remaster.active) remaster.finishFrame();
   if (timing) gpuTimer.end();
@@ -4016,7 +4019,6 @@ const automation = createAutomation({
   player,
   caffeine,
   camera,
-  arcade,
   workerViews,
   departures,
   casualties,
