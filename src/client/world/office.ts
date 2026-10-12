@@ -355,8 +355,8 @@ function highBay(drop: number): THREE.Group {
 }
 
 /**
- * A window filling its hole in an outside wall: a black steel frame lining the hole, divided into
- * factory sashes by slim mullions and a transom, steel sills and real glass.
+ * A window hole in an outside wall, open to the night: a black steel frame lining the hole and
+ * steel sills, with no glass and no mullions across it.
  */
 function windowIn(o: Opening): THREE.Group {
   const g = new THREE.Group();
@@ -371,33 +371,8 @@ function windowIn(o: Opening): THREE.Group {
   g.add(mesh(box(w, F, D), frame, 0, o.y1 - F / 2, 0, false));
   g.add(mesh(box(w, F, D), frame, 0, o.y0 + F / 2, 0, false));
   for (const sx of [-1, 1]) g.add(mesh(box(F, h, D), frame, sx * (w / 2 - F / 2), midY, 0, false));
-  const lights = Math.max(2, Math.round(w / 1));
-  for (let i = 1; i < lights; i++) g.add(mesh(box(0.045, h - 2 * F, 0.07), frame, -w / 2 + F + ((w - 2 * F) * i) / lights, midY, 0, false));
-  g.add(mesh(box(w - 2 * F, 0.045, 0.07), frame, 0, o.y0 + F + (h - 2 * F) * 0.62, 0, false));
-  const pane = glassPane(w - 2 * F, h - 2 * F);
-  pane.position.y = midY;
-  g.add(pane);
   g.add(mesh(box(w + 0.2, 0.05, 0.2), sill, 0, o.y0 - 0.025, -(WALL_T / 2 + 0.08)));
   g.add(mesh(box(w + 0.2, 0.05, 0.16), sill, 0, o.y0 - 0.025, WALL_T / 2 + 0.06));
-  const at = onWall(o.wall, o.u);
-  g.position.set(at.x, 0, at.z);
-  g.rotation.y = at.rotY;
-  return g;
-}
-
-/** Rain on the outside of a window's glass (see sky.ts), kept out of the merged glazing so it keeps its UVs. */
-function wetPane(o: Opening, mat: THREE.Material): THREE.Group {
-  const F = 0.09;
-  const w = o.width - 2 * F;
-  const h = o.y1 - o.y0 - 2 * F;
-  const geo = new THREE.PlaneGeometry(w, h);
-  // The drops are the same size on every window, whatever its size.
-  const uv = geo.attributes.uv as THREE.BufferAttribute;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * w) / 0.9, (uv.getY(i) * h) / 0.9 + o.u * 0.37);
-  const pane = new THREE.Mesh(geo, mat);
-  pane.position.set(0, (o.y0 + o.y1) / 2, 0.05);
-  const g = new THREE.Group();
-  g.add(pane);
   const at = onWall(o.wall, o.u);
   g.position.set(at.x, 0, at.z);
   g.rotation.y = at.rotY;
@@ -479,43 +454,6 @@ function exitDoor(night: NightParts): { group: THREE.Group; door: Door } {
     z: at.z,
     open: 0,
     show: (k) => (hinge.rotation.y = -1.8 * k * k * (3 - 2 * k)),
-  };
-  return { group: mount(g, o), door };
-}
-
-/** Glass doors out to the balcony that slide apart, into the wall on either side, when someone comes up. */
-function balconyDoor(): { group: THREE.Group; door: Door } {
-  const o = BALCONY_DOOR;
-  const g = doorFrame(o);
-  const F = 0.08;
-  const half = (o.width - 2 * F) / 2;
-  const h = o.y1 - F;
-  const alu = toon('#727272');
-  const panels: [THREE.Group, number][] = [];
-  for (const side of [-1, 1]) {
-    const p = new THREE.Group();
-    const pw = half + 0.02;
-    for (const y of [0.04, h - 0.04]) p.add(mesh(box(pw, 0.08, 0.05), alu, 0, y, 0, false));
-    for (const x of [-pw / 2 + 0.035, pw / 2 - 0.035]) p.add(mesh(box(0.07, h, 0.05), alu, x, h / 2, 0, false));
-    const pane = glassPane(pw - 0.14, h - 0.16);
-    pane.position.y = h / 2;
-    p.add(pane);
-    p.add(mesh(box(0.03, 0.45, 0.08), toon(PALETTE.brushed), -side * (pw / 2 - 0.12), 1.05, 0, false));
-    const x0 = (side * half) / 2;
-    p.position.x = x0;
-    g.add(p);
-    panels.push([p, x0]);
-  }
-  const at = onWall(o.wall, o.u);
-  const door: Door = {
-    x: at.x,
-    y: 0,
-    z: at.z,
-    open: 0,
-    show: (k) => {
-      const e = k * k * (3 - 2 * k);
-      for (const [p, x0] of panels) p.position.x = x0 + Math.sign(x0) * e * (half + 0.04);
-    },
   };
   return { group: mount(g, o), door };
 }
@@ -1189,28 +1127,24 @@ export function buildOffice(): Office {
     windows: [],
     street: STREET_Y,
     clouds: toonUnique('#ffffff'),
-    wetGlass: new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, fog: false, visible: false }),
   };
 
   // A work cell under each desk cluster: a flat dark pad with a hairline border and orange corner
   // brackets. It stays under 0.012 m so the line stencils painted on it (factory-floor.ts) sit on top.
   group.add(workCells(night));
 
-  // Outside walls, with real windows you see out of and a door out.
+  // Outside walls, with open windows you see out of and a door out.
   const openings = [...WINDOWS, EXIT_DOOR, BALCONY_DOOR];
   buildWalls(group, colliders, openings, looks);
-  const glazing = new THREE.Group();
+  const frames = new THREE.Group();
   for (const o of WINDOWS) {
-    glazing.add(windowIn(o));
+    frames.add(windowIn(o));
     fixture(o.wall, o.u, (o.y0 + o.y1) / 2 - 0.03, o.width + 0.2, o.y1 - o.y0 + 0.12);
-    group.add(wetPane(o, night.wetGlass));
   }
-  group.add(mergeByMaterial(glazing));
+  group.add(mergeByMaterial(frames));
   const doors: Door[] = [];
-  // Out the glass doors on the south wall: the balcony.
-  const slider = balconyDoor();
-  group.add(slider.group);
-  doors.push(slider.door);
+  // Out the open doorway on the south wall: the balcony.
+  group.add(mount(doorFrame(BALCONY_DOOR), BALCONY_DOOR));
   fixture(BALCONY_DOOR.wall, BALCONY_DOOR.u, (BALCONY_DOOR.y1 + 0.1) / 2, BALCONY_DOOR.width + 0.2, BALCONY_DOOR.y1 + 0.1);
   buildBalcony(group, colliders, interactables, night);
 

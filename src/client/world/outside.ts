@@ -38,8 +38,6 @@ export interface NightParts {
   /** The neighbours' walls, whose windows light up at night. */
   windows: THREE.MeshToonMaterial[];
   clouds: THREE.MeshToonMaterial;
-  /** Rain running down the office windows. */
-  wetGlass: THREE.MeshBasicMaterial;
 }
 
 /** A bulb that glows `day` much by day and fully at night. */

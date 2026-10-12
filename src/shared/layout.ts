@@ -306,7 +306,7 @@ export const EXIT_STAIRS = {
   run: 0.34,
 } as const;
 
-/** Glass doors out to the balcony, on the south wall. They slide apart into the wall on either side. */
+/** The open doorway out to the balcony, on the south wall. */
 export const BALCONY_DOOR: Opening = { wall: 'south', u: -4, width: 3, y0: 0, y1: 2.5 };
 /** The balcony, hanging over the garage entrance. */
 export const BALCONY = { minX: -10.5, maxX: 2.5, minZ: FLOOR.maxZ + WALL_T, maxZ: FLOOR.maxZ + WALL_T + 3.4 } as const;
