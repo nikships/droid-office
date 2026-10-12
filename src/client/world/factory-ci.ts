@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SCREEN_BLACK } from './screen';
 import { capabilityOf, type FactoryConnection } from '../../shared/factory';
 import { CI_KIND_LABEL, ciForFloor, ciOutcome, ciTotals, groupCi, runTime, triggerLabel, type CiOutcome, type CiRepoGroup, type FactoryCiState } from '../../shared/factory-ci';
 import { BOARDS } from '../../shared/layout';
@@ -118,7 +119,7 @@ export class CiBoardTexture {
     const g = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
-    g.fillStyle = '#050505';
+    g.fillStyle = SCREEN_BLACK;
     g.fillRect(0, 0, W, H);
     g.textBaseline = 'alphabetic';
     this.header(i, W);

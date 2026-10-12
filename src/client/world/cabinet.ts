@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SCREEN_BLACK, screenMaterial } from './screen';
 import { ANISOTROPY } from './texture-quality';
 import { CABINET, FLOOR } from '../../shared/layout';
 import { mesh, roundedBox, toon } from './toon';
@@ -99,7 +100,7 @@ export function buildCabinet(): CabinetModel {
   const marqueeTex = new THREE.CanvasTexture(marquee);
   marqueeTex.colorSpace = THREE.SRGBColorSpace;
   marqueeTex.anisotropy = ANISOTROPY;
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(inner, 0.25), new THREE.MeshBasicMaterial({ map: marqueeTex, toneMapped: false }));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(inner, 0.25), screenMaterial({ map: marqueeTex }));
   sign.position.set(0, 1.765, 0.192);
   group.add(sign);
   // Canvas text only picks up the office's font once it has loaded.
@@ -115,7 +116,7 @@ export function buildCabinet(): CabinetModel {
   const bezel = mesh(new THREE.PlaneGeometry(inner - 0.04, 0.5), toon('#050505'), 0, (bv + tv) / 2 + out.y * 0.002, (bu + tu) / 2 + out.x * 0.002, false);
   bezel.rotation.x = -LEAN;
   group.add(bezel);
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.42), new THREE.MeshBasicMaterial({ color: '#070b14', toneMapped: false }));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.42), screenMaterial());
   screen.position.set(0, (bv + tv) / 2 + out.y * 0.005, (bu + tu) / 2 + out.x * 0.005);
   screen.rotation.x = -LEAN;
   group.add(screen);
@@ -151,7 +152,7 @@ export function buildCabinet(): CabinetModel {
 /** The marquee: the game's name in tracked mono on a dark lit panel, BLOCK in Factory orange, under a hairline. */
 function paintMarquee(c: HTMLCanvasElement) {
   const g = c.getContext('2d')!;
-  g.fillStyle = '#050505';
+  g.fillStyle = SCREEN_BLACK;
   g.fillRect(0, 0, c.width, c.height);
   g.strokeStyle = 'rgba(255, 255, 255, .18)';
   g.lineWidth = 3;

@@ -5,6 +5,7 @@ import { mesh, roundedBox, toon, toonUnique } from './toon';
 import { propReady, useProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
 import { glyphFlat } from './glyph3d';
+import { SCREEN_BLACK, screenMaterial } from './screen';
 
 /**
  * The terminal's colors: a Factory-dark ground with an orange cursor. The ANSI palette keeps its
@@ -113,7 +114,7 @@ function activeWindow(s: ScreenState, width: number, height: number, preferredRo
 }
 
 export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number, s: ScreenState | undefined, placeholder?: string, zoomRows = 0) {
-  ctx.fillStyle = TERM_THEME.background;
+  ctx.fillStyle = SCREEN_BLACK;
   ctx.fillRect(0, 0, w, h);
   if (!s) {
     ctx.fillStyle = '#6c7086';
@@ -145,10 +146,10 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     for (const [text, fgc, bgc, flags] of runs) {
       const len = [...text].length;
       let fg = color(fgc, TERM_THEME.foreground);
-      let bg = bgc < 0 ? null : color(bgc, TERM_THEME.background);
+      let bg = bgc < 0 ? null : color(bgc, SCREEN_BLACK);
       if (flags & FLAG_INVERSE) {
         const tmp = fg;
-        fg = bg ?? TERM_THEME.background;
+        fg = bg ?? SCREEN_BLACK;
         bg = tmp;
       }
       const px = left + x * charW;
@@ -249,7 +250,7 @@ export class Laptop {
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.anisotropy = ANISOTROPY;
     this.texture.minFilter = THREE.LinearMipmapLinearFilter;
-    this.screenMat = new THREE.MeshBasicMaterial({ map: this.texture, toneMapped: false });
+    this.screenMat = screenMaterial({ map: this.texture });
     // The procedural laptop below is the stand-in: it shows until the MacBook GLBs land
     // (see maybeSwap), the way every prop keeps a procedural version. The GLBs are
     // authored in this same space, so the swap changes nothing but the meshes.

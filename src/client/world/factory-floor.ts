@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { screenMaterial } from './screen';
 import type { WallId } from '../../shared/decor';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
 import { eyebrow, GREEN, HAIR, INK, LED_ROWS, LIGHT, MUTED, mergeFaces, mono, ORANGE, ORANGE_BRIGHT, paintedTexture, plateFace, sans, SignAtlas, tickerTexture, tracked, type AtlasRegion } from './factory-paint';
@@ -402,7 +403,7 @@ export function dressFactoryFloor(kit: DressingKit): Dressing {
   const visible = (tickerLen / TICKER.height) * LED_ROWS;
   ticker.tex.repeat.x = visible / ticker.columns;
   add(new THREE.BoxGeometry(tickerLen + 0.1, TICKER.height + 0.1, 0.06), plate, wallMatrix('west', tickerU, TICKER.y, 0.03));
-  const tickerFace = new THREE.Mesh(new THREE.PlaneGeometry(tickerLen, TICKER.height), new THREE.MeshBasicMaterial({ map: ticker.tex, color: '#ffffff' }));
+  const tickerFace = new THREE.Mesh(new THREE.PlaneGeometry(tickerLen, TICKER.height), screenMaterial({ map: ticker.tex }));
   tickerFace.name = 'factory-ticker';
   place(tickerFace, wallMatrix('west', tickerU, TICKER.y, 0.062));
   root.add(tickerFace);

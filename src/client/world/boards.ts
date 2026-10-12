@@ -10,14 +10,15 @@ import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
 import { paintGlyph, track } from './toon';
+import { SCREEN_BLACK } from './screen';
 
 /** The boards are laid out on this many pixels; the canvas holds SCREEN_SCALE times as many. */
 const BOARD_W = 1200;
 const BOARD_H = 600;
 
-// Factory product UI on the wall: a near-black screen, raised panels with hairline edges and square
+// Factory product UI on the wall: an OLED-black screen, raised panels with hairline edges and square
 // corners, mono uppercase labels, orange only for indexes and what's live, green and red only for status.
-const BG = '#050505';
+const BG = SCREEN_BLACK;
 const PANEL = '#101010';
 const PANEL_HOT = '#181818';
 const HAIR = 'rgba(255, 255, 255, .1)';
@@ -34,7 +35,7 @@ export const NOTE_COLORS = ['#111111', '#121212', '#101010', '#131313', '#121212
 /** The pin heads holding cards up: brushed steel, every fourth one Factory orange. */
 export const PINS = ['#ee6018', '#8c8c8c', '#8c8c8c', '#8c8c8c'];
 
-/** A screen's backdrop: near-black with a faint grid of hairlines, like Factory's product shots. */
+/** A screen's backdrop: OLED black with a faint grid of hairlines, like Factory's product shots. */
 function backdrop(g: CanvasRenderingContext2D) {
   g.fillStyle = BG;
   g.fillRect(0, 0, BOARD_W, BOARD_H);

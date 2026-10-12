@@ -5,6 +5,7 @@ import { MONO, SANS } from '../fonts';
 import { withToken } from '../token';
 import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
 import { paintGlyph, track } from './toon';
+import { SCREEN_BLACK } from './screen';
 
 // The Whiteboard on the east wall (docs/whiteboard.md, "On the wall"): the floor's cards as a grid of
 // thumbnails, or the selected card blown up at the region the owner last looked at in the window. Both
@@ -34,7 +35,7 @@ export const MIN_REGION_W = 320;
 export const OWNER_NAME = 'You';
 export const OWNER_COLOR = '#ee6018';
 
-const BG = '#050505';
+const BG = SCREEN_BLACK;
 const PANEL = '#101010';
 const HAIR = 'rgba(255, 255, 255, .1)';
 const HAIR_STRONG = 'rgba(255, 255, 255, .18)';

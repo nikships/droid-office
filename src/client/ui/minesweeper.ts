@@ -1,3 +1,5 @@
+import { SCREEN_BLACK } from '../world/screen';
+
 export const W = 960;
 export const H = 540;
 
@@ -111,7 +113,7 @@ export class Minesweeper {
    * game that hasn't started.
    */
   paint(g: CanvasRenderingContext2D, idle: boolean) {
-    g.fillStyle = '#1b2433';
+    g.fillStyle = SCREEN_BLACK;
     g.fillRect(0, 0, W, H);
     g.textAlign = 'center';
     g.textBaseline = 'middle';

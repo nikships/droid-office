@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SCREEN_BLACK, screenMaterial } from './screen';
 import { DROID_RACK, ROBOT_CELL } from '../../shared/layout';
 import { MONO } from '../fonts';
 import type { Dressing, DressingKit } from './factory-floor';
@@ -245,7 +246,7 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
         leds.push({ mat: ledMat, blink: c.blink, phase: i * 1.7 });
 
         const { tex, ctx } = canvas(384, 148);
-        const screen = new THREE.Mesh(new THREE.PlaneGeometry(READOUT.w, READOUT.h), flat(new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false })));
+        const screen = new THREE.Mesh(new THREE.PlaneGeometry(READOUT.w, READOUT.h), flat(screenMaterial({ map: tex })));
         screen.position.set(READOUT.x, READOUT.y, READOUT.z + 0.0004);
         model.add(screen);
         const r = { ctx, tex, data: c, cpu: c.cpu };
@@ -302,7 +303,8 @@ function buildRack(kit: DressingKit, waiting: Waiting[], updates: ((t: number, d
 
 function paintReadout(ctx: CanvasRenderingContext2D, cpu: number | undefined, mem: string, dsk: string) {
   const { width: w, height: h } = ctx.canvas;
-  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = SCREEN_BLACK;
+  ctx.fillRect(0, 0, w, h);
   ctx.font = `500 30px ${MONO}`;
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#e6e6e6';

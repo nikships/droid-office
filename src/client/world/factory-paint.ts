@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { loadFonts, MONO, SANS } from '../fonts';
 import { ANISOTROPY, fitScale } from './texture-quality';
+import { SCREEN_BLACK } from './screen';
 
 // Canvas painting for the Factory wayfinding: the brand's palette and type, a sign atlas that puts
 // every small plate on one texture, and the LED ticker's dot matrix.
@@ -242,7 +243,7 @@ export function tickerTexture(segments: { text: string; color: string }[]): { te
     return c;
   };
   const lit = dots('#000', 'rgba(0,0,0,0)');
-  const unlit = dots('#1d0d05', BASE);
+  const unlit = dots(null, SCREEN_BLACK);
 
   const draw = () => {
     lctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -281,7 +282,7 @@ export function tickerTexture(segments: { text: string; color: string }[]): { te
     }
     hctx.globalCompositeOperation = 'destination-over';
     const unlitPattern = hctx.createPattern(unlit, 'repeat');
-    hctx.fillStyle = unlitPattern ?? BASE;
+    hctx.fillStyle = unlitPattern ?? SCREEN_BLACK;
     hctx.fillRect(0, 0, hi.width, hi.height);
     hctx.globalCompositeOperation = 'source-over';
     tex.needsUpdate = true;

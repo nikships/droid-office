@@ -1,4 +1,5 @@
 import { CLEAR_POINTS, GAME, WELL_COLS, WELL_ROWS, levelFor, scoreText, type CabinetFrame, type HighScore, type PlayState } from '../../shared/cabinet';
+import { SCREEN_BLACK } from '../world/screen';
 
 /**
  * BLOCKFALL, the game on the arcade cabinet (ui/cabinet.ts): falling blocks with the usual rotation
@@ -406,29 +407,22 @@ const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 const CELL = 27;
 const X0 = (W - COLS * CELL) / 2;
 const Y0 = 36;
-const INK = '#0b1320';
 const TEXT = '#f1ede4';
 const DIM = '#8d99ae';
 const NEON = '#ff5ecb';
 
 /** Draws the whole screen. */
 export function paintScreen(g: CanvasRenderingContext2D, v: ScreenView) {
-  const bg = g.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#1b1d3a');
-  bg.addColorStop(1, INK);
-  g.fillStyle = bg;
+  g.fillStyle = SCREEN_BLACK;
   g.fillRect(0, 0, W, H);
   g.textBaseline = 'middle';
   if (v.frame) paintGame(g, v.frame, v);
   else paintAttract(g, v);
-  // Scan lines, like the tube it would have had.
-  g.fillStyle = 'rgba(0, 0, 0, 0.12)';
-  for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 1.5);
 }
 
 function paintGame(g: CanvasRenderingContext2D, f: CabinetFrame, v: ScreenView) {
   // The well, in a glowing frame.
-  g.fillStyle = '#070b14';
+  g.fillStyle = SCREEN_BLACK;
   g.fillRect(X0, Y0, COLS * CELL, WELL_ROWS * CELL);
   g.strokeStyle = NEON;
   g.lineWidth = 4;
@@ -563,7 +557,7 @@ function ghost(g: CanvasRenderingContext2D, x: number, y: number, size: number) 
 
 /** A piece in a little box, centered on (cx, cy). */
 function preview(g: CanvasRenderingContext2D, kind: number, cx: number, cy: number) {
-  g.fillStyle = '#070b14';
+  g.fillStyle = SCREEN_BLACK;
   g.beginPath();
   g.roundRect(cx - 62, cy - 36, 124, 72, 12);
   g.fill();
@@ -579,7 +573,7 @@ function preview(g: CanvasRenderingContext2D, kind: number, cx: number, cy: numb
 
 /** Big words across the well, and a line under them. */
 function banner(g: CanvasRenderingContext2D, title: string, sub: string, color: string) {
-  g.fillStyle = 'rgba(7, 11, 20, 0.72)';
+  g.fillStyle = 'rgba(0, 0, 0, 0.72)';
   g.fillRect(X0, Y0, COLS * CELL, WELL_ROWS * CELL);
   g.fillStyle = color;
   g.beginPath();

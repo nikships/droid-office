@@ -56,6 +56,8 @@ uniform float dither;
 varying vec2 vUv;
 
 vec3 curve( vec3 c ) {
+  // AgX's log floor is slightly above zero. A switched-off OLED pixel stays switched off.
+  if ( max( c.r, max( c.g, c.b ) ) <= 0.0 ) return vec3( 0.0 );
   if ( toneMap == 0 ) return NeutralToneMapping( c );
   if ( toneMap == 1 ) return AgXToneMapping( c );
   if ( toneMap == 2 ) return ACESFilmicToneMapping( c );
@@ -91,7 +93,7 @@ void main() {
   }
   c = srgb( c );
   // Half a step of 8-bit noise, so the dark night sky doesn't band on an 8-bit canvas. Not grain: too faint to see.
-  if ( dither > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
+  if ( dither > 0.0 && max( c.r, max( c.g, c.b ) ) > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
   gl_FragColor = vec4( c, 1.0 );
 }
 `;
@@ -119,7 +121,7 @@ void main() {
     vec3 k = -amp / mix( 8.0, 5.0, sharpness );
     c = ( c + ( n + s + e + w ) * k ) / ( 1.0 + 4.0 * k );
   }
-  if ( dither > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
+  if ( dither > 0.0 && max( c.r, max( c.g, c.b ) ) > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
   gl_FragColor = vec4( max( c, 0.0 ), 1.0 );
 }
 `;

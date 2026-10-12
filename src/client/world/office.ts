@@ -57,6 +57,7 @@ import { buildCoffeeMachine } from './coffee';
 import { dressFactoryFloor } from './factory-floor';
 import { placeFactoryProps } from './factory-props';
 import { glassRoomTexture } from './glass-room';
+import { screenMaterial } from './screen';
 
 export interface Collider {
   minX: number;
@@ -1158,7 +1159,7 @@ function wallBoard(width: number, height: number, frameColor: string): { group: 
   const frame = mesh(roundedBox(width + 0.3, 0.12, height + 0.3, 0.1), toon(frameColor), 0, 0, 0);
   frame.rotation.x = Math.PI / 2;
   group.add(frame);
-  const faceMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+  const faceMat = screenMaterial();
   const face = new THREE.Mesh(new THREE.PlaneGeometry(width, height), faceMat);
   face.position.z = 0.07;
   group.add(face);
@@ -1353,7 +1354,7 @@ export function buildOffice(): Office {
   const tvGroup = new THREE.Group();
   tvGroup.add(mesh(roundedBox(TV.width + 0.3, 0.14, TV.height + 0.3, 0.03), toon(PALETTE.ink), 0, 0, 0));
   (tvGroup.children[0] as THREE.Mesh).rotation.x = Math.PI / 2;
-  const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(TV.width, TV.height), new THREE.MeshBasicMaterial({ color: '#1b1d2e' }));
+  const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(TV.width, TV.height), screenMaterial());
   tvScreen.position.z = 0.08;
   tvGroup.add(tvScreen);
   tvGroup.position.set(TV.x - 0.1, TV.y, TV.z);
@@ -1369,9 +1370,9 @@ export function buildOffice(): Office {
   bezel.rotation.x = Math.PI / 2;
   computeWall.add(bezel);
   const fleetWidth = CW.width - CW.machineWidth - CW.gap;
-  const machineScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.machineWidth, CW.height), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  const machineScreen = new THREE.Mesh(new THREE.PlaneGeometry(CW.machineWidth, CW.height), screenMaterial());
   machineScreen.position.set(-CW.width / 2 + CW.machineWidth / 2, 0, 0.06);
-  const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(fleetWidth, CW.height), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  const fleetScreen = new THREE.Mesh(new THREE.PlaneGeometry(fleetWidth, CW.height), screenMaterial());
   fleetScreen.position.set(CW.width / 2 - fleetWidth / 2, 0, 0.06);
   // The orange seam between the two screens.
   computeWall.add(machineScreen, fleetScreen, mesh(box(0.012, CW.height - 0.3, 0.004), toon(PALETTE.accent, { emissive: PALETTE.accent }), -CW.width / 2 + CW.machineWidth + CW.gap / 2, 0, 0.056, false));
@@ -1710,7 +1711,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
   frame.rotation.y = Math.PI;
   group.add(frame);
   // A decorative panel on the glass beside the door.
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(0.62), map: glassRoomTexture('sign') }));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.96), screenMaterial({ color: new THREE.Color().setScalar(0.62), map: glassRoomTexture('sign') }));
   sign.position.set((R.minX + R.door.x0) / 2 + 0.01, 1.45, R.minZ - T / 2 - 0.03);
   sign.rotation.y = Math.PI;
   group.add(sign);
@@ -1867,7 +1868,7 @@ function buildLoft(group: THREE.Group, colliders: Collider[], interactables: Int
   deskBody.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), toon('#eeeeee'), 0.9, 0.89, 0.15));
   desk.add(mergeByMaterial(deskBody));
   // Minesweeper plays on it (ui/arcade.ts).
-  const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), new THREE.MeshBasicMaterial({ color: '#101010' }), 0, 1.18, -0.165, false);
+  const screen = mesh(new THREE.PlaneGeometry(0.8, 0.45), screenMaterial(), 0, 1.18, -0.165, false);
   desk.add(screen);
   const plate = textPlane('BOSS', { bg: '#0a0a0a', color: '#ee6018', border: '#2f2f2f', size: 48 });
   plate.scale.multiplyScalar(0.55);

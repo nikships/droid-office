@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SANS, MONO, loadFonts } from '../fonts';
 import { ANISOTROPY } from './texture-quality';
 import { paintGlyph, track } from './toon';
+import { SCREEN_BLACK } from './screen';
 
 /** Static artwork for the unused room's screens. No state or interactions. */
 export function glassRoomTexture(kind: 'board' | 'sign'): THREE.CanvasTexture {
@@ -16,7 +17,7 @@ export function glassRoomTexture(kind: 'board' | 'sign'): THREE.CanvasTexture {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = ANISOTROPY;
   const paint = () => {
-    g.fillStyle = board ? '#050505' : '#0a0a0a';
+    g.fillStyle = SCREEN_BLACK;
     g.fillRect(0, 0, W, H);
     g.textBaseline = 'alphabetic';
     if (!board) {

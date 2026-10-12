@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SCREEN_BLACK } from './screen';
 import type { FactoryState } from '../../shared/factory';
 import { compactCredits, isLive, latestArtifacts, artifactLabel, sessionWhere, spanText, type FactorySession } from '../../shared/factory-sessions';
 import { MONO } from '../fonts';
@@ -71,7 +72,7 @@ export class FactoryTvTexture {
 
   private background() {
     const g = this.g;
-    g.fillStyle = '#060606';
+    g.fillStyle = SCREEN_BLACK;
     g.fillRect(0, 0, W, H);
     g.fillStyle = 'rgba(255, 255, 255, .035)';
     for (let y = 24; y < H; y += 48) for (let x = 24; x < W; x += 48) g.fillRect(x, y, 3, 3);

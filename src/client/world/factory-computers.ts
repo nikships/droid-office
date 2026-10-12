@@ -8,6 +8,7 @@ import type { RackCube } from './factory-props';
 import { fmtGb, loadColor, officeFull } from './machine';
 import { ANISOTROPY } from './texture-quality';
 import { paintGlyph, track } from './toon';
+import { SCREEN_BLACK } from './screen';
 
 // The compute wall on the west wall, between the exit door and the kitchen: this machine on the
 // left screen (CPU, memory and workers, as the machine monitor showed them) and every Factory Droid
@@ -23,7 +24,7 @@ const AMBER = '#f2b84b';
 const RED = '#ef4444';
 const HAIR = 'rgba(255, 255, 255, .12)';
 const PANEL = '#0e0e0e';
-const BG = '#050505';
+const BG = SCREEN_BLACK;
 
 /** 400 px a meter, like the machine monitor was. */
 const PX_PER_M = 400;

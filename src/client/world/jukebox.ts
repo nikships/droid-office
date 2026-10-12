@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SCREEN_BLACK, screenMaterial } from './screen';
 import { ANISOTROPY } from './texture-quality';
 import { JUKEBOX } from '../../shared/layout';
 import { mesh, roundedBox, textSprite, toon, toonUnique } from './toon';
@@ -54,7 +55,7 @@ export function buildJukebox(): JukeboxView {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = ANISOTROPY;
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.41), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.41), screenMaterial({ map: tex }));
   screen.position.set(0, H - r + 0.02, front + 0.005);
   group.add(screen);
 
@@ -83,7 +84,7 @@ export function buildJukebox(): JukeboxView {
   let shown = '';
   const paint = (title: string) => {
     const g = canvas.getContext('2d')!;
-    g.fillStyle = '#050505';
+    g.fillStyle = SCREEN_BLACK;
     g.fillRect(0, 0, 512, 256);
     g.strokeStyle = 'rgba(255, 255, 255, .18)';
     g.lineWidth = 3;
