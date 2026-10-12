@@ -182,9 +182,11 @@ const LID_LEAN = 0.08;
 const SPACE_BLACK = '#1c1c1e';
 /**
  * The MacBook GLBs' own materials, by name, in Factory tones. Its mirrored badge on the lid goes
- * the shell's color, so the pinwheel decal (see pinwheelDecal) is the only mark on the back.
+ * the shell's color, so the pinwheel decal (see pinwheelDecal) is the only mark on the back. The
+ * speaker grilles' hole texture is white between the holes, so tinting it the shell's color
+ * keeps the deck one finish with only the holes darker.
  */
-const RETONE: Record<string, string> = { MacbookBody: SPACE_BLACK, Chrome: SPACE_BLACK, MacbookPad: '#2a2a2a' };
+const RETONE: Record<string, string> = { MacbookBody: SPACE_BLACK, Chrome: SPACE_BLACK, MacbookPad: '#2a2a2a', MacbookGrille: SPACE_BLACK };
 const retoned = new Map<THREE.Material, THREE.Material>();
 
 /** Swaps a freshly installed GLB's materials for their Factory-toned copies (made once, shared by every laptop). */
@@ -256,13 +258,13 @@ export class Laptop {
     // authored in this same space, so the swap changes nothing but the meshes.
     const shell = toon(SPACE_BLACK);
     const dark = toon('#0a0a0a');
-    // Base with keyboard
+    // Base with keyboard and trackpad, where the GLB has them
     this.root.add(this.baseModel);
-    this.baseModel.add(mesh(roundedBox(0.78, 0.035, 0.52, 0.04), shell, 0, 0.018, 0.02));
-    this.baseModel.add(mesh(new THREE.BoxGeometry(0.66, 0.006, 0.24), dark, 0, 0.037, 0.0, false));
-    this.baseModel.add(mesh(new THREE.BoxGeometry(0.2, 0.004, 0.11), toon('#2a2a2a'), 0, 0.037, 0.19, false));
-    // Lid, hinged along the back edge
-    this.lid.position.set(0, 0.035, -0.24);
+    this.baseModel.add(mesh(roundedBox(0.78, 0.026, 0.52, 0.02), shell, 0, 0.017, 0.02));
+    this.baseModel.add(mesh(new THREE.BoxGeometry(0.612, 0.004, 0.243), dark, 0, 0.029, -0.0865, false));
+    this.baseModel.add(mesh(new THREE.BoxGeometry(0.356, 0.004, 0.202), toon('#2a2a2a'), 0, 0.029, 0.163, false));
+    // Lid, hinged along the deck's top back edge
+    this.lid.position.set(0, 0.03, -0.24);
     this.root.add(this.lid);
     this.lid.add(this.lidModel);
     const lidShell = mesh(roundedBox(0.78, 0.025, 0.5, 0.04), shell, 0, 0.25, 0);

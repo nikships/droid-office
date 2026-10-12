@@ -29,10 +29,14 @@ import json
 import math
 import os
 import shutil
+import struct
 import sys
+import tempfile
+import zlib
 
 import bmesh
 import bpy
+import numpy as np
 from mathutils import Matrix, Vector
 
 # --------------------------------------------------------------------------------------
@@ -375,55 +379,454 @@ def build_materials() -> None:
 
 
 # --------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------
-# the MacBook’s two halves
-#------------------------------------------------------------------------------
+# the MacBook's two halves
+# --------------------------------------------------------------------------------------
 
 
-@prop("macbook-base", "desk", recenter=False)
-def build_macbook_base():
-    """MacBook Pro lower half: a space-grey unibody deck on rubber strips, a black
-    keyboard tray with staggered rows and a wide spacebar, speaker grilles, a glass
-    trackpad in a seam, side ports, and the hinge barrel the lid turns in.
+# MacBook Pro 16 proportions on the laptop's 0.78 x 0.52 deck, about 2.2x life size. The base
+# is authored in the laptop's own space (y up, +z toward whoever sits at it), so the lid's hinge
+# pivot in src/client/world/laptop.ts, (y 0.03, z -0.24), is the deck's top back edge.
+MAC_DECK = {"half_w": 0.39, "back": -0.24, "front": 0.28, "corner": 0.02, "bottom": 0.004, "top": 0.030}
+# The deck's side profile from the bottom face up, as (y, inset): a generous round under the
+# slab, straight flanks, and a tight round on the top edge.
+MAC_PROFILE = [
+    (0.0040, 0.0058), (0.0042, 0.0040), (0.0048, 0.0024), (0.0059, 0.0011), (0.0074, 0.0003), (0.0088, 0.0),
+    (0.0286, 0.0), (0.0295, 0.0002), (0.0300, 0.0009),
+]
+# The recessed keyboard well and the keys standing in it, tops flush with the deck.
+MAC_WELL = {"half_w": 0.306, "back": -0.208, "front": 0.035, "floor": 0.026, "corner": 0.006}
+KEY_PITCH = (0.0415, 0.0388)  # one key unit across (x) and down (z)
+KEY_GAP = 0.0068
+KEY_CORNER = 0.0034
+KEY_CHAMFER = 0.0006
+MAC_PAD = {"half_w": 0.178, "back": 0.062, "front": 0.264, "corner": 0.013, "seam": 0.0015}
 
-    Authored in the laptop's own space (deck z -0.24..0.28, strips on y=0), so the GLB
-    drops onto the desk with no offset and the hinge lands under the lid's pivot.
+# The legends are SF Pro, the face Apple prints on the keys; the few glyphs it lacks come
+# from Apple Symbols. Both ship with macOS, which is where this generator runs.
+LEGEND_FONTS = {"sf": "/System/Library/Fonts/SFNS.ttf", "symbols": "/System/Library/Fonts/Apple Symbols.ttf"}
+SYMBOL_GLYPHS = set("☼☀⊞⌕🎤🌐")
+LEGEND_SIZE = {"letter": 0.0094, "pair": 0.0064, "word": 0.0047, "icon": 0.0070, "fkey": 0.0038, "mod": 0.0064, "arrow": 0.0046}
+# Brightness of the backlight in the glow atlas: the legends, and the light that leaks round
+# each cap onto the well floor. Kept low: a lit keyboard in a bright office, not a gaming rig.
+BACKLIGHT = {"legend": 0.78, "leak": 0.42, "falloff": 0.0011}
+ATLAS_WIDTH = 2048
+
+
+def _letters(chars):
+    return [(1, [(c, "c", "letter")]) for c in chars]
+
+
+def _pairs(pairs):
+    """Two-legend keys: the shifted character over the plain one."""
+    return [(1, [(p[0], "t", "pair"), (p[1], "b", "pair")]) for p in pairs]
+
+
+FN_ICONS = ["☼", "☀", "⊞", "⌕", "🎤", "☾", "◀◀", "▶‖", "▶▶", "◁", "◀)", "◀))"]
+
+# The US layout, one row per entry, each key (width in key units, legends). A legend is
+# (text, where, size): where is c (centre), t/b (centred high/low) or tl/tr/bl/br (corners).
+# Every row is 14.5 units wide; "arrows" is the inverted-T cluster, three units.
+KEY_ROWS = [
+    [(1.5, [("esc", "bl", "word")])]
+    + [(1, [(icon, "t", "icon"), (f"F{i + 1}", "b", "fkey")]) for i, icon in enumerate(FN_ICONS)]
+    + [(1, [])],  # Touch ID
+    _pairs(["~`", "!1", "@2", "#3", "$4", "%5", "^6", "&7", "*8", "(9", ")0", "_-", "+="]) + [(1.5, [("delete", "br", "word")])],
+    [(1.5, [("tab", "bl", "word")])] + _letters("QWERTYUIOP") + _pairs(["{[", "}]", "|\\"]),
+    [(1.75, [("•", "tl", "word"), ("caps lock", "bl", "word")])] + _letters("ASDFGHJKL") + _pairs([":;", "\"'"])
+    + [(1.75, [("return", "br", "word")])],
+    [(2.25, [("⇧", "tl", "mod"), ("shift", "bl", "word")])] + _letters("ZXCVBNM") + _pairs(["<,", ">.", "?/"])
+    + [(2.25, [("⇧", "tr", "mod"), ("shift", "br", "word")])],
+    [
+        (1, [("fn", "tr", "word"), ("🌐", "bl", "icon")]),
+        (1, [("⌃", "tr", "mod"), ("control", "br", "word")]),
+        (1, [("⌥", "tr", "mod"), ("option", "br", "word")]),
+        (1.25, [("⌘", "tr", "mod"), ("command", "br", "word")]),
+        (5, []),
+        (1.25, [("⌘", "tl", "mod"), ("command", "bl", "word")]),
+        (1, [("⌥", "tl", "mod"), ("option", "bl", "word")]),
+        (3, "arrows"),
+    ],
+]
+
+
+def keyboard_keys():
+    """Every key cap as (name, x0, x1, z0, z1, legends), laid out in the well from the back row."""
+    ux, uz = KEY_PITCH
+    left = -14.5 * ux / 2
+    pad_z = (MAC_WELL["front"] - MAC_WELL["back"] - len(KEY_ROWS) * uz) / 2
+    g = KEY_GAP / 2
+    keys = []
+    for r, row in enumerate(KEY_ROWS):
+        z0 = MAC_WELL["back"] + pad_z + r * uz
+        z1 = z0 + uz
+        x = left
+        for c, (width, legends) in enumerate(row):
+            if legends == "arrows":
+                mid = (z0 + z1) / 2
+                half = 0.0012  # the narrow gap between the stacked up and down keys
+                keys.append(("key_left", x + g, x + ux - g, mid + half, z1 - g, [("◀", "c", "arrow")]))
+                keys.append(("key_up", x + ux + g, x + 2 * ux - g, z0 + g, mid - half, [("▲", "c", "arrow")]))
+                keys.append(("key_down", x + ux + g, x + 2 * ux - g, mid + half, z1 - g, [("▼", "c", "arrow")]))
+                keys.append(("key_right", x + 2 * ux + g, x + 3 * ux - g, mid + half, z1 - g, [("▶", "c", "arrow")]))
+            else:
+                keys.append((f"key{r}_{c}", x + g, x + width * ux - g, z0 + g, z1 - g, legends))
+            x += width * ux
+    return keys
+
+
+def rrect(x0, x1, z0, z1, r, y, k=2):
+    """A rounded rectangle at height y, `k` segments a corner, wound clockwise seen from above."""
+    pts = []
+    for cx, cz, start in ((x1 - r, z1 - r, 0), (x0 + r, z1 - r, 90), (x0 + r, z0 + r, 180), (x1 - r, z0 + r, 270)):
+        for i in range(k + 1):
+            a = math.radians(start + 90 * i / k)
+            pts.append((cx + r * math.cos(a), y, cz + r * math.sin(a)))
+    return pts
+
+
+def loft(name, rings, bottom=True, top=True, uv=None, smooth_sides=True, recalc=False):
+    """A solid through stacked rounded-rectangle rings (bottom first), outward-facing.
+
+    `uv(kind, co)` gives each face corner a UV, with kind "top", "side" or "bottom"; without it
+    every UV is zero. Sides are smooth, caps flat, and the edges round each cap stay sharp so
+    the flat top never borrows the flanks' normals. `recalc` re-derives the winding, for a
+    solid lofted along some axis other than +y.
     """
-    parts = []
-    parts.append((attach(smooth(box("deck", (0.78, 0.032, 0.52), loc=(0, 0.021, 0.02), bevel_w=0.012, bevel_seg=3)), M["mac_body"]), None))
-    for tag, z in (("rear", -0.18), ("front", 0.22)):
-        parts.append((attach(box(f"strip_{tag}", (0.6, 0.005, 0.025), loc=(0, 0.0025, z), bevel_w=0.002), M["rubber"]), None))
-    parts.append((attach(box("kb_tray", (0.72, 0.010, 0.25), loc=(0, 0.035, -0.045), bevel_w=0.006), M["plastic_black"]), None))
-    rows, cols, pitch = 5, 14, 0.047
-    for r in range(rows):
-        for c in range(cols):
-            if r == rows - 1 and 4 <= c <= 9:
-                continue  # the spacebar covers the bottom middle
-            key = box(f"key{r}_{c}", (0.041, 0.008, 0.037),
-                      loc=((c - (cols - 1) / 2) * pitch + r * 0.005, 0.044, -0.045 + (r - 2) * 0.044),
-                      bevel_w=0.002, bevel_seg=1)
-            parts.append((attach(key, M["mac_key"]), None))
-    parts.append((attach(box("spacebar", (6 * pitch - 0.006, 0.008, 0.037), loc=((rows - 1) * 0.005, 0.044, 0.043), bevel_w=0.002, bevel_seg=1), M["mac_key"]), None))
+    bm = bmesh.new()
+    layer = bm.loops.layers.uv.new("UVMap")
+    vs = [[bm.verts.new(p) for p in ring] for ring in rings]
+    n = len(rings[0])
+    kinds = {}
+    for i in range(len(rings) - 1):
+        for j in range(n):
+            k = (j + 1) % n
+            f = bm.faces.new((vs[i][j], vs[i + 1][j], vs[i + 1][k], vs[i][k]))
+            f.smooth = smooth_sides
+            kinds[f] = "side"
+    if bottom:
+        kinds[bm.faces.new(vs[0])] = "bottom"
+    if top:
+        kinds[bm.faces.new(list(reversed(vs[-1])))] = "top"
+    for ring in (vs[0], vs[-1]):
+        for j in range(n):
+            e = bm.edges.get((ring[j], ring[(j + 1) % n]))
+            if e:
+                e.smooth = False
+    for f, kind in kinds.items():
+        for loop in f.loops:
+            loop[layer].uv = uv(kind, loop.vert.co) if uv else (0.0, 0.0)
+    if recalc:
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def rrect_prism(name, x0, x1, z0, z1, r, y0, y1, k=6):
+    return loft(name, [rrect(x0, x1, z0, z1, r, y, k) for y in (y0, y1)])
+
+
+def side_slot(name, outline, x0, x1):
+    """A rounded slot through a side wall: `outline` [(z, y)] swept across x from x0 to x1."""
+    return loft(name, [[(x, y, z) for z, y in outline] for x in (x0, x1)], recalc=True)
+
+
+def _atlas_frame():
+    """The glow atlas covers the keyboard well: (left x, front z, metres a pixel, width, height)."""
+    width = 2 * MAC_WELL["half_w"]
+    depth = MAC_WELL["front"] - MAC_WELL["back"]
+    height_px = round(ATLAS_WIDTH * depth / width)
+    return -MAC_WELL["half_w"], MAC_WELL["front"], width / ATLAS_WIDTH, ATLAS_WIDTH, height_px
+
+
+def atlas_uv(x, z):
+    """Top-down planar UV into the glow atlas: u across, v = 0 at the well's front edge."""
+    left, front, px, w, h = _atlas_frame()
+    return ((x - left) / (px * w), (front - z) / (px * h))
+
+
+def render_legends(keys) -> "np.ndarray":
+    """Renders every key legend white on transparent, top-down over the well, and returns its
+    coverage as a (height, width) array whose row 0 is the well's front edge, Blender's
+    bottom-up pixel order. Workbench, flat, in a scratch scene that is deleted afterwards."""
+    left, front, px, w, h = _atlas_frame()
+    fonts = {k: bpy.data.fonts.load(p, check_existing=True) for k, p in LEGEND_FONTS.items()}
+    scene = bpy.data.scenes.new("KeyLegends")
+    inset_x, inset_z = 0.0034, 0.0030
+    curves = []
+    for name, x0, x1, z0, z1, legends in keys:
+        for i, (text, where, size) in enumerate(legends):
+            cu = bpy.data.curves.new(f"{name}_{i}", "FONT")
+            cu.body = text
+            cu.font = fonts["symbols" if any(ch in SYMBOL_GLYPHS for ch in text) else "sf"]
+            cu.size = LEGEND_SIZE[size]
+            cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+            depth = z1 - z0
+            if where == "c":
+                cu.align_x, cu.align_y, x, z = "CENTER", "CENTER", cx, cz
+            elif where in ("t", "b"):
+                cu.align_x, cu.align_y, x = "CENTER", "CENTER", cx
+                z = z0 + depth * (0.31 if where == "t" else 0.69)
+            else:
+                cu.align_x = "LEFT" if where[1] == "l" else "RIGHT"
+                x = x0 + inset_x if where[1] == "l" else x1 - inset_x
+                if where[0] == "t":
+                    cu.align_y, z = "TOP", z0 + inset_z
+                else:
+                    cu.align_y, z = "BOTTOM_BASELINE", z1 - inset_z
+            ob = bpy.data.objects.new(cu.name, cu)
+            # The render plane is Blender's XY seen from above, with the well's back at the top.
+            ob.location = (x, -z, 0.0)
+            scene.collection.objects.link(ob)
+            curves.append(cu)
+    cam_data = bpy.data.cameras.new("LegendCam")
+    cam_data.type = "ORTHO"
+    cam_data.ortho_scale = px * w
+    cam = bpy.data.objects.new("LegendCam", cam_data)
+    cam.location = (left + px * w / 2, -(front - px * h / 2), 1.0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    r = scene.render
+    r.engine = "BLENDER_WORKBENCH"
+    r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
+    r.film_transparent = True
+    r.image_settings.file_format = "PNG"
+    r.image_settings.color_mode = "RGBA"
+    scene.display.render_aa = "32"
+    shading = scene.display.shading
+    shading.light = "FLAT"
+    shading.color_type = "SINGLE"
+    shading.single_color = (1.0, 1.0, 1.0)
+    shading.show_cavity = shading.show_shadows = shading.show_object_outline = False
+    scene.view_settings.view_transform = "Standard"
+    out = os.path.join(tempfile.mkdtemp(prefix="legends-"), "legends.png")
+    r.filepath = out
+    bpy.ops.render.render(write_still=True, scene=scene.name)
+    img = bpy.data.images.load(out)
+    pixels = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(pixels)
+    coverage = pixels.reshape(h, w, 4)[:, :, 3].copy()
+    bpy.data.images.remove(img)
+    for ob in list(scene.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
+    for cu in curves:
+        bpy.data.curves.remove(cu)
+    bpy.data.cameras.remove(cam_data)
+    bpy.data.scenes.remove(scene)
+    shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+    return coverage
+
+
+def keyboard_glow(keys):
+    """The keyboard's emission atlas: lit legends on every cap, and a soft rim of light on the
+    well floor round each cap, where a backlit key leaks. Everything else is black, including
+    the corner pixel the caps' sides sample."""
+    left, front, px, w, h = _atlas_frame()
+    legends = render_legends(keys)
+    xs = left + (np.arange(w) + 0.5) * px
+    zs = front - (np.arange(h) + 0.5) * px
+    inside = np.zeros((h, w), dtype=bool)
+    leak = np.zeros((h, w), dtype=np.float32)
+    margin = 0.006
+    for _, x0, x1, z0, z1, _ in keys:
+        i0, i1 = np.searchsorted(xs, [x0 - margin, x1 + margin])
+        # zs falls from front to back, so search its reverse.
+        j0, j1 = h - np.searchsorted(zs[::-1], [z1 + margin, z0 - margin])
+        sx, sz = xs[i0:i1], zs[j0:j1]
+        cx, cz, hx, hz = (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2 - KEY_CORNER, (z1 - z0) / 2 - KEY_CORNER
+        qx = np.abs(sx[None, :] - cx) - hx
+        qz = np.abs(sz[:, None] - cz) - hz
+        d = np.hypot(np.maximum(qx, 0), np.maximum(qz, 0)) + np.minimum(np.maximum(qx, qz), 0) - KEY_CORNER
+        inside[j0:j1, i0:i1] |= d <= 0
+        np.maximum(leak[j0:j1, i0:i1], np.exp(-np.maximum(d, 0) / BACKLIGHT["falloff"]), out=leak[j0:j1, i0:i1])
+    glow = np.where(inside, legends * BACKLIGHT["legend"], leak * BACKLIGHT["leak"])
+    glow[:4, :4] = 0.0
+    return packed_gray_png("MacbookKeyGlow", glow)
+
+
+def packed_gray_png(name, values):
+    """Packs a (height, width) array of 0..1, row 0 at the bottom, as an 8-bit greyscale PNG.
+
+    A Blender-generated image would pack as RGBA, four times the bytes for one channel of
+    information; the glTF exporter embeds a packed PNG as it is, so this keeps the GLB small.
+    """
+    h, w = values.shape
+    rows = np.clip(np.round(values[::-1] * 255), 0, 255).astype(np.uint8)
+    # PNG filter 1 (Sub): each byte minus its left neighbour, which flattens the soft gradients.
+    sub = np.diff(rows.astype(np.int16), axis=1, prepend=0).astype(np.uint8)
+    raw = np.concatenate([np.ones((h, 1), dtype=np.uint8), sub], axis=1).tobytes()
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+    path = os.path.join(tempfile.mkdtemp(prefix="glow-"), f"{name}.png")
+    with open(path, "wb") as fh:
+        fh.write(png)
+    image = bpy.data.images.load(path)
+    image.name = name
+    image.pack()
+    shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+    return image
+
+
+def grille_tile():
+    """One repeat of a speaker grille: two staggered holes, dark on white. The client tints the
+    white to the shell colour (see RETONE in laptop.ts), so the holes stay darker than the deck."""
+    n = 16
+    yy, xx = np.mgrid[0:n, 0:n] + 0.5
+    holes = np.zeros((n, n), dtype=np.float32)
+    for hx, hy in ((4, 4), (12, 12)):
+        for ox in (-n, 0, n):
+            for oy in (-n, 0, n):
+                d = np.hypot(xx - hx - ox, yy - hy - oy)
+                holes = np.maximum(holes, np.clip(3.4 - d, 0, 1))
+    value = 1.0 - 0.96 * holes
+    rgba = np.ones((n, n, 4), dtype=np.float32)
+    rgba[:, :, 0] = rgba[:, :, 1] = rgba[:, :, 2] = value
+    image = bpy.data.images.new("MacbookGrilleTile", n, n)
+    image.pixels.foreach_set(rgba.ravel())
+    image.pack()
+    return image
+
+
+def textured(name, color, image, socket, roughness=0.5, metallic=0.0):
+    """A Principled material with one image texture on `socket` (Base Color or Emission Color)."""
+    mat = material(name, color, roughness=roughness, metallic=metallic)
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = image
+    bsdf = nodes["Principled BSDF"]
+    links.new(tex.outputs["Color"], bsdf.inputs[socket])
+    if socket == "Emission Color":
+        bsdf.inputs["Emission Strength"].default_value = 1.0
+    return mat
+
+
+def keycap(name, x0, x1, z0, z1):
+    """One key: a rounded cap standing on the well floor with a fine chamfer round its top.
+    The top and chamfer map into the glow atlas; the sides sample its black corner."""
+    y0, y1 = MAC_WELL["floor"], MAC_DECK["top"]
+    c = KEY_CHAMFER
+    dark = (1.5 / ATLAS_WIDTH, 1.5 / _atlas_frame()[4])
+    rings = [
+        rrect(x0, x1, z0, z1, KEY_CORNER, y0),
+        rrect(x0, x1, z0, z1, KEY_CORNER, y1 - c),
+        rrect(x0 + c, x1 - c, z0 + c, z1 - c, KEY_CORNER - c, y1),
+    ]
+    obj = loft(name, rings, bottom=False, uv=lambda kind, co: atlas_uv(co.x, co.z) if kind == "top" else dark)
+    # The chamfer band is a "side" to loft(); give it the atlas too, so the legend region is whole.
+    layer = obj.data.uv_layers["UVMap"]
+    for poly in obj.data.polygons:
+        ys = [obj.data.vertices[v].co.y for v in poly.vertices]
+        if min(ys) > y1 - c - 1e-6:
+            poly.use_smooth = False
+            for li in poly.loop_indices:
+                co = obj.data.vertices[obj.data.loops[li].vertex_index].co
+                layer.data[li].uv = atlas_uv(co.x, co.z)
+    return obj
+
+
+@prop("macbook-base", "desk", recenter=False, keep_uvs=True)
+def build_macbook_base():
+    """MacBook Pro 16 lower half: a space-black unibody slab with rounded corners on four round
+    feet, a recessed keyboard well holding the full US layout (function row with Touch ID,
+    inverted-T arrows) with backlit legends, perforated speaker grilles either side, a flush
+    Force Touch trackpad in a hairline seam, the front thumb scoop, the hinge barrel in its slot
+    across the back, and the ports cut into both sides (MagSafe, Thunderbolt, jack; HDMI, SD).
+
+    Authored in the laptop's own space (deck z -0.24..0.28, feet on y=0), so the GLB drops onto
+    the desk with no offset and the hinge lands under the lid's pivot. The keys and the well
+    floor share one material whose emission atlas (see keyboard_glow) carries the backlight.
+    """
+    d = MAC_DECK
+    keys = keyboard_keys()
+    glow = keyboard_glow(keys)
+    keys_mat = textured("MacbookKeys", "#111113", glow, "Emission Color", roughness=0.55)
+    # The grille shares the deck's finish, so only its holes set it apart.
+    grille_mat = textured("MacbookGrille", "#ffffff", grille_tile(), "Base Color", roughness=0.45, metallic=0.6)
+
+    deck = loft(
+        "deck",
+        [rrect(-d["half_w"] + i, d["half_w"] - i, d["back"] + i, d["front"] - i, d["corner"] - i, y, k=8) for y, i in MAC_PROFILE],
+    )
+    w = MAC_WELL
+    well_cut = rrect_prism("well_cut", -w["half_w"], w["half_w"], w["back"], w["front"], w["corner"], w["floor"] - 0.0005, 0.05)
+    p = MAC_PAD
+    s = p["seam"]
+    pad_cut = rrect_prism("pad_cut", -p["half_w"] - s, p["half_w"] + s, p["back"] - s, p["front"] + s, p["corner"] + s, d["top"] - 0.0022, 0.05)
+    hinge_cut = raw(box("hinge_cut", (0.66, 0.03, 0.04), loc=(0, d["top"] + 0.003, d["back"] - 0.006)))
+    scoop = raw(sphere("scoop", 1.0, loc=(0, d["top"] + 0.0045, d["front"] + 0.004), segs=48, rings=16, scale=(0.065, 0.0075, 0.016)))
+    # Side ports as (side, z centre, length along z, height, corner radius); y is the slab's middle.
+    ports = [
+        (-1, -0.150, 0.034, 0.0068, 0.0030),  # MagSafe 3
+        (-1, -0.090, 0.019, 0.0060, 0.0028),  # Thunderbolt
+        (-1, -0.050, 0.019, 0.0060, 0.0028),  # Thunderbolt
+        (-1, 0.110, 0.0092, 0.0092, 0.0044),  # headphone jack
+        (1, -0.130, 0.031, 0.0095, 0.0016),  # HDMI
+        (1, -0.070, 0.019, 0.0060, 0.0028),  # Thunderbolt
+        (1, 0.070, 0.052, 0.0052, 0.0010),  # SDXC
+    ]
+    port_y = (d["bottom"] + d["top"]) / 2
+    cutters = [well_cut, pad_cut, hinge_cut, scoop]
+    backs = []
+    for i, (side, z, length, height, r) in enumerate(ports):
+        x_out = side * d["half_w"]
+        outline = [(z + a, port_y + b) for a, _, b in rrect(-length / 2, length / 2, -height / 2, height / 2, r, 0.0, k=3)]
+        cutters.append(side_slot(f"port_cut{i}", outline, x_out - side * 0.006, x_out + side * 0.004))
+        # A dark plug at the bottom of each opening, so the port reads as a hole.
+        backs.append(side_slot(f"port_back{i}", outline, x_out - side * 0.0065, x_out - side * 0.0028))
+    cut(deck, *cutters)
+
+    parts = [(deck, M["mac_body"])]
+    floor = loft(
+        "well_floor",
+        [rrect(-w["half_w"], w["half_w"], w["back"], w["front"], w["corner"], w["floor"], k=6)],
+        bottom=False,
+        uv=lambda kind, co: atlas_uv(co.x, co.z),
+    )
+    parts.append((floor, keys_mat))
+    for name, x0, x1, z0, z1, _ in keys:
+        parts.append((keycap(name, x0, x1, z0, z1), keys_mat))
+
+    # Speaker grilles flank the keyboard, a grid of holes printed onto a hair-raised panel.
+    tile = 0.0042
+    gx = (w["half_w"] + d["half_w"]) / 2
     for sx in (-1, 1):
-        parts.append((attach(box(f"grille{sx}", (0.025, 0.004, 0.24), loc=(sx * 0.3725, 0.038, -0.045)), M["plastic_black"]), None))
-    parts.append((attach(box("pad_seam", (0.248, 0.003, 0.158), loc=(0, 0.0375, 0.155)), M["plastic_black"]), None))
-    parts.append((attach(box("pad", (0.24, 0.004, 0.15), loc=(0, 0.038, 0.155), bevel_w=0.002), M["mac_pad"]), None))
-    parts.append((attach(box("scoop", (0.14, 0.010, 0.012), loc=(0, 0.032, 0.276), bevel_w=0.003), M["plastic_black"]), None))
-    # The hinge barrel along X: cyl() stands parts along Y, and Z+90 lays Y onto X.
-    hinge = cyl("hinge", 0.018, 0.66, loc=(0, 0.030, -0.245), rot=(0, 0, math.radians(90)), verts=12)
-    parts.append((attach(hinge, M["plastic_black"]), None))
-    # Ports, slightly proud of the deck's sides: MagSafe, Thunderbolt, HDMI, SD, jack.
-    for tag, x, h, w, z in (
-        ("magsafe", -0.39, 0.012, 0.030, -0.10),
-        ("tb1", -0.39, 0.010, 0.026, -0.02),
-        ("tb2", -0.39, 0.010, 0.026, 0.04),
-        ("hdmi", -0.39, 0.012, 0.050, 0.10),
-        ("tb3", 0.39, 0.010, 0.026, -0.06),
-        ("sd", 0.39, 0.006, 0.050, 0.0),
-    ):
-        parts.append((attach(box(tag, (0.004, h, w), loc=(x, 0.021, z)), M["plastic_black"]), None))
-    jack = cyl("jack", 0.006, 0.004, loc=(0.39, 0.021, 0.06), rot=(0, 0, math.radians(90)), verts=8)
-    parts.append((attach(jack, M["plastic_black"]), None))
+        x0, x1, z0, z1 = sx * gx - 0.018, sx * gx + 0.018, w["back"] + 0.004, w["front"] - 0.004
+        grille = loft(
+            f"grille{sx}",
+            [rrect(x0, x1, z0, z1, 0.004, d["top"] + 0.0003, k=3)],
+            bottom=False,
+            uv=lambda kind, co, x0=x0, z0=z0: ((co.x - x0) / tile, (co.z - z0) / tile),
+        )
+        parts.append((grille, grille_mat))
+
+    seam = loft(
+        "pad_seam",
+        [rrect(-p["half_w"] - s, p["half_w"] + s, p["back"] - s, p["front"] + s, p["corner"] + s, d["top"] - 0.0020, k=6)],
+        bottom=False,
+    )
+    parts.append((seam, M["plastic_black"]))
+    pad = loft(
+        "pad",
+        [rrect(-p["half_w"], p["half_w"], p["back"], p["front"], p["corner"], y, k=6) for y in (d["top"] - 0.0020, d["top"] - 0.0006)]
+        + [rrect(-p["half_w"] + 0.0004, p["half_w"] - 0.0004, p["back"] + 0.0004, p["front"] - 0.0004, p["corner"] - 0.0004, d["top"] - 0.0002, k=6)],
+        bottom=False,
+    )
+    parts.append((pad, M["mac_pad"]))
+
+    # The hinge barrel along X at the lid's pivot: cyl() stands parts along Y, and Z+90 lays Y onto X.
+    hinge = cyl("hinge", 0.0105, 0.648, loc=(0, d["top"], d["back"]), rot=(0, 0, math.radians(90)), verts=20, bevel_w=0.002)
+    parts.append((smooth_obj(hinge), M["plastic_black"]))
+    for back in backs:
+        parts.append((back, M["plastic_black"]))
+    for i, (x, z) in enumerate(((-0.33, -0.19), (0.33, -0.19), (-0.33, 0.23), (0.33, 0.23))):
+        foot = cyl(f"foot{i}", 0.011, d["bottom"] + 0.0005, loc=(x, (d["bottom"] + 0.0005) / 2, z), verts=16, bevel_w=0.0015)
+        parts.append((smooth_obj(foot), M["rubber"]))
     return parts
 
 
