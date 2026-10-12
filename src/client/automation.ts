@@ -139,19 +139,14 @@ function withSpot(t: TargetInfo, spots: Interactable[]): ResolvedTarget {
 }
 
 /**
- * Where to stand for a target, which way to face, and the pitch: behind a worker (the desk pose),
- * in front of a kiosk, or (anywhere else) on the interactable's spot, stepping out from it when
- * something stands there. `center` is the thing itself, when the scene knows it. A desk's pitch is
- * fixed; anything else is pitchToward its face from eye height.
+ * Where to stand for a target, which way to face, and the pitch: behind a worker or in front of a
+ * kiosk (the desk pose N and go-to-desk use, whose pitch is fixed), or (anywhere else) on the
+ * interactable's spot, stepping out from it when something stands there, looking with pitchToward
+ * from eye height at `center` (the thing itself, when the scene knows it).
  */
 export function standFor(t: ResolvedTarget, blocked: (x: number, z: number, y: number) => boolean, center?: Point3 | null): ApproachPose | null {
   const desk = t.deskId ? DESK_BY_ID.get(t.deskId) : undefined;
-  if (desk) {
-    const pose = deskApproach(desk);
-    // The same pose N and go-to-desk use. A later aim must not pitchToward over it.
-    if (!center) return pose;
-    return { ...pose, face: center, facing: facingToward(pose.at, center) };
-  }
+  if (desk) return deskApproach(desk);
   const spot = t.spot;
   if (!spot) return null;
   const y = spot.y ?? 0;

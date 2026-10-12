@@ -116,8 +116,10 @@ export class Climber {
     const p = this.player;
     p.pos.y = THREE.MathUtils.clamp(p.pos.y, 0, LADDER_TOP);
     this.state = { kind: 'ladder', auto: 0, waiting: false, rung: Math.round(p.pos.y / 0.3), off: null, bonked: false };
+    p.facing = -Math.PI / 2;
     // Face the rungs, looking up them.
-    p.apply({ facing: -Math.PI / 2, camYaw: Math.PI / 2, lookPitch: 0.45 });
+    p.camYaw = Math.PI / 2;
+    p.lookPitch = 0.45;
     p.moving = false;
     p.rig = (dt) => this.ladderStep(dt);
     this.hooks.sound('grab');
@@ -224,11 +226,9 @@ export class Climber {
       p.pos.x = THREE.MathUtils.lerp(s.off.x, OFF_X, e);
       p.pos.y = THREE.MathUtils.lerp(s.off.y, 0, e) + Math.sin(Math.PI * k) * 0.12;
       p.pos.z += (LADDER.z - p.pos.z) * Math.min(1, dt * 12);
-      p.apply({
-        facing: THREE.MathUtils.lerp(-Math.PI / 2, s.off.facing, e),
-        camYaw: THREE.MathUtils.lerp(s.off.yaw, s.off.toYaw, e),
-        lookPitch: p.lookPitch + (-0.08 - p.lookPitch) * Math.min(1, dt * 8),
-      });
+      p.facing = THREE.MathUtils.lerp(-Math.PI / 2, s.off.facing, e);
+      p.camYaw = THREE.MathUtils.lerp(s.off.yaw, s.off.toYaw, e);
+      p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
       p.moving = k < 1;
       if (k >= 1) {
         p.pos.y = 0;
@@ -239,7 +239,7 @@ export class Climber {
     // Onto the rungs, facing the wall.
     p.pos.x += (LADDER.x - p.pos.x) * Math.min(1, dt * 12);
     p.pos.z += (LADDER.z - p.pos.z) * Math.min(1, dt * 12);
-    p.apply({ facing: -Math.PI / 2 });
+    p.facing = -Math.PI / 2;
     if (!s.auto && !s.waiting && p.pos.y >= 0 && p.holding('Space')) {
       // Jump off, back from the wall.
       p.pos.x = LADDER.x + 0.3;
@@ -348,13 +348,10 @@ export class Climber {
       p.pos.y = Math.sin(Math.PI * k) * 0.25;
       // From facing round the pole to facing out, away from it.
       const along = s.angle + Math.PI / 2;
-      const facing = along + Math.atan2(Math.sin(spot.open - along), Math.cos(spot.open - along)) * out;
-      const yaw = facing - Math.PI;
-      p.apply({
-        facing,
-        camYaw: p.camYaw + Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw)) * Math.min(1, dt * 10),
-        lookPitch: p.lookPitch + (-0.08 - p.lookPitch) * Math.min(1, dt * 8),
-      });
+      p.facing = along + Math.atan2(Math.sin(spot.open - along), Math.cos(spot.open - along)) * out;
+      const yaw = p.facing - Math.PI;
+      p.camYaw += Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw)) * Math.min(1, dt * 10);
+      p.lookPitch += (-0.08 - p.lookPitch) * Math.min(1, dt * 8);
       p.moving = out > 0 && k < 1;
       this.rush = Math.max(0, this.rush - dt * 4);
       if (k >= 1) {
@@ -405,9 +402,11 @@ export class Climber {
   private face(angle: number, dt: number, pitch: number) {
     const p = this.player;
     const facing = angle + Math.PI / 2;
+    p.facing = facing;
     const yaw = facing + 1.25 - Math.PI;
     const d = Math.atan2(Math.sin(yaw - p.camYaw), Math.cos(yaw - p.camYaw));
-    p.apply({ facing, camYaw: p.camYaw + d * Math.min(1, dt * 10), lookPitch: p.lookPitch + (pitch - p.lookPitch) * Math.min(1, dt * 6) });
+    p.camYaw += d * Math.min(1, dt * 10);
+    p.lookPitch += (pitch - p.lookPitch) * Math.min(1, dt * 6);
   }
 }
 

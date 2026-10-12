@@ -332,19 +332,9 @@ export class PlayerController {
   private look(dx: number, dy: number) {
     const yaw = this.camYaw;
     const pitch = this.lookPitch;
-    this.apply({ camYaw: this.camYaw - dx, lookPitch: THREE.MathUtils.clamp(this.lookPitch - dy, -1.45, 1.45) });
+    this.camYaw -= dx;
+    this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy, -1.45, 1.45);
     if (this.camYaw !== yaw || this.lookPitch !== pitch) this.onLook?.();
-  }
-
-  /**
-   * The only write of `facing`, `camYaw` and `lookPitch`: an arrival, sitting down, a climb, or the
-   * mouse. Pass only the fields that change. A seat keeps the camera free to look around, so sitting
-   * sets `facing` alone after the first pose.
-   */
-  apply(pose: { facing?: number; camYaw?: number; lookPitch?: number }) {
-    if (pose.facing !== undefined) this.facing = pose.facing;
-    if (pose.camYaw !== undefined) this.camYaw = pose.camYaw;
-    if (pose.lookPitch !== undefined) this.lookPitch = pose.lookPitch;
   }
 
   /** Sits you down in `place`, facing the way it does, and you look out from it. */
@@ -356,7 +346,9 @@ export class PlayerController {
     this.moving = false;
     this.stepOffset = 0;
     this.bob = 0;
-    this.apply({ facing: place.rotY, camYaw: place.rotY - Math.PI, lookPitch: -0.08 });
+    this.facing = place.rotY;
+    this.camYaw = place.rotY - Math.PI;
+    this.lookPitch = -0.08;
   }
 
   /** Gets you up off your seat onto the floor beside it: out in front (or behind), else wherever there's room. */
@@ -437,7 +429,7 @@ export class PlayerController {
     if (this.seat) {
       if (!this.enabled || !GET_UP.some((c) => k.has(c))) {
         this.moving = false;
-        this.apply({ facing: this.seat.rotY });
+        this.facing = this.seat.rotY;
         this.jitterT += dt;
         this.updateCamera();
         return;
@@ -460,7 +452,7 @@ export class PlayerController {
       this.onPathEnd?.('cancelled');
     }
     if (this.path && this.enabled) this.followPath(dt);
-    this.apply({ facing: Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI)) });
+    this.facing = Math.atan2(Math.sin(this.camYaw + Math.PI), Math.cos(this.camYaw + Math.PI));
     if (steering) {
       const len = Math.hypot(ix, iz);
       ix /= len;
@@ -534,7 +526,7 @@ export class PlayerController {
     this.moving = true;
     const want = Math.atan2(dx, dz);
     const ease = Math.min(1, dt * 8);
-    this.apply({ camYaw: this.camYaw + Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease });
+    this.camYaw += Math.atan2(Math.sin(want + Math.PI - this.camYaw), Math.cos(want + Math.PI - this.camYaw)) * ease;
     // Up against something the map didn't know about: give up rather than walk on the spot.
     this.stuckFor = Math.hypot(this.pos.x - x0, this.pos.z - z0) < step * 0.2 ? this.stuckFor + dt : 0;
     if (this.stuckFor > 1) {

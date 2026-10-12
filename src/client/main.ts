@@ -1110,7 +1110,9 @@ function placeAt(at: { x: number; y: number; z: number; rotY: number }) {
   if (player.seat) standUp();
   player.pos.set(at.x, at.y, at.z);
   player.vy = 0;
-  player.apply({ facing: at.rotY, camYaw: at.rotY - Math.PI, lookPitch: -0.08 });
+  player.facing = at.rotY;
+  player.camYaw = player.facing - Math.PI;
+  player.lookPitch = -0.08;
 }
 
 /** Not a trip of yours: the office put you on another floor (yours went), in its elevator car. Whatever you were doing stops. */
@@ -1361,7 +1363,9 @@ function stopWalking() {
 /** There: stop, and take the pose, pitch included. A desk arrives at DESK_LOOK_PITCH, not a fresh pitchToward. */
 function arrivedAt(pose: ApproachPose) {
   stopWalking();
-  player.apply({ facing: pose.facing, camYaw: pose.facing - Math.PI, lookPitch: pose.lookPitch });
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 player.onPathEnd = (why) => {
@@ -1866,7 +1870,9 @@ function standAt(desk: DeskDef) {
   const pose = deskApproach(desk);
   player.pos.set(pose.at.x, pose.at.y, pose.at.z);
   player.vy = 0;
-  player.apply({ facing: pose.facing, camYaw: pose.facing - Math.PI, lookPitch: pose.lookPitch });
+  player.facing = pose.facing;
+  player.camYaw = pose.facing - Math.PI;
+  player.lookPitch = pose.lookPitch;
 }
 
 // ---- Who's waiting on you: N, the count in the Workers panel, and the compass --------------------------
@@ -3906,19 +3912,23 @@ function centerOf(spot: Interactable): { x: number; y: number; z: number } | nul
 /** Faces the pose from where you stand. A desk keeps its pitch; anything else looks with pitchToward. */
 function aimAt(pose: ApproachPose) {
   if (pose.pitchFixed) {
-    player.apply({ facing: pose.facing, camYaw: pose.facing - Math.PI, lookPitch: pose.lookPitch });
+    player.facing = pose.facing;
+    player.camYaw = pose.facing - Math.PI;
+    player.lookPitch = pose.lookPitch;
     player.updateCamera();
     return;
   }
-  const facing = facingToward(player.pos, pose.face);
-  player.apply({ facing, camYaw: facing - Math.PI });
+  player.facing = facingToward(player.pos, pose.face);
+  player.camYaw = player.facing - Math.PI;
   player.updateCamera();
-  player.apply({ lookPitch: pitchToward(camera.position, pose.face) });
+  player.lookPitch = pitchToward(camera.position, pose.face);
   player.updateCamera();
 }
 
 function setCamera(pose: CameraPose) {
-  player.apply({ camYaw: pose.camYaw, lookPitch: pose.lookPitch, facing: pose.camYaw + Math.PI });
+  player.camYaw = pose.camYaw;
+  player.lookPitch = pose.lookPitch;
+  player.facing = pose.camYaw + Math.PI;
   player.updateCamera();
   renderWake();
 }
