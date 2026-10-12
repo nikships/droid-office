@@ -12,6 +12,7 @@ import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, WORKER_REVIVE_MS, isAgentE
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
+import { checkoutDirty, choosePullBase, existingPull, pushHead, pushRemote } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { stationBrief } from './stations.js';
@@ -235,6 +236,8 @@ export class WorkerManager {
   /** The Droid hook commands, reused for per-worker model overlays (see droidSettings). */
   private droidHooks: Record<string, unknown[]> = {};
   private trees: Worktrees;
+  /** The checkout's branch when the office opened this floor (see the constructor). */
+  private configuredBase?: string;
   private droidSessions = new DroidSessionReader();
   private agentPath: string | null = null;
 
@@ -284,6 +287,9 @@ export class WorkerManager {
     private prompts?: PromptSource,
   ) {
     this.trees = new Worktrees(dir);
+    // The branch the checkout was on when this floor opened: a pull request's configured base. The
+    // live branch is tried after it (see open-pull.ts). Freshening the checkout does not move this.
+    this.configuredBase = this.trees.currentBranch();
     this.statePath = path.join(dataDir, 'workers.json');
     this.droidSettingsPath = path.join(dataDir, 'droid-hooks.json');
     this.writeHookSettings();
@@ -937,28 +943,9 @@ export class WorkerManager {
       cleanup = 'all';
     }
     if (cleanup === 'keep') return { note: `Kept ${name}'s worktree and branch ${wt.branch}` };
-    let gone = wt;
-    let kept = '';
-    if (cleanup === 'all' && wt.made) {
-      if (!(await this.trees.hasBranch(wt.made))) {
-        // The agent deleted the office's branch (a rename is followed, see current), so git can't say
-        // whether the one it's on is its own or was there before it: that one stays.
-        cleanup = 'worktree';
-      } else {
-        // The office's own branch stays while it has commits that no remote, the project's checkout
-        // or the branch it's on has.
-        const work = await this.trees.wouldLose(wt.made, [wt.branch]);
-        if (work) kept = ` and kept branch ${wt.made} — it has ${work}`;
-        // A branch it made itself goes with it; one that was there before it (main, say) isn't the office's to delete.
-        if (await this.trees.madeSince(wt.branch, wt.made)) gone = work ? { ...wt, made: undefined } : wt;
-        else if (work) cleanup = 'worktree';
-        else gone = { ...wt, branch: wt.made, made: undefined };
-      }
-    }
-    const error = await this.trees.remove(gone, cleanup);
-    if (error) return { error: `Couldn't delete ${name}'s worktree: ${error}` };
-    if (cleanup === 'worktree') return { note: `Deleted ${name}'s worktree${kept || ` and kept branch ${wt.branch}`}` };
-    return { note: `Deleted ${name}'s worktree and branch ${gone.branch}${kept && `,${kept}`}` };
+    const sent = await this.trees.sendHome(wt, cleanup);
+    if (sent.error) return { error: `Couldn't delete ${name}'s worktree: ${sent.error}` };
+    return { note: `Deleted ${name}'s ${sent.note}` };
   }
 
   private async dismissWorktrees(w: Worker): Promise<{ note?: string; error?: string }> {
@@ -997,18 +984,11 @@ export class WorkerManager {
       cleanup = 'all';
     }
     if (cleanup === 'keep') return { note: `Kept ${name}'s worktrees and branch ${branch} in ${where}` };
-    const how = cleanup;
-    const errors = (
-      await Promise.all(
-        trees.map(async (t) => {
-          const error = await t.trees.remove(t.ref, how);
-          return error && `${t.name}: ${error}`;
-        }),
-      )
-    ).filter((e): e is string => !!e);
+    const sent = await Promise.all(trees.map(async (t) => ({ name: t.name, ...(await t.trees.sendHome(t.ref, cleanup)) })));
+    const errors = sent.filter((t) => t.error).map((t) => `${t.name}: ${t.error}`);
     if (errors.length) return { error: `Couldn't delete all of ${name}'s worktrees: ${errors.join('; ')}` };
     clearWorkspace(path.join(this.dir, workspaceOf(info)!));
-    return { note: how === 'all' ? `Deleted ${name}'s worktrees and branch ${branch} in ${where}` : `Deleted ${name}'s worktrees in ${where} and kept branch ${branch}` };
+    return { note: reposHomeNote(name, branch, where, sent) };
   }
 
   /**
@@ -1078,16 +1058,11 @@ export class WorkerManager {
     this.persist();
   }
 
-  /** A worktree on the branch it's on now, with the office's own branch kept in `made`; the same one when nothing moved. */
+  /** A worktree on the branch it's on now (see Worktrees.followed); the same one when nothing moved. */
   private async current(wt: Worktree): Promise<Worktree> {
-    const live = await this.trees.branchOf(wt);
-    if (!live) return wt;
-    let made = wt.made ?? (live === wt.branch ? undefined : wt.branch);
-    // Back on it, or renamed it (`git branch -m fix-x`): the branch it's on is the office's own.
-    // A deleted office branch is not a rename (see Worktrees.renamedTo): `made` stays so send-home
-    // can tell the branch it's on apart from one the worker made.
-    if (made === live || (made && (await this.trees.renamedTo(made, live)))) made = undefined;
-    return live === wt.branch && made === wt.made ? wt : { ...wt, branch: live, made };
+    const now = await this.trees.followed(wt);
+    if (now === wt) return wt;
+    return { ...wt, branch: now.branch, made: now.made };
   }
 
   /**
@@ -1339,16 +1314,18 @@ export class WorkerManager {
       await this.syncBranch(w);
       const branch = info.worktree?.branch ?? wt.branch;
       const commits = (await run('git', ['log', '--reverse', '--format=%h %s', `${wt.base}..${branch}`], cwd)).split('\n').filter(Boolean);
-      const dirty = (await run('git', ['status', '--porcelain'], cwd)) !== '';
+      const dirty = await checkoutDirty(cwd);
       if (!commits.length) return dirty ? `${info.name} hasn't committed anything yet — ask it to commit first` : `${info.name} has no commits on ${branch} yet`;
-      const open = await this.pulls.findOpenPull(branch, cwd);
+      const open = await existingPull(this.pulls, branch, cwd);
       if (open) {
         info.pr = open;
         this.persist();
         return { prs: [{ ...open, existed: true, dirty }], failed: [] };
       }
-      await run('git', ['push', '-u', 'origin', branch], cwd, 90_000);
-      const base = await this.pushedBranch([wt.from, this.trees.currentBranch()], branch);
+      const remote = await pushRemote(cwd);
+      if (!remote) throw new Error('This project has no git remote to push to');
+      await pushHead(cwd, remote, branch, 90_000);
+      const base = await choosePullBase(this.trees, branch, { from: wt.from, configured: this.configuredBase, current: this.trees.currentBranch(), defaultBranch: this.trees.defaultBranch() });
       const { title, body } = draftPr(info, commits, by);
       const { number, url } = await this.pulls.createPull(cwd, branch, base, title, body);
       info.pr = { number, url };
@@ -1388,8 +1365,8 @@ export class WorkerManager {
       for (const p of parts) {
         const cwd = path.join(this.dir, p.path);
         try {
-          const dirty = (await run('git', ['status', '--porcelain'], cwd)) !== '';
-          const known = p.pr ?? (await this.pulls.findOpenPull(p.branch, cwd));
+          const dirty = await checkoutDirty(cwd);
+          const known = await existingPull(this.pulls, p.branch, cwd, p.pr);
           if (known) {
             p.set(known);
             prs.push({ repo: p.name, ...known, existed: true, dirty, cwd });
@@ -1400,8 +1377,11 @@ export class WorkerManager {
             if (dirty) uncommitted.push(p.name);
             continue;
           }
-          await run('git', ['push', '-u', 'origin', p.branch], cwd, 90_000);
-          const base = await this.pushedBranch([p.from, new Worktrees(p.dir).currentBranch()], p.branch, p.dir);
+          const remote = await pushRemote(cwd);
+          if (!remote) throw new Error('This project has no git remote to push to');
+          await pushHead(cwd, remote, p.branch, 90_000);
+          const repo = new Worktrees(p.dir);
+          const base = await choosePullBase(repo, p.branch, { from: p.from, configured: p.own ? this.configuredBase : undefined, current: repo.currentBranch(), defaultBranch: repo.defaultBranch() });
           const { title, body } = draftPr(info, commits, by, p.own ? undefined : { home });
           const pr = await this.pulls.createPull(cwd, p.branch, base, title, body);
           p.set(pr);
@@ -1437,11 +1417,6 @@ export class WorkerManager {
       info.prOpening = false;
       if (this.workers.get(info.id) === w) this.emitUpdate(w);
     }
-  }
-
-  /** The first of these branches that exists on origin (of `dir`'s repository), for a PR base. None: the forge picks the default branch. */
-  private async pushedBranch(candidates: (string | undefined)[], not: string, dir = this.dir): Promise<string | undefined> {
-    return new Worktrees(dir).pushedBranch(candidates, not);
   }
 
   resize(id: string, cols: number, rows: number) {
@@ -2445,6 +2420,17 @@ function describeTool(payload: any): string {
 function offlineBanner(info: WorkerInfo): string {
   const hint = info.kind === 'shell' ? ' Press R to restart it.' : info.sessionId ? ' Press R to resume the session.' : '';
   return `\x1b[2m${info.name} is not running.${hint}\x1b[0m\r\n`;
+}
+
+/**
+ * Sending every repository home. When each one deleted or kept the same branch, the sentence is the
+ * one a single branch would get; otherwise each repository says what `sendHome` did.
+ */
+function reposHomeNote(name: string, branch: string, where: string, sent: { name: string; note?: string }[]): string {
+  const notes = sent.map((t) => t.note);
+  if (notes.every((n) => n === `worktree and branch ${branch}`)) return `Deleted ${name}'s worktrees and branch ${branch} in ${where}`;
+  if (notes.every((n) => n === `worktree and kept branch ${branch}`)) return `Deleted ${name}'s worktrees in ${where} and kept branch ${branch}`;
+  return `Deleted ${name}'s worktrees in ${where}: ${sent.map((t) => `${t.name} ${t.note}`).join('; ')}`;
 }
 
 /** Runs a command without blocking the office; rejects with the last lines of its stderr. */

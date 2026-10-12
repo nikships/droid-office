@@ -9,6 +9,7 @@ import { excludeFromGit } from '../src/server/config.js';
 import { landedWorkers } from '../src/server/leave-on-merge.js';
 import { WorkerManager, relatedBlock, withRelated, workspaceNames, type RepoSource, type WorkerEvents } from '../src/server/workers.js';
 import { Worktrees } from '../src/server/worktrees.js';
+import { choosePullBase } from '../src/server/open-pull.js';
 import type { ChangesState, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
 // A worker across repositories (WorkerInfo.repos): hired on one floor with other floors' projects,
@@ -266,6 +267,96 @@ test('sending a worker across repositories home checks every worktree, and delet
   assert.equal(existsSync(ws2), false);
   assert.equal(git(f.a, 'branch', '--list', w2.worktree!.branch), '');
   assert.equal(git(f.b, 'branch', '--list', w2.worktree!.branch), '');
+});
+
+test('kill and sending a worker across repositories home make one branch decision, a deleted office branch included', async (t) => {
+  const f = fixture(t);
+  const workers = manager(f, t);
+  const branches = (dir: string, ...names: string[]) => git(dir, 'branch', '--list', '--format=%(refname:short)', ...names);
+  const workspace = (w: WorkerInfo) => path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
+
+  // One checkout: the agent made fix-one and deleted the office's branch. fix-one stays.
+  const one = workers.spawn('desk-1', 'Cody', undefined, true) as WorkerInfo;
+  const oneDir = path.join(f.a, one.worktree!.path);
+  git(oneDir, 'checkout', '-qb', 'fix-one');
+  git(oneDir, 'branch', '-D', one.worktree!.branch);
+  assert.deepEqual(await workers.kill(one.id, 'all'), { note: `Deleted ${one.name}'s worktree and kept branch fix-one` });
+  assert.equal(branches(f.a, 'fix-one'), 'fix-one');
+  assert.ok(!existsSync(oneDir));
+
+  // The same facts in api, across repositories: the same decision, where web's office branch goes.
+  const many = workers.spawn('desk-2', 'Cody', undefined, true, 'agent', undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
+  const office = many.worktree!.branch;
+  git(path.join(workspace(many), 'api'), 'checkout', '-qb', 'fix-api');
+  git(path.join(workspace(many), 'api'), 'branch', '-D', office);
+  const across = await workers.kill(many.id, 'all');
+  assert.equal(across.error, undefined);
+  assert.equal(across.note, `Deleted ${many.name}'s worktrees in web, api: web worktree and branch ${office}; api worktree and kept branch fix-api`);
+  assert.equal(branches(f.b, 'fix-api'), 'fix-api');
+  assert.equal(branches(f.a, office), '');
+  assert.equal(existsSync(workspace(many)), false);
+
+  // Commits only on the office's branch, then a branch from before the hire: both stay, in api too.
+  execFileSync('git', ['branch', 'release'], { cwd: f.b, env: { ...process.env, GIT_COMMITTER_DATE: '@1000000000 +0000' } });
+  const held = workers.spawn('desk-3', 'Cody', undefined, true, 'agent', undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
+  const api = path.join(workspace(held), 'api');
+  writeFileSync(path.join(api, 'held.js'), 'held\n');
+  git(api, 'add', '-A');
+  git(api, 'commit', '-q', '-m', 'only on the office branch');
+  git(api, 'checkout', '-q', 'release');
+  const kept = await workers.kill(held.id, 'all');
+  assert.equal(kept.error, undefined);
+  assert.equal(kept.note, `Deleted ${held.name}'s worktrees in web, api: web worktree and branch ${held.worktree!.branch}; api worktree and kept branch ${held.worktree!.branch} — it has 1 unpushed commit`);
+  assert.equal(branches(f.b, 'release', held.worktree!.branch), `${held.worktree!.branch}\nrelease`);
+  assert.equal(git(f.b, 'log', '-1', '--format=%s', held.worktree!.branch), 'only on the office branch');
+});
+
+test('desk O and the Changes window, given the same facts, open the pull request against the same base', async (t) => {
+  const f = fixture(t);
+  // develop: the branch the office opened this floor on. topic: the checkout's branch later. main: the default.
+  git(f.a, 'checkout', '-qb', 'develop');
+  git(f.a, 'push', '-q', 'origin', 'develop');
+  const workers = manager(f, t);
+  git(f.a, 'checkout', '-qb', 'topic');
+  git(f.a, 'push', '-q', 'origin', 'topic');
+  // The work is cut from wip, which origin never had.
+  git(f.a, 'checkout', '-qb', 'wip');
+  const w = workers.spawn('desk-1', 'Cody', undefined, true) as WorkerInfo;
+  assert.equal(w.worktree!.from, 'wip');
+  git(f.a, 'checkout', '-q', 'topic');
+  const cwd = path.join(f.a, w.worktree!.path);
+  writeFileSync(path.join(cwd, 'x.js'), 'x\n');
+  git(cwd, 'add', '-A');
+  git(cwd, 'commit', '-q', '-m', 'x');
+  const facts = { from: 'wip', configured: 'develop', current: 'topic', defaultBranch: 'main' };
+  assert.equal(await choosePullBase(new Worktrees(f.a), w.worktree!.branch, facts), 'develop');
+  assert.equal(await choosePullBase(new Worktrees(f.a), w.worktree!.branch, { ...facts, configured: undefined }), 'topic');
+
+  // The Changes window, set up the way the floor sets it up.
+  const bases: (string | undefined)[] = [];
+  const changes = new Changes(
+    'develop',
+    (id) => (id === w.id ? { name: w.name, cwd, rel: w.worktree!.path, worktreeBase: w.worktree!.base, baseBranch: w.worktree!.from, prBaseFallback: 'topic' } : undefined),
+    () => undefined,
+    { state() {}, toast() {}, refreshGitHub() {} },
+    {
+      async createPull(_cwd, _head, base) {
+        bases.push(base);
+        return { number: 7, url: 'https://github.com/acme/web/pull/7' };
+      },
+      async findOpenPull() {
+        return undefined;
+      },
+    },
+  );
+  t.after(() => changes.stop());
+  assert.equal(await changes.pullRequest(w.id, 'X', '', 'Cody'), undefined);
+
+  // Desk O, through gh.
+  (workers as any).workers.get(w.id).info.status = 'done';
+  const r = await workers.openPr(w.id, 'Cody');
+  if (typeof r === 'string') return assert.fail(r);
+  assert.deepEqual([bases[0], f.prs()[0]?.base], ['develop', 'develop']);
 });
 
 test('O opens a pull request in each repository with commits, and each one lists them all', async (t) => {

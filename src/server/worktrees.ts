@@ -29,6 +29,17 @@ export interface WorktreeRef {
   made?: string;
 }
 
+/** What sending one worktree home deleted and kept. `note` is set when `error` is not. */
+export interface SentHome {
+  /** Git's complaint, when the delete failed. */
+  error?: string;
+  /**
+   * What was deleted and what was kept, without the worker's name: "worktree and branch fix-x",
+   * "worktree and kept branch release", or "worktree and branch fix-z, and kept branch office/x — it has 1 unpushed commit".
+   */
+  note?: string;
+}
+
 /** Where a new worktree starts (see Worktrees.create). */
 export type WorktreeStart =
   /** The latest of origin's default branch, whatever the project's checkout is on. */
@@ -460,6 +471,20 @@ export class Worktrees {
   }
 
   /**
+   * The worktree on the branch it's on now, with the office's own branch kept in `made`. The same ref
+   * when nothing moved (a detached HEAD, a missing folder). A rename (`git branch -m`) is followed.
+   * A deleted office branch is not a rename: `made` stays so send-home can tell the branch it's on
+   * apart from one the worker made.
+   */
+  async followed(wt: WorktreeRef): Promise<WorktreeRef> {
+    const live = await this.branchOf(wt);
+    if (!live) return wt;
+    let made = wt.made ?? (live === wt.branch ? undefined : wt.branch);
+    if (made === live || (made && (await this.renamedTo(made, live)))) made = undefined;
+    return live === wt.branch && made === wt.made ? wt : { ...wt, branch: live, made };
+  }
+
+  /**
    * What deleting `branch` would lose that no remote, the project's checkout or the `besides`
    * branches have, as describeWork says it; '' when nothing.
    */
@@ -507,11 +532,50 @@ export class Worktrees {
     return state;
   }
 
-  /** Deletes the worktree folder, and the branch too for 'all'. Returns what went wrong, if anything. */
-  async remove(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<string | undefined> {
+  /**
+   * Sends one worktree home: decides which branch dies, deletes it, and says what was kept.
+   * `worktree` removes only the folder. `all` also removes the office's branch and a branch the worker
+   * made, but never one that was already there, and never the office's branch while it still has
+   * commits no remote, the project's checkout or the branch it's on has. One `wouldLose` check.
+   * Gun dismissal (`dismiss`) does not come through here.
+   */
+  async sendHome(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<SentHome> {
+    const cur = await this.followed(wt);
+    let mode = cleanup;
+    let gone = cur;
+    let keptBranch: string | undefined;
+    let keptWhy: string | undefined;
+    if (mode === 'all' && cur.made) {
+      if (!(await this.hasBranch(cur.made))) {
+        // The agent deleted the office's branch (a rename is followed, see followed), so git can't say
+        // whether the one it's on is its own or was there before it: that one stays.
+        mode = 'worktree';
+        keptBranch = cur.branch;
+      } else {
+        // The office's own branch stays while it has commits that no remote, the project's checkout
+        // or the branch it's on has.
+        const work = await this.wouldLose(cur.made, [cur.branch]);
+        if (work) {
+          keptBranch = cur.made;
+          keptWhy = work;
+        }
+        // A branch it made itself goes with it; one that was there before it (main, say) isn't the office's to delete.
+        if (await this.madeSince(cur.branch, cur.made)) {
+          if (work) gone = { ...cur, made: undefined };
+        } else if (work) mode = 'worktree';
+        else {
+          gone = { ...cur, branch: cur.made, made: undefined };
+          keptBranch = undefined;
+          keptWhy = undefined;
+        }
+      }
+    } else if (mode === 'worktree') keptBranch = cur.branch;
+    const extra = mode === 'all' && gone.made && gone.made !== gone.branch ? gone.made : undefined;
+    const kept = keptBranch ? `${mode === 'all' ? ', and' : ' and'} kept branch ${keptBranch}${keptWhy ? ` — it has ${keptWhy}` : ''}` : '';
+    const note = mode === 'all' ? `worktree and branch ${gone.branch}${kept}` : `worktree${kept}`;
     try {
-      if (wt.path) {
-        const abs = path.join(this.dir, wt.path);
+      if (gone.path) {
+        const abs = path.join(this.dir, gone.path);
         if (existsSync(abs)) {
           try {
             await this.git(['worktree', 'remove', '--force', '--force', abs]);
@@ -524,17 +588,24 @@ export class Worktrees {
       }
       // Forget worktrees whose folders are gone: this one, and any someone rm -rf'd by hand.
       await this.git(['worktree', 'prune']);
-      if (cleanup === 'all') {
-        // The office's own branch, left behind when the worker made one of its own: it goes too,
-        // unless it has commits that no remote, the project's checkout or that one has.
-        const made = wt.made && wt.made !== wt.branch && !(await this.wouldLose(wt.made, [wt.branch])) ? wt.made : undefined;
-        await this.git(['branch', '-D', wt.branch]);
-        if (made) await this.git(['branch', '-D', made]).catch(() => undefined);
+      if (mode === 'all') {
+        await this.git(['branch', '-D', gone.branch]);
+        // Already decided this one holds nothing the other lacks: a failure here doesn't undo that.
+        if (extra) await this.git(['branch', '-D', extra]).catch(() => undefined);
       }
-      return undefined;
+      return { note };
     } catch (err) {
-      return gitError(err);
+      return { error: gitError(err) };
     }
+  }
+
+  /**
+   * Deletes what `sendHome` decides. Returns git's complaint, if any.
+   * Prune calls this after its own keep-or-force check (`describeWork`); a ref with no `made` still
+   * loses the branch it names when `cleanup` is 'all'. This does not replace that check with `wouldLose`.
+   */
+  async remove(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<string | undefined> {
+    return (await this.sendHome(wt, cleanup)).error;
   }
 
   /** Gun dismissal: discard owned work, never a project checkout or a branch that predates this worker. */
