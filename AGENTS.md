@@ -104,3 +104,12 @@ npm run test:coverage
 CI then sets the release version and starts the built office from the checkout (step "Start the office from the checkout"). When changing server startup, also run that smoke test locally as the workflow writes it. The Mac job packages the app and starts the office on the app's own Electron; when changing app packaging or startup, also run that smoke test.
 
 CI runs on a pull request only when it touches a path in the workflow's `pull_request.paths` filter. A new check goes into `release.yml` as a step in the same change, and its files go into both `paths` filters. Within a pull request, the `changes` job also skips the `mac` and `android` jobs unless the PR touches their files. A new path one of them depends on goes into that job's pattern too.
+
+## Cursor Cloud specific instructions
+
+- `npm ci` sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1`. The Mac app's Electron binary is not used on Linux. Node 22 is already on the image.
+- Whiteboard tests use the Chromium from `node bin/droid-office.js browser install`, kept in `~/.cache/droid-office/browsers`, plus Playwright's system libraries.
+- Android unit tests and lint use the SDK at `/opt/android-sdk` (platform `android-37.0`, build-tools 36). JDK 21 is already installed. `android/local.properties` is gitignored and points `sdk.dir` at that SDK. From `android/`: `./gradlew testDebugUnitTest lintDebug`.
+- `agent-browser` is on `PATH` for the headed 3D checks in `.agents/skills/office-3d-testing/SKILL.md`.
+- Boot runs `npm run dev`: Vite at http://127.0.0.1:5173 and the office on port 4600. A check that must not share that office uses another port and a temporary `HOME`, as that skill describes.
+- Git rewrites `github.com` remotes to credentialed https URLs. `normalizeRepo` drops that userinfo. A test stub that reads `git remote get-url` has to allow an optional `user:token@` as well.
