@@ -206,7 +206,14 @@ test('Droid workers launch with their own hook overlay and resume the correct se
   const pids = workers.owners();
   assert.equal(pids.length, 1, 'the guest scan gets the running worker terminal');
   assert.ok(Number.isInteger(pids[0]) && pids[0] > 0, 'ownership is a PID list');
-  assert.deepEqual(first.args.slice(0, 3), ['--settings', path.join(f.data, 'droid-hooks.json'), '--from-test']);
+  const systemFile = path.join(f.data, `system-${worker.id}.md`);
+  assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
+  const system = readFileSync(systemFile, 'utf8');
+  assert.match(system, new RegExp(`^You're ${worker.name}, a worker in Droid Office`));
+  assert.ok(system.includes(`You work in the project's main checkout, ${f.root},`), 'it says where the worker works');
+  assert.match(system, /office-workers/);
+  assert.match(system, /office-whiteboard/);
+  assert.doesNotMatch(system, /\{\{/, 'every placeholder is filled in');
   // Droid started with a prompt argument never opens /rewind-conversation: the prompt is typed in instead.
   assert.equal(first.args.at(-1), '--from-test');
   assert.equal(first.env.workerId, worker.id);
@@ -260,6 +267,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
     )
   )[1];
   assert.deepEqual(second.args.slice(-2), ['--resume', 'droid-1']);
+  assert.equal(second.args[second.args.indexOf('--append-system-prompt-file') + 1], systemFile, 'a resume gets the system prompt too');
   assert.notEqual(second.env.hookToken, first.env.hookToken);
   assert.equal(hook('Stop', {}), false, 'hooks from the old process must not control a resumed worker');
   assert.equal(hook('SessionStart', { source: 'resume' }, second.env.hookToken!), true);
@@ -331,7 +339,7 @@ test('a guest brought in sits at its desk with its name and resumes its own sess
       (records) => records.some((r) => r.kind === 'droid' && r.args.includes('--settings')),
     )
   ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
-  assert.deepEqual(run.args, ['--settings', path.join(f.data, 'droid-hooks.json'), '--from-test', '--resume', 'outside-session']);
+  assert.deepEqual(run.args, ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', path.join(f.data, `system-${info.id}.md`), '--from-test', '--resume', 'outside-session']);
   assert.equal(run.env.workerId, info.id);
 
   assert.match(String(workers.takeIn({ ...guest, id: 'guest-2' }, 's-2', 'Nik')), /taken/, 'never onto a desk someone has');
@@ -385,6 +393,45 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(restored.get(worker.id)?.effort, 'high');
   await workers.kill(worker.id);
   assert.equal(existsSync(overlayPath), false, 'a worker going home takes its overlay with it');
+});
+
+test('the worker system prompt is the office’s as rewritten, filled in for each worker, and none when it is empty', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  let system = 'You are {{name}}. {{where}}';
+  const prompts: PromptSource = { text: (id) => (id === 'worker.system' ? system : PROMPTS[id].text), agent: () => undefined };
+  const workers = new WorkerManager(f.root, f.data, f.droid, [], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, prompts);
+  t.after(() => workers.shutdown());
+  const launchOf = async (id: string) =>
+    (
+      await waitFor(
+        () => f.read(),
+        (records) => records.some((r) => r.kind === 'droid' && r.env.workerId === id && r.args.includes('--settings')),
+      )
+    ).find((r) => r.kind === 'droid' && r.env.workerId === id && r.args.includes('--settings'))!;
+
+  const a = workers.spawn('desk-2', 'test', 'look around');
+  if (typeof a === 'string') return assert.fail(a);
+  const file = path.join(f.data, `system-${a.id}.md`);
+  const first = await launchOf(a.id);
+  assert.equal(first.args[first.args.indexOf('--append-system-prompt-file') + 1], file);
+  assert.equal(readFileSync(file, 'utf8'), `You are ${a.name}. You work in the project's main checkout, ${f.root}, which other workers may use too: don't switch branches, stash or reset it unless your task says to.\n`);
+  await workers.kill(a.id);
+  assert.equal(existsSync(file), false, 'a worker going home takes its system prompt with it');
+
+  system = '';
+  const b = workers.spawn('desk-3', 'test', 'look around');
+  if (typeof b === 'string') return assert.fail(b);
+  const second = await launchOf(b.id);
+  assert.ok(!second.args.includes('--append-system-prompt-file'), 'an empty prompt adds nothing');
+  assert.equal(existsSync(path.join(f.data, `system-${b.id}.md`)), false);
 });
 
 test('board agents are hired with the requested model and effort', async (t) => {
