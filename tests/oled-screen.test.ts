@@ -32,7 +32,7 @@ test('screen textures and brightness survive the OLED material treatment', () =>
   map.dispose();
 });
 
-test('OLED cover glass is glossy without a room environment map or a full-screen reflection', (t) => {
+test('OLED cover glass is a rim gloss without a ceiling-light streak or a room environment map', (t) => {
   const environment = new THREE.CubeTexture();
   const mat = screenMaterial({ envMap: environment });
   const inherited = THREE.Material.prototype.onBeforeCompile;
@@ -52,10 +52,10 @@ test('OLED cover glass is glossy without a room environment map or a full-screen
   assert.equal(inheritedCalls, 1, 'the office glow and GI-bake hooks are retained');
   assert.equal(shader.uniforms.officeGlow.value, 1);
   assert.match(shader.vertexShader, /vScreenView = vec3/);
-  assert.match(shader.fragmentShader, /screenSheenAt.*screenView\.x.*screenView\.y/);
-  assert.match(shader.fragmentShader, /screenSheen = 1\.0 - smoothstep/);
+  assert.match(shader.fragmentShader, /screenFresnel = pow\( 1\.0 - abs\( screenView\.z \), 5\.0 \)/);
   assert.match(shader.fragmentShader, /screenEdge = 1\.0 - smoothstep/);
-  assert.match(shader.fragmentShader, /outgoingLight \+=.*screenSheen.*screenEdge/);
+  assert.match(shader.fragmentShader, /outgoingLight \+=.*screenEdge \* \( 0\.006 \+ 0\.045 \* screenFresnel \)/);
+  assert.doesNotMatch(shader.fragmentShader, /screenSheen|softbox|vScreenUv\.y \+/);
 });
 
 function painter() {

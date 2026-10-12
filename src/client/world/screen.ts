@@ -8,20 +8,20 @@ varying vec2 vScreenUv;
 varying vec3 vScreenView;
 `;
 
-/** A polished glass coat, not an ambient reflection that turns the whole black panel grey. */
+/**
+ * Cover glass, not a picture of the room. A streak sliding across the panel read as the ceiling
+ * fixtures; the highlight stays on the rim, and is zero everywhere else, so black is not washed grey.
+ */
 const GLASS = /* glsl */ `
 vec3 screenView = normalize( vScreenView );
 float screenFresnel = pow( 1.0 - abs( screenView.z ), 5.0 );
-// A narrow softbox streak moves across the glass with the viewing angle.
-float screenSheenAt = vScreenUv.y + 0.32 * vScreenUv.x + 0.28 * screenView.x + 0.18 * screenView.y;
-float screenSheen = 1.0 - smoothstep( 0.008, 0.024, abs( screenSheenAt - 1.08 ) );
 vec2 screenEdgeDistance = min( vScreenUv, 1.0 - vScreenUv );
-float screenEdge = 1.0 - smoothstep( 0.002, 0.009, min( screenEdgeDistance.x, screenEdgeDistance.y ) );
-// Exactly zero outside the streak and the glass edge: no backlight or full-screen haze.
-outgoingLight += vec3( 0.84, 0.91, 1.0 ) * ( screenSheen * ( 0.012 + 0.028 * screenFresnel ) + screenEdge * screenFresnel * 0.012 );
+float screenEdge = 1.0 - smoothstep( 0.0, 0.014, min( screenEdgeDistance.x, screenEdgeDistance.y ) );
+// Rim only. Head-on the panel is untouched; nothing is added across the glass.
+outgoingLight += vec3( 0.84, 0.91, 1.0 ) * screenEdge * ( 0.006 + 0.045 * screenFresnel );
 `;
 
-/** OLED content stays unlit and unfogged; a separate, localized sheen gives its cover glass a glossy finish. */
+/** OLED content stays unlit and unfogged; a rim highlight on the cover glass reads as gloss without reflecting the ceiling lights. */
 export function screenMaterial(params: THREE.MeshBasicMaterialParameters = {}): THREE.MeshBasicMaterial {
   const material = new THREE.MeshBasicMaterial({ color: params.map ? '#ffffff' : SCREEN_BLACK, ...params, envMap: null, fog: false, toneMapped: false });
   material.onBeforeCompile = function (shader, renderer) {
