@@ -5,22 +5,18 @@
  */
 
 export type ToneMap = 'neutral' | 'agx' | 'aces' | 'reinhard' | 'cineon' | 'linear';
-export type AAMode = 'msaa' | 'msaa-smaa' | 'smaa' | 'fxaa' | 'off';
 export type ShadowFilter = 'pcf' | 'vsm';
 export type ShadowMapSize = '1024' | '2048' | '4096' | '8192';
 export type ToonRamp = 'classic' | 'bands5' | 'soft' | 'smooth';
 export type GiDensity = 'low' | 'medium' | 'high';
-export type DebugView = 'final' | 'ao' | 'depth' | 'hdr' | 'gi';
+export type DebugView = 'final' | 'hdr' | 'gi';
 export type PaceMode = 'adaptive' | 'full';
-export type AoSamples = '8' | '16' | '24' | '32';
-export type AoResolution = 'half' | 'full';
 
 export interface RemasterSettings {
   enabled: boolean;
   preset: string;
   // Image
-  renderScale: number;
-  aa: AAMode;
+  msaa: boolean;
   sharpen: number;
   // HDR and tone
   hdr: boolean;
@@ -28,20 +24,6 @@ export interface RemasterSettings {
   paperWhite: number;
   toneMap: ToneMap;
   exposure: number;
-  // Bloom
-  bloom: boolean;
-  bloomStrength: number;
-  bloomRadius: number;
-  bloomThreshold: number;
-  bloomLevels: number;
-  // Ambient occlusion
-  ao: boolean;
-  aoRadius: number;
-  aoIntensity: number;
-  aoThickness: number;
-  aoBlend: number;
-  aoSamples: AoSamples;
-  aoResolution: AoResolution;
   // Global illumination
   gi: boolean;
   giIntensity: number;
@@ -50,11 +32,6 @@ export interface RemasterSettings {
   giRolling: boolean;
   giSpeed: number;
   giBounces: number;
-  // Moon light shafts
-  shafts: boolean;
-  shaftsIntensity: number;
-  shaftsDecay: number;
-  shaftsLength: number;
   // Color
   saturation: number;
   vibrance: number;
@@ -106,58 +83,42 @@ export interface RemasterSection {
   controls: RemasterControl[];
 }
 
+/** The Nik preset: native resolution, 2× MSAA, baked high-density GI, smooth shading, no outlines. */
 export const REMASTER_DEFAULTS: RemasterSettings = {
   enabled: true,
-  preset: 'crisp',
-  renderScale: 1,
-  aa: 'msaa',
+  preset: 'nik',
+  msaa: true,
   sharpen: 0.25,
-  hdr: true,
+  hdr: false,
   hdrPeak: 4,
   paperWhite: 1,
-  toneMap: 'neutral',
-  exposure: 1,
-  bloom: true,
-  bloomStrength: 0.35,
-  bloomRadius: 0.35,
-  bloomThreshold: 0.9,
-  bloomLevels: 3,
-  ao: true,
-  aoRadius: 0.6,
-  aoIntensity: 1,
-  aoThickness: 1,
-  aoBlend: 0.8,
-  aoSamples: '16',
-  aoResolution: 'half',
+  toneMap: 'linear',
+  exposure: 1.25,
   gi: true,
-  giIntensity: 0.6,
-  giGlow: 0.15,
-  giDensity: 'medium',
-  giRolling: true,
+  giIntensity: 0.25,
+  giGlow: 0.4,
+  giDensity: 'high',
+  giRolling: false,
   giSpeed: 30,
   giBounces: 1,
-  shafts: false,
-  shaftsIntensity: 0.6,
-  shaftsDecay: 0.96,
-  shaftsLength: 0.75,
   saturation: 1.05,
-  vibrance: 0.1,
-  contrast: 1.04,
+  vibrance: 0.15,
+  contrast: 1.06,
   temperature: 0,
   tint: 0,
   moon: 1,
   skyFill: 1,
-  ambientFill: 1,
-  officeFill: 1,
-  screenLight: 1.15,
-  lampLight: 1.1,
+  ambientFill: 0.95,
+  officeFill: 1.05,
+  screenLight: 1.4,
+  lampLight: 1.2,
   emissive: 1.4,
-  screenGlow: 1.6,
+  screenGlow: 1,
   shadowFilter: 'pcf',
-  shadowMapSize: '4096',
-  shadowSoftness: 1.5,
-  toonRamp: 'classic',
-  outlines: true,
+  shadowMapSize: '1024',
+  shadowSoftness: 0.5,
+  toonRamp: 'smooth',
+  outlines: false,
   outlineThickness: 1.8,
   outlineOpacity: 1,
   debug: 'final',
@@ -180,22 +141,8 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
     icon: '🖥️',
     controls: [
       { key: 'enabled', kind: 'toggle', label: 'Remastered renderer', hint: 'Off draws the office exactly the way Droid Office does, with the classic Graphics settings.' },
-      { key: 'renderScale', kind: 'range', min: 0.5, max: 2, step: 0.05, percent: true, label: 'Render scale', hint: 'Below 100% upscales; above 100% supersamples for the cleanest edges and text.', needs: 'enabled' },
-      {
-        key: 'aa',
-        kind: 'select',
-        label: 'Anti-aliasing',
-        hint: 'MSAA is the sharpest. SMAA catches edges MSAA misses, like the outlines. FXAA is cheapest and softest.',
-        needs: 'enabled',
-        options: [
-          ['msaa', '4× MSAA'],
-          ['msaa-smaa', '4× MSAA + SMAA'],
-          ['smaa', 'SMAA'],
-          ['fxaa', 'FXAA'],
-          ['off', 'Off'],
-        ],
-      },
-      { key: 'sharpen', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Sharpening (CAS)', hint: 'Contrast-adaptive sharpening on the final image.', needs: 'enabled' },
+      { key: 'msaa', kind: 'toggle', label: 'Anti-aliasing (2× MSAA)', hint: 'Smooths the edges of everything drawn, at the screen’s full resolution.', needs: 'enabled' },
+      { key: 'sharpen', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Sharpening (CAS)', hint: 'Contrast-adaptive sharpening on the final image. At 0% one pass fewer is drawn.', needs: 'enabled' },
     ],
   },
   {
@@ -209,63 +156,6 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
       { key: 'paperWhite', kind: 'range', min: 0.5, max: 2, step: 0.05, unit: '×', label: 'Paper white', hint: 'Brightness of everything that isn’t a highlight, relative to the desktop’s white.', needs: 'hdr' },
       { key: 'toneMap', kind: 'select', label: 'Tone mapping', hint: 'How highlights roll off to the display’s peak. Neutral leaves colors below the knee untouched.', needs: 'enabled', options: TONE_MAPS },
       { key: 'exposure', kind: 'range', min: 0.25, max: 4, step: 0.05, unit: '×', label: 'Exposure', hint: 'Scene brightness before tone mapping.', needs: 'enabled' },
-    ],
-  },
-  {
-    id: 'bloom',
-    title: 'Bloom',
-    icon: '✨',
-    controls: [
-      { key: 'bloom', kind: 'toggle', label: 'Bloom', hint: 'Light bleeding off screens, signs and lamps.', needs: 'enabled' },
-      { key: 'bloomStrength', kind: 'range', min: 0, max: 2, step: 0.05, label: 'Strength', hint: 'How much glow is added.', needs: 'bloom' },
-      { key: 'bloomRadius', kind: 'range', min: 0, max: 1, step: 0.05, label: 'Radius', hint: 'Tight halo (0) to wide haze (1).', needs: 'bloom' },
-      { key: 'bloomThreshold', kind: 'range', min: 0, max: 3, step: 0.05, label: 'Threshold', hint: 'Only light brighter than this blooms. Above 1 keeps it to true highlights.', needs: 'bloom' },
-      {
-        key: 'bloomLevels',
-        kind: 'range',
-        min: 1,
-        max: 5,
-        step: 1,
-        label: 'Spread levels',
-        hint: 'Blur levels, each half the size of the last. More reach further across the room; on Apple GPUs each level past the second costs about 1 ms.',
-        needs: 'bloom',
-      },
-    ],
-  },
-  {
-    id: 'ao',
-    title: 'Ambient occlusion',
-    icon: '🌑',
-    controls: [
-      { key: 'ao', kind: 'toggle', label: 'Ambient occlusion (GTAO)', hint: 'Contact shadows where things meet: under desks, chairs, people and in corners.', needs: 'enabled' },
-      { key: 'aoRadius', kind: 'range', min: 0.1, max: 2, step: 0.05, unit: 'm', label: 'Radius', hint: 'How far each pixel looks for occluders.', needs: 'ao' },
-      { key: 'aoIntensity', kind: 'range', min: 0.25, max: 3, step: 0.05, unit: '×', label: 'Intensity', hint: 'How dark the occlusion gets.', needs: 'ao' },
-      { key: 'aoThickness', kind: 'range', min: 0.1, max: 4, step: 0.05, unit: 'm', label: 'Thickness', hint: 'How thick an occluder is assumed to be. Lower stops halos round thin things.', needs: 'ao' },
-      { key: 'aoBlend', kind: 'range', min: 0, max: 1, step: 0.05, percent: true, label: 'Blend', hint: 'How much of the AO reaches the final image.', needs: 'ao' },
-      {
-        key: 'aoSamples',
-        kind: 'select',
-        label: 'Samples',
-        hint: 'More samples, less noise, more GPU.',
-        needs: 'ao',
-        options: [
-          ['8', '8'],
-          ['16', '16'],
-          ['24', '24'],
-          ['32', '32'],
-        ],
-      },
-      {
-        key: 'aoResolution',
-        kind: 'select',
-        label: 'Resolution',
-        hint: 'Half works the AO out for a quarter of the pixels and scales it up: most of the look for about a third of the GPU.',
-        needs: 'ao',
-        options: [
-          ['half', 'Half'],
-          ['full', 'Full'],
-        ],
-      },
     ],
   },
   {
@@ -314,17 +204,6 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
     ],
   },
   {
-    id: 'shafts',
-    title: 'Light shafts',
-    icon: '🌙',
-    controls: [
-      { key: 'shafts', kind: 'toggle', label: 'Moonlight shafts', hint: 'Rays of moonlight past the window frames, walls and skyline.', needs: 'enabled' },
-      { key: 'shaftsIntensity', kind: 'range', min: 0, max: 3, step: 0.05, unit: '×', label: 'Intensity', hint: 'How bright the rays are.', needs: 'shafts' },
-      { key: 'shaftsDecay', kind: 'range', min: 0.85, max: 1, step: 0.005, label: 'Decay', hint: 'How quickly a ray fades away from the moon.', needs: 'shafts' },
-      { key: 'shaftsLength', kind: 'range', min: 0.2, max: 1.5, step: 0.05, label: 'Length', hint: 'How far across the screen the rays reach.', needs: 'shafts' },
-    ],
-  },
-  {
     id: 'color',
     title: 'Color',
     icon: '🎨',
@@ -348,7 +227,7 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
       { key: 'screenLight', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Laptop screen light', hint: 'The pools of light the laptop screens throw over the desks.', needs: 'enabled' },
       { key: 'lampLight', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Street lamps', hint: 'The lamps and string lights outside.', needs: 'enabled' },
       { key: 'emissive', kind: 'range', min: 0, max: 4, step: 0.05, unit: '×', label: 'Emissive surfaces', hint: 'Lit windows across the city, bulbs and glowing trim.', needs: 'enabled' },
-      { key: 'screenGlow', kind: 'range', min: 0.5, max: 4, step: 0.05, unit: '×', label: 'Screen and sign brightness', hint: 'Laptop screens, signs and LEDs. Above 1 they glow past white in HDR and catch the bloom.', needs: 'enabled' },
+      { key: 'screenGlow', kind: 'range', min: 0.5, max: 4, step: 0.05, unit: '×', label: 'Screen and sign brightness', hint: 'Laptop screens, signs and LEDs. Above 1 they glow past white in HDR.', needs: 'enabled' },
     ],
   },
   {
@@ -419,9 +298,7 @@ export const REMASTER_SECTIONS: RemasterSection[] = [
         needs: 'enabled',
         options: [
           ['final', 'Final image'],
-          ['ao', 'Ambient occlusion'],
           ['gi', 'GI only'],
-          ['depth', 'Depth'],
           ['hdr', 'HDR heatmap'],
         ],
       },
@@ -453,97 +330,32 @@ export const REMASTER_PRESETS: RemasterPreset[] = [
   {
     id: 'performance',
     label: 'Performance',
-    hint: 'Most of the look for the least GPU.',
-    values: { enabled: true, renderScale: 0.8, aa: 'fxaa', sharpen: 0.45, ao: false, gi: true, giDensity: 'low', giRolling: false, giBounces: 0, bloom: true, shafts: false, shadowMapSize: '2048', shadowFilter: 'pcf', shadowSoftness: 1 },
-  },
-  { id: 'crisp', label: 'Crisp', hint: 'Native resolution, MSAA, bloom, AO, GI and HDR. Nothing that blurs.', values: { ...REMASTER_DEFAULTS } },
-  {
-    id: 'cinematic',
-    label: 'Cinematic',
-    hint: 'Moonlight shafts, filmic tone, warmer glow.',
-    values: {
-      enabled: true,
-      renderScale: 1,
-      aa: 'msaa-smaa',
-      toneMap: 'aces',
-      exposure: 1.1,
-      bloom: true,
-      bloomStrength: 0.6,
-      bloomRadius: 0.55,
-      bloomThreshold: 0.75,
-      bloomLevels: 5,
-      shafts: true,
-      gi: true,
-      giIntensity: 0.6,
-      giBounces: 2,
-      screenGlow: 2.2,
-      emissive: 1.8,
-      contrast: 1.08,
-      saturation: 1.1,
-      temperature: 0.1,
-      shadowSoftness: 2.5,
-    },
+    hint: 'The Nik look for less GPU: no MSAA or sharpening, and probes every 2 m with no extra bounce.',
+    values: { enabled: true, msaa: false, sharpen: 0, giDensity: 'medium', giBounces: 0 },
   },
   {
-    id: 'ultra',
-    label: 'Ultra',
-    hint: '150% supersampling, 8K shadows, dense GI, 32-sample AO.',
-    values: {
-      enabled: true,
-      renderScale: 1.5,
-      aa: 'msaa-smaa',
-      sharpen: 0.15,
-      ao: true,
-      aoSamples: '32',
-      aoResolution: 'full',
-      gi: true,
-      giDensity: 'high',
-      giBounces: 2,
-      giRolling: true,
-      giSpeed: 120,
-      shadowMapSize: '8192',
-      shadowSoftness: 1.25,
-      bloom: true,
-      bloomLevels: 5,
-    },
+    id: 'toon',
+    label: 'Toon',
+    hint: 'The classic cartoon look, three-band shading and ink outlines, lit by the baked GI.',
+    values: { enabled: true, toonRamp: 'classic', outlines: true, outlineThickness: 1.8, outlineOpacity: 1, exposure: 1, shadowMapSize: '2048', shadowSoftness: 1.5 },
   },
   {
     id: 'nik',
     label: 'Nik',
-    hint: 'Tuned for a 16" M5 Pro MacBook Pro at 3456×2168 and 120 Hz: native resolution, SMAA, HDR and bloom, the classic colors, and warmer screen light in place of GI and AO.',
-    // Measured full screen on that machine: a steady 120 FPS in every spot tried, about 3 ms of GPU a frame. GI's
-    // per-pixel probe lookups and AO each cost more than the HDR copy leaves room for at that size, and MSAA on the
-    // float target does too. Linear keeps the dark room as the classic renderer draws it; Neutral's toe takes the grey
-    // out of it, which only GI's extra light makes up for.
-    values: {
-      enabled: true,
-      renderScale: 1,
-      aa: 'smaa',
-      sharpen: 0.25,
-      hdr: true,
-      hdrPeak: 4,
-      toneMap: 'linear',
-      bloom: true,
-      bloomStrength: 0.45,
-      bloomRadius: 0.4,
-      bloomThreshold: 1,
-      bloomLevels: 3,
-      ao: false,
-      gi: false,
-      giRolling: false,
-      shafts: false,
-      saturation: 1.05,
-      vibrance: 0.15,
-      contrast: 1.06,
-      screenLight: 1.4,
-      lampLight: 1.2,
-      emissive: 1.6,
-      screenGlow: 2,
-      shadowMapSize: '4096',
-      shadowFilter: 'pcf',
-      shadowSoftness: 1.5,
-      outlines: true,
-    },
+    hint: 'Native resolution, 2× MSAA, baked GI every 1.4 m with one extra bounce, smooth shading and no outlines, in SDR.',
+    values: { ...REMASTER_DEFAULTS },
+  },
+  {
+    id: 'hdr',
+    label: 'HDR',
+    hint: 'Nik in native HDR on an EDR display such as the XDR panel: highlights up to 4× white, screens and signs glowing past it.',
+    values: { enabled: true, hdr: true, hdrPeak: 4, screenGlow: 1.6 },
+  },
+  {
+    id: 'ultra',
+    label: 'Ultra',
+    hint: 'Nik with 4096² shadows, two extra GI bounces, and Live GI re-baking 60 probes a second so people and screens show up in the bounce light.',
+    values: { enabled: true, shadowMapSize: '4096', shadowSoftness: 1, giBounces: 2, giRolling: true, giSpeed: 60 },
   },
 ];
 

@@ -870,7 +870,7 @@ export function openSettings(
         'Remastered',
         card('Graphics Lab', {
           desc: desc(
-            'Every Remastered renderer setting, live, in a see-through panel beside the game: native HDR, bloom, ambient occlusion, probe GI, color, lights and shadows. ` opens and closes it. While the Remastered renderer is on, it replaces the resolution and anti-aliasing settings below.',
+            'Every Remastered renderer setting, live, in a see-through panel beside the game: 2× MSAA, native HDR, baked probe GI, color, lights and shadows. ` opens and closes it. While the Remastered renderer is on, it replaces the resolution and anti-aliasing settings below.',
           ),
           control: labButton,
         }),

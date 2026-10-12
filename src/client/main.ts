@@ -3435,7 +3435,7 @@ const renderLoop = new RenderLoop({
 
 // ---- The Remastered renderer and its Graphics Lab (` toggles it) --------------------------------
 let remasterSettings: RemasterSettings = loadRemaster();
-const remaster = new Remaster(renderer, scene, camera, { sun, hemi, ambient }, [hands.scene], remasterSettings, () => {
+const remaster = new Remaster(renderer, scene, { sun, hemi, ambient }, [hands.scene], remasterSettings, () => {
   graphicsLab.paint();
   renderWake();
 });
@@ -3617,7 +3617,7 @@ function drawFrame(dt: number, t: number) {
         system: systemGpu,
         render,
         output,
-        scale: remaster.active ? remasterSettings.renderScale : settings.graphics.scale,
+        scale: remaster.active ? 1 : settings.graphics.scale,
         taa: settings.graphics.taa,
         mode: remaster.active ? remaster.describe() : undefined,
         shadows: { mode: settings.graphics.shadows, redrawn: shadowFrames / fpsFrames },

@@ -1,24 +1,18 @@
 import * as THREE from 'three';
 import { LightProbeGridWebGL } from 'three/examples/jsm/lighting/LightProbeGridWebGL.js';
-import { FXAAPass } from 'three/examples/jsm/postprocessing/FXAAPass.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
-import { renderSize } from '../graphics';
 import { GI_SPACING, type GiDensity, probeCount, type RemasterSettings, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
 import { remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
 
 /*
- * The Remastered renderer: the office drawn into a float (HDR, linear) target, then ambient occlusion, bloom and
- * moonlight shafts in that light, then exposure, white balance, contrast, saturation and tone mapping to the
- * display's range (up to the HDR peak on an EDR display), then SMAA or FXAA, then contrast-adaptive sharpening as it
- * is brought up (or down) to the screen's resolution. Global illumination is a light-probe grid over the floor that
- * three.js's own lighting reads (see the probe lines in world/sky.ts). With the renderer off, none of this runs and
- * the office draws as it always has.
+ * The Remastered renderer: the office drawn at the screen's resolution into a float (HDR, linear) target, with 2×
+ * MSAA when it's on, then exposure, white balance, contrast, saturation and tone mapping to the display's range (up to
+ * the HDR peak on an EDR display), then contrast-adaptive sharpening. Global illumination is a light-probe grid over
+ * the floor that three.js's own lighting reads (see the probe lines in world/sky.ts). With the renderer off, none of
+ * this runs and the office draws as it always has.
  */
 
 export interface RemasterLights {
@@ -39,9 +33,6 @@ void main() {
 const TONEMAP_GLSL = THREE.ShaderChunk.tonemapping_pars_fragment.replace('uniform float toneMappingExposure;', '').replaceAll('toneMappingExposure', '1.0');
 
 const COMMON = /* glsl */ `
-uniform float cameraNear;
-uniform float cameraFar;
-float viewZ( float d ) { return ( cameraNear * cameraFar ) / ( cameraFar - d * ( cameraFar - cameraNear ) ); }
 float srgb1( float x ) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow( x, 1.0 / 2.4 ) - 0.055; }
 // The sRGB curve carried on past 1: what an extended-range canvas reads.
 vec3 srgb( vec3 c ) { c = max( c, 0.0 ); return vec3( srgb1( c.r ), srgb1( c.g ), srgb1( c.b ) ); }
@@ -53,17 +44,6 @@ const GRADE = /* glsl */ `
 ${TONEMAP_GLSL}
 ${COMMON}
 uniform sampler2D tColor;
-uniform sampler2D tDepth;
-uniform sampler2D tAO;
-uniform sampler2D tShafts;
-uniform float shafts;
-uniform float aoBlend;
-uniform sampler2D tBloom0;
-uniform sampler2D tBloom1;
-uniform sampler2D tBloom2;
-uniform sampler2D tBloom3;
-uniform sampler2D tBloom4;
-uniform float bloomW[5];
 uniform float exposure;
 uniform vec3 balance;
 uniform float contrast;
@@ -72,6 +52,7 @@ uniform float vibrance;
 uniform float peak;
 uniform int toneMap;
 uniform int view;
+uniform float dither;
 varying vec2 vUv;
 
 vec3 curve( vec3 c ) {
@@ -93,23 +74,7 @@ vec3 heat( float l ) {
 }
 
 void main() {
-  if ( view == 1 ) {
-    gl_FragColor = vec4( srgb( vec3( texture2D( tAO, vUv ).r ) ), 1.0 );
-    return;
-  }
-  if ( view == 3 ) {
-    float z = viewZ( texture2D( tDepth, vUv ).x );
-    gl_FragColor = vec4( vec3( 1.0 - clamp( log2( max( z, 1.0 ) ) / log2( cameraFar ), 0.0, 1.0 ) ), 1.0 );
-    return;
-  }
   vec3 c = texture2D( tColor, vUv ).rgb;
-  if ( aoBlend > 0.0 ) c *= mix( 1.0, texture2D( tAO, vUv ).r, aoBlend );
-  if ( bloomW[0] > 0.0 ) c += bloomW[0] * texture2D( tBloom0, vUv ).rgb;
-  if ( bloomW[1] > 0.0 ) c += bloomW[1] * texture2D( tBloom1, vUv ).rgb;
-  if ( bloomW[2] > 0.0 ) c += bloomW[2] * texture2D( tBloom2, vUv ).rgb;
-  if ( bloomW[3] > 0.0 ) c += bloomW[3] * texture2D( tBloom3, vUv ).rgb;
-  if ( bloomW[4] > 0.0 ) c += bloomW[4] * texture2D( tBloom4, vUv ).rgb;
-  if ( shafts > 0.0 ) c += texture2D( tShafts, vUv ).rgb * shafts;
   c *= exposure * balance;
   // Contrast around middle grey, in log space, so highlights are treated the same in SDR and HDR.
   c = 0.18 * pow( max( c, 0.0 ) / 0.18, vec3( contrast ) );
@@ -120,45 +85,18 @@ void main() {
   c = max( mix( vec3( luma ), c, saturation * ( 1.0 + vibrance * ( 1.0 - chroma ) ) ), 0.0 );
   // Up to the display's peak: 1 in SDR, the HDR peak on an EDR display.
   c = peak * curve( c / peak );
-  if ( view == 4 ) {
+  if ( view == 1 ) {
     gl_FragColor = vec4( srgb( heat( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ) ), 1.0 );
     return;
   }
-  gl_FragColor = vec4( srgb( c ), 1.0 );
+  c = srgb( c );
+  // Half a step of 8-bit noise, so the dark night sky doesn't band on an 8-bit canvas. Not grain: too faint to see.
+  if ( dither > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
+  gl_FragColor = vec4( c, 1.0 );
 }
 `;
 
-const SHAFT_STEPS = 48;
-const SHAFTS = /* glsl */ `
-${COMMON}
-uniform sampler2D tColor;
-uniform sampler2D tDepth;
-uniform vec2 moonUv;
-uniform float aspect;
-uniform float decay;
-uniform float reach;
-uniform float visible;
-uniform vec3 moonColor;
-varying vec2 vUv;
-void main() {
-  vec2 delta = ( vUv - moonUv ) * reach / float( ${SHAFT_STEPS} );
-  // Each pixel starts a fraction of a step along, so the steps don't show as bands.
-  vec2 uv = vUv - delta * hash( gl_FragCoord.xy );
-  float lit = 1.0;
-  vec3 sum = vec3( 0.0 );
-  for ( int i = 0; i < ${SHAFT_STEPS}; i ++ ) {
-    float sky = smoothstep( cameraFar * 0.5, cameraFar * 0.9, viewZ( texture2D( tDepth, uv ).x ) );
-    vec2 d = ( uv - moonUv ) * vec2( aspect, 1.0 );
-    float halo = exp( - dot( d, d ) * 14.0 );
-    sum += sky * ( halo * moonColor + 0.2 * texture2D( tColor, uv ).rgb ) * lit;
-    lit *= decay;
-    uv -= delta;
-  }
-  gl_FragColor = vec4( sum * visible * ( 4.0 / float( ${SHAFT_STEPS} ) ), 1.0 );
-}
-`;
-
-/** Contrast-adaptive sharpening (after AMD's CAS) as the image is brought to the screen's size. */
+/** Contrast-adaptive sharpening (after AMD's CAS) on the graded image. */
 const PRESENT = /* glsl */ `
 ${COMMON}
 uniform sampler2D tColor;
@@ -181,16 +119,13 @@ void main() {
     vec3 k = -amp / mix( 8.0, 5.0, sharpness );
     c = ( c + ( n + s + e + w ) * k ) / ( 1.0 + 4.0 * k );
   }
-  // Half a step of 8-bit noise, so the dark night sky doesn't band on an 8-bit canvas. Not grain: too faint to see.
   if ( dither > 0.0 ) c += ( hash( gl_FragCoord.xy ) - 0.5 ) / 255.0;
   gl_FragColor = vec4( max( c, 0.0 ), 1.0 );
 }
 `;
 
-const BLUR_X = new THREE.Vector2(1, 0);
-const BLUR_Y = new THREE.Vector2(0, 1);
 const TONE_INDEX: Record<ToneMap, number> = { neutral: 0, agx: 1, aces: 2, reinhard: 3, cineon: 4, linear: 5 };
-const VIEW_INDEX: Record<RemasterSettings['debug'], number> = { final: 0, ao: 1, gi: 0, depth: 3, hdr: 4 };
+const VIEW_INDEX: Record<RemasterSettings['debug'], number> = { final: 0, gi: 0, hdr: 1 };
 /** three.js's own tone mapping for what draws straight to the screen after the pipeline (your hands). */
 const THREE_TONE: Record<ToneMap, THREE.ToneMapping> = {
   neutral: THREE.NeutralToneMapping,
@@ -324,36 +259,16 @@ export class Remaster {
   readonly hdr: HdrPresenter;
   readonly gi: ProbeGI;
   private sceneRT: THREE.WebGLRenderTarget | null = null;
-  private shaftsRT: THREE.WebGLRenderTarget | null = null;
-  private ldr: [THREE.WebGLRenderTarget, THREE.WebGLRenderTarget] | null = null;
-  private gtao: GTAOPass | null = null;
-  private bloom: UnrealBloomPass | null = null;
-  private smaa: SMAAPass | null = null;
-  private fxaa: FXAAPass | null = null;
+  private graded: THREE.WebGLRenderTarget | null = null;
   private readonly quad = new FullScreenQuad();
   private readonly outputSize = new THREE.Vector2();
-  private readonly moonDir = new THREE.Vector3();
-  private readonly moonAt = new THREE.Vector3();
-  private readonly camDir = new THREE.Vector3();
   private shadow = { type: -1 as number, size: 0, radius: -1 };
   private ramp = '';
-  private aoSize = '';
   private lastDraw = 0;
   private giGlow = -1;
   private liveDue = 0;
   private readonly grade = shader(GRADE, {
     tColor: { value: null },
-    tDepth: { value: null },
-    tAO: { value: null },
-    tShafts: { value: null },
-    shafts: { value: 0 },
-    aoBlend: { value: 0 },
-    tBloom0: { value: null },
-    tBloom1: { value: null },
-    tBloom2: { value: null },
-    tBloom3: { value: null },
-    tBloom4: { value: null },
-    bloomW: { value: [0, 0, 0, 0, 0] },
     exposure: { value: 1 },
     balance: { value: new THREE.Vector3(1, 1, 1) },
     contrast: { value: 1 },
@@ -362,34 +277,18 @@ export class Remaster {
     peak: { value: 1 },
     toneMap: { value: 0 },
     view: { value: 0 },
-    cameraNear: { value: 0.1 },
-    cameraFar: { value: 100 },
-  });
-  private readonly shafts = shader(SHAFTS, {
-    tColor: { value: null },
-    tDepth: { value: null },
-    moonUv: { value: new THREE.Vector2() },
-    aspect: { value: 1 },
-    decay: { value: 0.96 },
-    reach: { value: 0.75 },
-    visible: { value: 0 },
-    moonColor: { value: new THREE.Color() },
-    cameraNear: { value: 0.1 },
-    cameraFar: { value: 100 },
+    dither: { value: 0 },
   });
   private readonly present = shader(PRESENT, {
     tColor: { value: null },
     texel: { value: new THREE.Vector2() },
     sharpness: { value: 0 },
     dither: { value: 1 },
-    cameraNear: { value: 0.1 },
-    cameraFar: { value: 100 },
   });
 
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
     private readonly scene: THREE.Scene,
-    private readonly camera: THREE.PerspectiveCamera,
     private readonly lights: RemasterLights,
     /** Scenes besides the office whose materials need rebuilding when the shadow filter changes (your hands). */
     private readonly others: THREE.Object3D[],
@@ -405,14 +304,12 @@ export class Remaster {
     return this.settings.enabled;
   }
 
-  /** What the scene is drawn at and what it is shown at, in device pixels. */
+  /** What the scene is drawn at and what it is shown at, in device pixels: the same, unless the GPU's texture limit is smaller. */
   sizes(): { render: { width: number; height: number }; output: { width: number; height: number } } {
     this.renderer.getDrawingBufferSize(this.outputSize);
     const output = { width: this.outputSize.x, height: this.outputSize.y };
-    const max = this.renderer.capabilities.maxTextureSize;
-    const r = renderSize(output.width, output.height, this.settings.renderScale);
-    const fit = Math.min(1, max / Math.max(r.width, r.height));
-    return { render: { width: Math.max(1, Math.floor(r.width * fit)), height: Math.max(1, Math.floor(r.height * fit)) }, output };
+    const fit = Math.min(1, this.renderer.capabilities.maxTextureSize / Math.max(output.width, output.height));
+    return { render: { width: Math.max(1, Math.floor(output.width * fit)), height: Math.max(1, Math.floor(output.height * fit)) }, output };
   }
 
   /** The peak the image is tone mapped to: the HDR peak once HDR is on screen, else white. */
@@ -423,10 +320,10 @@ export class Remaster {
   /** The corner readout's pipeline line. */
   describe(): string {
     const s = this.settings;
-    const aa = { msaa: 'MSAA', 'msaa-smaa': 'MSAA+SMAA', smaa: 'SMAA', fxaa: 'FXAA', off: 'no AA' }[s.aa];
+    const aa = s.msaa ? '2× MSAA' : 'no AA';
     const hdr = s.hdr ? (this.hdr.active ? `HDR ${s.hdrPeak}×` : this.hdr.state === 'starting' ? 'HDR starting' : 'SDR (HDR unavailable)') : 'SDR';
-    const fx = [s.bloom && 'bloom', s.ao && 'AO', s.gi && (this.gi.baking ? `GI ${Math.round(this.gi.progress * 100)}%` : 'GI'), s.shafts && 'shafts'].filter(Boolean).join('+');
-    return `Remastered · ${aa} · ${hdr}${fx ? ` · ${fx}` : ''}`;
+    const gi = s.gi ? (this.gi.baking ? ` · GI ${Math.round(this.gi.progress * 100)}%` : ' · GI') : '';
+    return `Remastered · ${aa} · ${hdr}${gi}`;
   }
 
   /** Applies settings: the shader dials, shadows, the toon ramp, GI, HDR. Cheap to call again with the same ones. */
@@ -457,16 +354,12 @@ export class Remaster {
     // What draws straight to the screen after the pipeline (your hands) is tone mapped to match.
     this.renderer.toneMapping = on ? THREE_TONE[s.toneMap] : THREE.NoToneMapping;
     this.renderer.toneMappingExposure = on ? s.exposure : 1;
-    if (this.gtao) {
-      this.tuneAO(this.gtao);
-      if (this.sceneRT && this.aoSize !== s.aoResolution) this.sizeAO(this.sceneRT.width, this.sceneRT.height);
-    }
     if (!on) this.disposeTargets();
     else if (this.sceneRT && this.sceneRT.samples !== this.msaaSamples()) this.disposeTargets();
   }
 
   private msaaSamples(): number {
-    return this.settings.aa === 'msaa' || this.settings.aa === 'msaa-smaa' ? 4 : 0;
+    return this.settings.msaa ? 2 : 0;
   }
 
   private applyShadows(type: THREE.ShadowMapType, size: number, radius: number) {
@@ -493,20 +386,6 @@ export class Remaster {
     sm.needsUpdate = true;
   }
 
-  private tuneAO(gtao: GTAOPass) {
-    const s = this.settings;
-    gtao.updateGtaoMaterial({ radius: s.aoRadius, thickness: s.aoThickness, scale: s.aoIntensity, samples: Number(s.aoSamples), distanceExponent: 1, distanceFallOff: 1 });
-  }
-
-  /** The AO is worked out at half or full resolution, and scaled up as it is blended in. */
-  private sizeAO(w: number, h: number) {
-    const half = this.settings.aoResolution === 'half';
-    const aw = half ? Math.max(1, w >> 1) : w;
-    const ah = half ? Math.max(1, h >> 1) : h;
-    this.aoSize = this.settings.aoResolution;
-    if (this.gtao && (this.gtao.width !== aw || this.gtao.height !== ah)) this.gtao.setSize(aw, ah);
-  }
-
   /** After the canvas changes size. */
   resized() {
     this.hdr.resized();
@@ -516,26 +395,9 @@ export class Remaster {
     const { width: w, height: h } = render;
     if (this.sceneRT && this.sceneRT.width === w && this.sceneRT.height === h) return;
     this.disposeTargets();
-    const hdr = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false } as const;
-    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples(), depthTexture: new THREE.DepthTexture(w, h, THREE.FloatType) });
-    this.shaftsRT = new THREE.WebGLRenderTarget(Math.max(1, w >> 1), Math.max(1, h >> 1), hdr);
-    this.ldr = [new THREE.WebGLRenderTarget(w, h, hdr), new THREE.WebGLRenderTarget(w, h, hdr)];
-    if (!this.gtao) {
-      this.gtao = new GTAOPass(this.scene, this.camera, w, h);
-      // Only the AO is worked out here; the grade pass multiplies it in, which saves a full-size copy and blend.
-      this.gtao.output = GTAOPass.OUTPUT.Off;
-    }
-    this.sizeAO(w, h);
-    // AO from the depth this frame was drawn with: glass (which writes no depth) is seen through, and no second scene pass.
-    this.gtao.setGBuffer(this.sceneRT.depthTexture ?? undefined);
-    this.tuneAO(this.gtao);
-    this.bloom ??= new UnrealBloomPass(new THREE.Vector2(w, h), 1, 0.4, 1);
-    // From a half-size source (the pass halves it again): the glow is a blur, so it looks the same for a quarter of the work.
-    this.bloom.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
-    this.smaa ??= new SMAAPass();
-    this.smaa.setSize(w, h);
-    this.fxaa ??= new FXAAPass();
-    this.fxaa.setSize(w, h);
+    const hdr = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter } as const;
+    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: this.msaaSamples() });
+    this.graded = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: false });
   }
 
   /** Draws the frame `drawScene` renders with the camera to the canvas, through the whole pipeline. */
@@ -545,7 +407,6 @@ export class Remaster {
     const { render } = this.sizes();
     this.ensure(render);
     const sceneRT = this.sceneRT!;
-    const camera = this.camera;
     const { sun, hemi, ambient } = this.lights;
     const lit = [sun.intensity, hemi.intensity, ambient.intensity] as const;
     sun.intensity *= s.moon;
@@ -578,24 +439,8 @@ export class Remaster {
       r.setRenderTarget(null);
     }
 
-    const color = sceneRT;
-    const ao = s.ao && !!this.gtao;
-    if (ao) this.gtao!.render(r, sceneRT, sceneRT, 0, false);
-    const bloomLevels = s.bloom && this.bloom ? this.drawBloom(this.bloom, color.texture) : 0;
-
-    const near = camera.near;
-    const far = camera.far;
-    let shafts = 0;
-    if (s.shafts) shafts = this.drawShafts(color, sceneRT.depthTexture!) ? s.shaftsIntensity : 0;
-
     const g = this.grade.uniforms;
-    g.tColor.value = color.texture;
-    g.tDepth.value = sceneRT.depthTexture;
-    g.tAO.value = this.gtao?.pdRenderTarget.texture ?? null;
-    g.tShafts.value = this.shaftsRT!.texture;
-    g.shafts.value = shafts;
-    g.aoBlend.value = ao ? s.aoBlend : 0;
-    this.bloomWeights(g, bloomLevels);
+    g.tColor.value = sceneRT.texture;
     g.exposure.value = s.exposure * (this.peak > 1 ? s.paperWhite : 1);
     g.balance.value.set(...whiteBalance(s.temperature, s.tint));
     g.contrast.value = s.contrast;
@@ -603,101 +448,21 @@ export class Remaster {
     g.vibrance.value = s.vibrance;
     g.peak.value = this.peak;
     g.toneMap.value = TONE_INDEX[s.toneMap];
-    g.view.value = s.debug === 'ao' && !s.ao ? 0 : VIEW_INDEX[s.debug];
-    g.cameraNear.value = near;
-    g.cameraFar.value = far;
-    const [a, b] = this.ldr!;
-    const smaa = (s.aa === 'smaa' || s.aa === 'msaa-smaa') && this.smaa;
-    const fxaa = s.aa === 'fxaa' && this.fxaa;
-    // The present pass would only copy (no sharpening, no resize, no dither on a float16 canvas): the last pass draws
-    // straight to the canvas instead. Each pass dropped is worth about a millisecond on Apple GPUs at 120 Hz.
-    const direct = s.sharpen === 0 && this.hdr.active && render.width === this.outputSize.x && render.height === this.outputSize.y;
-    this.blit(this.grade, direct && !smaa && !fxaa ? null : a);
-
-    let out = a;
-    if (smaa) {
-      smaa.renderToScreen = direct;
-      smaa.render(r, b, a, 0, false);
-      out = b;
-    } else if (fxaa) {
-      fxaa.renderToScreen = direct;
-      fxaa.render(r, b, a, 0, false);
-      out = b;
-    }
+    g.view.value = VIEW_INDEX[s.debug];
+    // A float16 canvas has no 8-bit steps to hide.
+    const dither = this.hdr.active ? 0 : 1;
+    // Without sharpening or a resize, the grade is the last pass and draws straight to the canvas.
+    const direct = s.sharpen === 0 && render.width === this.outputSize.x && render.height === this.outputSize.y;
+    g.dither.value = direct ? dither : 0;
+    this.blit(this.grade, direct ? null : this.graded);
     if (direct) return;
 
     const p = this.present.uniforms;
-    p.tColor.value = out.texture;
+    p.tColor.value = this.graded!.texture;
     p.texel.value.set(1 / render.width, 1 / render.height);
     p.sharpness.value = s.sharpen;
-    // A float16 canvas has no 8-bit steps to hide.
-    p.dither.value = this.hdr.active ? 0 : 1;
+    p.dither.value = dither;
     this.blit(this.present, null);
-  }
-
-  /**
-   * UnrealBloomPass's bright pass and blurred mips, without its composite and its blend back into the scene target:
-   * the grade pass samples the mips itself (see bloomWeights), which saves two passes. Only `bloomLevels` of its five
-   * blur levels are drawn: on Apple GPUs each small level past the second costs about 1.3 ms of GPU time, however few
-   * pixels it has. Returns how many levels were drawn.
-   */
-  private drawBloom(pass: UnrealBloomPass, input: THREE.Texture): number {
-    const s = this.settings;
-    const levels = Math.max(1, Math.min(pass.nMips, Math.round(s.bloomLevels)));
-    const high = pass.highPassUniforms as Record<string, THREE.IUniform>;
-    high.tDiffuse.value = input;
-    high.luminosityThreshold.value = s.bloomThreshold;
-    this.blit(pass.materialHighPassFilter, pass.renderTargetBright);
-    let from = pass.renderTargetBright;
-    for (let i = 0; i < levels; i++) {
-      const blur = pass.separableBlurMaterials[i];
-      blur.uniforms.colorTexture.value = from.texture;
-      blur.uniforms.direction.value = BLUR_X;
-      this.blit(blur, pass.renderTargetsHorizontal[i]);
-      blur.uniforms.colorTexture.value = pass.renderTargetsHorizontal[i].texture;
-      blur.uniforms.direction.value = BLUR_Y;
-      this.blit(blur, pass.renderTargetsVertical[i]);
-      from = pass.renderTargetsVertical[i];
-    }
-    return levels;
-  }
-
-  /** The grade pass's share of each bloom level: UnrealBloomPass's composite weights, 0 for levels not drawn this frame. */
-  private bloomWeights(g: Record<string, THREE.IUniform>, levels: number) {
-    const s = this.settings;
-    const w = g.bloomW.value as number[];
-    for (let i = 0; i < 5; i++) {
-      const factor = 1 - i * 0.2;
-      w[i] = i < levels ? s.bloomStrength * THREE.MathUtils.lerp(factor, 1.2 - factor, s.bloomRadius) : 0;
-      g[`tBloom${i}`].value = i < levels && this.bloom ? this.bloom.renderTargetsVertical[i].texture : null;
-    }
-  }
-
-  /** The moon's rays into shaftsRT. False when the moon is behind you or off screen. */
-  private drawShafts(color: THREE.WebGLRenderTarget, depth: THREE.DepthTexture): boolean {
-    const { sun } = this.lights;
-    const camera = this.camera;
-    this.moonDir.copy(sun.position).sub(sun.target.position).normalize();
-    camera.getWorldDirection(this.camDir);
-    const facing = this.camDir.dot(this.moonDir);
-    if (facing <= 0.05) return false;
-    this.moonAt
-      .copy(camera.position)
-      .addScaledVector(this.moonDir, camera.far * 0.8)
-      .project(camera);
-    const u = this.shafts.uniforms;
-    u.moonUv.value.set(this.moonAt.x * 0.5 + 0.5, this.moonAt.y * 0.5 + 0.5);
-    u.visible.value = THREE.MathUtils.smoothstep(facing, 0.05, 0.45);
-    u.aspect.value = camera.aspect;
-    u.decay.value = this.settings.shaftsDecay;
-    u.reach.value = this.settings.shaftsLength;
-    u.moonColor.value.copy(sun.color).multiplyScalar(0.35);
-    u.tColor.value = color.texture;
-    u.tDepth.value = depth;
-    u.cameraNear.value = camera.near;
-    u.cameraFar.value = camera.far;
-    this.blit(this.shafts, this.shaftsRT);
-    return true;
   }
 
   private blit(material: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget | null) {
@@ -712,11 +477,8 @@ export class Remaster {
   }
 
   private disposeTargets() {
-    this.sceneRT?.depthTexture?.dispose();
     this.sceneRT?.dispose();
-    this.shaftsRT?.dispose();
-    for (const t of this.ldr ?? []) t.dispose();
-    this.sceneRT = this.shaftsRT = null;
-    this.ldr = null;
+    this.graded?.dispose();
+    this.sceneRT = this.graded = null;
   }
 }

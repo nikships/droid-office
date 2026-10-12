@@ -87,9 +87,9 @@ export class GraphicsLab {
       body.append(sec);
     }
 
-    const reset = h('button.btn.sm.ghost', { type: 'button', title: 'Back to the Crisp preset' }, 'Reset');
+    const reset = h('button.btn.sm.ghost', { type: 'button', title: 'Back to the Nik preset' }, 'Reset');
     reset.addEventListener('click', () => {
-      this.commit(applyPreset('crisp', this.host.settings()));
+      this.commit(applyPreset('nik', this.host.settings()));
       this.host.backToGame();
     });
     const classic = h('button.btn.sm', { type: 'button', title: 'Frame rate limit, shadow updates and the performance overlay' }, 'Classic settings…');
@@ -219,7 +219,7 @@ export class GraphicsLab {
       slider.blur();
       this.host.backToGame();
     });
-    // A double click puts it back at the Crisp preset's value.
+    // A double click puts it back at the Nik preset's value.
     slider.addEventListener('dblclick', () => this.set(c.key, REMASTER_DEFAULTS[c.key]));
     return {
       input: h('div.glab-range', {}, slider, value),
