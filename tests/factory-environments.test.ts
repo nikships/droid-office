@@ -4,7 +4,7 @@ import { FactoryApi } from '../src/server/factory/api.js';
 import { EnvironmentsFeature } from '../src/server/factory/environments.js';
 import type { FactoryRequest, FeatureHost } from '../src/server/factory/feature.js';
 import { computerOf } from '../src/shared/factory-computers.js';
-import { canStartFrom, environmentOf, environmentPhase, instanceName, logOf, repoFolder, sourcesOf, unbuiltChanges, type FactoryEnvironment } from '../src/shared/factory-environments.js';
+import { canStartFrom, environmentOf, environmentPhase, instanceName, logOf, repoFolder, repoName, sourcesOf, unbuiltChanges, type FactoryEnvironment } from '../src/shared/factory-environments.js';
 
 const KEY = 'fk-test-environments-4321';
 const json = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -86,6 +86,8 @@ test('an Environment from the real list: repositories, scripts, source and lates
   assert.equal(environmentOf(null), undefined);
   const bare = environmentOf({ id: 'x' })!;
   assert.deepEqual([bare.name, bare.scope, bare.status, bare.repositories, bare.setupScript, bare.source, bare.latestBuild], ['x', 'user', 'building', [], '', undefined, undefined]);
+  const blank = environmentOf({ ...REAL_ENV, source: { ...REAL_ENV.source, id: '' }, latestBuild: { ...REAL_ENV.latestBuild, id: '' } })!;
+  assert.deepEqual([blank.source, blank.latestBuild], [undefined, undefined], 'an empty id is no source or build');
 
   assert.deepEqual(sourcesOf(REAL_SOURCES), [{ id: 'factory-default', name: 'Factory default', providerId: 'factory-managed', providerName: 'Factory managed', supportsRepositories: true, supportsSetupScripts: true }]);
   assert.deepEqual(sourcesOf({}), []);
@@ -130,6 +132,8 @@ test('an instance’s name, and the folder of the floor’s repository on it', (
   assert.equal(repoFolder(dirs, 'nikships/other'), undefined, 'two clones and neither is it: the home folder');
   assert.equal(repoFolder(dirs.slice(0, 1), 'nikships/other'), '/home/factory-user/repos/droid-office', 'the only clone there is');
   assert.equal(repoFolder(undefined, 'x/y'), undefined);
+  assert.equal(repoFolder(['/home/factory-user/repos/Gemdex/', ...dirs.slice(0, 1)], 'nikships/gemdex.git'), '/home/factory-user/repos/Gemdex/');
+  assert.deepEqual(['nikships/Droid-Office', 'https://github.com/nikships/droid-office.git/', '/home/u/repos/droid-office/', undefined].map(repoName), ['droid-office', 'droid-office', 'droid-office', undefined]);
 });
 
 test('a computer started from an Environment is tagged with it, and an unlisted one says so', () => {
@@ -250,6 +254,7 @@ test('edit, rebuild, cancel, the log, the default and delete', async () => {
     'PUT /environments/default': (req) => json(200, { defaultEnvironmentId: (req.body as { environmentId: string }).environmentId }),
     [`DELETE /environments/${ENV_ID}`]: () => new Response(null, { status: 204 }),
     'GET /environments/gone': () => json(404, { status: 404, title: 'Not Found', detail: 'Environment not found' }),
+    'GET /environments/just-made': () => json(200, { ...REAL_ENV, id: 'just-made', name: 'just-made', isDefault: false }),
   });
   await s.feature.poll(s.api);
   const id = { id: ENV_ID };
@@ -275,7 +280,11 @@ test('edit, rebuild, cancel, the log, the default and delete', async () => {
   assert.equal(((await s.route('GET', '/:id/log')(id, {}, 'build=old')) as { log: { buildId: string } }).log.buildId, 'old');
 
   const def = s.route('PUT', '/default');
-  await assert.rejects(() => def({}, { environmentId: 'nope' }), /No such Environment/);
+  await assert.rejects(() => def({}, {}), /Say which Environment/);
+  await assert.rejects(() => def({}, { environmentId: 'gone' }), /No such Environment|not found/);
+  // One made since the last read is asked of Factory rather than refused.
+  assert.deepEqual(await def({}, { environmentId: 'just-made' }), { defaultId: 'just-made' });
+  assert.equal(s.feature.state().items[0].isDefault, false);
   assert.deepEqual(await def({}, { environmentId: ENV_ID }), { defaultId: ENV_ID });
   assert.equal(s.feature.state().items[0].isDefault, true);
 

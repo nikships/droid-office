@@ -377,7 +377,6 @@ test('hire on an Environment: a computer of its own, waited for, the session in 
     environmentId: ENV_ID,
     environmentName: 'droid-office-default',
     instance: true,
-    catchUp: true,
   });
   assert.equal(cloudBadge(w.cloud!), '☁ droid-office-default');
   assert.ok(r.toasts.some((x) => x.includes('hired Bea on ☁ droid-office-default')));
@@ -434,7 +433,53 @@ test('hire on an Environment: a typed folder wins, a failure deletes the compute
   await assert.rejects(r.feature.hire(f.api, envHire({ environmentId: 'gone' }), 'Nik'), /isn't on Factory any more/);
   const before = f.calls.length;
   await assert.rejects(r.feature.hire(f.api, envHire({ cwd: 'relative' }), 'Nik'), /full path/);
-  assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, f.calls.slice(0, before).filter((c) => c.method === 'DELETE').length + 1, 'a folder it can’t use gives the computer back too');
+  assert.equal(f.calls.length, before, 'a folder no computer can use is refused before one is started');
+});
+
+test('hire on an Environment: send home deletes its computer even when the session cleanup fails', async (t) => {
+  let computerDelete = new Response(null, { status: 204 });
+  const f = factory({
+    'POST /computers': () => json(201, { ...INSTANCE, status: 'active' }),
+    'POST /sessions': () => json(201, { sessionId: 's3' }),
+    'POST /sessions/s3/messages': () => json(200, { status: 'running' }),
+    'POST /sessions/s3/interrupt': () => json(200, { status: 'idle' }),
+    'DELETE /sessions/s3': () => json(500, { detail: 'boom' }),
+    [`DELETE /computers/${INSTANCE.id}`]: () => computerDelete,
+  });
+  const r = rig(t, f, { environments: () => envs() });
+  const w = await r.feature.hire(f.api, envHire({ prompt: '' }), 'Nik');
+  const home = await r.feature.sendHome(w.id, true);
+  assert.match(home.error ?? '', /computer droid-office-default-probe01 was deleted, but its session wasn't: boom/);
+  assert.deepEqual(r.deleted, [INSTANCE.id]);
+  assert.deepEqual(r.forgotten, [], 'a session that wasn’t deleted stays in the Sessions list');
+
+  // A computer that stays keeps its session running there: it's stopped instead.
+  computerDelete = json(500, { detail: 'no' });
+  const busy = await r.feature.hire(f.api, envHire(), 'Nik');
+  await tick();
+  const again = await r.feature.sendHome(busy.id, false);
+  assert.match(again.error ?? '', /Couldn't delete .+'s computer droid-office-default-probe01: delete it in the Computers window$/);
+  assert.ok(f.calls.some((c) => c.path === '/sessions/s3/interrupt'));
+});
+
+test('hire on an Environment: the catch-up note goes with exactly one message, and comes back if that one fails', async (t) => {
+  let fail = true;
+  const f = factory({
+    'POST /computers': () => json(201, { ...INSTANCE, status: 'active' }),
+    'POST /sessions': () => json(201, { sessionId: 's4' }),
+    'POST /sessions/s4/messages': () => (fail ? json(500, { detail: 'boom' }) : json(200, { status: 'running' })),
+  });
+  const r = rig(t, f, { environments: () => envs(), repo: 'nikships/droid-office' });
+  const w = await r.feature.hire(f.api, envHire({ prompt: '' }), 'Nik');
+  assert.match(String(await r.feature.send(w.id, 'first', [])), /boom/);
+  assert.equal(r.feature.find(w.id)?.info.cloud?.catchUp, true, 'a message that never arrived leaves the note for the next');
+  fail = false;
+  const sent = await Promise.all([r.feature.send(w.id, 'one', []), r.feature.send(w.id, 'two', [])]);
+  assert.deepEqual(sent, [undefined, undefined]);
+  const texts = f.calls.filter((c) => c.method === 'POST' && c.path === '/sessions/s4/messages').map((c) => (c.body as { text: string }).text);
+  assert.equal(texts.length, 3);
+  assert.equal(texts.slice(1).filter((x) => x.includes('git pull --ff-only')).length, 1, 'two sent at once: only one carries the note');
+  assert.equal(r.feature.find(w.id)?.info.cloud?.catchUp, undefined);
 });
 
 test('hire on an Environment: a computer that never comes up is given up on and deleted', async (t) => {

@@ -115,7 +115,7 @@ function reposOf(v: unknown): FactoryEnvRepo[] {
 
 export function sourceOf(raw: unknown, provider?: { id?: unknown; name?: unknown }): FactoryEnvSource | undefined {
   const r = obj(raw);
-  if (!r || typeof r.id !== 'string') return undefined;
+  if (!r || typeof r.id !== 'string' || !r.id) return undefined;
   const p = obj(r.provider) ?? provider ?? {};
   return {
     id: r.id,
@@ -130,7 +130,7 @@ export function sourceOf(raw: unknown, provider?: { id?: unknown; name?: unknown
 
 export function buildOf(raw: unknown): FactoryEnvBuild | undefined {
   const r = obj(raw);
-  if (!r || typeof r.id !== 'string') return undefined;
+  if (!r || typeof r.id !== 'string' || !r.id) return undefined;
   const repos = (Array.isArray(r.repositories) ? r.repositories : [])
     .map(obj)
     .filter((x): x is Record<string, unknown> => !!x && typeof x.url === 'string')
@@ -235,7 +235,7 @@ export const canStartFrom = (e: Pick<FactoryEnvironment, 'status' | 'source' | '
   return p === 'ready' || p === 'updating' || p === 'update-failed';
 };
 
-/** Its saved repositories or setup script differ from what its last good build used: the next build picks them up. */
+/** Its saved repositories (or their install scripts) differ from what its last good build used: the next build picks them up. */
 export function unbuiltChanges(e: Pick<FactoryEnvironment, 'repositories' | 'activeRepositories'>): boolean {
   if (!e.activeRepositories) return false;
   const key = (rs: FactoryEnvRepo[]) => JSON.stringify(rs.map((r) => [r.url, r.script]).sort());
@@ -251,15 +251,19 @@ export function instanceName(envName: string, hex: string): string {
   return `${base}-${hex.slice(0, 8)}`;
 }
 
-/** The folder of `repo` (owner/name or a URL) among a computer's cloned repositories, else the only one there is. */
-export function repoFolder(dirs: readonly string[] | undefined, repo: string | undefined): string | undefined {
-  if (!dirs?.length) return undefined;
-  const name = repo
-    ?.replace(/\.git$/, '')
+/** A repository's folder name, lower-cased, from owner/name, a URL or a path. */
+export const repoName = (repo: string | undefined): string | undefined =>
+  repo
+    ?.replace(/\.git\/*$|\/+$/, '')
     .split('/')
     .filter(Boolean)
     .pop()
     ?.toLowerCase();
-  const hit = name ? dirs.find((d) => d.replace(/\/+$/, '').split('/').pop()?.toLowerCase() === name) : undefined;
+
+/** The folder of `repo` (owner/name or a URL) among a computer's cloned repositories, else the only one there is. */
+export function repoFolder(dirs: readonly string[] | undefined, repo: string | undefined): string | undefined {
+  if (!dirs?.length) return undefined;
+  const name = repoName(repo);
+  const hit = name ? dirs.find((d) => repoName(d) === name) : undefined;
   return hit ?? (dirs.length === 1 ? dirs[0] : undefined);
 }

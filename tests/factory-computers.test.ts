@@ -328,8 +328,13 @@ test('unlisted computers are Environment instances, kept apart from the list; a 
   assert.equal(r.computer.environmentId, 'cf248f8e-05ce-4fa4-9769-84d85d19792e');
   assert.ok(s.feature.state().items.some((c) => c.id === 'listed-id'));
 
+  // Listed since the last read, then unlisted again: it moves between the lists, never in both.
+  s.feature.track({ ...computerOf(INSTANCE)!, unlisted: false });
+  assert.deepEqual(s.feature.state().instances, []);
+  assert.ok(s.feature.state().items.some((c) => c.id === INSTANCE.id));
   s.feature.track({ ...computerOf(INSTANCE)!, status: 'provisioning' });
   assert.equal(s.feature.state().instances[0].status, 'provisioning');
+  assert.ok(!s.feature.state().items.some((c) => c.id === INSTANCE.id));
   assert.ok(s.feature.busy(), 'an instance starting polls fast');
   assert.deepEqual(await s.route('DELETE', '/:id')({ id: INSTANCE.id }, { confirm: 'office-a7caa037' }), { deleted: INSTANCE.id });
   assert.deepEqual(s.feature.state().instances, []);

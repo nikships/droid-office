@@ -1,5 +1,5 @@
 import { canHost, cloudBadge, cloudSessionUrl, computerHome, type CloudComputer } from '../../shared/factory-cloud';
-import { canStartFrom, type FactoryEnvironment } from '../../shared/factory-environments';
+import { canStartFrom, repoName, type FactoryEnvironment } from '../../shared/factory-environments';
 import { NEW_SESSION_GRACE_MS, creditsNote } from '../../shared/factory-sessions';
 import { statusWord } from '../../shared/guests';
 import type { AgentEffort, WorkerInfo } from '../../shared/protocol';
@@ -104,17 +104,15 @@ export function runsOnPicker(): RunsOn | null {
     const e = pickedEnv();
     cloudRow.classList.toggle('hidden', !c && !e);
     if (e) {
-      const cloned =
-        repo &&
-        e.repositories.some(
-          (r) =>
-            r.url
-              .replace(/\.git$/, '')
-              .split('/')
-              .pop() === repo,
-        );
+      // The same pick the server makes for an empty folder (repoFolder): this floor's repository, else the only one.
+      const clone = e.repositories.find((r) => !!repo && repoName(r.url) === repoName(repo)) ?? (e.repositories.length === 1 ? e.repositories[0] : undefined);
       folder.value = savedCwds()[`env:${e.id}`] ?? '';
-      folder.placeholder = cloned ? `Empty for its clone of ${repo}, or ~/…` : 'Empty for its home folder (/home/factory-user), or ~/…';
+      folder.placeholder = clone
+        ? `Empty for its clone of ${clone.url
+            .replace(/\.git$/, '')
+            .split('/')
+            .pop()}, or ~/…`
+        : 'Empty for its home folder (/home/factory-user), or ~/…';
       note.textContent = `A computer of its own starts from ${e.name} with everything installed (about 10 seconds), and is deleted when it goes home. Its Droid session runs in auto mode through Factory: no worktree or terminal here.`;
     } else if (c) {
       const home = computerHome(c);

@@ -226,7 +226,9 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       if (!canHost(computer)) throw badRequest(`${computer.name} is ${computer.status}: only an active computer can take a session`);
     }
     const typedCwd = str(body.cwd, 5000);
-    const typedWhere = computer ? sessionCwd(typedCwd, computer) : undefined;
+    // On an Environment the folder is checked again against the computer once it's started; this
+    // catches a folder that's wrong on any computer before one is started for nothing.
+    const typedWhere = sessionCwd(typedCwd, computer ?? { name: env!.name, providerType: 'e2b', remoteUser: 'factory-user' });
     if (typeof typedWhere === 'string') throw badRequest(typedWhere);
     const model = str(body.model, MODEL_MAX + 1) || undefined;
     if (model && (model.length > MODEL_MAX || /[\s\p{Cc}]/u.test(model))) throw badRequest('That model id is not valid');
@@ -236,7 +238,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const held = floor.cloud.hold(deskId);
     if (held) throw badRequest(held);
     const autonomy = officeAutonomy(this.opts.agentArgs);
-    let where: { cwd?: string } = typedWhere ?? {};
+    let where: { cwd?: string } = typedWhere;
     let instance: FactoryComputer | undefined;
     let catchUp = false;
     let made: { sessionId?: unknown; sessionSettings?: Session['sessionSettings'] };
@@ -287,7 +289,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         i.task = task;
       });
     }
-    this.opts.toast(floor.id, `${by} hired ${info.name} on ${cloudBadge(info.cloud!)}${info.prompt ? ' with a task' : ''}`);
+    this.opts.toast(floor.id, `${by} hired ${info.name} on ${cloudBadge(place)}${info.prompt ? ' with a task' : ''}`);
     if (prompt || images.length) {
       void this.send(info.id, prompt, images).then((why) => {
         if (why) this.opts.toast(floor.id, `☁ ${info.name} didn't get its first prompt: ${why instanceof Error ? why.message : why}`, 'warn');
@@ -319,10 +321,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Factory";
     if (info.cloud?.error) return `${info.name} can't take prompts right now: ${info.cloud.error}`;
     const before = info.status;
-    const lead = info.cloud?.catchUp ? this.catchUpNote(info.cloud) : '';
+    const catchUp = info.cloud?.catchUp === true;
+    const lead = catchUp ? this.catchUpNote(info.cloud!) : '';
     const was = floor.cloud.turn(id) ?? {};
     const count = floor.cloud.seen(id)?.count ?? 0;
     floor.cloud.update(id, (i, w) => {
+      // Cleared before the message goes, so a second one sent meanwhile doesn't carry the note too.
+      if (i.cloud) delete i.cloud.catchUp;
       w.turn = { sentAt: this.now(), countAtSend: count };
       i.activity = clip(message, 80);
       i.lastInputAt = this.now();
@@ -334,10 +339,6 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       const r = await this.whileNew(info, () =>
         api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: lead ? `${lead}\n\n${message}` : message, ...(pictures.length ? { images: pictures } : {}) }),
       );
-      if (info.cloud?.catchUp)
-        floor.cloud.update(id, (i) => {
-          if (i.cloud) delete i.cloud.catchUp;
-        });
       if (r?.status === 'running' || r?.status === 'pending')
         floor.cloud.update(id, (_, w) => {
           w.turn = { ...w.turn, seenBusy: true };
@@ -345,6 +346,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     } catch (err) {
       floor.cloud.update(id, (i, w) => {
         w.turn = was;
+        if (catchUp && i.cloud) i.cloud.catchUp = true;
         i.activity = clip(`Couldn't send: ${(err as Error).message}`, 80);
       });
       floor.cloud.setStatus(id, before === 'starting' ? 'idle' : before);
@@ -377,20 +379,29 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     }
     const path = `/sessions/${encodeURIComponent(sid)}`;
     const asked = this.now();
+    const interrupt = () => this.whileNew(info, () => api.post(`${path}/interrupt`, {}));
+    let sessionError: string | undefined;
     try {
       // Deleting its computer stops the session anyway.
-      if (busy && !instance) await this.whileNew(info, () => api.post(`${path}/interrupt`, {}));
+      if (busy && !instance) await interrupt();
       if (deleteSession) await this.whileNew(info, () => api.delete(path));
     } catch (err) {
       // A 404 for a session past its first moments: it's gone already, which is what was wanted.
-      if (!alreadyGone(err, info.createdAt, asked)) return { error: `☁ ${info.name}'s session: ${(err as Error).message}` };
+      if (!alreadyGone(err, info.createdAt, asked)) sessionError = (err as Error).message;
     }
-    if (deleteSession) this.opts.sessionDeleted?.(sid);
+    if (deleteSession && !sessionError) this.opts.sessionDeleted?.(sid);
     if (instance) {
+      // Its computer goes whatever happened to the session: it was started for this worker alone.
       const name = info.cloud?.computerName ?? 'computer';
-      if (!(await this.deleteInstance(api, info.cloud!.computerId))) return { error: `☁ Couldn't delete ${info.name}'s computer ${name}: delete it in the Computers window` };
+      if (!(await this.deleteInstance(api, info.cloud!.computerId))) {
+        // The computer stays, so a session at work there would carry on: stop it.
+        if (busy) await interrupt().catch(() => undefined);
+        return { error: `☁ Couldn't delete ${info.name}'s computer ${name}: delete it in the Computers window${sessionError ? `. Its session: ${sessionError}` : ''}` };
+      }
+      if (sessionError) return { error: `☁ ${info.name}'s computer ${name} was deleted, but its session wasn't: ${sessionError}` };
       return { note: deleteSession ? `🗑️ ${info.name}'s computer ${name} and its session were deleted` : `🗑️ ${info.name}'s computer ${name} was deleted; its session stays archived in Factory` };
     }
+    if (sessionError) return { error: `☁ ${info.name}'s session: ${sessionError}` };
     if (deleteSession) return { note: `🗑️ ${info.name}'s Factory session was deleted` };
     return { note: `☁ ${info.name}'s session was stopped; it stays in Factory's sessions` };
   }

@@ -416,7 +416,17 @@ export function envDetail(id: string, go: Go): Section {
 
 export function envForm(go: Go, id?: string): Section {
   const was = id ? store.factory.environments.items.find((e) => e.id === id) : undefined;
-  const nameIn = h('input.input', { type: 'text', 'aria-label': 'Name', maxlength: ENV_NAME_MAX, spellcheck: 'false', value: was?.name ?? `${floorSlug()}-env`.slice(0, ENV_NAME_MAX) }) as HTMLInputElement;
+  const nameIn = h('input.input', {
+    type: 'text',
+    'aria-label': 'Name',
+    maxlength: ENV_NAME_MAX,
+    spellcheck: 'false',
+    value:
+      was?.name ??
+      `${floorSlug()
+        .slice(0, ENV_NAME_MAX - 4)
+        .replace(/-+$/, '')}-env`,
+  }) as HTMLInputElement;
   const scope = choices(
     'env-scope',
     [
@@ -425,7 +435,9 @@ export function envForm(go: Go, id?: string): Section {
     ],
     'organization',
   );
-  const defaultToggle = toggle({ label: 'Make it the organization’s default', description: 'Factory starts sessions on it unless told otherwise.', checked: !store.factory.environments.items.length });
+  // Ticked for the first one, which is only known once the list has loaded, unless the owner set it.
+  let defaultSet = false;
+  const defaultToggle = toggle({ label: 'Make it the organization’s default', description: 'Factory starts sessions on it unless told otherwise.', checked: !store.factory.environments.items.length, onChange: () => (defaultSet = true) });
   const setup = h('textarea.input.env-code-in', {
     rows: 10,
     spellcheck: 'false',
@@ -449,24 +461,24 @@ export function envForm(go: Go, id?: string): Section {
   const picked = new Set<string>((was?.repositories ?? []).map((r) => r.url));
   const here = floorRepo();
   if (!was && here) picked.add(`https://github.com/${here}`);
-  const scriptsByUrl = new Map<string, HTMLTextAreaElement>();
+  const scriptsByUrl = new Map<string, { ta: HTMLTextAreaElement; count: HTMLElement }>();
   const repoScripts = h('div.stack.tight');
   const scriptFor = (url: string) => {
-    let ta = scriptsByUrl.get(url);
-    if (!ta) {
-      ta = h('textarea.input.env-code-in', { rows: 4, spellcheck: 'false', 'aria-label': `Install script for ${shortRepo(url)}`, placeholder: 'npm ci', maxlength: ENV_SCRIPT_MAX }) as HTMLTextAreaElement;
+    let script = scriptsByUrl.get(url);
+    if (!script) {
+      const ta = h('textarea.input.env-code-in', { rows: 4, spellcheck: 'false', 'aria-label': `Install script for ${shortRepo(url)}`, placeholder: 'npm ci', maxlength: ENV_SCRIPT_MAX }) as HTMLTextAreaElement;
       ta.value = was?.repositories.find((r) => r.url === url)?.script ?? '';
-      scriptsByUrl.set(url, ta);
+      script = { ta, count: h('span.env-count') };
+      counted(ta, script.count);
+      scriptsByUrl.set(url, script);
     }
-    return ta;
+    return script;
   };
   const paintScripts = () => {
     repoScripts.replaceChildren(
       ...(picked.size
         ? [...picked].map((url) => {
-            const ta = scriptFor(url);
-            const count = h('span.env-count');
-            counted(ta, count);
+            const { ta, count } = scriptFor(url);
             return h('div.field', {}, h('label.env-script-label', {}, h('span', {}, `${shortRepo(url)} · runs in its clone`), count), ta);
           })
         : [h('p.cmp-muted', {}, 'No repositories: computers from it start with none cloned.')]),
@@ -476,7 +488,7 @@ export function envForm(go: Go, id?: string): Section {
   paintScripts();
 
   const out = h('p.cmp-out', { role: 'status' });
-  const repositories = (): FactoryEnvRepo[] => [...picked].map((url) => ({ url, script: scriptFor(url).value }));
+  const repositories = (): FactoryEnvRepo[] => [...picked].map((url) => ({ url, script: scriptFor(url).ta.value }));
   const save = actionButton(
     was ? 'Save' : 'Create',
     was ? 'Save it; a change to its repositories or scripts starts a build' : 'Make it in Factory and start its first build',
@@ -505,6 +517,7 @@ export function envForm(go: Go, id?: string): Section {
   const cancel = h('button.btn.ghost', { type: 'button', onclick: () => go(was ? { kind: 'env', id: was.id } : { kind: 'envs' }) }, 'Cancel');
   const source = h('p.field-hint');
   const render = () => {
+    if (!was && !defaultSet && store.factory.environments.fetchedAt) defaultToggle.input.checked = !store.factory.environments.items.length;
     const src = was?.source ?? store.factory.environments.sources[0];
     source.textContent = src ? `Built on ${sourceName(src)}: Ubuntu with Node, Python, git, gh and Droid, as factory-user with sudo.` : '';
   };

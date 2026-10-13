@@ -425,8 +425,11 @@ export class ComputersFeature extends SliceFeature<'computers'> {
     const key = c.unlisted ? 'instances' : 'items';
     const list = this.slice[key];
     const next = list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? { ...x, ...c } : x)) : [...list, c];
-    if (key === 'instances') this.set({ instances: next });
-    else this.set({ items: next, here: hereOf(next, this.hostNames) });
+    // A computer listed or unlisted since the last read moves: it's never in both lists.
+    if (key === 'instances') {
+      const items = this.slice.items.filter((x) => x.id !== c.id);
+      this.set({ instances: next, items, here: hereOf(items, this.hostNames) });
+    } else this.set({ items: next, instances: this.slice.instances.filter((x) => x.id !== c.id), here: hereOf(next, this.hostNames) });
   }
 }
 

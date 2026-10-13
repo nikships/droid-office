@@ -561,7 +561,12 @@ function detail(id: string, go: (v: View) => void): Section {
       ...fact('Provider', c.managed ? `${c.providerType} (managed by Factory)` : 'BYOM (your own machine)'),
       ...fact('Created', c.createdAt ? `${new Date(c.createdAt).toLocaleString()} (${timeAgo(c.createdAt)})` : '—'),
       ...fact('Remote user', c.remoteUser ?? '—'),
-      ...(c.environmentId ? fact('Environment', env ? h('button.cmp-link', { type: 'button', title: `Open ${env.name}`, onclick: () => go({ kind: 'env', id: env.id }) }, `⧉ ${env.name}`) : 'One that was deleted') : []),
+      ...(c.environmentId
+        ? fact(
+            'Environment',
+            env ? h('button.cmp-link', { type: 'button', title: `Open ${env.name}`, onclick: () => go({ kind: 'env', id: env.id }) }, `⧉ ${env.name}`) : store.factory.environments.fetchedAt ? 'One that was deleted' : 'Reading it…',
+          )
+        : []),
       ...fact('Repositories', c.repos?.length ? h('span.cmp-codes', {}, ...c.repos.map((r) => h('code', { title: r }, r))) : '—', 'wide'),
       ...(latest ? fact('Size', `${latest.cpuCount} CPU · ${fmtGb(latest.memTotal)} memory · ${fmtGb(latest.diskTotal)} disk`) : []),
     );
@@ -744,14 +749,14 @@ function newForm(go: (v: View) => void, environmentId?: string): Section {
   from.addEventListener('change', paintFrom);
   setMode(false);
 
-  let fromKey = '';
+  let fromKey: string | null = null;
   const render = () => {
     const providers = store.factory.computers.providers.length ? store.factory.computers.providers : ['e2b'];
     if (provider.options.length !== providers.length) provider.replaceChildren(...providers.map((p) => h('option', { value: p }, p)));
     const envs = store.factory.environments.items.filter(canStartFrom);
-    const key = envs.map((e) => e.id).join();
+    const key = envs.map((e) => e.id).join(',');
     if (key !== fromKey) {
-      const was = fromKey ? from.value : (environmentId ?? '');
+      const was = fromKey === null ? (environmentId ?? '') : from.value;
       fromKey = key;
       from.replaceChildren(h('option', { value: '' }, 'Factory default image'), ...envs.map((e) => h('option', { value: e.id }, `⧉ ${e.name}${e.isDefault ? ' (default)' : ''}`)));
       from.value = envs.some((e) => e.id === was) ? was : '';

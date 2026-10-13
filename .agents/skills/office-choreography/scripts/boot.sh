@@ -19,9 +19,14 @@ agent-browser --headed open "$URL" >/dev/null
 agent-browser set viewport "$W" "$H" >/dev/null
 # droid-office.worktree=1: hires (including handing a carried issue card to a desk) get their own
 # worktree and branch instead of working in the owner's checkout.
+# Set after the owner's settings, which carry their own droid-office.worktree.
 if [ -n "$OFFICE_SETTINGS" ]; then
-  agent-browser eval "localStorage.setItem('droid-office.worktree','1'); 'ok'" >/dev/null
+  [ -r "$OFFICE_SETTINGS" ] || { echo "boot.sh: can't read OFFICE_SETTINGS ($OFFICE_SETTINGS)" >&2; exit 1; }
   agent-browser eval --stdin < "$OFFICE_SETTINGS" >/dev/null
+  # load-settings.js reloads 50 ms later; wait for that before setting the flag on the new page.
+  sleep 2
+  agent-browser eval "localStorage.setItem('droid-office.worktree','1'); location.reload(); 'ok'" >/dev/null
+  sleep 2
 else
   agent-browser eval "localStorage.setItem('droid-office.profile', JSON.stringify({name:$NAME_JSON,color:$COLOR_JSON,look:{}})); localStorage.setItem('droid-office.worktree','1'); location.reload(); 'ok'" >/dev/null
 fi

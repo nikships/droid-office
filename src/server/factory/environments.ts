@@ -62,8 +62,9 @@ export class EnvironmentsFeature extends SliceFeature<'environments'> {
       path: '/default',
       handle: async ({ api, json, by }) => {
         const body = await json<{ environmentId?: unknown }>();
-        const e = this.known(str(body.environmentId, 128));
-        if (!e) throw notFound('No such Environment');
+        const id = str(body.environmentId, 128);
+        if (!id) throw badRequest('Say which Environment');
+        const e = await this.find(api, id);
         const r = await api.request<{ defaultEnvironmentId?: unknown }>('PUT', '/environments/default', { body: { environmentId: e.id } });
         const defaultId = typeof r?.defaultEnvironmentId === 'string' ? r.defaultEnvironmentId : e.id;
         this.set({ defaultId, items: this.slice.items.map((x) => ({ ...x, isDefault: x.id === defaultId })) });

@@ -99,7 +99,7 @@ export function sessionCwd(typed: string, c: Pick<CloudComputer, 'name' | 'provi
 export const cloudSessionUrl = (sessionId: string) => `https://app.factory.ai/sessions/${encodeURIComponent(sessionId)}`;
 
 /** The badge a cloud worker wears on its card, its desk hint and the Workers panel: ☁ and its Environment, else its computer. */
-export const cloudBadge = (c: Pick<CloudWorker, 'computerName' | 'environmentName'>) => `☁ ${c.environmentName ?? c.computerName}`;
+export const cloudBadge = (c: Pick<CloudWorker, 'computerName' | 'environmentName'>) => `☁ ${c.environmentName || c.computerName}`;
 
 /**
  * What the office remembers of a cloud worker's turns between polls, to tell a turn that ended from

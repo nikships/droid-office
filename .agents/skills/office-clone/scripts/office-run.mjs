@@ -83,7 +83,25 @@ if (!port || port === 4600) {
 const url = `http://127.0.0.1:${port}/`;
 const out = path.resolve(opts.out ?? path.join(clone, 'shots'));
 mkdirSync(out, { recursive: true });
-const [width, height] = opts.size.split('x').map(Number);
+const [width, height] = /^\d+x\d+$/.test(opts.size ?? '') ? opts.size.split('x').map(Number) : [];
+if (!width || !height || !(opts.timeout > 0)) {
+  console.error(`office-run: --size is WIDTHxHEIGHT (got ${opts.size}) and --timeout a number of seconds above 0 (got ${opts.timeout})`);
+  process.exit(1);
+}
+// Loaded before the browser starts, so a broken steps file fails in a second, not after the boot.
+let steps;
+if (stepsFile) {
+  try {
+    steps = (await import(pathToFileURL(path.resolve(stepsFile)).href)).default;
+  } catch (err) {
+    console.error(`office-run: couldn't load ${stepsFile}: ${err.message}`);
+    process.exit(1);
+  }
+  if (typeof steps !== 'function') {
+    console.error(`office-run: ${stepsFile} has to export a default async function`);
+    process.exit(1);
+  }
+}
 
 const exe = headlessShell();
 if (!exe) {
@@ -102,23 +120,36 @@ const { chromium } = await import(pathToFileURL(path.join(repo, 'node_modules/pl
 // Software WebGL in a headless browser runs the office at a few frames a second and is what used
 // to blank the page; macOS has Metal through ANGLE even headless. Linux (cloud agents) has no GPU.
 const gpu = process.platform === 'darwin' ? ['--use-angle=metal', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
-const browser = await chromium.launch({ executablePath: exe, headless: true, args: gpu });
-const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
-
 const storage = path.join(clone, 'local-storage.json');
-if (existsSync(storage)) {
+let settings;
+try {
+  settings = existsSync(storage) ? JSON.parse(readFileSync(storage, 'utf8')) : undefined;
+  if (!settings) console.warn('office-run: no local-storage.json in the clone: the office opens on the character picker');
+} catch (err) {
+  console.warn(`office-run: can't read ${storage} (${err.message}): the office opens on the character picker`);
+}
+
+const browser = await chromium.launch({ executablePath: exe, headless: true, args: gpu });
+const closeAndExit = async (code) => {
+  await browser.close().catch(() => undefined);
+  process.exit(code);
+};
+let context;
+let page;
+try {
+  context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   // Once per tab, before the office's own code: a reload mid-run keeps what the run changed.
-  await context.addInitScript(
-    (d) => {
+  if (settings)
+    await context.addInitScript((d) => {
       if (sessionStorage.getItem('office-run.loaded')) return;
       for (const [k, v] of Object.entries(d)) localStorage.setItem(k, v);
       sessionStorage.setItem('office-run.loaded', '1');
-    },
-    JSON.parse(readFileSync(storage, 'utf8')),
-  );
-} else console.warn('office-run: no local-storage.json in the clone: the office opens on the character picker');
-
-const page = await context.newPage();
+    }, settings);
+  page = await context.newPage();
+} catch (err) {
+  console.error(`office-run: couldn't open a page: ${err.message}`);
+  await closeAndExit(1);
+}
 const problems = [];
 let crashed = false;
 page.on('crash', () => {
@@ -132,11 +163,11 @@ page.on('console', (m) => {
 // A native confirm() or alert() would stall every step after it: accept it and say so.
 page.on('dialog', (d) => {
   console.log(`office-run: ${d.type()} "${d.message().slice(0, 160)}" accepted`);
-  void d.accept();
+  d.accept().catch((err) => problems.push(`dialog: ${err.message}`));
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const ready = () => page.waitForFunction(() => window.office?.state().floor && !document.getElementById('loading'), undefined, { timeout: opts.timeout * 1000 });
+const ready = () => page.waitForFunction(() => window.office?.state?.()?.floor && !document.getElementById('loading'), undefined, { timeout: opts.timeout * 1000 });
 const helpers = {
   page,
   url,
@@ -159,7 +190,8 @@ const helpers = {
   waitFor: (fn, arg, timeoutMs = 30_000) => page.waitForFunction(fn, arg, { timeout: timeoutMs }),
   /** Saves <out>/<name>.png (the page, or one element by selector) and prints its path. */
   shot: async (name, selector) => {
-    const file = path.join(out, `${name.replace(/\.png$/, '')}.png`);
+    const file = path.resolve(out, `${String(name).replace(/\.png$/, '')}.png`);
+    if (!file.startsWith(out + path.sep)) throw new Error(`shot: ${name} is outside ${out}`);
     if (selector) await page.locator(selector).first().screenshot({ path: file });
     else await page.screenshot({ path: file });
     console.log(`shot ${file}`);
@@ -192,17 +224,14 @@ try {
     .catch(() => false);
   if (!settled) console.warn('office-run: the warm-up line is still up after 90 s; carrying on');
   const s = await page.evaluate(() => window.office.state());
-  console.log(`office-run: ready on ${url} (floor ${s.floor?.name}, ${s.workers.length} workers; WebGL ${gl})`);
-  if (stepsFile) {
-    const mod = await import(pathToFileURL(path.resolve(stepsFile)).href);
-    await mod.default(helpers);
-  } else await helpers.shot('office');
+  console.log(`office-run: ready on ${url} (floor ${s?.floor?.name}, ${s?.workers?.length ?? 0} workers; WebGL ${gl})`);
+  if (steps) await steps(helpers);
+  else await helpers.shot('office');
 } catch (err) {
   code = 1;
   console.error(`office-run: ${crashed ? 'the page crashed' : err.message}`);
   await helpers.shot('failure').catch(() => undefined);
 } finally {
   if (problems.length) console.log(`office-run: the page reported:\n  ${[...new Set(problems)].slice(0, 20).join('\n  ')}`);
-  await browser.close();
 }
-process.exit(code);
+await closeAndExit(code);

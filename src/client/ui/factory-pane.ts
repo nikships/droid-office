@@ -121,7 +121,6 @@ export function repoPicker(picked: Set<string>, onChange: () => void = () => {})
     },
     (err: Error) => {
       reposError = `Couldn’t list repositories: ${err.message}`;
-      repos = [];
       paint();
     },
   );
