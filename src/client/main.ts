@@ -134,9 +134,10 @@ import { bakeCache } from './gi-cache';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
+import { warmOfficeShaders, warmOutlines } from './shader-warmup';
 import { WarmupWatch, type WarmupStatus } from './warmup';
 
-// Up from the first paint (index.html) until the office has drawn a frame. Nothing is preloaded.
+// Up from the first paint (index.html) until the office has drawn a frame. Props and shaders are waited on below.
 const loading = loadingScreen(() => () => {});
 
 // ---- Renderer & scene ---------------------------------------------------------------------------
@@ -174,7 +175,7 @@ office.group.add(teamLines.group);
 // The MacBook GLBs load after the scene exists; each laptop swaps its procedural
 // stand-in for them the first frame they are cached (see world/laptop.ts). A gun drawn before
 // magnum.glb lands stays empty until it does (see world/gun.ts), and so does a wand before wand.glb (world/wand.ts).
-void loadPropManifest()
+const propsReady = loadPropManifest()
   .then(() => preloadProps(Object.keys(propManifest())))
   .then(() => {
     const gun = propScene('magnum');
@@ -586,9 +587,13 @@ let wandRecipient: { spell: 'ship' | 'leviosa'; id: string } | null = null;
 const lastWandShip = new Map<string, number>();
 /** Lumos: the wand's emitter lit, throwing light round you until you put it out (1 again) or away. */
 let lumos = false;
-/** The light Lumos (and a spell leaving the tip) throws on the room, following the tip. */
+/**
+ * The light Lumos (and a spell leaving the tip) throws on the room, following the tip. It stays visible at
+ * intensity 0 while it's dark: hiding it would change how many point lights the office's shaders were
+ * compiled for, and every lit material would compile again the moment the wand glows.
+ */
 const wandLight = new THREE.PointLight('#ffc49a', 0, 7, 1.6);
-wandLight.visible = false;
+wandLight.visible = true;
 scene.add(wandLight);
 /** The tip's trail of light through the air. */
 const tipTrail = new TipTrail();
@@ -3365,6 +3370,8 @@ let fpsSince = performance.now();
 const upscaler = new Upscaler(renderer);
 const gpuTimer = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
 const warmup = new WarmupWatch();
+/** Set once shader warmup has finished, so a later outline rebuild can compile before the next frame. */
+let shadersWarmed = false;
 const warmupEl = $('warmup');
 let warmupKey = '';
 /** The warm-up line at the bottom of the view: what is costing frame rate for now, and how far through it is. */
@@ -3457,6 +3464,18 @@ const remaster = new Remaster(
 remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group];
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
+/** A new outline effect has empty caches. Compile them before the next frame, for the draw that's on now. */
+function rewarmOutlines() {
+  try {
+    warmOutlines(renderer, (scene, camera) => effect.renderOutline(scene, camera), [
+      { scene, camera, pipeline: remaster.active ? 'float' : upscaler.active ? 'srgb' : 'canvas' },
+      { scene: hands.scene, camera: hands.camera, pipeline: 'canvas' },
+    ]);
+    warmup.seed(renderer.info.programs?.length ?? 0);
+  } catch (err) {
+    console.warn('office: outline shaders failed to compile', err);
+  }
+}
 function applyRemaster() {
   const s = (remasterParams = resolveRemaster(remasterSettings));
   remaster.configure(s);
@@ -3464,6 +3483,7 @@ function applyRemaster() {
   if (key !== outlineKey) {
     outlineKey = key;
     effect = s.enabled ? outlineEffect(s.outlineThickness, s.outlineOpacity) : outlineEffect();
+    if (shadersWarmed) rewarmOutlines();
   }
   effect.enabled = !s.enabled || s.outlines;
   // The classic upscaler stands aside while the Remastered pipeline draws.
@@ -3701,12 +3721,12 @@ function drawFrame(dt: number, t: number) {
   tipTrail.emit(tipWorld, tipNow && wandPose ? wandPose.trail : 0);
   tipTrail.update(dt);
   const wandGlow = 2.4 * hands.lumos + 1.6 * (wandPose?.glow ?? 0);
-  wandLight.visible = !!tipNow && wandGlow > 0.02;
+  // Visible either way (see where the light is made). Dark when the wand is away or the glow is too dim to read.
+  wandLight.intensity = tipNow && wandGlow > 0.02 ? wandGlow : 0;
   if (tipNow) {
     // A touch ahead of the tip, so it lights what's in front of you rather than the shaft's own shadow side.
     hands.wandDir(tipDir);
     wandLight.position.copy(tipNow).add(tipDir.transformDirection(camera.matrixWorld).multiplyScalar(0.12));
-    wandLight.intensity = wandGlow;
   }
   // Down a pole: the view widens and the edges streak past.
   const rush = reduceMotion.matches ? 0 : climber.rush;
@@ -3838,6 +3858,13 @@ function startLoop() {
   renderLoop.start();
 }
 
+/** Shaders first, then the loop, so the first frame is not where they compile. */
+async function startWhenReady() {
+  await shadersReady;
+  warmup.seed(renderer.info.programs?.length ?? 0);
+  startLoop();
+}
+
 // A background tab and a fully covered window both show up as visibilityState "hidden".
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') activeAt = performance.now();
@@ -3869,12 +3896,36 @@ player.onLook = renderLook;
 // ---- Boot ------------------------------------------------------------------------------------------
 function boot() {
   net.connect();
-  startLoop();
+  void startWhenReady();
 }
 
 guardLeaving();
-// The world is built. Come down once it has drawn, or at the cap if this page never gets that far.
-loading.until([]);
+// Prop models, then every shader a session can reach, then the first frame. A compile keeps the cap moving.
+const shadersReady = propsReady
+  .then(async () => {
+    theRoof();
+    const extras = Object.keys(propManifest()).flatMap((name) => {
+      const loaded = propScene(name);
+      return loaded ? [loaded] : [];
+    });
+    await warmOfficeShaders({
+      renderer,
+      outline: (scene, camera) => effect.renderOutline(scene, camera),
+      world: { scene, camera, wandLight },
+      hands: { scene: hands.scene, camera: hands.camera },
+      grid: remaster.gi.grid,
+      pipeline: remaster.active ? 'float' : upscaler.active ? 'srgb' : 'canvas',
+      passes: [...remaster.shaderPasses(), ...upscaler.shaderPasses()],
+      extras,
+      pulse: () => loading.stillGoing(),
+    });
+    shadersWarmed = true;
+  })
+  .catch((err) => console.warn('office: shader warmup failed', err));
+loading.until([
+  { say: 'Unpacking the office', done: propsReady },
+  { say: 'Compiling shaders', done: shadersReady },
+]);
 {
   // The sign-in page's remembered name, from before there was no signing in: gone once, here.
   try {
@@ -3890,8 +3941,8 @@ loading.until([]);
   } else {
     // Pick a character first (people from before there was a choice keep their name and color).
     if (saved) Object.assign(store.profile, { name: saved.name, color: saved.color });
-    // Render the office behind the character select screen.
-    startLoop();
+    // The office draws behind the character select screen once its shaders are in.
+    void startWhenReady();
     openCharacter(true, (p) => {
       showMyProfile(p);
       net.connect();

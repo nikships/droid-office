@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { CAP_MS, Gate } from '../src/client/ui/loading.js';
+import { CAP_MS, Gate, loadingSay } from '../src/client/ui/loading.js';
 
 // When the loading screen comes down (ui/loading.ts): once everything it waits on has settled, or at its
 // cap, whichever is first, and only ever once. The clock is the test's, so the cap comes exactly when told.
@@ -118,4 +118,15 @@ test('with nothing to wait for it comes down straight away', async (t) => {
   g.until([]);
   await settle();
   assert.deepEqual(calls, ['ready']);
+});
+
+test('the line names a step in progress ahead of the first frame, then the frame, then the doors', () => {
+  const frame = { say: 'Loading the office', settled: false, frame: true };
+  const props = { say: 'Unpacking the office', settled: false };
+  const shaders = { say: 'Compiling shaders', settled: false };
+  assert.equal(loadingSay({ unpacking: true, steps: [frame, props] }), 'Unpacking the office');
+  assert.equal(loadingSay({ unpacking: false, steps: [frame, props, shaders] }), 'Unpacking the office');
+  assert.equal(loadingSay({ unpacking: false, steps: [frame, { ...props, settled: true }, shaders] }), 'Compiling shaders');
+  assert.equal(loadingSay({ unpacking: false, steps: [frame, { ...props, settled: true }, { ...shaders, settled: true }] }), 'Loading the office');
+  assert.equal(loadingSay({ unpacking: false, steps: [{ ...frame, settled: true }] }), 'Opening the doors');
 });

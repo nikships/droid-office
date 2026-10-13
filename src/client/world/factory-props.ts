@@ -96,10 +96,11 @@ const gradient = () => (toon('#ffffff') as THREE.MeshToonMaterial).gradientMap;
  * material. Its emission atlas comes along, so the signal orange still reads in the dim room.
  */
 const toonOf = new Map<string, THREE.MeshToonMaterial>();
-function toonify(root: THREE.Object3D) {
+/** Turns a GLB clone's standard materials into the toon ones `placeFactoryProps` will reuse, keyed by the source material. */
+export function toonifyProp(root: THREE.Object3D) {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
+    if (!m.isMesh || !m.material || Array.isArray(m.material)) return;
     const src = m.material as THREE.MeshStandardMaterial;
     let out = toonOf.get(src.uuid);
     if (!out) {
@@ -225,7 +226,7 @@ export function placeFactoryProps(kit: DressingKit): Dressing {
         waiting.splice(i, 1);
         const model = prop(w.name);
         if (!model) continue;
-        toonify(model);
+        toonifyProp(model);
         w.install(model);
       }
       for (const u of updates) u(t, dt);

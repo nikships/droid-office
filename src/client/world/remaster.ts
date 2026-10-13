@@ -407,6 +407,18 @@ export class Remaster {
     return this.settings.enabled;
   }
 
+  /**
+   * The full-screen passes and the target each one draws to. The grade draws to the float scene target,
+   * or straight to the canvas when it is the last pass; the present always draws to the canvas.
+   */
+  shaderPasses(): { material: THREE.ShaderMaterial; pipeline: 'float' | 'canvas' }[] {
+    return [
+      { material: this.grade, pipeline: 'float' },
+      { material: this.grade, pipeline: 'canvas' },
+      { material: this.present, pipeline: 'canvas' },
+    ];
+  }
+
   /** What the scene is drawn at and what it is shown at, in device pixels: the output at the resolution scale, within the GPU's texture limit. */
   sizes(resolution = this.settings.resolution): { render: { width: number; height: number }; output: { width: number; height: number } } {
     this.renderer.getDrawingBufferSize(this.outputSize);

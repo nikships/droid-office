@@ -65,6 +65,16 @@ export interface LoadingScreen {
   drew(): void;
   /** What else to wait for besides the first frame, said in this order while it's waited for. Given once. */
   until(steps: Step[]): void;
+  /** The work is still moving (a shader compile between paints): the cap starts over, and the line repaints. */
+  stillGoing(): void;
+}
+
+/** The line under the bar: a step in progress ahead of the first frame, which is only named once the rest has settled. */
+export function loadingSay(state: { unpacking: boolean; steps: readonly { say: string; settled: boolean; frame?: boolean }[] }): string {
+  if (state.unpacking) return 'Unpacking the office';
+  const pending = state.steps.filter((step) => !step.settled);
+  const named = pending.find((step) => !step.frame) ?? pending[0];
+  return named?.say ?? 'Opening the doors';
 }
 
 /** How long the fade out takes, with some to spare, in case its end is never heard of. */
@@ -84,7 +94,7 @@ export function loadingScreen(watchModels: (fn: (p: LoadProgress) => void) => ()
   let frameDrawn = () => {};
   const frame: Step = { say: 'Loading the office', done: new Promise<void>((resolve) => (frameDrawn = resolve)) };
   /** Every step and whether it has settled, the first frame's first. */
-  const steps = [{ step: frame, settled: false }];
+  const steps: { step: Step; settled: boolean; frame: boolean }[] = [{ step: frame, settled: false, frame: true }];
   let drawn = false;
   let given = false;
   let gone = false;
@@ -102,7 +112,7 @@ export function loadingScreen(watchModels: (fn: (p: LoadProgress) => void) => ()
     fillTo((files.done + steps.filter((s) => s.settled).length) / (files.asked + steps.length));
     // Files still coming in before the office is built, then whichever step is next.
     const unpacking = !given && files.done < files.asked;
-    const say = (unpacking ? 'Unpacking the office' : steps.find((s) => !s.settled)?.step.say) ?? 'Opening the doors';
+    const say = loadingSay({ unpacking, steps: steps.map((s) => ({ say: s.step.say, settled: s.settled, frame: s.frame })) });
     if (line && line.textContent !== say) line.textContent = say;
   };
   const gate = new Gate((why) => {
@@ -152,12 +162,16 @@ export function loadingScreen(watchModels: (fn: (p: LoadProgress) => void) => ()
       if (given) return;
       given = true;
       for (const step of more) {
-        const s = { step, settled: false };
+        const s = { step, settled: false, frame: false };
         steps.push(s);
         follow(s);
       }
       paint();
       gate.until(steps.map((s) => s.step.done));
+    },
+    stillGoing() {
+      gate.stillGoing();
+      paint();
     },
   };
 }
