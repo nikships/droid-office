@@ -850,7 +850,7 @@ function castBolt(tip: THREE.Vector3) {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-/** What a shot along `raycaster` would strike first: a laptop screen, worker, other solid, or nothing. */
+/** What a shot along `raycaster` would strike first: an interactive surface, worker, other solid, or nothing. */
 function aimedShot(): ReturnType<typeof gunHit> {
   if (upTop) return null;
   const byRoot = new Map<THREE.Object3D, string>();
@@ -881,10 +881,12 @@ function missAt(hit: THREE.Intersection) {
  * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
  * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
  * floor sees it go down, its session still running. Shooting it again while it's down confirms the
- * kill. A laptop screen instead opens its worker's UI, like E at the desk, without a reach limit.
+ * kill. An interactive surface instead opens its UI, without a reach limit.
  */
 function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
+  if (result?.hit.object === office.bossScreen) return openOfficeShell(net);
+  if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
@@ -2261,21 +2263,29 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
   if (note && key === 'E') return pickUp(note);
   if (note && key === 'O') return openIssue(note, net, boardActions());
   if (key !== 'E') return;
+  if (openPane(target, aimedRun)) return;
+  if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
+  else if (target.kind === 'coffee') drinkCoffee();
+  else if (target.kind === 'gong') hitGong();
+  else if (target.kind === 'ladder') grabLadder();
+  else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
+}
+
+/** Opening a pane is safe from across the room; physical controls still need a nearby E. */
+function openPane(target: Interactable, runId?: number): boolean {
+  if (target.off) return false;
   if (target.kind === 'elevator') showElevator();
   else if (target.kind === 'issues') openBoard('issues', net, boardActions(), issuesTex.tab);
   else if (target.kind === 'pulls') openBoard('pulls', net, boardActions());
   else if (target.kind === 'computers') showComputers();
-  else if (target.kind === 'actions') showPipelines(aimedRun !== undefined ? { runId: aimedRun } : {});
+  else if (target.kind === 'actions') showPipelines(runId !== undefined ? { runId } : {});
   else if (target.kind === 'ci') showCi();
   else if (target.kind === 'whiteboard') openWhiteboard(net, { card: wallCard()?.id });
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
-  else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
-  else if (target.kind === 'coffee') drinkCoffee();
-  else if (target.kind === 'gong') hitGong();
-  else if (target.kind === 'ladder') grabLadder();
-  else if (target.kind === 'pole' && target.pole !== undefined) usePole(target.pole);
+  else return false;
+  return true;
 }
 
 /** A cup from the kitchen machine: a minute of quicker feet and higher jumps, and a mug in your hand. */

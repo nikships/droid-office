@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { Interactable } from './office';
 import { toonUnique } from './toon';
 
 /**
@@ -19,13 +20,13 @@ const DRUM_AT = new THREE.Vector3(0, 0.047, 0.03);
 /** The crane's hinge, under the cylinder and to its left (+X), inside the frame. */
 const CRANE_AT = new THREE.Vector2(0.008, 0.012);
 
-/** The closest rendered solid struck by a bullet or spell, including registered laptop screens. */
+/** The closest rendered solid struck by a bullet or spell, with its laptop or pane interaction. */
 export function gunHit(
   ray: THREE.Raycaster,
   office: THREE.Object3D,
   workers: ReadonlyMap<THREE.Object3D, string>,
   screens: ReadonlyMap<THREE.Object3D, string> = new Map(),
-): { hit: THREE.Intersection; workerId: string | null; laptopWorkerId: string | null } | null {
+): { hit: THREE.Intersection; workerId: string | null; laptopWorkerId: string | null; interactable: Interactable | null } | null {
   // A muzzle ray has no camera. Do not raycast sprites: their camera-dependent intersection
   // would throw before any worker could react. Only rendered meshes can absorb a bullet.
   const solids = new Set<THREE.Mesh>();
@@ -40,11 +41,13 @@ export function gunHit(
     if (!material?.visible || material.opacity <= 0) continue;
     let shown = true;
     let workerId: string | null = null;
+    let interactable: Interactable | null = null;
     for (let object: THREE.Object3D | null = hit.object; object; object = object.parent) {
       if (!object.visible) shown = false;
       workerId ??= workers.get(object) ?? null;
+      interactable ??= (object.userData.interact as Interactable | undefined) ?? null;
     }
-    if (shown) return { hit, workerId, laptopWorkerId: screens.get(hit.object) ?? null };
+    if (shown) return { hit, workerId, laptopWorkerId: screens.get(hit.object) ?? null, interactable: interactable?.off ? null : interactable };
   }
   return null;
 }

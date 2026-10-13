@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { gunHit } from '../src/client/world/gun.js';
+import type { Interactable } from '../src/client/world/office.js';
 
 function fixture() {
   const office = new THREE.Group();
@@ -153,4 +154,55 @@ test('an unregistered display remains a solid miss, not a laptop UI target', () 
   const hit = gunHit(f.ray, f.office, f.workers);
   assert.equal(hit?.hit.object, f.screen);
   assert.equal(hit?.laptopWorkerId, null);
+});
+
+test('shots resolve every pane and the jukebox through their tagged parent, without a reach limit', () => {
+  const kinds = ['issues', 'pulls', 'actions', 'ci', 'whiteboard', 'computers', 'jukebox', 'bookshelf', 'decor', 'elevator'] as const;
+  for (const kind of kinds) {
+    for (const distance of [2, 12, 1000]) {
+      const f = laptopFixture(distance);
+      const it: Interactable = { kind, x: 0, z: -distance, radius: 1 };
+      f.laptop.userData.interact = it;
+      f.body.position.z = -distance - 1;
+      f.office.updateMatrixWorld(true);
+      const hit = gunHit(f.ray, f.office, f.workers);
+      assert.equal(hit?.hit.object, f.screen, kind);
+      assert.equal(hit?.interactable, it, kind);
+      assert.equal(hit?.workerId, null, 'opening a pane must not damage a worker behind it');
+    }
+  }
+});
+
+test('a solid blocker never forwards a shot to the pane behind it', () => {
+  const f = laptopFixture(12);
+  f.laptop.userData.interact = { kind: 'whiteboard', x: 0, z: -12, radius: 1 } satisfies Interactable;
+  f.office.add(f.blocker);
+  f.office.updateMatrixWorld(true);
+  const hit = gunHit(f.ray, f.office, f.workers);
+  assert.equal(hit?.hit.object, f.blocker);
+  assert.equal(hit?.interactable, null);
+});
+
+test('hidden or disabled panes cannot become shot interactions', () => {
+  for (const hidden of ['laptop', 'screen', 'material', 'opacity', 'off'] as const) {
+    const f = laptopFixture();
+    const it: Interactable = { kind: 'computers', x: 0, z: -2, radius: 1 };
+    f.laptop.userData.interact = it;
+    if (hidden === 'laptop') f.laptop.visible = false;
+    else if (hidden === 'screen') f.screen.visible = false;
+    else if (hidden === 'material') f.screen.material.visible = false;
+    else if (hidden === 'opacity') f.screen.material.opacity = 0;
+    else it.off = true;
+    f.office.updateMatrixWorld(true);
+    assert.equal(gunHit(f.ray, f.office, f.workers)?.interactable, null, hidden);
+  }
+});
+
+test('a mesh interaction takes precedence over a containing group, including the boss monitor', () => {
+  const f = laptopFixture();
+  const chair: Interactable = { kind: 'seat', seatId: 'boss-chair', x: 0, z: -2, radius: 1 };
+  f.screen.userData.interact = chair;
+  f.laptop.userData.interact = { kind: 'decor', decorId: 'picture', x: 0, z: -2, radius: 1 } satisfies Interactable;
+  f.office.updateMatrixWorld(true);
+  assert.equal(gunHit(f.ray, f.office, f.workers)?.interactable, chair);
 });
