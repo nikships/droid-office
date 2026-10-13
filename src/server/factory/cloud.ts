@@ -1,7 +1,10 @@
-import { CLOCK_SKEW_MS, answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn } from '../../shared/factory-cloud.js';
-import type { FactoryComputersState } from '../../shared/factory-computers.js';
+import { randomBytes } from 'node:crypto';
+import { CLOCK_SKEW_MS, answeredByAssistant, canHost, cloudBadge, cloudStatus, emptyCloud, latestReply, latestTool, officeAutonomy, sessionCwd, type CloudComputer, type CloudTurn, type CloudWorker } from '../../shared/factory-cloud.js';
+import { anyComputer, computerOf, type FactoryComputer, type FactoryComputersState } from '../../shared/factory-computers.js';
+import { ENV_PHASE_WORD, canStartFrom, environmentPhase, instanceName, repoFolder, type FactoryEnvironmentsState } from '../../shared/factory-environments.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
 import { isAgentEffort } from '../../shared/protocol.js';
+import { PROMPTS, fillPrompt, type PromptId, type PromptVars } from '../../shared/prompts.js';
 import type { CloudWorkers } from '../cloud-workers.js';
 import { fallbackTask } from '../tasks.js';
 import { cloudScreen } from '../../shared/cloud-screen.js';
@@ -9,6 +12,7 @@ import { NEW_SESSION_GRACE_MS, mergeMessages, messageOf, type FactoryMessage } f
 import { FactoryError, type FactoryApi } from './api.js';
 import { HttpError, SliceFeature, badRequest, notFound, str, type FactoryRoute, type FeatureHost } from './feature.js';
 import { alreadyGone, whileNew, type NewSessionOptions } from './new-session.js';
+import type { ComputersFeature } from './computers.js';
 import type { FactoryRegistry } from './registry.js';
 import type { SessionsFeature } from './sessions.js';
 
@@ -28,6 +32,9 @@ const PROMPT_MAX = 20_000;
 const MODEL_MAX = 256;
 /** How long after a turn ends the office looks for its reply, when the reply wasn't listed yet. */
 const REPLY_WAIT_MS = 90_000;
+/** How long a computer started from an Environment may take to come up (they usually take seconds). */
+const INSTANCE_MAX_MS = 4 * 60_000;
+const INSTANCE_EVERY_MS = 2000;
 
 const clip = (s: string, n: number) => {
   const one = s.replace(/\s+/g, ' ').trim();
@@ -41,6 +48,8 @@ export interface CloudFloor {
   cloud: CloudWorkers;
   /** Takes pictures that were pasted into a prompt off the floor's staging area. */
   unstage(ids: readonly string[]): void;
+  /** The floor's repository (`owner/name`), to start a session from an Environment in its clone. */
+  repo?: string;
 }
 
 export interface CloudOptions {
@@ -49,6 +58,11 @@ export interface CloudOptions {
   agentArgs: readonly string[];
   /** The computers slice, to check a computer is there and can take a session. */
   computers(): FactoryComputersState | undefined;
+  /** The Environments slice, for a hire on one. */
+  environments?(): FactoryEnvironmentsState | undefined;
+  /** A computer the office started for a worker, or deleted as it went home: the computers slice hears now. */
+  computerMade?(c: FactoryComputer): void;
+  computerDeleted?(id: string): void;
   /** A toast for everyone on one floor. */
   toast(floorId: string, text: string, level?: 'info' | 'warn' | 'error'): void;
   now?: () => number;
@@ -56,6 +70,10 @@ export interface CloudOptions {
   retry?: Omit<NewSessionOptions, 'now'>;
   /** A worker's session was deleted as it went home: the Sessions feature drops it (SessionsFeature.forget). */
   sessionDeleted?(sessionId: string): void;
+  /** How often and how long a hire waits for a computer started from an Environment; for tests. */
+  instanceWait?: { everyMs: number; maxMs: number };
+  /** One of the office's prompts as rewritten in Settings (server/prompts.ts); the default without it. */
+  prompt?(id: PromptId, vars: PromptVars): string;
 }
 
 type Session = { status?: unknown; messageCount?: unknown; updatedAt?: unknown; title?: unknown; sessionSettings?: { model?: unknown; reasoningEffort?: unknown } };
@@ -73,7 +91,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   readonly routes: readonly FactoryRoute[] = [
     {
-      // Hire a cloud worker: { floor, deskId, computerId, cwd?, prompt?, model?, effort?, images? }.
+      // Hire a cloud worker: { floor, deskId, computerId | environmentId, cwd?, prompt?, model?, effort?, images? }.
       method: 'POST',
       path: '/hire',
       handle: async ({ api, json, by }) => {
@@ -148,8 +166,46 @@ export class CloudFeature extends SliceFeature<'cloud'> {
   }
 
   private computer(id: string): CloudComputer | undefined {
-    const c = this.opts.computers()?.items.find((x) => x.id === id);
+    const s = this.opts.computers();
+    const c = s && anyComputer(s, id);
     return c && { id: c.id, name: c.name, providerType: c.providerType, status: c.status, remoteUser: c.remoteUser };
+  }
+
+  /**
+   * A computer of its own for a worker hired on an Environment: unlisted, like the ones Factory's
+   * web app starts for a session, and waited for until it's active. Deleted again if it never is.
+   */
+  private async startInstance(api: FactoryApi, environmentId: string, envName: string): Promise<FactoryComputer> {
+    const made = computerOf(await api.post('/computers', { name: instanceName(envName, randomBytes(4).toString('hex')), source: { kind: 'environment', environmentId, isListed: false } }));
+    if (!made) throw new HttpError(502, `Factory made no computer from ${envName} (it didn't say which)`);
+    const { everyMs, maxMs } = this.opts.instanceWait ?? { everyMs: INSTANCE_EVERY_MS, maxMs: INSTANCE_MAX_MS };
+    const until = this.now() + maxMs;
+    let c: FactoryComputer = made;
+    this.opts.computerMade?.(c);
+    try {
+      while (c.status !== 'active') {
+        if (c.status === 'error') throw new HttpError(502, `${c.name} didn't start from ${envName} on Factory`);
+        if (this.now() >= until) throw new HttpError(504, `${c.name} didn't start from ${envName} within ${Math.round(maxMs / 60_000)} minutes`);
+        await new Promise((r) => setTimeout(r, everyMs));
+        c = computerOf(await api.get(`/computers/${encodeURIComponent(made.id)}`, { includeProvisioningSteps: true })) ?? c;
+        this.opts.computerMade?.(c);
+      }
+    } catch (err) {
+      await this.deleteInstance(api, made.id);
+      throw err;
+    }
+    return c;
+  }
+
+  /** Deletes a computer the office started for a worker; whether it's gone (a 404 counts). */
+  private async deleteInstance(api: FactoryApi, id: string): Promise<boolean> {
+    try {
+      await api.delete(`/computers/${encodeURIComponent(id)}`);
+    } catch (err) {
+      if (!(err instanceof FactoryError && err.status === 404)) return false;
+    }
+    this.opts.computerDeleted?.(id);
+    return true;
   }
 
   /** Makes the session on the computer, seats the worker, then sends it its first prompt. */
@@ -158,12 +214,22 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!floor) throw badRequest('That floor is no longer in the building');
     const images = imageIds(body.images);
     const deskId = str(body.deskId, 32);
-    const computer = this.computer(str(body.computerId, 128));
+    const environmentId = str(body.environmentId, 128);
+    const env = environmentId ? this.opts.environments?.()?.items.find((e) => e.id === environmentId) : undefined;
+    let computer = environmentId ? undefined : this.computer(str(body.computerId, 128));
     // A hire that fails leaves its pictures staged: the dialog stays open to try again, and drops them when it closes.
-    if (!computer) throw badRequest("That computer isn't on Factory any more");
-    if (!canHost(computer)) throw badRequest(`${computer.name} is ${computer.status}: only an active computer can take a session`);
-    const where = sessionCwd(str(body.cwd, 5000), computer);
-    if (typeof where === 'string') throw badRequest(where);
+    if (environmentId) {
+      if (!env) throw badRequest("That Environment isn't on Factory any more");
+      if (!canStartFrom(env)) throw badRequest(`${env.name} is ${ENV_PHASE_WORD[environmentPhase(env)].toLowerCase()}: a computer starts from an Environment once it has built`);
+    } else {
+      if (!computer) throw badRequest("That computer isn't on Factory any more");
+      if (!canHost(computer)) throw badRequest(`${computer.name} is ${computer.status}: only an active computer can take a session`);
+    }
+    const typedCwd = str(body.cwd, 5000);
+    // On an Environment the folder is checked again against the computer once it's started; this
+    // catches a folder that's wrong on any computer before one is started for nothing.
+    const typedWhere = sessionCwd(typedCwd, computer ?? { name: env!.name, providerType: 'e2b', remoteUser: 'factory-user' });
+    if (typeof typedWhere === 'string') throw badRequest(typedWhere);
     const model = str(body.model, MODEL_MAX + 1) || undefined;
     if (model && (model.length > MODEL_MAX || /[\s\p{Cc}]/u.test(model))) throw badRequest('That model id is not valid');
     if (model?.startsWith('custom:')) throw badRequest("Your own (BYOK) models only run on this machine: pick one of Factory's for a cloud worker");
@@ -172,29 +238,50 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const held = floor.cloud.hold(deskId);
     if (held) throw badRequest(held);
     const autonomy = officeAutonomy(this.opts.agentArgs);
+    let where: { cwd?: string } = typedWhere;
+    let instance: FactoryComputer | undefined;
+    let catchUp = false;
     let made: { sessionId?: unknown; sessionSettings?: Session['sessionSettings'] };
     try {
+      if (env) {
+        instance = await this.startInstance(api, env.id, env.name);
+        computer = { id: instance.id, name: instance.name, providerType: instance.providerType, status: instance.status, remoteUser: instance.remoteUser };
+        const typed = sessionCwd(typedCwd, computer);
+        if (typeof typed === 'string') throw badRequest(typed);
+        // Left empty: the floor's repository's clone, where the Environment put it.
+        const dir = typed.cwd ? undefined : repoFolder(instance.repos, floor.repo);
+        where = dir ? { cwd: dir } : typed;
+        catchUp = !!dir;
+      }
       made = await api.post('/sessions', {
-        computerId: computer.id,
+        computerId: computer!.id,
         ...where,
         sessionSettings: { interactionMode: 'auto', autonomyLevel: autonomy, ...(model ? { model } : {}), ...(effort ? { reasoningEffort: effort } : {}) },
       });
+      if (typeof made?.sessionId !== 'string' || !made.sessionId) throw new HttpError(502, "Factory made no session (it didn't say which)");
     } catch (err) {
       floor.cloud.release(deskId);
+      if (instance) await this.deleteInstance(api, instance.id);
       throw err;
     }
-    if (typeof made?.sessionId !== 'string' || !made.sessionId) {
-      floor.cloud.release(deskId);
-      throw new HttpError(502, "Factory made no session (it didn't say which)");
-    }
+    const host = computer!;
+    const place: CloudWorker = {
+      computerId: host.id,
+      computerName: host.name,
+      provider: host.providerType,
+      ...where,
+      autonomy,
+      ...(env ? { environmentId: env.id, environmentName: env.name, instance: true } : {}),
+      ...(catchUp ? { catchUp: true } : {}),
+    };
     const info = floor.cloud.add({
       deskId,
       by,
-      sessionId: made.sessionId,
+      sessionId: made.sessionId as string,
       prompt: prompt || (images.length ? 'See the attached images' : undefined),
       model: typeof made.sessionSettings?.model === 'string' ? made.sessionSettings.model : model,
       effort,
-      cloud: { computerId: computer.id, computerName: computer.name, provider: computer.providerType, ...where, autonomy },
+      cloud: place,
     });
     if (info.prompt) {
       const task = fallbackTask(info.prompt);
@@ -202,13 +289,19 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         i.task = task;
       });
     }
-    this.opts.toast(floor.id, `${by} hired ${info.name} on ${cloudBadge(info.cloud!)}${info.prompt ? ' with a task' : ''}`);
+    this.opts.toast(floor.id, `${by} hired ${info.name} on ${cloudBadge(place)}${info.prompt ? ' with a task' : ''}`);
     if (prompt || images.length) {
       void this.send(info.id, prompt, images).then((why) => {
         if (why) this.opts.toast(floor.id, `☁ ${info.name} didn't get its first prompt: ${why instanceof Error ? why.message : why}`, 'warn');
       });
     }
     return floor.cloud.get(info.id) ?? info;
+  }
+
+  /** What goes before the first message to a worker whose clone is from its Environment's build (cloud.environment). */
+  private catchUpNote(c: CloudWorker): string {
+    const vars = { environment: c.environmentName ?? 'it was started from', folder: c.cwd ?? '.' };
+    return (this.opts.prompt ? this.opts.prompt('cloud.environment', vars) : fillPrompt(PROMPTS['cloud.environment'].text, vars)).trim();
   }
 
   /** Sends a message to a cloud worker's session; why not, or undefined once Factory has it. */
@@ -228,9 +321,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Factory";
     if (info.cloud?.error) return `${info.name} can't take prompts right now: ${info.cloud.error}`;
     const before = info.status;
+    const catchUp = info.cloud?.catchUp === true;
+    const lead = catchUp ? this.catchUpNote(info.cloud!) : '';
     const was = floor.cloud.turn(id) ?? {};
     const count = floor.cloud.seen(id)?.count ?? 0;
     floor.cloud.update(id, (i, w) => {
+      // Cleared before the message goes, so a second one sent meanwhile doesn't carry the note too.
+      if (i.cloud) delete i.cloud.catchUp;
       w.turn = { sentAt: this.now(), countAtSend: count };
       i.activity = clip(message, 80);
       i.lastInputAt = this.now();
@@ -239,7 +336,9 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     });
     floor.cloud.setStatus(id, 'working');
     try {
-      const r = await this.whileNew(info, () => api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: message, ...(pictures.length ? { images: pictures } : {}) }));
+      const r = await this.whileNew(info, () =>
+        api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: lead ? `${lead}\n\n${message}` : message, ...(pictures.length ? { images: pictures } : {}) }),
+      );
       if (r?.status === 'running' || r?.status === 'pending')
         floor.cloud.update(id, (_, w) => {
           w.turn = { ...w.turn, seenBusy: true };
@@ -247,6 +346,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     } catch (err) {
       floor.cloud.update(id, (i, w) => {
         w.turn = was;
+        if (catchUp && i.cloud) i.cloud.catchUp = true;
         i.activity = clip(`Couldn't send: ${(err as Error).message}`, 80);
       });
       floor.cloud.setStatus(id, before === 'starting' ? 'idle' : before);
@@ -258,8 +358,9 @@ export class CloudFeature extends SliceFeature<'cloud'> {
 
   /**
    * Sends a cloud worker home: it leaves its desk now, its session is interrupted when it's working,
-   * and deleted when `deleteSession` (otherwise it stays on the Factory account). Resolves to what to
-   * tell the floor about the session, if anything.
+   * and deleted when `deleteSession` (otherwise it stays on the Factory account). A computer the
+   * office started for it from an Environment is deleted too (its sessions are archived with it).
+   * Resolves to what to tell the floor about the session, if anything.
    */
   async sendHome(id: string, deleteSession: boolean): Promise<{ note?: string; error?: string }> {
     const found = this.find(id);
@@ -268,20 +369,39 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     floor.cloud.remove(id);
     this.due.delete(id);
     const sid = info.sessionId;
+    const instance = info.cloud?.instance === true;
     const busy = info.status === 'working' || info.status === 'starting';
-    if (!sid || (!busy && !deleteSession)) return {};
+    if (!sid || (!instance && !busy && !deleteSession)) return {};
     const api = this.host.api();
-    if (!api) return { error: `☁ The office isn't connected to Factory, so ${info.name}'s session ${deleteSession ? 'is still there' : 'keeps going'} on ${info.cloud?.computerName ?? 'Factory'}` };
+    if (!api) {
+      if (instance) return { error: `☁ The office isn't connected to Factory, so ${info.name}'s computer ${info.cloud?.computerName} is still there: delete it in Factory` };
+      return { error: `☁ The office isn't connected to Factory, so ${info.name}'s session ${deleteSession ? 'is still there' : 'keeps going'} on ${info.cloud?.computerName ?? 'Factory'}` };
+    }
     const path = `/sessions/${encodeURIComponent(sid)}`;
     const asked = this.now();
+    const interrupt = () => this.whileNew(info, () => api.post(`${path}/interrupt`, {}));
+    let sessionError: string | undefined;
     try {
-      if (busy) await this.whileNew(info, () => api.post(`${path}/interrupt`, {}));
+      // Deleting its computer stops the session anyway.
+      if (busy && !instance) await interrupt();
       if (deleteSession) await this.whileNew(info, () => api.delete(path));
     } catch (err) {
       // A 404 for a session past its first moments: it's gone already, which is what was wanted.
-      if (!alreadyGone(err, info.createdAt, asked)) return { error: `☁ ${info.name}'s session: ${(err as Error).message}` };
+      if (!alreadyGone(err, info.createdAt, asked)) sessionError = (err as Error).message;
     }
-    if (deleteSession) this.opts.sessionDeleted?.(sid);
+    if (deleteSession && !sessionError) this.opts.sessionDeleted?.(sid);
+    if (instance) {
+      // Its computer goes whatever happened to the session: it was started for this worker alone.
+      const name = info.cloud?.computerName ?? 'computer';
+      if (!(await this.deleteInstance(api, info.cloud!.computerId))) {
+        // The computer stays, so a session at work there would carry on: stop it.
+        if (busy) await interrupt().catch(() => undefined);
+        return { error: `☁ Couldn't delete ${info.name}'s computer ${name}: delete it in the Computers window${sessionError ? `. Its session: ${sessionError}` : ''}` };
+      }
+      if (sessionError) return { error: `☁ ${info.name}'s computer ${name} was deleted, but its session wasn't: ${sessionError}` };
+      return { note: deleteSession ? `🗑️ ${info.name}'s computer ${name} and its session were deleted` : `🗑️ ${info.name}'s computer ${name} was deleted; its session stays archived in Factory` };
+    }
+    if (sessionError) return { error: `☁ ${info.name}'s session: ${sessionError}` };
     if (deleteSession) return { note: `🗑️ ${info.name}'s Factory session was deleted` };
     return { note: `☁ ${info.name}'s session was stopped; it stays in Factory's sessions` };
   }
@@ -316,7 +436,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const id = info.id;
     const sid = encodeURIComponent(info.sessionId!);
     const computers = this.opts.computers();
-    const computer = computers?.items.find((c) => c.id === info.cloud?.computerId);
+    const computer = computers && anyComputer(computers, info.cloud?.computerId);
     // The computers list has been read and it isn't on it: the computer was deleted.
     if (computers?.fetchedAt && !computers.error && !computer) return this.broken(floor, id, `its computer ${info.cloud?.computerName ?? ''} is no longer on Factory`.replace('  ', ' '), now);
     if (computer?.status === 'error') return this.broken(floor, id, `its computer ${computer.name} has a problem on Factory`, now);
@@ -428,12 +548,15 @@ export interface CloudMessageContext {
  * Cloud workers in the office: the feature registered with the Factory registry, and what server.ts
  * calls for a ws message about one. Returns undefined when `workerId` isn't a cloud worker's.
  */
-export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, 'computers'>) {
+export function mountCloud(registry: FactoryRegistry, opts: Omit<CloudOptions, 'computers' | 'environments' | 'computerMade' | 'computerDeleted'>) {
   const feature = registry.register(
     (host) =>
       new CloudFeature(host, {
         ...opts,
         computers: () => registry.feature('computers')?.state(),
+        environments: () => registry.feature('environments')?.state(),
+        computerMade: (c) => (registry.feature('computers') as ComputersFeature | undefined)?.track(c),
+        computerDeleted: (id) => (registry.feature('computers') as ComputersFeature | undefined)?.forget(id),
         sessionDeleted: (id) => (registry.feature('sessions') as SessionsFeature | undefined)?.forget(id),
       }),
   ) as CloudFeature;

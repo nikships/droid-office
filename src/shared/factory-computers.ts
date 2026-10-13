@@ -29,6 +29,10 @@ export interface FactoryComputer {
   provisioningSteps?: FactoryProvisioningStep[];
   /** Where its repositories were cloned on it, when Factory says. */
   repos?: string[];
+  /** The Factory Environment it was started from (see factory-environments.ts). */
+  environmentId?: string;
+  /** Hidden from Factory's computer list: an Environment's instance, made for one session or worker. */
+  unlisted?: boolean;
 }
 
 /** One 5-minute sample of a managed computer's load. */
@@ -63,7 +67,10 @@ export const METRICS_LOOKBACK_HOURS = 24;
 export const ASLEEP_AFTER_MS = 20 * 60_000;
 
 export interface FactoryComputersState {
+  /** The account's computers, as Factory's own list shows them. */
   items: FactoryComputer[];
+  /** Unlisted computers: Environment instances started for a session or a cloud worker. */
+  instances: FactoryComputer[];
   /** By computer id, managed computers only. */
   metrics: Record<string, FactoryComputerMetrics>;
   /** Who can make a new computer (GET /computers/providers), e.g. ['e2b']. */
@@ -81,7 +88,12 @@ export interface FactoryComputersState {
 }
 
 export function emptyComputers(): FactoryComputersState {
-  return { items: [], metrics: {}, providers: [], waking: {}, secrets: [], fetchedAt: 0 };
+  return { items: [], instances: [], metrics: {}, providers: [], waking: {}, secrets: [], fetchedAt: 0 };
+}
+
+/** A computer by id, listed or an instance. */
+export function anyComputer(s: Pick<FactoryComputersState, 'items' | 'instances'>, id: string | undefined): FactoryComputer | undefined {
+  return id ? (s.items.find((c) => c.id === id) ?? s.instances.find((c) => c.id === id)) : undefined;
 }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -107,6 +119,9 @@ export function computerOf(raw: unknown): FactoryComputer | undefined {
         }))
     : undefined;
   const repos = Array.isArray(r.clonedRepoDirectories) ? r.clonedRepoDirectories.filter((d): d is string => typeof d === 'string' && !!d).slice(0, 50) : undefined;
+  // Factory answers with the legacy `template` kind for a computer it started from an Environment.
+  const src = r.computerSource && typeof r.computerSource === 'object' ? (r.computerSource as Record<string, unknown>) : undefined;
+  const environmentId = optStr(src?.environmentId) ?? (src?.kind === 'template' || src?.kind === 'environment' ? optStr(src?.templateId) : undefined);
   return {
     id: r.id,
     name: typeof r.name === 'string' ? r.name : r.id,
@@ -119,6 +134,8 @@ export function computerOf(raw: unknown): FactoryComputer | undefined {
     ...(optStr(r.ownerPrincipalKind) ? { ownerPrincipalKind: optStr(r.ownerPrincipalKind) } : {}),
     ...(steps ? { provisioningSteps: steps } : {}),
     ...(repos?.length ? { repos } : {}),
+    ...(environmentId ? { environmentId } : {}),
+    ...(r.isListed === false ? { unlisted: true } : {}),
   };
 }
 

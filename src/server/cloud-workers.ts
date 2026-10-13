@@ -330,6 +330,17 @@ function validInfo(raw: unknown): WorkerInfo | undefined {
     open: false,
     cols: 100,
     rows: 30,
-    cloud: { computerId: c.computerId, computerName: c.computerName, provider: c.provider, cwd: c.cwd, autonomy: c.autonomy ?? 'high', ...(c.error ? { error: c.error } : {}) },
+    cloud: {
+      computerId: c.computerId,
+      computerName: c.computerName,
+      provider: typeof c.provider === 'string' ? c.provider : undefined,
+      cwd: typeof c.cwd === 'string' ? c.cwd : undefined,
+      autonomy: c.autonomy ?? 'high',
+      ...(c.error ? { error: c.error } : {}),
+      ...(typeof c.environmentId === 'string' && c.environmentId ? { environmentId: c.environmentId } : {}),
+      ...(typeof c.environmentName === 'string' && c.environmentName ? { environmentName: c.environmentName } : {}),
+      ...(c.instance === true ? { instance: true } : {}),
+      ...(c.catchUp === true ? { catchUp: true } : {}),
+    },
   };
 }

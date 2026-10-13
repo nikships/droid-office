@@ -182,7 +182,7 @@ export class ComputersFeature extends SliceFeature<'computers'> {
   }
 
   busy(): boolean {
-    return this.slice.items.some((c) => c.status === 'provisioning') || Object.keys(this.slice.waking).length > 0;
+    return [...this.slice.items, ...this.slice.instances].some((c) => c.status === 'provisioning') || Object.keys(this.slice.waking).length > 0;
   }
 
   reset() {
@@ -197,7 +197,7 @@ export class ComputersFeature extends SliceFeature<'computers'> {
     const wantProviders = now - this.providersAt >= PROVIDERS_EVERY_MS;
     const wantSecrets = now - this.secretsAt >= SECRETS_EVERY_MS;
     const [list, providers, secrets] = await Promise.all([
-      api.get<{ computers?: unknown[] }>('/computers', { includeProvisioningSteps: true }),
+      api.get<{ computers?: unknown[] }>('/computers', { includeProvisioningSteps: true, includeUnlisted: true }),
       wantProviders ? api.providers().catch(() => undefined) : undefined,
       wantSecrets
         ? this.secretNames(api).then(
@@ -206,9 +206,11 @@ export class ComputersFeature extends SliceFeature<'computers'> {
           )
         : undefined,
     ]);
-    const items = (Array.isArray(list?.computers) ? list.computers : []).map(computerOf).filter((c): c is FactoryComputer => !!c);
+    const all = (Array.isArray(list?.computers) ? list.computers : []).map(computerOf).filter((c): c is FactoryComputer => !!c);
+    const items = all.filter((c) => !c.unlisted);
+    const instances = all.filter((c) => c.unlisted);
     const metrics = await this.readMetrics(api, items);
-    const patch: Partial<FactoryComputersState> = { items, metrics, here: hereOf(items, this.hostNames), waking: this.stillWaking(items, metrics), fetchedAt: now, error: undefined };
+    const patch: Partial<FactoryComputersState> = { items, instances, metrics, here: hereOf(items, this.hostNames), waking: this.stillWaking(items, metrics), fetchedAt: now, error: undefined };
     if (providers) {
       this.providersAt = now;
       patch.providers = (providers.providers ?? []).filter((p): p is string => typeof p === 'string');
@@ -320,21 +322,28 @@ export class ComputersFeature extends SliceFeature<'computers'> {
   private async create({ api, json, by }: FactoryRequest) {
     const body = await json<Record<string, unknown>>();
     const name = nameOf(body.name);
-    const repos = reposOf(body.repos);
-    const provider = str(body.provider, 40);
-    const remoteUser = str(body.remoteUser, NAME_MAX) || DEFAULT_REMOTE_USER;
-    const c = computerOf(
-      await api.post('/computers', {
-        name,
-        ...(provider ? { provider } : {}),
-        remoteUser,
-        ...(repos?.length ? { repos } : {}),
-        ...(typeof body.autoInstallDeps === 'boolean' ? { autoInstallDeps: body.autoInstallDeps } : {}),
-      }),
-    );
+    const environmentId = str(body.environmentId, 128);
+    let c: FactoryComputer | undefined;
+    if (environmentId) {
+      // An Environment says what's on it: its image, repositories and setup.
+      c = computerOf(await api.post('/computers', { name, source: { kind: 'environment', environmentId, isListed: true } }));
+    } else {
+      const repos = reposOf(body.repos);
+      const provider = str(body.provider, 40);
+      const remoteUser = str(body.remoteUser, NAME_MAX) || DEFAULT_REMOTE_USER;
+      c = computerOf(
+        await api.post('/computers', {
+          name,
+          ...(provider ? { provider } : {}),
+          remoteUser,
+          ...(repos?.length ? { repos } : {}),
+          ...(typeof body.autoInstallDeps === 'boolean' ? { autoInstallDeps: body.autoInstallDeps } : {}),
+        }),
+      );
+    }
     if (c) this.replace(c);
     this.host.toast(`🖥️ ${by} made the Droid Computer ${name}`);
-    console.log(`  ${by} made the Droid Computer ${name}`);
+    console.log(`  ${by} made the Droid Computer ${name}${environmentId ? ' from an Environment' : ''}`);
     this.host.pollSoon();
     return { computer: c ?? null };
   }
@@ -389,9 +398,7 @@ export class ComputersFeature extends SliceFeature<'computers'> {
     if (!c) throw notFound('No such computer');
     if (confirm !== c.name) throw badRequest(`Type the computer’s name, ${c.name}, to delete it`);
     await api.delete(`/computers/${encodeURIComponent(params.id)}`);
-    const { [c.id]: _gone, ...metrics } = this.slice.metrics;
-    const { [c.id]: _wake, ...waking } = this.slice.waking;
-    this.set({ items: this.slice.items.filter((x) => x.id !== c.id), metrics, waking, here: this.slice.here === c.id ? undefined : this.slice.here });
+    this.forget(c.id);
     this.host.toast(`🗑️ ${by} deleted the Droid Computer ${c.name}`);
     console.log(`  ${by} deleted the Droid Computer ${c.name}`);
     this.host.pollSoon();
@@ -399,13 +406,30 @@ export class ComputersFeature extends SliceFeature<'computers'> {
   }
 
   private known(id: string): FactoryComputer | undefined {
-    return this.slice.items.find((c) => c.id === id);
+    return this.slice.items.find((c) => c.id === id) ?? this.slice.instances.find((c) => c.id === id);
   }
 
-  /** Puts an answer's computer into the list (in place, or at the end for a new one). */
+  /** Puts an answer's computer into the list or the instances (in place, or at the end for a new one). */
+  track(c: FactoryComputer) {
+    this.replace(c);
+  }
+
+  /** A computer that was deleted: it goes from the slice now, before the next poll. */
+  forget(id: string) {
+    const { [id]: _gone, ...metrics } = this.slice.metrics;
+    const { [id]: _wake, ...waking } = this.slice.waking;
+    this.set({ items: this.slice.items.filter((x) => x.id !== id), instances: this.slice.instances.filter((x) => x.id !== id), metrics, waking, here: this.slice.here === id ? undefined : this.slice.here });
+  }
+
   private replace(c: FactoryComputer) {
-    const items = this.slice.items.some((x) => x.id === c.id) ? this.slice.items.map((x) => (x.id === c.id ? { ...x, ...c } : x)) : [...this.slice.items, c];
-    this.set({ items, here: hereOf(items, this.hostNames) });
+    const key = c.unlisted ? 'instances' : 'items';
+    const list = this.slice[key];
+    const next = list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? { ...x, ...c } : x)) : [...list, c];
+    // A computer listed or unlisted since the last read moves: it's never in both lists.
+    if (key === 'instances') {
+      const items = this.slice.items.filter((x) => x.id !== c.id);
+      this.set({ instances: next, items, here: hereOf(items, this.hostNames) });
+    } else this.set({ items: next, instances: this.slice.instances.filter((x) => x.id !== c.id), here: hereOf(next, this.hostNames) });
   }
 }
 

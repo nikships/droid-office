@@ -27,6 +27,9 @@ function factory(overrides: Record<string, Handler> = {}) {
   const routes: Record<string, Handler> = {
     '/api/v0/computers/providers': () => json(200, { providers: ['e2b'] }),
     '/api/v0/computers': () => json(200, COMPUTERS),
+    // GET /environments from the owner's account, trimmed.
+    '/api/v0/environments': () =>
+      json(200, { environments: [{ id: 'cf248f8e-05ce-4fa4-9769-84d85d19792e', name: 'droid-office-default', scope: 'organization', status: 'ready', isDefault: true }], defaultEnvironmentId: 'cf248f8e-05ce-4fa4-9769-84d85d19792e' }),
     '/api/v0/sessions': () => json(200, { sessions: [], pagination: { hasMore: false } }),
     '/api/v0/automations/ci/repository-owners': () => json(200, { owners: [{ login: 'olive', type: 'user' }], integration: { connected: true } }),
     '/api/v0/wiki': () => json(200, { wikiRuns: [] }),
@@ -48,7 +51,10 @@ function factory(overrides: Record<string, Handler> = {}) {
 
 const reject401 = () => json(401, { detail: 'Api key not found or deleted', status: 401, title: 'Unauthorized' });
 const ALL_401: Record<string, Handler> = Object.fromEntries(
-  ['/api/v0/computers/providers', '/api/v0/computers', '/api/v0/sessions', '/api/v0/automations/ci/repository-owners', '/api/v0/wiki', '/api/v0/organization/users', '/api/v0/service-accounts'].map((p) => [p, reject401]),
+  ['/api/v0/computers/providers', '/api/v0/computers', '/api/v0/environments', '/api/v0/sessions', '/api/v0/automations/ci/repository-owners', '/api/v0/wiki', '/api/v0/organization/users', '/api/v0/service-accounts'].map((p) => [
+    p,
+    reject401,
+  ]),
 );
 
 function tmp(t: { after: (fn: () => void) => void }) {
@@ -94,10 +100,11 @@ test('connecting checks the key, saves it 0600 and never hands it out', async (t
   assert.ok(conn.at && conn.checkedAt);
   assert.deepEqual(
     conn.capabilities.map((c) => c.group),
-    ['computers', 'sessions', 'ci', 'wiki', 'organization', 'serviceAccounts'],
+    ['computers', 'environments', 'sessions', 'ci', 'wiki', 'organization', 'serviceAccounts'],
   );
   assert.equal(capabilityOf(conn, 'computers')?.status, 'ok');
   assert.equal(capabilityOf(conn, 'computers')?.reason, 'Can make e2b computers');
+  assert.equal(capabilityOf(conn, 'environments')?.reason, '1 Environment');
   assert.equal(capabilityOf(conn, 'ci')?.reason, 'GitHub connected');
   assert.equal(capabilityOf(conn, 'organization')?.reason, '2 members');
   const sa = capabilityOf(conn, 'serviceAccounts');
@@ -224,7 +231,7 @@ test('Check again shows each group as checking until its own probe answers', asy
 
   const before = changes;
   await tick();
-  assert.deepEqual(statuses(office), { computers: 'ok', sessions: 'checking', ci: 'ok', wiki: 'checking', organization: 'ok', serviceAccounts: 'denied' });
+  assert.deepEqual(statuses(office), { computers: 'ok', environments: 'ok', sessions: 'checking', ci: 'ok', wiki: 'checking', organization: 'ok', serviceAccounts: 'denied' });
   assert.ok(changes - before >= 4, 'each answer goes out as it lands');
   assert.equal(office.connection().checking, true);
 

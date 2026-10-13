@@ -291,6 +291,55 @@ test('create and bulk create: checked here, sent to Factory, added to the list s
   assert.ok(s.feature.state().items.some((c) => c.name === 'fleet-1'));
 });
 
+// A computer started from the owner's droid-office-default Environment (GET /computers?includeUnlisted=true), trimmed.
+const INSTANCE = {
+  id: '12b42d4d-e791-40c2-8f56-acbaa5f90a09',
+  name: 'office-a7caa037',
+  isListed: false,
+  providerType: 'e2b',
+  status: 'active',
+  createdAt: 1791584194241,
+  remoteUser: 'factory-user',
+  clonedRepoDirectories: ['/home/factory-user/repos/droid-office'],
+  computerSource: { kind: 'template', templateId: 'cf248f8e-05ce-4fa4-9769-84d85d19792e' },
+};
+
+test('unlisted computers are Environment instances, kept apart from the list; a computer can start from an Environment', async () => {
+  const s = setup({
+    '/computers': () => json(200, { computers: [ORB, INSTANCE, MAC] }),
+    'POST /computers': () => json(201, { ...INSTANCE, id: 'listed-id', name: 'from-env', isListed: true, status: 'provisioning' }),
+    [`DELETE /computers/${INSTANCE.id}`]: () => json(204),
+  });
+  await s.feature.poll(s.api);
+  const st = s.feature.state();
+  assert.equal(s.seen[0].query.get('includeUnlisted'), 'true');
+  assert.deepEqual(
+    st.items.map((c) => c.name),
+    ['orb', 'nikhils-macbook-pro'],
+  );
+  assert.deepEqual(
+    st.instances.map((c) => [c.name, c.environmentId]),
+    [['office-a7caa037', 'cf248f8e-05ce-4fa4-9769-84d85d19792e']],
+  );
+  assert.ok(!s.seen.some((r) => r.path.includes(INSTANCE.id)), 'instances have no metrics read');
+
+  const r = (await s.route('POST', '')({}, { name: 'from-env', environmentId: 'cf248f8e-05ce-4fa4-9769-84d85d19792e', repos: ['ignored/too'], remoteUser: 'ignored' })) as { computer: FactoryComputer };
+  assert.deepEqual(s.seen.at(-1)?.body, { name: 'from-env', source: { kind: 'environment', environmentId: 'cf248f8e-05ce-4fa4-9769-84d85d19792e', isListed: true } });
+  assert.equal(r.computer.environmentId, 'cf248f8e-05ce-4fa4-9769-84d85d19792e');
+  assert.ok(s.feature.state().items.some((c) => c.id === 'listed-id'));
+
+  // Listed since the last read, then unlisted again: it moves between the lists, never in both.
+  s.feature.track({ ...computerOf(INSTANCE)!, unlisted: false });
+  assert.deepEqual(s.feature.state().instances, []);
+  assert.ok(s.feature.state().items.some((c) => c.id === INSTANCE.id));
+  s.feature.track({ ...computerOf(INSTANCE)!, status: 'provisioning' });
+  assert.equal(s.feature.state().instances[0].status, 'provisioning');
+  assert.ok(!s.feature.state().items.some((c) => c.id === INSTANCE.id));
+  assert.ok(s.feature.busy(), 'an instance starting polls fast');
+  assert.deepEqual(await s.route('DELETE', '/:id')({ id: INSTANCE.id }, { confirm: 'office-a7caa037' }), { deleted: INSTANCE.id });
+  assert.deepEqual(s.feature.state().instances, []);
+});
+
 test('rename, remote user, refresh, install-deps, activity and the detail', async () => {
   const s = setup({
     'PATCH /computers/orb-id': (r) => json(200, { ...ORB, ...(r.body as object) }),

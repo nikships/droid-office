@@ -3,7 +3,8 @@
 #
 # Safe to run again whenever the session drops or comes back as about:blank.
 # Env: OFFICE_URL, AGENT_BROWSER_SESSION, CAPTURE_W/CAPTURE_H (1920x1080),
-#      OFFICE_NAME/OFFICE_COLOR (the saved profile, skips the character picker),
+#      OFFICE_SETTINGS (load-settings.js from office-clone: the owner's profile and settings),
+#      OFFICE_NAME/OFFICE_COLOR (a profile, only without OFFICE_SETTINGS; skips the character picker),
 #      OFFICE_FLOOR (floor id to ride to once in, e.g. droid-office).
 set -e
 source "$(dirname "$0")/env.sh"
@@ -18,7 +19,17 @@ agent-browser --headed open "$URL" >/dev/null
 agent-browser set viewport "$W" "$H" >/dev/null
 # droid-office.worktree=1: hires (including handing a carried issue card to a desk) get their own
 # worktree and branch instead of working in the owner's checkout.
-agent-browser eval "localStorage.setItem('droid-office.profile', JSON.stringify({name:$NAME_JSON,color:$COLOR_JSON,look:{}})); localStorage.setItem('droid-office.worktree','1'); location.reload(); 'ok'" >/dev/null
+# Set after the owner's settings, which carry their own droid-office.worktree.
+if [ -n "$OFFICE_SETTINGS" ]; then
+  [ -r "$OFFICE_SETTINGS" ] || { echo "boot.sh: can't read OFFICE_SETTINGS ($OFFICE_SETTINGS)" >&2; exit 1; }
+  agent-browser eval --stdin < "$OFFICE_SETTINGS" >/dev/null
+  # load-settings.js reloads 50 ms later; wait for that before setting the flag on the new page.
+  sleep 2
+  agent-browser eval "localStorage.setItem('droid-office.worktree','1'); location.reload(); 'ok'" >/dev/null
+  sleep 2
+else
+  agent-browser eval "localStorage.setItem('droid-office.profile', JSON.stringify({name:$NAME_JSON,color:$COLOR_JSON,look:{}})); localStorage.setItem('droid-office.worktree','1'); location.reload(); 'ok'" >/dev/null
+fi
 
 ready=false
 for _ in $(seq 1 40); do

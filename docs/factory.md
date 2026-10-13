@@ -1,6 +1,6 @@
 # Factory in Droid Office
 
-The office can be connected to [Factory](https://factory.ai) with a Factory API key. With it, the office shows Factory on its wall boards and acts on Factory: cloud computers (Droid Computers), Droid sessions and their credits, CI automations, AutoWiki, and cloud workers (office workers whose Droid session runs on a Factory computer). It is a real feature, polished and complete, not a demo.
+The office can be connected to [Factory](https://factory.ai) with a Factory API key. With it, the office shows Factory on its wall boards and acts on Factory: cloud computers (Droid Computers) and the Environments they start from, Droid sessions and their credits, CI automations, AutoWiki, and cloud workers (office workers whose Droid session runs on a Factory computer). It is a real feature, polished and complete, not a demo.
 
 This is the plan for that work and the contract every Factory feature follows. Status: **implemented**. The foundation (the connection, the API client, the feature registry, the Settings pane) and every feature on it are built.
 
@@ -16,7 +16,7 @@ This is the plan for that work and the contract every Factory feature follows. S
 
 - Base URL `https://api.factory.ai`, every path under `/api/v0`, header `Authorization: Bearer <key>`. Docs: <https://docs.factory.com/api-reference>. The live OpenAPI spec also has endpoints the docs pages don't show: `GET/PATCH /organization/computer-secrets`, `GET /sessions/{id}/children` and `GET /wiki/upload-access?repoUrl=`.
 - Several response schemas in the spec are empty (`{}`): CI jobs, runs and scan, and every wiki answer. The shapes in `src/shared/factory-*.ts` come from real answers instead, and for the wiki from the `droid` CLI's own schemas for the same endpoints. Where the account had no data yet (CI runs), a parsed item keeps the fields it most likely has and `raw`, the item as the API sent it.
-- Tests use an injected fake `fetch` and fake keys like `fk-test-…`. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
+- Unit tests inject `fetch`, because CI has no Factory key, and use keys like `fk-test-…`. Every answer they inject is copied from a real one from the owner's account. A feature is done once it also works in a clone of the owner's office against their real account (the `office-clone` skill), and its pull request's screenshots come from there. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
 
 What a key reaches, from the owner's account:
 
@@ -26,6 +26,7 @@ What a key reaches, from the owner's account:
 | Sessions | ✓ | List items: `sessionId`, `title`, `status` (`idle`, `pending`, `running`), `messageCount`, `createdAt`, `updatedAt`, `computerId?`, `artifacts[]` (pull requests and so on). `factoryCredits` is only on `GET /sessions/{id}`. The office's own workers' sessions are in this list (`WorkerInfo.sessionId` matches `sessionId`), so credits per worker work. |
 | CI automations | ✓ | The scan finds the Droid workflows across the account's repositories (`templateId` like `code-review`, triggers, model, cron, `droidActionInputs`) and says how long it caches (`cacheTtlMs`, 30 minutes; `?forceRefresh=true` skips it); `repositories` lists about a hundred (`?owner=` narrows it). `jobs` lists the workflow PRs opened through `POST /automations/ci/edit`, whose body is not documented (see [CI automations](#ci-automations)). `runs` was empty for this account. |
 | Wiki | ✓ | `POST /wiki` is the *upload* of a finished wiki (`repoUrl`, `commitHash`, `branch`, `hasLocalChanges`, `hasNonRemoteCommits`, `pages`, `pageTree`), not a request to write one: the pages are written by a Droid session running `/wiki` in a checkout, which uploads them as its last step. `GET /wiki/upload-access` says `allowed: true` for any URL, even one that isn't a repository. See [AutoWiki](#autowiki). |
+| Environments | ✓ | `GET /environments` lists each with `latestBuild` (status, stages, failure, a log excerpt) and the organization's `defaultEnvironmentId`. Create answers 201 `{id, buildId}`, `PATCH` `{id, buildId?}` (a build only when the repositories or setup script changed), delete 204, `POST /{id}/builds` `{id, buildId}`, cancel 204, `PUT /environments/default` `{defaultEnvironmentId}`. `GET /environments/source-options` is `{providers: [{id, name, sources}]}`. A validation 400 is `{message, errors[]}`, not the usual shape. See [Environments](#environments). |
 | Organization | ✓, thin | Users, no credit limits, no enterprise history; computer secrets by name only. |
 | Service accounts | ✗ | 402, Teams plan. Out of scope. |
 
@@ -45,7 +46,7 @@ How the API behaves, and what the office does about it:
 | `src/server/factory/feature.ts` | The contract: `FactoryFeature`, `FeatureHost`, `FactoryRoute`, `FactoryRequest`, the `SliceFeature` base class and the route helpers. |
 | `src/server/factory/registry.ts` | `FactoryRegistry`: runs the pollers, keeps the watches, broadcasts, dispatches routes. |
 | `src/server/factory/index.ts` | `mountFactory`: makes the connection and the registry, registers every feature, handles the `factory.*` messages. server.ts calls only this. |
-| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts` (with `wiki-run.ts`, its /wiki runs), `cloud.ts`. |
+| `src/server/factory/<feature>.ts` | One module per feature: `computers.ts`, `environments.ts`, `sessions.ts` (with `credits.ts`, its ledger), `ci.ts`, `wiki.ts` (with `wiki-run.ts`, its /wiki runs), `cloud.ts`. |
 | `src/server/factory/new-session.ts` | `whileNew`: a write to a session made in the last 30 seconds tries again after a 404 (see [Droid sessions](#droid-sessions)). |
 | `src/shared/factory.ts` | `FactoryState`, `FactoryConnection`, the probe's groups and capabilities. |
 | `src/shared/factory-<feature>.ts` | Each feature's slice type and the parsers that turn the API's answers into it. |
@@ -145,6 +146,8 @@ What the office does with it (`src/server/factory/wiki.ts`, `wiki-run.ts`, `src/
 
 What the live tests on `orb` showed: a managed computer's home folder is `/home/<remoteUser>` (`/home/factory-user`), which is the session's folder when `cwd` is left out; no repositories are cloned there by Factory. `POST /sessions` took about 16 seconds and the first `POST /sessions/{id}/messages` about 23. Right after a message, `GET /sessions/{id}` can still say `idle` with the old `messageCount`. `GET /sessions/{id}` doesn't return `sessionSettings`. `DELETE /sessions/{id}` answers 204; in the first tests the session still read 200 and stayed in the list afterwards, and in later ones it was gone from the list and read 404 at once, so the office drops a session it deleted from the slice itself (`SessionsFeature.forget`, also when a cloud worker goes home with its session) rather than wait for the list. Factory lists a new message many seconds late, 20 or more after it was made: a session can read `idle` while its reply isn't listed yet, and the newest message listed can still be the last turn's reply. So a cloud worker's turn counts as answered only by a reply made after the message went (`answeredByAssistant(messages, since)`), a turn that ended before its reply was listed reads the tail for up to 90 seconds more (`replyBy`), and the transcript goes on reading after a session stops until a new reply is in (at most 90 seconds).
 
+A cloud worker can also be hired on an Environment (*Runs on* → *A fresh computer from an Environment*), one that has built. The office starts an unlisted computer from it for that worker alone, named `<environment>-<8 hex>`, and reads it every 2 seconds until it's active (4 minutes at most). The session starts in the floor's repository's clone there (`repoFolder`), unless a folder was typed. Since that clone is as old as the Environment's last build, the first message goes with the *Cloud worker on an Environment* prompt first (`cloud.environment`, Settings → Workers → Prompts; empty sends the message alone), which has the worker run `git fetch origin && git pull --ff-only` before anything else. In the live test it fast-forwarded two commits, then did the task. When anything in the hire fails, the computer is deleted. Sending the worker home deletes the computer (its sessions are archived with it), so there's no interrupt.
+
 ### CI automations
 
 The board on the north wall past the gong (`world/factory-ci.ts`, `BOARDS.ci` in `layout.ts`) and the CI automations window (`ui/factory-ci.ts`) read the `ci` slice, then `ciForFloor` in `src/shared/factory-ci.ts` keeps only this floor's repository (its `origin` remote, `owner/repo`, matched without case). Workflows, runs and workflow pull requests in any other repository stay in the scan and off both the board and the window, including the add form, which writes only to this floor. With nothing left, `groupCi` is that one repository (still created when it has no workflows yet, so there's somewhere to add the first) and each workflow's latest run. A run belongs to a workflow by repository and file, or by name when it has no file. A floor with no GitHub origin shows that instead of anyone else's automations.
@@ -173,6 +176,30 @@ The board on the north wall past the gong (`world/factory-ci.ts`, `BOARDS.ci` in
 Built. The west-wall board (`COMPUTE_WALL` in `src/shared/layout.ts`, drawn by `src/client/world/factory-computers.ts`) is two canvases in one bezel: this machine on its south end (the old machine monitor, still fed by `/api/machine`) and the fleet on the rest. Each is redrawn only when what it shows changes (its data as a JSON key, ages rounded to the minute), so the machine's frequent updates never re-upload the fleet's bigger texture. The fleet screen's states: not connected (how to connect), no access, reading, and the computers, with the last good list and its age when Factory is down or the key is rejected. One to six computers get big tiles (status, provider, the provisioning step, CPU/MEM/DISK bars and six-hour sparklines); seven to twelve go to compact rows, and past twelve the last row says how many more. The Droid rack under it (`factory-props.ts`) gets a cube per computer, lit by its phase. The wall polls fast while you're within 12 m of it.
 
 The Computers window (`src/client/ui/factory-computers.ts`) is E at the wall, ☰ → Computers or the palette. Phases (`computerPhase` in `src/shared/factory-computers.ts`): *provisioning* (with `currentStep`), *error*, *waking* (a restart that resumed it, until its first sample), *asleep* (managed, no sample for 20 minutes) and *active*. Deleting a computer takes its name typed out, and the route checks it too. Factory's computer file upload and download endpoints are left out: the office has nothing to send a computer that a session can't fetch itself.
+
+### Environments
+
+An Environment is a recipe Factory builds and checks once: a base image (a *source*; the Factory default is Ubuntu with Node, Python, git, gh and Droid, as `factory-user` with sudo), the repositories it clones with an install script each, and a machine setup script. It runs nothing itself. A Droid Computer started from one is ready in about ten seconds with all of that in place, where a plain one clones and installs as it's made. So the two live side by side: Environments replace the old Cloud Templates, not Droid Computers.
+
+What the live tests showed:
+
+- A computer starts from an Environment through `POST /computers` with `source: {kind: 'environment', environmentId, isListed}`; `POST /sessions` takes only a `computerId`, so a session never starts on an Environment directly. An unlisted computer (`isListed: false`) is what Factory's web app starts for a session: it's in `GET /computers` only with `includeUnlisted=true`, and reads back with `computerSource: {kind: 'template', templateId: <environment id>}`.
+- One was active 11 seconds after it was made, through four steps: create the computer, configure the environment, configure credentials, start services. Deleting it answered 204, then 404.
+- Each repository is cloned at `/home/factory-user/repos/<name>` at the commit of the Environment's last build. Starting a computer doesn't pull, so its clone is as old as that build.
+- Saving a change to the repositories or the setup script starts a build (about two minutes for this repository); computers keep starting from the last good build until the new one passes. Factory validates a build by starting a computer from it and checking Droid, each repository, git and gh. A name is lower-case letters, digits and hyphens, 63 at most; a script is 10,000 characters at most.
+
+The `environments` feature (`src/server/factory/environments.ts`, shapes in `src/shared/factory-environments.ts`) reads the list every 5 minutes, every 20 seconds while one builds or the tab is open, and the source options every 30. `environmentPhase` says what the owner sees: *queued*, *building*, *ready*, *updating* (a new build while the last good one serves), *update failed* (it still serves the last good one), *failed* and *unavailable*. A build's log is read when asked, not broadcast. Its routes, under `/api/factory/environments`:
+
+| Route | Body or query | Does |
+| --- | --- | --- |
+| `POST ''` | `{name, scope, repositories: [{url, script?}], setupScript?, sourceId?, makeDefault?}` | Makes one (`makeDefault` is `makeOrganizationDefault`); Factory builds it |
+| `PUT /default` | `{environmentId}` | The organization's default |
+| `PATCH /:id` | `{name?, repositories?, setupScript?, sourceId?}` | Saves a change; a build when repositories or the script changed |
+| `DELETE /:id` | `{confirm}`, its name | Deletes it; computers already started from it keep running |
+| `POST /:id/rebuild`, `POST /:id/cancel` | | A new build of what's saved; stops the running one |
+| `GET /:id/log` | `?build=` | The log's last few thousand characters (`build-diagnostics`) |
+
+The computers feature reads with `includeUnlisted=true`: `items` stays the listed computers (the compute wall, the window's list), and `instances` holds the unlisted ones, with no metrics. The Computers window has two tabs. **Computers** is the fleet (counts, a card per computer with its load, the computer secrets), each computer's detail with the Environment it came from, and **+ New computer**, which can start from an Environment. **Environments** is an overview of what each is for and every computer started from one, grouped by Environment, with the ones whose Environment was deleted flagged for deletion; each Environment's build, its stages and log (read every 5 seconds while it builds), the computers started from it, its scripts, and Rebuild, Stop build, Make default, Edit and Delete (its name typed out); and the form that makes or edits one.
 
 ### Droid sessions
 
@@ -233,6 +260,6 @@ Rules every piece follows:
 - Keep wiring into the big shared files (`src/client/main.ts`, `src/client/world/office.ts`, `src/shared/layout.ts`, `src/shared/protocol.ts`, `src/server/server.ts`, `docs/guide.md`) small, one block per file where possible: the logic goes in the feature's own module, which exports one mount or register function.
 - Status and feedback on actions use the office's toasts and its windows' inline errors.
 - The boards use the Factory look the office already has (`world/machine.ts`, `world/factory-props.ts`): near-black panels, mono type, letter-spaced labels, the orange `#ee6018` accent, green, amber and red load colors, and the pinwheel glyph from `toon.ts`.
-- Tests are `tests/factory-<piece>.test.ts` with a fake `fetch`. `npm run test:coverage` has floors, so new code needs real tests.
+- Tests are `tests/factory-<piece>.test.ts`, injecting `fetch` with answers copied from the real API. `npm run test:coverage` has floors, so new code needs real tests. Then check the piece in a clone of the owner's office against their real account (the `office-clone` skill).
 - The guide gets a "What's inside" and a "How it works" bullet for what each piece builds, and this document stays current.
 - Prefer no new environment variable; `.env.example` lists any there is.

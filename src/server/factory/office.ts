@@ -32,6 +32,11 @@ const PROBES: Record<FactoryGroup, (api: FactoryApi) => Promise<Found>> = {
     const providers = (r?.providers ?? []).filter((p): p is string => typeof p === 'string');
     return { reason: providers.length ? `Can make ${providers.join(', ')} computers` : undefined };
   },
+  environments: async (api) => {
+    const r = await api.get<{ environments?: unknown[] }>('/environments');
+    const n = Array.isArray(r?.environments) ? r.environments.length : 0;
+    return { reason: n ? `${n} ${n === 1 ? 'Environment' : 'Environments'}` : 'No Environments yet' };
+  },
   sessions: async (api) => {
     await api.sessions(1);
     return {};

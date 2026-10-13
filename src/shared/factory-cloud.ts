@@ -18,6 +18,13 @@ export interface CloudWorker {
   autonomy: CloudAutonomy;
   /** Why it can't work right now (its session is gone, its computer was deleted…), shown on its desk and card. */
   error?: string;
+  /** It was hired on this Factory Environment, on a computer started from it for this worker alone. */
+  environmentId?: string;
+  environmentName?: string;
+  /** The office started its computer for it, and deletes that computer when it goes home. */
+  instance?: boolean;
+  /** Its next message goes with the cloud.environment prompt first: its clone is from the Environment's build. */
+  catchUp?: boolean;
 }
 
 /** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */
@@ -91,8 +98,8 @@ export function sessionCwd(typed: string, c: Pick<CloudComputer, 'name' | 'provi
 /** A session's page in Factory's web app. */
 export const cloudSessionUrl = (sessionId: string) => `https://app.factory.ai/sessions/${encodeURIComponent(sessionId)}`;
 
-/** The badge a cloud worker wears on its card, its desk hint and the Workers panel: ☁ and its computer. */
-export const cloudBadge = (c: Pick<CloudWorker, 'computerName'>) => `☁ ${c.computerName}`;
+/** The badge a cloud worker wears on its card, its desk hint and the Workers panel: ☁ and its Environment, else its computer. */
+export const cloudBadge = (c: Pick<CloudWorker, 'computerName' | 'environmentName'>) => `☁ ${c.environmentName || c.computerName}`;
 
 /**
  * What the office remembers of a cloud worker's turns between polls, to tell a turn that ended from
