@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SETTLE_MAX, SETTLE_REST, idleRelock, relockAt, takeRelockMove } from '../src/client/player.js';
+import { LOCK_WARP_MS, LOCK_WARP_PX, SETTLE_MAX, SETTLE_REST, idleRelock, lockWarp, relockAt, takeRelockMove } from '../src/client/player.js';
 
 const t0 = 10_000;
 
@@ -68,4 +68,12 @@ test('continuous follow-through ends at the short cap, not a second later', () =
 test('a normal lock has no first-movement guard', () => {
   assert.equal(takeRelockMove(idleRelock(), { dx: 0, dy: -400, now: t0, rested: 0 }).look, true);
   assert.equal(takeRelockMove(idleRelock(), { dx: 4, dy: 6, now: t0, rested: 0 }).look, true);
+});
+
+test('only right after a lock lands is a huge move taken for the cursor warping to the middle', () => {
+  assert.equal(lockWarp(LOCK_WARP_PX + 1, 0, 0), true);
+  assert.equal(lockWarp(0, -900, LOCK_WARP_MS - 1), true);
+  assert.equal(lockWarp(LOCK_WARP_PX, LOCK_WARP_PX, 10), false, 'a move up to the limit is the hand');
+  // Later, a fast flick passes whole instead of being clipped at 250.
+  for (const dx of [251, 600, 1800, -2400]) assert.equal(lockWarp(dx, 0, LOCK_WARP_MS), false);
 });

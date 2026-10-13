@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   applyQuality,
   autoQuality,
+  BAKE_BUDGET_MAX_MS,
   BAKE_FORMAT,
+  bakeBudget,
   bakeKey,
   CHOICE_SETTINGS,
   choiceLive,
@@ -308,4 +310,18 @@ test('settings round-trip through localStorage, and a broken save comes back as 
   assert.deepEqual(loadRemaster(), tuned);
   mem.set(REMASTER_KEY, '{');
   assert.deepEqual(loadRemaster(), REMASTER_DEFAULTS);
+});
+
+test('a GI bake slice takes at most half a frame at the limit, and never more than 14 ms', () => {
+  near(bakeBudget(120), 1000 / 120 / 2, '120 FPS');
+  near(bakeBudget(60), 1000 / 60 / 2, '60 FPS');
+  near(bakeBudget(40), 12.5, '40 FPS');
+  assert.equal(bakeBudget(30), BAKE_BUDGET_MAX_MS);
+  assert.equal(bakeBudget(0), BAKE_BUDGET_MAX_MS);
+  assert.equal(bakeBudget(Number.NaN), BAKE_BUDGET_MAX_MS);
+  // A display slower than the limit gives each frame its own refresh.
+  near(bakeBudget(120, 1000 / 60), 1000 / 60 / 2, '120 FPS on 60 Hz');
+  near(bakeBudget(120, 1000 / 120), 1000 / 120 / 2, '120 FPS on 120 Hz');
+  near(bakeBudget(40, 1000 / 120), 12.5, '40 FPS on 120 Hz');
+  near(bakeBudget(0, 1000 / 60), 1000 / 60 / 2, 'no limit: the refresh');
 });

@@ -1,10 +1,11 @@
-import { IDLE_FRAME_MS, advanceClock, frameDelta, gateFrame, OPEN_GATE, type FrameGate, type RenderClock, type RenderPace } from './render-pace';
+import { IDLE_FRAME_MS, advanceClock, displayRefresh, frameDelta, gateFrame, OPEN_GATE, type FrameGate, type RenderClock, type RenderPace } from './render-pace';
 
 interface RenderHost {
   pace(): RenderPace;
   /** The most frames a second to draw at the full pace. */
   fpsCap(): number;
-  draw(dt: number, elapsed: number): void;
+  /** `at` is when the frame is drawn; `paced` when the full-rate loop drew it on an animation frame. */
+  draw(dt: number, elapsed: number, frame: { at: number; paced: boolean }): void;
   animation(callback: ((timestamp: number) => void) | null): void;
   delay(callback: () => void, ms: number): number;
   cancelDelay(id: number): void;
@@ -25,6 +26,11 @@ export class RenderLoop {
 
   get mode() {
     return this.clock.mode;
+  }
+
+  /** The display's refresh period measured from animation frames, in ms. */
+  get refreshMs(): number {
+    return displayRefresh(this.gate);
   }
 
   start() {
@@ -67,7 +73,7 @@ export class RenderLoop {
       if (!gated) this.gate = { ...this.gate, due: now + 1000 / fps };
       // Absolute-time poses must advance by the same capped step as physics, not by the hidden gap.
       this.elapsed += dt;
-      this.host.draw(dt, this.elapsed);
+      this.host.draw(dt, this.elapsed, { at: now, paced: gated });
     }
     if (plan.schedule === 'raf' && !this.armed) {
       this.armed = true;

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { FrameStats } from '../src/client/frame-stats.js';
 import { BOARDS, DESK_BY_ID, deskSeat, FLOOR, STATIONS } from '../src/shared/layout.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
@@ -339,6 +340,17 @@ function fakeOffice() {
       setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, eyeHeight: 1.4 * scale } }), 15);
     },
     frames: () => s.frames++,
+    frameStats: (reset) => {
+      log.push(`frameStats ${reset}`);
+      return {
+        ...new FrameStats().report({ fpsCap: 120, refreshMs: 1000 / 120 }),
+        renderer: 'Classic',
+        backend: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Version 26.7.1 (Build 25G241))',
+        pace: 'full',
+        output: { width: 2880, height: 1800 },
+        rawMouse: null,
+      };
+    },
     wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
   };
   return { s, log, office: createAutomation(host) };
@@ -472,4 +484,15 @@ test('relayed commands run only what window.office answers', async () => {
   assert.equal(((await runCommand(office, 'state', undefined as unknown as unknown[])) as { floor: { id: string } }).floor.id, 'f1');
   await assert.rejects(runCommand(office, 'constructor', []), /No command "constructor"/);
   await assert.rejects(runCommand(office, 'goTo', ['nobody']), /No such target/);
+});
+
+test('frameStats reports pacing, starts over when asked, and is available through the server relay', async () => {
+  const { office, log } = fakeOffice();
+  const r = office.frameStats();
+  assert.equal(r.frames, 0);
+  assert.equal(r.backend.includes('Metal'), true);
+  office.frameStats({ reset: true });
+  const relayed = (await runCommand(office, 'frameStats', [{ reset: true }])) as typeof r;
+  assert.equal(relayed.fpsCap, 120);
+  assert.deepEqual(log, ['frameStats false', 'frameStats true', 'frameStats true']);
 });

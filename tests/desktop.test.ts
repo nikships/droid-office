@@ -5,6 +5,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { glBackend, gpuReport } from '../src/desktop/gpu.ts';
 import { linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
@@ -277,4 +278,66 @@ test('update errors are cut to their first line for the window', () => {
   const long = briefError('x'.repeat(500));
   assert.equal(long.length, 240);
   assert.ok(long.endsWith('…'));
+});
+
+// app.getGPUInfo('complete') and app.getGPUFeatureStatus() from Electron 44 on an M5 Pro, trimmed.
+const GPU_INFO = {
+  auxAttributes: {
+    displayType: 'ANGLE_METAL',
+    glImplementationParts: '(gl=egl-angle,angle=metal)',
+    glRenderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Version 26.7.1 (Build 25G241))',
+    glVersion: 'OpenGL ES 3.0 (ANGLE 2.1.28489 git hash: e71c7344f185)',
+    inProcessGpu: false,
+    maxMsaaSamples: '8',
+    sandboxed: true,
+    skiaBackendType: 'GraphiteDawnMetal',
+  },
+  gpuDevice: [
+    {
+      active: true,
+      deviceId: 0,
+      deviceString: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Version 26.7.1 (Build 25G241))',
+      driverVendor: 'Apple',
+      driverVersion: '26.7.1',
+      gpuPreference: 0,
+      vendorId: 4203,
+      vendorString: 'Google Inc. (Apple)',
+    },
+  ],
+  machineModelName: 'Mac',
+};
+const GPU_STATUS = { webgl: 'enabled', gpu_compositing: 'enabled', webgpu: 'enabled', skia_graphite: 'enabled_on' };
+
+test('the GPU report says which GPU and which WebGL backend the app draws with', () => {
+  assert.equal(
+    gpuReport(GPU_INFO, GPU_STATUS, new Date('2026-10-13T12:00:00Z')),
+    [
+      'Droid Office GPU report, 2026-10-13T12:00:00.000Z',
+      'GPU: ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Version 26.7.1 (Build 25G241))',
+      'WebGL backend: ANGLE on Metal (gl=egl-angle,angle=metal), display ANGLE_METAL',
+      'Compositor: Skia GraphiteDawnMetal',
+      'GL: OpenGL ES 3.0 (ANGLE 2.1.28489 git hash: e71c7344f185)',
+      'Driver: 26.7.1',
+      'Max MSAA samples: 8',
+      'GPU process: its own, sandboxed',
+      'Machine: Mac',
+      'Features:',
+      '  gpu_compositing: enabled',
+      '  skia_graphite: enabled_on',
+      '  webgl: enabled',
+      '  webgpu: enabled',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('the GPU report copes with what basic info and a missing GPU process leave out', () => {
+  assert.equal(glBackend('(gl=none,angle=none)'), undefined);
+  assert.equal(glBackend('(gl=egl-angle,angle=swiftshader)'), 'ANGLE on swiftshader');
+  assert.equal(glBackend('(gl=desktop-gl)'), 'desktop-gl');
+  assert.equal(glBackend(undefined), undefined);
+  const report = gpuReport(null, {}, new Date(0));
+  assert.match(report, /^GPU: unknown$/m);
+  assert.match(report, /^WebGL backend: unknown$/m);
+  assert.doesNotMatch(report, /Features:/);
 });

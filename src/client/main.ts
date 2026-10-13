@@ -129,8 +129,9 @@ import { wayTo } from './walkto';
 import { Upscaler } from './world/upscaler';
 import { Remaster } from './world/remaster';
 import { GraphicsLab } from './ui/graphics-lab';
-import { bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
+import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
+import { FrameStats, pacingText } from './frame-stats';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
@@ -3388,7 +3389,14 @@ const fpsEl = $('fps');
 let fpsFrames = 0;
 let fpsSince = performance.now();
 const upscaler = new Upscaler(renderer);
-const gpuTimer = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
+// Timer queries can't nest, so the scene and the hands with the frame's finish are timed one after the other.
+const gpuScene = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
+const gpuHands = new GpuTimer(renderer.getContext() as WebGL2RenderingContext);
+const frameStats = new FrameStats();
+/** The window the overlay's pacing line covers, in ms. */
+const PACING_WINDOW_MS = 5000;
+/** GPU time per pass over the overlay's last half second, while something times it. */
+let lastGpuPass: { scene: number | null; hands: number | null } | null = null;
 const warmup = new WarmupWatch();
 /** Set once shader warmup has finished, so a later outline rebuild can compile before the next frame. */
 let shadersWarmed = false;
@@ -3429,6 +3437,7 @@ async function pollSystemGpu() {
 /** Graphics settings to the renderer and the overlay. The counter's text still updates while hidden: recording rigs read it. */
 function applyGraphics() {
   upscaler.configure(settings.graphics);
+  player.rawInput = settings.graphics.rawMouse;
   const overhead = settings.graphics.overhead;
   sky.setOverhead(overhead);
   // The next frame gives the bounce light its new bake key: the old brightness stays up until it's loaded or baked.
@@ -3649,7 +3658,8 @@ function currentPace(): RenderPace {
   });
 }
 
-function drawFrame(dt: number, t: number) {
+function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean }) {
+  const frameStart = performance.now();
   framesDrawn++;
   fpsFrames++;
   const fpsNow = performance.now();
@@ -3657,7 +3667,9 @@ function drawFrame(dt: number, t: number) {
     const windowMs = fpsNow - fpsSince;
     const fps = (fpsFrames * 1000) / windowMs;
     const timed = settings.graphics.stats || graphicsLab.isOpen;
-    const gpuMs = timed ? gpuTimer.take() : null;
+    const gpuPass = timed ? { scene: gpuScene.take(), hands: gpuHands.take() } : null;
+    lastGpuPass = gpuPass;
+    const gpuMs = gpuPass?.scene == null || gpuPass.hands == null ? null : gpuPass.scene + gpuPass.hands;
     const { render, output } = remaster.active ? remaster.sizes() : upscaler.sizes();
     if (graphicsLab.isOpen) {
       const info = renderer.info;
@@ -3685,7 +3697,8 @@ function drawFrame(dt: number, t: number) {
         fpsCap: settings.graphics.fpsCap,
         // Frames skipped while queries were in flight count at the timed frames' average.
         gpu: gpuMs === null ? null : { ms: gpuMs, busy: gpuBusy(gpuMs * fpsFrames, windowMs) },
-        gpuNote: gpuTimer.supported ? 'timing…' : 'timing unavailable in this browser',
+        gpuNote: gpuScene.supported ? 'timing…' : 'timing unavailable in this browser',
+        pacing: pacingText(frameStats.report({ fpsCap: settings.graphics.fpsCap, refreshMs: renderLoop.refreshMs, since: frame.at - PACING_WINDOW_MS })),
         system: systemGpu,
         render,
         output,
@@ -3826,20 +3839,26 @@ function drawFrame(dt: number, t: number) {
   renderCrosshair();
 
   const timing = settings.graphics.stats || graphicsLab.isOpen;
-  if (timing) gpuTimer.begin();
+  if (timing) gpuScene.begin();
   renderer.info.reset();
   const drawStart = performance.now();
   if (remaster.active) {
     remaster.gi.paused = upTop;
+    remaster.gi.budgetMs = bakeBudget(settings.graphics.fpsCap, renderLoop.refreshMs);
     remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, bootVersion));
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
+  const sceneEnd = performance.now();
+  if (timing) {
+    gpuScene.end();
+    gpuHands.begin();
+  }
   const gi = remaster.gi;
   renderWarmup(
     warmup.update({
       now: performance.now(),
       programs: renderer.info.programs?.length ?? 0,
-      drawMs: performance.now() - drawStart,
+      drawMs: sceneEnd - drawStart,
       bake: remaster.active && gi.baking && !gi.paused ? gi.progress : null,
     }),
   );
@@ -3859,8 +3878,9 @@ function drawFrame(dt: number, t: number) {
     sky.shading(true);
   }
   if (remaster.active) remaster.finishFrame();
-  if (timing) gpuTimer.end();
+  if (timing) gpuHands.end();
   loading.drew();
+  frameStats.record({ at: frame.at, paced: frame.paced, cpu: { update: drawStart - frameStart, scene: sceneEnd - drawStart, hands: performance.now() - sceneEnd } });
 }
 
 /** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
@@ -4079,6 +4099,18 @@ const automation = createAutomation({
     renderWake();
   },
   frames: () => framesDrawn,
+  frameStats: (reset) => {
+    if (reset) frameStats.reset();
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    return {
+      ...frameStats.report({ fpsCap: settings.graphics.fpsCap, refreshMs: renderLoop.refreshMs, gpu: lastGpuPass ?? undefined }),
+      renderer: remaster.active ? remaster.describe() : 'Classic',
+      backend: gpuRendererName(),
+      pace: renderLoop.mode,
+      output: { width: size.x, height: size.y },
+      rawMouse: player.rawMouse,
+    };
+  },
   wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 (window as unknown as { office: typeof automation }).office = automation;
@@ -4098,7 +4130,9 @@ const automation = createAutomation({
   renderer,
   renderLoop,
   upscaler,
-  gpuTimer,
+  gpuScene,
+  gpuHands,
+  frameStats,
   hands,
   me,
   settings,

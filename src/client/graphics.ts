@@ -16,6 +16,8 @@ export interface GraphicsSettings {
   fpsCap: FpsCap;
   /** The FPS, GPU time and render resolution readout in the bottom-right corner. */
   stats: boolean;
+  /** Read the captured mouse raw, without the OS's pointer acceleration, where the browser can. */
+  rawMouse: boolean;
 }
 
 export const RENDER_SCALE_MIN = 0.5;
@@ -23,7 +25,7 @@ export const RENDER_SCALE_STEP = 0.05;
 
 export const OVERHEAD_STEP = 0.05;
 
-export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true };
+export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -49,6 +51,7 @@ export function normalizeGraphics(saved: unknown): GraphicsSettings {
   if (typeof s.overhead === 'number' && Number.isFinite(s.overhead)) g.overhead = normalizeOverhead(s.overhead);
   if (FPS_CAPS.includes(s.fpsCap as FpsCap)) g.fpsCap = s.fpsCap as FpsCap;
   if (typeof s.stats === 'boolean') g.stats = s.stats;
+  if (typeof s.rawMouse === 'boolean') g.rawMouse = s.rawMouse;
   return g;
 }
 
@@ -96,6 +99,8 @@ export function statsText(s: {
   fpsCap: FpsCap;
   gpu: { ms: number; busy: number } | null;
   gpuNote?: string;
+  /** Frame pacing over the last few seconds (`pacingText`). */
+  pacing?: string;
   system: number | null;
   render: { width: number; height: number };
   output: { width: number; height: number };
@@ -105,6 +110,7 @@ export function statsText(s: {
   mode?: string;
 }): string {
   const lines = [`${Math.round(s.fps)} FPS · cap ${s.fpsCap} · ${s.frameMs.toFixed(1)} ms`];
+  if (s.pacing) lines.push(s.pacing);
   if (s.gpu) lines.push(`GPU ${s.gpu.ms.toFixed(2)} ms/frame · ${Math.round(s.gpu.busy * 100)}% busy`);
   else if (s.gpuNote) lines.push(`GPU ${s.gpuNote}`);
   if (s.system !== null) lines.push(`Mac GPU ${Math.round(s.system)}%`);
