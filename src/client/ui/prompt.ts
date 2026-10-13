@@ -165,7 +165,7 @@ export function openPrompt(opts: PromptOptions) {
       waiting = true;
       const label = submit.textContent;
       submit.toggleAttribute('disabled', true);
-      submit.textContent = `☁ Starting on ${cloud.computerName}…`;
+      submit.textContent = cloud.environmentId ? `☁ Starting a computer from ${cloud.computerName}…` : `☁ Starting on ${cloud.computerName}…`;
       failed.classList.add('hidden');
       void opts.onCloud(text, { model: models?.model(), effort: models?.effort(), images: images?.ids() ?? [], cloud }).then((why) => {
         waiting = false;
