@@ -25,7 +25,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
-| `deploy/` | `aws.sh` (EC2 lifecycle), `provision.sh` (machine setup it runs) and `factory-computer.sh` (a Factory Droid Computer's repository setup script) |
+| `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
 | `docs/` | `guide.md` (every feature, setup and how each subsystem works) and the README pictures |
 
 ## Nested instructions
