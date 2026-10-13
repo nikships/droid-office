@@ -9,32 +9,30 @@ Every office tab exposes `window.office`. It walks or teleports you to desks, bo
 
 The full command reference lives in [docs/guide.md, "Automation API"](../../../docs/guide.md#automation-api-windowoffice) and the code in `src/client/automation.ts`.
 
-## 1. Build and start an isolated test office
+## 1. Build and start a clone of the owner's office
 
-`node bin/droid-office.js` serves `dist/`, so build after every source change. Never test against the owner's own office (the Mac app or `npm run dev` on :4600): commands move their player and open windows on their screen.
+Test on a copy of the owner's real install, made and started by [`office-clone`](../office-clone/SKILL.md): their floors and repositories, Factory account, decor, Whiteboards and browser settings, with nobody at the desks. Never test on invented, mocked or seeded data or an empty throwaway office, and never against the owner's own office (the Mac app or `npm run dev` on :4600): commands move their player and open windows on their screen.
 
 ```bash
-npm run build
-T=$(mktemp -d /tmp/office-test-XXXX)
-mkdir -p "$T/proj" "$T/home" && git -C "$T/proj" init -q
-HOME="$T/home" node bin/droid-office.js "$T/proj" --port 4677 --host 127.0.0.1 --projects "$T" --weather clear
+npm run build                                          # the clone runs this checkout's dist/
+.agents/skills/office-clone/scripts/clone-office.sh    # prints T, e.g. /tmp/office-clone-Kk3x
+$T/start.sh                                            # fireAndForget; port 4677 or the next free one
 ```
 
-- Start the last command as a background process (fireAndForget). A process backgrounded with `&` inside a one-off shell dies when that shell exits.
-- `HOME="$T/home"` is required. The office always adds a Home floor at the home directory, and that floor's `.droid-office/` holds the owner's real workers. Without the override the test office resumes their real sessions in a new PTY host that outlives the test.
-- Pick a free port (`lsof -nP -iTCP:4677 -sTCP:LISTEN` prints nothing). `--host 127.0.0.1` keeps it off the LAN. `--weather clear` keeps screenshots comparable.
-- The office has two floors, `proj` and `Home`. Boards are empty because the temp repository has no GitHub remote. Hired workers would run under the temp HOME without the owner's droid login, so test with UI, boards, places and floors, not real agent work.
+- Start `start.sh` as a background process (fireAndForget). A process backgrounded with `&` inside a one-off shell dies when that shell exits.
+- `start.sh` sets `HOME` to the clone's. The office always adds a Home floor at the home directory, and the owner's real one holds their workers. Never start an office on the owner's own folders.
+- Rebuild and restart `start.sh` after every source change.
 
 ## 2. Open it in a browser session
 
-Use agent-browser in its own named session, **headed**. Headless Chromium uses software WebGL and drops the page to `about:blank` after about 20 seconds.
+Use agent-browser in its own named session, **headed**. Headless Chromium uses software WebGL and drops the page to `about:blank` after about 20 seconds. Load the owner's profile and settings, which also skips the character picker:
 
 ```bash
-export AGENT_BROWSER_SESSION=office-test
+export AGENT_BROWSER_SESSION=office-clone
 agent-browser --headed open http://127.0.0.1:4677/
-# A new profile shows the character picker first; save a profile and reload to skip it.
-agent-browser eval "localStorage.setItem('droid-office.profile', JSON.stringify({name:'Tester',color:'#4f86f7',look:{}})); location.reload(); 'ok'"
-agent-browser wait --fn "window.office && office.state().floor && office.state().player.controls"
+agent-browser set viewport 1440 900
+agent-browser eval --stdin < $T/load-settings.js
+agent-browser wait --fn "window.office && office.state().floor && getComputedStyle(document.getElementById('loading')).display === 'none'" --timeout 120000
 ```
 
 Playwright works the same way: `page.evaluate(() => window.office.goTo('issues'))`.
@@ -91,7 +89,7 @@ curl -s -X POST http://127.0.0.1:4677/api/automation -H 'content-type: applicati
 Some behaviour lives between `goTo` targets: walking into furniture, turning, jumping, the fire pole, the sidearm and its spells. To test those, load the movement rig from [`office-choreography`](../office-choreography/SKILL.md) into the test tab. Then script the input with `__walkTo`, `__look`, `__hold` and `__tap`, and assert on `state()` afterwards:
 
 ```bash
-AGENT_BROWSER_SESSION=office-test .agents/skills/office-choreography/scripts/run.sh \
+AGENT_BROWSER_SESSION=office-clone .agents/skills/office-choreography/scripts/run.sh \
   "(async()=>{ await office.goTo('elevator'); await __walkTo(8.3,-3); await __walkTo(6.8,-0.7); __tap('KeyE','e'); await __sleep(6000); return office.state().floor.id })()"
 ```
 
@@ -110,10 +108,10 @@ For video proof of a fix (a PR, a bug repro), record the same steps with [`offic
 Stop everything you started, and only that. A floor's PTY host keeps running after the office stops while it still has live terminals.
 
 ```bash
-agent-browser --session office-test close
-kill <office pid>
-lsof -t "$T/proj/.droid-office/pty.sock" "$T/home/.droid-office/pty.sock" 2>/dev/null | xargs kill 2>/dev/null
+agent-browser --session office-clone close
+kill <start.sh pid>
+lsof -t "$T"/home/.droid-office/pty.sock "$T"/floors/*/.droid-office/pty.sock 2>/dev/null | xargs kill 2>/dev/null
 rm -rf "$T"
 ```
 
-Never kill a `droid-office-ptys` process whose socket is outside `$T`. Those hosts serve the owner's own office and its workers.
+Never kill a `droid-office-ptys` process whose socket is outside `$T`. Those hosts serve the owner's own office and its workers. Delete anything the check made in the owner's Factory account or on GitHub (see `office-clone`).

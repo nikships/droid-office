@@ -9,6 +9,8 @@ A demo looks best with real work in it: issues on the wall, workers at desks on 
 
 ## Ground rules
 
+- **Only for a demo the owner asked for.** Tests, bug repros and pull-request proof never stage anything: they run on a clone of the owner's real office ([`office-clone`](../office-clone/SKILL.md)) and show what is really there.
+
 - **Ask before you write to GitHub or the owner's office.** Opening issues and hiring workers are outside-world writes. Agree on the repository and how many issues, and agree to clean up afterwards.
 - **Every hire gets a worktree.** `boot.sh` sets the tab's `droid-office.worktree` pref, and `hire.sh` ticks the dialog's worktree box. Handing a carried issue card to a desk hires at once with **only** the tab's pref. If you hire without the pref, the worker edits and branches in the owner's checkout. If that happens, stop the worker and save its diff (`git diff > patch`). Then restore only the files it touched, switch back to the branch the checkout was on, and delete the branch it made. Never touch changes that were there before.
 - **Leave the owner's workers alone.** Don't prompt them, send them home, or film their terminals unless the owner says so. All the scripts take explicit names or desks.

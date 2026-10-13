@@ -16,7 +16,7 @@ This is the plan for that work and the contract every Factory feature follows. S
 
 - Base URL `https://api.factory.ai`, every path under `/api/v0`, header `Authorization: Bearer <key>`. Docs: <https://docs.factory.com/api-reference>. The live OpenAPI spec also has endpoints the docs pages don't show: `GET/PATCH /organization/computer-secrets`, `GET /sessions/{id}/children` and `GET /wiki/upload-access?repoUrl=`.
 - Several response schemas in the spec are empty (`{}`): CI jobs, runs and scan, and every wiki answer. The shapes in `src/shared/factory-*.ts` come from real answers instead, and for the wiki from the `droid` CLI's own schemas for the same endpoints. Where the account had no data yet (CI runs), a parsed item keeps the fields it most likely has and `raw`, the item as the API sent it.
-- Tests use an injected fake `fetch` and fake keys like `fk-test-…`. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
+- Unit tests inject `fetch`, because CI has no Factory key, and use keys like `fk-test-…`. Every answer they inject is copied from a real one from the owner's account. A feature is done once it also works in a clone of the owner's office against their real account (the `office-clone` skill), and its pull request's screenshots come from there. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
 
 What a key reaches, from the owner's account:
 
@@ -233,6 +233,6 @@ Rules every piece follows:
 - Keep wiring into the big shared files (`src/client/main.ts`, `src/client/world/office.ts`, `src/shared/layout.ts`, `src/shared/protocol.ts`, `src/server/server.ts`, `docs/guide.md`) small, one block per file where possible: the logic goes in the feature's own module, which exports one mount or register function.
 - Status and feedback on actions use the office's toasts and its windows' inline errors.
 - The boards use the Factory look the office already has (`world/machine.ts`, `world/factory-props.ts`): near-black panels, mono type, letter-spaced labels, the orange `#ee6018` accent, green, amber and red load colors, and the pinwheel glyph from `toon.ts`.
-- Tests are `tests/factory-<piece>.test.ts` with a fake `fetch`. `npm run test:coverage` has floors, so new code needs real tests.
+- Tests are `tests/factory-<piece>.test.ts`, injecting `fetch` with answers copied from the real API. `npm run test:coverage` has floors, so new code needs real tests. Then check the piece in a clone of the owner's office against their real account (the `office-clone` skill).
 - The guide gets a "What's inside" and a "How it works" bullet for what each piece builds, and this document stays current.
 - Prefer no new environment variable; `.env.example` lists any there is.

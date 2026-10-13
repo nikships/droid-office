@@ -13,17 +13,17 @@ Related skills: [`office-video-capture`](../office-video-capture/SKILL.md) recor
 
 ```bash
 R=.agents/skills/office-choreography/scripts
-OFFICE_URL=http://127.0.0.1:4600 OFFICE_FLOOR=droid-office $R/boot.sh
+OFFICE_URL=http://127.0.0.1:4677 OFFICE_SETTINGS=$T/load-settings.js OFFICE_FLOOR=droid-office $R/boot.sh
 ```
 
 `boot.sh` does the following:
 - Opens the office headed at 1920×1080 in agent-browser session `office-rig`, at `?pace=full`. That flag keeps this one tab drawing every frame. Without it, the office drops to about 5 FPS after 30 s of stillness and stops while its window is covered, which makes moves stutter.
-- Saves a profile, which skips the character picker.
+- Loads the owner's profile and browser settings from `OFFICE_SETTINGS` (a clone's `load-settings.js`), which also skips the character picker.
 - Sets the tab's worktree pref, so a hire from this tab never works in the owner's checkout.
 - Waits until you are in, loads the rig, and rides to `OFFICE_FLOOR`.
 
 Choose the office first:
-- An **isolated test office** (`office-3d-testing` step 1) is safe for anything.
+- A **clone of the owner's office** ([`office-clone`](../office-clone/SKILL.md), `$T` is the folder it printed) is the default: their real floors, boards, Factory data and settings, with nobody at the desks.
 - The **owner's office** (:4600) has real workers and boards, but needs the owner's OK. Your tab has its own camera, but desk keys act on real workers.
 
 `env.sh` (sourced by every script) forces headed mode and turns off agent-browser's idle shutdown. A headless relaunch drops the page to `about:blank`. **If an eval says `office is not defined`, rerun `boot.sh`.**
