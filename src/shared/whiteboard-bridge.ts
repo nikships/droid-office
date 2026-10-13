@@ -82,7 +82,7 @@ export type FrameMsg =
   /** Wheel deltas are device CSS pixels, but the pointer is in the frame's canonical coordinates. */
   | { type: 'wheel'; point: Point; dx: number; dy: number; deltaMode: number; zoom: boolean; shift: boolean }
   | { type: 'space'; pressed: boolean }
-  | { type: 'shortcut'; key: 'm' | 'h' | '+' | '-' | '0' | '1' }
+  | { type: 'shortcut'; key: 'm' | 'h' | 'f' | '+' | '-' | '0' | '1' }
   /** Middle-button drag coordinates are screen pixels, unaffected by the frame's transform. */
   | { type: 'pan'; phase: 'start' | 'move' | 'end'; point: Point }
   /** What has focus in the frame now, sent whenever it, its caret or its unsaved value changes; null when nothing does. */
@@ -181,7 +181,7 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
     case 'space':
       return typeof d.pressed === 'boolean' ? { type: 'space', pressed: d.pressed } : undefined;
     case 'shortcut':
-      return ['m', 'h', '+', '-', '0', '1'].includes(d.key) ? { type: 'shortcut', key: d.key } : undefined;
+      return ['m', 'h', 'f', '+', '-', '0', '1'].includes(d.key) ? { type: 'shortcut', key: d.key } : undefined;
     case 'pan':
       return ['start', 'move', 'end'].includes(d.phase) && isPoint(d.point) ? { type: 'pan', phase: d.phase, point: d.point } : undefined;
     case 'focus': {

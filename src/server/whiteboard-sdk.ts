@@ -6,7 +6,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '3';
+export const SDK_VERSION = '4';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -383,7 +383,7 @@ export const SDK_SCRIPT = String.raw`(function () {
     var key = e.key.toLowerCase();
     if (key === '=') key = '+';
     if (key === '_') key = '-';
-    if (['m', 'h', '+', '-', '0', '1'].indexOf(key) < 0 || (e.repeat && (key === 'm' || key === 'h'))) return;
+    if (['m', 'h', 'f', '+', '-', '0', '1'].indexOf(key) < 0 || (e.repeat && (key === 'm' || key === 'h' || key === 'f'))) return;
     e.preventDefault();
     post({ type: 'shortcut', key: key });
   });

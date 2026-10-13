@@ -255,7 +255,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     surface.el.focus({ preventScroll: true });
   }
 
-  let tb: { use: HTMLElement; markup: HTMLElement; pan: HTMLElement; marks: HTMLElement; fit: HTMLElement; actual: HTMLElement; label: HTMLElement; hint: HTMLElement } | null = null;
+  let tb: { use: HTMLElement; markup: HTMLElement; pan: HTMLElement; marks: HTMLElement; fit: HTMLElement; actual: HTMLElement; fs: HTMLElement; label: HTMLElement; hint: HTMLElement } | null = null;
 
   /** The toolbar, made once per card; paintToolbar keeps it current, so a click never lands on a button being replaced. */
   function buildToolbar(s: Surface): HTMLElement {
@@ -284,6 +284,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
       ),
       fit: h('button.btn.sm', { type: 'button', title: 'Fit to the window (0)', onclick: () => s.fit() }, 'Fit'),
       actual: h('button.btn.sm', { type: 'button', title: 'Actual size (1)', onclick: () => s.actual() }, '100%'),
+      fs: h('button.btn.sm.icon.wb-fs', { type: 'button', title: 'Full screen (F)', 'aria-label': 'Full screen', 'aria-pressed': 'false', 'aria-keyshortcuts': 'F', onclick: () => void s.toggleFullscreen() }, fsIcon()),
       label: h('span.wb-zoom-label', { title: 'Zoom' }),
       hint: h('span.wb-hint-text'),
     };
@@ -305,6 +306,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
         h('button.btn.sm.icon', { type: 'button', title: 'Zoom in (+)', 'aria-label': 'Zoom in', onclick: () => s.zoomBy(1) }, '+'),
       ),
       tb.label,
+      tb.fs,
     );
   }
 
@@ -325,6 +327,10 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     tb.marks.setAttribute('aria-pressed', String(marksVisible));
     tb.fit.classList.toggle('on', s.zoomMode.fit);
     tb.actual.classList.toggle('on', !s.zoomMode.fit && Math.abs(s.zoom - 1) < 0.001);
+    tb.fs.classList.toggle('on', s.fullscreen);
+    tb.fs.setAttribute('aria-pressed', String(s.fullscreen));
+    tb.fs.title = s.fullscreen ? 'Exit full screen (F or Esc)' : 'Full screen (F)';
+    tb.fs.setAttribute('aria-label', s.fullscreen ? 'Exit full screen' : 'Full screen');
     tb.label.textContent = zoomLabel(s.zoom);
     tb.hint.textContent = s.pan
       ? 'Drag anywhere to pan. Use returns to the page.'
@@ -533,7 +539,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   const offs = [store.on('whiteboard', onBoard), store.on('workers', () => !card && paintGrid()), store.on('floor', () => store.floor !== floor && modal.close())];
   const clock = window.setInterval(() => (card ? paintHeader() : paintGrid()), 30_000);
 
-  // Keys: M switches Use and Mark up; + - 0 1 zoom. Not while typing in a field of the window.
+  // Keys: M switches Use and Mark up; H pans; F is full screen; + - 0 1 zoom. Not while typing in a field of the window.
   const onKey = (e: KeyboardEvent) => {
     if (!surface || e.metaKey || e.ctrlKey || e.altKey) return;
     // Only while this window is on top; focus may have fallen back to the page body (after a rename, say).
@@ -544,6 +550,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     const k = e.key;
     if (k === 'm' || k === 'M') s.setMode(s.mode === 'use' ? 'markup' : 'use');
     else if (k === 'h' || k === 'H') s.setPan(!s.pan);
+    else if ((k === 'f' || k === 'F') && !e.repeat) void s.toggleFullscreen();
     else if (k === '+' || k === '=') s.zoomBy(1);
     else if (k === '-' || k === '_') s.zoomBy(-1);
     else if (k === '0') s.fit();
@@ -609,4 +616,22 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
     paintBars();
   }
   setTimeout(() => el.focus({ preventScroll: true }), 30);
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Four corners, the expand mark next to the zoom controls. */
+function fsIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M2.5 6V2.5H6.5M9.5 2.5H13.5V6.5M13.5 10v3.5H10M6.5 13.5H2.5V10');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.append(path);
+  return svg;
 }
