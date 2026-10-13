@@ -483,6 +483,15 @@ const DEFS = {
     text: 'The owner updated the Whiteboard. Run `office-whiteboard read` and look at what changed.',
   },
 
+  'cloud.environment': {
+    group: 'workers',
+    label: 'Cloud worker on an Environment',
+    used: "Put before the first message to a cloud worker hired on a Factory Environment. Its computer has the floor's repository as the Environment's last build cloned it, which can be behind. Left empty, the message goes alone.",
+    vars: { environment: "The Environment's name", folder: "The repository's clone on the computer, where the session starts" },
+    optional: true,
+    text: 'This computer was started from the Factory Environment {{environment}}, so `{{folder}}` holds the repository as it was when that Environment last built, and may be behind. Before anything else, bring it up to date: `git fetch origin && git pull --ff-only`. Never stash, reset or discard anything to get there; if it fails, say why. Then do this:',
+  },
+
   // --- Across repositories ---
   'worker.repos': {
     group: 'repos',

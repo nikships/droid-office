@@ -4,6 +4,7 @@ import { anyComputer, computerOf, type FactoryComputer, type FactoryComputersSta
 import { ENV_PHASE_WORD, canStartFrom, environmentPhase, instanceName, repoFolder, type FactoryEnvironmentsState } from '../../shared/factory-environments.js';
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../../shared/protocol.js';
 import { isAgentEffort } from '../../shared/protocol.js';
+import { PROMPTS, fillPrompt, type PromptId, type PromptVars } from '../../shared/prompts.js';
 import type { CloudWorkers } from '../cloud-workers.js';
 import { fallbackTask } from '../tasks.js';
 import { cloudScreen } from '../../shared/cloud-screen.js';
@@ -71,6 +72,8 @@ export interface CloudOptions {
   sessionDeleted?(sessionId: string): void;
   /** How often and how long a hire waits for a computer started from an Environment; for tests. */
   instanceWait?: { everyMs: number; maxMs: number };
+  /** One of the office's prompts as rewritten in Settings (server/prompts.ts); the default without it. */
+  prompt?(id: PromptId, vars: PromptVars): string;
 }
 
 type Session = { status?: unknown; messageCount?: unknown; updatedAt?: unknown; title?: unknown; sessionSettings?: { model?: unknown; reasoningEffort?: unknown } };
@@ -235,6 +238,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     const autonomy = officeAutonomy(this.opts.agentArgs);
     let where: { cwd?: string } = typedWhere ?? {};
     let instance: FactoryComputer | undefined;
+    let catchUp = false;
     let made: { sessionId?: unknown; sessionSettings?: Session['sessionSettings'] };
     try {
       if (env) {
@@ -245,6 +249,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
         // Left empty: the floor's repository's clone, where the Environment put it.
         const dir = typed.cwd ? undefined : repoFolder(instance.repos, floor.repo);
         where = dir ? { cwd: dir } : typed;
+        catchUp = !!dir;
       }
       made = await api.post('/sessions', {
         computerId: computer!.id,
@@ -258,7 +263,15 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       throw err;
     }
     const host = computer!;
-    const place: CloudWorker = { computerId: host.id, computerName: host.name, provider: host.providerType, ...where, autonomy, ...(env ? { environmentId: env.id, environmentName: env.name, instance: true } : {}) };
+    const place: CloudWorker = {
+      computerId: host.id,
+      computerName: host.name,
+      provider: host.providerType,
+      ...where,
+      autonomy,
+      ...(env ? { environmentId: env.id, environmentName: env.name, instance: true } : {}),
+      ...(catchUp ? { catchUp: true } : {}),
+    };
     const info = floor.cloud.add({
       deskId,
       by,
@@ -283,6 +296,12 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     return floor.cloud.get(info.id) ?? info;
   }
 
+  /** What goes before the first message to a worker whose clone is from its Environment's build (cloud.environment). */
+  private catchUpNote(c: CloudWorker): string {
+    const vars = { environment: c.environmentName ?? 'it was started from', folder: c.cwd ?? '.' };
+    return (this.opts.prompt ? this.opts.prompt('cloud.environment', vars) : fillPrompt(PROMPTS['cloud.environment'].text, vars)).trim();
+  }
+
   /** Sends a message to a cloud worker's session; why not, or undefined once Factory has it. */
   async send(id: string, text: string, images: readonly string[]): Promise<string | Error | undefined> {
     const found = this.find(id);
@@ -300,6 +319,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     if (!api) return "The office isn't connected to Factory: connect it in ⚙️ Settings → Factory";
     if (info.cloud?.error) return `${info.name} can't take prompts right now: ${info.cloud.error}`;
     const before = info.status;
+    const lead = info.cloud?.catchUp ? this.catchUpNote(info.cloud) : '';
     const was = floor.cloud.turn(id) ?? {};
     const count = floor.cloud.seen(id)?.count ?? 0;
     floor.cloud.update(id, (i, w) => {
@@ -311,7 +331,13 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     });
     floor.cloud.setStatus(id, 'working');
     try {
-      const r = await this.whileNew(info, () => api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: message, ...(pictures.length ? { images: pictures } : {}) }));
+      const r = await this.whileNew(info, () =>
+        api.post<{ status?: unknown }>(`/sessions/${encodeURIComponent(info.sessionId!)}/messages`, { text: lead ? `${lead}\n\n${message}` : message, ...(pictures.length ? { images: pictures } : {}) }),
+      );
+      if (info.cloud?.catchUp)
+        floor.cloud.update(id, (i) => {
+          if (i.cloud) delete i.cloud.catchUp;
+        });
       if (r?.status === 'running' || r?.status === 'pending')
         floor.cloud.update(id, (_, w) => {
           w.turn = { ...w.turn, seenBusy: true };

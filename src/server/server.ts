@@ -421,6 +421,7 @@ export async function startServer(cfg: Config) {
       floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, repo: f.def.repo, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
       agentArgs: cfg.agentArgs,
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
+      prompt: (id, vars) => officePrompt(prompts, id, vars),
     },
     // Every floor's workers (desk, cloud and guests) with a session, so each shows what it has cost.
     // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().

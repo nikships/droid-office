@@ -23,6 +23,8 @@ export interface CloudWorker {
   environmentName?: string;
   /** The office started its computer for it, and deletes that computer when it goes home. */
   instance?: boolean;
+  /** Its next message goes with the cloud.environment prompt first: its clone is from the Environment's build. */
+  catchUp?: boolean;
 }
 
 /** The cloud slice of FactoryState: when the office last read its cloud workers' sessions, and why the last read failed. */

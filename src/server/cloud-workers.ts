@@ -340,6 +340,7 @@ function validInfo(raw: unknown): WorkerInfo | undefined {
       ...(typeof c.environmentId === 'string' ? { environmentId: c.environmentId } : {}),
       ...(typeof c.environmentName === 'string' ? { environmentName: c.environmentName } : {}),
       ...(c.instance === true ? { instance: true } : {}),
+      ...(c.catchUp === true ? { catchUp: true } : {}),
     },
   };
 }
