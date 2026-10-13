@@ -8,7 +8,7 @@ import { CARRY_ON_PROMPT, WorkerManager, setupFailedNote, type WorkerEvents } fr
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
 import { PROMPTS } from '../src/shared/prompts.js';
-import type { AgentChoice, AgentEffort, WorkerInfo } from '../src/shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
 type Invocation = {
   kind: string;
@@ -1928,6 +1928,84 @@ test('fresh workers start from the latest main, the checkout moved only when nob
   assert.equal(remote.worktree?.base, remoteHead);
   assert.equal(remote.worktree?.from, 'remote-start');
   assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+});
+
+test('the checkout goes back to main once its branch merged, and subagents of a lead on an old main start from the latest', async (t) => {
+  const f = carryOnFixture(t);
+  const forge = mkdtempSync(path.join(tmpdir(), 'office-settle-forge-'));
+  t.after(() => rmSync(forge, { recursive: true, force: true }));
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const origin = path.join(forge, 'origin.git');
+  git(forge, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(f.root, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(f.root, 'a.txt'), 'a');
+  git(f.root, 'add', 'a.txt');
+  git(f.root, 'commit', '-qm', 'init');
+  git(f.root, 'remote', 'add', 'origin', origin);
+  git(f.root, 'push', '-q', '-u', 'origin', 'main');
+  const github = path.join(forge, 'github');
+  git(forge, 'clone', '-q', origin, github);
+  const merge = (file: string) => {
+    git(github, 'pull', '-q', '--ff-only');
+    writeFileSync(path.join(github, file), file);
+    git(github, 'add', '.');
+    git(github, 'commit', '-qm', file);
+    git(github, 'push', '-q', 'origin', 'main');
+    return git(github, 'rev-parse', 'HEAD');
+  };
+  const toasts: string[] = [];
+  const workers = new WorkerManager(f.root, f.data, f.droid, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, { ...events([]), toast: (text) => toasts.push(text) });
+  t.after(() => workers.shutdown());
+  const branch = () => git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD');
+
+  // A worker's branch, merged on the forge (squashed: its commit isn't in main).
+  git(f.root, 'checkout', '-q', '-b', 'feature');
+  writeFileSync(path.join(f.root, 'work.txt'), 'work');
+  git(f.root, 'add', 'work.txt');
+  git(f.root, 'commit', '-qm', 'work');
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  const merged = merge('squashed.txt');
+  const pull = (state: string, oid = head) => ({ number: 7, state, headRefName: 'feature', headRefOid: oid }) as unknown as GhPull;
+  let pulls: GhPull[] = [pull('OPEN')];
+  workers.pullList = () => pulls;
+
+  // A worker is sitting in the checkout at rest, as the one that merged would be.
+  const first = workers.spawn('desk-1', 'test', 'merge it');
+  if (typeof first === 'string') throw new Error(first);
+  await waitFor(
+    () => launchesOf(f).filter((l) => l.env.workerId === first.id),
+    (x) => x.length > 0,
+  );
+  first.status = 'idle';
+
+  // Nothing happens with the setting off, or while the pull request is still open.
+  await workers.settleCheckout();
+  workers.freshMain = () => true;
+  await workers.settleCheckout();
+  assert.equal(branch(), 'feature');
+  // Merged, but at a commit the branch has moved past: not everything landed.
+  pulls = [pull('MERGED', merged)];
+  await workers.settleCheckout();
+  assert.equal(branch(), 'feature');
+  // Merged at the commit it's on: back to the latest main, though that worker is still there.
+  pulls = [pull('MERGED')];
+  await workers.settleCheckout();
+  assert.equal(branch(), 'main');
+  assert.equal(git(f.root, 'rev-parse', 'HEAD'), merged);
+  assert.ok(toasts.includes('🌿 Switched the checkout from feature to main: its pull request merged'), toasts.join('\n'));
+
+  // A lead in the checkout on a main nobody pulled hands its subagents the latest, not that.
+  workers.freshMain = () => false;
+  const next = merge('later.txt');
+  assert.notEqual(git(f.root, 'rev-parse', 'HEAD'), next);
+  // (The manager fetched main a moment ago, so a fresh instance does the fetching here.)
+  await new Worktrees(f.root).fetch('main');
+  assert.equal(workers.fetchStart(first.id), undefined);
+  const sub = workers.spawn('desk-2', 'test', 'a piece of it', true, 'agent', undefined, undefined, [], first.id);
+  if (typeof sub === 'string') throw new Error(sub);
+  assert.equal(sub.worktree?.base, next);
+  assert.equal(sub.worktree?.from, 'main');
+  assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
 });
 
 test('a log read ignores a trailing partial line', (t) => {

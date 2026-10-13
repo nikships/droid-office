@@ -21,7 +21,7 @@ class Fake implements TeamWorkers {
   killed: string[] = [];
   tails = new Map<string, string>();
   fetched = 0;
-  starts: [string, string][] = [];
+  starts: [string, string | undefined][] = [];
   refuse?: string;
   private n = 0;
   add(w: WorkerInfo) {
@@ -73,7 +73,7 @@ class Fake implements TeamWorkers {
     const w = this.ws.get(id);
     if (w) w.task = task;
   }
-  fetchStart(lead: string, from: string) {
+  fetchStart(lead: string, from?: string) {
     this.fetched++;
     this.starts.push([lead, from]);
     return Promise.resolve();
@@ -127,7 +127,8 @@ test('a lead hires a subagent at the free desk nearest it, in its own worktree, 
   const res = await r.call('lead', { action: 'hire', task: '  Fix the login redirect\r\nand test it  ', title: 'Fix login' });
   assert.equal(res.status, 200);
   assert.deepEqual(r.fake.hired, [{ deskId: 'desk-3', by: 'Nibble', prompt: 'Fix the login redirect\nand test it', worktree: true, choice: { model: 'custom:droidproxy:gpt-6-sol', effort: 'high' }, lead: 'lead' }]);
-  assert.equal(r.fake.fetched, 0, "the lead's own HEAD doesn't need a fetch");
+  assert.equal(r.fake.fetched, 1, "the branch the lead's HEAD is on is refreshed, so it isn't handed an old main");
+  assert.deepEqual(r.fake.starts, [['lead', undefined]]);
   assert.deepEqual(r.fake.get('sub1')?.task, { name: 'Fix login', summary: 'Fix the login redirect and test it' });
   assert.equal(res.body.worker.name, 'Pixel');
   assert.equal(res.body.worker.desk, 'Desk 3');
@@ -161,10 +162,11 @@ test('a lead picks the branch its subagent starts from, and only for a worktree'
   assert.equal(r.fake.hired[0].from, 'origin/main');
   assert.equal(r.fake.fetched, 1, 'fetched first, so origin/main is what the forge has now');
   assert.deepEqual(r.fake.starts, [['lead', 'origin/main']]);
-  // Left out, it starts where the lead is: nothing is passed on.
+  // Left out, it starts where the lead is: nothing is passed on, and the lead's own branch is refreshed.
   await r.call('lead', { action: 'hire', task: 'b' });
   assert.equal(r.fake.hired[1].from, undefined);
-  assert.equal(r.fake.fetched, 1, "the lead's own HEAD doesn't fetch the office's default base");
+  assert.equal(r.fake.fetched, 2);
+  assert.deepEqual(r.fake.starts[1], ['lead', undefined]);
   const no = async (body: Record<string, unknown>, why: RegExp) => {
     const out = await r.call('lead', { action: 'hire', task: 'x', ...body });
     assert.equal(out.status, 400, JSON.stringify(body));

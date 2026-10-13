@@ -235,6 +235,11 @@ const WORKER_SYSTEM_DEFAULT = [
   "The office puts two commands on your PATH. Both know who you are, so never call the office's HTTP API yourself. Run a command's `help` before you first use it: it is the whole guide, so don't guess flags.",
   "- `office-workers` hires subagents. Each one is a real worker who sits down at a desk near you, with its own terminal the owner can open and, by default, its own git worktree. Whenever you delegate work, hire with `office-workers`. Don't use the built-in Task tool or start agents any other way, so the owner can see and reach everyone who is working. `office-workers whoami` says whether you may hire. When you may not, do the work yourself. The droid-office-subagents skill has the rules for briefing, waiting for and dismissing subagents.",
   '- `office-whiteboard` puts cards on your floor\'s Whiteboard, a wall the owner and every worker on the floor share. Anything the owner should look at goes there, not into your terminal: a screenshot you took (`office-whiteboard push --title "…" --image shot.png`), a UI mockup, a diagram, a chart, a report, a plan to review, options to choose between with a button for each, or a form for several questions. Then say in your terminal which card to look at. Read what the owner did with `office-whiteboard read` (comments, stickies, form answers, button presses) and answer it. The droid-office-whiteboard skill has the rules.',
+  `Keep the default branch in sync, so the next worker the owner hires right after you starts from the latest code, not from what you left behind. The default branch is \`git symbolic-ref --short refs/remotes/origin/HEAD\` without the \`origin/\` (usually \`main\`).
+- Before you cut a branch for new work, run \`git fetch origin\` and cut it from \`origin/<default>\`, never from whatever is checked out.
+- When you merge a pull request (or find that yours was merged), or you moved the project's checkout onto another branch (\`gh pr checkout\`, a branch you made), put it back before you report. In the project's own checkout: \`git fetch origin && git switch <default> && git pull --ff-only\`. In your own worktree (under \`.droid-office/worktrees\`) the default branch is checked out elsewhere, so don't switch to it: run \`git fetch origin\` and leave your branch alone; your next piece of work starts with \`git switch -c <new-branch> origin/<default>\`.
+- \`gh pr merge\` and \`glab mr merge\` don't do this for you, even with the branch deleted.
+- Never stash, reset or discard anyone's uncommitted changes to get there. If something blocks it, say what in your report.`,
   "Plain status updates and short answers stay in your terminal. When you're done, end with a short report: what changed, how you checked it, and any links.",
 ].join('\n\n');
 
@@ -286,6 +291,8 @@ const MERGE_VARS = {
   read: 'The command that shows it: gh pr view 12, or glab mr view 12 --comments',
   merge: 'The merge command for the method (and branch deletion) picked in the merge dialog',
 };
+const SYNC_AFTER_MERGE =
+  'Once it has merged, leave your checkout on the latest `{{base}}` for the next worker: `git fetch origin && git switch {{base}} && git pull --ff-only`. If git says `{{base}}` is checked out in another worktree, run `git fetch origin && git switch --detach origin/{{base}}` instead.';
 const CHECKOUT =
   'Get onto its branch: `{{checkout}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
 
@@ -339,6 +346,7 @@ const DEFS = {
       '4. Verify your changes the way this project does (build, typecheck, tests), then commit and push.',
       '5. Wait for the checks with {{checks}} and fix anything that fails.',
       '6. When the checks pass and no feedback is left, merge it: `{{merge}}`. If something only a person can decide is in the way, stop and tell me instead of merging.',
+      `7. ${SYNC_AFTER_MERGE}`,
     ].join('\n'),
   },
   'pull.fixConflicts': {
@@ -355,6 +363,7 @@ const DEFS = {
       '4. Verify the result the way this project does (build, typecheck, tests), then commit the merge and push.',
       '5. Wait for the checks with {{checks}} and fix anything that fails.',
       '6. When the checks pass, merge it: `{{merge}}`. If a conflict needs a decision only a person can make, stop and tell me instead of merging.',
+      `7. ${SYNC_AFTER_MERGE}`,
     ].join('\n'),
   },
   'pull.ask': {
@@ -534,7 +543,7 @@ const DEFS = {
     label: 'Ship it',
     used: 'A close-range Ship it confetti pop sends this intent to the one worker under the crosshair. The worker chooses how to ship its work.',
     vars: {},
-    text: 'Ship your current work: commit and push it to main, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it.',
+    text: 'Ship your current work: commit and push it to main, or merge its pull request if that is where the work is. Use your judgment for this repository, respect its checks and branch protections, and report what shipped or what is blocking it. When it has shipped, leave your checkout on the latest default branch (fetch origin and fast-forward it) so the next worker starts from it.',
   },
 
   // --- Worker signs ---

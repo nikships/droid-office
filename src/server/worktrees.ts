@@ -234,7 +234,7 @@ export class Worktrees {
    * under way, a detached HEAD, commits on the default branch that origin doesn't have, or anything
    * git refuses (an untracked file in the way, say) keep it too. Never stashes, resets or discards.
    */
-  freshen(busy: string[] = []): Freshened {
+  freshen(busy: string[] = [], parked: string[] = []): Freshened {
     const main = this.defaultBranch();
     if (!main) return {};
     const current = this.currentBranch();
@@ -242,12 +242,12 @@ export class Worktrees {
     const head = this.commitOf('HEAD');
     if (current === main && (!latest || (head && this.isAncestor(latest, head)))) return { branch: main, main };
     const kept = (why: string, branch = current): Freshened => ({ kept: why, main, ...(branch ? { branch } : {}) });
-    if (busy.length) {
-      const who = busy.length === 1 ? busy[0] : `${busy.slice(0, -1).join(', ')} and ${busy[busy.length - 1]}`;
-      return kept(`${who} ${busy.length === 1 ? 'is' : 'are'} working in it`);
-    }
+    const working = (names: string[]) => `${names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`} ${names.length === 1 ? 'is' : 'are'} working in it`;
+    if (busy.length) return kept(working(busy));
     if (this.midOperation()) return kept('a merge, rebase or cherry-pick is under way there');
     if (!current) return kept("it isn't on a branch");
+    // Workers at rest on another branch have it to come back to, and moving it under them would put their next commit on main.
+    if (current !== main && parked.length) return kept(working(parked));
     const local = this.commitOf(`refs/heads/${main}`);
     // The local branch can simply move up to origin's: nothing on it would be left behind.
     const behind = !!latest && (!local || this.isAncestor(local, latest));
@@ -279,6 +279,32 @@ export class Worktrees {
       return { ...done, kept: `git wouldn't bring ${main} up to origin/${main}: ${gitRefusal(err)}` };
     }
     return done;
+  }
+
+  /**
+   * Whether the project's checkout sits on a branch whose work has all landed: a merged pull request
+   * of that branch ends at the very commit it's on. Nothing there is left to lose by moving off it.
+   */
+  delivered(pulls: readonly { state: string; headRefName: string; headRefOid?: string }[]): boolean {
+    const branch = this.currentBranch();
+    const head = this.commitOf('HEAD');
+    if (!branch || !head || branch === this.defaultBranch()) return false;
+    return pulls.some((p) => p.state === 'MERGED' && p.headRefName === branch && p.headRefOid === head);
+  }
+
+  /**
+   * `at` (see resolve) moved up to origin's copy of its branch when that has everything `at` has and
+   * more: a lead sitting on a main nobody pulled shouldn't hand its subagents that old commit.
+   */
+  caughtUp(at: { commit: string; branch?: string }): { commit: string; branch?: string } {
+    const remote = at.branch ? this.commitOf(`refs/remotes/origin/${at.branch}`) : undefined;
+    if (!remote || remote === at.commit || !this.isAncestor(at.commit, remote)) return at;
+    return { commit: remote, branch: at.branch };
+  }
+
+  /** Refreshes origin's copy of `branch` when origin has one, as fetch does for the branch a worktree is cut from. */
+  refresh(branch: string): Promise<void> | undefined {
+    return this.commitOf(`refs/remotes/origin/${branch}`) ? this.fetchBranch(branch) : undefined;
   }
 
   /** A merge, rebase, cherry-pick, revert or bisect is under way in the project's checkout. */

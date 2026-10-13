@@ -97,6 +97,7 @@ test('the boards send what they always did on a GitHub floor', () => {
       '4. Verify your changes the way this project does (build, typecheck, tests), then commit and push.',
       '5. Wait for the checks with `gh pr checks 5 --watch` and fix anything that fails.',
       '6. When the checks pass and no feedback is left, merge it: `gh pr merge 5 --squash --delete-branch --repo o/r`. If something only a person can decide is in the way, stop and tell me instead of merging.',
+      '7. Once it has merged, leave your checkout on the latest `main` for the next worker: `git fetch origin && git switch main && git pull --ff-only`. If git says `main` is checked out in another worktree, run `git fetch origin && git switch --detach origin/main` instead.',
     ].join('\n'),
   );
   assert.equal(
@@ -110,6 +111,7 @@ test('the boards send what they always did on a GitHub floor', () => {
       '4. Verify the result the way this project does (build, typecheck, tests), then commit the merge and push.',
       '5. Wait for the checks with `gh pr checks 5 --watch` and fix anything that fails.',
       '6. When the checks pass, merge it: `gh pr merge 5 --rebase --repo o/r`. If a conflict needs a decision only a person can make, stop and tell me instead of merging.',
+      '7. Once it has merged, leave your checkout on the latest `main` for the next worker: `git fetch origin && git switch main && git pull --ff-only`. If git says `main` is checked out in another worktree, run `git fetch origin && git switch --detach origin/main` instead.',
     ].join('\n'),
   );
 });
@@ -144,6 +146,7 @@ test('the boards send what they always did on a GitLab floor', () => {
       '4. Verify your changes the way this project does (build, typecheck, tests), then commit and push.',
       '5. Wait for the checks with `glab ci status --branch feat/cat --wait` and fix anything that fails.',
       '6. When the checks pass and no feedback is left, merge it: `glab mr merge 9 --squash --remove-source-branch --auto-merge=false --yes --repo https://gitlab.example.com/grp/sub/proj`. If something only a person can decide is in the way, stop and tell me instead of merging.',
+      '7. Once it has merged, leave your checkout on the latest `develop` for the next worker: `git fetch origin && git switch develop && git pull --ff-only`. If git says `develop` is checked out in another worktree, run `git fetch origin && git switch --detach origin/develop` instead.',
     ].join('\n'),
   );
   assert.equal(
@@ -157,6 +160,7 @@ test('the boards send what they always did on a GitLab floor', () => {
       '4. Verify the result the way this project does (build, typecheck, tests), then commit the merge and push.',
       '5. Wait for the checks with `glab ci status --branch feat/cat --wait` and fix anything that fails.',
       '6. When the checks pass, merge it: `glab mr merge 9 --auto-merge=false --yes --repo https://gitlab.example.com/grp/sub/proj`. If a conflict needs a decision only a person can make, stop and tell me instead of merging.',
+      '7. Once it has merged, leave your checkout on the latest `develop` for the next worker: `git fetch origin && git switch develop && git pull --ff-only`. If git says `develop` is checked out in another worktree, run `git fetch origin && git switch --detach origin/develop` instead.',
     ].join('\n'),
   );
 });

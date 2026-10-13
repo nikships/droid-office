@@ -309,6 +309,55 @@ test("freshening leaves the checkout alone when that would get in someone's way,
   assert.equal(f.git('rev-parse', 'HEAD'), local);
 });
 
+test('workers at rest keep the checkout on their branch, but not from fast-forwarding main', async (t) => {
+  const f = fixture(t);
+  f.merge('fix.txt');
+  const trees = new Worktrees(f.dir);
+  await trees.fetch('main');
+  // On a stale main, a worker at rest doesn't mind it moving up.
+  assert.deepEqual(trees.freshen([], ['Pixel']), { main: 'main', branch: 'main' });
+  assert.equal(f.git('rev-parse', 'HEAD'), f.git('rev-parse', 'origin/main'));
+  // On another branch, it might come back to it: left alone, and one mid-turn always blocks.
+  f.git('checkout', '-q', '-b', 'feature');
+  f.merge('more.txt');
+  await new Worktrees(f.dir).fetch('main');
+  const r = trees.freshen([], ['Pixel']);
+  assert.match(r.kept ?? '', /^Pixel is working in it$/);
+  assert.equal(f.git('rev-parse', '--abbrev-ref', 'HEAD'), 'feature');
+  assert.equal(trees.freshen([], []).switchedFrom, 'feature');
+});
+
+test("a branch counts as delivered once a merged pull request ends at the commit it's on", (t) => {
+  const f = fixture(t);
+  const trees = new Worktrees(f.dir);
+  const merged = (oid?: string) => [{ state: 'MERGED', headRefName: 'feature', headRefOid: oid }];
+  assert.equal(trees.delivered(merged('x')), false, 'main is never delivered');
+  f.git('checkout', '-q', '-b', 'feature');
+  f.commit('work.txt');
+  const head = f.git('rev-parse', 'HEAD');
+  assert.equal(trees.delivered([]), false);
+  assert.equal(trees.delivered([{ state: 'OPEN', headRefName: 'feature', headRefOid: head }]), false);
+  assert.equal(trees.delivered(merged('0'.repeat(40))), false, 'it has moved past what merged');
+  assert.equal(trees.delivered(merged(head)), true);
+  assert.equal(trees.delivered([{ state: 'MERGED', headRefName: 'other', headRefOid: head }]), false);
+});
+
+test("a start point behind its branch on origin is moved up to origin's, and only then", async (t) => {
+  const f = fixture(t);
+  const stale = f.git('rev-parse', 'HEAD');
+  const merged = f.merge('fix.txt');
+  const trees = new Worktrees(f.dir);
+  // Not fetched yet: origin/main still says stale.
+  assert.deepEqual(trees.caughtUp({ commit: stale, branch: 'main' }), { commit: stale, branch: 'main' });
+  await trees.refresh('main');
+  assert.deepEqual(trees.caughtUp({ commit: stale, branch: 'main' }), { commit: merged, branch: 'main' });
+  assert.deepEqual(trees.caughtUp({ commit: merged, branch: 'main' }), { commit: merged, branch: 'main' });
+  // A commit on a branch origin doesn't have, or no branch at all, stays.
+  assert.deepEqual(trees.caughtUp({ commit: stale }), { commit: stale });
+  assert.deepEqual(trees.caughtUp({ commit: stale, branch: 'office/x' }), { commit: stale, branch: 'office/x' });
+  assert.equal(trees.refresh('office/x'), undefined);
+});
+
 test('freshening waits out a merge under way', (t) => {
   const f = fixture(t);
   f.git('checkout', '-q', '-b', 'feature');

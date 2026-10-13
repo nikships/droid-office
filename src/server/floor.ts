@@ -182,6 +182,8 @@ export class Floor {
       if (state.loading || state.error) return;
       // A worker may have opened one from a branch it made itself, mid-turn or from a shell.
       void this.workers.syncBranches();
+      // A branch that merged is no place for the next worker to start from.
+      void this.workers.settleCheckout().catch(() => undefined);
       for (const p of this.merges.look(state.items)) {
         ctx.toast(this, `🎉 ${words.pr} ${words.ref(p.number)} merged: ${p.title}`);
         this.merged(p.number);
@@ -270,6 +272,7 @@ export class Floor {
       inCheckout: () => this.guests.list().map((g) => g.name),
     };
     this.workers.freshMain = () => ctx.freshMain();
+    this.workers.pullList = () => this.board.pulls.items;
 
     // The 🚀 Pipelines board: runs that end while someone watches say so (a failure always, a pass when the office started it).
     this.pipelines = floorPipelines(def.dir, forge, def.repo, {

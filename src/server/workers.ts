@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, OutsideProcess, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { WORKER_REVIVE_MS, isAgentEffort } from '../shared/protocol.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
@@ -250,6 +250,9 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
+  /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
+  pullList?: () => GhPull[];
+  private settling = false;
 
   private get forge(): Forge {
     return this.pulls.forge ?? 'github';
@@ -396,12 +399,18 @@ export class WorkerManager {
     return this.trees.fetch(fresh ? 'main' : 'checkout');
   }
 
-  /** Fetches the origin branch a lead explicitly picked, independently of freshMain. */
-  fetchStart(lead: string, from: string): Promise<void> | undefined {
+  /**
+   * Fetches what a subagent of `lead` starts from, independently of freshMain: the origin branch the
+   * lead picked, or the one its own HEAD is on, so a lead sitting on an old main doesn't hand it that.
+   */
+  fetchStart(lead: string, from?: string): Promise<void> | undefined {
     const boss = this.workers.get(lead)?.info;
     if (!boss) return undefined;
     const cwd = boss.worktree ? path.join(this.dir, boss.worktree.path) : this.dir;
-    return this.trees.fetchRef(from, existsSync(cwd) ? cwd : this.dir);
+    const where = existsSync(cwd) ? cwd : this.dir;
+    if (from !== undefined) return this.trees.fetchRef(from, where);
+    const branch = this.trees.resolve('HEAD', where)?.branch;
+    return branch ? this.trees.refresh(branch) : undefined;
   }
 
   get resolvedAgent(): string | null {
@@ -571,7 +580,7 @@ export class WorkerManager {
   private leadStart(lead: WorkerInfo, from: string | undefined): WorktreeStart | string {
     const cwd = lead.worktree ? path.join(this.dir, lead.worktree.path) : this.dir;
     const at = this.trees.resolve(from ?? 'HEAD', existsSync(cwd) ? cwd : this.dir);
-    if (at) return at;
+    if (at) return from === undefined ? this.trees.caughtUp(at) : at;
     return from === undefined ? `${lead.name}'s checkout has no commit to start from` : `There's no branch, tag or commit called ${from} here`;
   }
 
@@ -581,13 +590,48 @@ export class WorkerManager {
    * switch would get in the way of (see Worktrees.freshen). Toasts what happened when it's news.
    */
   private freshenCheckout(name: string) {
-    const others = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info)).map((w) => w.info.name);
-    const r = this.trees.freshen([...others, ...(this.holds?.inCheckout?.() ?? [])]);
+    const r = this.freshenWith(this.trees.delivered(this.pullList?.() ?? []));
     if (r.switchedFrom) {
       this.events.checkout?.(r.branch ?? r.main ?? '');
       this.events.toast(`🌿 Switched the checkout from ${r.switchedFrom} to ${r.main} for ${name}`, 'info');
     }
     if (r.kept) this.events.toast(`🌿 ${name} starts on ${r.branch ?? 'the checkout'} as it is, not the latest ${r.main}: ${r.kept}`, 'info');
+  }
+
+  /**
+   * Worktrees.freshen with who's in the checkout sorted out: guests and workers mid-turn block it;
+   * workers at rest only block leaving a branch they may come back to, which they don't once its
+   * work has landed (`delivered`).
+   */
+  private freshenWith(delivered: boolean) {
+    const there = [...this.workers.values()].filter((w) => w.pty && !w.info.worktree && !boardAgent(w.info));
+    const active = there.filter((w) => isBusy(w.info.status)).map((w) => w.info.name);
+    const resting = delivered ? [] : there.filter((w) => !isBusy(w.info.status)).map((w) => w.info.name);
+    return this.trees.freshen([...active, ...(this.holds?.inCheckout?.() ?? [])], resting);
+  }
+
+  /**
+   * Puts the project's checkout back on the latest default branch once the branch it's on has merged,
+   * so the next worker hired starts from there even when whoever merged it never switched back (or a
+   * person merged it on the forge). Called when the pull request list comes in. Quiet when it has to
+   * leave the checkout alone (it looks again with the next list), and does nothing with *Latest main*
+   * off. Never touches a branch whose work hasn't landed, uncommitted changes, or a worker mid-turn.
+   */
+  async settleCheckout(): Promise<void> {
+    if (this.settling || !(this.freshMain?.() ?? false)) return;
+    const landed = () => this.trees.delivered(this.pullList?.() ?? []);
+    if (!landed()) return;
+    this.settling = true;
+    try {
+      await this.trees.fetch('main');
+      if (!landed()) return;
+      const r = this.freshenWith(true);
+      if (!r.switchedFrom) return;
+      this.events.checkout?.(r.branch ?? r.main ?? '');
+      this.events.toast(`🌿 Switched the checkout from ${r.switchedFrom} to ${r.main}: its pull request merged`, 'info');
+    } finally {
+      this.settling = false;
+    }
   }
 
   /**
