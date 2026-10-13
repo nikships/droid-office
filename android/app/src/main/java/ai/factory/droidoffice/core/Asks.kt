@@ -14,6 +14,10 @@ object Asks {
     /** The numbered menu on its screen: a shell's numbered output is never an ask. */
     fun menu(w: WorkerInfo, screen: ScreenState?): Menu? = if (w.isShell || screen == null) null else Choices.read(screen)
 
+    /** The thread can answer only a live local worker's waiting question with a readable menu. */
+    fun canAnswer(w: WorkerInfo, screen: ScreenState?): Boolean =
+        w.state == WorkerStatus.NeedsInput && !w.isShell && !w.isCloud && !w.isGuest && menu(w, screen) != null
+
     /** One line of what it's on, above the question: its task or title, else the start of its prompt. */
     fun context(w: WorkerInfo): String? =
         (Workers.title(w) ?: w.prompt?.lineSequence()?.firstOrNull { it.isNotBlank() })?.trim()?.take(140)?.takeIf { it.isNotBlank() }

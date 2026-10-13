@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
@@ -169,9 +170,14 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         Offline(link.phase)
         val live = !worker.state.asleep
         val screen = screens[workerId]
-        // Droid workers open on the thread; a shell, a cloud worker or one sent here to type an answer opens on its terminal.
-        var tty by rememberSaveable(workerId) { mutableStateOf(worker.isShell || worker.isCloud || draft != null) }
-        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { tty = it }
+        // Default to Raw TTY unless the thread has an answerable question. Wait for the first screen
+        // before keeping the default, and never change the view after the owner picks one.
+        var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
+        val tty = ttyChoice ?: (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen))
+        LaunchedEffect(workerId, screen) {
+            if (ttyChoice == null && screen != null) ttyChoice = tty
+        }
+        if (!worker.isShell && !worker.isCloud) ViewToggle(tty) { ttyChoice = it }
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
         val currentSize = TermSize(worker.cols, worker.rows)
@@ -202,7 +208,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         if (!tty) Thread(
             worker, screen, live && link.phase == Phase.Connected,
             Modifier.weight(1f).fillMaxWidth(),
-            onType = { tty = true },
+            onType = { ttyChoice = true },
         ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,

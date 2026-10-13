@@ -1,7 +1,9 @@
 package ai.factory.droidoffice.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AsksTest {
@@ -32,6 +34,37 @@ class AsksTest {
     fun aShellNeverHasAnAsk() {
         val w = WorkerInfo(id = "s", kind = "shell", status = "needs_input")
         assertNull(Asks.menu(w, box))
+    }
+
+    @Test
+    fun theThreadCanAnswerAWaitingWorkerWithAReadableMenu() {
+        val w = WorkerInfo(id = "a", status = "needs_input")
+        assertTrue(Asks.canAnswer(w, box))
+        assertTrue(Asks.canAnswer(w, screen("Allow this command?", "> 1. Yes", "  2. No")))
+    }
+
+    @Test
+    fun needingInputWithoutAReadableMenuStillNeedsTheTerminal() {
+        val w = WorkerInfo(id = "a", status = "needs_input", activity = "Allow this command?")
+        assertFalse(Asks.canAnswer(w, null))
+        assertFalse(Asks.canAnswer(w, screen("Allow this command?", "Press y or n")))
+    }
+
+    @Test
+    fun aMenuDoesNotMakeANonWaitingWorkerAnswerable() {
+        val w = WorkerInfo(id = "a")
+        WorkerStatus.entries.filter { it != WorkerStatus.NeedsInput }.forEach {
+            assertFalse(it.name, Asks.canAnswer(w.copy(status = it.wire), box))
+        }
+    }
+
+    @Test
+    fun shellsCloudWorkersAndGuestsCannotAnswerThroughTheThread() {
+        val w = WorkerInfo(id = "a", status = "needs_input")
+        assertFalse(Asks.canAnswer(w.copy(kind = "shell"), box))
+        assertFalse(Asks.canAnswer(w.copy(kind = "cloud"), box))
+        assertFalse(Asks.canAnswer(w.copy(cloud = CloudRef()), box))
+        assertFalse(Asks.canAnswer(w.copy(guest = GuestInfo()), box))
     }
 
     @Test
