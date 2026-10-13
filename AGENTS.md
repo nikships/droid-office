@@ -85,7 +85,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 
 ## Testing the running office
 
-Check every change to what the office shows or does in a clone of the owner's real installed office, made with the [`office-clone`](.agents/skills/office-clone/SKILL.md) skill: their floors and repositories, Factory account, decor, Whiteboards and browser settings, run from this checkout's build. Screenshots and video for a pull request come from that clone too. Never test on mocked, invented or seeded data or an empty throwaway office, and never drive the owner's own office on :4600. When what you need to show isn't in the owner's account yet, make it for real (with their go-ahead for anything that costs money or writes outside the office) and remove it afterwards. Unit tests in `tests/` stub the network only because CI has no keys; see [`tests/AGENTS.md`](tests/AGENTS.md).
+Check every change to what the office shows or does in a clone of the owner's real installed office, made with the [`office-clone`](.agents/skills/office-clone/SKILL.md) skill: their floors and repositories, Factory account, decor, Whiteboards and browser settings, run from this checkout's build. Drive it with that skill's `scripts/office-run.mjs`, one self-contained browser run per check, rather than a browser session held open across commands. Screenshots and video for a pull request come from that clone too. Never test on mocked, invented or seeded data or an empty throwaway office, and never drive the owner's own office on :4600. When what you need to show isn't in the owner's account yet, make it for real (with their go-ahead for anything that costs money or writes outside the office) and remove it afterwards. Unit tests in `tests/` stub the network only because CI has no keys; see [`tests/AGENTS.md`](tests/AGENTS.md).
 
 ## Pushing and pull requests
 
@@ -114,6 +114,6 @@ CI runs on a pull request only when it touches a path in the workflow's `pull_re
 - `npm ci` sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1`. The Mac app's Electron binary is not used on Linux. Node 22 is already on the image.
 - Whiteboard tests use the Chromium from `node bin/droid-office.js browser install`, kept in `~/.cache/droid-office/browsers`, plus Playwright's system libraries.
 - Android unit tests and lint use the SDK at `/opt/android-sdk` (platform `android-37.0`, build-tools 36). JDK 21 is already installed. `android/local.properties` is gitignored and points `sdk.dir` at that SDK. From `android/`: `./gradlew testDebugUnitTest lintDebug`.
-- `agent-browser` is on `PATH` for the headed 3D checks in `.agents/skills/office-3d-testing/SKILL.md`.
+- Checks of the running office go through `.agents/skills/office-clone/scripts/office-run.mjs` (Playwright's headless shell from `node bin/droid-office.js browser install`; SwiftShader WebGL on Linux). `agent-browser` is on `PATH` for video capture, which needs a headed session.
 - Boot runs `npm run dev`: Vite at http://127.0.0.1:5173 and the office on port 4600. A check that must not share that office runs on a clone of the owner's office on another port, as the `office-clone` skill describes.
 - Git rewrites `github.com` remotes to credentialed https URLs. `normalizeRepo` drops that userinfo. A test stub that reads `git remote get-url` has to allow an optional `user:token@` as well.

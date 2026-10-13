@@ -39,19 +39,39 @@ $T/start.sh                  # fireAndForget; prints the URL (port 4677, or the 
 
 Run `npm run build` again after every source change, then restart `start.sh`. The clone's data stays as it is.
 
-## 3. Open it as the owner
+## 3. Drive it as the owner: `office-run.mjs`
 
-Use a headed agent-browser session of its own (headless WebGL drops to `about:blank`):
+Every check and screenshot goes through one command that owns its browser from start to finish:
 
 ```bash
-export AGENT_BROWSER_SESSION=office-clone
-agent-browser --headed open http://127.0.0.1:4677/
-agent-browser set viewport 1440 900
-agent-browser eval --stdin < $T/load-settings.js     # the owner's profile and settings, then a reload
-agent-browser wait --fn "window.office && office.state().floor && getComputedStyle(document.getElementById('loading')).display === 'none'" --timeout 120000
+node .agents/skills/office-clone/scripts/office-run.mjs $T steps.mjs --out /tmp/shots
 ```
 
-Drive it with `window.office` as [`office-3d-testing`](../office-3d-testing/SKILL.md) describes. Wait for `#loading` to be hidden before a screenshot: the office compiles its shaders behind the loading screen.
+It launches Playwright's headless shell (the one `node bin/droid-office.js browser install` puts in the office's browser cache) with GPU WebGL (Metal through ANGLE on macOS; SwiftShader on Linux). It writes the owner's `localStorage` from `$T/local-storage.json` before the first load, so the owner's profile, settings and floor are there with no character picker and no reload. It waits until `window.office` is in, the loading screen is gone and the warm-up line (shaders, the light bake) is done. Then it runs your steps, saves the screenshots, prints what the page logged as errors, and closes the browser. It reads the clone's port from `start.sh` and refuses :4600.
+
+A steps file is one async function. The helpers wrap `window.office` ([`office-3d-testing`](../office-3d-testing/SKILL.md) has the commands) and Playwright's `page`:
+
+```js
+// steps.mjs
+export default async ({ page, js, open, click, shot, sleep, waitFor, rig, reload, log }) => {
+  await open('computers');                                   // office.open(id), from the ☰ menu
+  await click('.cmp-tabs button', /Environments/);           // first match whose text fits
+  await shot('environments');                                // <out>/environments.png
+  await js(() => window.office.goTo('desk-1'));              // anything in the page
+  await js(() => window.office.interact('E'));
+  await page.selectOption('#runs-on', { label: '⧉ droid-office-default (default)' });
+  await page.fill('.modal textarea', 'Say hi');
+  log(await js(() => document.querySelector('.modal')?.innerText));
+};
+```
+
+- Without a steps file it saves `office.png`: a quick check that the clone renders.
+- Exit code 1, with a `failure.png`, when the office never got ready, the page crashed or a step threw. Read the error and fix the step; don't retry blind.
+- A native `confirm()` or `alert()` is accepted and printed, so it can't stall the run.
+- `rig()` loads [`office-choreography`](../office-choreography/SKILL.md)'s movement rig (`__walkTo`, `__look`, `__hold`, `__tap`) for input `window.office` doesn't cover.
+- One run per check, each about 15 to 40 seconds. State lives in the clone's server, not the browser, so the next run picks up where the last left off (a worker you hired is at its desk).
+
+Don't keep a browser session open across commands (an `agent-browser` daemon, a headed window) for checks. When that session dies (an office restart takes the processes of the terminal that started it), the next `agent-browser` command quietly launches a new **headless Chrome for Testing**, and Chrome for Testing under Playwright closes its pages about 30 seconds in. That is the `about:blank` page earlier skills blamed on WebGL. The headless shell has neither problem. Video capture still needs a headed session ([`office-video-capture`](../office-video-capture/SKILL.md)).
 
 ## 4. What is real, and what that means
 
@@ -63,7 +83,6 @@ Drive it with `window.office` as [`office-3d-testing`](../office-3d-testing/SKIL
 ## 5. Clean up
 
 ```bash
-agent-browser --session office-clone close
 kill <start.sh pid>
 lsof -t $T/home/.droid-office/pty.sock $T/floors/*/.droid-office/pty.sock 2>/dev/null | xargs kill 2>/dev/null
 rm -rf $T
