@@ -8,6 +8,7 @@ import { DESK_BY_ID, STATION_AGENT, type DeskDef } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
 import { deskApproach, type ApproachPose } from './approach';
+import type { FrameReport } from './frame-stats';
 import { waitingOnSomeone } from './notify';
 import { EYE_HEIGHT } from './player';
 import type { InteractKind, Interactable } from './world/office';
@@ -21,7 +22,7 @@ export const CAMERA_PRESETS = ['first'] as const;
 export type CameraPreset = (typeof CAMERA_PRESETS)[number];
 
 /** The commands `window.office` answers, and the only ones the server relay may call. */
-export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'camera', 'height', 'state', 'list', 'commands'] as const;
+export const AUTOMATION_COMMANDS = ['goTo', 'interact', 'open', 'closeAll', 'ride', 'camera', 'height', 'frameStats', 'state', 'list', 'commands'] as const;
 export type AutomationCommand = (typeof AUTOMATION_COMMANDS)[number];
 
 /** The boards on the wall, which `goTo` lists as kind 'board'. */
@@ -306,6 +307,20 @@ export interface CommandInfo {
   blocked?: string;
 }
 
+/** Frame pacing (frame-stats.ts) with what drew it, so two measurements can be told apart. */
+export interface PacingReport extends FrameReport {
+  /** Classic, or the Remastered renderer's quality and HDR state. */
+  renderer: string;
+  /** WebGL's name for the GPU and its backend (on a Mac, ANGLE's Metal or OpenGL renderer). */
+  backend: string;
+  /** The loop's pace when asked: full, idle or paused. */
+  pace: string;
+  /** The drawing buffer's size, in device pixels. */
+  output: { width: number; height: number };
+  /** Whether the mouse is read raw (no OS acceleration): true, false, or null before a lock has said. */
+  rawMouse: boolean | null;
+}
+
 /** What `window.office` needs from main.ts: the scene's own functions, nothing reimplemented. */
 export interface AutomationHost {
   context(): TargetContext;
@@ -335,6 +350,8 @@ export interface AutomationHost {
   setHeight(scale: number): void;
   /** Frames drawn so far. */
   frames(): number;
+  /** Frame pacing since the last reset, or over the last minute; `reset` starts a new measurement. */
+  frameStats(reset: boolean): PacingReport;
   wait(ms: number): Promise<void>;
 }
 
@@ -360,6 +377,8 @@ export interface OfficeAutomation {
   camera(preset: CameraPreset): Promise<Snapshot>;
   /** Smoothly changes eye height to 1–3 times the default, resolving once it settles. */
   height(scale: number): Promise<Snapshot>;
+  /** Frame pacing since the last `frameStats({ reset: true })`, or over the last minute. */
+  frameStats(opts?: { reset?: boolean }): PacingReport;
   state(): Snapshot;
   list(): TargetInfo[];
   commands(): CommandInfo[];
@@ -524,6 +543,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     ride,
     camera,
     height,
+    frameStats: (opts = {}) => host.frameStats(opts?.reset === true),
     state,
     list: () => listTargets(host.context()),
     commands: () => host.commands(),

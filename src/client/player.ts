@@ -28,6 +28,18 @@ const DRAG_LOOK_SPEED = 0.005;
  */
 export const SETTLE_REST = 100;
 export const SETTLE_MAX = 150;
+/**
+ * Right after a lock lands, some platforms report the cursor's warp to the middle of the page as one huge move. Only
+ * then is a move that big dropped; later ones are the hand, however fast, and pass whole.
+ */
+export const LOCK_WARP_PX = 250;
+export const LOCK_WARP_MS = 250;
+
+/** Whether a locked move `sinceLockMs` after the lock landed is the cursor's warp rather than the hand. */
+export function lockWarp(dx: number, dy: number, sinceLockMs: number): boolean {
+  return sinceLockMs < LOCK_WARP_MS && Math.max(Math.abs(dx), Math.abs(dy)) > LOCK_WARP_PX;
+}
+
 /** A click's relock: short follow-through, and the first nonzero move that rebases the captured cursor. */
 export interface Relock {
   settleUntil: number;
@@ -133,6 +145,18 @@ export class PlayerController {
   private relock: Relock = idleRelock();
   /** When the mouse last moved, or a lock that settles landed. */
   private movedAt = 0;
+  /** When the current lock landed. */
+  private lockedAt = 0;
+  /** Ask for the mouse raw (`unadjustedMovement`: no OS pointer acceleration) when capturing it. */
+  rawInput = false;
+  /** This browser said it can't read the mouse raw; later locks don't ask. */
+  private rawUnsupported = false;
+  /** Whether the last lock taken reads the mouse raw; null before one is taken. */
+  private rawLocked: boolean | null = null;
+  /** Whether the last lock asked for was raw: what the lock says once it lands. */
+  private lockRaw = false;
+  /** The last lock request returned a promise: its rejection, not pointerlockerror, says what to do, in either order. */
+  private lockPromised = false;
   enabled = true;
   /** False while the mouse picks something else (an emote on the wheel), so it doesn't turn the camera. */
   mouseLook = true;
@@ -204,9 +228,8 @@ export class PlayerController {
         const step = takeRelockMove(this.relock, { dx: e.movementX, dy: e.movementY, now, rested });
         this.relock = step.relock;
         if (!step.look) return;
-        // Some platforms report a bogus huge jump right after locking.
-        const clamp = (v: number) => THREE.MathUtils.clamp(v, -250, 250);
-        this.look(clamp(e.movementX) * LOOK_SPEED, clamp(e.movementY) * LOOK_SPEED);
+        if (lockWarp(e.movementX, e.movementY, now - this.lockedAt)) return;
+        this.look(e.movementX * LOOK_SPEED, e.movementY * LOOK_SPEED);
         return;
       }
       if (!this.drag) return;
@@ -228,6 +251,8 @@ export class PlayerController {
         return;
       }
       this.everLocked = true;
+      this.lockedAt = performance.now();
+      this.rawLocked = this.lockRaw;
       this.drag = null;
       // The pause to click doesn't count as the hand coming to rest: only once it's taken.
       if (this.settleNext) this.movedAt = performance.now();
@@ -236,7 +261,8 @@ export class PlayerController {
       // A lock that lands with a window open (the one yieldMouse takes, or a relock racing the next window) is let go.
       if (!this.enabled) this.unlock();
     });
-    document.addEventListener('pointerlockerror', () => this.refused());
+    // Answered after the request returns, when it's known whether a promise speaks for it.
+    document.addEventListener('pointerlockerror', () => setTimeout(() => !this.lockPromised && this.refused(), 0));
     dom.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
   }
 
@@ -247,6 +273,11 @@ export class PlayerController {
   /** Whether the mouse is captured and staying so: not while it's being let go of for a window. */
   get hasMouse(): boolean {
     return this.locked && !this.letting;
+  }
+
+  /** Whether the last lock taken reads the mouse raw (true), accelerated (false), or none was taken yet (null). */
+  get rawMouse(): boolean | null {
+    return this.rawLocked;
   }
 
   /** Whether clicking the scene will capture the mouse for looking around. */
@@ -312,10 +343,22 @@ export class PlayerController {
     this.lockOnGesture = navigator.userActivation?.isActive ?? true;
     // Asking uses up the browser's leave to hand the mouse back, whatever it answers.
     this.letGo = false;
+    const raw = this.rawInput && !this.rawUnsupported;
     try {
-      // Newer browsers return a promise; older ones report through pointerlockerror.
-      const p = this.dom.requestPointerLock() as unknown as Promise<void> | undefined;
-      p?.catch?.(() => this.refused());
+      // Newer browsers return a promise; older ones report through pointerlockerror and ignore the options.
+      const p = this.dom.requestPointerLock(raw ? { unadjustedMovement: true } : undefined) as unknown as Promise<void> | undefined;
+      this.lockPromised = !!p?.then;
+      this.lockRaw = raw && this.lockPromised;
+      p?.catch?.((err: unknown) => {
+        // Where raw input isn't supported the browser refuses the whole lock: ask again without it.
+        if (raw && (err as { name?: string } | null)?.name === 'NotSupportedError') {
+          this.rawUnsupported = true;
+          this.lockPending = false;
+          this.lock();
+          return;
+        }
+        this.refused();
+      });
     } catch {
       this.lockPending = false;
       this.lockFailed = true;

@@ -1,8 +1,9 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
+import { gpuReport } from './gpu.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
@@ -20,6 +21,7 @@ app.setPath('userData', path.join(app.getPath('appData'), 'com.nikships.droid-of
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
+const gpuLog = path.join(logDir, 'gpu.log');
 let settings: DesktopSettings = loadSettings(settingsFile);
 /** What the office and its workers run with: the login shell's environment (see desktopEnv). */
 let officeEnv: NodeJS.ProcessEnv = process.env;
@@ -236,6 +238,17 @@ async function changeOfficeDir() {
   await openOffice();
 }
 
+/** Writes what Electron says the GPU draws with to gpu.log. Never fatal: the report is for reading, not for starting. */
+async function writeGpuReport() {
+  try {
+    const info = await app.getGPUInfo('complete');
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(gpuLog, gpuReport(info, app.getGPUFeatureStatus() as unknown as Record<string, string>, new Date()));
+  } catch (err) {
+    console.warn('droid-office: no GPU report', err);
+  }
+}
+
 async function restartOffice() {
   if (!office) return openOffice();
   await stopOffice(true);
@@ -268,6 +281,7 @@ function menu(): Menu {
         { label: 'Change Office Folder…', click: () => void changeOfficeDir() },
         { type: 'separator' },
         { label: 'Show Office Log', click: () => shell.showItemInFolder(officeLog) },
+        { label: 'Show GPU Report', click: () => void writeGpuReport().then(() => shell.showItemInFolder(gpuLog)) },
       ],
     },
     { role: 'viewMenu' },
@@ -308,6 +322,7 @@ if (!app.requestSingleInstanceLock()) {
       saveSettings(settingsFile, settings);
     }
     await openOffice();
+    void writeGpuReport();
     mkdirSync(logDir, { recursive: true });
     downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
     updates.start();

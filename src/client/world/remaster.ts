@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { LightProbeGridWebGL } from 'three/examples/jsm/lighting/LightProbeGridWebGL.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
-import { probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
+import { BAKE_BUDGET_MAX_MS, probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
 import { CLEAR_NIGHT, remasterUniforms } from './sky';
 import { setToonRamp } from './toon';
@@ -142,8 +142,6 @@ function shader(fragmentShader: string, uniforms: Record<string, THREE.IUniform>
   return new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader, uniforms, depthTest: false, depthWrite: false, toneMapped: false });
 }
 
-/** How long a full bake may take of each frame, in ms of the main thread. */
-const BAKE_BUDGET_MS = 14;
 /** How each probe sees the room. */
 const CAPTURE = { cubemapSize: 16, near: 0.05, far: 60 } as const;
 /** The probe grid's box: the floor, a little in from the walls, from just over the floor to just under the ceiling. */
@@ -179,6 +177,8 @@ export class ProbeGI {
   paused = false;
   /** What changes from one floor to the next: hidden while the probes are baked. */
   hideWhileBaking: () => THREE.Object3D[] = () => [];
+  /** How long a bake slice may take of each frame, in ms of the main thread (`bakeBudget` for the frame rate limit). */
+  budgetMs = BAKE_BUDGET_MAX_MS;
   private spacing: number | null = null;
   private cursor = 0;
   private pass = 0;
@@ -274,7 +274,7 @@ export class ProbeGI {
     }
     if (!this.full) return;
     const total = this.probes;
-    const count = Math.min(Math.max(1, Math.floor(BAKE_BUDGET_MS / this.msPerProbe)), total - this.cursor, 96);
+    const count = Math.min(Math.max(1, Math.floor(this.budgetMs / this.msPerProbe)), total - this.cursor, 96);
     const t0 = performance.now();
     this.hidden(() => grid.bake(renderer, this.scene, { start: this.cursor, count, pass: this.pass, ...CAPTURE }));
     this.msPerProbe = THREE.MathUtils.lerp(this.msPerProbe, Math.max(0.05, (performance.now() - t0) / count), 0.3);

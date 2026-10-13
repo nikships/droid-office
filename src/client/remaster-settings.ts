@@ -448,6 +448,21 @@ export function probeCount(span: number, spacing: number): number {
   return Math.max(2, Math.round(span / spacing) + 1);
 }
 
+/** The most of each frame's main thread a GI bake slice takes, in ms, whatever the frame rate limit. */
+export const BAKE_BUDGET_MAX_MS = 14;
+/** The share of a frame a bake slice may take, leaving the rest for drawing the frame itself. */
+export const BAKE_FRAME_SHARE = 0.5;
+
+/**
+ * How long a GI bake slice may take of each frame: half of what one frame has, at most 14 ms. A frame has the limit's
+ * interval (`fpsCap`), or the display's refresh (`refreshMs`) when that is slower: a 120 FPS limit on 60 Hz has 16.7 ms.
+ */
+export function bakeBudget(fpsCap: number, refreshMs = 0): number {
+  const interval = Math.max(fpsCap > 0 ? 1000 / fpsCap : 0, refreshMs > 0 ? refreshMs : 0);
+  if (!(interval > 0)) return BAKE_BUDGET_MAX_MS;
+  return Math.min(BAKE_BUDGET_MAX_MS, interval * BAKE_FRAME_SHARE);
+}
+
 /**
  * The red/green/blue gain for a white balance: temperature -1 (cool) to 1 (warm), tint -1 (green) to 1 (magenta).
  * Normalized so the green channel keeps the overall brightness about the same.

@@ -4,7 +4,7 @@ export type SettingsPane = 'you' | 'sound' | 'graphics' | 'notify' | 'building' 
 export const SETTINGS_PANES: { id: SettingsPane; icon: string; label: string; blurb: string }[] = [
   { id: 'you', icon: '🧍', label: 'You', blurb: 'How you look, how you see the office, and what you hold.' },
   { id: 'sound', icon: '🔊', label: 'Sound', blurb: 'How loud the office is for you.' },
-  { id: 'graphics', icon: '🖥️', label: 'Graphics', blurb: 'Which renderer draws the office, how sharp, how many frames a second, how much of your GPU that takes, and the readout that shows it.' },
+  { id: 'graphics', icon: '🖥️', label: 'Graphics', blurb: 'Which renderer draws the office, how sharp, how many frames a second, how the mouse turns the view, how much of your GPU that takes, and the readout that shows it.' },
   { id: 'notify', icon: '🔔', label: 'Notifications', blurb: 'Hear about a worker that needs someone, or finished, while you’re somewhere else.' },
   { id: 'building', icon: '🏢', label: 'Building', blurb: 'The sky, Jira, where the elevator looks for projects, and local source reload.' },
   {
@@ -37,6 +37,7 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Temporal anti-aliasing' },
   { pane: 'graphics', title: 'Sharpening' },
   { pane: 'graphics', title: 'Frame rate limit' },
+  { pane: 'graphics', title: 'Raw mouse input' },
   { pane: 'graphics', title: 'Overhead lights' },
   { pane: 'graphics', title: 'Performance overlay' },
   { pane: 'notify', title: 'Desktop notifications' },

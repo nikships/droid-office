@@ -10,13 +10,17 @@ function rig(initial: RenderPace = 'idle', fpsCap = 120) {
   let serial = 0;
   let paused = 0;
   const draws: { dt: number; elapsed: number }[] = [];
+  const frames: { at: number; paced: boolean }[] = [];
   const schedules: boolean[] = [];
   const timers = new Map<number, () => void>();
   const loop = new RenderLoop({
     pace: () => pace,
     fpsCap: () => fpsCap,
     now: () => now,
-    draw: (dt, elapsed) => draws.push({ dt, elapsed }),
+    draw: (dt, elapsed, frame) => {
+      draws.push({ dt, elapsed });
+      frames.push(frame);
+    },
     animation: (callback) => {
       animation = callback;
       schedules.push(!!callback);
@@ -33,6 +37,7 @@ function rig(initial: RenderPace = 'idle', fpsCap = 120) {
   return {
     loop,
     draws,
+    frames,
     timers,
     schedules,
     paused: () => paused,
@@ -174,4 +179,20 @@ test('a long hitch at full pace draws once on the late frame, with the hitch cap
   assert.equal(r.draws.length, drawn, 'no catch-up burst');
   r.frame(1000 / 120);
   assert.equal(r.draws.length, drawn + 1);
+});
+
+test('only full-rate animation frames are paced, and the refresh is measured from their gaps', () => {
+  const r = rig('full', 120);
+  r.loop.start();
+  for (let i = 0; i < 4; i++) r.frame(1000 / 120);
+  r.pace('idle');
+  r.frame(1000 / 120);
+  r.idle();
+  assert.deepEqual(
+    r.frames.map((f) => f.paced),
+    [false, true, true, true, true, false, false],
+    'the first draw, idle draws and the hand-off to idle are spaced on purpose',
+  );
+  assert.ok(Math.abs(r.loop.refreshMs - 1000 / 120) < 1e-9);
+  for (let i = 1; i < r.frames.length; i++) assert.ok(r.frames[i].at > r.frames[i - 1].at, 'each frame says when it was drawn');
 });

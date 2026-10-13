@@ -801,6 +801,11 @@ export function openSettings(
     () => settings.graphics.stats,
     (on) => graphicsSet({ stats: on }),
   );
+  const rawMouse = toggle(
+    'Raw mouse input',
+    () => settings.graphics.rawMouse,
+    (on) => graphicsSet({ rawMouse: on }),
+  );
   const paintGraphics = () => {
     const g = settings.graphics;
     for (const [s, v] of [
@@ -816,6 +821,7 @@ export function openSettings(
     taa.paint();
     fpsCap.paint();
     stats.paint();
+    rawMouse.paint();
     const upscaling = g.taa ? ' with TAA' : '. Turn on TAA to bring back the detail a plain stretch loses';
     scaleNote.textContent =
       g.scale >= 1
@@ -901,6 +907,15 @@ export function openSettings(
         }),
       ),
       group(
+        'Mouse',
+        card('Raw mouse input', {
+          desc: desc(
+            'Looking around follows the mouse’s own movement, without the pointer acceleration macOS adds, so the same hand movement always turns the view the same amount. Where the browser can’t, the mouse works as usual. Takes effect the next time the office captures the mouse.',
+          ),
+          control: rawMouse.el,
+        }),
+      ),
+      group(
         'Lighting',
         card('Overhead lights', {
           desc: desc(
@@ -913,7 +928,7 @@ export function openSettings(
         'Diagnostics',
         card('Performance overlay', {
           desc: desc(
-            'Bottom right: frames per second and the frame rate limit, the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), and the render resolution.',
+            'Bottom right: frames per second and the frame rate limit, the frame pacing of the last five seconds (p50, p95 and p99 time between frames, frames that missed their refresh and refreshes that showed a frame again), the GPU time each frame costs and how busy that keeps the GPU, the Mac’s whole-GPU load (the Activity Monitor numbers, on the office’s own Mac), and the render resolution.',
           ),
           control: stats.el,
         }),

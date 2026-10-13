@@ -5,7 +5,7 @@ import { parseIoreg } from '../src/server/gpu-stats.js';
 
 test('graphics settings default to native resolution with MSAA and the overlay on', () => {
   assert.deepEqual(normalizeGraphics(undefined), GRAPHICS_DEFAULTS);
-  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true });
+  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false });
 });
 
 test('saved graphics settings are clamped and snapped, bad values fall back', () => {
@@ -17,11 +17,13 @@ test('saved graphics settings are clamped and snapped, bad values fall back', ()
     overhead: 0.4,
     fpsCap: 60,
     stats: false,
+    rawMouse: false,
   });
   assert.ok(!('shadows' in normalizeGraphics({ shadows: 'live' })));
   assert.equal(normalizeGraphics({ scale: 0.1 }).scale, 0.5);
   assert.equal(normalizeGraphics({ scale: 4 }).scale, 1);
-  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', overhead: '50%', fpsCap: 144, stats: 'yes' }), GRAPHICS_DEFAULTS);
+  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', overhead: '50%', fpsCap: 144, stats: 'yes', rawMouse: 'on' }), GRAPHICS_DEFAULTS);
+  assert.equal(normalizeGraphics({ rawMouse: true }).rawMouse, true);
   assert.equal(normalizeScale(0.775), 0.8);
 });
 
@@ -83,6 +85,7 @@ test('the overlay names fps, GPU time, the Mac GPU and how the scene is drawn', 
   assert.match(statsText({ ...base, gpu: null, system: null, scale: 1, taa: true }), /· TAA$/);
   assert.match(statsText({ ...base, fps: 59.8, fpsCap: 60, gpu: null, system: null, scale: 1, taa: false }), /^60 FPS · cap 60 · /);
   assert.match(statsText({ ...base, gpu: null, system: null, scale: 0.5, taa: false }), /· bilinear$/);
+  assert.equal(statsText({ ...base, pacing: 'p50 8.3 · p95 8.4 · p99 9.0 ms · 0 missed · 0 repeated', gpu: null, system: null, scale: 1, taa: false }).split('\n')[1], 'p50 8.3 · p95 8.4 · p99 9.0 ms · 0 missed · 0 repeated');
 });
 
 test('ioreg output gives the busiest GPU', () => {
