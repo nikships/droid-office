@@ -9,7 +9,8 @@ import { CloudFeature, cloudRefusal, mountCloud, type CloudFloor } from '../src/
 import { HttpError, type FeatureHost } from '../src/server/factory/feature.js';
 import { FactoryRegistry } from '../src/server/factory/registry.js';
 import { toolAction } from '../src/shared/actions.js';
-import { computerOf, type FactoryComputersState } from '../src/shared/factory-computers.js';
+import { computerOf, type FactoryComputer, type FactoryComputersState } from '../src/shared/factory-computers.js';
+import { emptyEnvironments, environmentOf, type FactoryEnvironmentsState } from '../src/shared/factory-environments.js';
 import { SEND_SETTLE_MS, answeredByAssistant, canHost, cloudBadge, cloudSessionUrl, cloudStatus, computerHome, latestReply, latestTool, officeAutonomy, sessionCwd, toolActivity } from '../src/shared/factory-cloud.js';
 import { DESKS } from '../src/shared/layout.js';
 import type { ClientMsg, WorkerInfo } from '../src/shared/protocol.js';
@@ -47,11 +48,15 @@ const MAC = { id: 'mac-id', name: 'macbook', providerType: 'byom', status: 'acti
 const SLEEPY = { id: 'zz-id', name: 'sleepy', providerType: 'e2b', status: 'provisioning', createdAt: 3 };
 
 function computersState(raw = [ORB, MAC, SLEEPY], fetchedAt = 1): FactoryComputersState {
-  return { items: raw.map((c) => computerOf(c)!), metrics: {}, providers: [], fetchedAt };
+  return { items: raw.map((c) => computerOf(c)!), instances: [], metrics: {}, providers: [], waking: {}, secrets: [], fetchedAt };
 }
 
 /** A floor's cloud workers in a temp folder, with the feature that drives them, against `f`. */
-function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: string; agentArgs?: string[]; taken?: string[]; computers?: () => FactoryComputersState | undefined } = {}) {
+function rig(
+  t: test.TestContext,
+  f: ReturnType<typeof factory>,
+  opts: { dir?: string; agentArgs?: string[]; taken?: string[]; computers?: () => FactoryComputersState | undefined; environments?: () => FactoryEnvironmentsState; repo?: string } = {},
+) {
   const dir = opts.dir ?? mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
   if (!opts.dir) t.after(() => rmSync(dir, { recursive: true, force: true }));
   const updates: WorkerInfo[] = [];
@@ -59,7 +64,7 @@ function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: s
   const toasts: string[] = [];
   const taken = new Set(opts.taken ?? []);
   const cloud = new CloudWorkers(dir, { deskTaken: (id) => taken.has(id), names: () => ['Ada'], pool: { names: ['Ada', 'Bea', 'Cy'], colors: ['#123456'] } }, { update: (w) => updates.push(w), remove: (id) => removed.push(id) });
-  const floor: CloudFloor = { id: 'f1', name: 'proj', cloud, unstage: (ids) => cloud.drops.unstage(ids) };
+  const floor: CloudFloor = { id: 'f1', name: 'proj', repo: opts.repo, cloud, unstage: (ids) => cloud.drops.unstage(ids) };
   let polls = 0;
   let now = 1_000_000;
   const host: FeatureHost = { changed: () => {}, pollSoon: () => polls++, api: () => f.api, toast: () => {} };
@@ -67,7 +72,13 @@ function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: s
   const sleeps: number[] = [];
   const retry = { sleep: async (ms: number) => void sleeps.push(ms) };
   const forgotten: string[] = [];
+  const made: FactoryComputer[] = [];
+  const deleted: string[] = [];
   const feature = new CloudFeature(host, {
+    environments: opts.environments,
+    computerMade: (c) => made.push(c),
+    computerDeleted: (id) => deleted.push(id),
+    instanceWait: { everyMs: 0, maxMs: 60_000 },
     floors: () => [floor],
     agentArgs: opts.agentArgs ?? [],
     computers,
@@ -86,6 +97,8 @@ function rig(t: test.TestContext, f: ReturnType<typeof factory>, opts: { dir?: s
     toasts,
     sleeps,
     forgotten,
+    made,
+    deleted,
     polls: () => polls,
     clock: (ms: number) => {
       now += ms;
@@ -303,6 +316,135 @@ test('hire: refuses what can’t run on a Factory computer before asking Factory
   await refused({ deskId: 'nowhere' }, /Unknown desk/);
   await refused({ deskId: DESKS.find((d) => d.station)?.id ?? 'station-issues' }, /board agent|Unknown desk/);
   assert.equal(f.calls.length, 0);
+});
+
+// GET /environments and POST/GET /computers answers from the owner's account, trimmed.
+const ENV_ID = 'cf248f8e-05ce-4fa4-9769-84d85d19792e';
+const REAL_ENV = {
+  id: ENV_ID,
+  name: 'droid-office-default',
+  scope: 'organization',
+  repositories: [{ url: 'https://github.com/nikships/droid-office', script: 'npm ci --no-audit --no-fund\n' }],
+  setupScript: '',
+  latestBuild: { id: '25128393-78d5-4841-a8db-2c2c442f9bc0', status: 'succeeded', trigger: 'edit', truncated: true, withheld: false, createdAt: 1791868403886 },
+  lastSuccessfulBuildAt: 1791868529007,
+  status: 'ready',
+  isDefault: true,
+  createdAt: 1791867364265,
+  updatedAt: 1791868529007,
+};
+const INSTANCE = {
+  id: 'a3283d44-f68a-4fdb-b7b6-a8ec87ff0ceb',
+  name: 'droid-office-default-probe01',
+  isListed: false,
+  providerType: 'e2b',
+  status: 'provisioning',
+  createdAt: 1791871271173,
+  remoteUser: 'factory-user',
+  clonedRepoDirectories: ['/home/factory-user/repos/droid-office'],
+  computerSource: { kind: 'template', templateId: ENV_ID },
+  provisioningSteps: [{ id: 'create-computer', name: 'Create computer', status: 'running' }],
+};
+const envs = (raw: Record<string, unknown>[] = [REAL_ENV]): FactoryEnvironmentsState => ({ ...emptyEnvironments(), items: raw.map((e) => environmentOf(e)!), fetchedAt: 1 });
+const envHire = (extra: Record<string, unknown> = {}) => hireBody({ computerId: undefined, environmentId: ENV_ID, cwd: '', ...extra });
+
+test('hire on an Environment: a computer of its own, waited for, the session in the floor’s clone; home deletes the computer', async (t) => {
+  let polls = 0;
+  const f = factory({
+    'POST /computers': () => json(201, INSTANCE),
+    [`GET /computers/${INSTANCE.id}`]: () => json(200, ++polls < 3 ? INSTANCE : { ...INSTANCE, status: 'active', provisioningSteps: [{ id: 'create-computer', name: 'Create computer', status: 'completed' }] }),
+    'POST /sessions': () => json(201, { sessionId: 's1', status: 'idle' }),
+    'POST /sessions/s1/messages': () => json(200, { status: 'running' }),
+    [`DELETE /computers/${INSTANCE.id}`]: () => new Response(null, { status: 204 }),
+  });
+  const r = rig(t, f, { environments: () => envs(), repo: 'nikships/droid-office' });
+  const w = await r.feature.hire(f.api, envHire(), 'Nik');
+  const create = f.calls.find((c) => c.method === 'POST' && c.path === '/computers')!;
+  assert.match((create.body as { name: string }).name, /^droid-office-default-[0-9a-f]{8}$/);
+  assert.deepEqual((create.body as { source: unknown }).source, { kind: 'environment', environmentId: ENV_ID, isListed: false });
+  assert.equal(polls, 3, 'it waited for the computer to be active');
+  assert.deepEqual(f.calls.find((c) => c.path === '/sessions')!.body, {
+    computerId: INSTANCE.id,
+    cwd: '/home/factory-user/repos/droid-office',
+    sessionSettings: { interactionMode: 'auto', autonomyLevel: 'high', model: 'claude-opus-4', reasoningEffort: 'high' },
+  });
+  assert.deepEqual(w.cloud, {
+    computerId: INSTANCE.id,
+    computerName: 'droid-office-default-probe01',
+    provider: 'e2b',
+    cwd: '/home/factory-user/repos/droid-office',
+    autonomy: 'high',
+    environmentId: ENV_ID,
+    environmentName: 'droid-office-default',
+    instance: true,
+  });
+  assert.equal(cloudBadge(w.cloud!), '☁ droid-office-default');
+  assert.ok(r.toasts.some((x) => x.includes('hired Bea on ☁ droid-office-default')));
+  assert.ok(r.made.length >= 2 && r.made.every((c) => c.unlisted && c.environmentId === ENV_ID), 'the computers slice hears of it while it starts');
+
+  // It's still there after a restart, an instance still.
+  const again = new CloudWorkers(r.dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#000'] } }, { update: () => {}, remove: () => {} });
+  assert.equal(again.get(w.id)?.cloud?.instance, true);
+  assert.equal(again.get(w.id)?.cloud?.environmentName, 'droid-office-default');
+
+  await tick();
+  const home = await r.feature.sendHome(w.id, false);
+  assert.match(home.note!, /computer droid-office-default-probe01 was deleted; its session stays archived/);
+  assert.ok(!f.calls.some((c) => c.path === '/sessions/s1/interrupt'), 'deleting the computer stops the session anyway');
+  assert.ok(f.calls.some((c) => c.method === 'DELETE' && c.path === `/computers/${INSTANCE.id}`));
+  assert.deepEqual(r.deleted, [INSTANCE.id]);
+});
+
+test('hire on an Environment: a typed folder wins, a failure deletes the computer, and one not built yet is refused', async (t) => {
+  let session = json(201, { sessionId: 's2' });
+  let deletes = 0;
+  const f = factory({
+    'POST /computers': () => json(201, { ...INSTANCE, status: 'active' }),
+    'POST /sessions': () => session,
+    [`DELETE /computers/${INSTANCE.id}`]: () => (deletes++ ? json(404, { status: 404, title: 'Not Found', detail: 'Computer not found' }) : new Response(null, { status: 204 })),
+    'DELETE /sessions/s2': () => new Response(null, { status: 204 }),
+  });
+  const r = rig(t, f, {
+    environments: () => envs([REAL_ENV, { ...REAL_ENV, id: 'fresh', name: 'fresh', lastSuccessfulBuildAt: undefined, status: 'building', latestBuild: { ...REAL_ENV.latestBuild, status: 'building' } }]),
+    repo: 'nikships/other',
+  });
+  const w = await r.feature.hire(f.api, envHire({ cwd: '~/scratch', prompt: '' }), 'Nik');
+  assert.equal(w.cloud?.cwd, '/home/factory-user/scratch');
+  // A second floor repository that isn't on it: the session starts in its only clone.
+  const home = await r.feature.sendHome(w.id, true);
+  assert.match(home.note!, /computer droid-office-default-probe01 and its session were deleted/);
+  assert.deepEqual(r.forgotten, ['s2']);
+
+  session = json(422, { detail: 'Computer is not reachable' });
+  await assert.rejects(r.feature.hire(f.api, envHire(), 'Nik'), /not reachable/);
+  assert.equal(deletes, 2, 'the computer made for the failed hire is deleted (a 404 counts as gone)');
+  assert.equal(r.cloud.deskTaken(DESK[0].id), false);
+
+  await assert.rejects(r.feature.hire(f.api, envHire({ environmentId: 'fresh' }), 'Nik'), /fresh is building: a computer starts from an Environment once it has built/);
+  await assert.rejects(r.feature.hire(f.api, envHire({ environmentId: 'gone' }), 'Nik'), /isn't on Factory any more/);
+  const before = f.calls.length;
+  await assert.rejects(r.feature.hire(f.api, envHire({ cwd: 'relative' }), 'Nik'), /full path/);
+  assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, f.calls.slice(0, before).filter((c) => c.method === 'DELETE').length + 1, 'a folder it can’t use gives the computer back too');
+});
+
+test('hire on an Environment: a computer that never comes up is given up on and deleted', async (t) => {
+  const f = factory({
+    'POST /computers': () => json(201, INSTANCE),
+    [`GET /computers/${INSTANCE.id}`]: () => json(200, { ...INSTANCE, status: 'error' }),
+    [`DELETE /computers/${INSTANCE.id}`]: () => json(500, { detail: 'boom' }),
+  });
+  const r = rig(t, f, { environments: () => envs() });
+  await assert.rejects(r.feature.hire(f.api, envHire(), 'Nik'), /didn't start from droid-office-default/);
+  assert.equal(r.cloud.list().length, 0);
+  assert.deepEqual(r.deleted, [], 'a delete that failed is not counted as gone');
+  const slow = factory({ 'POST /computers': () => json(201, INSTANCE), [`GET /computers/${INSTANCE.id}`]: () => json(200, INSTANCE), [`DELETE /computers/${INSTANCE.id}`]: () => new Response(null, { status: 204 }) });
+  const r2 = rig(t, slow, { environments: () => envs() });
+  const never = new CloudFeature(
+    { changed: () => {}, pollSoon: () => {}, api: () => slow.api, toast: () => {} },
+    { floors: () => [r2.floor], agentArgs: [], computers: () => computersState(), environments: () => envs(), toast: () => {}, instanceWait: { everyMs: 0, maxMs: 0 } },
+  );
+  await assert.rejects(never.hire(slow.api, envHire(), 'Nik'), /within 0 minutes/);
+  assert.equal(r2.cloud.deskTaken(DESK[0].id), false);
 });
 
 test('poll: working with its latest tool call acted out, then done with its reply, and the session’s model', async (t) => {

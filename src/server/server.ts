@@ -418,7 +418,7 @@ export async function startServer(cfg: Config) {
     toast: (text, level) => toastAll(text, level),
     // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
     cloud: {
-      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
+      floors: () => [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, repo: f.def.repo, cloud: f.cloud, unstage: (ids: readonly string[]) => f.workers.unstage(ids) })),
       agentArgs: cfg.agentArgs,
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
     },

@@ -2,8 +2,9 @@ import type { FactoryState } from '../../shared/factory.js';
 import { isFactoryFeature } from '../../shared/factory.js';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol.js';
 import { CiFeature } from './ci.js';
-import { mountCloud, type CloudOptions } from './cloud.js';
+import { mountCloud } from './cloud.js';
 import { ComputersFeature } from './computers.js';
+import { EnvironmentsFeature } from './environments.js';
 import { FactoryOffice } from './office.js';
 import { FactoryRegistry } from './registry.js';
 import { SessionsFeature, type OfficeSessionRef } from './sessions.js';
@@ -20,7 +21,7 @@ export interface MountOptions {
   fetchImpl?: typeof fetch;
   base?: string;
   /** The floors' cloud workers (cloud.ts), when the office has floors to seat them on. */
-  cloud?: Omit<CloudOptions, 'computers'>;
+  cloud?: Parameters<typeof mountCloud>[1];
   /** The office's own workers with a Droid session, on every floor, for their credits. */
   officeSessions?: () => OfficeSessionRef[];
   /** The floors and the Droid command AutoWiki's /wiki runs need (wiki.ts). */
@@ -37,6 +38,7 @@ export function mountFactory(opts: MountOptions) {
   const registry = new FactoryRegistry({ link: office, broadcast: opts.broadcast, toast: opts.toast });
   office.onChange = () => registry.connectionChanged();
   registry.register((host) => new ComputersFeature(host));
+  registry.register((host) => new EnvironmentsFeature(host));
   registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
   registry.register((host) => new CiFeature(host));
   const wiki = registry.register((host) => new WikiFeature(host, { ...opts.wiki, key: () => office.key(), fetchImpl: opts.fetchImpl, base: opts.base })) as WikiFeature;

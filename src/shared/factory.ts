@@ -4,6 +4,8 @@ import type { FactoryCloudState } from './factory-cloud.js';
 import { emptyCloud } from './factory-cloud.js';
 import type { FactoryComputersState } from './factory-computers.js';
 import { emptyComputers } from './factory-computers.js';
+import type { FactoryEnvironmentsState } from './factory-environments.js';
+import { emptyEnvironments } from './factory-environments.js';
 import type { FactorySessionsState } from './factory-sessions.js';
 import { emptySessions } from './factory-sessions.js';
 import type { FactoryWikiState } from './factory-wiki.js';
@@ -16,18 +18,19 @@ import { emptyWiki } from './factory-wiki.js';
 export const FACTORY_KEYS_URL = 'https://app.factory.ai/settings/api-keys';
 
 /** The Factory features the office polls, each with its own slice of FactoryState. */
-export type FactoryFeatureId = 'computers' | 'sessions' | 'ci' | 'wiki' | 'cloud';
-export const FACTORY_FEATURES: readonly FactoryFeatureId[] = ['computers', 'sessions', 'ci', 'wiki', 'cloud'];
+export type FactoryFeatureId = 'computers' | 'environments' | 'sessions' | 'ci' | 'wiki' | 'cloud';
+export const FACTORY_FEATURES: readonly FactoryFeatureId[] = ['computers', 'environments', 'sessions', 'ci', 'wiki', 'cloud'];
 
 export function isFactoryFeature(v: unknown): v is FactoryFeatureId {
   return typeof v === 'string' && (FACTORY_FEATURES as readonly string[]).includes(v);
 }
 
-/** What the connection probes: the four API groups the features read, plus the organization and service accounts. Cloud workers are sessions. */
-export type FactoryGroup = 'computers' | 'sessions' | 'ci' | 'wiki' | 'organization' | 'serviceAccounts';
+/** What the connection probes: the API groups the features read, plus the organization and service accounts. Cloud workers are sessions. */
+export type FactoryGroup = 'computers' | 'environments' | 'sessions' | 'ci' | 'wiki' | 'organization' | 'serviceAccounts';
 
 export const FACTORY_GROUPS: readonly { id: FactoryGroup; label: string }[] = [
   { id: 'computers', label: 'Droid Computers' },
+  { id: 'environments', label: 'Environments' },
   { id: 'sessions', label: 'Droid sessions' },
   { id: 'ci', label: 'CI automations' },
   { id: 'wiki', label: 'AutoWiki' },
@@ -85,6 +88,7 @@ export interface FactoryConnection {
 export interface FactoryState {
   connection: FactoryConnection;
   computers: FactoryComputersState;
+  environments: FactoryEnvironmentsState;
   sessions: FactorySessionsState;
   ci: FactoryCiState;
   wiki: FactoryWikiState;
@@ -93,7 +97,7 @@ export interface FactoryState {
 
 /** The slices before anything is read: what a disconnected office shows. */
 export function emptyFactoryState(): FactoryState {
-  return { connection: { connected: false, capabilities: [] }, computers: emptyComputers(), sessions: emptySessions(), ci: emptyCi(), wiki: emptyWiki(), cloud: emptyCloud() };
+  return { connection: { connected: false, capabilities: [] }, computers: emptyComputers(), environments: emptyEnvironments(), sessions: emptySessions(), ci: emptyCi(), wiki: emptyWiki(), cloud: emptyCloud() };
 }
 
 /** One group's capability, if the probe has said. */
