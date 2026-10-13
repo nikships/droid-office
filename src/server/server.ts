@@ -1011,10 +1011,30 @@ export async function startServer(cfg: Config) {
           return send(res, status === 400 || status === 403 || status === 404 ? status : 502, { error: (err as Error).message });
         }
       }
-      if (p.startsWith('/api/docs') && req.method === 'GET') {
-        // The bookshelf: the project's Markdown files, one to read, and the pictures in it (see docs.ts).
+      if (p.startsWith('/api/docs')) {
+        // The bookshelf: the project's docs and text files, one to read or save, search across them, and pictures (see docs.ts).
         if (!floor) return send(res, 404, { error: 'No such floor' });
-        if (p === '/api/docs') return send(res, 200, await floor.docs.list());
+        if (p === '/api/docs/file' && req.method === 'PUT') {
+          if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
+          let body: { path?: unknown; text?: unknown; baseMtime?: unknown };
+          try {
+            body = JSON.parse(await readBody(req, 3 * 1024 * 1024));
+          } catch (err) {
+            return (err as Error).message === 'too large' ? send(res, 413, { error: 'That file is over 2 MB' }) : send(res, 400, { error: 'Bad JSON' });
+          }
+          const file = typeof body?.path === 'string' ? str(body.path, 4096) : '';
+          const text = typeof body?.text === 'string' ? body.text : undefined;
+          const baseMtime = typeof body?.baseMtime === 'number' && Number.isFinite(body.baseMtime) ? body.baseMtime : undefined;
+          if (!file || text === undefined) return send(res, 400, { error: 'Bad request' });
+          const r = await floor.docs.write(file, text, baseMtime);
+          return 'error' in r ? send(res, r.status, { error: r.error, ...(r.mtime !== undefined ? { mtime: r.mtime } : {}) }) : send(res, 200, r);
+        }
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        if (p === '/api/docs') return send(res, 200, await floor.docs.list(url.searchParams.get('all') === '1'));
+        if (p === '/api/docs/search') {
+          const q = str(url.searchParams.get('q'), 256) ?? '';
+          return send(res, 200, await floor.docs.search(q, url.searchParams.get('all') !== '0'));
+        }
         const file = str(url.searchParams.get('path'), 4096);
         if (!file) return send(res, 400, { error: 'Bad request' });
         if (p === '/api/docs/file') {
