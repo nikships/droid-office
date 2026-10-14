@@ -5,7 +5,7 @@ import path from 'node:path';
 import { insideCheckout } from './changes.js';
 import type { ImageResult } from './decor.js';
 import { changedImageType } from '../shared/protocol.js';
-import { isBinaryBuffer, isDocPath, isEditablePath, type DocFile, type DocList, type DocSaveResult, type DocSearchHit, type DocSearchMatch, type DocSearchResults, type DocText } from '../shared/docs.js';
+import { isBinaryBuffer, isDocPath, isEditablePath, type DocFile, type DocGitStatus, type DocList, type DocSaveResult, type DocSearchHit, type DocSearchMatch, type DocSearchResults, type DocText } from '../shared/docs.js';
 
 // The bookshelf: the Markdown docs and editable text files in a floor's project, to read, search
 // and edit in the office (ui/bookshelf.ts). Git says which files are the project's (tracked, or new
@@ -37,6 +37,47 @@ function gitFiles(dir: string, all: boolean): Promise<string[] | undefined> {
       resolve([...new Set(stdout.split('\0').filter(Boolean))]);
     });
   });
+}
+
+function git(dir: string, args: string[]): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 20_000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }, (err, stdout) => resolve(err ? undefined : stdout));
+  });
+}
+
+/**
+ * Each changed file's status from `git status --porcelain=v1 -z` output, by path from the repository
+ * root with `prefix` (the project folder inside the repository, "" or "app/") cut off.
+ */
+export function parseGitStatus(out: string, prefix = ''): Map<string, DocGitStatus> {
+  const status = new Map<string, DocGitStatus>();
+  const fields = out.split('\0');
+  for (let i = 0; i < fields.length; ) {
+    const rec = fields[i++];
+    if (rec.length < 4) continue;
+    const xy = rec.slice(0, 2);
+    const file = rec.slice(3);
+    // A rename or copy is followed by the path it came from.
+    if (/[RC]/.test(xy)) i++;
+    let kind: DocGitStatus;
+    if (UNMERGED.test(xy)) kind = 'C';
+    else if (xy.includes('D')) continue;
+    else if (xy === '??') kind = 'U';
+    else if (/[RC]/.test(xy)) kind = 'R';
+    else if (xy[0] === 'A') kind = 'A';
+    else kind = 'M';
+    if (file.startsWith(prefix)) status.set(file.slice(prefix.length), kind);
+  }
+  return status;
+}
+
+/** The XY codes `git status` gives a path with a merge conflict. */
+const UNMERGED = /^(DD|AU|UD|UA|DU|AA|UU)$/;
+
+/** The uncommitted changes under `dir`, by path from `dir`; empty when it isn't a git checkout. */
+async function gitChanges(dir: string): Promise<Map<string, DocGitStatus>> {
+  const [prefix, out] = await Promise.all([git(dir, ['rev-parse', '--show-prefix']), git(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', '.'])]);
+  return out === undefined ? new Map() : parseGitStatus(out, (prefix ?? '').trim());
 }
 
 /** Without git: the files under `dir`, not following links or going into hidden or build folders. */
@@ -137,7 +178,8 @@ export class Docs {
 
   private async scan(all: boolean): Promise<DocList> {
     const keep = all ? isEditablePath : isDocPath;
-    const found = ((await gitFiles(this.dir, all)) ?? (await walkFiles(this.dir, all))).filter(keep).map((p) => p.split(path.sep).join('/'));
+    const [listed, changes] = await Promise.all([gitFiles(this.dir, all), gitChanges(this.dir)]);
+    const found = (listed ?? (await walkFiles(this.dir, all))).filter(keep).map((p) => p.split(path.sep).join('/'));
     found.sort((a, b) => a.localeCompare(b));
     const more = found.length > MAX_DOCS;
     const files: DocFile[] = [];
@@ -161,7 +203,8 @@ export class Docs {
               this.titles.set(p, known);
               title = known.title;
             }
-            return { path: p, ...(title ? { title } : {}), size: s.size, mtime: Math.round(s.mtimeMs) };
+            const change = changes.get(p);
+            return { path: p, ...(title ? { title } : {}), size: s.size, mtime: Math.round(s.mtimeMs), ...(change ? { git: change } : {}) };
           } catch {
             return undefined;
           }
