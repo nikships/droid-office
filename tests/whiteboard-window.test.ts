@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { CANONICAL_WIDTH, OWNER_AUTHOR, applyOps, emptyBoard, type Author, type Board, type Op } from '../src/shared/whiteboard.js';
 import { canvasBounds, changesSince, dragBox, dragMarkOps, pictureSize, placeMarks, reattachMarkOps } from '../src/shared/whiteboard-marks.js';
-import { folderFiles, mimeFor, pingRows, pingedText } from '../src/client/ui/whiteboard-picker.js';
+import { forgeWords } from '../src/shared/floors.js';
+import { folderFiles, mimeFor, pingRows, pingTask, pingWhere, pingedText } from '../src/client/ui/whiteboard-picker.js';
 import {
   CANVAS_MARGIN,
   ZOOM_MAX,
@@ -296,9 +297,38 @@ test('ping picker: eligibility and why for each worker, the ones that can first'
   assert.equal(by.d.status, 'down');
   assert.match(by.n.note, /waiting on an answer/);
   assert.match(by.z.note, /Types the line/);
+  assert.equal(by.z.task, undefined);
+  assert.equal(by.z.where, undefined);
   assert.equal(pingedText('Zed', 'queue'), 'Queued for Zed after its turn');
   assert.equal(pingedText('Zed', 'resume'), 'Woke Zed up with it');
   assert.equal(pingedText('Zed', 'type'), "Typed it into Zed's terminal");
+});
+
+test('ping picker: each row says what the worker is on and where', () => {
+  const labels = { idle: 'ready', starting: 'starting' };
+  const worktree = { path: '.droid-office/worktrees/byte', branch: 'office/byte-1', base: 'abc' };
+  const rows = pingRows(
+    [
+      worker({ id: 'b', name: 'Byte', task: { name: 'Fix login redirect', summary: 'Editing auth.ts' }, prompt: 'ignored', worktree: { ...worktree, made: 'fix-login' }, pr: { number: 12, url: 'u' } }),
+      worker({ id: 'd', name: 'Dot', prompt: `\n  Add a dark mode toggle to the settings window ${'and more '.repeat(20)}\nsecond line`, worktree }),
+      worker({ id: 's', name: 'Sprocket', status: 'starting' }),
+    ],
+    labels,
+    1000,
+    forgeWords('gitlab'),
+  );
+  const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.equal(by.b.task, 'Fix login redirect');
+  assert.equal(by.b.where, 'fix-login · MR !12');
+  assert.match(by.d.task ?? '', /^Add a dark mode toggle to the settings window and more/);
+  assert.ok((by.d.task ?? '').endsWith('…'));
+  assert.ok((by.d.task ?? '').length <= 80);
+  assert.equal(by.d.where, 'office/byte-1');
+  assert.equal(by.s.task, undefined);
+  assert.equal(by.s.where, undefined);
+  assert.equal(by.s.ok, false);
+  assert.equal(pingWhere(worker({ pr: { number: 7, url: 'u' } })), 'PR #7');
+  assert.equal(pingTask(worker({ prompt: 'short' })), 'short');
 });
 
 test('Copy for agent: one line with the id, the title and the read command', () => {

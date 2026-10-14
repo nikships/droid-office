@@ -1,6 +1,7 @@
 // What the Whiteboard dialogs need that is not a mark: the Ping a worker rows, and the media types
 // and file list of a folder upload.
 
+import { forgeWords, type ForgeWords } from '../../shared/floors';
 import type { WorkerInfo } from '../../shared/protocol';
 import { pingEligibility, type PingHow } from '../../shared/whiteboard-ping';
 
@@ -8,6 +9,10 @@ export interface PingRow {
   id: string;
   name: string;
   color: string;
+  /** What it is on: its task card's title, else the prompt it was hired with. Unset while it has neither. */
+  task?: string;
+  /** Where that work lives: its branch and pull request. */
+  where?: string;
   /** The status word, as the rest of the office says it. */
   status: string;
   statusClass: string;
@@ -25,13 +30,45 @@ const HOW_NOTE: Record<PingHow, string> = {
   queue: 'Queues the line behind its current turn',
 };
 
+const TASK_CHARS = 80;
+
+/** What a worker is on, so the owner can pick it without knowing its name. */
+export function pingTask(w: WorkerInfo): string | undefined {
+  const name = w.task?.name.trim();
+  if (name) return name;
+  const line = w.prompt
+    ?.split('\n')
+    .map((l) => l.trim())
+    .find(Boolean);
+  if (!line) return undefined;
+  return line.length > TASK_CHARS ? `${line.slice(0, TASK_CHARS - 1).trimEnd()}…` : line;
+}
+
+/** Its branch (the one it made, else its worktree's) and its pull request, as one line. */
+export function pingWhere(w: WorkerInfo, words: ForgeWords = forgeWords(undefined)): string | undefined {
+  const branch = w.worktree?.made ?? w.worktree?.branch;
+  const parts = [branch, w.pr && `${words.pr} ${words.ref(w.pr.number)}`].filter(Boolean);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
 /** The picker's rows: every worker on the floor with whether it can be pinged now and why not; the ones that can first, then A to Z. */
-export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, now = Date.now()): PingRow[] {
+export function pingRows(workers: Iterable<WorkerInfo>, statusLabel: Record<string, string>, now = Date.now(), words: ForgeWords = forgeWords(undefined)): PingRow[] {
   const rows = [...workers].map((w): PingRow => {
     const e = pingEligibility(w, now);
     const down = w.downedUntil !== undefined && w.downedUntil > now;
     const status = w.guest ? 'guest' : down ? 'down' : (statusLabel[w.status] ?? w.status);
-    const base = { id: w.id, name: w.name, color: w.color, status, statusClass: w.guest ? 'offline' : down ? 'needs_input' : w.status, ...(w.guest ? { guest: true } : {}) };
+    const task = pingTask(w);
+    const where = pingWhere(w, words);
+    const base = {
+      id: w.id,
+      name: w.name,
+      color: w.color,
+      ...(task ? { task } : {}),
+      ...(where ? { where } : {}),
+      status,
+      statusClass: w.guest ? 'offline' : down ? 'needs_input' : w.status,
+      ...(w.guest ? { guest: true } : {}),
+    };
     return e.ok ? { ...base, ok: true, how: e.how, note: HOW_NOTE[e.how] } : { ...base, ok: false, note: e.reason, ...(e.busy ? { busy: true } : {}) };
   });
   const rank = (r: PingRow) => (r.ok ? 0 : r.busy ? 1 : 2);
