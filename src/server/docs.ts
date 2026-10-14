@@ -64,7 +64,7 @@ export function parseGitStatus(out: string, prefix = ''): Map<string, DocGitStat
     else if (xy.includes('D')) continue;
     else if (xy === '??') kind = 'U';
     else if (/[RC]/.test(xy)) kind = 'R';
-    else if (xy[0] === 'A') kind = 'A';
+    else if (xy.includes('A')) kind = 'A';
     else kind = 'M';
     if (file.startsWith(prefix)) status.set(file.slice(prefix.length), kind);
   }

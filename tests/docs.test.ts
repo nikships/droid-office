@@ -190,7 +190,7 @@ test('the tree sorts like a file manager and counts the changed files under each
 
 test('git status marks each changed file, from the project folder inside the repository', async (t) => {
   // Renames carry the old path as a second field; deletions aren't on the shelf; conflicts win.
-  const raw = ['M  src/a.ts', ' M README.md', 'A  new.md', '?? notes/todo.md', 'R  src/b.ts', 'src/old.ts', ' D gone.md', 'UU both.md', 'AM staged-then-edited.md', ''].join('\0');
+  const raw = ['M  src/a.ts', ' M README.md', 'A  new.md', '?? notes/todo.md', 'R  src/b.ts', 'src/old.ts', ' D gone.md', 'UU both.md', 'AM staged-then-edited.md', ' A intent.md', ''].join('\0');
   assert.deepEqual(
     [...parseGitStatus(raw)],
     [
@@ -201,6 +201,7 @@ test('git status marks each changed file, from the project folder inside the rep
       ['src/b.ts', 'R'],
       ['both.md', 'C'],
       ['staged-then-edited.md', 'A'],
+      ['intent.md', 'A'],
     ],
   );
   assert.deepEqual([...parseGitStatus('M  app/src/a.ts\0 M other/b.ts\0', 'app/')], [['src/a.ts', 'M']]);

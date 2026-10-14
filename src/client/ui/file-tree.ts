@@ -119,6 +119,8 @@ export interface FileTreeOptions {
   storageKey: string;
   /** Said when nothing matches the filter, or there are no files. */
   empty(query: string): string;
+  /** Show a filter result in the tree: the owner clears its filter box, then calls `reveal`. */
+  onReveal(path: string): void;
 }
 
 export interface FileTree {
@@ -185,10 +187,13 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
 
   const rowPath = (r: ViewRow | undefined) => (!r ? undefined : r.kind === 'dir' ? r.dir.path : r.kind === 'file' ? r.file.path : r.hit.doc.path);
 
-  const persist = () => saveExpanded(opts.storageKey, setKey, expanded);
+  const persist = () => {
+    const known = new Set(docTreeDirPaths(tree));
+    saveExpanded(opts.storageKey, setKey, new Set([...expanded].filter((p) => known.has(p))));
+  };
 
   /** Rebuild the rows from the tree or the filter, keeping the cursor on the same path when it's still there. */
-  const rebuild = (keepPath = rowPath(rows[cursor])) => {
+  const rebuild = (keepPath: string | undefined) => {
     rows = query ? hits.map((hit) => ({ kind: 'hit', hit })) : docTreeRows(tree, expanded);
     const at = keepPath === undefined ? -1 : rows.findIndex((r) => rowPath(r) === keepPath);
     cursor = at >= 0 ? at : Math.min(cursor, Math.max(0, rows.length - 1));
@@ -245,6 +250,7 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
   const nameParts = (name: string) => name.split('/').flatMap((part, i) => (i ? [h('span.ft-sep', {}, '/'), part] : [part]));
 
   function draw() {
+    if (frame) cancelAnimationFrame(frame);
     frame = 0;
     const top = el.scrollTop;
     const height = el.clientHeight || 600;
@@ -252,6 +258,8 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
     const last = Math.min(rows.length, Math.ceil((top + height) / ROW_H) + OVERSCAN);
     const out: HTMLElement[] = [];
     for (let i = first; i < last; i++) out.push(renderRow(rows[i], i));
+    // The cursor's row is always drawn, so aria-activedescendant names a row that exists.
+    if (rows[cursor] && (cursor < first || cursor >= last)) out.push(renderRow(rows[cursor], cursor));
     canvas.replaceChildren(...out);
     if (rows[cursor]) el.setAttribute('aria-activedescendant', `${id}-${cursor}`);
     else el.removeAttribute('aria-activedescendant');
@@ -260,7 +268,14 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
   const schedule = () => {
     frame ||= requestAnimationFrame(draw);
   };
-  el.addEventListener('scroll', schedule, { passive: true });
+  el.addEventListener(
+    'scroll',
+    () => {
+      closeMenu();
+      schedule();
+    },
+    { passive: true },
+  );
 
   const scrollToCursor = () => {
     const top = cursor * ROW_H;
@@ -283,15 +298,16 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
       else expanded.delete(p);
     }
     persist();
-    rebuild();
+    rebuild(rowPath(rows[cursor]));
   };
 
   const activate = (i: number) => {
     const r = rows[i];
     if (!r) return;
     cursor = i;
-    if (r.kind === 'dir') toggle(r.dir);
-    else opts.onOpen(r.kind === 'file' ? r.file.path : r.hit.doc.path);
+    if (r.kind === 'dir') return toggle(r.dir);
+    draw();
+    opts.onOpen(r.kind === 'file' ? r.file.path : r.hit.doc.path);
   };
 
   /** The index of the row's parent folder, walking up from `i`. */
@@ -331,7 +347,7 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
   });
 
   el.addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const r = rows[cursor];
     const page = Math.max(1, Math.floor(el.clientHeight / ROW_H) - 1);
     switch (e.key) {
@@ -423,7 +439,7 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
     } else {
       const path = r.kind === 'file' ? r.file.path : r.hit.doc.path;
       items.push(['Open', () => opts.onOpen(path)]);
-      if (r.kind === 'hit') items.push(['Reveal in tree', () => api.reveal(path)]);
+      if (r.kind === 'hit') items.push(['Reveal in tree', () => opts.onReveal(path)]);
       items.push(['', null]);
       items.push(['Copy path', () => copyText(path, path)]);
       items.push(['Copy name', () => copyText(nameOf(path), nameOf(path))]);
@@ -501,8 +517,8 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
       if (key !== setKey) {
         setKey = key;
         expanded = loadExpanded(opts.storageKey, key) ?? new Set(files.length <= SMALL_PROJECT ? docTreeDirPaths(tree) : []);
+        if (current) for (const p of docTreeAncestors(tree, current)) expanded.add(p);
       }
-      if (current) for (const p of docTreeAncestors(tree, current)) expanded.add(p);
       hits = query ? filterDocs(files, query) : [];
       rebuild(keep);
     },
@@ -534,20 +550,23 @@ export function createFileTree(opts: FileTreeOptions): FileTree {
       }
       for (const p of docTreeAncestors(tree, path)) expanded.add(p);
       persist();
-      rebuild(path);
+      // A folder inside a compacted chain ("acme" in "com/acme/app") has no row of its own: land on the chain's.
+      const next = docTreeRows(tree, expanded);
+      const target = next.some((r) => rowPath(r) === path) ? path : rowPath(next.find((r) => r.kind === 'dir' && r.dir.path.startsWith(`${path}/`)));
+      rebuild(target ?? path);
       scrollToCursor();
       draw();
     },
     expandAll() {
       expanded = new Set(docTreeDirPaths(tree));
       persist();
-      rebuild();
+      rebuild(rowPath(rows[cursor]));
     },
     collapseAll() {
       expanded.clear();
       persist();
-      rebuild();
       el.scrollTop = 0;
+      rebuild(rowPath(rows[cursor]));
     },
     moveCursor(by) {
       setCursor(cursor + by);

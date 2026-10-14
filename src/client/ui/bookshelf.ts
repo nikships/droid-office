@@ -210,6 +210,7 @@ export function openBookshelf(deps: ShelfDeps) {
   const tree = createFileTree({
     storageKey: TREE_KEY,
     onOpen: (path) => requestOpenDoc(path),
+    onReveal: (path) => revealInSidebar(path),
     ...(blob ? { forge: { site: blob.site, url: (p: string) => blobUrl(p) } } : {}),
     empty: (query) => (query ? `No ${scope === 'docs' ? 'doc' : 'file'} matches “${query}”.` : scope === 'docs' ? 'No Markdown files in this project yet.' : 'No editable files in this project yet.'),
   });
@@ -643,9 +644,12 @@ export function openBookshelf(deps: ShelfDeps) {
     all[grepSel].scrollIntoView({ block: 'nearest' });
   };
 
+  /** The results the list was last drawn from, so reopening a file keeps your place in it. */
+  let grepDrawn: DocSearchResults | null = null;
   const renderGrepResults = () => {
     const queryText = filter.value.trim();
     if (!queryText) {
+      grepDrawn = null;
       count.textContent = `Search inside ${scope === 'docs' ? 'the docs' : 'every project file'}`;
       grepList.replaceChildren(h('div.ft-empty', {}, 'Type a word or phrase to find the lines it is on.'));
       return;
@@ -658,9 +662,15 @@ export function openBookshelf(deps: ShelfDeps) {
     const totalMatches = hits.reduce((sum, x) => sum + x.matches.length, 0);
     count.textContent = hits.length ? `${totalMatches} match${totalMatches === 1 ? '' : 'es'} in ${hits.length}${grepResults?.more ? '+' : ''} file${hits.length === 1 ? '' : 's'}` : 'No matches';
     if (!hits.length) {
+      grepDrawn = null;
       grepList.replaceChildren(h('div.ft-empty', {}, `Nothing ${scope === 'docs' ? 'in the docs' : 'in the project'} says “${queryText}”.`));
       return;
     }
+    if (grepDrawn === grepResults) {
+      for (const row of grepList.querySelectorAll<HTMLElement>('.bs-grep-file')) row.classList.toggle('is-open', row.title === current);
+      return;
+    }
+    grepDrawn = grepResults;
     const items: HTMLElement[] = [];
     for (const hit of hits) {
       const name = nameOf(hit.path);
@@ -771,10 +781,11 @@ export function openBookshelf(deps: ShelfDeps) {
     tree.setFiles(files, `${floor}:${scope}`);
   };
 
+  /** Whether you picked a scope yourself this visit, so the first listing doesn't override it. */
+  let scopePicked = false;
   const applyScope = (nextScope: ShelfScope) => {
     if (scope === nextScope) return;
     scope = nextScope;
-    rememberScope(floor, scope);
     feedTree();
     syncScopeAndLayoutUI();
     refilter();
@@ -818,8 +829,13 @@ export function openBookshelf(deps: ShelfDeps) {
     }
   };
 
-  scopeDocsBtn.addEventListener('click', () => applyScope('docs'));
-  scopeAllBtn.addEventListener('click', () => applyScope('all'));
+  const pickScope = (next: ShelfScope) => {
+    scopePicked = true;
+    rememberScope(floor, next);
+    applyScope(next);
+  };
+  scopeDocsBtn.addEventListener('click', () => pickScope('docs'));
+  scopeAllBtn.addEventListener('click', () => pickScope('all'));
   layoutFilesBtn.addEventListener('click', () => applyLayout('files'));
   layoutGrepBtn.addEventListener('click', () => applyLayout('grep'));
   locateBtn.addEventListener('click', () => {
@@ -869,25 +885,35 @@ export function openBookshelf(deps: ShelfDeps) {
     el.style.setProperty('--bs-side', `${w}px`);
     return w;
   };
-  const savedSide = Number(localStorage.getItem(SIDE_KEY));
-  if (savedSide) setSide(savedSide);
+  try {
+    const savedSide = Number(localStorage.getItem(SIDE_KEY));
+    if (savedSide) setSide(savedSide);
+  } catch {
+    // Storage is off: the sidebar starts at its default width.
+  }
   resizer.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     resizer.setPointerCapture(e.pointerId);
     const left = docsBody.getBoundingClientRect().left;
-    const onMove = (ev: PointerEvent) => setSide(ev.clientX - left);
-    const onUp = (ev: PointerEvent) => {
-      resizer.releasePointerCapture(ev.pointerId);
+    let width = el.style.getPropertyValue('--bs-side');
+    const onMove = (ev: PointerEvent) => {
+      width = String(setSide(ev.clientX - left));
+    };
+    const onEnd = () => {
       resizer.removeEventListener('pointermove', onMove);
-      resizer.removeEventListener('pointerup', onUp);
+      resizer.removeEventListener('pointerup', onEnd);
+      resizer.removeEventListener('pointercancel', onEnd);
+      resizer.removeEventListener('lostpointercapture', onEnd);
       try {
-        localStorage.setItem(SIDE_KEY, String(setSide(ev.clientX - left)));
+        if (width) localStorage.setItem(SIDE_KEY, String(Number.parseInt(width, 10)));
       } catch {
         // Storage is off: the width just won't be remembered.
       }
     };
     resizer.addEventListener('pointermove', onMove);
-    resizer.addEventListener('pointerup', onUp);
+    resizer.addEventListener('pointerup', onEnd);
+    resizer.addEventListener('pointercancel', onEnd);
+    resizer.addEventListener('lostpointercapture', onEnd);
   });
   resizer.addEventListener('dblclick', () => {
     el.style.removeProperty('--bs-side');
@@ -900,7 +926,8 @@ export function openBookshelf(deps: ShelfDeps) {
 
   // Esc in a filled box clears it first; the next Esc closes the window.
   const releaseFilterEscape = claimEscape(findBox, () => {
-    if (document.activeElement !== filter || !filter.value) return false;
+    const at = document.activeElement;
+    if (!filter.value || !(at === filter || tree.el.contains(at))) return false;
     filter.value = '';
     refilter();
     return true;
@@ -922,6 +949,8 @@ export function openBookshelf(deps: ShelfDeps) {
     if (mod && e.shiftKey && key === 'f') {
       e.preventDefault();
       applyLayout('grep');
+      filter.focus();
+      filter.select();
       return;
     }
     if (!current) return;
@@ -1072,7 +1101,7 @@ export function openBookshelf(deps: ShelfDeps) {
       // Docs when the project has Markdown, else All files; and whichever you picked last time.
       const hasDocs = allFiles.some((f) => isDocPath(f.path));
       const saved = lastScope(floor);
-      scope = !hasDocs && allFiles.length ? 'all' : (saved ?? 'docs');
+      if (!scopePicked) scope = !hasDocs && allFiles.length ? 'all' : (saved ?? 'docs');
       feedTree();
       syncScopeAndLayoutUI();
       refilter();
