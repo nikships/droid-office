@@ -1,18 +1,22 @@
-import { buildDocTree, flattenDocTree, isDocPath, isEditablePath, resolveDocLink, type DocFile, type DocList, type DocSaveResult, type DocSearchHit, type DocSearchResults, type DocText, type DocTreeDir } from '../../shared/docs';
+import { isDocPath, isEditablePath, resolveDocLink, type DocFile, type DocList, type DocSaveResult, type DocSearchHit, type DocSearchResults, type DocText } from '../../shared/docs';
 import { withToken } from '../token';
 import { claimEscape, clip, h, openModal, setDoing, timeAgo, toast } from './dom';
 import type { CodeEditor, CodeEditorCursor } from './editor';
 import { mountWikiTab, type WikiTab } from './factory-wiki';
+import { fileIcon, glyph, iconSvg, type ToolGlyph } from './file-icons';
+import { createFileTree, GIT_LABEL, marked, shelfOrder } from './file-tree';
 import { emptyState, windowHeader } from './kit';
 import { markdownFile } from './markdown';
 
 // The bookshelf: every Markdown doc and editable text file in the floor's project, to read, search
-// and edit without leaving the office. Filter by name/title, browse the collapsible folder tree, or
-// grep across file contents; read Markdown rendered like GitHub, or switch to Edit / Split mode to
-// edit with CodeMirror 6 syntax highlighting and save straight to disk (⌘S / Ctrl+S). While it's
-// open your character holds an open book. Its AutoWiki tab reads the Factory wiki (ui/factory-wiki.ts).
+// and edit without leaving the office. Browse the project tree (ui/file-tree.ts), filter it down to
+// a ranked "go to file" list, or search inside files; read Markdown rendered like GitHub, or switch
+// to Edit / Split mode to edit with CodeMirror 6 syntax highlighting and save straight to disk
+// (⌘S / Ctrl+S). While it's open your character holds an open book. Its AutoWiki tab reads the
+// Factory wiki (ui/factory-wiki.ts).
 
 const LAST_KEY = 'droid-office.bookshelf';
+const TREE_KEY = 'droid-office.bookshelf.tree';
 
 export interface ShelfDeps {
   /** The floor whose project it is, and the project's name. */
@@ -31,95 +35,9 @@ export interface ShelfDeps {
 export type ShelfTab = 'docs' | 'wiki';
 export type DocViewMode = 'preview' | 'edit' | 'split';
 type ShelfScope = 'docs' | 'all';
-type SidebarLayout = 'list' | 'tree' | 'grep';
-
-/** A doc that passes the filter: how well, and which letters of its title and path matched. */
-interface Hit {
-  doc: DocFile;
-  score: number;
-  title: Set<number>;
-  path: Set<number>;
-}
+type SidebarLayout = 'files' | 'grep';
 
 const nameOf = (p: string) => p.slice(p.lastIndexOf('/') + 1);
-
-/** Where the letters of `q` (lower case) turn up in `text`, in order: all together if they can be, else each as early as it can. */
-function find(q: string, text: string): number[] | null {
-  const lower = text.toLowerCase();
-  const at = lower.indexOf(q);
-  if (at >= 0) return Array.from(q, (_, i) => at + i);
-  const out: number[] = [];
-  for (let j = 0; j < lower.length && out.length < q.length; j++) if (lower[j] === q[out.length]) out.push(j);
-  return out.length === q.length ? out : null;
-}
-
-/** How good a find is: together beats scattered, and the start of a word beats the middle of one. */
-function rate(at: number[], text: string): number {
-  let score = 0;
-  for (let k = 0; k < at.length; k++) {
-    const p = at[k];
-    const prev = text[p - 1] ?? '';
-    if (p === 0 || /[\s/_.-]/.test(prev) || (/[a-z]/.test(prev) && /[A-Z]/.test(text[p]))) score += 8;
-    if (k > 0) score += at[k - 1] === p - 1 ? 5 : -Math.min(6, p - at[k - 1] - 1) * 0.5;
-  }
-  return score - at[0] * 0.05;
-}
-
-/** The docs that match every word of `query`, best first; all of them, in shelf order, for none. */
-export function filterDocs(files: DocFile[], query: string): Hit[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return shelfOrder(files).map((doc) => ({ doc, score: 0, title: new Set(), path: new Set() }));
-  const hits: Hit[] = [];
-  for (const doc of files) {
-    const name = nameOf(doc.path);
-    const dir = doc.path.length - name.length;
-    const hit: Hit = { doc, score: 0, title: new Set(), path: new Set() };
-    let all = true;
-    for (const w of words) {
-      // The file's name counts most, then its title, then anywhere in its path.
-      const inName = find(w, name);
-      const inTitle = doc.title ? find(w, doc.title) : null;
-      const inPath = inName ? null : find(w, doc.path);
-      const options: [number, () => void][] = [];
-      if (inName) options.push([rate(inName, name) + 20, () => inName.forEach((i) => hit.path.add(dir + i))]);
-      if (inTitle) options.push([rate(inTitle, doc.title!) + 10, () => inTitle.forEach((i) => hit.title.add(i))]);
-      if (inPath) options.push([rate(inPath, doc.path), () => inPath.forEach((i) => hit.path.add(i))]);
-      if (!options.length) {
-        all = false;
-        break;
-      }
-      const best = options.reduce((a, b) => (b[0] > a[0] ? b : a));
-      hit.score += best[0];
-      best[1]();
-    }
-    if (all) hits.push(hit);
-  }
-  return hits.sort((a, b) => b.score - a.score || a.doc.path.length - b.doc.path.length || a.doc.path.localeCompare(b.doc.path));
-}
-
-/** The project's own docs first (its README before the rest), then each folder's, in path order. */
-function shelfOrder(files: DocFile[]): DocFile[] {
-  const rank = (p: string) => (p.includes('/') ? 2 : /^readme\./i.test(p) ? 0 : 1);
-  return [...files].sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path));
-}
-
-/** `text` with the letters at `at` marked. */
-function marked(text: string, at: Set<number>): (string | HTMLElement)[] {
-  if (!at.size) return [text];
-  const out: (string | HTMLElement)[] = [];
-  let run = '';
-  let on = false;
-  for (let i = 0; i <= text.length; i++) {
-    const hit = at.has(i);
-    if (i === text.length || hit !== on) {
-      if (run) out.push(on ? h('mark', {}, run) : run);
-      run = '';
-      on = hit;
-    }
-    if (i < text.length) run += text[i];
-  }
-  return out;
-}
 
 /** Highlights every case-insensitive occurrence of `needle` inside `text`. */
 function markSubstring(text: string, needle: string): (string | HTMLElement)[] {
@@ -165,6 +83,27 @@ function rememberRead(floor: string, path: string) {
     localStorage.setItem(LAST_KEY, JSON.stringify(all));
   } catch {
     // Private mode, or storage is full: it just won't reopen where you were.
+  }
+}
+
+const SCOPE_KEY = 'droid-office.bookshelf.scope';
+
+function lastScope(floor: string): ShelfScope | undefined {
+  try {
+    const s = JSON.parse(localStorage.getItem(SCOPE_KEY) ?? '{}')[floor];
+    return s === 'docs' || s === 'all' ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberScope(floor: string, scope: ShelfScope) {
+  try {
+    const all = JSON.parse(localStorage.getItem(SCOPE_KEY) ?? '{}');
+    all[floor] = scope;
+    localStorage.setItem(SCOPE_KEY, JSON.stringify(all));
+  } catch {
+    // Storage is off: it opens on Docs next time.
   }
 }
 
@@ -246,21 +185,37 @@ export function openBookshelf(deps: ShelfDeps) {
   // Start warming the CodeMirror chunk in the background so switching to Edit/Split is instant.
   const editorModulePromise = import('./editor');
 
-  // Sidebar controls: scope (Docs vs All files) and layout (List vs Tree vs Grep).
+  // Sidebar controls: scope (Docs vs All files), the Files tree or a Search inside them, and the tree's tools.
   let scope: ShelfScope = 'docs';
-  let layout: SidebarLayout = 'list';
-  const scopeDocsBtn = h('button.btn.sm.on', { type: 'button', role: 'radio', 'aria-checked': 'true', 'data-scope': 'docs' }, 'Docs') as HTMLButtonElement;
-  const scopeAllBtn = h('button.btn.sm', { type: 'button', role: 'radio', 'aria-checked': 'false', 'data-scope': 'all' }, 'All files') as HTMLButtonElement;
+  let layout: SidebarLayout = 'files';
+  const scopeDocsBtn = h('button.btn.sm.on', { type: 'button', role: 'radio', 'aria-checked': 'true', 'data-scope': 'docs', title: 'Only Markdown docs' }, 'Docs') as HTMLButtonElement;
+  const scopeAllBtn = h('button.btn.sm', { type: 'button', role: 'radio', 'aria-checked': 'false', 'data-scope': 'all', title: 'Every text file in the project' }, 'All files') as HTMLButtonElement;
   const scopeGroup = h('div.seg.bs-scope', { role: 'radiogroup', 'aria-label': 'File scope' }, scopeDocsBtn, scopeAllBtn);
 
-  const layoutListBtn = h('button.btn.sm.on', { type: 'button', role: 'radio', 'aria-checked': 'true', 'data-layout': 'list', title: 'Flat ranked list' }, 'List') as HTMLButtonElement;
-  const layoutTreeBtn = h('button.btn.sm', { type: 'button', role: 'radio', 'aria-checked': 'false', 'data-layout': 'tree', title: 'Collapsible folder tree' }, 'Tree') as HTMLButtonElement;
-  const layoutGrepBtn = h('button.btn.sm', { type: 'button', role: 'radio', 'aria-checked': 'false', 'data-layout': 'grep', title: 'Search inside files' }, 'Search') as HTMLButtonElement;
-  const layoutGroup = h('div.seg.bs-layout', { role: 'radiogroup', 'aria-label': 'Sidebar view' }, layoutListBtn, layoutTreeBtn, layoutGrepBtn);
+  const layoutTab = (l: SidebarLayout, icon: ToolGlyph, label: string, title: string) =>
+    h('button.tab.bs-side-tab', { type: 'button', role: 'tab', 'aria-selected': String(l === layout), 'data-layout': l, title }, glyph(icon), label) as HTMLButtonElement;
+  const layoutFilesBtn = layoutTab('files', 'files', 'Files', 'The project tree; type to go to a file');
+  const layoutGrepBtn = layoutTab('grep', 'search', 'Search', 'Search inside files');
+  const toolBtn = (icon: ToolGlyph, title: string) => h('button.bs-tool', { type: 'button', title, 'aria-label': title }, glyph(icon)) as HTMLButtonElement;
+  const locateBtn = toolBtn('locate', 'Select the open file in the tree');
+  const expandBtn = toolBtn('expand', 'Expand all folders');
+  const collapseBtn = toolBtn('collapse', 'Collapse all folders');
+  const refreshBtn = toolBtn('refresh', 'Reload the file list from disk');
+  const treeTools = h('div.bs-tools', {}, locateBtn, expandBtn, collapseBtn, refreshBtn);
+  const layoutBar = h('div.bs-side-tabs', { role: 'tablist', 'aria-label': 'Sidebar view' }, layoutFilesBtn, layoutGrepBtn, h('span.grow'), treeTools);
 
-  const filter = h('input.input', { type: 'text', placeholder: 'Filter the docs…', 'aria-label': 'Filter the docs', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const filter = h('input.bs-filter', { type: 'text', placeholder: 'Go to file…', 'aria-label': 'Go to file', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const findBox = h('label.bs-go', {}, glyph('search', 'bs-go-icon'), filter);
   const count = h('div.bs-count', {}, 'Looking along the shelves…');
-  const list = h('ul.list.bs-list', { role: 'listbox', 'aria-label': 'Docs' });
+  const tree = createFileTree({
+    storageKey: TREE_KEY,
+    onOpen: (path) => requestOpenDoc(path),
+    onReveal: (path) => revealInSidebar(path),
+    ...(blob ? { forge: { site: blob.site, url: (p: string) => blobUrl(p) } } : {}),
+    empty: (query) => (query ? `No ${scope === 'docs' ? 'doc' : 'file'} matches “${query}”.` : scope === 'docs' ? 'No Markdown files in this project yet.' : 'No editable files in this project yet.'),
+  });
+  const grepList = h('div.bs-grep', { role: 'listbox', 'aria-label': 'Search results', hidden: true });
+  const resizer = h('div.bs-resize', { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the sidebar', title: 'Drag to resize; double-click to reset' });
 
   // Reader / Editor bar controls.
   const crumbs = h('div.bs-crumbs');
@@ -307,7 +262,7 @@ export function openBookshelf(deps: ShelfDeps) {
   const docsBody = h(
     'div.body.flush.split.bs-split',
     { role: 'tabpanel' },
-    h('aside.bs-side', {}, h('div.bs-side-bar', {}, scopeGroup, layoutGroup), h('div.bs-find', {}, filter), count, list),
+    h('aside.bs-side', {}, h('div.bs-side-bar', {}, scopeGroup), layoutBar, findBox, count, tree.el, grepList, resizer),
     h('article.bs-reader.flush', {}, h('div.bs-bar', {}, crumbs, modeGroup, findBtn, discardBtn, saveBtn, meta, toc), conflictBar, work, statusBar),
   );
   const wikiBody = h('div.body.flush.bs-wiki', { role: 'tabpanel', hidden: true });
@@ -317,10 +272,8 @@ export function openBookshelf(deps: ShelfDeps) {
   let allFiles: DocFile[] = [];
   let files: DocFile[] = [];
   let moreFiles = false;
-  let shown: Hit[] = [];
-  const collapsedDirs = new Set<string>();
-  /** Which of `shown` ↑ ↓ are on. */
-  let sel = 0;
+  /** Which search result ↑ ↓ are on. */
+  let grepSel = 0;
   /** The file open now, and each open's number, so a slow one that's been overtaken is dropped. */
   let current: string | null = null;
   let currentMtime: number | undefined;
@@ -398,8 +351,10 @@ export function openBookshelf(deps: ShelfDeps) {
     },
     onClose: () => {
       releaseEscape();
+      releaseFilterEscape();
       if (splitPreviewTimer) clearTimeout(splitPreviewTimer);
       if (grepTimer) clearTimeout(grepTimer);
+      tree.dispose();
       editor?.destroy();
       editor = null;
       wiki?.dispose();
@@ -430,8 +385,23 @@ export function openBookshelf(deps: ShelfDeps) {
       crumbs.title = '';
       return;
     }
-    const dir = current.slice(0, current.length - nameOf(current).length);
-    crumbs.replaceChildren(dir ? h('span.dir', {}, dir) : '', h('span.bs-crumb-name', {}, nameOf(current)), dirty ? h('span.bs-dirty-pill', { title: 'Unsaved changes in editor' }, '● Modified') : '');
+    const segs = current.split('/');
+    const name = segs.pop()!;
+    const parts: (string | Node)[] = [];
+    segs.forEach((seg, i) => {
+      const dirPath = segs.slice(0, i + 1).join('/');
+      const b = h('button.bs-crumb', { type: 'button', title: `Show ${dirPath}/ in the tree` }, seg);
+      b.addEventListener('click', () => revealInSidebar(dirPath));
+      parts.push(b, h('span.bs-crumb-sep', { 'aria-hidden': 'true' }, '›'));
+    });
+    const git = allFiles.find((f) => f.path === current)?.git;
+    crumbs.replaceChildren(
+      ...parts,
+      iconSvg(fileIcon(current)),
+      h('span.bs-crumb-name', { class: git ? `git-${git}` : '' }, name),
+      git ? h('span.bs-git-pill', { class: `git-${git}`, title: `${GIT_LABEL[git]} in git` }, GIT_LABEL[git]) : '',
+      dirty ? h('span.bs-dirty-pill', { title: 'Unsaved changes in editor' }, '● Modified') : '',
+    );
     crumbs.title = current;
   };
 
@@ -484,7 +454,7 @@ export function openBookshelf(deps: ShelfDeps) {
     const changed = dirty !== nextDirty;
     dirty = nextDirty;
     updateToolbar();
-    if (changed) renderSidebar();
+    if (changed) tree.setCurrent(current, dirty);
   };
 
   const renderMarkdownIntoPage = (text: string, path: string, preserveScroll = false) => {
@@ -590,7 +560,8 @@ export function openBookshelf(deps: ShelfDeps) {
       }
       saving = false;
       setDirtyState(false);
-      renderSidebar();
+      // Saving can change the file's git status, so the tree asks again.
+      void loadFiles();
       toast(`Saved ${nameOf(savingPath)}`, 'info');
       deps.onTurn();
       return true;
@@ -664,140 +635,87 @@ export function openBookshelf(deps: ShelfDeps) {
   });
   tabs.wiki.addEventListener('click', () => showTab('wiki'));
 
-  const renderFileRow = (hit: Hit, i: number, depth = 0, inTree = false): HTMLLIElement => {
-    const { doc } = hit;
-    const isMd = isDocPath(doc.path);
-    const title = isMd && doc.title ? doc.title : nameOf(doc.path);
-    const isFileDirty = dirty && doc.path === current;
-    const titleStart = doc.path.length - nameOf(doc.path).length;
-    const nameMarks = new Set([...hit.path].map((p) => p - titleStart).filter((p) => p >= 0));
-    const li = h(
-      'li.list-row.bs-item',
-      {
-        role: 'option',
-        'aria-selected': String(i === sel),
-        class: [doc.path === current ? 'on' : '', inTree ? 'bs-tree-file' : ''].filter(Boolean).join(' '),
-        title: doc.path,
-      },
-      h(
-        'div.list-main',
-        {},
-        h('div.list-title', {}, ...(isMd && doc.title ? marked(title, hit.title) : marked(title, nameMarks)), isFileDirty ? h('span.bs-dirty-dot', { title: 'Unsaved changes' }, ' ●') : null),
-        inTree && (!isMd || !doc.title) ? null : h('div.list-meta.bs-path', {}, ...marked(doc.path, hit.path)),
-      ),
-    ) as HTMLLIElement;
-    if (inTree) li.style.setProperty('--depth', String(depth));
-    li.addEventListener('mousedown', (e) => e.preventDefault());
-    li.addEventListener('click', () => {
-      sel = i;
-      requestOpenDoc(doc.path);
-    });
-    return li;
+  const grepRows = () => [...grepList.querySelectorAll<HTMLElement>('.bs-grep-row')];
+  const setGrepSel = (i: number) => {
+    const all = grepRows();
+    if (!all.length) return;
+    grepSel = Math.max(0, Math.min(all.length - 1, i));
+    for (const [k, r] of all.entries()) r.setAttribute('aria-selected', String(k === grepSel));
+    all[grepSel].scrollIntoView({ block: 'nearest' });
   };
 
-  const renderTreeNodes = (dir: DocTreeDir, depth: number, hitByPath: Map<string, Hit>, indexByPath: Map<string, number>, forceExpand: boolean): HTMLLIElement[] => {
-    const rows: HTMLLIElement[] = [];
-    for (const sub of dir.dirs) {
-      const isCollapsed = !forceExpand && collapsedDirs.has(sub.path);
-      const folderRow = h(
-        'li.list-row.bs-folder',
-        {
-          role: 'treeitem',
-          'aria-expanded': String(!isCollapsed),
-          title: sub.path,
-        },
-        h('span.bs-chev', {}, isCollapsed ? '▸' : '▾'),
-        h('span.bs-folder-name', {}, sub.name),
-        h('span.bs-folder-count', {}, String(sub.count)),
-      ) as HTMLLIElement;
-      folderRow.style.setProperty('--depth', String(depth));
-      folderRow.addEventListener('mousedown', (e) => e.preventDefault());
-      folderRow.addEventListener('click', () => {
-        if (collapsedDirs.has(sub.path)) collapsedDirs.delete(sub.path);
-        else collapsedDirs.add(sub.path);
-        renderSidebar();
-      });
-      rows.push(folderRow);
-      if (!isCollapsed) {
-        rows.push(...renderTreeNodes(sub, depth + 1, hitByPath, indexByPath, forceExpand));
-      }
-    }
-    for (const f of dir.files) {
-      const hit = hitByPath.get(f.path) ?? { doc: f, score: 0, title: new Set(), path: new Set() };
-      const idx = indexByPath.get(f.path) ?? -1;
-      rows.push(renderFileRow(hit, idx, depth, true));
-    }
-    return rows;
-  };
-
+  /** The results the list was last drawn from, so reopening a file keeps your place in it. */
+  let grepDrawn: DocSearchResults | null = null;
   const renderGrepResults = () => {
     const queryText = filter.value.trim();
     if (!queryText) {
-      count.textContent = `Type above to search inside ${scope === 'docs' ? 'docs' : 'all project files'}`;
-      list.replaceChildren(h('li.bs-none', {}, 'Enter a word or phrase to search file contents.'));
+      grepDrawn = null;
+      count.textContent = `Search inside ${scope === 'docs' ? 'the docs' : 'every project file'}`;
+      grepList.replaceChildren(h('div.ft-empty', {}, 'Type a word or phrase to find the lines it is on.'));
       return;
     }
     if (grepLoading) {
-      count.textContent = 'Searching files…';
+      count.textContent = 'Searching…';
       return;
     }
     const hits: DocSearchHit[] = grepResults?.hits ?? [];
     const totalMatches = hits.reduce((sum, x) => sum + x.matches.length, 0);
-    count.textContent = hits.length ? `${totalMatches} match${totalMatches === 1 ? '' : 'es'} in ${hits.length}${grepResults?.more ? '+' : ''} file${hits.length === 1 ? '' : 's'}` : '0 matches';
+    count.textContent = hits.length ? `${totalMatches} match${totalMatches === 1 ? '' : 'es'} in ${hits.length}${grepResults?.more ? '+' : ''} file${hits.length === 1 ? '' : 's'}` : 'No matches';
     if (!hits.length) {
-      list.replaceChildren(h('li.bs-none', {}, 'No matching lines found.'));
+      grepDrawn = null;
+      grepList.replaceChildren(h('div.ft-empty', {}, `Nothing ${scope === 'docs' ? 'in the docs' : 'in the project'} says “${queryText}”.`));
       return;
     }
-    const items: HTMLLIElement[] = [];
+    if (grepDrawn === grepResults) {
+      for (const row of grepList.querySelectorAll<HTMLElement>('.bs-grep-file')) row.classList.toggle('is-open', row.title === current);
+      return;
+    }
+    grepDrawn = grepResults;
+    const items: HTMLElement[] = [];
     for (const hit of hits) {
-      const fileHeader = h(
-        'li.list-row.bs-grep-file',
-        { class: hit.path === current ? 'on' : '', title: hit.path },
-        h('div.list-main', {}, h('div.list-title', {}, hit.title ?? nameOf(hit.path)), h('div.list-meta.bs-path', {}, hit.path)),
-      ) as HTMLLIElement;
-      fileHeader.addEventListener('click', () => requestOpenDoc(hit.path));
-      items.push(fileHeader);
+      const name = nameOf(hit.path);
+      const dir = hit.path.slice(0, hit.path.length - name.length - 1);
+      const fileRow = h(
+        'div.bs-grep-row.bs-grep-file',
+        { role: 'option', 'aria-selected': 'false', class: hit.path === current ? 'is-open' : '', title: hit.path },
+        iconSvg(fileIcon(hit.path)),
+        h('span.ft-name', {}, name),
+        dir ? h('span.ft-dir', {}, dir) : '',
+        h('span.bs-grep-count', {}, String(hit.matches.length)),
+      );
+      fileRow.addEventListener('click', () => requestOpenDoc(hit.path));
+      items.push(fileRow);
       for (const m of hit.matches) {
-        const lineRow = h('li.list-row.bs-grep-line', { title: `${hit.path}:${m.line}` }, h('span.bs-grep-ln', {}, `:${m.line}`), h('span.bs-grep-text', {}, ...markSubstring(m.text, queryText))) as HTMLLIElement;
+        const lineRow = h(
+          'div.bs-grep-row.bs-grep-line',
+          { role: 'option', 'aria-selected': 'false', title: `${hit.path}:${m.line}` },
+          h('span.bs-grep-ln', {}, String(m.line)),
+          h('span.bs-grep-text', {}, ...markSubstring(m.text, queryText)),
+        );
         lineRow.addEventListener('click', () => requestOpenDoc(hit.path, `L${m.line}`));
         items.push(lineRow);
       }
     }
-    list.replaceChildren(...items);
+    grepList.replaceChildren(...items);
+    grepSel = -1;
+  };
+
+  const updateCount = () => {
+    const noun = scope === 'docs' ? 'doc' : 'file';
+    const { shown, total, changed } = tree.counts();
+    const plural = (n: number) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+    if (!total) count.textContent = '';
+    else if (filter.value.trim()) count.textContent = `${shown} of ${plural(total)}`;
+    else count.textContent = `${plural(total)}${moreFiles ? ` (the first ${total})` : ''}${changed ? ` · ${changed} changed` : ''}`;
   };
 
   const renderSidebar = () => {
-    if (layout === 'grep') {
-      renderGrepResults();
-      return;
-    }
-    const noun = scope === 'docs' ? 'doc' : 'file';
-    const hasQuery = Boolean(filter.value.trim());
-    if (!files.length) {
-      count.textContent = '';
-    } else if (hasQuery) {
-      count.textContent = `${shown.length} of ${files.length} ${noun}s`;
-    } else {
-      count.textContent = `${files.length} ${noun}${files.length === 1 ? '' : 's'}${moreFiles ? ` (the first ${files.length})` : ''}`;
-    }
-
-    if (layout === 'tree') {
-      const tree = buildDocTree(shown.map((x) => x.doc));
-      const visibleFiles = flattenDocTree(tree, hasQuery ? new Set() : collapsedDirs);
-      const hitByPath = new Map(shown.map((x) => [x.doc.path, x]));
-      shown = visibleFiles.map((f) => hitByPath.get(f.path) ?? { doc: f, score: 0, title: new Set(), path: new Set() });
-      if (sel >= shown.length) sel = Math.max(0, shown.length - 1);
-      const indexByPath = new Map(shown.map((x, idx) => [x.doc.path, idx]));
-      list.replaceChildren(...renderTreeNodes(tree, 0, hitByPath, indexByPath, hasQuery));
-    } else {
-      list.replaceChildren(...shown.map((hit, i) => renderFileRow(hit, i)));
-    }
-
-    if (!files.length) {
-      list.append(h('li.bs-none', {}, scope === 'docs' ? 'No Markdown files in this project yet.' : 'No editable files in this project yet.'));
-    } else if (!shown.length) {
-      list.append(h('li.bs-none', {}, `No ${noun} matches that.`));
-    }
+    const grep = layout === 'grep';
+    tree.el.hidden = grep;
+    grepList.hidden = !grep;
+    treeTools.hidden = grep;
+    if (grep) renderGrepResults();
+    else updateCount();
   };
 
   const triggerGrep = () => {
@@ -834,11 +752,8 @@ export function openBookshelf(deps: ShelfDeps) {
       triggerGrep();
       return;
     }
-    shown = filterDocs(files, filter.value);
-    const curIdx = current ? shown.findIndex((x) => x.doc.path === current) : -1;
-    sel = curIdx >= 0 ? curIdx : 0;
+    tree.setQuery(filter.value);
     renderSidebar();
-    list.scrollTop = 0;
   };
 
   const syncScopeAndLayoutUI = () => {
@@ -851,73 +766,194 @@ export function openBookshelf(deps: ShelfDeps) {
       btn.setAttribute('aria-checked', String(on));
     }
     for (const [l, btn] of [
-      ['list', layoutListBtn],
-      ['tree', layoutTreeBtn],
+      ['files', layoutFilesBtn],
       ['grep', layoutGrepBtn],
     ] as const) {
-      const on = layout === l;
-      btn.classList.toggle('on', on);
-      btn.setAttribute('aria-checked', String(on));
+      btn.setAttribute('aria-selected', String(layout === l));
     }
-    if (layout === 'grep') {
-      filter.placeholder = scope === 'docs' ? 'Search inside docs…' : 'Search inside files…';
-      filter.setAttribute('aria-label', filter.placeholder);
-    } else {
-      filter.placeholder = scope === 'docs' ? 'Filter the docs…' : 'Filter project files…';
-      filter.setAttribute('aria-label', filter.placeholder);
-    }
+    filter.placeholder = layout === 'grep' ? (scope === 'docs' ? 'Search inside docs…' : 'Search inside files…') : scope === 'docs' ? 'Go to doc…' : 'Go to file…';
+    filter.setAttribute('aria-label', filter.placeholder);
   };
 
-  const applyScope = (nextScope: ShelfScope) => {
-    scope = nextScope;
+  /** Hand the tree this scope's files. */
+  const feedTree = () => {
     files = scope === 'all' ? allFiles : allFiles.filter((f) => isDocPath(f.path));
+    tree.setFiles(files, `${floor}:${scope}`);
+  };
+
+  /** Whether you picked a scope yourself this visit, so the first listing doesn't override it. */
+  let scopePicked = false;
+  const applyScope = (nextScope: ShelfScope) => {
+    if (scope === nextScope) return;
+    scope = nextScope;
+    feedTree();
     syncScopeAndLayoutUI();
     refilter();
   };
 
   const applyLayout = (nextLayout: SidebarLayout) => {
+    if (layout === nextLayout) return;
     layout = nextLayout;
+    if (layout === 'files') tree.setQuery('');
+    filter.value = '';
     syncScopeAndLayoutUI();
     refilter();
-  };
-
-  scopeDocsBtn.addEventListener('click', () => applyScope('docs'));
-  scopeAllBtn.addEventListener('click', () => applyScope('all'));
-  layoutListBtn.addEventListener('click', () => applyLayout('list'));
-  layoutTreeBtn.addEventListener('click', () => applyLayout('tree'));
-  layoutGrepBtn.addEventListener('click', () => {
-    applyLayout('grep');
     filter.focus();
-  });
-
-  const move = (by: number) => {
-    if (!shown.length || layout === 'grep') return;
-    sel = (sel + by + shown.length) % shown.length;
-    renderSidebar();
-    list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   };
+
+  /** Show `path` (a file or folder) in the tree, clearing a filter that would hide it. */
+  const revealInSidebar = (path: string) => {
+    if (layout !== 'files') applyLayout('files');
+    if (filter.value) {
+      filter.value = '';
+      refilter();
+    }
+    tree.reveal(path);
+    tree.focus();
+  };
+
+  /** Fetch the file list again (after a save, or the ↻ button), keeping what's expanded and open. */
+  const loadFiles = async (): Promise<boolean> => {
+    try {
+      const r = await getJson<DocList>(`/api/docs?${q({ all: '1' })}`);
+      if (!el.isConnected) return false;
+      allFiles = r.files;
+      moreFiles = r.more;
+      feedTree();
+      renderSidebar();
+      updateCrumbs();
+      return true;
+    } catch (err) {
+      if (el.isConnected) toast(`Couldn't list the project's files: ${(err as Error).message}`, 'warn');
+      return false;
+    }
+  };
+
+  const pickScope = (next: ShelfScope) => {
+    scopePicked = true;
+    rememberScope(floor, next);
+    applyScope(next);
+  };
+  scopeDocsBtn.addEventListener('click', () => pickScope('docs'));
+  scopeAllBtn.addEventListener('click', () => pickScope('all'));
+  layoutFilesBtn.addEventListener('click', () => applyLayout('files'));
+  layoutGrepBtn.addEventListener('click', () => applyLayout('grep'));
+  locateBtn.addEventListener('click', () => {
+    if (current) revealInSidebar(current);
+  });
+  expandBtn.addEventListener('click', () => tree.expandAll());
+  collapseBtn.addEventListener('click', () => tree.collapseAll());
+  refreshBtn.addEventListener('click', () => {
+    refreshBtn.classList.add('spin');
+    void loadFiles().then((ok) => {
+      refreshBtn.classList.remove('spin');
+      if (ok) toast('File list reloaded', 'info');
+    });
+  });
 
   filter.addEventListener('input', refilter);
   filter.addEventListener('keydown', (e) => {
+    const grep = layout === 'grep';
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      if (layout === 'grep') return;
       e.preventDefault();
-      move(e.key === 'ArrowDown' ? 1 : -1);
+      const by = e.key === 'ArrowDown' ? 1 : -1;
+      if (grep) setGrepSel(grepSel + by);
+      else tree.moveCursor(by);
     } else if (e.key === 'Enter') {
-      if (layout === 'grep') return;
       e.preventDefault();
-      const hit = shown[sel];
-      if (hit) requestOpenDoc(hit.doc.path);
+      if (grep) grepRows()[Math.max(0, grepSel)]?.click();
+      else tree.activateCursor();
+    } else if (e.key === 'Tab' && !e.shiftKey && !grep) {
+      e.preventDefault();
+      tree.focus();
     } else if (e.key === 'PageDown' || e.key === 'PageUp') {
       // The page, not the box: read on without leaving the filter.
       e.preventDefault();
       page.scrollBy({ top: (e.key === 'PageDown' ? 1 : -1) * page.clientHeight * 0.85, behavior: 'smooth' });
     }
   });
+  // Typing while the tree has focus goes to the filter, the way IDE trees speed-search.
+  tree.el.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1 || e.key === ' ' || e.key === '*') return;
+    filter.focus();
+  });
+
+  // Dragging the sidebar's edge resizes it; the width is remembered.
+  const SIDE_KEY = 'droid-office.bookshelf.side';
+  const setSide = (px: number) => {
+    const w = Math.round(Math.max(200, Math.min(560, px)));
+    el.style.setProperty('--bs-side', `${w}px`);
+    return w;
+  };
+  try {
+    const savedSide = Number(localStorage.getItem(SIDE_KEY));
+    if (savedSide) setSide(savedSide);
+  } catch {
+    // Storage is off: the sidebar starts at its default width.
+  }
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    const left = docsBody.getBoundingClientRect().left;
+    let width = el.style.getPropertyValue('--bs-side');
+    const onMove = (ev: PointerEvent) => {
+      width = String(setSide(ev.clientX - left));
+    };
+    const onEnd = () => {
+      resizer.removeEventListener('pointermove', onMove);
+      resizer.removeEventListener('pointerup', onEnd);
+      resizer.removeEventListener('pointercancel', onEnd);
+      resizer.removeEventListener('lostpointercapture', onEnd);
+      try {
+        if (width) localStorage.setItem(SIDE_KEY, String(Number.parseInt(width, 10)));
+      } catch {
+        // Storage is off: the width just won't be remembered.
+      }
+    };
+    resizer.addEventListener('pointermove', onMove);
+    resizer.addEventListener('pointerup', onEnd);
+    resizer.addEventListener('pointercancel', onEnd);
+    resizer.addEventListener('lostpointercapture', onEnd);
+  });
+  resizer.addEventListener('dblclick', () => {
+    el.style.removeProperty('--bs-side');
+    try {
+      localStorage.removeItem(SIDE_KEY);
+    } catch {
+      // Storage is off.
+    }
+  });
+
+  // Esc in a filled box clears it first; the next Esc closes the window.
+  const releaseFilterEscape = claimEscape(findBox, () => {
+    const at = document.activeElement;
+    if (!filter.value || !(at === filter || tree.el.contains(at))) return false;
+    filter.value = '';
+    refilter();
+    return true;
+  });
 
   // Global keyboard shortcuts while the Bookshelf modal is open.
   el.addEventListener('keydown', (e) => {
-    if (shownTab !== 'docs' || !current) return;
+    if (shownTab !== 'docs' || e.defaultPrevented) return;
+    const mod = (e.metaKey || e.ctrlKey) && !e.altKey;
+    const key = e.key.toLowerCase();
+    if (mod && !e.shiftKey && key === 'p') {
+      // Go to file, as in IDEs (and not the browser's Print).
+      e.preventDefault();
+      applyLayout('files');
+      filter.focus();
+      filter.select();
+      return;
+    }
+    if (mod && e.shiftKey && key === 'f') {
+      e.preventDefault();
+      applyLayout('grep');
+      filter.focus();
+      filter.select();
+      return;
+    }
+    if (!current) return;
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
       void saveCurrentFile(false);
@@ -963,12 +999,6 @@ export function openBookshelf(deps: ShelfDeps) {
     }
   }
 
-  const expandAncestors = (path: string) => {
-    for (const d of [...collapsedDirs]) {
-      if (path.startsWith(`${d}/`)) collapsedDirs.delete(d);
-    }
-  };
-
   const openDoc = async (path: string, hash = '') => {
     if (path === current) {
       jump(hash);
@@ -987,13 +1017,7 @@ export function openBookshelf(deps: ShelfDeps) {
     if (mine !== opening || !el.isConnected) return;
 
     // If a non-Markdown file was opened (e.g. via a link in a doc), switch scope to All files so it shows in the sidebar.
-    if (!isDocPath(path) && scope === 'docs') {
-      scope = 'all';
-      files = allFiles;
-      syncScopeAndLayoutUI();
-      shown = filterDocs(files, filter.value);
-    }
-    expandAncestors(path);
+    if (!isDocPath(path) && scope === 'docs') applyScope('all');
 
     current = path;
     currentMtime = doc.mtime;
@@ -1023,9 +1047,8 @@ export function openBookshelf(deps: ShelfDeps) {
     }
 
     turnedAt = 0;
-    const idx = shown.findIndex((x) => x.doc.path === path);
-    if (idx >= 0) sel = idx;
     updateToolbar();
+    tree.setCurrent(path, false);
     renderSidebar();
     if (lineNum !== undefined) {
       editor?.goToLine(lineNum);
@@ -1075,14 +1098,11 @@ export function openBookshelf(deps: ShelfDeps) {
       if (!el.isConnected) return;
       allFiles = r.files;
       moreFiles = r.more;
-      const mdFiles = allFiles.filter((f) => isDocPath(f.path));
-      // Default to Docs scope when the project has Markdown files, or All files when it only has code.
-      if (!mdFiles.length && allFiles.length) {
-        scope = 'all';
-        files = allFiles;
-      } else {
-        files = mdFiles;
-      }
+      // Docs when the project has Markdown, else All files; and whichever you picked last time.
+      const hasDocs = allFiles.some((f) => isDocPath(f.path));
+      const saved = lastScope(floor);
+      if (!scopePicked) scope = !hasDocs && allFiles.length ? 'all' : (saved ?? 'docs');
+      feedTree();
       syncScopeAndLayoutUI();
       refilter();
       const last = lastRead(floor);

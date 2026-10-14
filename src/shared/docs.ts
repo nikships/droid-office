@@ -10,7 +10,12 @@ export interface DocFile {
   size: number;
   /** Last modified, ms since epoch. */
   mtime: number;
+  /** Its uncommitted change in git, when it has one (absent when it's clean or the folder isn't a checkout). */
+  git?: DocGitStatus;
 }
+
+/** A file's uncommitted change: modified, added (staged new), untracked (new, not staged), renamed, or in conflict. */
+export type DocGitStatus = 'M' | 'A' | 'U' | 'R' | 'C';
 
 /** What GET /api/docs answers: the files in the floor's project, by path. */
 export interface DocList {
@@ -171,29 +176,46 @@ export function isBinaryBuffer(bytes: Uint8Array): boolean {
   return false;
 }
 
-/** A folder node in the bookshelf's collapsible file tree. */
+/** A folder node in the bookshelf's file tree. */
 export interface DocTreeDir {
+  /** What the tree shows: one folder's name, or a chain of single-child folders joined ("src/client/ui"). */
   name: string;
+  /** The deepest folder's path from the project folder. */
   path: string;
   dirs: DocTreeDir[];
   files: DocFile[];
-  /** Total files under this directory (including nested subdirectories). */
+  /** Files under this folder, at any depth. */
   count: number;
+  /** Files under this folder, at any depth, with an uncommitted change in git. */
+  changed: number;
 }
 
+/** One line of the file tree as it shows: a folder (open or shut) or a file, and how deep it sits. */
+export type DocTreeRow = { kind: 'dir'; dir: DocTreeDir; depth: number; expanded: boolean } | { kind: 'file'; file: DocFile; depth: number };
+
+/** File-manager order: case-insensitive, with numbers by value ("v2" before "v10"). */
+export const compareNames = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0);
+
+const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
 /**
- * Builds a folder tree from `files`, squashing single-child directory chains ("src/client/ui")
- * and sorting folders before files at each level.
+ * Builds a folder tree from `files`, squashing single-child folder chains ("src/client/ui") the way
+ * IDEs compact them, with folders before files at each level, both in file-manager order.
  */
 export function buildDocTree(files: DocFile[]): DocTreeDir {
-  const root: DocTreeDir = { name: '', path: '', dirs: [], files: [], count: 0 };
+  const root: DocTreeDir = { name: '', path: '', dirs: [], files: [], count: 0, changed: 0 };
+  const byPath = new Map<string, DocTreeDir>([['', root]]);
   for (const f of files) {
     const parts = f.path.split('/');
     let d = root;
     for (const part of parts.slice(0, -1)) {
       const p = d.path ? `${d.path}/${part}` : part;
-      let next = d.dirs.find((x) => x.name === part && x.path === p);
-      if (!next) d.dirs.push((next = { name: part, path: p, dirs: [], files: [], count: 0 }));
+      let next = byPath.get(p);
+      if (!next) {
+        next = { name: part, path: p, dirs: [], files: [], count: 0, changed: 0 };
+        byPath.set(p, next);
+        d.dirs.push(next);
+      }
       d = next;
     }
     d.files.push(f);
@@ -202,20 +224,50 @@ export function buildDocTree(files: DocFile[]): DocTreeDir {
     d.dirs = d.dirs.map(squash);
     while (d.dirs.length === 1 && !d.files.length && d.path) {
       const only = d.dirs[0];
-      d = { name: `${d.name}/${only.name}`, path: only.path, dirs: only.dirs, files: only.files, count: 0 };
+      d = { ...only, name: `${d.name}/${only.name}` };
     }
-    d.dirs.sort((a, b) => a.name.localeCompare(b.name));
-    d.files.sort((a, b) => a.path.localeCompare(b.path));
+    d.dirs.sort((a, b) => compareNames(a.name, b.name));
+    d.files.sort((a, b) => compareNames(baseName(a.path), baseName(b.path)));
     d.count = d.files.length + d.dirs.reduce((sum, sub) => sum + sub.count, 0);
+    d.changed = d.files.filter((f) => f.git).length + d.dirs.reduce((sum, sub) => sum + sub.changed, 0);
     return d;
   };
   return squash(root);
 }
 
-/** Visible files in tree display order, skipping directories whose path is in `collapsed`. */
-export function flattenDocTree(dir: DocTreeDir, collapsed: ReadonlySet<string> = new Set()): DocFile[] {
-  if (dir.path && collapsed.has(dir.path)) return [];
-  return [...dir.dirs.flatMap((sub) => flattenDocTree(sub, collapsed)), ...dir.files];
+/** The tree's rows top to bottom, going into a folder only when its path is in `expanded`. */
+export function docTreeRows(tree: DocTreeDir, expanded: ReadonlySet<string>): DocTreeRow[] {
+  const rows: DocTreeRow[] = [];
+  const walk = (d: DocTreeDir, depth: number) => {
+    for (const sub of d.dirs) {
+      const open = expanded.has(sub.path);
+      rows.push({ kind: 'dir', dir: sub, depth, expanded: open });
+      if (open) walk(sub, depth + 1);
+    }
+    for (const file of d.files) rows.push({ kind: 'file', file, depth });
+  };
+  walk(tree, 0);
+  return rows;
+}
+
+/** The paths of the tree's folders that hold `path` (a file's or a folder's), outermost first. */
+export function docTreeAncestors(tree: DocTreeDir, path: string): string[] {
+  const out: string[] = [];
+  let d: DocTreeDir | undefined = tree;
+  while (d) {
+    const next: DocTreeDir | undefined = d.dirs.find((sub) => path === sub.path || path.startsWith(`${sub.path}/`));
+    if (!next || next.path === path) break;
+    out.push(next.path);
+    d = next;
+  }
+  return out;
+}
+
+/** Every folder path at or under `dir`, for expanding or collapsing a whole branch. */
+export function docTreeDirPaths(dir: DocTreeDir): string[] {
+  const out: string[] = dir.path ? [dir.path] : [];
+  for (const sub of dir.dirs) out.push(...docTreeDirPaths(sub));
+  return out;
 }
 
 /**

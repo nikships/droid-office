@@ -4,8 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Docs, docTitle } from '../src/server/docs.js';
-import { buildDocTree, flattenDocTree, isBinaryBuffer, isDocPath, isEditablePath, isSafeProjectPath, resolveDocLink } from '../src/shared/docs.js';
+import { Docs, docTitle, parseGitStatus } from '../src/server/docs.js';
+import { buildDocTree, compareNames, docTreeAncestors, docTreeDirPaths, docTreeRows, isBinaryBuffer, isDocPath, isEditablePath, isSafeProjectPath, resolveDocLink, type DocGitStatus } from '../src/shared/docs.js';
 
 /** A folder with some Markdown in it, and whatever `git` makes of it. */
 function fixture(t: { after(fn: () => void): void }, git: boolean) {
@@ -155,14 +155,65 @@ test('shared tree and path helpers group folders and validate editable paths', (
   assert.equal(tree.dirs.length, 2);
   assert.equal(tree.dirs[0]?.name, 'docs');
   assert.equal(tree.dirs[1]?.name, 'src/client/ui');
+  const shown = (expanded: string[]) => docTreeRows(tree, new Set(expanded)).map((r) => (r.kind === 'dir' ? `${r.dir.name}/${r.expanded ? '' : '+'}` : r.file.path));
+  assert.deepEqual(shown(['docs', 'docs/api', 'src/client/ui']), ['docs/', 'api/', 'docs/api/auth.md', 'docs/guide.md', 'src/client/ui/', 'src/client/ui/bookshelf.ts', 'README.md']);
+  assert.deepEqual(shown(['src/client/ui']), ['docs/+', 'src/client/ui/', 'src/client/ui/bookshelf.ts', 'README.md']);
   assert.deepEqual(
-    flattenDocTree(tree, new Set()).map((f) => f.path),
-    ['docs/api/auth.md', 'docs/guide.md', 'src/client/ui/bookshelf.ts', 'README.md'],
+    docTreeRows(tree, new Set(['docs', 'docs/api'])).map((r) => r.depth),
+    [0, 1, 2, 1, 0, 0],
+  );
+  // The folders that hold a file, outermost first, through a squashed chain.
+  assert.deepEqual(docTreeAncestors(tree, 'docs/api/auth.md'), ['docs', 'docs/api']);
+  assert.deepEqual(docTreeAncestors(tree, 'src/client/ui/bookshelf.ts'), ['src/client/ui']);
+  assert.deepEqual(docTreeAncestors(tree, 'docs/api'), ['docs']);
+  assert.deepEqual(docTreeAncestors(tree, 'README.md'), []);
+  assert.deepEqual(docTreeDirPaths(tree), ['docs', 'docs/api', 'src/client/ui']);
+});
+
+test('the tree sorts like a file manager and counts the changed files under each folder', () => {
+  const f = (p: string, git?: DocGitStatus) => ({ path: p, size: 1, mtime: 1, ...(git ? { git } : {}) });
+  const tree = buildDocTree([f('b.md'), f('A.md'), f('v10/x.md', 'M'), f('v2/y.md'), f('v2/z.md', 'U'), f('v2/deep/q.md', 'A'), f('file10.ts'), f('file2.ts')]);
+  assert.deepEqual(
+    tree.dirs.map((d) => d.name),
+    ['v2', 'v10'],
   );
   assert.deepEqual(
-    flattenDocTree(tree, new Set(['docs'])).map((f) => f.path),
-    ['src/client/ui/bookshelf.ts', 'README.md'],
+    tree.files.map((x) => x.path),
+    ['A.md', 'b.md', 'file2.ts', 'file10.ts'],
   );
+  assert.equal(tree.changed, 3);
+  assert.equal(tree.dirs[0]?.changed, 2);
+  assert.equal(tree.dirs[0]?.count, 3);
+  assert.equal(tree.dirs[1]?.changed, 1);
+  assert.ok(compareNames('a', 'B') < 0 && compareNames('x2', 'x10') < 0 && compareNames('same', 'same') === 0);
+});
+
+test('git status marks each changed file, from the project folder inside the repository', async (t) => {
+  // Renames carry the old path as a second field; deletions aren't on the shelf; conflicts win.
+  const raw = ['M  src/a.ts', ' M README.md', 'A  new.md', '?? notes/todo.md', 'R  src/b.ts', 'src/old.ts', ' D gone.md', 'UU both.md', 'AM staged-then-edited.md', ' A intent.md', ''].join('\0');
+  assert.deepEqual(
+    [...parseGitStatus(raw)],
+    [
+      ['src/a.ts', 'M'],
+      ['README.md', 'M'],
+      ['new.md', 'A'],
+      ['notes/todo.md', 'U'],
+      ['src/b.ts', 'R'],
+      ['both.md', 'C'],
+      ['staged-then-edited.md', 'A'],
+      ['intent.md', 'A'],
+    ],
+  );
+  assert.deepEqual([...parseGitStatus('M  app/src/a.ts\0 M other/b.ts\0', 'app/')], [['src/a.ts', 'M']]);
+
+  const { dir, docs } = fixture(t, true);
+  writeFileSync(path.join(dir, 'README.md'), '# Changed\n');
+  const { files } = await docs.list(true);
+  const git = Object.fromEntries(files.filter((x) => x.git).map((x) => [x.path, x.git]));
+  assert.deepEqual(git, { 'NOTES.md': 'U', 'README.md': 'M' });
+
+  const plain = fixture(t, false);
+  assert.ok((await plain.docs.list(true)).files.every((x) => !x.git));
 });
 
 test('a doc is titled by its front matter, else its first heading, whatever the style', () => {
