@@ -7,8 +7,9 @@
 //
 // Every NSEvent-derived message goes out through `eventSink` as a plain NSDictionary (NSNumber,
 // NSString, NSArray, NSDictionary values only). presenter.mm turns it into a JS object and delivers
-// it to the function given to `presenter.setEventHandler(fn)` on the Electron main-process JS thread.
-// The schema is `NativeEvent` in src/desktop/input-events.ts: positions are DIPs from the top-left.
+// it to the `onEvent` function given to `new Presenter(handle, { onEvent })` on the Electron
+// main-process JS thread. The schema is `NativeEvent` in src/desktop/input-events.ts: positions are
+// DIPs from the top-left.
 @interface DOPresenterView : DOMetalView
 @property(nonatomic, copy) void (^eventSink)(NSDictionary *event);
 

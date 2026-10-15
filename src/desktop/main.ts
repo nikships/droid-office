@@ -1,14 +1,16 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import { app, type BaseWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
 import { gpuReport } from './gpu.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
+import { PresenterWindow } from './presenter.js';
 import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
+import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -16,8 +18,11 @@ const BACKGROUND = '#050505';
 const PORT_TRIES = 20;
 
 // Not ~/Library/Application Support/Droid Office (the product name): the Unity office keeps its
-// own data under that folder.
-app.setPath('userData', path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+// own data under that folder. `--user-data-dir=<folder>` (Chromium's switch) moves it and the logs, so a
+// test run never shares the single-instance lock, settings or logs of the app someone is using.
+const userDataSwitch = app.commandLine.getSwitchValue('user-data-dir');
+app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
@@ -25,7 +30,8 @@ const gpuLog = path.join(logDir, 'gpu.log');
 let settings: DesktopSettings = loadSettings(settingsFile);
 /** What the office and its workers run with: the login shell's environment (see desktopEnv). */
 let officeEnv: NodeJS.ProcessEnv = process.env;
-let win: BrowserWindow | undefined;
+/** The office window: the native Metal view and the offscreen page it shows (see presenter.ts). */
+let win: PresenterWindow | undefined;
 /** The office this app started, if it started one (it may be using one that was already running). */
 let office: Office | undefined;
 let officeUrl: string | undefined;
@@ -43,7 +49,7 @@ const updates = new Updates({
     quitting = true;
     return stopOffice(true);
   },
-  parent: () => (win && !win.isDestroyed() ? win : undefined),
+  parent: () => (win && !win.base.isDestroyed() ? win.base : undefined),
 });
 
 function page(title: string, detail = ''): string {
@@ -56,10 +62,10 @@ function page(title: string, detail = ''): string {
 }
 
 function show(url: string) {
-  if (!win || win.isDestroyed()) createWindow(false);
+  if (!win || win.base.isDestroyed()) createWindow(false);
   replacing = true;
   // An aborted load (the next page replaced this one first) rejects; that's no error here.
-  void win!
+  void win!.contents
     .loadURL(url)
     .catch(() => {})
     .finally(() => {
@@ -68,22 +74,18 @@ function show(url: string) {
 }
 
 function createWindow(loadOffice = true) {
-  win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    show: false,
+  const created = new PresenterWindow({
     title: 'Droid Office',
     backgroundColor: BACKGROUND,
-    webPreferences: { sandbox: true, contextIsolation: true, spellcheck: false, autoplayPolicy: 'no-user-gesture-required' },
+    // Full screen once there's something to show: asked for at creation, macOS sometimes leaves a
+    // window that isn't on screen yet as an ordinary one.
+    onFirstFrame: (base: BaseWindow) => {
+      base.show();
+      base.setFullScreen(true);
+    },
   });
-  const created = win;
-  // Full screen once there's something to show: asked for at creation, macOS sometimes leaves a
-  // window that isn't on screen yet as an ordinary one.
-  created.once('ready-to-show', () => {
-    created.show();
-    created.setFullScreen(true);
-  });
-  const contents = win.webContents;
+  win = created;
+  const contents = created.contents;
   contents.setWindowOpenHandler(({ url }) => {
     const action = officeUrl ? linkAction(url, new URL(officeUrl).origin) : 'ignore';
     if (action === 'app') return { action: 'allow', overrideBrowserWindowOptions: { fullscreen: false, backgroundColor: BACKGROUND } };
@@ -103,13 +105,13 @@ function createWindow(loadOffice = true) {
       e.preventDefault();
       return;
     }
-    const choice = dialog.showMessageBoxSync(created, { type: 'question', message: 'Leave the office?', buttons: ['Leave', 'Stay'], defaultId: 1, cancelId: 1 });
+    const choice = dialog.showMessageBoxSync(created.base, { type: 'question', message: 'Leave the office?', buttons: ['Leave', 'Stay'], defaultId: 1, cancelId: 1 });
     if (choice === 0) e.preventDefault();
   });
-  win.on('closed', () => {
-    win = undefined;
+  created.base.on('closed', () => {
+    if (win === created) win = undefined;
   });
-  if (loadOffice && officeUrl) void win.loadURL(officeUrl).catch(() => {});
+  if (loadOffice && officeUrl) void contents.loadURL(officeUrl).catch(() => {});
 }
 
 /**
@@ -290,16 +292,16 @@ function menu(): Menu {
   return Menu.buildFromTemplate(template);
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (!win || win.isDestroyed()) createWindow();
-    else win.focus();
+    if (!win || win.base.isDestroyed()) createWindow();
+    else win.base.focus();
   });
 
   app.on('activate', () => {
-    if (!win || win.isDestroyed()) createWindow();
+    if (!win || win.base.isDestroyed()) createWindow();
   });
 
   // The Mac way: closing the window leaves the app (and the office) running until you quit.
@@ -312,19 +314,27 @@ if (!app.requestSingleInstanceLock()) {
     void stopOffice(true).finally(() => app.quit());
   });
 
-  void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(menu());
-    if (await moveToApplications()) return;
-    show(page('Opening the office…'));
-    officeEnv = await desktopEnv();
-    if (!settings.officeDir) {
-      settings = { ...settings, officeDir: await chooseOfficeDir(true) };
-      saveSettings(settingsFile, settings);
-    }
-    await openOffice();
-    void writeGpuReport();
-    mkdirSync(logDir, { recursive: true });
-    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
-    updates.start();
-  });
+  void app
+    .whenReady()
+    .then(async () => {
+      enforceRequirements();
+      if (isStartupCheck()) return runStartupCheck();
+      Menu.setApplicationMenu(menu());
+      if (await moveToApplications()) return;
+      show(page('Opening the office…'));
+      officeEnv = await desktopEnv();
+      if (!settings.officeDir) {
+        settings = { ...settings, officeDir: await chooseOfficeDir(true) };
+        saveSettings(settingsFile, settings);
+      }
+      await openOffice();
+      void writeGpuReport();
+      mkdirSync(logDir, { recursive: true });
+      downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
+      updates.start();
+    })
+    .catch((err: unknown) => {
+      // failStartup has already shown why and asked the app to exit; anything else is a bug that should surface.
+      if (!(err instanceof StartupAborted)) throw err;
+    });
 }

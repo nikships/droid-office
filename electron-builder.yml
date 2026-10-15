@@ -14,6 +14,9 @@ files:
   - bin/**/*
   - dist/**/*
   - '!dist/**/*.map'
+  # Only the compiled presenter (npm run build:native), not its sources or node-gyp's intermediates. It
+  # stays a file on disk (no asar), signed with the app by electron-builder, and src/desktop loads it by path.
+  - native/presenter/build/Release/presenter.node
 
 # The office runs bin/droid-office.js, its PTY host and the workers' office-workers
 # command as files on disk with Electron's Node, and node-pty spawns its spawn-helper from disk,
@@ -29,6 +32,9 @@ mac:
   icon: build/icon.png
   identity: Nikhil Anand (NW6B3R27LQ)
   hardenedRuntime: true
+  # macOS 14 for CAMetalDisplayLink, which the native presenter drives frames with. Written into the app's
+  # Info.plist as LSMinimumSystemVersion. src/desktop/requirements.ts (MIN_MACOS) checks it again at startup.
+  minimumSystemVersion: '14.0'
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
