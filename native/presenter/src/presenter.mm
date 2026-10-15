@@ -230,22 +230,26 @@ class Core : public std::enable_shared_from_this<Core> {
     auto self = shared_from_this();
     double target = update.targetPresentationTimestamp;
     Sample sample{(double)f.id, f.submittedAt, now, target, 0, 0};
-    auto presentedAt = std::make_shared<std::atomic<double>>(0);
-    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
-      presentedAt->store(d.presentedTime);
-    }];
     {
       std::lock_guard<std::mutex> g(lock);
       counters.inFlight++;
       counters.maxInFlight = std::max(counters.maxInFlight, counters.inFlight);
     }
+    // presentedTime is only known once the compositor has shown (or skipped) the frame, after the GPU is done with it.
+    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+      Sample s = sample;
+      s.presentedAt = d.presentedTime;
+      s.gpuMs = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+      if (s.presentedAt <= 0) {
+        std::lock_guard<std::mutex> g(self->lock);
+        self->counters.notShown++;
+        return;
+      }
+      self->record(s);
+    }];
     IOSurfaceRef surface = f.surface;
     uint32_t fid = f.id;
-    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
-      Sample s = sample;
-      s.gpuMs = (done.GPUEndTime - done.GPUStartTime) * 1000.0;
-      // presentedTime arrives after completion on some paths; poll the stamped value a moment later.
-      s.presentedAt = presentedAt->load();
+    [cb addCompletedHandler:^(id<MTLCommandBuffer>) {
       if (capture) self->readback(drawableTexture);
       CFRelease(surface);
       {
@@ -254,16 +258,6 @@ class Core : public std::enable_shared_from_this<Core> {
         self->counters.presented++;
       }
       self->notifyRelease(fid);
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(50 * NSEC_PER_MSEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        Sample final = s;
-        final.presentedAt = presentedAt->load();
-        if (final.presentedAt <= 0) {
-          std::lock_guard<std::mutex> g(self->lock);
-          self->counters.notShown++;
-          return;
-        }
-        self->record(final);
-      });
     }];
     [cb commit];
   }

@@ -76,6 +76,7 @@ export class PresenterWindow {
   private gotTexture = false;
   private closed = false;
   private hdr = false;
+  private visible = true;
   private maxFps = 60;
 
   constructor(private readonly options: PresenterWindowOptions) {
@@ -83,7 +84,8 @@ export class PresenterWindow {
     this.base = new BaseWindow({ width: 1440, height: 900, show: false, title: options.title, backgroundColor: options.backgroundColor });
     const content = this.base.getContentSize();
     const format = osrPixelFormat(module.edrCapable());
-    const display = screen.getDisplayMatching(this.base.getBounds());
+    // The scale factor is fixed when the page is created, so take the sharpest screen's: the window then stays sharp on whichever screen it is dragged to, and the presenter filters it down on the others.
+    const scaleFactor = Math.max(1, ...screen.getAllDisplays().map((d) => d.scaleFactor));
     this.page = new BrowserWindow({
       show: false,
       frame: false,
@@ -98,10 +100,17 @@ export class PresenterWindow {
         autoplayPolicy: 'no-user-gesture-required',
         ...options.webPreferences,
         preload: PAGE_PRELOAD,
-        offscreen: { useSharedTexture: true, sharedTexturePixelFormat: format, deviceScaleFactor: display.scaleFactor },
+        offscreen: { useSharedTexture: true, sharedTexturePixelFormat: format, deviceScaleFactor: scaleFactor },
       },
     });
     this.contents = this.page.webContents;
+    // An offscreen window that was never shown keeps its page "visible" for good, and one that is shown draws nothing on
+    // screen but still takes a rectangle of it. Fully transparent, click-through and unfocusable, shown once, it can be hidden
+    // later, which is what makes the page's visibilityState (and with it the office's own idle pause) follow the real window.
+    this.page.setOpacity(0);
+    this.page.setIgnoreMouseEvents(true);
+    this.page.setFocusable(false);
+    this.page.showInactive();
     this.native = new module.Presenter(this.base.getNativeWindowHandle(), {
       pixelFormat: layerPixelFormat(format),
       onRelease: (id) => {
@@ -193,9 +202,21 @@ export class PresenterWindow {
     this.maxFps = osrFrameRate(state.maxFps);
     this.contents.setFrameRate(this.maxFps);
     this.native.setPacing({ followDisplay: true });
-    // A window nobody can see (minimized, covered, on another Space) makes no frames, as a hidden browser tab wouldn't.
-    if (state.visible === false) this.contents.stopPainting();
-    else this.contents.startPainting();
+    // The window isn't on screen until the first frame, so "not visible" means nothing before then.
+    this.setVisible(state.visible !== false || !this.gotTexture);
+  }
+
+  /** A window nobody can see (minimized, covered, on another Space) makes no frames and tells its page it is hidden, as a background tab would. */
+  private setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    if (visible) {
+      this.page.showInactive();
+      this.contents.startPainting();
+    } else {
+      this.page.hide();
+      this.contents.stopPainting();
+    }
   }
 
   private registerIpc(): void {

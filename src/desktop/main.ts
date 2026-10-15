@@ -274,7 +274,20 @@ function menu(): Menu {
         { role: 'quit' },
       ],
     },
-    { role: 'editMenu' },
+    {
+      // The page is offscreen and never the focused web contents, so Electron's own edit roles would find nothing to act on.
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => win?.contents.undo() },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: () => win?.contents.redo() },
+        { type: 'separator' },
+        { label: 'Cut', accelerator: 'CmdOrCtrl+X', click: () => win?.contents.cut() },
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: () => win?.contents.copy() },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: () => win?.contents.paste() },
+        { label: 'Paste and Match Style', accelerator: 'Shift+Alt+CmdOrCtrl+V', click: () => win?.contents.pasteAndMatchStyle() },
+        { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => win?.contents.selectAll() },
+      ],
+    },
     {
       label: 'Office',
       submenu: [
@@ -286,8 +299,27 @@ function menu(): Menu {
         { label: 'Show GPU Report', click: () => void writeGpuReport().then(() => shell.showItemInFolder(gpuLog)) },
       ],
     },
-    { role: 'viewMenu' },
-    { role: 'windowMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => win?.contents.reload() },
+        { label: 'Force Reload', accelerator: 'Shift+CmdOrCtrl+R', click: () => win?.contents.reloadIgnoringCache() },
+        { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win?.contents.toggleDevTools() },
+        { type: 'separator' },
+        { label: 'Toggle Full Screen', accelerator: 'Ctrl+CmdOrCtrl+F', click: () => win?.base.setFullScreen(!win.base.isFullScreen()) },
+      ],
+    },
+    {
+      label: 'Window',
+      role: 'window',
+      submenu: [
+        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', click: () => win?.base.minimize() },
+        { label: 'Zoom', click: () => (win?.base.isMaximized() ? win.base.unmaximize() : win?.base.maximize()) },
+        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => win?.base.close() },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
   ];
   return Menu.buildFromTemplate(template);
 }
