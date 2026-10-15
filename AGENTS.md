@@ -20,6 +20,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `src/shared/` | Types and pure logic compiled into both server and client, including the WebSocket protocol (`protocol.ts`) |
 | `src/client/` | Vite root: HTML entry pages, `main.ts`, `ui/` (DOM windows and panels), `world/` (three.js scene) |
 | `src/desktop/` | The Mac app's Electron main process: starts the office on Electron's Node, full-screen window, electron-updater (`tsconfig.desktop.json`, built to `dist/desktop`) |
+| `native/` | The Mac app's native Metal presenter (`native/presenter`, Objective-C++ Node-API addon built by `npm run build:native`) and its build script |
 | `electron-builder.yml`, `build/` | How the Mac app is packaged, signed and notarized; its icon and entitlements |
 | `android/` | Droid Office for Android, the phone companion app (Kotlin, Compose; its own Gradle build) |
 | `bin/droid-office.js` | Source checkout and Mac app CLI entry; loads the built `dist/server/server/cli.js` |
@@ -56,7 +57,7 @@ Run from the repository root. npm with `package-lock.json` is the only package m
 | Clean install (`prepare` also installs the pre-commit hook and builds client and server) | `npm ci` |
 | Add or change a dependency (updates `package-lock.json`; commit both files) | `npm install <pkg>` |
 | Dev: Vite with hot reload on :5173, server on :4600 | `npm run dev` |
-| Build `dist/public` (client) and `dist/server` (server) | `npm run build` |
+| Build `dist/public` (client), `dist/server` (server), `dist/desktop` (Mac app) and, on macOS, `native/presenter/build` (the Metal presenter, via `build:native`) | `npm run build` |
 | Lint and format check with Biome (`biome.jsonc`); any warning fails | `npm run lint` |
 | Rewrite files in the Biome format | `npm run format` |
 | Typecheck server and client | `npm run typecheck` |
