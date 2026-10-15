@@ -66,6 +66,7 @@ export class PresenterInput {
   private attached = false;
   private stopped = false;
   private focus = false;
+  private pageHidden = false;
 
   constructor(private readonly options: PresenterInputOptions) {
     this.lock = new PointerLock(() => options.native.inputCapabilities().rawMouse);
@@ -75,7 +76,7 @@ export class PresenterInput {
     page.on('did-start-navigation', (details: { isMainFrame?: boolean; isSameDocument?: boolean }) => {
       if (details?.isMainFrame && !details.isSameDocument) this.releaseLock();
     });
-    page.on('did-finish-load', () => void this.attach());
+    page.on('did-finish-load', () => void this.attach().then(() => this.pageHidden && this.applyVisibility()));
     page.on('render-process-gone', () => {
       this.attached = false;
       this.releaseLock();
@@ -105,6 +106,16 @@ export class PresenterInput {
 
   private log(message: string) {
     this.options.log?.(message);
+  }
+
+  /** Tells the page whether its window can be seen. A page nobody sees stops drawing, as a background tab does; the page learns it only from here. */
+  setPageVisible(visible: boolean): void {
+    this.pageHidden = !visible;
+    this.applyVisibility();
+  }
+
+  private applyVisibility() {
+    void this.evaluate(`${SHIM}?.visibility(${this.pageHidden})`);
   }
 
   /** The session has no target before the first page commits and hangs, so this runs from `did-finish-load`, never before. */

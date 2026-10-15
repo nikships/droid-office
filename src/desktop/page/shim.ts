@@ -16,7 +16,7 @@
  */
 (() => {
   type Host = (message: string) => void;
-  type Api = { granted(id: number, raw: boolean): void; denied(id: number, error: string): void; revoked(): void };
+  type Api = { granted(id: number, raw: boolean): void; denied(id: number, error: string): void; revoked(): void; visibility(hidden: boolean): void };
 
   const w = window as unknown as Record<string | symbol, unknown>;
   if (window !== window.top || w[Symbol.for('droid-office.shim')]) return;
@@ -72,6 +72,18 @@
       lockElement = null;
       fire('pointerlockchange');
     },
+    visibility() {},
+  };
+  // An offscreen page is never told it is hidden: its window can be minimized or covered and `document.visibilityState` stays
+  // "visible", so the page would keep drawing for nobody. The main process says when the window is hidden, and the page
+  // hears it as it would from a background tab.
+  let hidden = false;
+  Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, enumerable: true, get: () => (hidden ? 'hidden' : 'visible') });
+  Object.defineProperty(Document.prototype, 'hidden', { configurable: true, enumerable: true, get: () => hidden });
+  api.visibility = (now) => {
+    if (hidden === now) return;
+    hidden = now;
+    document.dispatchEvent(new Event('visibilitychange'));
   };
   Object.defineProperty(window, Symbol.for('droid-office.shim'), { value: api, enumerable: false });
 

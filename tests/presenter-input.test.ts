@@ -364,3 +364,22 @@ test('the context menu offers links and edit commands that apply, and nothing ot
     ['Copy'],
   );
 });
+
+test('the page is told when its window can no longer be seen, and again after it loads another document', async () => {
+  const t = setup();
+  t.emitPage('did-finish-load');
+  await t.flush();
+  assert.ok(!t.evaluated().some((e) => e.includes('visibility(')));
+  t.input.setPageVisible(false);
+  await t.flush();
+  assert.equal(t.evaluated().filter((e) => e.includes('?.visibility(true)')).length, 1);
+  t.emitPage('did-finish-load');
+  await t.flush();
+  assert.equal(t.evaluated().filter((e) => e.includes('?.visibility(true)')).length, 2);
+  t.input.setPageVisible(true);
+  await t.flush();
+  assert.ok(t.evaluated().some((e) => e.includes('?.visibility(false)')));
+  t.emitPage('did-finish-load');
+  await t.flush();
+  assert.equal(t.evaluated().filter((e) => e.includes('?.visibility(')).length, 3);
+});
