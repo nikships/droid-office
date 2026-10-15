@@ -88,8 +88,9 @@ export async function ensureRendering(cdp) {
     await cdp.send('Page.bringToFront').catch(() => undefined);
     const before = await cdp.eval('window.__raf.length');
     await sleep(600);
-    const [after, visible] = [await cdp.eval('window.__raf.length'), await cdp.eval('document.visibilityState')];
-    if (visible === 'visible' && after - before >= 20) return;
+    const after = await cdp.eval('window.__raf.length');
+    // Animation frames flowing is the test: a presenter build keeps its page in a hidden window, whose visibility is not.
+    if (after - before >= 20) return;
     await sleep(2000);
   }
   throw new Error('the page is not drawing (hidden or covered by another window)');

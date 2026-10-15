@@ -36,6 +36,14 @@ Every configuration is laid over the owner's saved settings (`local-storage.json
 
 Each row has the page's `office.frameStats()` (p50/p95/p99 frame time, missed and repeated, CPU and GPU per pass). With `--display-trace` the display's own changed frames in the same window are added: the gaps between them and how many came late against the cap. On a build whose `window.office` has `presenterStats` (the native presenter), each row also carries its report as `presenter`, reset and read over the same window. A scenario that errors or exceeds its time limit becomes a `failed` row and the matrix goes on.
 
+## The whole matrix on one build: `matrix.sh`
+
+```bash
+tools/frame-bench/matrix.sh "release/mac-arm64/Droid Office.app" /tmp/office-clone-XXXX /tmp/matrix-baseline baseline full /tmp/display-trace
+```
+
+Runs everything unattended (about 40 minutes of display time; `quick` is about 8): 120 FPS with 3 rounds, input latency, 60 and 40 FPS, and the light bake load. Run it on each build and compare the tables. Each row also has `--resources`: the app's CPU (cumulative CPU time over the scenario, as a share of one core, by process role), memory, and the system's GPU utilization from IOKit (no per-process GPU without sudo), so a quiet machine matters. A build with the native presenter adds its own report to the same rows. Every step has a time limit and `DEADLINE_MIN` stops new steps, so a stuck step does not stall the rest. Every launch starts from an empty profile, so each configuration runs on its own to make its light bake once.
+
 ## Latency: `latency.mjs`
 
 Each trial sends a mouse move through DevTools at a recorded `process.hrtime`; `display-trace` reports when the display's picture first changed after it (ScreenCaptureKit's `displayTime`). Latency is the difference. It includes DevTools delivery, input routing, the office's handler, the next frame, Chromium's compositing and the window server's composition. It excludes the operating system's dispatch of a real mouse event, the mouse sensor, and the panel's scan-out and pixel response (a high-speed camera measures those).
