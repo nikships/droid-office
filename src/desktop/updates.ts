@@ -1,5 +1,5 @@
 import { appendFileSync } from 'node:fs';
-import { app, type BrowserWindow, autoUpdater as squirrel } from 'electron';
+import { app, type BaseWindow, autoUpdater as squirrel } from 'electron';
 import updater from 'electron-updater';
 import { briefError, type UpdateAction, type UpdatePhase, updateBusy, updateView } from './update-view.js';
 import { UpdateWindow } from './update-window.js';
@@ -14,7 +14,7 @@ export interface UpdatesOptions {
   /** Runs before the app quits to install an update: stops the office, keeping its workers. */
   beforeInstall: () => Promise<void>;
   /** The office window, which the update window opens on as a sheet. */
-  parent: () => BrowserWindow | undefined;
+  parent: () => BaseWindow | undefined;
 }
 
 /**

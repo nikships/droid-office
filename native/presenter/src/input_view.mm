@@ -6,3 +6,5 @@
   return YES;
 }
 @end
+
+void DOInputRegisterExports(Napi::Env, Napi::Object) {}
