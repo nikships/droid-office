@@ -5,6 +5,7 @@ import {
   CALIBRATION_WARMUP_SECONDS,
   HIDDEN_FRAME_RATE,
   PageVisibility,
+  windowVisible,
   calibratePaced,
   layerPixelFormat,
   learnPacedLate,
@@ -261,8 +262,6 @@ test('paced: calibration keeps the quickest frame after the warm-up and ignores 
 test('hiding the page stops painting, slows its frame rate to the floor and tells the office page; showing undoes all of it', () => {
   const calls: string[] = [];
   const gate = new PageVisibility({
-    show: () => calls.push('show'),
-    hide: () => calls.push('hide'),
     startPainting: () => calls.push('start'),
     stopPainting: () => calls.push('stop'),
     setFrameRate: (fps) => calls.push(`rate ${fps}`),
@@ -273,12 +272,18 @@ test('hiding the page stops painting, slows its frame rate to the floor and tell
   gate.set(true);
   assert.deepEqual(calls, [], 'already visible: nothing happens');
   gate.set(false);
-  assert.deepEqual(calls.splice(0), ['hide', 'stop', `rate ${HIDDEN_FRAME_RATE}`, 'notify false']);
+  assert.deepEqual(calls.splice(0), ['stop', `rate ${HIDDEN_FRAME_RATE}`, 'notify false']);
   assert.equal(gate.isVisible(), false);
   gate.set(false);
   assert.deepEqual(calls, [], 'hiding twice does nothing');
   gate.setDisplayRate(60);
   assert.deepEqual(calls.splice(0), [`rate ${HIDDEN_FRAME_RATE}`], 'a display change while hidden keeps the floor');
   gate.set(true);
-  assert.deepEqual(calls.splice(0), ['show', 'start', 'rate 60', 'notify true']);
+  assert.deepEqual(calls.splice(0), ['start', 'rate 60', 'notify true']);
+});
+
+test('a window report with no verdict counts as visible, only an explicit false hides', () => {
+  assert.equal(windowVisible({}), true);
+  assert.equal(windowVisible({ visible: true }), true);
+  assert.equal(windowVisible({ visible: false }), false);
 });

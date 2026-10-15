@@ -25,8 +25,6 @@ export function presentMode(env: Record<string, string | undefined>): PresentMod
 export const HIDDEN_FRAME_RATE = 1;
 
 export interface PageVisibilityEffects {
-  show(): void;
-  hide(): void;
   startPainting(): void;
   stopPainting(): void;
   setFrameRate(fps: number): void;
@@ -34,7 +32,15 @@ export interface PageVisibilityEffects {
   notify(visible: boolean): void;
 }
 
-/** What follows a window becoming visible or hidden, in one place so it can be tested without Electron. */
+/** Whether the native side's report says the window can be seen: a report with no verdict counts as visible, so nothing is hidden on a guess. */
+export function windowVisible(state: { visible?: boolean }): boolean {
+  return state.visible !== false;
+}
+
+/**
+ * What follows a window becoming visible or hidden, in one place so it can be tested without Electron. The page's own window is never
+ * shown or hidden here: ordering it front or back from another Space tugs the Space switch of a window that is going full screen.
+ */
 export class PageVisibility {
   private visible = true;
   private fps = 60;
@@ -55,11 +61,9 @@ export class PageVisibility {
     if (visible === this.visible) return;
     this.visible = visible;
     if (visible) {
-      this.effects.show();
       this.effects.startPainting();
       this.effects.setFrameRate(this.fps);
     } else {
-      this.effects.hide();
       this.effects.stopPainting();
       this.effects.setFrameRate(HIDDEN_FRAME_RATE);
     }

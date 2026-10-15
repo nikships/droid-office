@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { app, BaseWindow, BrowserWindow, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
-import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, PageVisibility, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger } from './presenter-model.js';
+import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, PageVisibility, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger, windowVisible } from './presenter-model.js';
 import { failStartup, loadNative, StartupAborted } from './startup.js';
 import { sharedTextureFailure } from './startup-failure.js';
 
@@ -79,6 +79,7 @@ export class PresenterWindow {
   /** Called whenever the page becomes visible or hidden (a minimized or covered window), so the office page can pause its own render loop. */
   onVisibleChange: ((visible: boolean) => void) | undefined;
   private watchdog: NodeJS.Timeout | undefined;
+  private recheck: NodeJS.Timeout | undefined;
   private gotTexture = false;
   private closed = false;
   private hdr = false;
@@ -113,19 +114,22 @@ export class PresenterWindow {
     });
     this.contents = this.page.webContents;
     this.visibility = new PageVisibility({
-      show: () => this.page.showInactive(),
-      hide: () => this.page.hide(),
       startPainting: () => this.contents.startPainting(),
       stopPainting: () => this.contents.stopPainting(),
       setFrameRate: (fps) => this.contents.setFrameRate(fps),
       notify: (visible) => this.onVisibleChange?.(visible),
     });
     // The offscreen page is a real window as far as the window server is concerned, so it is made invisible and click-through
-    // rather than left unshown. Hiding it does not change the page's visibilityState or slow its animation frames in Electron's
-    // offscreen mode (only a low frame rate does), so PageVisibility also drops the frame rate and tells the office page itself.
+    // rather than left unshown. It is never hidden or ordered front again: that does not change the page's visibilityState or slow
+    // its animation frames in Electron's offscreen mode (only a low frame rate does), so PageVisibility drops the frame rate and tells
+    // the office page itself. It joins every Space: left on the desktop it was ordered from, it is occluded and tugs the Space switch
+    // when the visible window goes full screen into a new one, which left the visible window occluded for good about two launches in three.
     this.page.setOpacity(0);
     this.page.setIgnoreMouseEvents(true);
     this.page.setFocusable(false);
+    this.page.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    this.page.setHiddenInMissionControl(true);
+    this.page.excludedFromShownWindowsMenu = true;
     this.page.showInactive();
     this.native = new module.Presenter(this.base.getNativeWindowHandle(), {
       pixelFormat: layerPixelFormat(format),
@@ -224,12 +228,22 @@ export class PresenterWindow {
     this.visibility.setDisplayRate(this.maxFps);
     this.native.setPacing({ followDisplay: true });
     // The window isn't on screen until the first frame, so "not visible" means nothing before then.
-    this.setVisible(state.visible !== false || !this.gotTexture);
+    this.setVisible(windowVisible(state) || !this.gotTexture);
   }
 
   /** A window nobody can see (minimized, covered, on another Space) makes no frames and its page is slowed to the floor frame rate and told it is hidden (`onVisibleChange`), which is what pauses the office's render loop. */
   private setVisible(visible: boolean): void {
     this.visibility.set(visible);
+    if (visible || this.closed) {
+      clearInterval(this.recheck);
+      this.recheck = undefined;
+    } else if (!this.recheck) {
+      // An occlusion event is the only thing that turns a hidden page back on, so while hidden the window's real state is read once a second: a missed event must not strand a window that is on screen at the floor frame rate.
+      this.recheck = setInterval(() => {
+        if (!this.closed && windowVisible(this.native.displayInfo() as unknown as DisplayState)) this.setVisible(true);
+      }, 1000);
+      this.recheck.unref();
+    }
   }
 
   private registerIpc(): void {
@@ -249,6 +263,7 @@ export class PresenterWindow {
     if (this.closed) return;
     this.closed = true;
     clearTimeout(this.watchdog);
+    clearInterval(this.recheck);
     ipcMain.removeHandler('presenter:stats');
     ipcMain.removeAllListeners('presenter:hdr');
     this.native.close();
