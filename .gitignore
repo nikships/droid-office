@@ -10,3 +10,5 @@ pw.txt
 .env
 .env.*
 !.env.example
+# The native Metal presenter that `npm run build:native` compiles.
+native/presenter/build

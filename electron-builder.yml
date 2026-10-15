@@ -14,6 +14,9 @@ files:
   - bin/**/*
   - dist/**/*
   - '!dist/**/*.map'
+  # Only the compiled presenter (npm run build:native), not its sources or node-gyp's intermediates. It
+  # stays a file on disk (no asar), signed with the app by electron-builder, and src/desktop loads it by path.
+  - native/presenter/build/Release/presenter.node
 
 # The office runs bin/droid-office.js, its PTY host and the workers' office-workers
 # command as files on disk with Electron's Node, and node-pty spawns its spawn-helper from disk,

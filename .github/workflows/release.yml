@@ -187,7 +187,16 @@ jobs:
           cache: npm
 
       - name: Install and build
-        run: npm ci # its prepare script builds the client, the server and the app's main process
+        run: npm ci # its prepare script builds the client, the server, the app's main process and the native Metal presenter
+
+      - name: Check the native Metal presenter was built for the Mac app
+        run: |
+          node="native/presenter/build/Release/presenter.node"
+          test -f "$node"
+          lipo -archs "$node" | grep -qx arm64
+          # Built for macOS 14, the app's floor (minos in LC_BUILD_VERSION).
+          vtool -show-build "$node" | tee vtool.log
+          grep -Eq 'minos 14\.0' vtool.log
 
       - name: Set the release version
         id: version
@@ -241,9 +250,10 @@ jobs:
           app="release/mac-arm64/Droid Office.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = 14.0
 
-      # The app's own main process, with no window: the macOS 14 and chip gates, then exit 0. The runner is a
-      # base-chip virtual machine, so the check passes only with the CI-only DROID_OFFICE_ALLOW_ANY_CHIP, and
-      # must refuse without it. A fresh user-data folder keeps it off any other instance's lock and settings.
+      # The app's own main process, with no window: the macOS 14 and chip gates, the presenter module loading from the
+      # bundle, then exit 0. The runner is a base-chip virtual machine, so the check passes only with the CI-only
+      # DROID_OFFICE_ALLOW_ANY_CHIP, and must refuse without it. A fresh user-data folder keeps it off any other
+      # instance's lock and settings.
       - name: Check the app's startup gates
         run: |
           app="release/mac-arm64/Droid Office.app"
@@ -252,6 +262,8 @@ jobs:
           echo "runner chip: $chip"
           DROID_OFFICE_ALLOW_ANY_CHIP=1 "$bin" --startup-check --user-data-dir="$RUNNER_TEMP/startup-check-1" | tee startup-check.log
           grep -q '^startup-check ok' startup-check.log
+          grep -q '"presenter":{' startup-check.log
+          test -f "$app/Contents/Resources/app/native/presenter/build/Release/presenter.node"
           if echo "$chip" | grep -Eq '^Apple M[0-9]+ (Pro|Max|Ultra)$'; then
             "$bin" --startup-check --user-data-dir="$RUNNER_TEMP/startup-check-2"
           else
@@ -288,6 +300,12 @@ jobs:
         run: |
           app="release/mac-arm64/Droid Office.app"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The presenter is its own signed Mach-O: Developer ID, hardened runtime, the app's team.
+          node="$app/Contents/Resources/app/native/presenter/build/Release/presenter.node"
+          codesign --verify --strict --verbose=2 "$node"
+          codesign -dvv "$node" 2>&1 | tee presenter-signature.log
+          grep -q 'TeamIdentifier=NW6B3R27LQ' presenter-signature.log
+          grep -q 'flags=0x10000(runtime)' presenter-signature.log
           spctl --assess --type execute -vv "$app" 2>&1 | tee spctl.log
           grep -q 'source=Notarized Developer ID' spctl.log
           # electron-builder notarizes the app inside; the disk image around it gets its own ticket.

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkRequirements, darwinMajor, type Machine, MIN_DARWIN, MIN_MACOS, parseChip } from '../src/desktop/requirements.js';
@@ -93,4 +95,12 @@ test('startup failures for the native module and the shared texture name the cau
   assert.ok(texture.detail.includes('no frame in 5000 ms'));
   assert.equal(nativeModuleFailure('plain string').detail.endsWith('plain string'), true);
   assert.match(formatStartupFailure(texture), /^Droid Office couldn't get frames from the GPU\n\n/);
+});
+
+test('the presenter is looked for where electron-builder ships it', async () => {
+  const { presenterModulePath, PRESENTER_MODULE } = await import('../src/desktop/native.js');
+  assert.equal(presenterModulePath('/Applications/Droid Office.app/Contents/Resources/app'), '/Applications/Droid Office.app/Contents/Resources/app/native/presenter/build/Release/presenter.node');
+  const builder = readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8');
+  assert.ok(builder.includes(`- ${PRESENTER_MODULE.split(path.sep).join('/')}`), 'electron-builder.yml must list the presenter in files');
+  assert.match(builder, /minimumSystemVersion: '14\.0'/);
 });

@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, dialog } from 'electron';
+import { requirePresenter } from './native.js';
 import { checkRequirements, type Machine } from './requirements.js';
 import { formatStartupFailure, nativeModuleFailure, type StartupFailure } from './startup-failure.js';
 
@@ -71,9 +72,17 @@ export function loadNative<T>(load: () => T): T {
   }
 }
 
-/** What CI runs the packaged app with: the gates, then a one-line report on stdout and exit 0. A failure exits 1 through `failStartup`. */
+/**
+ * What CI runs the packaged app with: the gates, the presenter module loaded from the bundle (a `probe()` export, when it has
+ * one, is called too), then a one-line report on stdout and exit 0. A failure exits 1 through `failStartup`.
+ */
 export function runStartupCheck(): void {
   const machine = readMachine();
-  process.stdout.write(`startup-check ok: ${JSON.stringify({ chip: machine.brand ?? null, arch: machine.arch, darwin: machine.release, electron: process.versions.electron })}\n`);
+  const presenter = loadNative(() => {
+    const exports = requirePresenter(app.getAppPath());
+    return { exports: Object.keys(exports).sort(), probe: typeof exports.probe === 'function' ? (exports.probe as () => unknown)() : undefined };
+  });
+  const report = { chip: machine.brand ?? null, arch: machine.arch, darwin: machine.release, electron: process.versions.electron, presenter };
+  process.stdout.write(`startup-check ok: ${JSON.stringify(report)}\n`);
   app.exit(0);
 }
