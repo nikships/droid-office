@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, pageSize, SAMPLE_STRIDE, spread, summarizeNativeStats, TextureLedger } from '../src/desktop/presenter-model.js';
+import { layerPixelFormat, presentMode, type NativeStats, osrFrameRate, osrPixelFormat, pageSize, SAMPLE_STRIDE, spread, summarizeNativeStats, TextureLedger } from '../src/desktop/presenter-model.js';
 
 test('the page renders float16 only when a screen can show brighter than white', () => {
   assert.equal(osrPixelFormat(true), 'rgbaf16');
@@ -104,4 +104,10 @@ test('presenter stats on an empty ring are zeros, and one frame has no interval 
   assert.equal(one.fps, 0);
   assert.equal(one.late, 0);
   assert.ok(Math.abs(one.latency.p50 - 9) < 0.01);
+});
+
+test('the present mode is direct unless the display link is asked for', () => {
+  assert.equal(presentMode({}), 'direct');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'link' }), 'link');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'bogus' }), 'direct');
 });

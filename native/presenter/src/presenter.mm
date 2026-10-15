@@ -119,6 +119,10 @@ class Core : public std::enable_shared_from_this<Core> {
   Callbacks callbacks;
   bool callbacksOpen = true;
 
+  // Direct: a frame is drawn and presented when it arrives (the layer still waits for the display's vsync). Link: it is drawn on the next
+  // CAMetalDisplayLink update, which gives an exact cadence but shows the frame several refreshes after the update.
+  bool direct = true;
+  dispatch_queue_t directQueue = dispatch_queue_create("droid-office.presenter.direct", DISPATCH_QUEUE_SERIAL);
   std::atomic<bool> linkPaused{false}, closed{false};
   std::atomic<bool> captureArmed{false};
   std::mutex captureLock;
@@ -184,7 +188,9 @@ class Core : public std::enable_shared_from_this<Core> {
   }
 
   // Called on the link thread for every display refresh.
-  void tick(CAMetalDisplayLinkUpdate *update) API_AVAILABLE(macos(14.0)) {
+  void tick(CAMetalDisplayLinkUpdate *update) API_AVAILABLE(macos(14.0)) { drawFrame(update.drawable, update.targetPresentationTimestamp); }
+
+  void drawFrame(id<CAMetalDrawable> drawable, double target) {
     double now = CACurrentMediaTime();
     Frame f;
     {
@@ -203,7 +209,6 @@ class Core : public std::enable_shared_from_this<Core> {
       counters.ticksWithFrame++;
     }
     id<MTLTexture> tex = textureFor(f.surface);
-    id<CAMetalDrawable> drawable = update.drawable;
     if (!tex || !drawable) {
       {
         std::lock_guard<std::mutex> g(lock);
@@ -225,10 +230,9 @@ class Core : public std::enable_shared_from_this<Core> {
     [enc endEncoding];
     [cb presentDrawable:drawable];
 
-    bool capture = captureArmed.exchange(false) && !drawable.texture.framebufferOnly;
+    bool capture = !drawable.texture.framebufferOnly && captureArmed.exchange(false);
     id<MTLTexture> drawableTexture = drawable.texture;
     auto self = shared_from_this();
-    double target = update.targetPresentationTimestamp;
     Sample sample{(double)f.id, f.submittedAt, now, target, 0, 0};
     {
       std::lock_guard<std::mutex> g(lock);
@@ -292,7 +296,7 @@ class Core : public std::enable_shared_from_this<Core> {
     captureFn.Release();
   }
 
-  void pauseIfIdle() API_AVAILABLE(macos(14.0)) {
+  void pauseIfIdle() {
     linkPaused.store(true);
     {
       std::lock_guard<std::mutex> g(lock);
@@ -301,7 +305,7 @@ class Core : public std::enable_shared_from_this<Core> {
         return;
       }
     }
-    link.paused = YES;
+    if (@available(macOS 14.0, *)) link.paused = YES;
   }
 
   void wake() {
@@ -357,7 +361,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     Napi::Object opts = info[1].As<Napi::Object>();
     NSView *host = (__bridge NSView *)(*reinterpret_cast<void **>(info[0].As<Napi::Buffer<uint8_t>>().Data()));
     bool hdr = opts.Has("pixelFormat") && opts.Get("pixelFormat").ToString().Utf8Value() == "rgbaf16";
-    double latency = opts.Has("frameLatency") ? opts.Get("frameLatency").ToNumber().DoubleValue() : 1.0;
+    double latency = opts.Has("frameLatency") && opts.Get("frameLatency").IsNumber() ? opts.Get("frameLatency").ToNumber().DoubleValue() : 1.0;
 
     core = std::make_shared<Core>();
     core->device = MTLCreateSystemDefaultDevice();
@@ -393,6 +397,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
       core->callbacks.hasEvent = true;
     }
     core->ring.reserve(kRingCapacity);
+    core->direct = !(opts.Has("mode") && opts.Get("mode").ToString().Utf8Value() == "link");
 
     DOPresenterView *view = [[DOPresenterView alloc] initWithFrame:host.bounds];
     core->view = view;
@@ -437,7 +442,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
         NSRunLoop *rl = NSRunLoop.currentRunLoop;
         raw->runLoop = CFRunLoopGetCurrent();
         [rl addPort:NSMachPort.port forMode:NSDefaultRunLoopMode];
-        if (@available(macOS 14.0, *)) {
+        if (!raw->direct) if (@available(macOS 14.0, *)) {
           CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:raw->layer];
           link.delegate = raw->delegate;
           link.preferredFrameLatency = latency;
@@ -449,7 +454,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
         }
         dispatch_semaphore_signal(ready);
         while (!raw->closed.load()) [rl runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1.0]];
-        if (@available(macOS 14.0, *)) [raw->link invalidate];
+        if (!raw->direct) if (@available(macOS 14.0, *)) [raw->link invalidate];
       }
     }];
     core->thread.name = @"droid-office.presenter.link";
@@ -530,7 +535,19 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
       CFRelease(old.surface);
       core->notifyRelease(old.id);
     }
-    core->wake();
+    if (core->direct) {
+      auto c = core;
+      dispatch_async(c->directQueue, ^{
+        {
+          std::lock_guard<std::mutex> g(c->lock);
+          if (!c->mailbox.surface) return;
+        }
+        id<CAMetalDrawable> d = [c->layer nextDrawable];
+        if (d && !c->closed.load()) c->drawFrame(d, 0);
+      });
+    } else {
+      core->wake();
+    }
     return env.Undefined();
   }
 
@@ -573,6 +590,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     d[@"visible"] = @((core->view.window.occlusionState & NSWindowOcclusionStateVisible) != 0);
     d[@"pixelFormat"] = core->layerFormat == MTLPixelFormatRGBA16Float ? @"rgbaf16" : @"bgra8";
     d[@"edrActive"] = @(core->layer.wantsExtendedDynamicRangeContent);
+    d[@"mode"] = core->direct ? @"direct" : @"link";
     d[@"now"] = @(CACurrentMediaTime());
     return toJS(info.Env(), d);
   }

@@ -12,6 +12,14 @@ export function layerPixelFormat(osr: OsrPixelFormat): 'rgbaf16' | 'bgra' {
   return osr === 'rgbaf16' ? 'rgbaf16' : 'bgra';
 }
 
+/** How the addon puts a frame on the display: as it arrives (`direct`), or on the next `CAMetalDisplayLink` update (`link`). */
+export type PresentMode = 'direct' | 'link';
+
+/** `DROID_OFFICE_PRESENT_MODE=link` picks the display link; anything else is `direct`, the lower-latency mode. */
+export function presentMode(env: Record<string, string | undefined>): PresentMode {
+  return env.DROID_OFFICE_PRESENT_MODE === 'link' ? 'link' : 'direct';
+}
+
 const MIN_OSR_FPS = 30;
 const MAX_OSR_FPS = 120;
 
