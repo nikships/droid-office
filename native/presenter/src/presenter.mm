@@ -42,7 +42,7 @@ static const size_t kTextureCacheLimit = 24;
 // Without a new frame for this long the display link pauses; the next submit() resumes it.
 static const double kIdlePauseSeconds = 0.25;
 static const int kCalibrationFrames = 20;
-static const int kCalibrationWarmup = 30;
+static const double kCalibrationWarmupSeconds = 3;
 
 namespace {
 
@@ -134,7 +134,9 @@ class Core : public std::enable_shared_from_this<Core> {
   std::atomic<double> lastPresented{0};
   std::atomic<double> minLatency{0};
   double baseLatency = 0;
-  std::atomic<int> calibrated{0}, seen{0};
+  std::atomic<int> calibrated{0};
+  std::atomic<double> calibrationStart{0};
+  std::atomic<int> drawableCount{3};
   std::atomic<int> lateRun{0};
   double lastSubmit = 0;
   std::atomic<double> arrivalInterval{0};
@@ -315,8 +317,13 @@ class Core : public std::enable_shared_from_this<Core> {
       if (!calibrating) return;
       int n = calibrated.load();
       if (n >= kCalibrationFrames) return;
-      // The window is still appearing and the page starting for the first frames, which show slower than the steady state.
-      if (seen.fetch_add(1) + 1 <= kCalibrationWarmup) return;
+      // The window is still appearing and the page starting for the first seconds, which show slower than the steady state.
+      double start = calibrationStart.load();
+      if (start <= 0) {
+        calibrationStart.store(s.submittedAt);
+        return;
+      }
+      if (s.submittedAt - start < kCalibrationWarmupSeconds) return;
       double latency = s.presentedAt - s.submittedAt;
       if (latency > 0 && latency < 0.2) {
         minLatency.store(n == 0 ? latency : std::min(minLatency.load(), latency));
@@ -634,10 +641,15 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
         if (c->paced) {
           double interval = c->arrivalInterval.load(), p = c->period.load();
           bool holding = interval >= 1.5 * p;
+          // At a frame per refresh, two drawables take a refresh of queueing off the latency; a held frame needs the third.
+          if (interval > 0) {
+            int want = holding ? 3 : 2;
+            if (c->drawableCount.exchange(want) != want) dispatch_async(dispatch_get_main_queue(), ^{ c->layer.maximumDrawableCount = want; });
+          }
           // Calibration belongs to the pace being held to: one taken at a frame per refresh is queued behind the drawables.
           if (interval > 0 && !holding && c->calibrated.load() > 0) {
             c->calibrated.store(0);
-            c->seen.store(0);
+            c->calibrationStart.store(0);
             c->minLatency.store(0);
             c->lateRun.store(0);
           }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   CALIBRATION_FRAMES,
-  CALIBRATION_WARMUP,
+  CALIBRATION_WARMUP_SECONDS,
   calibratePaced,
   layerPixelFormat,
   learnPacedLate,
@@ -146,7 +146,7 @@ function simulatePaced(options: { acquireAtArrival: boolean; frames?: number; ar
   let smoothed = 0;
   let bumps = 0;
   let blocked = 0;
-  for (let n = 0; n < (options.frames ?? 400); n++) {
+  for (let n = 0; n < (options.frames ?? 700); n++) {
     const a = 1 + n * arrivalPeriod + (((n * 7919) % 13) - 6) * 0.00008;
     if (n > 0) smoothed = smoothed > 0 ? smoothed * 0.9 + (a - arrived[n - 1]!) * 0.1 : a - arrived[n - 1]!;
     arrived.push(a);
@@ -162,17 +162,17 @@ function simulatePaced(options: { acquireAtArrival: boolean; frames?: number; ar
     const acquireAt = hold && !options.acquireAtArrival ? hold.acquireAt : a;
     // Three drawables: this frame's is the one of the frame two before, which frees when the frame after that is shown.
     const committed = Math.max(acquireAt, n >= 2 ? shown[n - 2]! : 0);
-    if (n >= 100 && committed > acquireAt) blocked++;
-    let presented = vsyncAtOrAfter(Math.max(hold ? hold.slot - 0.5 * p : 0, committed + deadline + (n < CALIBRATION_WARMUP ? (options.startupDelay ?? 0) : 0)));
+    if (n >= 300 && committed > acquireAt) blocked++;
+    let presented = vsyncAtOrAfter(Math.max(hold ? hold.slot - 0.5 * p : 0, committed + deadline + (a - 1 < CALIBRATION_WARMUP_SECONDS ? (options.startupDelay ?? 0) : 0)));
     if (n > 0) presented = Math.max(presented, shown[n - 1]! + p);
     shown.push(presented);
     if (hold) heldFrames.push({ shownAt: presented, slot: hold.slot });
-    else state = calibratePaced(state, presented - a);
+    else state = calibratePaced(state, presented - a, a);
   }
-  const settled = shown.slice(100);
+  const settled = shown.slice(300);
   return {
     intervals: settled.slice(1).map((t, i) => (t - settled[i]!) / p),
-    latencies: settled.map((t, i) => t - arrived[100 + i]!),
+    latencies: settled.map((t, i) => t - arrived[300 + i]!),
     bumps,
     blocked,
     shown,
@@ -237,17 +237,18 @@ test('paced: the first frames are not measured, so a slow start does not set the
 
 test('paced: calibration keeps the quickest frame after the warm-up and ignores impossible latencies; late holds grow the deadline twice at most', () => {
   let s = newPacedDeadline();
-  for (let i = 0; i < CALIBRATION_WARMUP; i++) s = calibratePaced(s, 0.5);
+  for (let t = 0; t < CALIBRATION_WARMUP_SECONDS; t += 0.05) s = calibratePaced(s, 0.5, 100 + t);
   assert.equal(s.calibrated, 0);
-  s = calibratePaced(s, 0.03);
-  s = calibratePaced(s, 0.026);
-  s = calibratePaced(s, 0);
-  s = calibratePaced(s, 5);
+  const at = 100 + CALIBRATION_WARMUP_SECONDS + 1;
+  s = calibratePaced(s, 0.03, at);
+  s = calibratePaced(s, 0.026, at);
+  s = calibratePaced(s, 0, at);
+  s = calibratePaced(s, 5, at);
   assert.equal(s.calibrated, 2);
   assert.equal(s.minLatency, 0.026);
-  for (let i = 2; i < CALIBRATION_FRAMES; i++) s = calibratePaced(s, 0.027);
+  for (let i = 2; i < CALIBRATION_FRAMES; i++) s = calibratePaced(s, 0.027, at);
   assert.equal(s.baseLatency, 0.026);
-  assert.equal(calibratePaced(s, 0.01), s);
+  assert.equal(calibratePaced(s, 0.01, at), s);
   const p = 1 / 120;
   for (let i = 0; i < 20; i++) s = learnPacedLate(s, 20 + 0.9 * p, 20, p);
   assert.ok(Math.abs(s.minLatency - (0.026 + 2 * p)) < 1e-9);

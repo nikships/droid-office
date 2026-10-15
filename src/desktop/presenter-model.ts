@@ -27,8 +27,8 @@ export const CALIBRATION_FRAMES = 20;
 const HOLD_MIN_REFRESHES = 1.5;
 /** How long after the last presented frame the vsync grid is trusted, in seconds. */
 const GRID_STALE_SECONDS = 0.25;
-/** The window is still appearing and the page still starting for the first frames, which show slower than the steady state the hold is judged against. */
-export const CALIBRATION_WARMUP = 30;
+/** Seconds after the first frame at the held pace before any is measured: the window is still appearing and the page starting, and those frames show slower than the steady state the hold is judged against. */
+export const CALIBRATION_WARMUP_SECONDS = 3;
 /** The drawable is acquired this long (seconds) before the compositor's deadline for the slot. */
 const ACQUIRE_MARGIN_SECONDS = 0.001;
 
@@ -42,22 +42,22 @@ export interface PacedDeadline {
   minLatency: number;
   baseLatency: number;
   lateRun: number;
-  /** Frames seen so far, calibration frames included (the first CALIBRATION_WARMUP are not measured). */
-  seen: number;
+  /** When the first frame at the held pace arrived (0 before it), on the clock the frames' times are on. */
+  startedAt: number;
 }
 
 export function newPacedDeadline(): PacedDeadline {
-  return { calibrated: 0, minLatency: 0, baseLatency: 0, lateRun: 0, seen: 0 };
+  return { calibrated: 0, minLatency: 0, baseLatency: 0, lateRun: 0, startedAt: 0 };
 }
 
-/** A frame shown with no hold took `latency` seconds from its paint reaching the presenter to the display. Call it only for frames that arrive at the pace being held to. */
-export function calibratePaced(state: PacedDeadline, latency: number): PacedDeadline {
+/** A frame that arrived at `arrivedAt` and was shown with no hold took `latency` seconds to reach the display. Call it only for frames that arrive at the pace being held to. */
+export function calibratePaced(state: PacedDeadline, latency: number, arrivedAt: number): PacedDeadline {
   if (state.calibrated >= CALIBRATION_FRAMES) return state;
-  const seen = state.seen + 1;
-  if (seen <= CALIBRATION_WARMUP || !(latency > 0 && latency < 0.2)) return { ...state, seen };
+  if (state.startedAt === 0) state = { ...state, startedAt: arrivedAt };
+  if (arrivedAt - state.startedAt < CALIBRATION_WARMUP_SECONDS || !(latency > 0 && latency < 0.2)) return state;
   const minLatency = state.calibrated === 0 ? latency : Math.min(state.minLatency, latency);
   const calibrated = state.calibrated + 1;
-  return { ...state, seen, calibrated, minLatency, baseLatency: calibrated === CALIBRATION_FRAMES ? minLatency : state.baseLatency };
+  return { ...state, calibrated, minLatency, baseLatency: calibrated === CALIBRATION_FRAMES ? minLatency : state.baseLatency };
 }
 
 export interface PacedHoldInput {
