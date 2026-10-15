@@ -10,5 +10,6 @@ pw.txt
 .env
 .env.*
 !.env.example
-# The native Metal presenter that `npm run build:native` compiles.
-native/presenter/build
+
+# Built native addons (npm run build:native).
+native/*/build
