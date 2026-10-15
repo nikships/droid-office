@@ -2,7 +2,7 @@
 // longer than the frame rate limit meant. Average FPS hides both. Pure and loadable in Node (tests/frame-stats.test.ts).
 
 /** The parts of a frame timed on the CPU, in the order `drawFrame` (main.ts) runs them. */
-export const FRAME_PASSES = ['update', 'scene', 'hands'] as const;
+export const FRAME_PASSES = ['update', 'scene', 'hands', 'finish'] as const;
 export type FramePass = (typeof FRAME_PASSES)[number];
 
 /** One drawn frame. */
@@ -111,7 +111,7 @@ export class FrameStats {
       frameTime: spread(gaps),
       missed,
       repeated,
-      cpu: { update: cpuOf('update'), scene: cpuOf('scene'), hands: cpuOf('hands'), total: cpuOf('total') },
+      cpu: { update: cpuOf('update'), scene: cpuOf('scene'), hands: cpuOf('hands'), finish: cpuOf('finish'), total: cpuOf('total') },
       gpu: o.gpu ?? { scene: null, hands: null },
     };
   }

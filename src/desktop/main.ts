@@ -12,7 +12,7 @@ import type { NativeEvent } from './input-events.js';
 import { type InputNative, PresenterInput } from './presenter-input.js';
 import { PresenterWindow, presenterModule } from './presenter.js';
 import { officeRuntime } from './runtime.js';
-import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
+import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
 import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { Updates } from './updates.js';
@@ -27,6 +27,8 @@ const PORT_TRIES = 20;
 const userDataSwitch = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com.nikships.droid-office'));
 if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
+/** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
+const isolated = Boolean(userDataSwitch);
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
@@ -187,6 +189,11 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
 /** The chosen port, or the first one after it that nothing holds; an office already on one is used as is. */
 async function findPort(): Promise<{ port: number; running: boolean }> {
   const first = settings.port ?? DEFAULT_PORT;
+  if (isolated) {
+    // Never starts an office and never scans: it shows the one office already on the chosen port, which is not the owner's.
+    if (!isolatedPortOk(first, await probePort(first))) throw new Error(`--user-data-dir is set: start an office on port ${first} first (not ${DEFAULT_PORT}), and put that port in ${settingsFile}.`);
+    return { port: first, running: true };
+  }
   for (let port = first; port < first + PORT_TRIES && port <= 65535; port++) {
     const state = await probePort(port);
     if (state === 'office') return { port, running: true };
@@ -364,18 +371,18 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
       enforceRequirements();
       if (isStartupCheck()) return runStartupCheck();
       Menu.setApplicationMenu(menu());
-      if (await moveToApplications()) return;
+      if (!isolated && (await moveToApplications())) return;
       show(page('Opening the office…'));
       officeEnv = await desktopEnv();
-      if (!settings.officeDir) {
+      if (!isolated && !settings.officeDir) {
         settings = { ...settings, officeDir: await chooseOfficeDir(true) };
         saveSettings(settingsFile, settings);
       }
       await openOffice();
       void writeGpuReport();
       mkdirSync(logDir, { recursive: true });
-      downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
-      updates.start();
+      if (!isolated) downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
+      if (!isolated) updates.start();
     })
     .catch((err: unknown) => {
       // failStartup has already shown why and asked the app to exit; anything else is a bug that should surface.
