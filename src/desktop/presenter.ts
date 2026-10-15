@@ -128,6 +128,8 @@ export class PresenterWindow {
     this.page.setIgnoreMouseEvents(true);
     this.page.setFocusable(false);
     this.page.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    // Screen-share pickers list an invisible window too; sharing none keeps it out of them (paints and presented frames were unchanged with it on).
+    this.page.setContentProtection(true);
     this.page.setHiddenInMissionControl(true);
     this.page.excludedFromShownWindowsMenu = true;
     this.page.showInactive();
