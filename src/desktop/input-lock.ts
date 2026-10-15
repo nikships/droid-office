@@ -21,10 +21,11 @@ export class PointerLock {
   private letGo = false;
   private escDown = false;
 
-  constructor(private rawSupported: boolean) {}
+  /** `rawSupported` is asked at each request: a mouse can be plugged in or pulled out between two. */
+  constructor(private rawSupported: boolean | (() => boolean)) {}
 
   request(req: { raw: boolean; activation: boolean }): LockAnswer {
-    if (req.raw && !this.rawSupported) return { ok: false, error: 'NotSupportedError' };
+    if (req.raw && !(typeof this.rawSupported === 'function' ? this.rawSupported() : this.rawSupported)) return { ok: false, error: 'NotSupportedError' };
     const earned = this.letGo;
     // Asking uses up the leave, whatever comes of it.
     this.letGo = false;
