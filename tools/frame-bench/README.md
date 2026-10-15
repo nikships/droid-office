@@ -38,6 +38,18 @@ Each row has the page's `office.frameStats()` (p50/p95/p99 frame time, missed an
 
 Each trial sends a mouse move through DevTools at a recorded `process.hrtime`; `display-trace` reports when the display's picture first changed after it (ScreenCaptureKit's `displayTime`). Latency is the difference. It includes DevTools delivery, input routing, the office's handler, the next frame, Chromium's compositing and the window server's composition. It excludes the operating system's dispatch of a real mouse event, the mouse sensor, and the panel's scan-out and pixel response (a high-speed camera measures those).
 
+## Controls: `control.mjs`, `native-control.mjs`
+
+The display-side numbers have a floor that no page or app can beat: the capture tool coalesces or drops some frames, and the window server and Chromium add their own. Two controls record it the same way as an office run.
+
+```bash
+node tools/frame-bench/control.mjs --app "release/mac-arm64/Droid Office.app" --clone /tmp/office-clone-XXXX --out /tmp/bench --display-trace /tmp/display-trace
+swiftc -O tools/frame-bench/display-trace/native-control.swift -o /tmp/native-control
+node tools/frame-bench/native-control.mjs --native-control /tmp/native-control --display-trace /tmp/display-trace --out /tmp/bench
+```
+
+`control.mjs` is a page that moves a bar once per animation frame, in the app's own window. `native-control.mjs` is a full-screen Metal window driven by the display link, with no browser. If the native control also shows late frames, they belong to the capture tool or the window server, not to Chromium. Rows go to `control.jsonl`.
+
 ## Notes
 
 - Take the display lock when other agents share the machine, and record background load with the results (`machine.json`, `load` per row).
