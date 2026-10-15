@@ -70,6 +70,8 @@ export class PresenterWindow {
   readonly contents: WebContents;
   private readonly native: NativePresenter;
   private readonly ledger = new TextureLedger<Electron.OffscreenSharedTexture>();
+  /** Receives what the native view's `eventSink` emits (mouse, keys, text input); set by the input code. */
+  onNativeEvent: ((event: Record<string, unknown>) => void) | undefined;
   private watchdog: NodeJS.Timeout | undefined;
   private gotTexture = false;
   private closed = false;
@@ -106,6 +108,7 @@ export class PresenterWindow {
         this.ledger.release(id);
       },
       onState: (state) => this.nativeState(state),
+      onEvent: (event) => this.onNativeEvent?.(event),
     });
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
