@@ -1,10 +1,10 @@
 // display-trace: records when the display's picture changes, as ScreenCaptureKit reports it.
 //
 // ScreenCaptureKit hands over a frame each time the window server composes a new picture of the display, stamped with
-// `displayTime`: the mach host time of the refresh it was composed for. This tool captures the main display at the
+// `displayTime`: the host time of the refresh it was composed for. This tool captures the main display at the
 // display's refresh rate, shrinks every frame to a coarse luma grid inside the chosen region, and records for each frame
 // its displayTime and how much the grid changed from the frame before. The harness (bench.mjs) injects input at a known
-// `process.hrtime` (the same clock: mach_absolute_time in nanoseconds) and finds the first frame that changed after it.
+// `process.hrtime` (the same clock: CLOCK_MONOTONIC nanoseconds, which the tool converts to) and finds the first frame that changed after it.
 //
 //   display-trace --out trace.json [--seconds 30] [--region x,y,w,h] [--grid 32x20] [--fps 120] [--display 1]
 //
@@ -58,7 +58,11 @@ struct Frame {
 
 var timebase = mach_timebase_info_data_t()
 mach_timebase_info(&timebase)
-func ns(_ ticks: UInt64) -> UInt64 { ticks &* UInt64(timebase.numer) / UInt64(timebase.denom) }
+func absoluteNs(_ ticks: UInt64) -> UInt64 { ticks &* UInt64(timebase.numer) / UInt64(timebase.denom) }
+// ScreenCaptureKit stamps frames in mach_absolute_time, which stops while the Mac sleeps; Node's process.hrtime (and
+// CLOCK_MONOTONIC) does not. Every time written out is shifted into the CLOCK_MONOTONIC domain so the harness can compare.
+let monotonicOffset = Int64(clock_gettime_nsec_np(CLOCK_MONOTONIC)) - Int64(absoluteNs(mach_absolute_time()))
+func ns(_ ticks: UInt64) -> UInt64 { UInt64(Int64(absoluteNs(ticks)) + monotonicOffset) }
 
 final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     let gridW: Int
@@ -149,7 +153,7 @@ func finish() {
     recorder.lock.lock()
     let frames = recorder.frames
     recorder.lock.unlock()
-    var text = "{\"clock\":\"mach_absolute_time ns\",\"frames\":[\n"
+    var text = "{\"clock\":\"CLOCK_MONOTONIC ns (process.hrtime)\",\"frames\":[\n"
     text += frames.map { "{\"t\":\($0.displayNs),\"r\":\($0.receivedNs),\"d\":\(String(format: "%.3f", $0.diff)),\"s\":\($0.status)}" }.joined(separator: ",\n")
     text += "\n]}\n"
     do { try text.write(toFile: args.out, atomically: true, encoding: .utf8) } catch { fputs("display-trace: \(error)\n", stderr); exit(1) }

@@ -1,0 +1,45 @@
+# frame-bench
+
+Measures how the Mac app paces frames and how long a mouse move takes to reach the display. It runs a **packaged** app (or any Electron build of this repository) on its own `--user-data-dir`, against a clone of the owner's office, and drives it through the DevTools port. It never touches the installed app, the owner's `userData` or the office on :4600.
+
+## Setup
+
+```bash
+npm run build && npx electron-builder --mac --arm64 --dir --publish never   # release/mac-arm64/Droid Office.app, signed when the keychain has the Developer ID
+.agents/skills/office-clone/scripts/clone-office.sh                          # prints /tmp/office-clone-XXXX
+/tmp/office-clone-XXXX/start.sh                                              # fireAndForget; the app attaches to it (port 4677)
+swiftc -O tools/frame-bench/display-trace/display-trace.swift -o /tmp/display-trace
+```
+
+The display recorder needs Screen Recording permission for the process that starts it (`CGPreflightScreenCaptureAccess`).
+
+## Pacing: `bench.mjs`
+
+```bash
+node tools/frame-bench/bench.mjs --app "release/mac-arm64/Droid Office.app" --clone /tmp/office-clone-XXXX --out /tmp/bench \
+  --configs remastered-sdr,remastered-hdr,classic --caps 120,60,40 --scenarios idle,turn,walk,terminal,load \
+  --seconds 12 --repeat 3 --label baseline --display-trace /tmp/display-trace
+node tools/frame-bench/bench.mjs --table /tmp/bench/results.jsonl
+```
+
+Every configuration is laid over the owner's saved settings (`local-storage.json` in the clone) with render pace forced to `full`, so the loop never idles during a still measurement. Per configuration the page is reloaded and its shader and light warm-up finishes before anything is measured. Scenarios:
+
+| Scenario | What it does |
+| --- | --- |
+| `idle` | Stand at the coffee machine looking ahead |
+| `turn` | Turn at 2 rad/s, reversing every second, with mouse deltas every 8 ms on a captured mouse |
+| `walk` | Coffee machine to elevator and back along the office paths |
+| `terminal` | A plain shell's terminal open over the office with output scrolling (a shell is opened at desk 1 of the clone) |
+| `load` | Reload with the light bake cached, then with it cleared (a full bake), from animation-frame timing since navigation |
+
+Each row has the page's `office.frameStats()` (p50/p95/p99 frame time, missed and repeated, CPU and GPU per pass). With `--display-trace` the display's own changed frames in the same window are added: the gaps between them and how many came late against the cap. A scenario that errors or exceeds its time limit becomes a `failed` row and the matrix goes on.
+
+## Latency: `latency.mjs`
+
+Each trial sends a mouse move through DevTools at a recorded `process.hrtime`; `display-trace` reports when the display's picture first changed after it (ScreenCaptureKit's `displayTime`). Latency is the difference. It includes DevTools delivery, input routing, the office's handler, the next frame, Chromium's compositing and the window server's composition. It excludes the operating system's dispatch of a real mouse event, the mouse sensor, and the panel's scan-out and pixel response (a high-speed camera measures those).
+
+## Notes
+
+- Take the display lock when other agents share the machine, and record background load with the results (`machine.json`, `load` per row).
+- `display-trace` writes every time in `CLOCK_MONOTONIC` nanoseconds (what `process.hrtime` reports); ScreenCaptureKit's own clock is `mach_absolute_time`, which stops while the Mac sleeps.
+- The page's `performance.now()` is aligned to `hrtime` before and after each run from the shortest DevTools round trip; the drift is stored in the row.

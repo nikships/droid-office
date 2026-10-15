@@ -13,7 +13,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from 'node:path';
 import { Cdp } from './cdp.mjs';
 import { launchApp } from './launch.mjs';
-import { CONFIGS, displayPacing, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
+import { CONFIGS, clockOffset, displayPacing, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
 import { tables } from './table.mjs';
 
 const argv = process.argv.slice(2);
@@ -53,6 +53,7 @@ const label = arg('label', 'run');
 const traceBinary = arg('display-trace');
 mkdirSync(out, { recursive: true });
 const results = path.join(out, 'results.jsonl');
+const withTimeout = (promise, ms, why) => Promise.race([promise.then(() => null).catch((err) => err.message), new Promise((resolve) => setTimeout(() => resolve(`${why} within ${ms / 1000} s`), ms))]);
 const record = (row) => appendFileSync(results, `${JSON.stringify(row)}\n`);
 
 const running = await launchApp({ app, clone, userData: path.join(out, 'userdata'), debugPort: Number(arg('debug-port', '9333')) });
@@ -79,16 +80,26 @@ try {
         for (let rep = 1; rep <= repeat; rep++) {
           const base = path.join(out, `trace-${config}-${cap}-${name}-${rep}.json`);
           const trace = traceBinary ? await startDisplayTrace(traceBinary, base) : null;
-          const sync = { epochMs: Date.now(), ns: process.hrtime.bigint() };
-          await run({ cdp, seconds });
+          const clockBefore = await clockOffset(cdp);
+          const failure = await withTimeout(run({ cdp, seconds }), (seconds + 150) * 1000, `${name} did not finish`);
+          if (failure) {
+            // One stuck scenario must not stall the matrix: note it, put the page back and go on.
+            record({ label, config, cap, scenario: name, rep, failed: failure });
+            console.log(`bench:   ${name} #${rep}: FAILED ${failure}`);
+            await trace?.stop().catch(() => undefined);
+            await cdp.eval('document.exitPointerLock(); office.closeAll()', { timeout: 20_000 }).catch(() => undefined);
+            continue;
+          }
+          const clockAfter = await clockOffset(cdp);
           const frames = trace ? await trace.stop() : null;
           const got = JSON.parse(await cdp.eval('JSON.stringify({ report: window.__bench.report, t0: window.__bench.t0, t1: window.__bench.t1 })'));
           if (!got.report) throw new Error(`${name} produced no report`);
           const row = { label, config, cap, scenario: name, rep, seconds, renderer: got.report.renderer, report: got.report, machine: { load: machineRecord().load } };
           if (frames) {
-            const toNs = (epoch) => sync.ns + BigInt(Math.round((epoch - sync.epochMs) * 1e6));
-            const [a, b] = [toNs(got.t0), toNs(got.t1)];
-            const inside = frames.filter((f) => BigInt(f.t) >= a && BigInt(f.t) <= b);
+            // The page's window in hrtime, from the clock offset taken before and after the run (their gap bounds the drift).
+            const [a, b] = [got.t0 * 1e6 + clockBefore.offsetNs, got.t1 * 1e6 + clockAfter.offsetNs];
+            const inside = frames.filter((f) => f.t >= a && f.t <= b);
+            row.clock = { driftUs: (clockAfter.offsetNs - clockBefore.offsetNs) / 1e3, rttUs: Math.max(clockBefore.rtt, clockAfter.rtt) / 1e3 };
             row.display = { ...displayPacing(inside, { cap, refreshMs: 1000 / 120 }), refreshMs: 1000 / 120 };
           }
           record(row);

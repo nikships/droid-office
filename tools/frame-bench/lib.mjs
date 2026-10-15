@@ -70,11 +70,27 @@ export async function loadOffice(cdp, storage, { clearBake = false } = {}) {
   return { shownMs: shown, warmMs: warm };
 }
 
+/**
+ * How the page's performance.now() (ms) lines up with process.hrtime (ns, CLOCK_MONOTONIC) right now: the sample with the
+ * shortest DevTools round trip, taking the page's clock at the middle of it. hrtime = pageMs * 1e6 + offsetNs.
+ */
+export async function clockOffset(cdp) {
+  let best;
+  for (let i = 0; i < 9; i++) {
+    const before = process.hrtime.bigint();
+    const page = await cdp.eval('performance.now()');
+    const after = process.hrtime.bigint();
+    const rtt = Number(after - before);
+    if (!best || rtt < best.rtt) best = { rtt, offsetNs: Number((before + after) / 2n) - page * 1e6 };
+  }
+  return best;
+}
+
 /** Page-side helpers, injected once per load. */
 export const PAGE_LIB = `(() => {
   if (window.__bench) return;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const epoch = () => performance.timeOrigin + performance.now();
+  const epoch = () => performance.now();
   window.__bench = {
     sleep,
     // A measurement is the frames between begin() and end(); end() keeps the page's own report of them.
@@ -175,6 +191,7 @@ export const spread = (values) => ({ p50: pct(values, 50), p95: pct(values, 95),
  * late against what the frame rate cap plans, the same rule as the page's own count (src/client/frame-stats.ts).
  */
 export function displayPacing(frames, { cap, refreshMs }) {
+  // frames: { t } in ns
   const interval = 1000 / cap;
   const planned = Math.max(1, Math.ceil(interval / refreshMs - 1e-6));
   const gaps = [];
