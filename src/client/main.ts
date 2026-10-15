@@ -132,6 +132,7 @@ import { GraphicsLab } from './ui/graphics-lab';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
 import { FrameStats, pacingText } from './frame-stats';
+import { presenterStats, reportHdr } from './native-bridge';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
@@ -3483,6 +3484,7 @@ const remaster = new Remaster(
   { sun, hemi, ambient },
   remasterParams,
   () => {
+    reportHdr(remaster.hdr.active);
     graphicsLab.paint();
     renderWake();
   },
@@ -4099,6 +4101,7 @@ const automation = createAutomation({
     renderWake();
   },
   frames: () => framesDrawn,
+  presenterStats: (reset) => presenterStats(reset, 1000 / Math.min(settings.graphics.fpsCap, 1000 / renderLoop.refreshMs)),
   frameStats: (reset) => {
     if (reset) frameStats.reset();
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
