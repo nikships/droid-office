@@ -340,8 +340,8 @@ function fakeOffice() {
       setTimeout(() => (s.raw = { ...s.raw, player: { ...s.raw.player, eyeHeight: 1.4 * scale } }), 15);
     },
     frames: () => s.frames++,
-    presenterStats: async (reset) => {
-      log.push(`presenterStats ${reset}`);
+    presenterStats: async (reset, samples) => {
+      log.push(`presenterStats ${reset} ${samples}`);
       return null;
     },
     frameStats: (reset) => {

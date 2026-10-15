@@ -130,9 +130,9 @@ export class PresenterWindow {
   }
 
   /** The native side's presentation numbers, judged against `plannedMs` between frames (the FPS cap or the refresh). */
-  stats(options: { reset?: boolean; plannedMs?: number } = {}): PresenterReport {
+  stats(options: { reset?: boolean; plannedMs?: number; samples?: boolean } = {}): PresenterReport {
     const raw = this.native.stats({ reset: options.reset });
-    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps);
+    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps, options.samples === true);
   }
 
   /** Reads back the next presented frame (tests and measurement only). */
@@ -221,9 +221,9 @@ export class PresenterWindow {
 
   private registerIpc(): void {
     const own = (sender: WebContents) => sender === this.contents;
-    ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown) => {
+    ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown, samples: unknown) => {
       if (!own(event.sender)) return null;
-      return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined });
+      return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined, samples: samples === true });
     });
     ipcMain.on('presenter:hdr', (event, on: unknown) => {
       if (!own(event.sender) || typeof on !== 'boolean') return;

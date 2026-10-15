@@ -111,6 +111,8 @@ export interface PresenterReport {
   early: number;
   /** The interval between frames the numbers above are judged against, in milliseconds. */
   plannedMs: number;
+  /** Every presented frame, oldest first, when asked for (`samples: true`): see SAMPLE_STRIDE. Seconds are on the app's monotonic clock (`now()` of the addon). */
+  samples?: number[];
 }
 
 const ZERO: Spread = { p50: 0, p95: 0, p99: 0, max: 0 };
@@ -128,7 +130,7 @@ export function spread(values: number[]): Spread {
 }
 
 /** Turns the addon's raw counters and samples into the report `office.presenterStats()` returns. `plannedMs` is the frame interval the player asked for (the FPS cap, or the refresh when it is faster). */
-export function summarizeNativeStats(stats: NativeStats, plannedMs: number): PresenterReport {
+export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false): PresenterReport {
   const interval: number[] = [];
   const latency: number[] = [];
   const wait: number[] = [];
@@ -177,5 +179,6 @@ export function summarizeNativeStats(stats: NativeStats, plannedMs: number): Pre
     late,
     early,
     plannedMs,
+    ...(withSamples ? { samples: Array.from(stats.samples) } : {}),
   };
 }
