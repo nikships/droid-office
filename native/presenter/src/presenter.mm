@@ -132,6 +132,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::atomic<double> period{1.0 / 60.0};
   std::atomic<double> lastPresented{0};
   std::atomic<double> minLatency{0};
+  double baseLatency = 0;
   std::atomic<int> calibrated{0};
   std::atomic<int> lateRun{0};
   double lastSubmit = 0;
@@ -288,7 +289,7 @@ class Core : public std::enable_shared_from_this<Core> {
     [cb commit];
   }
 
-  // The time to hand presentDrawable:atTime: for the frame in the mailbox, or 0 to show it at the first refresh it can make.
+  // The display refresh the frame in the mailbox is held to, or 0 to show it at the first refresh it can make.
   double pacedSlot() {
     double p = period.load();
     double anchor = lastPresented.load();
@@ -303,7 +304,7 @@ class Core : public std::enable_shared_from_this<Core> {
     if (interval <= 0 || interval < 1.5 * p || CACurrentMediaTime() - anchor > 0.25) return 0;
     double target = submittedAt + minLatency.load() + 0.5 * p;
     double slot = anchor + std::ceil((target - anchor) / p) * p;
-    return slot - 0.5 * p;
+    return slot;
   }
 
   // Learns where the compositor's deadline is from how long the frames shown without a hold took, and notices a hold that was too short.
@@ -315,12 +316,14 @@ class Core : public std::enable_shared_from_this<Core> {
       if (n < kCalibrationFrames && latency > 0 && latency < 0.2) {
         minLatency.store(n == 0 ? latency : std::min(minLatency.load(), latency));
         calibrated.store(n + 1);
+        if (n + 1 == kCalibrationFrames) baseLatency = minLatency.load();
       }
       return;
     }
     // Shown more than half a refresh after the grid point asked for: the deadline is later than thought.
     if (s.presentedAt - (requested + 0.5 * p) > 0.5 * p) {
-      if (lateRun.fetch_add(1) + 1 >= 3) {
+      // A held frame that lost its drawable also shows late, and growing the hold would only make that worse: grow it twice at most.
+      if (lateRun.fetch_add(1) + 1 >= 3 && minLatency.load() < baseLatency + 1.5 * p) {
         minLatency.store(minLatency.load() + p);
         lateRun.store(0);
       }
@@ -621,8 +624,20 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
           std::lock_guard<std::mutex> g(c->lock);
           if (!c->mailbox.surface) return;
         }
-        id<CAMetalDrawable> d = [c->layer nextDrawable];
-        if (d && !c->closed.load()) c->drawFrame(d, 0, c->paced ? c->pacedSlot() : 0);
+        double slot = c->paced ? c->pacedSlot() : 0;
+        // A held frame takes its drawable only when the compositor can still make its slot: drawables are scarce (three), and a frame
+        // holding one from arrival to its slot would stall the next acquire.
+        double wait = slot > 0 ? slot - c->minLatency.load() - 0.001 - CACurrentMediaTime() : 0;
+        auto present = ^{
+          {
+            std::lock_guard<std::mutex> g(c->lock);
+            if (!c->mailbox.surface) return;
+          }
+          id<CAMetalDrawable> d = [c->layer nextDrawable];
+          if (d && !c->closed.load()) c->drawFrame(d, 0, slot > 0 ? slot - 0.5 * c->period.load() : 0);
+        };
+        if (wait > 0.0005) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), c->directQueue, present);
+        else present();
       });
     } else {
       core->wake();

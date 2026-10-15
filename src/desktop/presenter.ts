@@ -129,6 +129,9 @@ export class PresenterWindow {
     });
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
+    // A minimized window does not always report an occlusion change, so the window's own events speak for it too.
+    this.base.on('minimize', () => this.setVisible(false));
+    this.base.on('restore', () => this.setVisible(true));
     this.base.on('resize', () => this.resizePage());
     this.base.on('enter-full-screen', () => this.resizePage());
     this.base.on('leave-full-screen', () => this.resizePage());
