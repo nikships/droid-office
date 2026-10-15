@@ -19,8 +19,16 @@ const OWNER_REMASTER_KEY = 'droid-office.remaster';
 /** The owner's saved browser settings in the clone (clone-office.sh writes them), with the bench's configuration on top. */
 export function storageFor(clone, { config, cap, remaster = {}, graphics = {} }) {
   const saved = JSON.parse(readFileSync(path.join(clone, 'local-storage.json'), 'utf8'));
-  const base = CONFIGS[config];
+  // `remastered-sdr+antiAliasing=medium+resolution=0.8+graphics.scale=0.9`: a named configuration with settings changed.
+  const [name, ...changes] = config.split('+');
+  const base = CONFIGS[name];
   if (!base) throw new Error(`unknown config ${config}: ${Object.keys(CONFIGS).join(', ')}`);
+  for (const change of changes) {
+    const [key, raw] = change.split('=');
+    const value = raw === 'true' ? true : raw === 'false' ? false : Number.isFinite(Number(raw)) ? Number(raw) : raw;
+    if (key.startsWith('graphics.')) graphics = { ...graphics, [key.slice(9)]: value };
+    else remaster = { ...remaster, [key]: value };
+  }
   const ownerRemaster = JSON.parse(saved[OWNER_REMASTER_KEY] ?? '{}');
   const ownerSettings = JSON.parse(saved[OWNER_SETTINGS_KEY] ?? '{}');
   // Render pace "full" keeps the loop from idling after 30 s of stillness, which would corrupt a long still measurement.

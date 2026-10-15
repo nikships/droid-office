@@ -86,6 +86,9 @@ test('a configuration is laid over the owner settings and always runs at full re
   assert.deepEqual(JSON.parse(s['droid-office.settings']), { volume: 1, graphics: { fpsCap: 40, scale: 1, stats: true } });
   assert.equal(s.other, 'kept');
   assert.throws(() => storageFor(dir, { config: 'nope', cap: 60 }), /unknown config/);
+  const v = storageFor(dir, { config: 'classic+antiAliasing=medium+resolution=0.8+hdr=false+graphics.scale=0.9', cap: 120 });
+  assert.deepEqual(JSON.parse(v['droid-office.remaster']), { enabled: false, antiAliasing: 'medium', pace: 'full', hdr: false, resolution: 0.8 });
+  assert.equal(JSON.parse(v['droid-office.settings']).graphics.scale, 0.9);
 });
 
 test('the results table averages repeats and keeps a failed run out of it', () => {
