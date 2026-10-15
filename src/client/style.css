@@ -2089,6 +2089,9 @@ li.cmp-muted:hover { background: none; }
 .wb-ping-list .list-row { cursor: default; }
 .wb-ping-list .list-meta { white-space: normal; }
 .wb-ineligible .list-title { color: var(--text-secondary); }
+.wb-ping-list .wb-ping-task { white-space: nowrap; color: var(--text); }
+.wb-ping-list .wb-ping-none { color: var(--text-tertiary); }
+.wb-ping-list .wb-ping-where { white-space: nowrap; font-family: var(--font-mono); color: var(--text-tertiary); }
 .wb-ok { color: var(--success); }
 .wb-bad { color: var(--danger); }
 .wb-paste { min-height: 220px; font: 12px/1.5 var(--font-mono); }

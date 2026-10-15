@@ -15,7 +15,7 @@ import { buildSync } from 'esbuild';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
-import { BRIDGE_CHANNEL } from '../src/shared/whiteboard-bridge.js';
+import { BRIDGE_CHANNEL, CARD_ALLOW } from '../src/shared/whiteboard-bridge.js';
 import { CARD_SANDBOX } from '../src/server/whiteboard.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import type { ServerMsg } from '../src/shared/protocol.js';
@@ -127,7 +127,7 @@ whiteboard.ready.then(function () {
 /** The window's part, on the office's own origin: two cards' frames, each with its own nonce, and what the host accepted. */
 function hostPage(bridge: string, frames: { card: string; cap: string; nonce: string }[], token: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>office</title></head><body>
-${frames.map((f) => `<iframe id="f-${f.card}" sandbox="${CARD_SANDBOX}" allow="" referrerpolicy="no-referrer" style="width:600px;height:300px" src="/whiteboard/c/${f.cap}/#wb=${f.nonce}"></iframe>`).join('\n')}
+${frames.map((f) => `<iframe id="f-${f.card}" sandbox="${CARD_SANDBOX}" allow="${CARD_ALLOW}" referrerpolicy="no-referrer" style="width:600px;height:300px" src="/whiteboard/c/${f.cap}/#wb=${f.nonce}"></iframe>`).join('\n')}
 <script>${bridge}</script>
 <script>
   window.officeToken = ${JSON.stringify(token)};

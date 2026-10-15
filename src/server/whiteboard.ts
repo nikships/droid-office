@@ -23,7 +23,8 @@
 //       office's SDK script is injected into it. Every answer carries CARD_HEADERS: a CSP sandbox with
 //       the iframe's flags, nosniff, no referrer, and Access-Control-Allow-Origin: * (no credentials).
 //       A capability reaches its own card's files only.
-//       The window's frame: `<iframe sandbox="${CARD_SANDBOX}" allow="" src="/whiteboard/c/<cap>/<entry>#wb=<nonce>">`.
+//       The window's frame: `<iframe sandbox="${CARD_SANDBOX}" allow="${CARD_ALLOW}" src="/whiteboard/c/<cap>/<entry>#wb=<nonce>">`
+//       (CARD_ALLOW, in shared/whiteboard-bridge.ts, grants clipboard writes only).
 //
 //   GET /api/whiteboard/render?floor=<floor>&card=<card>[&size=full|thumb][&tile=<n>]
 //       The card's latest render as image/png, with x-whiteboard-rev (the board revision it shows),

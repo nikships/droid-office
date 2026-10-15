@@ -10,7 +10,7 @@
 // and scroll back on the way out. The wall keeps the view from before, not the temporary fit.
 
 import type { WhiteboardRenderInfo } from '../../shared/protocol';
-import { actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
+import { CARD_ALLOW, actionOp, parseFrameMsg, wrap, writeOp, type BridgeMode, type FocusedField, type FrameMsg, type HostMsg } from '../../shared/whiteboard-bridge';
 import {
   CANONICAL_WIDTH,
   MAX_ASSET_BYTES,
@@ -72,6 +72,8 @@ export interface SurfaceHost {
   apply(ops: Op[], what?: string): Promise<boolean>;
   /** Says something went wrong that isn't a batch: an upload, a file that isn't a picture. */
   notify(text: string): void;
+  /** The card recorded a press of one of its actions (a `data-wb-action` button or `whiteboard.action`). */
+  acted(name: string): void;
   /** The frame URL for a load with this nonce; undefined until the card's capability is known. */
   cardUrl(nonce: string): string | undefined;
   /** A card file's URL (a picture), by hash. */
@@ -597,7 +599,7 @@ export class Surface {
     }
     const iframe = h('iframe.wb-frame', {
       sandbox: 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads',
-      allow: '',
+      allow: CARD_ALLOW,
       referrerpolicy: 'no-referrer',
       title: this.card.title,
       src: url,
@@ -771,7 +773,7 @@ export class Surface {
       case 'action':
         if (slot !== this.slot) break;
         this.frameState = this.stateWith(actionOp(this.card.id, msg.name, msg.data));
-        this.host.apply([actionOp(this.card.id, msg.name, msg.data)], 'Recording the action');
+        void this.host.apply([actionOp(this.card.id, msg.name, msg.data)], 'Recording the action').then((ok) => ok && !this.disposed && this.host.acted(msg.name));
         break;
       case 'anchor':
       case 'positions': {

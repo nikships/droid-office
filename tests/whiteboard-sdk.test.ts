@@ -288,6 +288,7 @@ window.start = function (page, hash, kind) {
     floor: 'f',
     apply: function (ops) { applied.push(ops); setTimeout(function () { commit(ops); }, 0); return Promise.resolve(true); },
     notify: function () {},
+    acted: function () {},
     cardUrl: function (n) { loads.push(version); return '/card/' + version + '/#wb=' + n; },
     fileUrl: function () { return ''; },
     live: function () { return true; },
@@ -584,7 +585,7 @@ window.start = function () {
   var content = { entry: 'index.html', files: { 'index.html': { hash: '${'c'.repeat(64)}', size: 100, mime: 'text/html' } } };
   commit([{ op: 'card.create', card: 'c1', kind: 'html', title: 'Page', content: content }]);
   var host = {
-    floor: 'f', apply: function () { return Promise.resolve(true); }, notify: function () {},
+    floor: 'f', apply: function () { return Promise.resolve(true); }, notify: function () {}, acted: function () {},
     cardUrl: function (n) { return '/card/tall/#wb=' + n; }, fileUrl: function () { return ''; }, live: function () { return true; },
     selectMark: function () {}, changed: function () {}, located: function () {}, view: function () {},
     changedMarks: function () { return new Set(); }, render: function () { return undefined; }

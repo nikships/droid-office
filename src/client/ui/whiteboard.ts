@@ -31,6 +31,9 @@ interface WindowCtl {
 
 let open: WindowCtl | null = null;
 
+/** How long a card's same action stays quiet after its "Recorded" toast. */
+const ACTED_TOAST_MS = 4000;
+
 /** Cards changed since the owner last opened them, for the ☰ menu's count. */
 export function whiteboardChanged(): number {
   return store.floor ? changedCount(store.whiteboard.board(store.floor)) : 0;
@@ -221,6 +224,7 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
   // ---- A card ----
 
   function openCard(c: Card) {
+    const actedAt = new Map<string, number>();
     el.classList.add('wb-on-card');
     setDoing(modal, `🧑‍🎨 on “${c.title}” at the Whiteboard`);
     panel = new Panel({ apply, surface: () => surface, changes, fileUrl });
@@ -229,6 +233,13 @@ export function openWhiteboard(net: Net, opts: { card?: string } = {}): void {
         floor,
         apply,
         notify: (text) => toast(text, 'warn'),
+        acted: (name) => {
+          // A page that records actions by itself (a game, a timer) would otherwise bury the screen in toasts.
+          const now = Date.now();
+          if (now - (actedAt.get(name) ?? 0) < ACTED_TOAST_MS) return;
+          actedAt.set(name, now);
+          toast(`✅ Recorded “${name}” on this card. Workers see it when they read the board; Ping a worker to tell one now.`);
+        },
         cardUrl: (nonce) => sync.cardUrl(floor, c.id, nonce),
         fileUrl,
         live: () => sync.state(floor) === 'live',

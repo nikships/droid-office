@@ -18,6 +18,13 @@ import type { Anchor, Author, Json, Op, Point, StateObject } from './whiteboard.
 export const BRIDGE_CHANNEL = 'droid-office-whiteboard';
 export const BRIDGE_VERSION = 1;
 
+/**
+ * The window frame's `allow` list: clipboard writes only, so an artifact's own Copy button works.
+ * Clipboard reads, media and the rest stay off, and the card routes' Permissions-Policy refuses them
+ * as well. The allowlist is `*` because the frame's origin is opaque.
+ */
+export const CARD_ALLOW = 'clipboard-write *';
+
 /** Use: the artifact gets clicks and typing. Mark up: the host's overlay takes them for marks. */
 export type BridgeMode = 'use' | 'markup';
 

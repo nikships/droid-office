@@ -4,7 +4,7 @@
 import type { ServerMsg } from '../../shared/protocol';
 import { MAX_ASSET_BYTES, MAX_CARD_BYTES, MAX_FILES_PER_CARD, MAX_HTML_BYTES, MAX_TITLE_LENGTH, type CardContent, type FileRef, type Op } from '../../shared/whiteboard';
 import type { Net } from '../net';
-import { store } from '../state';
+import { store, words } from '../state';
 import { STATUS_LABEL, h, openModal } from './dom';
 import { colorDot, emptyState, field, windowHeader } from './kit';
 import { uploadBlob } from './whiteboard-surface';
@@ -37,7 +37,7 @@ export function openPing(net: Net) {
     h('footer', {}, h('span.grow', {}, 'Guests and cloud workers can’t use the board yet'), h('button.btn.ghost', { type: 'button', onclick: () => modal.close() }, 'Done')),
   );
   const paint = () => {
-    const rows = pingRows(store.workers.values(), STATUS_LABEL);
+    const rows = pingRows(store.workers.values(), STATUS_LABEL, Date.now(), words());
     // Both stay in the window, so a worker sitting down while the picker is open shows up in it.
     list.hidden = !rows.length;
     none.hidden = !!rows.length;
@@ -53,11 +53,13 @@ export function openPing(net: Net) {
           paint();
         });
         const meta = res && res !== 'sending' ? h('span.list-meta', { class: res.ok ? 'wb-ok' : 'wb-bad', title: res.text }, res.text) : h('span.list-meta', { title: r.note }, r.guest ? `${r.note} (Bring it in from its desk.)` : r.note);
+        const task = r.task ?? (r.statusClass === 'starting' ? 'Starting, no task yet' : 'No task yet');
+        const job = h('span.list-meta.wb-ping-task', { class: r.task ? '' : 'wb-ping-none', title: [r.task, r.where].filter(Boolean).join('\n') || task }, task);
         return h(
           'li.list-row',
           { class: r.ok ? '' : 'wb-ineligible', 'data-worker': r.id },
           h('span.list-icon', {}, colorDot(r.color)),
-          h('span.list-main', {}, h('span.list-title', { title: r.name }, r.name), meta),
+          h('span.list-main', {}, h('span.list-title', { title: r.name }, r.name), job, r.where ? h('span.list-meta.wb-ping-where', { title: r.where }, r.where) : null, meta),
           h('span.list-end', {}, h('span.pill', { class: r.statusClass }, r.status), btn),
         );
       }),
