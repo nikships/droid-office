@@ -1,4 +1,4 @@
-// Starts a packaged Droid Office (or any Electron app that honours DROID_OFFICE_USER_DATA) on its own userData, shown
+// Starts a packaged Droid Office on its own userData, shown
 // against a clone of the owner's office, with a DevTools port to drive it. It never touches the installed app, the
 // owner's data or the owner's office on :4600.
 import { spawn } from 'node:child_process';
@@ -35,7 +35,7 @@ export async function launchApp({ app, clone, userData, debugPort, log }) {
   writeFileSync(path.join(resolved, 'settings.json'), `${JSON.stringify({ officeDir: path.join(clone, 'office'), port })}\n`);
   const out = log ?? path.join(resolved, 'app.log');
   const logFd = (await import('node:fs')).openSync(out, 'a');
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { env: { ...process.env, DROID_OFFICE_USER_DATA: resolved }, stdio: ['ignore', logFd, logFd], detached: true });
+  const child = spawn(exe, [`--user-data-dir=${resolved}`, `--remote-debugging-port=${debugPort}`], { env: process.env, stdio: ['ignore', logFd, logFd], detached: true });
   const deadline = Date.now() + 60_000;
   for (;;) {
     if (child.exitCode !== null) throw new Error(`the app exited (${child.exitCode}); see ${out}`);
