@@ -111,9 +111,10 @@ try {
         }
         const clockAfter = await clockOffset(cdp);
         const frames = trace ? await trace.stop() : null;
-        const got = JSON.parse(await cdp.eval('JSON.stringify({ report: window.__bench.report, t0: window.__bench.t0, t1: window.__bench.t1 })'));
+        await cdp.eval('window.__bench.presenterDone');
+        const got = JSON.parse(await cdp.eval('JSON.stringify({ report: window.__bench.report, t0: window.__bench.t0, t1: window.__bench.t1, presenter: window.__bench.presenter })'));
         if (!got.report) throw new Error(`${name} produced no report`);
-        const row = { label, config, cap, scenario: name, rep, seconds, renderer: got.report.renderer, report: got.report, machine: { load: machineRecord().load } };
+        const row = { label, config, cap, scenario: name, rep, seconds, renderer: got.report.renderer, report: got.report, ...(got.presenter ? { presenter: got.presenter } : {}), machine: { load: machineRecord().load } };
         if (frames) {
           // The page's window in hrtime, from the clock offset taken before and after the run (their gap bounds the drift).
           const [lo, hi] = [got.t0 * 1e6 + clockBefore.offsetNs, got.t1 * 1e6 + clockAfter.offsetNs];

@@ -34,7 +34,7 @@ Every configuration is laid over the owner's saved settings (`local-storage.json
 | `terminal` | A plain shell's terminal open over the office with output scrolling (a shell is opened at desk 1 of the clone) |
 | `load` | Reload with the light bake cached, then with it cleared (a full bake), from animation-frame timing since navigation |
 
-Each row has the page's `office.frameStats()` (p50/p95/p99 frame time, missed and repeated, CPU and GPU per pass). With `--display-trace` the display's own changed frames in the same window are added: the gaps between them and how many came late against the cap. A scenario that errors or exceeds its time limit becomes a `failed` row and the matrix goes on.
+Each row has the page's `office.frameStats()` (p50/p95/p99 frame time, missed and repeated, CPU and GPU per pass). With `--display-trace` the display's own changed frames in the same window are added: the gaps between them and how many came late against the cap. On a build whose `window.office` has `presenterStats` (the native presenter), each row also carries its report as `presenter`, reset and read over the same window. A scenario that errors or exceeds its time limit becomes a `failed` row and the matrix goes on.
 
 ## Latency: `latency.mjs`
 

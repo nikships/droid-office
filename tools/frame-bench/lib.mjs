@@ -119,8 +119,14 @@ export const PAGE_LIB = `(() => {
   window.__bench = {
     sleep,
     // A measurement is the frames between begin() and end(); end() keeps the page's own report of them.
-    begin: () => { office.frameStats({ reset: true }); window.__bench.t0 = epoch(); window.__bench.report = null; },
-    end: () => { window.__bench.t1 = epoch(); window.__bench.report = office.frameStats(); },
+    // The Mac app's native presenter (a build that has it) keeps its own counters, reset and read the same way; null elsewhere.
+    begin: () => { office.frameStats({ reset: true }); if (typeof office.presenterStats === 'function') office.presenterStats({ reset: true }).catch(() => {}); window.__bench.t0 = epoch(); window.__bench.report = null; },
+    end: () => {
+      window.__bench.t1 = epoch();
+      window.__bench.report = office.frameStats();
+      window.__bench.presenter = null;
+      window.__bench.presenterDone = typeof office.presenterStats === 'function' ? office.presenterStats().then((s) => { window.__bench.presenter = s; }, () => {}) : Promise.resolve();
+    },
     rafGaps: () => { const a = window.__raf; const g = []; for (let i = 1; i < a.length; i++) g.push(a[i] - a[i - 1]); return g; },
   };
 })();`;
