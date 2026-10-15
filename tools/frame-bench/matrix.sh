@@ -9,7 +9,7 @@
 # quick: 120 FPS cap, SDR and HDR, walk and terminal, 2 rounds, with resource use. About 8 minutes.
 # Every scenario row carries the page's frameStats, the display trace, the app's CPU, memory and GPU utilization, and
 # the native presenter's stats when the build has them. A step that overruns its limit is killed and the next one runs.
-# DEADLINE_MIN (default 42) stops starting new steps once that many minutes have passed since the start.
+# QUICK_CONFIGS limits quick to some configurations (a space-separated list). DEADLINE_MIN (default 42) stops starting new steps once that many minutes have passed since the start.
 set -u
 APP=${1:?app}
 CLONE=${2:?clone}
@@ -63,7 +63,7 @@ late() {
 
 if [ "$MODE" = quick ]; then
   step "quick: 120 FPS cap, SDR and HDR"
-  for cfg in remastered-sdr remastered-hdr; do
+  for cfg in ${QUICK_CONFIGS:-remastered-sdr remastered-hdr}; do
     late "$cfg" || bench 900 quick --configs "$cfg" --caps 120 --scenarios walk,terminal --seconds 12 --repeat 2 --seed 11
   done
   step done
