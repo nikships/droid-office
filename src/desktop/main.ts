@@ -9,6 +9,7 @@ import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
+import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { Updates } from './updates.js';
 
 const BACKGROUND = '#050505';
@@ -16,8 +17,11 @@ const BACKGROUND = '#050505';
 const PORT_TRIES = 20;
 
 // Not ~/Library/Application Support/Droid Office (the product name): the Unity office keeps its
-// own data under that folder.
-app.setPath('userData', path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+// own data under that folder. `--user-data-dir=<folder>` (Chromium's switch) moves it and the logs, so a
+// test run never shares the single-instance lock, settings or logs of the app someone is using.
+const userDataSwitch = app.commandLine.getSwitchValue('user-data-dir');
+app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
@@ -290,7 +294,7 @@ function menu(): Menu {
   return Menu.buildFromTemplate(template);
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -312,19 +316,27 @@ if (!app.requestSingleInstanceLock()) {
     void stopOffice(true).finally(() => app.quit());
   });
 
-  void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(menu());
-    if (await moveToApplications()) return;
-    show(page('Opening the office…'));
-    officeEnv = await desktopEnv();
-    if (!settings.officeDir) {
-      settings = { ...settings, officeDir: await chooseOfficeDir(true) };
-      saveSettings(settingsFile, settings);
-    }
-    await openOffice();
-    void writeGpuReport();
-    mkdirSync(logDir, { recursive: true });
-    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
-    updates.start();
-  });
+  void app
+    .whenReady()
+    .then(async () => {
+      enforceRequirements();
+      if (isStartupCheck()) return runStartupCheck();
+      Menu.setApplicationMenu(menu());
+      if (await moveToApplications()) return;
+      show(page('Opening the office…'));
+      officeEnv = await desktopEnv();
+      if (!settings.officeDir) {
+        settings = { ...settings, officeDir: await chooseOfficeDir(true) };
+        saveSettings(settingsFile, settings);
+      }
+      await openOffice();
+      void writeGpuReport();
+      mkdirSync(logDir, { recursive: true });
+      downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
+      updates.start();
+    })
+    .catch((err: unknown) => {
+      // failStartup has already shown why and asked the app to exit; anything else is a bug that should surface.
+      if (!(err instanceof StartupAborted)) throw err;
+    });
 }

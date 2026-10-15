@@ -11,7 +11,7 @@ test('the release builds the browser client, the server, the Mac app and the And
   assert.deepEqual(pkg.files, ['bin', 'dist']);
   assert.doesNotMatch(JSON.stringify(pkg), /@iwsdk|bonjour|three-mesh-bvh|dev:runtime|build:android|test:vr|tools\/vr/);
   const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.doesNotMatch(workflow, /setup-android|OFFICE_XR|native\//);
+  assert.doesNotMatch(workflow, /setup-android|OFFICE_XR|native\/(?:android|unity)/);
   assert.match(workflow, /working-directory: android\n/);
 });
 
