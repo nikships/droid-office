@@ -21,6 +21,52 @@ export function presentMode(env: Record<string, string | undefined>): PresentMod
   return mode === 'link' || mode === 'direct' ? mode : 'paced';
 }
 
+/** The frame rate a page that nobody can see is held to. Hiding the offscreen window does not change the page's `visibilityState` or stop its animation frames in Electron's offscreen mode; only a low frame rate slows them. */
+export const HIDDEN_FRAME_RATE = 1;
+
+export interface PageVisibilityEffects {
+  show(): void;
+  hide(): void;
+  startPainting(): void;
+  stopPainting(): void;
+  setFrameRate(fps: number): void;
+  /** Tells the office page itself (its visibility shim), which is what pauses its render loop. */
+  notify(visible: boolean): void;
+}
+
+/** What follows a window becoming visible or hidden, in one place so it can be tested without Electron. */
+export class PageVisibility {
+  private visible = true;
+  private fps = 60;
+
+  constructor(private readonly effects: PageVisibilityEffects) {}
+
+  isVisible(): boolean {
+    return this.visible;
+  }
+
+  /** The display's frame rate changed: a visible page follows it, a hidden one stays slow. */
+  setDisplayRate(fps: number): void {
+    this.fps = fps;
+    this.effects.setFrameRate(this.visible ? fps : HIDDEN_FRAME_RATE);
+  }
+
+  set(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    if (visible) {
+      this.effects.show();
+      this.effects.startPainting();
+      this.effects.setFrameRate(this.fps);
+    } else {
+      this.effects.hide();
+      this.effects.stopPainting();
+      this.effects.setFrameRate(HIDDEN_FRAME_RATE);
+    }
+    this.effects.notify(visible);
+  }
+}
+
 /** Frames shown at the first refresh they can make, before `paced` mode has seen where the compositor's deadline is. */
 export const CALIBRATION_FRAMES = 20;
 /** `paced` mode holds a frame only when frames arrive at least this many refreshes apart; at one per refresh there is nothing to hold. */

@@ -101,6 +101,7 @@ function createWindow(loadOffice = true) {
     log: (message) => console.warn(`droid-office: ${message}`),
   });
   created.onNativeEvent = (event) => input.handle(event as unknown as NativeEvent);
+  created.onVisibleChange = (visible) => input.setPageVisible(visible);
   // A right click the page left alone gets the menu a browser would show, since an offscreen page has no native one.
   contents.on('context-menu', (_event, params) => {
     const items = contextMenu(

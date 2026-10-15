@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import {
   CALIBRATION_FRAMES,
   CALIBRATION_WARMUP_SECONDS,
+  HIDDEN_FRAME_RATE,
+  PageVisibility,
   calibratePaced,
   layerPixelFormat,
   learnPacedLate,
@@ -253,4 +255,29 @@ test('paced: calibration keeps the quickest frame after the warm-up and ignores 
   for (let i = 0; i < 20; i++) s = learnPacedLate(s, 20 + 0.9 * p, 20, p);
   assert.ok(Math.abs(s.minLatency - (0.026 + 2 * p)) < 1e-9);
   assert.equal(learnPacedLate({ ...s, lateRun: 2 }, 20, 20, p).lateRun, 0);
+});
+
+test('hiding the page stops painting, slows its frame rate to the floor and tells the office page; showing undoes all of it', () => {
+  const calls: string[] = [];
+  const gate = new PageVisibility({
+    show: () => calls.push('show'),
+    hide: () => calls.push('hide'),
+    startPainting: () => calls.push('start'),
+    stopPainting: () => calls.push('stop'),
+    setFrameRate: (fps) => calls.push(`rate ${fps}`),
+    notify: (visible) => calls.push(`notify ${visible}`),
+  });
+  gate.setDisplayRate(120);
+  assert.deepEqual(calls.splice(0), ['rate 120']);
+  gate.set(true);
+  assert.deepEqual(calls, [], 'already visible: nothing happens');
+  gate.set(false);
+  assert.deepEqual(calls.splice(0), ['hide', 'stop', `rate ${HIDDEN_FRAME_RATE}`, 'notify false']);
+  assert.equal(gate.isVisible(), false);
+  gate.set(false);
+  assert.deepEqual(calls, [], 'hiding twice does nothing');
+  gate.setDisplayRate(60);
+  assert.deepEqual(calls.splice(0), [`rate ${HIDDEN_FRAME_RATE}`], 'a display change while hidden keeps the floor');
+  gate.set(true);
+  assert.deepEqual(calls.splice(0), ['show', 'start', 'rate 60', 'notify true']);
 });

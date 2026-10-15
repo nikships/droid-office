@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { app, BaseWindow, BrowserWindow, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
-import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger } from './presenter-model.js';
+import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, PageVisibility, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger } from './presenter-model.js';
 import { failStartup, loadNative, StartupAborted } from './startup.js';
 import { sharedTextureFailure } from './startup-failure.js';
 
@@ -76,11 +76,13 @@ export class PresenterWindow {
   private readonly ledger = new TextureLedger<Electron.OffscreenSharedTexture>();
   /** Receives what the native view's `eventSink` emits (mouse, keys, text input); set by the input code. */
   onNativeEvent: ((event: Record<string, unknown>) => void) | undefined;
+  /** Called whenever the page becomes visible or hidden (a minimized or covered window), so the office page can pause its own render loop. */
+  onVisibleChange: ((visible: boolean) => void) | undefined;
   private watchdog: NodeJS.Timeout | undefined;
   private gotTexture = false;
   private closed = false;
   private hdr = false;
-  private visible = true;
+  private readonly visibility: PageVisibility;
   private maxFps = 60;
   private readonly mode: PresentMode;
 
@@ -110,9 +112,17 @@ export class PresenterWindow {
       },
     });
     this.contents = this.page.webContents;
-    // An offscreen window that was never shown keeps its page "visible" for good, and one that is shown draws nothing on
-    // screen but still takes a rectangle of it. Fully transparent, click-through and unfocusable, shown once, it can be hidden
-    // later, which is what makes the page's visibilityState (and with it the office's own idle pause) follow the real window.
+    this.visibility = new PageVisibility({
+      show: () => this.page.showInactive(),
+      hide: () => this.page.hide(),
+      startPainting: () => this.contents.startPainting(),
+      stopPainting: () => this.contents.stopPainting(),
+      setFrameRate: (fps) => this.contents.setFrameRate(fps),
+      notify: (visible) => this.onVisibleChange?.(visible),
+    });
+    // The offscreen page is a real window as far as the window server is concerned, so it is made invisible and click-through
+    // rather than left unshown. Hiding it does not change the page's visibilityState or slow its animation frames in Electron's
+    // offscreen mode (only a low frame rate does), so PageVisibility also drops the frame rate and tells the office page itself.
     this.page.setOpacity(0);
     this.page.setIgnoreMouseEvents(true);
     this.page.setFocusable(false);
@@ -211,23 +221,15 @@ export class PresenterWindow {
   private applyDisplay(state: DisplayState): void {
     if (this.closed) return;
     this.maxFps = osrFrameRate(state.maxFps);
-    this.contents.setFrameRate(this.maxFps);
+    this.visibility.setDisplayRate(this.maxFps);
     this.native.setPacing({ followDisplay: true });
     // The window isn't on screen until the first frame, so "not visible" means nothing before then.
     this.setVisible(state.visible !== false || !this.gotTexture);
   }
 
-  /** A window nobody can see (minimized, covered, on another Space) makes no frames and tells its page it is hidden, as a background tab would. */
+  /** A window nobody can see (minimized, covered, on another Space) makes no frames and its page is slowed to the floor frame rate and told it is hidden (`onVisibleChange`), which is what pauses the office's render loop. */
   private setVisible(visible: boolean): void {
-    if (visible === this.visible) return;
-    this.visible = visible;
-    if (visible) {
-      this.page.showInactive();
-      this.contents.startPainting();
-    } else {
-      this.page.hide();
-      this.contents.stopPainting();
-    }
+    this.visibility.set(visible);
   }
 
   private registerIpc(): void {
