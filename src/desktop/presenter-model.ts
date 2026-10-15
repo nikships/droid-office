@@ -80,6 +80,56 @@ export class PageVisibility {
   }
 }
 
+/** While input flows, the frame rate is set again at most this often (ms). */
+export const INPUT_REAPPLY_GAP_MS = 32;
+/**
+ * Chromium drops an offscreen page to 60 frames a second about 120 ms after any input event (mouse, key, sent or through the
+ * DevTools Protocol) and keeps it there until the frame rate is set again. The set after the last event has to come after that drop
+ * lands, so it is made this long (ms) after the event.
+ */
+export const INPUT_REAPPLY_TRAIL_MS = 250;
+
+export interface InputFrameRateEffects {
+  now(): number;
+  /** Runs `fn` after `ms`; returns what cancels it. */
+  schedule(fn: () => void, ms: number): () => void;
+  /** Sets the page's frame rate again (`PageVisibility.reapply`). */
+  reapply(): void;
+  isVisible(): boolean;
+}
+
+/**
+ * Keeps an offscreen page at its frame rate while input reaches it: a throttled re-apply during the input and one after the last
+ * event. Nothing runs while the page is idle or hidden (a hidden page's rate is the floor `PageVisibility` set, and no input reaches it).
+ */
+export class InputFrameRate {
+  private lastReapply = Number.NEGATIVE_INFINITY;
+  private cancel: (() => void) | undefined;
+
+  constructor(private readonly effects: InputFrameRateEffects) {}
+
+  onInput(): void {
+    if (!this.effects.isVisible()) return;
+    const now = this.effects.now();
+    if (now - this.lastReapply >= INPUT_REAPPLY_GAP_MS) {
+      this.lastReapply = now;
+      this.effects.reapply();
+    }
+    this.cancel?.();
+    this.cancel = this.effects.schedule(() => {
+      this.cancel = undefined;
+      if (!this.effects.isVisible()) return;
+      this.lastReapply = this.effects.now();
+      this.effects.reapply();
+    }, INPUT_REAPPLY_TRAIL_MS);
+  }
+
+  stop(): void {
+    this.cancel?.();
+    this.cancel = undefined;
+  }
+}
+
 /** Frames shown at the first refresh they can make, before `paced` mode has seen where the compositor's deadline is. */
 export const CALIBRATION_FRAMES = 20;
 /** `paced` mode holds a frame only when frames arrive at least this many refreshes apart; at one per refresh there is nothing to hold. */

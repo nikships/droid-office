@@ -4,6 +4,9 @@ import {
   CALIBRATION_FRAMES,
   CALIBRATION_WARMUP_SECONDS,
   HIDDEN_FRAME_RATE,
+  INPUT_REAPPLY_GAP_MS,
+  INPUT_REAPPLY_TRAIL_MS,
+  InputFrameRate,
   PageVisibility,
   windowVisible,
   calibratePaced,
@@ -307,4 +310,71 @@ test('a visible page is always asked for the display rate and a hidden one for t
   gate.setDisplayRate(60);
   assert.equal(rates.at(-1), 60, 'a display change while visible follows at once');
   assert.equal(gate.expectedRate(), 60);
+});
+
+function inputRateHarness(visible = true) {
+  let clock = 0;
+  let sets = 0;
+  const timers: { at: number; fn: () => void; live: boolean }[] = [];
+  const state = { visible };
+  const keeper = new InputFrameRate({
+    now: () => clock,
+    schedule: (fn, ms) => {
+      const timer = { at: clock + ms, fn, live: true };
+      timers.push(timer);
+      return () => {
+        timer.live = false;
+      };
+    },
+    reapply: () => {
+      sets++;
+    },
+    isVisible: () => state.visible,
+  });
+  const advance = (ms: number) => {
+    const end = clock + ms;
+    for (;;) {
+      const due = timers.filter((t) => t.live && t.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      clock = due.at;
+      due.live = false;
+      due.fn();
+    }
+    clock = end;
+  };
+  return { keeper, advance, state, sets: () => sets };
+}
+
+test('input sets the frame rate again at most once per gap, and once more after the last event', () => {
+  const h = inputRateHarness();
+  for (let i = 0; i < 500; i++) {
+    h.keeper.onInput();
+    h.advance(2);
+  }
+  const during = h.sets();
+  assert.ok(during >= 1000 / INPUT_REAPPLY_GAP_MS - 2 && during <= 1000 / INPUT_REAPPLY_GAP_MS + 2, `${during} sets in 1 s of 500 Hz input`);
+  h.advance(INPUT_REAPPLY_TRAIL_MS - 4);
+  assert.equal(h.sets(), during, 'not before the trailing delay');
+  h.advance(4);
+  assert.equal(h.sets(), during + 1, 'one set after the last event');
+  h.advance(10_000);
+  assert.equal(h.sets(), during + 1, 'nothing runs while the page is idle');
+});
+
+test('a hidden page is never set again by input, and stopping drops the pending set', () => {
+  const hidden = inputRateHarness(false);
+  hidden.keeper.onInput();
+  hidden.advance(1000);
+  assert.equal(hidden.sets(), 0);
+  const h = inputRateHarness();
+  h.keeper.onInput();
+  assert.equal(h.sets(), 1);
+  h.state.visible = false;
+  h.advance(1000);
+  assert.equal(h.sets(), 1, 'the trailing set is skipped once the page is hidden');
+  h.state.visible = true;
+  h.keeper.onInput();
+  h.keeper.stop();
+  h.advance(1000);
+  assert.equal(h.sets(), 2, 'a stopped keeper schedules nothing further');
 });

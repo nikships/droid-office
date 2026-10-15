@@ -1,7 +1,21 @@
 import { fileURLToPath } from 'node:url';
 import { app, BaseWindow, BrowserWindow, dialog, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
-import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, PageVisibility, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger, windowVisible } from './presenter-model.js';
+import {
+  InputFrameRate,
+  layerPixelFormat,
+  type NativeStats,
+  osrFrameRate,
+  osrPixelFormat,
+  PageVisibility,
+  pageSize,
+  type PresenterReport,
+  type PresentMode,
+  presentMode,
+  summarizeNativeStats,
+  TextureLedger,
+  windowVisible,
+} from './presenter-model.js';
 import { CrashPolicy, FirstFrameGate, GPU_REPAINT_MS, GpuRecovery, trustedFrame } from './presenter-recovery.js';
 import { failStartup, loadNative, logStartupFailure, StartupAborted } from './startup.js';
 import { nativeModuleFailure, rendererCrashFailure, sharedTextureFailure } from './startup-failure.js';
@@ -97,6 +111,7 @@ export class PresenterWindow {
   private closed = false;
   private hdr = false;
   private readonly visibility: PageVisibility;
+  private readonly inputRate: InputFrameRate;
   private maxFps = 60;
   private readonly mode: PresentMode;
 
@@ -132,6 +147,16 @@ export class PresenterWindow {
       setFrameRate: (fps) => this.contents.setFrameRate(fps),
       notify: (visible) => this.onVisibleChange?.(visible),
     });
+    this.inputRate = new InputFrameRate({
+      now: () => performance.now(),
+      schedule: (fn, ms) => {
+        const timer = setTimeout(fn, ms);
+        timer.unref();
+        return () => clearTimeout(timer);
+      },
+      reapply: () => this.visibility.reapply(),
+      isVisible: () => this.visibility.isVisible(),
+    });
     // The offscreen page is a real window as far as the window server is concerned, so it is made invisible and click-through
     // rather than left unshown. It is never hidden or ordered front again: that does not change the page's visibilityState or slow
     // its animation frames in Electron's offscreen mode (only a low frame rate does), so PageVisibility drops the frame rate and tells
@@ -166,6 +191,8 @@ export class PresenterWindow {
     this.native = native;
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
+    // Any input into the page, from PresenterInput or the DevTools Protocol, drops its frame rate to 60 until it is set again.
+    this.contents.on('input-event', () => this.inputRate.onInput());
     // A new page view (a navigation to the office swaps it) is made at Electron's own rate, not the one asked for, so every load sets the rate again.
     for (const event of ['dom-ready', 'did-navigate', 'did-finish-load'] as const) this.contents.on(event as 'dom-ready', () => this.visibility.reapply());
     // A page whose process is gone leaves its last frame on the screen for good, so it is brought back (see CrashPolicy).
@@ -388,6 +415,7 @@ export class PresenterWindow {
     clearTimeout(this.watchdog);
     clearInterval(this.recheck);
     clearTimeout(this.settle);
+    this.inputRate.stop();
     clearTimeout(this.gpuTimer);
     app.removeListener('child-process-gone', this.onChildGone);
     ipcMain.removeHandler('presenter:stats');
