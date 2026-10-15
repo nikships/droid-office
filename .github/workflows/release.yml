@@ -263,9 +263,8 @@ jobs:
           DROID_OFFICE_ALLOW_ANY_CHIP=1 "$bin" --startup-check --user-data-dir="$RUNNER_TEMP/startup-check-1" | tee startup-check.log
           grep -q '^startup-check ok' startup-check.log
           grep -q '"presenter":{' startup-check.log
-          # The probe makes a Metal device and layer. A runner without a GPU can't, which the app itself would refuse at
-          # startup, so that is a warning here; if it appears, the Metal-dependent checks are not running in CI.
-          grep -q '"probe":{' startup-check.log || echo '::warning::the presenter loaded but its Metal probe failed on this runner (see the log)'
+          # startup-check exits 1 unless the presenter's probe made a Metal device, imported an IOSurface and made a layer.
+          grep -q '"probe":{' startup-check.log
           test -f "$app/Contents/Resources/app/native/presenter/build/Release/presenter.node"
           if echo "$chip" | grep -Eq '^Apple M[0-9]+ (Pro|Max|Ultra)$'; then
             "$bin" --startup-check --user-data-dir="$RUNNER_TEMP/startup-check-2"
