@@ -4101,7 +4101,7 @@ const automation = createAutomation({
     renderWake();
   },
   frames: () => framesDrawn,
-  presenterStats: (reset) => presenterStats(reset, 1000 / Math.min(settings.graphics.fpsCap, 1000 / renderLoop.refreshMs)),
+  presenterStats: (reset, samples) => presenterStats(reset, 1000 / Math.min(settings.graphics.fpsCap, 1000 / renderLoop.refreshMs), samples),
   frameStats: (reset) => {
     if (reset) frameStats.reset();
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());

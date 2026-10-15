@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { app, BaseWindow, BrowserWindow, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
-import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, pageSize, type PresenterReport, summarizeNativeStats, TextureLedger } from './presenter-model.js';
+import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger } from './presenter-model.js';
 import { failStartup, loadNative, StartupAborted } from './startup.js';
 import { sharedTextureFailure } from './startup-failure.js';
 
@@ -35,7 +35,7 @@ interface NativePresenter {
 interface NativeModule {
   Presenter: new (
     windowHandle: Buffer,
-    options: { pixelFormat: 'rgbaf16' | 'bgra'; frameLatency?: number; onRelease: (id: number) => void; onState?: (state: Record<string, unknown>) => void; onEvent?: (event: Record<string, unknown>) => void },
+    options: { pixelFormat: 'rgbaf16' | 'bgra'; mode: PresentMode; frameLatency?: number | undefined; onRelease: (id: number) => void; onState?: (state: Record<string, unknown>) => void; onEvent?: (event: Record<string, unknown>) => void },
   ) => NativePresenter;
   probe(): Record<string, unknown>;
   edrCapable(): boolean;
@@ -55,6 +55,10 @@ export interface PresenterWindowOptions {
   backgroundColor: string;
   /** Called once with the window state the first texture arrives in; show and full-screen it from here. */
   onFirstFrame: (base: BaseWindow) => void;
+  /** `direct` presents each frame as it arrives; `paced` does too but keeps a steady cadence on the vsync grid; `link` draws on `CAMetalDisplayLink` updates (steady cadence, about 25 ms more latency). */
+  mode?: PresentMode;
+  /** In `link` mode, the frames the display link leads the display by. */
+  frameLatency?: number;
   /** Extra `webPreferences` merged under the offscreen ones. */
   webPreferences?: Electron.WebPreferences;
 }
@@ -113,6 +117,8 @@ export class PresenterWindow {
     this.page.showInactive();
     this.native = new module.Presenter(this.base.getNativeWindowHandle(), {
       pixelFormat: layerPixelFormat(format),
+      mode: options.mode ?? presentMode(process.env),
+      frameLatency: options.frameLatency,
       onRelease: (id) => {
         this.ledger.release(id);
       },
@@ -130,9 +136,9 @@ export class PresenterWindow {
   }
 
   /** The native side's presentation numbers, judged against `plannedMs` between frames (the FPS cap or the refresh). */
-  stats(options: { reset?: boolean; plannedMs?: number } = {}): PresenterReport {
+  stats(options: { reset?: boolean; plannedMs?: number; samples?: boolean } = {}): PresenterReport {
     const raw = this.native.stats({ reset: options.reset });
-    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps);
+    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps, options.samples === true);
   }
 
   /** Reads back the next presented frame (tests and measurement only). */
@@ -221,9 +227,9 @@ export class PresenterWindow {
 
   private registerIpc(): void {
     const own = (sender: WebContents) => sender === this.contents;
-    ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown) => {
+    ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown, samples: unknown) => {
       if (!own(event.sender)) return null;
-      return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined });
+      return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined, samples: samples === true });
     });
     ipcMain.on('presenter:hdr', (event, on: unknown) => {
       if (!own(event.sender) || typeof on !== 'boolean') return;

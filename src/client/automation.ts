@@ -353,7 +353,7 @@ export interface AutomationHost {
   /** Frame pacing since the last reset, or over the last minute; `reset` starts a new measurement. */
   frameStats(reset: boolean): PacingReport;
   /** The Mac app's native presenter numbers since the last reset; null in a browser. */
-  presenterStats(reset: boolean): Promise<unknown | null>;
+  presenterStats(reset: boolean, samples: boolean): Promise<unknown | null>;
   wait(ms: number): Promise<void>;
 }
 
@@ -386,7 +386,7 @@ export interface OfficeAutomation {
    * dropped, the time between presented frames, and the latency from the paint reaching the presenter to the display showing
    * it (p50, p95, p99, max ms each). Null in a browser, where Chromium presents the page itself.
    */
-  presenterStats(opts?: { reset?: boolean }): Promise<unknown | null>;
+  presenterStats(opts?: { reset?: boolean; samples?: boolean }): Promise<unknown | null>;
   state(): Snapshot;
   list(): TargetInfo[];
   commands(): CommandInfo[];
@@ -552,7 +552,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
     camera,
     height,
     frameStats: (opts = {}) => host.frameStats(opts?.reset === true),
-    presenterStats: (opts = {}) => host.presenterStats(opts?.reset === true),
+    presenterStats: (opts = {}) => host.presenterStats(opts?.reset === true, opts?.samples === true),
     state,
     list: () => listTargets(host.context()),
     commands: () => host.commands(),

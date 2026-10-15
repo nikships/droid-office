@@ -1,6 +1,6 @@
 /** The Mac app's line from the page to its native Metal presenter (`droidOfficeNative`, exposed by `src/desktop/page-preload.cts`). Absent in a browser. */
 interface NativePresenterBridge {
-  stats(reset: boolean, plannedMs: number): Promise<unknown>;
+  stats(reset: boolean, plannedMs: number, samples: boolean): Promise<unknown>;
   setHdr(on: boolean): void;
 }
 
@@ -20,7 +20,7 @@ export function reportHdr(on: boolean) {
 }
 
 /** What the presenter measured on its side (present times, latency from the paint, dropped frames), or null in a browser. */
-export async function presenterStats(reset: boolean, plannedMs: number): Promise<unknown | null> {
+export async function presenterStats(reset: boolean, plannedMs: number, samples: boolean): Promise<unknown | null> {
   const native = bridge();
-  return native ? await native.stats(reset, plannedMs) : null;
+  return native ? await native.stats(reset, plannedMs, samples) : null;
 }

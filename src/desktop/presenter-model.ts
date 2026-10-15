@@ -12,6 +12,15 @@ export function layerPixelFormat(osr: OsrPixelFormat): 'rgbaf16' | 'bgra' {
   return osr === 'rgbaf16' ? 'rgbaf16' : 'bgra';
 }
 
+/** How the addon puts a frame on the display: as it arrives (`direct`), as it arrives but held to the vsync grid so a steady cadence stays steady (`paced`), or on the next `CAMetalDisplayLink` update (`link`). */
+export type PresentMode = 'direct' | 'paced' | 'link';
+
+/** `DROID_OFFICE_PRESENT_MODE` picks `link` or `direct` for a comparison; anything else is `paced`, the default. */
+export function presentMode(env: Record<string, string | undefined>): PresentMode {
+  const mode = env.DROID_OFFICE_PRESENT_MODE;
+  return mode === 'link' || mode === 'direct' ? mode : 'paced';
+}
+
 const MIN_OSR_FPS = 30;
 const MAX_OSR_FPS = 120;
 
@@ -111,6 +120,8 @@ export interface PresenterReport {
   early: number;
   /** The interval between frames the numbers above are judged against, in milliseconds. */
   plannedMs: number;
+  /** Every presented frame, oldest first, when asked for (`samples: true`): see SAMPLE_STRIDE. Seconds are on the app's monotonic clock (`now()` of the addon). */
+  samples?: number[];
 }
 
 const ZERO: Spread = { p50: 0, p95: 0, p99: 0, max: 0 };
@@ -128,7 +139,7 @@ export function spread(values: number[]): Spread {
 }
 
 /** Turns the addon's raw counters and samples into the report `office.presenterStats()` returns. `plannedMs` is the frame interval the player asked for (the FPS cap, or the refresh when it is faster). */
-export function summarizeNativeStats(stats: NativeStats, plannedMs: number): PresenterReport {
+export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false): PresenterReport {
   const interval: number[] = [];
   const latency: number[] = [];
   const wait: number[] = [];
@@ -177,5 +188,6 @@ export function summarizeNativeStats(stats: NativeStats, plannedMs: number): Pre
     late,
     early,
     plannedMs,
+    ...(withSamples ? { samples: Array.from(stats.samples) } : {}),
   };
 }
