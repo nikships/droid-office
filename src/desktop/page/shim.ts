@@ -35,15 +35,14 @@
 
   Object.defineProperty(Document.prototype, 'pointerLockElement', { configurable: true, enumerable: true, get: () => lockElement });
   Element.prototype.requestPointerLock = function requestPointerLock(this: Element, options?: { unadjustedMovement?: boolean }): Promise<void> {
-    const element = this;
     return new Promise<void>((resolve, reject) => {
-      if (!element.isConnected) {
+      if (!this.isConnected) {
         reject(new DOMException('The element is not in the document.', 'InvalidStateError'));
         fire('pointerlockerror');
         return;
       }
       const id = nextId++;
-      pending.set(id, { element, resolve, reject });
+      pending.set(id, { element: this, resolve, reject });
       post({ t: 'lock', id, raw: options?.unadjustedMovement === true, activation: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive ?? false });
     });
   } as typeof Element.prototype.requestPointerLock;

@@ -163,6 +163,7 @@ static Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("probe", Napi::Function::New(env, Probe));
   exports.Set("readback", Napi::Function::New(env, Readback));
   exports.Set("present", Napi::Function::New(env, Present));
+  DOInputRegisterExports(env, exports);
   return exports;
 }
 NODE_API_MODULE(presenter, Init)
