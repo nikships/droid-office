@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   CALIBRATION_FRAMES,
+  CALIBRATION_WARMUP,
   calibratePaced,
   layerPixelFormat,
   learnPacedLate,
@@ -131,9 +132,9 @@ test('the present mode is paced unless a comparison asks for another', () => {
 
 // A model of the compositor for `paced` mode: a frame committed at `c` with a hold until `slot` is shown at the first refresh at or after
 // max(slot, c + deadline); the layer has three drawables, and a frame's drawable frees when the frame after it is shown.
-function simulatePaced(options: { acquireAtArrival: boolean; frames?: number; arrivalPeriod?: number }) {
+function simulatePaced(options: { acquireAtArrival: boolean; frames?: number; arrivalPeriod?: number; startupDelay?: number }) {
   const p = 1 / 120;
-  const deadline = 0.026;
+  const deadline = 0.022;
   const phase = 0.0031;
   const arrivalPeriod = options.arrivalPeriod ?? 2 * p;
   const vsyncAtOrAfter = (t: number) => phase + Math.ceil((t - phase) / p - 1e-9) * p;
@@ -161,19 +162,21 @@ function simulatePaced(options: { acquireAtArrival: boolean; frames?: number; ar
     const acquireAt = hold && !options.acquireAtArrival ? hold.acquireAt : a;
     // Three drawables: this frame's is the one of the frame two before, which frees when the frame after that is shown.
     const committed = Math.max(acquireAt, n >= 2 ? shown[n - 2]! : 0);
-    if (n >= 60 && committed > acquireAt) blocked++;
-    let presented = vsyncAtOrAfter(Math.max(hold ? hold.slot - 0.5 * p : 0, committed + deadline));
+    if (n >= 100 && committed > acquireAt) blocked++;
+    let presented = vsyncAtOrAfter(Math.max(hold ? hold.slot - 0.5 * p : 0, committed + deadline + (n < CALIBRATION_WARMUP ? (options.startupDelay ?? 0) : 0)));
     if (n > 0) presented = Math.max(presented, shown[n - 1]! + p);
     shown.push(presented);
     if (hold) heldFrames.push({ shownAt: presented, slot: hold.slot });
     else state = calibratePaced(state, presented - a);
   }
-  const settled = shown.slice(60);
+  const settled = shown.slice(100);
   return {
     intervals: settled.slice(1).map((t, i) => (t - settled[i]!) / p),
-    latencies: settled.map((t, i) => t - arrived[60 + i]!),
+    latencies: settled.map((t, i) => t - arrived[100 + i]!),
     bumps,
     blocked,
+    shown,
+    arrived,
     minLatency: state.minLatency,
     p,
   };
@@ -225,8 +228,17 @@ test('paced: the slot is a refresh of the grid half a refresh past the deadline,
   assert.ok(Math.abs(hold.acquireAt - (hold.slot - 0.026)) < 1e-9);
 });
 
-test('paced: calibration keeps the quickest frame and ignores impossible latencies; late holds grow the deadline twice at most', () => {
+test('paced: the first frames are not measured, so a slow start does not set the deadline', () => {
+  const slow = simulatePaced({ acquireAtArrival: false, startupDelay: 0.006 });
+  const normal = simulatePaced({ acquireAtArrival: false });
+  assert.ok(Math.abs(slow.minLatency - normal.minLatency) < 1e-9);
+  assert.ok(slow.intervals.every((x) => Math.abs(x - 2) < 0.01));
+});
+
+test('paced: calibration keeps the quickest frame after the warm-up and ignores impossible latencies; late holds grow the deadline twice at most', () => {
   let s = newPacedDeadline();
+  for (let i = 0; i < CALIBRATION_WARMUP; i++) s = calibratePaced(s, 0.5);
+  assert.equal(s.calibrated, 0);
   s = calibratePaced(s, 0.03);
   s = calibratePaced(s, 0.026);
   s = calibratePaced(s, 0);

@@ -27,6 +27,8 @@ export const CALIBRATION_FRAMES = 20;
 const HOLD_MIN_REFRESHES = 1.5;
 /** How long after the last presented frame the vsync grid is trusted, in seconds. */
 const GRID_STALE_SECONDS = 0.25;
+/** The window is still appearing and the page still starting for the first frames, which show slower than the steady state the hold is judged against. */
+export const CALIBRATION_WARMUP = 30;
 /** The drawable is acquired this long (seconds) before the compositor's deadline for the slot. */
 const ACQUIRE_MARGIN_SECONDS = 0.001;
 
@@ -40,18 +42,22 @@ export interface PacedDeadline {
   minLatency: number;
   baseLatency: number;
   lateRun: number;
+  /** Frames seen so far, calibration frames included (the first CALIBRATION_WARMUP are not measured). */
+  seen: number;
 }
 
 export function newPacedDeadline(): PacedDeadline {
-  return { calibrated: 0, minLatency: 0, baseLatency: 0, lateRun: 0 };
+  return { calibrated: 0, minLatency: 0, baseLatency: 0, lateRun: 0, seen: 0 };
 }
 
-/** A frame shown with no hold took `latency` seconds from its paint reaching the presenter to the display. */
+/** A frame shown with no hold took `latency` seconds from its paint reaching the presenter to the display. Call it only for frames that arrive at the pace being held to. */
 export function calibratePaced(state: PacedDeadline, latency: number): PacedDeadline {
-  if (state.calibrated >= CALIBRATION_FRAMES || !(latency > 0 && latency < 0.2)) return state;
+  if (state.calibrated >= CALIBRATION_FRAMES) return state;
+  const seen = state.seen + 1;
+  if (seen <= CALIBRATION_WARMUP || !(latency > 0 && latency < 0.2)) return { ...state, seen };
   const minLatency = state.calibrated === 0 ? latency : Math.min(state.minLatency, latency);
   const calibrated = state.calibrated + 1;
-  return { ...state, calibrated, minLatency, baseLatency: calibrated === CALIBRATION_FRAMES ? minLatency : state.baseLatency };
+  return { ...state, seen, calibrated, minLatency, baseLatency: calibrated === CALIBRATION_FRAMES ? minLatency : state.baseLatency };
 }
 
 export interface PacedHoldInput {
@@ -87,9 +93,9 @@ export function pacedHold(input: PacedHoldInput): PacedHold | null {
 }
 
 /**
- * A held frame was shown at `presentedAt`. Three in a row shown over half a refresh after their slot mean the deadline is later
- * than thought, so the hold grows by a refresh; at most twice, because a held frame that waited for a drawable also shows late
- * and growing the hold then only makes it worse.
+ * A held frame was shown at `presentedAt`, for the slot it was held to. Three in a row shown over half a refresh after their slot
+ * mean the deadline is later than thought, so the hold grows by a refresh; at most twice, because a held frame that waited for a
+ * drawable also shows late and growing the hold then only makes it worse.
  */
 export function learnPacedLate(state: PacedDeadline, presentedAt: number, slot: number, period: number): PacedDeadline {
   if (presentedAt - slot <= 0.5 * period) return state.lateRun === 0 ? state : { ...state, lateRun: 0 };
@@ -152,6 +158,8 @@ export interface NativeStats {
   ticks: number;
   ticksWithFrame: number;
   importFailures: number;
+  /** `paced` mode's estimate of the compositor's deadline: the quickest paint-to-display time of frames shown without a hold, in milliseconds (0 until measured). */
+  deadlineMs: number;
   released: number;
   inFlight: number;
   maxInFlight: number;
@@ -179,6 +187,8 @@ export interface PresenterReport {
   /** Frames the compositor never showed (their presented time stayed 0). */
   notShown: number;
   importFailures: number;
+  /** `paced` mode's estimate of the compositor's deadline: the quickest paint-to-display time of frames shown without a hold, in milliseconds (0 until measured). */
+  deadlineMs: number;
   /** Display refreshes the presenter was woken for, and those that had a new frame to show. */
   ticks: number;
   ticksWithFrame: number;
@@ -257,6 +267,7 @@ export function summarizeNativeStats(stats: NativeStats, plannedMs: number, with
     dropped: stats.dropped,
     notShown: stats.notShown,
     importFailures: stats.importFailures,
+    deadlineMs: stats.deadlineMs,
     ticks: stats.ticks,
     ticksWithFrame: stats.ticksWithFrame,
     maxInFlight: stats.maxInFlight,

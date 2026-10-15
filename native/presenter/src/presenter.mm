@@ -42,6 +42,7 @@ static const size_t kTextureCacheLimit = 24;
 // Without a new frame for this long the display link pauses; the next submit() resumes it.
 static const double kIdlePauseSeconds = 0.25;
 static const int kCalibrationFrames = 20;
+static const int kCalibrationWarmup = 30;
 
 namespace {
 
@@ -133,7 +134,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::atomic<double> lastPresented{0};
   std::atomic<double> minLatency{0};
   double baseLatency = 0;
-  std::atomic<int> calibrated{0};
+  std::atomic<int> calibrated{0}, seen{0};
   std::atomic<int> lateRun{0};
   double lastSubmit = 0;
   std::atomic<double> arrivalInterval{0};
@@ -207,7 +208,7 @@ class Core : public std::enable_shared_from_this<Core> {
     drawFrame(update.drawable, update.targetPresentationTimestamp);
   }
 
-  void drawFrame(id<CAMetalDrawable> drawable, double target, double presentAt = 0) {
+  void drawFrame(id<CAMetalDrawable> drawable, double target, double presentAt = 0, bool calibrating = false) {
     double now = CACurrentMediaTime();
     Frame f;
     {
@@ -264,7 +265,7 @@ class Core : public std::enable_shared_from_this<Core> {
       if (s.presentedAt > 0) {
         double prev = self->lastPresented.load();
         if (s.presentedAt > prev) self->lastPresented.store(s.presentedAt);
-        if (self->paced) self->learn(s, presentAt);
+        if (self->paced) self->learn(s, presentAt, calibrating);
       }
       s.gpuMs = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
       if (s.presentedAt <= 0) {
@@ -308,12 +309,16 @@ class Core : public std::enable_shared_from_this<Core> {
   }
 
   // Learns where the compositor's deadline is from how long the frames shown without a hold took, and notices a hold that was too short.
-  void learn(const Sample &s, double requested) {
+  void learn(const Sample &s, double requested, bool calibrating) {
     double p = period.load();
     if (requested <= 0) {
+      if (!calibrating) return;
       int n = calibrated.load();
+      if (n >= kCalibrationFrames) return;
+      // The window is still appearing and the page starting for the first frames, which show slower than the steady state.
+      if (seen.fetch_add(1) + 1 <= kCalibrationWarmup) return;
       double latency = s.presentedAt - s.submittedAt;
-      if (n < kCalibrationFrames && latency > 0 && latency < 0.2) {
+      if (latency > 0 && latency < 0.2) {
         minLatency.store(n == 0 ? latency : std::min(minLatency.load(), latency));
         calibrated.store(n + 1);
         if (n + 1 == kCalibrationFrames) baseLatency = minLatency.load();
@@ -624,7 +629,21 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
           std::lock_guard<std::mutex> g(c->lock);
           if (!c->mailbox.surface) return;
         }
-        double slot = c->paced ? c->pacedSlot() : 0;
+        double slot = 0;
+        bool calibrating = false;
+        if (c->paced) {
+          double interval = c->arrivalInterval.load(), p = c->period.load();
+          bool holding = interval >= 1.5 * p;
+          // Calibration belongs to the pace being held to: one taken at a frame per refresh is queued behind the drawables.
+          if (interval > 0 && !holding && c->calibrated.load() > 0) {
+            c->calibrated.store(0);
+            c->seen.store(0);
+            c->minLatency.store(0);
+            c->lateRun.store(0);
+          }
+          slot = c->pacedSlot();
+          calibrating = holding && slot == 0 && c->calibrated.load() < kCalibrationFrames;
+        }
         // A held frame takes its drawable only when the compositor can still make its slot: drawables are scarce (three), and a frame
         // holding one from arrival to its slot would stall the next acquire.
         double wait = slot > 0 ? slot - c->minLatency.load() - 0.001 - CACurrentMediaTime() : 0;
@@ -634,7 +653,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
             if (!c->mailbox.surface) return;
           }
           id<CAMetalDrawable> d = [c->layer nextDrawable];
-          if (d && !c->closed.load()) c->drawFrame(d, 0, slot > 0 ? slot - 0.5 * c->period.load() : 0);
+          if (d && !c->closed.load()) c->drawFrame(d, 0, slot > 0 ? slot - 0.5 * c->period.load() : 0, calibrating);
         };
         if (wait > 0.0005) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), c->directQueue, present);
         else present();
@@ -725,6 +744,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     o.Set("released", (double)c.released);
     o.Set("inFlight", (double)c.inFlight);
     o.Set("maxInFlight", (double)c.maxInFlight);
+    o.Set("deadlineMs", core->minLatency.load() * 1000.0);
     o.Set("now", CACurrentMediaTime());
     Napi::Float64Array arr = Napi::Float64Array::New(env, ordered.size() * kSampleStride);
     for (size_t i = 0; i < ordered.size(); i++) {
