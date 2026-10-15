@@ -33,6 +33,17 @@ export class StartupAborted extends Error {
   }
 }
 
+/** Appends a failure to `startup.log`; the log is a courtesy, the dialog is the report. */
+export function logStartupFailure(failure: StartupFailure): void {
+  try {
+    const logs = app.getPath('logs');
+    mkdirSync(logs, { recursive: true });
+    appendFileSync(path.join(logs, 'startup.log'), `${new Date().toISOString()} [${failure.kind}] ${formatStartupFailure(failure)}\n\n`);
+  } catch {
+    // Nothing to do about a log that can't be written.
+  }
+}
+
 /**
  * Shows why the app can't run and quits, with exit code 1. Every startup failure goes through here: the Mac app
  * has one way to draw, so a missing piece is an error the user reads, never a quieter mode. Call it once the app is
@@ -40,13 +51,7 @@ export class StartupAborted extends Error {
  */
 export function failStartup(failure: StartupFailure): never {
   const text = formatStartupFailure(failure);
-  try {
-    const logs = app.getPath('logs');
-    mkdirSync(logs, { recursive: true });
-    appendFileSync(path.join(logs, 'startup.log'), `${new Date().toISOString()} [${failure.kind}] ${text}\n\n`);
-  } catch {
-    // The log is a courtesy; the dialog below is the report.
-  }
+  logStartupFailure(failure);
   if (isStartupCheck()) {
     process.stderr.write(`startup failure [${failure.kind}]: ${text}\n`);
   } else {

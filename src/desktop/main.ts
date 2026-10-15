@@ -6,7 +6,7 @@ import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructor
 import { downloadBrowser } from './browser.js';
 import { contextMenu, editMenu } from './edit-menu.js';
 import { gpuReport } from './gpu.js';
-import { linkAction } from './links.js';
+import { linkAction, windowOpenAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import type { NativeEvent } from './input-events.js';
 import { type InputNative, PresenterInput } from './presenter-input.js';
@@ -89,6 +89,8 @@ function createWindow(loadOffice = true) {
       base.show();
       base.setFullScreen(true);
     },
+    officeOrigin: () => (officeUrl ? new URL(officeUrl).origin : undefined),
+    isQuitting: () => quitting,
   });
   win = created;
   const contents = created.contents;
@@ -112,10 +114,9 @@ function createWindow(loadOffice = true) {
     );
     if (items.length) Menu.buildFromTemplate(items).popup({ window: created.base, x: params.x, y: params.y });
   });
+  // Never an Electron window: a child of the offscreen page would inherit its shared-texture rendering with nothing to show it (see windowOpenAction).
   contents.setWindowOpenHandler(({ url }) => {
-    const action = officeUrl ? linkAction(url, new URL(officeUrl).origin) : 'ignore';
-    if (action === 'app') return { action: 'allow', overrideBrowserWindowOptions: { fullscreen: false, backgroundColor: BACKGROUND } };
-    if (action === 'browser') void shell.openExternal(url);
+    if (officeUrl && windowOpenAction(url, new URL(officeUrl).origin) === 'browser') void shell.openExternal(url);
     return { action: 'deny' };
   });
   contents.on('will-navigate', (e, url) => {

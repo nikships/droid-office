@@ -1,5 +1,5 @@
 /** Why the Mac app refused to start. Each one ends in a dialog and a quit: there is no degraded mode. */
-export type StartupFailureKind = 'platform' | 'macos' | 'chip' | 'native-module' | 'shared-texture';
+export type StartupFailureKind = 'platform' | 'macos' | 'chip' | 'native-module' | 'shared-texture' | 'renderer-crashed';
 
 export interface StartupFailure {
   kind: StartupFailureKind;
@@ -34,5 +34,14 @@ export function sharedTextureFailure(why: unknown): StartupFailure {
     kind: 'shared-texture',
     title: "Droid Office couldn't get frames from the GPU",
     detail: `Electron did not hand over a shared GPU texture of the office page, and the app has no other way to draw. Quit and open Droid Office again. If it keeps failing, report this message.\n\n${reason(why)}`,
+  };
+}
+
+/** The office page's process crashed twice in a minute, so it is asked about rather than reloaded again. The one failure the owner can answer with Reload instead of Quit. */
+export function rendererCrashFailure(reasons: unknown): StartupFailure {
+  return {
+    kind: 'renderer-crashed',
+    title: 'The office window crashed',
+    detail: `The page that draws the office stopped twice in a minute. Reload it to try again, or quit and open Droid Office again. If it keeps happening, report this message.\n\n${reason(reasons)}`,
   };
 }

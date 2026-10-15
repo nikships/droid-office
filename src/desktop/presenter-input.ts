@@ -95,9 +95,18 @@ export class PresenterInput {
 
   stop(): void {
     this.stopped = true;
-    this.releaseLock();
-    this.options.native.inputSetTextInput(false);
-    if (this.options.page.debugger.isAttached()) this.options.page.debugger.detach();
+    // Runs from the window's 'closed' handler, when the native view is already gone and every call into it throws.
+    try {
+      this.releaseLock();
+      this.options.native.inputSetTextInput(false);
+    } catch {
+      // Nothing left to release.
+    }
+    try {
+      if (this.options.page.debugger.isAttached()) this.options.page.debugger.detach();
+    } catch {
+      // The page is already destroyed.
+    }
   }
 
   get captured(): boolean {
@@ -331,8 +340,10 @@ export class PresenterInput {
   }
 
   private cursorChanged(type: string, image: { toPNG(): Buffer; isEmpty(): boolean } | undefined, scale: number, hotspot: { x: number; y: number }) {
-    if (type === 'custom' && image && !image.isEmpty()) this.cursor = { png: image.toPNG(), hotspot, scale };
-    else this.cursor = { name: nativeCursor(type) };
+    const png = type === 'custom' && image && !image.isEmpty() ? image.toPNG() : undefined;
+    // The page chooses the image, so it is capped before it is handed to native code: a larger one falls back to the arrow.
+    if (png && png.length <= MAX_CURSOR_PNG) this.cursor = { png, hotspot, scale };
+    else this.cursor = { name: png ? 'arrow' : nativeCursor(type) };
     if (!this.lock.locked) this.applyCursor();
   }
 
@@ -344,6 +355,8 @@ export class PresenterInput {
 }
 
 const ESCAPE = 0x35;
+/** The largest cursor image (PNG bytes) taken from the page; real cursors are a few KB. */
+const MAX_CURSOR_PNG = 256 * 1024;
 
 function buttonBit(button: number): number {
   return button === 1 ? BUTTON.right : button === 2 ? BUTTON.middle : BUTTON.left;

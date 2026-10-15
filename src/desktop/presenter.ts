@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
-import { app, BaseWindow, BrowserWindow, ipcMain, screen, type WebContents } from 'electron';
+import { app, BaseWindow, BrowserWindow, dialog, ipcMain, screen, type WebContents } from 'electron';
 import { requirePresenter } from './native.js';
 import { layerPixelFormat, type NativeStats, osrFrameRate, osrPixelFormat, PageVisibility, pageSize, type PresenterReport, type PresentMode, presentMode, summarizeNativeStats, TextureLedger, windowVisible } from './presenter-model.js';
-import { failStartup, loadNative, StartupAborted } from './startup.js';
-import { sharedTextureFailure } from './startup-failure.js';
+import { CrashPolicy, FirstFrameGate, GPU_REPAINT_MS, GpuRecovery, trustedFrame } from './presenter-recovery.js';
+import { failStartup, loadNative, logStartupFailure, StartupAborted } from './startup.js';
+import { nativeModuleFailure, rendererCrashFailure, sharedTextureFailure } from './startup-failure.js';
 
 const PAGE_PRELOAD = fileURLToPath(new URL('./page-preload.cjs', import.meta.url));
 /** How long the first shared texture may take. The page is a local data: URL at that point, so a healthy start paints within a second or two. */
@@ -59,8 +60,10 @@ export interface PresenterWindowOptions {
   mode?: PresentMode;
   /** In `link` mode, the frames the display link leads the display by. */
   frameLatency?: number;
-  /** Extra `webPreferences` merged under the offscreen ones. */
-  webPreferences?: Electron.WebPreferences;
+  /** The office's origin, once it is known: only the page's main frame at this origin may call the presenter's IPC. */
+  officeOrigin: () => string | undefined;
+  /** Whether the app is quitting, so the page's process being killed is not a crash. */
+  isQuitting: () => boolean;
 }
 
 /**
@@ -83,6 +86,14 @@ export class PresenterWindow {
   private recheck: NodeJS.Timeout | undefined;
   private settle: NodeJS.Timeout | undefined;
   private gotTexture = false;
+  private shown = false;
+  private failed = false;
+  private readonly gate = new FirstFrameGate();
+  private readonly crashes = new CrashPolicy();
+  private readonly gpu = new GpuRecovery();
+  private gpuTimer: NodeJS.Timeout | undefined;
+  private asking = false;
+  private readonly onChildGone = (_event: unknown, details: Electron.Details): void => this.childGone(details);
   private closed = false;
   private hdr = false;
   private readonly visibility: PageVisibility;
@@ -107,9 +118,9 @@ export class PresenterWindow {
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
+        nodeIntegration: false,
         spellcheck: false,
         autoplayPolicy: 'no-user-gesture-required',
-        ...options.webPreferences,
         preload: PAGE_PRELOAD,
         offscreen: { useSharedTexture: true, sharedTexturePixelFormat: format, deviceScaleFactor: scaleFactor },
       },
@@ -135,20 +146,32 @@ export class PresenterWindow {
     this.page.setHiddenInMissionControl(true);
     this.page.excludedFromShownWindowsMenu = true;
     this.page.showInactive();
-    this.native = new module.Presenter(this.base.getNativeWindowHandle(), {
-      pixelFormat: layerPixelFormat(format),
-      mode: this.mode,
-      frameLatency: options.frameLatency,
-      onRelease: (id) => {
-        this.ledger.release(id);
-      },
-      onState: (state) => this.nativeState(state),
-      onEvent: (event) => this.onNativeEvent?.(event),
-    });
+    let native: NativePresenter;
+    try {
+      native = new module.Presenter(this.base.getNativeWindowHandle(), {
+        pixelFormat: layerPixelFormat(format),
+        mode: this.mode,
+        frameLatency: options.frameLatency,
+        onRelease: (id) => {
+          this.ledger.release(id);
+        },
+        onState: (state) => this.nativeState(state),
+        onEvent: (event) => this.onNativeEvent?.(event),
+      });
+    } catch (err) {
+      this.page.destroy();
+      this.base.destroy();
+      failStartup(nativeModuleFailure(err));
+    }
+    this.native = native;
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
     // A new page view (a navigation to the office swaps it) is made at Electron's own rate, not the one asked for, so every load sets the rate again.
     for (const event of ['dom-ready', 'did-navigate', 'did-finish-load'] as const) this.contents.on(event as 'dom-ready', () => this.visibility.reapply());
+    // A page whose process is gone leaves its last frame on the screen for good, so it is brought back (see CrashPolicy).
+    this.contents.on('render-process-gone', (_event, details) => this.rendererGone(details.reason));
+    this.contents.on('unresponsive', () => void this.unresponsive());
+    app.on('child-process-gone', this.onChildGone);
     // A minimized window does not always report an occlusion change, so the window's own events speak for it too.
     this.base.on('minimize', () => this.setVisible(false));
     this.base.on('restore', () => this.setVisible(true));
@@ -156,7 +179,15 @@ export class PresenterWindow {
     this.base.on('enter-full-screen', () => this.resizePage());
     this.base.on('leave-full-screen', () => this.resizePage());
     this.base.once('closed', () => this.dispose());
-    this.watchdog = setTimeout(() => this.noTexture(`no paint event carried a shared texture within ${FIRST_TEXTURE_MS / 1000} s of the window opening`), FIRST_TEXTURE_MS);
+    this.watchdog = setTimeout(
+      () =>
+        this.noTexture(
+          this.gotTexture
+            ? `no frame had been drawn within ${FIRST_TEXTURE_MS / 1000} s of the window opening, though the page painted (its shared textures could not be shown)`
+            : `no paint event carried a shared texture within ${FIRST_TEXTURE_MS / 1000} s of the window opening`,
+        ),
+      FIRST_TEXTURE_MS,
+    );
     this.registerIpc();
   }
 
@@ -196,11 +227,11 @@ export class PresenterWindow {
       texture.release();
       return;
     }
-    if (!this.gotTexture) {
-      this.gotTexture = true;
-      clearTimeout(this.watchdog);
-      this.options.onFirstFrame(this.base);
-    }
+    this.gotTexture = true;
+    this.gpu.painted();
+    clearTimeout(this.gpuTimer);
+    // The display link draws only once the window is on screen, so in that diagnostic mode the first texture is what shows it.
+    if (this.mode === 'link') this.firstDrawn();
     const id = this.ledger.hold(texture);
     try {
       this.native.submit(id, surface, info.metadata.frameCount ?? 0);
@@ -211,7 +242,9 @@ export class PresenterWindow {
   }
 
   private noTexture(why: string): void {
-    if (this.closed) return;
+    if (this.closed || this.failed) return;
+    this.failed = true;
+    clearTimeout(this.watchdog);
     try {
       failStartup(sharedTextureFailure(why));
     } catch (err) {
@@ -226,6 +259,87 @@ export class PresenterWindow {
 
   private nativeState(state: Record<string, unknown>): void {
     if (state.type === 'display') this.applyDisplay(state as unknown as DisplayState);
+    else if (state.type === 'firstDrawn') this.firstDrawn();
+    else if (state.type === 'importFailed' && typeof state.count === 'number' && this.gate.importFailed(state.count)) this.noTexture(`the Metal presenter could not import ${state.count} shared textures in a row and has drawn no frame`);
+  }
+
+  /** The GPU has drawn a frame: the window has something to show, so it is shown (and made full screen by the caller). */
+  private firstDrawn(): void {
+    if (this.closed || this.failed || !this.gate.drawn()) return;
+    this.shown = true;
+    clearTimeout(this.watchdog);
+    this.options.onFirstFrame(this.base);
+  }
+
+  private rendererGone(reason: string): void {
+    if (this.closed) return;
+    const action = this.crashes.onGone(reason, Date.now(), this.options.isQuitting());
+    console.warn(`droid-office: the office page's process is gone (${reason}): ${action}`);
+    if (action === 'reload') this.reloadPage();
+    else if (action === 'dialog') void this.askAfterCrash(reason);
+  }
+
+  private reloadPage(): void {
+    if (this.closed || this.contents.isDestroyed()) return;
+    try {
+      this.contents.reload();
+    } catch (err) {
+      console.warn(`droid-office: reloading the office page failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async askAfterCrash(reason: string): Promise<void> {
+    if (this.asking) return;
+    this.asking = true;
+    const failure = rendererCrashFailure(`reason: ${reason}`);
+    logStartupFailure(failure);
+    try {
+      const { response } = await dialog.showMessageBox(this.base, { type: 'error', message: failure.title, detail: failure.detail, buttons: ['Reload', 'Quit'], defaultId: 0, cancelId: 1 });
+      if (this.closed) return;
+      if (response === 0) {
+        this.crashes.reset();
+        this.reloadPage();
+      } else app.quit();
+    } finally {
+      this.asking = false;
+    }
+  }
+
+  private async unresponsive(): Promise<void> {
+    if (this.closed || this.asking) return;
+    this.asking = true;
+    try {
+      const { response } = await dialog.showMessageBox(this.base, {
+        type: 'warning',
+        message: 'The office window is not responding',
+        detail: 'The page that draws the office has stopped answering. Wait for it, or reload it.',
+        buttons: ['Wait', 'Reload'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (this.closed || this.contents.isDestroyed() || response !== 1) return;
+      this.contents.forcefullyCrashRenderer();
+    } finally {
+      this.asking = false;
+    }
+  }
+
+  private childGone(details: Electron.Details): void {
+    if (this.closed || details.type !== 'GPU' || details.reason === 'clean-exit') return;
+    console.warn(`droid-office: the GPU process is gone (${details.reason})`);
+    this.armGpuTimer();
+  }
+
+  /** The page paints again by itself after the GPU process restarts; if it stays silent it is reloaded, and if it stays silent after that the app says so and quits. */
+  private armGpuTimer(): void {
+    clearTimeout(this.gpuTimer);
+    this.gpuTimer = setTimeout(() => {
+      if (this.closed) return;
+      if (this.gpu.silentFor() === 'reload') {
+        this.reloadPage();
+        this.armGpuTimer();
+      } else this.noTexture('the GPU process crashed and the office page did not paint again after a reload');
+    }, GPU_REPAINT_MS);
   }
 
   private applyDisplay(state: DisplayState): void {
@@ -233,8 +347,8 @@ export class PresenterWindow {
     this.maxFps = osrFrameRate(state.maxFps);
     this.visibility.setDisplayRate(this.maxFps);
     this.native.setPacing({ followDisplay: true });
-    // The window isn't on screen until the first frame, so "not visible" means nothing before then.
-    this.setVisible(windowVisible(state) || !this.gotTexture);
+    // The window isn't on screen until the first frame is drawn, so "not visible" means nothing before then.
+    this.setVisible(windowVisible(state) || !this.shown);
   }
 
   /** A window nobody can see (minimized, covered, on another Space) makes no frames and its page is slowed to the floor frame rate and told it is hidden (`onVisibleChange`), which is what pauses the office's render loop. */
@@ -255,13 +369,14 @@ export class PresenterWindow {
   }
 
   private registerIpc(): void {
-    const own = (sender: WebContents) => sender === this.contents;
+    // The page is untrusted: only its main frame, at the office's origin, may ask for anything.
+    const own = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => event.sender === this.contents && event.senderFrame === this.contents.mainFrame && trustedFrame(event.senderFrame?.url, this.options.officeOrigin());
     ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown, samples: unknown) => {
-      if (!own(event.sender)) return null;
+      if (!own(event)) return null;
       return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined, samples: samples === true });
     });
     ipcMain.on('presenter:hdr', (event, on: unknown) => {
-      if (!own(event.sender) || typeof on !== 'boolean') return;
+      if (!own(event) || typeof on !== 'boolean') return;
       this.hdr = on;
       this.native.setHdr(on);
     });
@@ -273,6 +388,8 @@ export class PresenterWindow {
     clearTimeout(this.watchdog);
     clearInterval(this.recheck);
     clearTimeout(this.settle);
+    clearTimeout(this.gpuTimer);
+    app.removeListener('child-process-gone', this.onChildGone);
     ipcMain.removeHandler('presenter:stats');
     ipcMain.removeAllListeners('presenter:hdr');
     this.native.close();

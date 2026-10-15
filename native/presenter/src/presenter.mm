@@ -38,7 +38,10 @@ static const uint32_t kPixelFormatBGRA = 'BGRA';
 static const uint32_t kPixelFormatRGBAHalf = 0x52476841u;  // kCVPixelFormatType_64RGBAHalf, 'RGhA'
 static const size_t kRingCapacity = 8192;
 static const size_t kSampleStride = 6;
-static const size_t kTextureCacheLimit = 24;
+// Each cached texture pins a frame's IOSurface (about 60 MB at 3456x2160 float16), so the cache stays small and is dropped when the frame size or format changes.
+static const size_t kTextureCacheLimit = 12;
+// Import failures in a row, before any frame has been drawn, that the script treats as a window that can never show anything.
+static const int kImportFailureReports = 5;
 // Without a new frame for this long the display link pauses; the next submit() resumes it.
 static const double kIdlePauseSeconds = 0.25;
 static const int kCalibrationFrames = 20;
@@ -133,7 +136,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::atomic<double> period{1.0 / 60.0};
   std::atomic<double> lastPresented{0};
   std::atomic<double> minLatency{0};
-  double baseLatency = 0;
+  std::atomic<double> baseLatency{0};
   std::atomic<int> calibrated{0};
   std::atomic<double> calibrationStart{0};
   std::atomic<int> drawableCount{3};
@@ -143,6 +146,10 @@ class Core : public std::enable_shared_from_this<Core> {
   dispatch_queue_t directQueue = dispatch_queue_create("droid-office.presenter.direct", DISPATCH_QUEUE_SERIAL);
   std::atomic<bool> linkPaused{false}, closed{false};
   std::atomic<bool> captureArmed{false};
+  std::atomic<bool> drawnOnce{false};
+  std::atomic<int> importStreak{0};
+  size_t cacheWidth = 0, cacheHeight = 0;
+  MTLPixelFormat cacheFormat = MTLPixelFormatInvalid;
   std::mutex captureLock;
   Napi::ThreadSafeFunction captureFn;
   bool hasCapture = false;
@@ -157,10 +164,12 @@ class Core : public std::enable_shared_from_this<Core> {
   void notifyRelease(uint32_t id) {
     std::lock_guard<std::mutex> g(cbLock);
     if (!callbacksOpen) return;
-    callbacks.release.NonBlockingCall(new uint32_t(id), [](Napi::Env env, Napi::Function fn, uint32_t *p) {
-      fn.Call({Napi::Number::New(env, *p)});
-      delete p;
-    });
+    uint32_t *payload = new uint32_t(id);
+    if (callbacks.release.NonBlockingCall(payload, [](Napi::Env env, Napi::Function fn, uint32_t *p) {
+          fn.Call({Napi::Number::New(env, *p)});
+          delete p;
+        }) != napi_ok)
+      delete payload;
     std::lock_guard<std::mutex> s(lock);
     counters.released++;
   }
@@ -168,10 +177,12 @@ class Core : public std::enable_shared_from_this<Core> {
   void emit(Napi::ThreadSafeFunction &fn, bool enabled, NSDictionary *dict) {
     std::lock_guard<std::mutex> g(cbLock);
     if (!callbacksOpen || !enabled) return;
-    fn.NonBlockingCall((void *)CFBridgingRetain(dict), [](Napi::Env env, Napi::Function f, void *p) {
-      NSDictionary *d = (NSDictionary *)CFBridgingRelease(p);
-      f.Call({toJS(env, d)});
-    });
+    void *payload = (void *)CFBridgingRetain(dict);
+    if (fn.NonBlockingCall(payload, [](Napi::Env env, Napi::Function f, void *p) {
+          NSDictionary *d = (NSDictionary *)CFBridgingRelease(p);
+          f.Call({toJS(env, d)});
+        }) != napi_ok)
+      CFBridgingRelease(payload);
   }
 
   void emitState(NSDictionary *d) { emit(callbacks.state, callbacks.hasState, d); }
@@ -179,13 +190,21 @@ class Core : public std::enable_shared_from_this<Core> {
 
   id<MTLTexture> textureFor(IOSurfaceRef surf) {
     uint32_t sid = IOSurfaceGetID(surf);
-    {
-      std::lock_guard<std::mutex> g(lock);
-      auto it = textures.find(sid);
-      if (it != textures.end() && it->second.width == IOSurfaceGetWidth(surf) && it->second.height == IOSurfaceGetHeight(surf)) return it->second;
-    }
     uint32_t pf = IOSurfaceGetPixelFormat(surf);
     MTLPixelFormat mf = pf == kPixelFormatRGBAHalf ? MTLPixelFormatRGBA16Float : MTLPixelFormatBGRA8Unorm;
+    size_t sw = IOSurfaceGetWidth(surf), sh = IOSurfaceGetHeight(surf);
+    {
+      std::lock_guard<std::mutex> g(lock);
+      // A resize or a format change leaves every cached surface unused, and they would be pinned until the cache filled.
+      if (sw != cacheWidth || sh != cacheHeight || mf != cacheFormat) {
+        textures.clear();
+        cacheWidth = sw;
+        cacheHeight = sh;
+        cacheFormat = mf;
+      }
+      auto it = textures.find(sid);
+      if (it != textures.end()) return it->second;
+    }
     if (mf != layerFormat || (pf != kPixelFormatRGBAHalf && pf != kPixelFormatBGRA)) return nil;
     MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:mf width:IOSurfaceGetWidth(surf) height:IOSurfaceGetHeight(surf) mipmapped:NO];
     td.usage = MTLTextureUsageShaderRead;
@@ -234,10 +253,16 @@ class Core : public std::enable_shared_from_this<Core> {
         std::lock_guard<std::mutex> g(lock);
         counters.importFailures++;
       }
+      // A frame that cannot be imported draws nothing, so a window whose every frame fails would sit black: the script is told, until one has been drawn.
+      if (!tex && !drawnOnce.load()) {
+        int streak = importStreak.fetch_add(1) + 1;
+        if (streak <= kImportFailureReports) emitState(@{@"type" : @"importFailed", @"count" : @(streak)});
+      }
       CFRelease(f.surface);
       notifyRelease(f.id);
       return;
     }
+    importStreak.store(0);
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture = drawable.texture;
     rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -279,7 +304,10 @@ class Core : public std::enable_shared_from_this<Core> {
     }];
     IOSurfaceRef surface = f.surface;
     uint32_t fid = f.id;
-    [cb addCompletedHandler:^(id<MTLCommandBuffer>) {
+    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      // The GPU finished a frame into the drawable, which is the proof that the window is not black. It is not waited for in the presented handler:
+      // a window that has not been shown yet is never presented.
+      if (done.status == MTLCommandBufferStatusCompleted && !self->drawnOnce.exchange(true)) self->emitState(@{@"type" : @"firstDrawn"});
       if (capture) self->readback(drawableTexture);
       CFRelease(surface);
       {
@@ -328,14 +356,14 @@ class Core : public std::enable_shared_from_this<Core> {
       if (latency > 0 && latency < 0.2) {
         minLatency.store(n == 0 ? latency : std::min(minLatency.load(), latency));
         calibrated.store(n + 1);
-        if (n + 1 == kCalibrationFrames) baseLatency = minLatency.load();
+        if (n + 1 == kCalibrationFrames) baseLatency.store(minLatency.load());
       }
       return;
     }
     // Shown more than half a refresh after the grid point asked for: the deadline is later than thought.
     if (s.presentedAt - (requested + 0.5 * p) > 0.5 * p) {
       // A held frame that lost its drawable also shows late, and growing the hold would only make that worse: grow it twice at most.
-      if (lateRun.fetch_add(1) + 1 >= 3 && minLatency.load() < baseLatency + 1.5 * p) {
+      if (lateRun.fetch_add(1) + 1 >= 3 && minLatency.load() < baseLatency.load() + 1.5 * p) {
         minLatency.store(minLatency.load() + p);
         lateRun.store(0);
       }
@@ -361,7 +389,8 @@ class Core : public std::enable_shared_from_this<Core> {
       size_t w, h;
       bool bgra;
     };
-    captureFn.NonBlockingCall(new Payload{bytes, w, h, bgra}, [](Napi::Env env, Napi::Function fn, Payload *p) {
+    Payload *payload = new Payload{bytes, w, h, bgra};
+    if (captureFn.NonBlockingCall(payload, [](Napi::Env env, Napi::Function fn, Payload *p) {
       Napi::Object o = Napi::Object::New(env);
       o.Set("width", (double)p->w);
       o.Set("height", (double)p->h);
@@ -371,7 +400,10 @@ class Core : public std::enable_shared_from_this<Core> {
       delete p->bytes;
       delete p;
       fn.Call({o});
-    });
+    }) != napi_ok) {
+      delete bytes;
+      delete payload;
+    }
     captureFn.Release();
   }
 
@@ -446,6 +478,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     core->device = MTLCreateSystemDefaultDevice();
     if (!core->device) {
       Napi::Error::New(env, "no Metal device").ThrowAsJavaScriptException();
+      core.reset();
       return;
     }
     core->queue = [core->device newCommandQueue];
@@ -454,6 +487,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     id<MTLLibrary> lib = [core->device newLibraryWithSource:kShader options:nil error:&err];
     if (!lib) {
       Napi::Error::New(env, std::string("shader compile failed: ") + err.localizedDescription.UTF8String).ThrowAsJavaScriptException();
+      core.reset();
       return;
     }
     MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
@@ -463,6 +497,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     core->pipeline = [core->device newRenderPipelineStateWithDescriptor:pd error:&err];
     if (!core->pipeline) {
       Napi::Error::New(env, std::string("pipeline failed: ") + err.localizedDescription.UTF8String).ThrowAsJavaScriptException();
+      core.reset();
       return;
     }
 
@@ -540,7 +575,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
           raw->linkPaused.store(true);
         }
         dispatch_semaphore_signal(ready);
-        while (!raw->closed.load()) [rl runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1.0]];
+        while (!raw->closed.load()) [rl runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
         if (!raw->direct) if (@available(macOS 14.0, *)) [raw->link invalidate];
       }
     }];
@@ -562,9 +597,11 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     core->closed.store(true);
     for (id o : core->observers)
       if (o) [NSNotificationCenter.defaultCenter removeObserver:o];
-    CFRunLoopStop(core->runLoop);
-    CFRunLoopWakeUp(core->runLoop);
-    while (core->thread.isExecuting) usleep(1000);
+    if (core->runLoop) {
+      CFRunLoopStop(core->runLoop);
+      CFRunLoopWakeUp(core->runLoop);
+    }
+    while (core->thread && core->thread.isExecuting) usleep(1000);
     DOPresenterView *view = core->view;
     view.eventSink = nil;
     [view removeFromSuperview];
@@ -583,7 +620,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
       if (core->callbacks.hasState) core->callbacks.state.Release();
       if (core->callbacks.hasEvent) core->callbacks.event.Release();
     }
-    core->delegate->core = nullptr;
+    if (core->delegate) core->delegate->core = nullptr;
   }
 
   Napi::Value CloseJS(const Napi::CallbackInfo &info) {

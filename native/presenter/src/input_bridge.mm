@@ -29,6 +29,7 @@ static Napi::Value SetCursor(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   DOPresenterView *view = View(env);
   if (!view) return env.Undefined();
+  if (info.Length() < 1 || !info[0].IsString()) return env.Undefined();
   [view setCursorNamed:[NSString stringWithUTF8String:info[0].As<Napi::String>().Utf8Value().c_str()]];
   return env.Undefined();
 }
@@ -38,6 +39,7 @@ static Napi::Value SetCursorImage(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   DOPresenterView *view = View(env);
   if (!view) return env.Undefined();
+  if (info.Length() < 4 || !info[0].IsBuffer()) return env.Undefined();
   auto buf = info[0].As<Napi::Buffer<uint8_t>>();
   NSData *png = [NSData dataWithBytes:buf.Data() length:buf.Length()];
   [view setCursorImage:png hotspot:NSMakePoint(info[1].ToNumber().DoubleValue(), info[2].ToNumber().DoubleValue()) scale:info[3].ToNumber().DoubleValue()];
