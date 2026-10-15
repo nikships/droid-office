@@ -149,10 +149,10 @@ export class PresenterWindow {
     });
     this.inputRate = new InputFrameRate({
       now: () => performance.now(),
-      schedule: (fn, ms) => {
-        const timer = setTimeout(fn, ms);
+      repeat: (fn, ms) => {
+        const timer = setInterval(fn, ms);
         timer.unref();
-        return () => clearTimeout(timer);
+        return () => clearInterval(timer);
       },
       reapply: () => this.visibility.reapply(),
       isVisible: () => this.visibility.isVisible(),

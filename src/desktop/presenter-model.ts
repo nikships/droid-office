@@ -80,53 +80,54 @@ export class PageVisibility {
   }
 }
 
-/** While input flows, the frame rate is set again at most this often (ms). */
-export const INPUT_REAPPLY_GAP_MS = 32;
+/** While input flows, the frame rate is set again this often (ms). */
+export const INPUT_REAPPLY_TICK_MS = 3;
 /**
  * Chromium drops an offscreen page to 60 frames a second about 120 ms after any input event (mouse, key, sent or through the
- * DevTools Protocol) and keeps it there until the frame rate is set again. The set after the last event has to come after that drop
- * lands, so it is made this long (ms) after the event.
+ * DevTools Protocol) and keeps it there until the frame rate is set again. Under a steady stream the drops keep landing, and the rate
+ * holds only when it is set again several times per frame, so the sets go on at a fixed pace until this long (ms) after the last event.
  */
-export const INPUT_REAPPLY_TRAIL_MS = 250;
+export const INPUT_REAPPLY_TRAIL_MS = 300;
 
 export interface InputFrameRateEffects {
   now(): number;
-  /** Runs `fn` after `ms`; returns what cancels it. */
-  schedule(fn: () => void, ms: number): () => void;
+  /** Runs `fn` every `ms`; returns what stops it. */
+  repeat(fn: () => void, ms: number): () => void;
   /** Sets the page's frame rate again (`PageVisibility.reapply`). */
   reapply(): void;
   isVisible(): boolean;
 }
 
 /**
- * Keeps an offscreen page at its frame rate while input reaches it: a throttled re-apply during the input and one after the last
- * event. Nothing runs while the page is idle or hidden (a hidden page's rate is the floor `PageVisibility` set, and no input reaches it).
+ * Keeps an offscreen page at its frame rate while input reaches it: a steady re-apply from the first event until INPUT_REAPPLY_TRAIL_MS
+ * after the last. Nothing runs while the page is idle or hidden (a hidden page's rate is the floor `PageVisibility` set, and no input reaches it).
  */
 export class InputFrameRate {
-  private lastReapply = Number.NEGATIVE_INFINITY;
-  private cancel: (() => void) | undefined;
+  private lastInput = Number.NEGATIVE_INFINITY;
+  private stop_: (() => void) | undefined;
 
   constructor(private readonly effects: InputFrameRateEffects) {}
 
   onInput(): void {
     if (!this.effects.isVisible()) return;
-    const now = this.effects.now();
-    if (now - this.lastReapply >= INPUT_REAPPLY_GAP_MS) {
-      this.lastReapply = now;
-      this.effects.reapply();
+    this.lastInput = this.effects.now();
+    if (this.stop_) return;
+    this.effects.reapply();
+    this.stop_ = this.effects.repeat(() => this.tick(), INPUT_REAPPLY_TICK_MS);
+  }
+
+  private tick(): void {
+    if (!this.effects.isVisible()) {
+      this.stop();
+      return;
     }
-    this.cancel?.();
-    this.cancel = this.effects.schedule(() => {
-      this.cancel = undefined;
-      if (!this.effects.isVisible()) return;
-      this.lastReapply = this.effects.now();
-      this.effects.reapply();
-    }, INPUT_REAPPLY_TRAIL_MS);
+    this.effects.reapply();
+    if (this.effects.now() - this.lastInput >= INPUT_REAPPLY_TRAIL_MS) this.stop();
   }
 
   stop(): void {
-    this.cancel?.();
-    this.cancel = undefined;
+    this.stop_?.();
+    this.stop_ = undefined;
   }
 }
 

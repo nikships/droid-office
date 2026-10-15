@@ -4,7 +4,7 @@ import {
   CALIBRATION_FRAMES,
   CALIBRATION_WARMUP_SECONDS,
   HIDDEN_FRAME_RATE,
-  INPUT_REAPPLY_GAP_MS,
+  INPUT_REAPPLY_TICK_MS,
   INPUT_REAPPLY_TRAIL_MS,
   InputFrameRate,
   PageVisibility,
@@ -315,13 +315,13 @@ test('a visible page is always asked for the display rate and a hidden one for t
 function inputRateHarness(visible = true) {
   let clock = 0;
   let sets = 0;
-  const timers: { at: number; fn: () => void; live: boolean }[] = [];
+  const repeats: { fn: () => void; ms: number; next: number; live: boolean }[] = [];
   const state = { visible };
   const keeper = new InputFrameRate({
     now: () => clock,
-    schedule: (fn, ms) => {
-      const timer = { at: clock + ms, fn, live: true };
-      timers.push(timer);
+    repeat: (fn, ms) => {
+      const timer = { fn, ms, next: clock + ms, live: true };
+      repeats.push(timer);
       return () => {
         timer.live = false;
       };
@@ -334,47 +334,55 @@ function inputRateHarness(visible = true) {
   const advance = (ms: number) => {
     const end = clock + ms;
     for (;;) {
-      const due = timers.filter((t) => t.live && t.at <= end).sort((a, b) => a.at - b.at)[0];
+      const due = repeats.filter((t) => t.live && t.next <= end).sort((a, b) => a.next - b.next)[0];
       if (!due) break;
-      clock = due.at;
-      due.live = false;
+      clock = due.next;
+      due.next += due.ms;
       due.fn();
     }
     clock = end;
   };
-  return { keeper, advance, state, sets: () => sets };
+  return { keeper, advance, state, sets: () => sets, running: () => repeats.some((t) => t.live) };
 }
 
-test('input sets the frame rate again at most once per gap, and once more after the last event', () => {
+test('input sets the frame rate again at a steady pace until a while after the last event, then stops', () => {
   const h = inputRateHarness();
-  for (let i = 0; i < 500; i++) {
+  h.keeper.onInput();
+  assert.equal(h.sets(), 1, 'the first event sets it at once');
+  for (let i = 0; i < 100; i++) {
+    h.advance(8);
     h.keeper.onInput();
-    h.advance(2);
   }
   const during = h.sets();
-  assert.ok(during >= 1000 / INPUT_REAPPLY_GAP_MS - 2 && during <= 1000 / INPUT_REAPPLY_GAP_MS + 2, `${during} sets in 1 s of 500 Hz input`);
-  h.advance(INPUT_REAPPLY_TRAIL_MS - 4);
-  assert.equal(h.sets(), during, 'not before the trailing delay');
-  h.advance(4);
-  assert.equal(h.sets(), during + 1, 'one set after the last event');
+  assert.ok(during >= 800 / INPUT_REAPPLY_TICK_MS - 2, `${during} sets in 0.8 s of input, several per frame`);
+  assert.equal(h.running(), true);
+  h.advance(INPUT_REAPPLY_TRAIL_MS - 10);
+  assert.equal(h.running(), true, 'still setting just before the trailing time');
+  h.advance(20);
+  assert.equal(h.running(), false, 'stopped after the trailing time');
+  const after = h.sets();
   h.advance(10_000);
-  assert.equal(h.sets(), during + 1, 'nothing runs while the page is idle');
+  assert.equal(h.sets(), after, 'nothing runs while the page is idle');
+  h.keeper.onInput();
+  assert.equal(h.running(), true, 'input after a pause starts it again');
 });
 
-test('a hidden page is never set again by input, and stopping drops the pending set', () => {
+test('a hidden page is never set again by input, and stopping ends the pace', () => {
   const hidden = inputRateHarness(false);
   hidden.keeper.onInput();
   hidden.advance(1000);
   assert.equal(hidden.sets(), 0);
+  assert.equal(hidden.running(), false);
   const h = inputRateHarness();
   h.keeper.onInput();
-  assert.equal(h.sets(), 1);
+  h.advance(10);
   h.state.visible = false;
-  h.advance(1000);
-  assert.equal(h.sets(), 1, 'the trailing set is skipped once the page is hidden');
+  const before = h.sets();
+  h.advance(20);
+  assert.equal(h.sets(), before, 'the pace ends once the page is hidden');
+  assert.equal(h.running(), false);
   h.state.visible = true;
   h.keeper.onInput();
   h.keeper.stop();
-  h.advance(1000);
-  assert.equal(h.sets(), 2, 'a stopped keeper schedules nothing further');
+  assert.equal(h.running(), false, 'a stopped keeper schedules nothing further');
 });
