@@ -21,6 +21,83 @@ export function presentMode(env: Record<string, string | undefined>): PresentMod
   return mode === 'link' || mode === 'direct' ? mode : 'paced';
 }
 
+/** Frames shown at the first refresh they can make, before `paced` mode has seen where the compositor's deadline is. */
+export const CALIBRATION_FRAMES = 20;
+/** `paced` mode holds a frame only when frames arrive at least this many refreshes apart; at one per refresh there is nothing to hold. */
+const HOLD_MIN_REFRESHES = 1.5;
+/** How long after the last presented frame the vsync grid is trusted, in seconds. */
+const GRID_STALE_SECONDS = 0.25;
+/** The drawable is acquired this long (seconds) before the compositor's deadline for the slot. */
+const ACQUIRE_MARGIN_SECONDS = 0.001;
+
+/**
+ * What `paced` mode has learned about the compositor: `minLatency` is the quickest paint-to-display time of the first
+ * CALIBRATION_FRAMES frames shown without a hold, which is where the deadline for a refresh sits. This is the model of
+ * the native code in `native/presenter/src/presenter.mm` (`pacedSlot`, `learn`); change them together.
+ */
+export interface PacedDeadline {
+  calibrated: number;
+  minLatency: number;
+  baseLatency: number;
+  lateRun: number;
+}
+
+export function newPacedDeadline(): PacedDeadline {
+  return { calibrated: 0, minLatency: 0, baseLatency: 0, lateRun: 0 };
+}
+
+/** A frame shown with no hold took `latency` seconds from its paint reaching the presenter to the display. */
+export function calibratePaced(state: PacedDeadline, latency: number): PacedDeadline {
+  if (state.calibrated >= CALIBRATION_FRAMES || !(latency > 0 && latency < 0.2)) return state;
+  const minLatency = state.calibrated === 0 ? latency : Math.min(state.minLatency, latency);
+  const calibrated = state.calibrated + 1;
+  return { ...state, calibrated, minLatency, baseLatency: calibrated === CALIBRATION_FRAMES ? minLatency : state.baseLatency };
+}
+
+export interface PacedHoldInput {
+  /** When the frame's paint reached the presenter. */
+  arrivedAt: number;
+  /** Now, and the presented time of the latest frame the compositor showed: any refresh of the grid. All in seconds on one clock. */
+  now: number;
+  anchor: number;
+  /** One refresh, and the smoothed gap between arrivals (0 when unknown). */
+  period: number;
+  arrivalInterval: number;
+  state: PacedDeadline;
+}
+
+export interface PacedHold {
+  /** The refresh (grid time) the frame is held to. */
+  slot: number;
+  /** When to take the frame's drawable: late enough that the frame does not sit on one of the layer's three drawables while it waits. */
+  acquireAt: number;
+}
+
+/**
+ * Where a frame goes: the refresh half a refresh past the one the deadline would give it, which stays the same refresh however
+ * the arrivals jitter. null means show it at the first refresh it can make.
+ */
+export function pacedHold(input: PacedHoldInput): PacedHold | null {
+  const { arrivedAt, now, anchor, period, arrivalInterval, state } = input;
+  if (state.calibrated < CALIBRATION_FRAMES || anchor <= 0 || period <= 0 || arrivedAt <= 0) return null;
+  if (arrivalInterval <= 0 || arrivalInterval < HOLD_MIN_REFRESHES * period || now - anchor > GRID_STALE_SECONDS) return null;
+  const target = arrivedAt + state.minLatency + 0.5 * period;
+  const slot = anchor + Math.ceil((target - anchor) / period) * period;
+  return { slot, acquireAt: slot - state.minLatency - ACQUIRE_MARGIN_SECONDS };
+}
+
+/**
+ * A held frame was shown at `presentedAt`. Three in a row shown over half a refresh after their slot mean the deadline is later
+ * than thought, so the hold grows by a refresh; at most twice, because a held frame that waited for a drawable also shows late
+ * and growing the hold then only makes it worse.
+ */
+export function learnPacedLate(state: PacedDeadline, presentedAt: number, slot: number, period: number): PacedDeadline {
+  if (presentedAt - slot <= 0.5 * period) return state.lateRun === 0 ? state : { ...state, lateRun: 0 };
+  const lateRun = state.lateRun + 1;
+  if (lateRun >= 3 && state.minLatency < state.baseLatency + 1.5 * period) return { ...state, lateRun: 0, minLatency: state.minLatency + period };
+  return { ...state, lateRun };
+}
+
 const MIN_OSR_FPS = 30;
 const MAX_OSR_FPS = 120;
 

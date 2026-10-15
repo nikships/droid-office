@@ -55,7 +55,7 @@ export interface PresenterWindowOptions {
   backgroundColor: string;
   /** Called once with the window state the first texture arrives in; show and full-screen it from here. */
   onFirstFrame: (base: BaseWindow) => void;
-  /** `direct` presents each frame as it arrives; `paced` does too but keeps a steady cadence on the vsync grid; `link` draws on `CAMetalDisplayLink` updates (steady cadence, about 25 ms more latency). */
+  /** `direct` presents each frame as it arrives; `paced` does too but keeps a steady cadence on the vsync grid; `link` draws on `CAMetalDisplayLink` updates (steady cadence, about 20 ms more latency in a window). */
   mode?: PresentMode;
   /** In `link` mode, the frames the display link leads the display by. */
   frameLatency?: number;
