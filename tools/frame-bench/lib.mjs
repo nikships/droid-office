@@ -75,11 +75,28 @@ export async function loadOffice(cdp, storage, { clearBake = false } = {}) {
   const warm = Date.now() - t0;
   // HDR starts asynchronously (a WebGPU device) and the loop needs a few seconds to settle after the warm-up.
   await sleep(4000);
+  await ensureRendering(cdp);
   return { shownMs: shown, warmMs: warm };
 }
 
 /**
- * How the page's performance.now() (ms) lines up with process.hrtime (ns, CLOCK_MONOTONIC) right now: the sample with the
+ * Chromium stops animation frames for a window another app covers or the user switched away from, and every number after
+ * that is zeros or stalls. Brings the page forward and waits until it draws; throws when it never does.
+ */
+export async function ensureRendering(cdp) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await cdp.send('Page.bringToFront').catch(() => undefined);
+    const before = await cdp.eval('window.__raf.length');
+    await sleep(600);
+    const [after, visible] = [await cdp.eval('window.__raf.length'), await cdp.eval('document.visibilityState')];
+    if (visible === 'visible' && after - before >= 20) return;
+    await sleep(2000);
+  }
+  throw new Error('the page is not drawing (hidden or covered by another window)');
+}
+
+/**
+ * How the page's performance.now() (ms) lines up with process.hrtime (ns, CLOCK_MONOTONIC_RAW) right now: the sample with the
  * shortest DevTools round trip, taking the page's clock at the middle of it. hrtime = pageMs * 1e6 + offsetNs.
  */
 export async function clockOffset(cdp) {
@@ -232,7 +249,12 @@ export async function startDisplayTrace(binary, file, { seconds = 600, region } 
     stop: () =>
       new Promise((resolve) => {
         child.removeAllListeners('exit');
-        child.once('exit', () => resolve(JSON.parse(readFileSync(file, 'utf8')).frames));
+        child.once('exit', () => {
+          const trace = JSON.parse(readFileSync(file, 'utf8'));
+          // A recorder built before the clock fix writes CLOCK_MONOTONIC, which is seconds off process.hrtime.
+          if (!String(trace.clock).includes('MONOTONIC_RAW')) throw new Error(`display-trace wrote ${trace.clock}: rebuild it`);
+          resolve(trace.frames);
+        });
         child.kill('SIGINT');
       }),
   };

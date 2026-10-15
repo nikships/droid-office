@@ -13,7 +13,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from 'node:path';
 import { Cdp } from './cdp.mjs';
 import { launchApp } from './launch.mjs';
-import { CONFIGS, clockOffset, displayPacing, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
+import { CONFIGS, clockOffset, displayPacing, ensureRendering, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
 import { tables } from './table.mjs';
 
 const argv = process.argv.slice(2);
@@ -97,6 +97,7 @@ try {
       )) {
         const run = SCENARIOS[name];
         if (!run) throw new Error(`unknown scenario ${name}: ${Object.keys(SCENARIOS).join(', ')}, load`);
+        await ensureRendering(cdp);
         const trace = traceBinary ? await startDisplayTrace(traceBinary, path.join(out, `trace-${config}-${cap}-${name}-${rep}.json`)) : null;
         const clockBefore = await clockOffset(cdp);
         const failure = await withTimeout(run({ cdp, seconds }), (seconds + 150) * 1000, `${name} did not finish`);
@@ -116,6 +117,7 @@ try {
         if (frames) {
           // The page's window in hrtime, from the clock offset taken before and after the run (their gap bounds the drift).
           const [lo, hi] = [got.t0 * 1e6 + clockBefore.offsetNs, got.t1 * 1e6 + clockAfter.offsetNs];
+          row.window = { loNs: lo, hiNs: hi };
           row.clock = { driftUs: (clockAfter.offsetNs - clockBefore.offsetNs) / 1e3, rttUs: Math.max(clockBefore.rtt, clockAfter.rtt) / 1e3 };
           row.display = {
             ...displayPacing(

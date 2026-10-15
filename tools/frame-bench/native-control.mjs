@@ -23,7 +23,7 @@ const fps = Number(arg('fps', '120'));
 mkdirSync(out, { recursive: true });
 const ticksFile = path.join(out, 'native-control-ticks.json');
 
-const native = spawn(nativeBinary, ['--seconds', String(seconds + 4), '--fps', String(fps), '--out', ticksFile], { stdio: ['ignore', 'pipe', 'inherit'], detached: true });
+const native = spawn(nativeBinary, ['--seconds', String(seconds + 8), '--fps', String(fps), '--out', ticksFile], { stdio: ['ignore', 'pipe', 'inherit'], detached: true });
 const exited = new Promise((resolve) => native.on('exit', resolve));
 await new Promise((resolve, reject) => {
   native.stdout.on('data', (chunk) => String(chunk).includes('ready') && resolve());

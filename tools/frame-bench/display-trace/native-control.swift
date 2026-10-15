@@ -5,8 +5,8 @@
 //   swiftc -O native-control.swift -o native-control
 //   native-control [--seconds 12] [--out ticks.json] [--fps 120]
 //
-// It prints `ready` after the first frame is presented. --out writes the display link's own tick times (CLOCK_MONOTONIC
-// ns, the same clock display-trace uses) and when each drawable was presented (also CLOCK_MONOTONIC ns).
+// It prints `ready` after the first frame is presented. --out writes the display link's own tick times (CLOCK_MONOTONIC_RAW
+// ns, the same clock display-trace uses) and when each drawable was presented (also CLOCK_MONOTONIC_RAW ns).
 import AppKit
 import Metal
 import QuartzCore
@@ -106,12 +106,12 @@ final class Renderer: NSObject {
         cb.commit()
     }
 
-    /// CLOCK_MONOTONIC in ns: the clock display-trace converts ScreenCaptureKit times to.
-    static func monotonicNs() -> Double { Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) }
+    /// CLOCK_MONOTONIC_RAW in ns: the clock display-trace converts ScreenCaptureKit times to.
+    static func monotonicNs() -> Double { Double(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) }
 
-    /// A mach_absolute_time stamp (seconds, as CACurrentMediaTime counts it) moved to the CLOCK_MONOTONIC domain.
+    /// A mach_absolute_time stamp (seconds, as CACurrentMediaTime counts it) moved to the CLOCK_MONOTONIC_RAW domain.
     static func monotonicNs(fromAbsoluteSeconds s: Double) -> Double {
-        s * 1e9 + Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) - CACurrentMediaTime() * 1e9
+        s * 1e9 + Double(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) - CACurrentMediaTime() * 1e9
     }
 }
 

@@ -53,5 +53,5 @@ node tools/frame-bench/native-control.mjs --native-control /tmp/native-control -
 ## Notes
 
 - Take the display lock when other agents share the machine, and record background load with the results (`machine.json`, `load` per row).
-- `display-trace` writes every time in `CLOCK_MONOTONIC` nanoseconds (what `process.hrtime` reports); ScreenCaptureKit's own clock is `mach_absolute_time`, which stops while the Mac sleeps.
+- `display-trace` writes every time in `CLOCK_MONOTONIC_RAW` nanoseconds (what `process.hrtime` reports on macOS; `CLOCK_MONOTONIC` is slewed and sits seconds behind it); ScreenCaptureKit's own clock is `mach_absolute_time`, which stops while the Mac sleeps.
 - The page's `performance.now()` is aligned to `hrtime` before and after each run from the shortest DevTools round trip; the drift is stored in the row.
