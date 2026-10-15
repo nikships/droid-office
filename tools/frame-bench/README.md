@@ -22,6 +22,8 @@ node tools/frame-bench/bench.mjs --app "release/mac-arm64/Droid Office.app" --cl
 node tools/frame-bench/bench.mjs --table /tmp/bench/results.jsonl
 ```
 
+`--ordered` keeps the configurations in the order given instead of shuffling them (to test what a switch from one to another costs, such as the light bake cache). Every launch starts from an empty `userData`, so state that must survive a switch has to survive within one run.
+
 Every configuration is laid over the owner's saved settings (`local-storage.json` in the clone) with render pace forced to `full`, so the loop never idles during a still measurement. Per configuration the page is reloaded and its shader and light warm-up finishes before anything is measured. Scenarios:
 
 | Scenario | What it does |

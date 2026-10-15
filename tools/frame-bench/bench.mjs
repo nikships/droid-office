@@ -86,7 +86,7 @@ try {
   const plan = configs.flatMap((config) => caps.map((cap) => ({ config, cap })));
   const rng = seeded(Number(arg('seed', '1')));
   for (let rep = 1; rep <= repeat; rep++) {
-    for (const { config, cap } of shuffle(plan, rng)) {
+    for (const { config, cap } of argv.includes('--ordered') ? plan : shuffle(plan, rng)) {
       const storage = storageFor(clone, { config, cap });
       const load = await loadOffice(cdp, storage);
       const state = JSON.parse(await cdp.eval('JSON.stringify({ stats: office.frameStats() })')).stats;
