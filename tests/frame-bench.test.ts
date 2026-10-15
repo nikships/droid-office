@@ -91,7 +91,7 @@ test('a configuration is laid over the owner settings and always runs at full re
   assert.equal(JSON.parse(v['droid-office.settings']).graphics.scale, 0.9);
 });
 
-test('the results table averages repeats and keeps a failed run out of it', () => {
+test('the results table takes the median of repeats with their range and keeps a failed run out of it', () => {
   const report = (p50: number, missed: number) => ({ frames: 100, frameTime: { p50, p95: p50 + 1, p99: p50 + 2, max: p50 + 5 }, missed, repeated: missed, cpu: { total: { p50: 6 } }, gpu: { scene: 4, hands: 2 } });
   const text = tables([
     { config: 'remastered-sdr', cap: 120, scenario: 'walk', renderer: 'Remastered', report: report(8, 0) },
@@ -100,6 +100,6 @@ test('the results table averages repeats and keeps a failed run out of it', () =
   ]);
   const walk = text.split('\n').filter((l) => l.includes('| walk |'));
   assert.equal(walk.length, 1);
-  assert.match(walk[0], /\| 9\.0 \| 10\.0 \| 11\.0 \| 14\.0 \| 1 \| 1 \|/);
+  assert.match(walk[0], /\| 2 \| 100 \| 9\.0 \[8\.0–10\.0\] \| 10\.0 \[9\.0–11\.0\] \| 11\.0 \[10\.0–12\.0\] \| 14\.0 \[13\.0–15\.0\] \| 1 \[0–2\] \| 1 \[0–2\] \|/);
   assert.doesNotMatch(text, /\| turn \|/);
 });
