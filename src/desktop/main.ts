@@ -1,12 +1,16 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, type BaseWindow, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import { fileURLToPath } from 'node:url';
+import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
 import { downloadBrowser } from './browser.js';
+import { contextMenu, editMenu } from './edit-menu.js';
 import { gpuReport } from './gpu.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
-import { PresenterWindow } from './presenter.js';
+import type { NativeEvent } from './input-events.js';
+import { type InputNative, PresenterInput } from './presenter-input.js';
+import { PresenterWindow, presenterModule } from './presenter.js';
 import { officeRuntime } from './runtime.js';
 import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
@@ -86,6 +90,25 @@ function createWindow(loadOffice = true) {
   });
   win = created;
   const contents = created.contents;
+  const input = new PresenterInput({
+    page: contents,
+    native: presenterModule() as unknown as InputNative,
+    shimSource: readFileSync(fileURLToPath(new URL('./page/shim.js', import.meta.url)), 'utf8'),
+    officeOrigin: () => (officeUrl ? new URL(officeUrl).origin : undefined),
+    focused: () => created.base.isFocused(),
+    log: (message) => console.warn(`droid-office: ${message}`),
+  });
+  created.onNativeEvent = (event) => input.handle(event as unknown as NativeEvent);
+  // A right click the page left alone gets the menu a browser would show, since an offscreen page has no native one.
+  contents.on('context-menu', (_event, params) => {
+    const items = contextMenu(
+      params,
+      contents,
+      (url) => officeUrl && linkAction(url, new URL(officeUrl).origin) === 'browser' && void shell.openExternal(url),
+      (text) => clipboard.writeText(text),
+    );
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: created.base, x: params.x, y: params.y });
+  });
   contents.setWindowOpenHandler(({ url }) => {
     const action = officeUrl ? linkAction(url, new URL(officeUrl).origin) : 'ignore';
     if (action === 'app') return { action: 'allow', overrideBrowserWindowOptions: { fullscreen: false, backgroundColor: BACKGROUND } };
@@ -109,6 +132,7 @@ function createWindow(loadOffice = true) {
     if (choice === 0) e.preventDefault();
   });
   created.base.on('closed', () => {
+    input.stop();
     if (win === created) win = undefined;
   });
   if (loadOffice && officeUrl) void contents.loadURL(officeUrl).catch(() => {});
@@ -274,20 +298,8 @@ function menu(): Menu {
         { role: 'quit' },
       ],
     },
-    {
-      // The page is offscreen and never the focused web contents, so Electron's own edit roles would find nothing to act on.
-      label: 'Edit',
-      submenu: [
-        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => win?.contents.undo() },
-        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: () => win?.contents.redo() },
-        { type: 'separator' },
-        { label: 'Cut', accelerator: 'CmdOrCtrl+X', click: () => win?.contents.cut() },
-        { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: () => win?.contents.copy() },
-        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: () => win?.contents.paste() },
-        { label: 'Paste and Match Style', accelerator: 'Shift+Alt+CmdOrCtrl+V', click: () => win?.contents.pasteAndMatchStyle() },
-        { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => win?.contents.selectAll() },
-      ],
-    },
+    // Not Electron's edit roles: the page is offscreen and never the focused web contents, so they would find nothing to act on.
+    editMenu(() => win?.contents),
     {
       label: 'Office',
       submenu: [

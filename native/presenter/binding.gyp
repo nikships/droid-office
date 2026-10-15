@@ -2,7 +2,7 @@
   "targets": [
     {
       "target_name": "presenter",
-      "sources": ["src/presenter.mm", "src/metal_view.mm", "src/input_view.mm"],
+      "sources": ["src/presenter.mm", "src/metal_view.mm", "src/input_view.mm", "src/input_bridge.mm"],
       "include_dirs": ["<!@(node -p \"require('node-addon-api').include_dir\")"],
       "defines": ["NAPI_VERSION=8", "NAPI_DISABLE_CPP_EXCEPTIONS"],
       "conditions": [
@@ -19,6 +19,8 @@
               "-framework AppKit",
               "-framework QuartzCore",
               "-framework Metal",
+              "-framework GameController",
+              "-framework ApplicationServices",
               "-framework IOSurface",
               "-framework CoreVideo"
             ]
