@@ -141,4 +141,22 @@ class ProtocolTest {
         assertFalse("cleanup" in json(ClientMsg.kill("w1", null)))
         assertEquals("all", json(ClientMsg.kill("w1", "all"))["cleanup"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun whiteboardMessagesGoToTheSync() {
+        for (t in listOf("whiteboard", "whiteboard.rendered", "whiteboard.renderer")) {
+            val m = Protocol.decode("""{"t":"$t","floor":"home"}""") as ServerMsg.Whiteboard
+            assertEquals(t, m.t)
+            assertEquals("home", m.obj["floor"]!!.jsonPrimitive.content)
+        }
+        val p = Protocol.decode("""{"t":"whiteboard.pinged","worker":"w1","ok":true,"how":"resume"}""") as ServerMsg.Pinged
+        assertEquals("resume", p.result.how)
+        assertTrue(Protocol.decode("""{"t":"whiteboard.pinged","ok":true}""") is ServerMsg.Ignored)
+    }
+
+    @Test
+    fun readsALostWorktree() {
+        val m = Protocol.decode("""{"t":"worker.update","worker":{"id":"w1","status":"idle","lost":{"branch":"droid/atlas"}}}""") as ServerMsg.WorkerUpdate
+        assertEquals("droid/atlas", m.worker.lost!!["branch"]!!.jsonPrimitive.content)
+    }
 }

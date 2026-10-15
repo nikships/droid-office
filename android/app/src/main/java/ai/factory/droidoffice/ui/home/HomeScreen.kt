@@ -313,7 +313,7 @@ private fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRet
 }
 
 @Composable
-private fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
+internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
