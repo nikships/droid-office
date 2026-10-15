@@ -250,6 +250,11 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)moved:(NSEvent *)e {
+  // A window that opens under a cursor that is already still gets no enter event until the cursor moves.
+  if (!_inside && !_captured) {
+    _inside = YES;
+    [_cursor set];
+  }
   if (_captured) {
     if (_rawCapture) return;
     if (e.deltaX != 0 || e.deltaY != 0) [self emitDelta:e.deltaX dy:e.deltaY raw:NO mods:Mods(e.modifierFlags)];
