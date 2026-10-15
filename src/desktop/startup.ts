@@ -73,14 +73,23 @@ export function loadNative<T>(load: () => T): T {
 }
 
 /**
- * What CI runs the packaged app with: the gates, the presenter module loaded from the bundle (a `probe()` export, when it has
- * one, is called too), then a one-line report on stdout and exit 0. A failure exits 1 through `failStartup`.
+ * What CI runs the packaged app with: the gates, the presenter module loaded from the bundle, its `probe()` (a Metal device,
+ * an IOSurface import and a CAMetalLayer, with no window), then a one-line report on stdout and exit 0. A module that
+ * won't load exits 1 through `failStartup`. A probe that throws is reported as `probeError` and left to the caller to judge:
+ * a CI runner's virtual machine may have no GPU, which the app itself would refuse at startup.
  */
 export function runStartupCheck(): void {
   const machine = readMachine();
   const presenter = loadNative(() => {
     const exports = requirePresenter(app.getAppPath());
-    return { exports: Object.keys(exports).sort(), probe: typeof exports.probe === 'function' ? (exports.probe as () => unknown)() : undefined };
+    const found: { exports: string[]; probe?: unknown; probeError?: string } = { exports: Object.keys(exports).sort() };
+    if (typeof exports.probe !== 'function') return found;
+    try {
+      found.probe = (exports.probe as () => unknown)();
+    } catch (err) {
+      found.probeError = err instanceof Error ? err.message : String(err);
+    }
+    return found;
   });
   const report = { chip: machine.brand ?? null, arch: machine.arch, darwin: machine.release, electron: process.versions.electron, presenter };
   process.stdout.write(`startup-check ok: ${JSON.stringify(report)}\n`);
