@@ -82,8 +82,10 @@ export class PresenterWindow {
   private hdr = false;
   private visible = true;
   private maxFps = 60;
+  private readonly mode: PresentMode;
 
   constructor(private readonly options: PresenterWindowOptions) {
+    this.mode = options.mode ?? presentMode(process.env);
     const module = presenterModule();
     this.base = new BaseWindow({ width: 1440, height: 900, show: false, title: options.title, backgroundColor: options.backgroundColor });
     const content = this.base.getContentSize();
@@ -117,7 +119,7 @@ export class PresenterWindow {
     this.page.showInactive();
     this.native = new module.Presenter(this.base.getNativeWindowHandle(), {
       pixelFormat: layerPixelFormat(format),
-      mode: options.mode ?? presentMode(process.env),
+      mode: this.mode,
       frameLatency: options.frameLatency,
       onRelease: (id) => {
         this.ledger.release(id);
@@ -138,7 +140,7 @@ export class PresenterWindow {
   /** The native side's presentation numbers, judged against `plannedMs` between frames (the FPS cap or the refresh). */
   stats(options: { reset?: boolean; plannedMs?: number; samples?: boolean } = {}): PresenterReport {
     const raw = this.native.stats({ reset: options.reset });
-    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps, options.samples === true);
+    return summarizeNativeStats(raw, options.plannedMs ?? 1000 / this.maxFps, options.samples === true, this.mode);
   }
 
   /** Reads back the next presented frame (tests and measurement only). */

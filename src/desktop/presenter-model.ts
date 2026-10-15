@@ -93,6 +93,8 @@ export interface Spread {
 }
 
 export interface PresenterReport {
+  /** How the presenter puts frames on the display (see `presentMode`). */
+  mode: PresentMode;
   /** Frames Chromium handed over, frames the presenter showed, and frames replaced in the mailbox before a refresh could show them. */
   submitted: number;
   presented: number;
@@ -139,7 +141,7 @@ export function spread(values: number[]): Spread {
 }
 
 /** Turns the addon's raw counters and samples into the report `office.presenterStats()` returns. `plannedMs` is the frame interval the player asked for (the FPS cap, or the refresh when it is faster). */
-export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false): PresenterReport {
+export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false, mode: PresentMode = 'paced'): PresenterReport {
   const interval: number[] = [];
   const latency: number[] = [];
   const wait: number[] = [];
@@ -172,6 +174,7 @@ export function summarizeNativeStats(stats: NativeStats, plannedMs: number, with
   }
   const span = lastAt - firstAt;
   return {
+    mode,
     submitted: stats.submitted,
     presented: stats.presented,
     dropped: stats.dropped,

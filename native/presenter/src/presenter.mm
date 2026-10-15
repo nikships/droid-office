@@ -41,6 +41,7 @@ static const size_t kSampleStride = 6;
 static const size_t kTextureCacheLimit = 24;
 // Without a new frame for this long the display link pauses; the next submit() resumes it.
 static const double kIdlePauseSeconds = 0.25;
+static const int kCalibrationFrames = 20;
 
 namespace {
 
@@ -122,12 +123,18 @@ class Core : public std::enable_shared_from_this<Core> {
   // Direct: a frame is drawn and presented when it arrives (the layer still waits for the display's vsync). Link: it is drawn on the next
   // CAMetalDisplayLink update, which gives an exact cadence but shows the frame several refreshes after the update.
   bool direct = true;
-  // Paced (direct, with frames held to the display's vsync grid so a steady cadence stays steady): the grid is the latest
-  // presented time plus whole refresh periods; spacing is the whole number of refreshes between arrivals.
+  // Paced (direct, with frames held to the display's vsync grid so a steady cadence stays steady). Chromium hands frames over at a steady
+  // phase to the display, so with no hold a frame lands just either side of the compositor's deadline for a refresh and the cadence
+  // flips between one and two refreshes. The grid is the latest presented time plus whole refresh periods. After kCalibrationFrames shown
+  // at the first refresh they can take, the quickest paint-to-display time seen (`minLatency`) says where the deadline is, and later
+  // frames are held to the grid point half a refresh past it, which is far from the deadline however the arrivals jitter.
   bool paced = false;
   std::atomic<double> period{1.0 / 60.0};
   std::atomic<double> lastPresented{0};
-  double lastSlot = 0, lastSubmit = 0;
+  std::atomic<double> minLatency{0};
+  std::atomic<int> calibrated{0};
+  std::atomic<int> lateRun{0};
+  double lastSubmit = 0;
   std::atomic<double> arrivalInterval{0};
   dispatch_queue_t directQueue = dispatch_queue_create("droid-office.presenter.direct", DISPATCH_QUEUE_SERIAL);
   std::atomic<bool> linkPaused{false}, closed{false};
@@ -196,11 +203,6 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Called on the link thread for every display refresh.
   void tick(CAMetalDisplayLinkUpdate *update) API_AVAILABLE(macos(14.0)) {
-    static int n = 0;
-    if (getenv("PRESENTER_DEBUG") && ++n % 240 == 0) {
-      double now = CACurrentMediaTime();
-      NSLog(@"link tick now=%.4f targetTs-now=%.2fms targetPres-now=%.2fms latencyProp=%.2f range=%.0f-%.0f/%.0f interval-ish", now, (update.targetTimestamp - now) * 1000, (update.targetPresentationTimestamp - now) * 1000, link.preferredFrameLatency, link.preferredFrameRateRange.minimum, link.preferredFrameRateRange.maximum, link.preferredFrameRateRange.preferred);
-    }
     drawFrame(update.drawable, update.targetPresentationTimestamp);
   }
 
@@ -261,6 +263,7 @@ class Core : public std::enable_shared_from_this<Core> {
       if (s.presentedAt > 0) {
         double prev = self->lastPresented.load();
         if (s.presentedAt > prev) self->lastPresented.store(s.presentedAt);
+        if (self->paced) self->learn(s, presentAt);
       }
       s.gpuMs = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
       if (s.presentedAt <= 0) {
@@ -285,28 +288,45 @@ class Core : public std::enable_shared_from_this<Core> {
     [cb commit];
   }
 
-  // The time to hand presentDrawable:atTime: for a frame that is ready now, or 0 to show it at the next vsync.
+  // The time to hand presentDrawable:atTime: for the frame in the mailbox, or 0 to show it at the first refresh it can make.
   double pacedSlot() {
-    double now = CACurrentMediaTime();
     double p = period.load();
     double anchor = lastPresented.load();
-    if (anchor <= 0 || now - anchor > 0.25 || p <= 0) {
-      lastSlot = 0;
-      return 0;
-    }
-    const double margin = 0.002;  // encode, GPU and the hop to the compositor
-    double slots = std::ceil((now + margin - anchor) / p);
-    double earliest = anchor + std::max(1.0, slots) * p;
-    double desired = earliest;
     double interval = arrivalInterval.load();
-    if (lastSlot > 0 && interval > 0) {
-      double spacing = std::max(1.0, std::round(interval / p));
-      desired = std::max(earliest, lastSlot + spacing * p);
-      // After a stall the plan is behind the grid: take the earliest slot again.
-      if (desired < earliest) desired = earliest;
+    double submittedAt;
+    {
+      std::lock_guard<std::mutex> g(lock);
+      submittedAt = mailbox.submittedAt;
     }
-    lastSlot = desired;
-    return desired - 0.5 * p;
+    if (calibrated.load() < kCalibrationFrames || anchor <= 0 || p <= 0 || submittedAt <= 0) return 0;
+    // At one frame per refresh there is nothing to hold.
+    if (interval <= 0 || interval < 1.5 * p || CACurrentMediaTime() - anchor > 0.25) return 0;
+    double target = submittedAt + minLatency.load() + 0.5 * p;
+    double slot = anchor + std::ceil((target - anchor) / p) * p;
+    return slot - 0.5 * p;
+  }
+
+  // Learns where the compositor's deadline is from how long the frames shown without a hold took, and notices a hold that was too short.
+  void learn(const Sample &s, double requested) {
+    double p = period.load();
+    if (requested <= 0) {
+      int n = calibrated.load();
+      double latency = s.presentedAt - s.submittedAt;
+      if (n < kCalibrationFrames && latency > 0 && latency < 0.2) {
+        minLatency.store(n == 0 ? latency : std::min(minLatency.load(), latency));
+        calibrated.store(n + 1);
+      }
+      return;
+    }
+    // Shown more than half a refresh after the grid point asked for: the deadline is later than thought.
+    if (s.presentedAt - (requested + 0.5 * p) > 0.5 * p) {
+      if (lateRun.fetch_add(1) + 1 >= 3) {
+        minLatency.store(minLatency.load() + p);
+        lateRun.store(0);
+      }
+    } else {
+      lateRun.store(0);
+    }
   }
 
   void readback(id<MTLTexture> t) {
@@ -497,7 +517,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
           CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:raw->layer];
           link.delegate = raw->delegate;
           link.preferredFrameLatency = latency;
-          if (getenv("PRESENTER_RANGE")) { float r = atof(getenv("PRESENTER_RANGE")); link.preferredFrameRateRange = CAFrameRateRangeMake(r, r, r); } else link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
+          link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
           raw->link = link;
           [link addToRunLoop:rl forMode:NSRunLoopCommonModes];
           link.paused = YES;
