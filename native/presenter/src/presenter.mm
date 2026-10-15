@@ -366,8 +366,9 @@ class Core : public std::enable_shared_from_this<Core> {
       o.Set("width", (double)p->w);
       o.Set("height", (double)p->h);
       o.Set("pixelFormat", p->bgra ? "bgra8" : "rgba16float");
-      std::vector<uint8_t> *owned = p->bytes;
-      o.Set("data", Napi::Buffer<uint8_t>::New(env, owned->data(), owned->size(), [](Napi::Env, uint8_t *, std::vector<uint8_t> *v) { delete v; }, owned));
+      // Electron's V8 sandbox refuses external buffers, so the bytes are copied into one V8 owns.
+      o.Set("data", Napi::Buffer<uint8_t>::Copy(env, p->bytes->data(), p->bytes->size()));
+      delete p->bytes;
       delete p;
       fn.Call({o});
     });
@@ -623,8 +624,8 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     }
     if (core->direct) {
       auto c = core;
-      if (c->paced) {
-        // Smoothed gap between arrivals, which sets how many refreshes a frame is held to.
+      {
+        // Smoothed gap between arrivals: it sets how many refreshes a held frame waits, and how many drawables the layer needs.
         double gap = f.submittedAt - c->lastSubmit;
         c->lastSubmit = f.submittedAt;
         double prior = c->arrivalInterval.load();
@@ -638,14 +639,14 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
         }
         double slot = 0;
         bool calibrating = false;
+        double interval = c->arrivalInterval.load(), p = c->period.load();
+        bool holding = interval >= 1.5 * p;
+        // At a frame per refresh, two drawables take a refresh of queueing off the latency; a held or spaced-out frame needs the third.
+        if (interval > 0) {
+          int want = holding ? 3 : 2;
+          if (c->drawableCount.exchange(want) != want) dispatch_async(dispatch_get_main_queue(), ^{ c->layer.maximumDrawableCount = want; });
+        }
         if (c->paced) {
-          double interval = c->arrivalInterval.load(), p = c->period.load();
-          bool holding = interval >= 1.5 * p;
-          // At a frame per refresh, two drawables take a refresh of queueing off the latency; a held frame needs the third.
-          if (interval > 0) {
-            int want = holding ? 3 : 2;
-            if (c->drawableCount.exchange(want) != want) dispatch_async(dispatch_get_main_queue(), ^{ c->layer.maximumDrawableCount = want; });
-          }
           // Calibration belongs to the pace being held to: one taken at a frame per refresh is queued behind the drawables.
           if (interval > 0 && !holding && c->calibrated.load() > 0) {
             c->calibrated.store(0);

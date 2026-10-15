@@ -12,13 +12,13 @@ export function layerPixelFormat(osr: OsrPixelFormat): 'rgbaf16' | 'bgra' {
   return osr === 'rgbaf16' ? 'rgbaf16' : 'bgra';
 }
 
-/** How the addon puts a frame on the display: as it arrives (`direct`), as it arrives but held to the vsync grid so a steady cadence stays steady (`paced`), or on the next `CAMetalDisplayLink` update (`link`). */
+/** How the addon puts a frame on the display: as it arrives (`direct`, the default), as it arrives but held to the vsync grid so a steady cadence stays steady (`paced`, a diagnostic: it costs latency), or on the next `CAMetalDisplayLink` update (`link`, a diagnostic). */
 export type PresentMode = 'direct' | 'paced' | 'link';
 
-/** `DROID_OFFICE_PRESENT_MODE` picks `link` or `direct` for a comparison; anything else is `paced`, the default. */
+/** `DROID_OFFICE_PRESENT_MODE` picks `link` or `paced` for a comparison; anything else is `direct`, the default. */
 export function presentMode(env: Record<string, string | undefined>): PresentMode {
   const mode = env.DROID_OFFICE_PRESENT_MODE;
-  return mode === 'link' || mode === 'direct' ? mode : 'paced';
+  return mode === 'link' || mode === 'paced' ? mode : 'direct';
 }
 
 /** The frame rate a page that nobody can see is held to. Hiding the offscreen window does not change the page's `visibilityState` or stop its animation frames in Electron's offscreen mode; only a low frame rate slows them. */
@@ -274,7 +274,7 @@ export function spread(values: number[]): Spread {
 }
 
 /** Turns the addon's raw counters and samples into the report `office.presenterStats()` returns. `plannedMs` is the frame interval the player asked for (the FPS cap, or the refresh when it is faster). */
-export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false, mode: PresentMode = 'paced'): PresenterReport {
+export function summarizeNativeStats(stats: NativeStats, plannedMs: number, withSamples = false, mode: PresentMode = 'direct'): PresenterReport {
   const interval: number[] = [];
   const latency: number[] = [];
   const wait: number[] = [];

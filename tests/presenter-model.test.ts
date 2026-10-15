@@ -125,11 +125,12 @@ test('presenter stats on an empty ring are zeros, and one frame has no interval 
   assert.ok(Math.abs(one.latency.p50 - 9) < 0.01);
 });
 
-test('the present mode is paced unless a comparison asks for another', () => {
-  assert.equal(presentMode({}), 'paced');
+test('the present mode is direct unless a comparison asks for another', () => {
+  assert.equal(presentMode({}), 'direct');
   assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'link' }), 'link');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'paced' }), 'paced');
   assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'direct' }), 'direct');
-  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'bogus' }), 'paced');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'bogus' }), 'direct');
 });
 
 // A model of the compositor for `paced` mode: a frame committed at `c` with a hold until `slot` is shown at the first refresh at or after
