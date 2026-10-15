@@ -9,7 +9,7 @@ import { glBackend, gpuReport } from '../src/desktop/gpu.ts';
 import { linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
-import { DEFAULT_PORT, defaultOfficeDir, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
+import { DEFAULT_PORT, defaultOfficeDir, isolatedPortOk, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
 import { desktopEnv, fencedEnv, knownDirs, loginShellEnv, mergeEnv, mergePath } from '../src/desktop/shell-path.ts';
 import { briefError, type UpdatePhase, updateBusy, updateView } from '../src/desktop/update-view.ts';
 import { runAsNode } from '../src/server/workers.ts';
@@ -340,4 +340,11 @@ test('the GPU report copes with what basic info and a missing GPU process leave 
   assert.match(report, /^GPU: unknown$/m);
   assert.match(report, /^WebGL backend: unknown$/m);
   assert.doesNotMatch(report, /Features:/);
+});
+
+test('a run with its own userData attaches only to a running office, never on the default port', () => {
+  assert.equal(isolatedPortOk(4677, 'office'), true);
+  assert.equal(isolatedPortOk(4677, 'free'), false);
+  assert.equal(isolatedPortOk(4677, 'other'), false);
+  assert.equal(isolatedPortOk(DEFAULT_PORT, 'office'), false);
 });

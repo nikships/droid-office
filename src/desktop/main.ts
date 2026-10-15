@@ -7,7 +7,7 @@ import { gpuReport } from './gpu.js';
 import { linkAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import { officeRuntime } from './runtime.js';
-import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, loadSettings, officeArgs, saveSettings } from './settings.js';
+import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, loadSettings, officeArgs, saveSettings } from './settings.js';
 import { desktopEnv } from './shell-path.js';
 import { Updates } from './updates.js';
 
@@ -16,8 +16,13 @@ const BACKGROUND = '#050505';
 const PORT_TRIES = 20;
 
 // Not ~/Library/Application Support/Droid Office (the product name): the Unity office keeps its
-// own data under that folder.
-app.setPath('userData', path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+// own data under that folder. `--user-data-dir=<folder>` (Chromium's switch) moves it and the logs, so a
+// test run never shares the single-instance lock, settings or logs of the app someone is using.
+const userDataSwitch = app.commandLine.getSwitchValue('user-data-dir');
+app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com.nikships.droid-office'));
+if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
+/** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
+const isolated = Boolean(userDataSwitch);
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const logDir = app.getPath('logs');
 const officeLog = path.join(logDir, 'office.log');
@@ -161,6 +166,11 @@ async function chooseOfficeDir(firstRun: boolean): Promise<string | undefined> {
 /** The chosen port, or the first one after it that nothing holds; an office already on one is used as is. */
 async function findPort(): Promise<{ port: number; running: boolean }> {
   const first = settings.port ?? DEFAULT_PORT;
+  if (isolated) {
+    // Never starts an office and never scans: it shows the one office already on the chosen port, which is not the owner's.
+    if (!isolatedPortOk(first, await probePort(first))) throw new Error(`--user-data-dir is set: start an office on port ${first} first (not ${DEFAULT_PORT}), and put that port in ${settingsFile}.`);
+    return { port: first, running: true };
+  }
   for (let port = first; port < first + PORT_TRIES && port <= 65535; port++) {
     const state = await probePort(port);
     if (state === 'office') return { port, running: true };
@@ -314,17 +324,17 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     Menu.setApplicationMenu(menu());
-    if (await moveToApplications()) return;
+    if (!isolated && (await moveToApplications())) return;
     show(page('Opening the office…'));
     officeEnv = await desktopEnv();
-    if (!settings.officeDir) {
+    if (!isolated && !settings.officeDir) {
       settings = { ...settings, officeDir: await chooseOfficeDir(true) };
       saveSettings(settingsFile, settings);
     }
     await openOffice();
     void writeGpuReport();
     mkdirSync(logDir, { recursive: true });
-    downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
-    updates.start();
+    if (!isolated) downloadBrowser({ runtime: officeRuntime(process.execPath), cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'), env: officeEnv, log: path.join(logDir, 'browser.log') });
+    if (!isolated) updates.start();
   });
 }
