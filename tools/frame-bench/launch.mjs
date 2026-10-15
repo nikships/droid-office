@@ -61,3 +61,27 @@ export async function launchApp({ app, clone, userData, debugPort, log }) {
     },
   };
 }
+
+// node tools/frame-bench/launch.mjs --app <Droid Office.app> --clone <dir> [--user-data <dir>] [--debug-port 9333]
+// Starts the app and keeps it up until this process is stopped, for driving it by hand through the DevTools port.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const arg = (name, fallback) => {
+    const i = process.argv.indexOf(`--${name}`);
+    return i > 0 ? process.argv[i + 1] : fallback;
+  };
+  const app = arg('app');
+  const clone = arg('clone');
+  if (!app || !clone) {
+    console.error('usage: launch.mjs --app <Droid Office.app> --clone <office clone> [--user-data <dir>] [--debug-port 9333]');
+    process.exit(1);
+  }
+  const running = await launchApp({ app, clone, userData: arg('user-data', path.join(os.tmpdir(), 'droid-office-bench-userdata')), debugPort: Number(arg('debug-port', '9333')) });
+  console.log(`running ${running.url} (pid ${running.pid}); stop this process to quit it`);
+  const stop = () => {
+    running.quit();
+    process.exit(0);
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  setInterval(() => {}, 1 << 30);
+}
