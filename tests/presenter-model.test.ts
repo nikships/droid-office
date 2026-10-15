@@ -287,3 +287,24 @@ test('a window report with no verdict counts as visible, only an explicit false 
   assert.equal(windowVisible({ visible: true }), true);
   assert.equal(windowVisible({ visible: false }), false);
 });
+
+test('a visible page is always asked for the display rate and a hidden one for the floor, however often it is set again', () => {
+  const rates: number[] = [];
+  const gate = new PageVisibility({ startPainting: () => {}, stopPainting: () => {}, setFrameRate: (fps) => rates.push(fps), notify: () => {} });
+  assert.equal(gate.expectedRate(), 60, 'before the display is known a visible page runs at the default');
+  gate.setDisplayRate(120);
+  gate.set(false);
+  gate.set(true);
+  gate.reapply();
+  gate.reapply();
+  assert.deepEqual(rates, [120, HIDDEN_FRAME_RATE, 120, 120, 120]);
+  assert.equal(gate.expectedRate(), 120);
+  gate.set(false);
+  rates.length = 0;
+  gate.reapply();
+  assert.deepEqual(rates, [HIDDEN_FRAME_RATE]);
+  gate.set(true);
+  gate.setDisplayRate(60);
+  assert.equal(rates.at(-1), 60, 'a display change while visible follows at once');
+  assert.equal(gate.expectedRate(), 60);
+});

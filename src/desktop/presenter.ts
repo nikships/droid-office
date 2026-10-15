@@ -68,6 +68,7 @@ export interface PresenterWindowOptions {
  * `BrowserWindow` that renders the page into shared GPU textures. Every texture goes straight to the addon, which
  * presents it on the display's refresh and hands the texture back once the GPU is done with it.
  */
+
 export class PresenterWindow {
   readonly base: BaseWindow;
   readonly page: BrowserWindow;
@@ -80,6 +81,7 @@ export class PresenterWindow {
   onVisibleChange: ((visible: boolean) => void) | undefined;
   private watchdog: NodeJS.Timeout | undefined;
   private recheck: NodeJS.Timeout | undefined;
+  private settle: NodeJS.Timeout | undefined;
   private gotTexture = false;
   private closed = false;
   private hdr = false;
@@ -145,6 +147,8 @@ export class PresenterWindow {
     });
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
+    // A new page view (a navigation to the office swaps it) is made at Electron's own rate, not the one asked for, so every load sets the rate again.
+    for (const event of ['dom-ready', 'did-navigate', 'did-finish-load'] as const) this.contents.on(event as 'dom-ready', () => this.visibility.reapply());
     // A minimized window does not always report an occlusion change, so the window's own events speak for it too.
     this.base.on('minimize', () => this.setVisible(false));
     this.base.on('restore', () => this.setVisible(true));
@@ -236,6 +240,9 @@ export class PresenterWindow {
   /** A window nobody can see (minimized, covered, on another Space) makes no frames and its page is slowed to the floor frame rate and told it is hidden (`onVisibleChange`), which is what pauses the office's render loop. */
   private setVisible(visible: boolean): void {
     this.visibility.set(visible);
+    clearTimeout(this.settle);
+    // A visible page must run at the display's rate, so it is set again once the fullscreen or restore transition has settled: a rate lost to it must not leave a visible page at the hidden floor.
+    if (visible) this.settle = setTimeout(() => this.visibility.reapply(), 500);
     if (visible || this.closed) {
       clearInterval(this.recheck);
       this.recheck = undefined;
@@ -244,7 +251,6 @@ export class PresenterWindow {
       this.recheck = setInterval(() => {
         if (!this.closed && windowVisible(this.native.displayInfo() as unknown as DisplayState)) this.setVisible(true);
       }, 1000);
-      this.recheck.unref();
     }
   }
 
@@ -266,6 +272,7 @@ export class PresenterWindow {
     this.closed = true;
     clearTimeout(this.watchdog);
     clearInterval(this.recheck);
+    clearTimeout(this.settle);
     ipcMain.removeHandler('presenter:stats');
     ipcMain.removeAllListeners('presenter:hdr');
     this.native.close();

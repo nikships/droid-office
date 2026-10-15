@@ -51,10 +51,20 @@ export class PageVisibility {
     return this.visible;
   }
 
+  /** What the page's frame rate must be right now: the display's own rate while visible, the floor while hidden. */
+  expectedRate(): number {
+    return this.visible ? this.fps : HIDDEN_FRAME_RATE;
+  }
+
   /** The display's frame rate changed: a visible page follows it, a hidden one stays slow. */
   setDisplayRate(fps: number): void {
     this.fps = fps;
-    this.effects.setFrameRate(this.visible ? fps : HIDDEN_FRAME_RATE);
+    this.reapply();
+  }
+
+  /** Sets the rate again whatever it is thought to be (Electron only reports the last value asked for, not the one a page view runs at): a new page view or a dropped call can leave the page at another rate than the one asked for. */
+  reapply(): void {
+    this.effects.setFrameRate(this.expectedRate());
   }
 
   set(visible: boolean): void {
@@ -62,11 +72,10 @@ export class PageVisibility {
     this.visible = visible;
     if (visible) {
       this.effects.startPainting();
-      this.effects.setFrameRate(this.fps);
     } else {
       this.effects.stopPainting();
-      this.effects.setFrameRate(HIDDEN_FRAME_RATE);
     }
+    this.reapply();
     this.effects.notify(visible);
   }
 }
