@@ -126,6 +126,27 @@
   let menu: { select: HTMLSelectElement; host: HTMLElement; rows: Row[]; active: number; close: () => void } | null = null;
   const plainSelect = (t: EventTarget | null): HTMLSelectElement | null => (t instanceof HTMLSelectElement && !t.multiple && t.size <= 1 && !t.disabled ? t : null);
 
+  // Registered once, here, ahead of every script the page runs: a window with its own capturing Esc handler (the office's)
+  // would otherwise hear the key first and close the window the list belongs to.
+  let menuKey: ((e: KeyboardEvent) => void) | null = null;
+  // A key the list took on its way down is not heard coming up either, as with a native menu.
+  const consumed = new Set<string>();
+  window.addEventListener('blur', () => consumed.clear());
+  for (const type of ['keydown', 'keyup', 'keypress']) {
+    window.addEventListener(
+      type,
+      (e) => {
+        const key = e as KeyboardEvent;
+        if (type === 'keyup' && consumed.delete(key.code)) {
+          key.stopImmediatePropagation();
+          return;
+        }
+        menuKey?.(key);
+      },
+      true,
+    );
+  }
+
   const closeMenu = () => menu?.close();
   const openMenu = (select: HTMLSelectElement) => {
     closeMenu();
@@ -197,6 +218,7 @@
       else if (e.key === 'End') paint((state.active = step(rows.length, -1)));
       else if (e.key === 'Enter' || e.key === ' ') choose(state.active);
       else return;
+      consumed.add(e.code);
       e.preventDefault();
     };
     const onOutside = (e: Event) => {
@@ -205,9 +227,7 @@
     };
     state.close = () => {
       menu = null;
-      window.removeEventListener('keydown', onKey, true);
-      window.removeEventListener('keyup', onKey, true);
-      window.removeEventListener('keypress', onKey, true);
+      menuKey = null;
       window.removeEventListener('mousedown', onOutside, true);
       window.removeEventListener('blur', state.close);
       window.removeEventListener('wheel', onOutside, true);
@@ -229,9 +249,7 @@
     list.style.left = `${Math.max(4, Math.min(box.left, innerWidth - list.offsetWidth - 4))}px`;
     list.style.top = up ? `${Math.max(4, box.top - list.offsetHeight - 2)}px` : `${box.bottom + 2}px`;
     paint(selected);
-    window.addEventListener('keydown', onKey, true);
-    window.addEventListener('keyup', onKey, true);
-    window.addEventListener('keypress', onKey, true);
+    menuKey = onKey;
     window.addEventListener('mousedown', onOutside, true);
     window.addEventListener('wheel', onOutside, { capture: true, passive: true });
     window.addEventListener('blur', state.close);
