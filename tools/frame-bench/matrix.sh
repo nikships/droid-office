@@ -27,7 +27,7 @@ exec > >(tee -a "$LOG") 2>&1
 elapsed() { echo $(( ($(date +%s) - START) / 60 )); }
 step() { echo "=== $(date +%H:%M:%S) (+$(elapsed) min, load $(uptime | sed 's/.*averages: //')) $*"; }
 
-# Runs a command with a time limit in seconds; kills its process group when it overruns.
+# Runs a command with a time limit in seconds; kills its process group when it overruns. Apps are only ever force-killed by PID (kill-own.sh).
 limited() {
   local limit=$1
   shift
@@ -40,8 +40,7 @@ limited() {
   kill "$watcher" 2>/dev/null
   wait "$watcher" 2>/dev/null
   # The app may outlive a killed bench.
-  pkill -f "$(realpath "$APP")" 2>/dev/null
-  pkill -f "$APP" 2>/dev/null
+  "$HERE/kill-own.sh" kill "$(dirname "$(realpath "$APP")")" >/dev/null
   sleep 3
   return $status
 }
