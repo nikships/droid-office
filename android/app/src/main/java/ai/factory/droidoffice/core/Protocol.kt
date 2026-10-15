@@ -112,6 +112,8 @@ data class WorkerInfo(
     val workingSince: Long? = null,
     val guest: GuestInfo? = null,
     val cloud: CloudRef? = null,
+    /** Its worktree was deleted; the office says where its branch still is. */
+    val lost: JsonObject? = null,
 ) {
     val state: WorkerStatus get() = WorkerStatus.of(status)
     val isShell: Boolean get() = kind == "shell"
@@ -192,6 +194,9 @@ sealed interface ServerMsg {
     data class Toast(val text: String, val level: String, val workerId: String?) : ServerMsg
     data class Pulls(val state: GhPulls) : ServerMsg
     data class Pong(val at: Long, val now: Long) : ServerMsg
+    /** `whiteboard`, `whiteboard.rendered` or `whiteboard.renderer`, read by [WhiteboardSync]. */
+    data class Whiteboard(val t: String, val obj: JsonObject) : ServerMsg
+    data class Pinged(val result: WbPinged) : ServerMsg
     data class Ignored(val t: String) : ServerMsg
 }
 
@@ -233,6 +238,8 @@ object Protocol {
         "toast" -> ServerMsg.Toast(o.str("text").orEmpty(), o.str("level") ?: "info", o.str("workerId"))
         "gh.pulls" -> ServerMsg.Pulls(o.obj("state")?.let { OfficeJson.decodeFromJsonElement<GhPulls>(it) } ?: GhPulls())
         "pong" -> ServerMsg.Pong(o.long("at") ?: 0, o.long("now") ?: 0)
+        "whiteboard", "whiteboard.rendered", "whiteboard.renderer" -> ServerMsg.Whiteboard(t, o)
+        "whiteboard.pinged" -> WbPinged.of(o)?.let { ServerMsg.Pinged(it) } ?: ServerMsg.Ignored(t)
         else -> ServerMsg.Ignored(t)
     }
 

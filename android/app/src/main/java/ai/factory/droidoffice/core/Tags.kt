@@ -19,6 +19,8 @@ object Tags {
         const val OFFICES = "screen.offices"
         const val ASKS = "screen.asks"
         const val ME = "screen.me"
+        const val BOARD = "screen.board"
+        const val BOARD_CARD = "screen.board_card"
     }
 
     object App {
@@ -32,7 +34,42 @@ object Tags {
         const val BAR = "tab.bar"
         const val ASKS = "tab.asks"
         const val OFFICE = "tab.office"
+        const val BOARD = "tab.board"
         const val ME = "tab.me"
+    }
+
+    /** The Whiteboard: the floor's grid of cards, and one card with its comment threads. */
+    object Board {
+        const val GRID = "board.grid"
+        const val EMPTY = "board.empty"
+        const val LOADING = "board.loading"
+        const val RENDERER = "board.renderer"
+        const val PING = "board.ping"
+        const val CARD_TITLE = "board.card.title"
+        const val CARD_META = "board.card.meta"
+        const val CARD_CHANGED = "board.card.changed"
+        const val BACK = "board.back"
+        const val TITLE = "board.title"
+        const val META = "board.meta"
+        const val IMAGE = "board.image"
+        const val IMAGE_STATUS = "board.image.status"
+        const val SHOW = "board.show"
+        const val COMMENTS = "board.comments"
+        const val COMMENTS_SHEET = "board.comments_sheet"
+        const val NEW_COMMENT = "board.new_comment"
+        const val COMMENT_INPUT = "board.comment.input"
+        const val COMMENT_SEND = "board.comment.send"
+        const val COMMENT_CANCEL = "board.comment.cancel"
+        const val PING_SHEET = "board.ping_sheet"
+        const val GONE = "board.gone"
+
+        fun card(id: String) = "board.card/$id"
+        fun thread(id: String) = "board.thread/$id"
+        fun reply(id: String) = "board.thread.reply/$id"
+        fun replySend(id: String) = "board.thread.reply_send/$id"
+        fun resolve(id: String) = "board.thread.resolve/$id"
+        fun sticky(id: String) = "board.sticky/$id"
+        fun pingWorker(id: String) = "board.ping/$id"
     }
 
     object Asks {

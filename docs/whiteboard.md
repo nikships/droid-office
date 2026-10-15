@@ -21,7 +21,7 @@ Status: **implemented**, apart from the renderer checks on Linux, Windows, the E
 - **You work on artifacts in a full-size window inside the office**, like the PR or terminal window. There is no separate browser page.
 - **Only the current state is kept.** There are no versions and no change log. The "changed since you last looked" marks come from revision stamps, not history (see [Reading the board](#reading-the-board)).
 - **Agents learn about it from a Droid skill the office installs and keeps up to date**, like `droid-office-subagents`.
-- **Not in scope:** the phone view, the Android app, agents working across floors, and cloud workers (see [Which agents](#which-agents)).
+- **Not in scope:** a phone view in the browser, agents working across floors, and cloud workers (see [Which agents](#which-agents)). The Android app came later: its **Board** tab shows each card as the office renders it and takes comments, replies, resolves, read points, the wall's selection and pings ([android/README.md](../android/README.md)). It never edits a card's content, stickies or pictures.
 - **The bar is a polished, complete feature**, not a first pass to iterate on. Every decision below picks the better behavior over the simpler one.
 
 ## Decisions made for the owner

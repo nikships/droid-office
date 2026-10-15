@@ -3,6 +3,7 @@ package ai.factory.droidoffice.net
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.Probe
+import ai.factory.droidoffice.core.WbRenderStatus
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +175,34 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         runCatching { client.newCall(request(base, "api/prompt/image", auth).url(url).delete().build()).await().close() }
     }
 
+    /** A Whiteboard card's latest image size, tiles and canvas origin (GET /api/whiteboard/render/status). */
+    suspend fun boardRenderStatus(base: String, auth: OfficeAuth, floor: String, card: String): WbRenderStatus? = withContext(Dispatchers.IO) {
+        val req = request(base, "api/whiteboard/render/status", auth, "floor" to floor, "card" to card).get().build()
+        try {
+            client.newCall(req).await().use { res ->
+                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<WbRenderStatus>(res.body.string()) }.getOrNull()
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /**
+     * A card's latest image as PNG bytes (GET /api/whiteboard/render): its grid thumbnail, or one tile
+     * of the full page. [version] is the render's time, so a newer render is never served from a cache.
+     */
+    suspend fun boardImage(base: String, auth: OfficeAuth, floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? = withContext(Dispatchers.IO) {
+        val req = request(
+            base, "api/whiteboard/render", auth,
+            "floor" to floor, "card" to card, "size" to if (thumb) "thumb" else "full", "tile" to "$tile", "v" to "$version",
+        ).get().build()
+        try {
+            client.newCall(req).await().use { res -> if (res.isSuccessful) res.body.bytes() else null }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
     fun socket(base: String, auth: OfficeAuth, floor: String?, name: String, listener: WebSocketListener): WebSocket {
         val http = base.toHttpUrl().newBuilder().addPathSegment("ws").apply {
             if (!floor.isNullOrBlank()) addQueryParameter("floor", floor)
@@ -185,8 +214,9 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         return client.newWebSocket(builder.build(), listener)
     }
 
-    private fun request(base: String, path: String, auth: OfficeAuth): Request.Builder {
+    private fun request(base: String, path: String, auth: OfficeAuth, vararg query: Pair<String, String>): Request.Builder {
         val url: HttpUrl = base.toHttpUrl().newBuilder().addPathSegments(path).apply {
+            for ((k, v) in query) addQueryParameter(k, v)
             if (auth is OfficeAuth.Lan) addQueryParameter("t", auth.token)
         }.build()
         return Request.Builder().url(url).header("Origin", base).apply {
