@@ -85,3 +85,55 @@ export function trustedFrame(frameUrl: string | undefined, origin: string | unde
     return false;
   }
 }
+
+/** How long (ms) an office page may be silent after it loads before each step of PaintStall. */
+export const STALL_KICK_MS = [1000, 2000] as const;
+export const STALL_RELOAD_MS = 3500;
+export const STALL_FAIL_MS = 3500;
+
+export type StallAction = 'wait' | 'kick' | 'reload' | 'fail';
+
+/**
+ * A page that loaded but whose paints never reach the presenter: after a navigation to the office, Electron's offscreen view
+ * sometimes starts with its frame capturer not delivering (about one launch in ten; the page runs at 120 rAF/s and the window
+ * keeps showing the splash). Restarting painting wakes it. A page that stays silent is kicked twice, reloaded once, and then
+ * the app says so and quits: never a window left on the splash. `armedAt` is when the office page finished loading;
+ * `painted` ends the watch and forgets the reload.
+ */
+export class PaintStall {
+  private armedAt: number | undefined;
+  private kicks = 0;
+  private reloaded = false;
+
+  arm(now: number): void {
+    this.armedAt = now;
+    this.kicks = 0;
+  }
+
+  painted(): void {
+    this.armedAt = undefined;
+    this.reloaded = false;
+  }
+
+  get armed(): boolean {
+    return this.armedAt !== undefined;
+  }
+
+  check(now: number): StallAction {
+    if (this.armedAt === undefined) return 'wait';
+    const silent = now - this.armedAt;
+    if (this.reloaded) return silent >= STALL_FAIL_MS ? 'fail' : 'wait';
+    if (silent >= STALL_RELOAD_MS) {
+      this.reloaded = true;
+      this.armedAt = now;
+      this.kicks = 0;
+      return 'reload';
+    }
+    const next = STALL_KICK_MS[this.kicks];
+    if (next !== undefined && silent >= next) {
+      this.kicks++;
+      return 'kick';
+    }
+    return 'wait';
+  }
+}

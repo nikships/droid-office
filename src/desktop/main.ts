@@ -128,7 +128,7 @@ function createWindow(loadOffice = true) {
   // The office asks before its page closes or reloads (src/client/leave.ts). A browser shows that
   // prompt itself; Electron just cancels, which would also stop the app from ever quitting.
   contents.on('will-prevent-unload', (e) => {
-    if (quitting || replacing) {
+    if (quitting || replacing || created.reloading) {
       e.preventDefault();
       return;
     }

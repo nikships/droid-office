@@ -16,7 +16,7 @@ import {
   TextureLedger,
   windowVisible,
 } from './presenter-model.js';
-import { CrashPolicy, FirstFrameGate, GPU_REPAINT_MS, GpuRecovery, trustedFrame } from './presenter-recovery.js';
+import { CrashPolicy, FirstFrameGate, GPU_REPAINT_MS, GpuRecovery, PaintStall, trustedFrame } from './presenter-recovery.js';
 import { failStartup, loadNative, logStartupFailure, StartupAborted } from './startup.js';
 import { nativeModuleFailure, rendererCrashFailure, sharedTextureFailure } from './startup-failure.js';
 
@@ -105,6 +105,8 @@ export class PresenterWindow {
   private readonly gate = new FirstFrameGate();
   private readonly crashes = new CrashPolicy();
   private readonly gpu = new GpuRecovery();
+  private readonly stall = new PaintStall();
+  private stallTimer: NodeJS.Timeout | undefined;
   private gpuTimer: NodeJS.Timeout | undefined;
   private asking = false;
   private readonly onChildGone = (_event: unknown, details: Electron.Details): void => this.childGone(details);
@@ -191,6 +193,8 @@ export class PresenterWindow {
     this.native = native;
     this.applyDisplay(this.native.displayInfo() as unknown as DisplayState);
     this.contents.on('paint', (event) => this.paint(event.texture));
+    // The office page's paints can fail to reach the presenter after its navigation (see PaintStall), so every load of it is watched.
+    this.contents.on('did-finish-load', () => this.watchStall());
     // Any input into the page, from PresenterInput or the DevTools Protocol, drops its frame rate to 60 until it is set again.
     this.contents.on('input-event', () => this.inputRate.onInput());
     // A new page view (a navigation to the office swaps it) is made at Electron's own rate, not the one asked for, so every load sets the rate again.
@@ -255,6 +259,8 @@ export class PresenterWindow {
       return;
     }
     this.gotTexture = true;
+    this.stall.painted();
+    this.endStallWatch();
     this.gpu.painted();
     clearTimeout(this.gpuTimer);
     // The display link draws only once the window is on screen, so in that diagnostic mode the first texture is what shows it.
@@ -265,6 +271,43 @@ export class PresenterWindow {
     } catch (err) {
       this.ledger.release(id);
       this.noTexture(`the Metal presenter refused a frame: ${(err as Error).message}`);
+    }
+  }
+
+  private watchStall(): void {
+    if (this.closed || this.failed || !trustedFrame(this.contents.mainFrame.url, this.options.officeOrigin())) return;
+    this.stall.arm(Date.now());
+    this.stallTimer ??= setInterval(() => this.checkStall(), 250);
+    this.stallTimer.unref();
+  }
+
+  private endStallWatch(): void {
+    clearInterval(this.stallTimer);
+    this.stallTimer = undefined;
+  }
+
+  private checkStall(): void {
+    // A hidden page makes no frames on purpose; the watch starts again when it is shown.
+    if (this.closed || this.failed || this.contents.isDestroyed()) {
+      this.endStallWatch();
+      return;
+    }
+    if (!this.visibility.isVisible()) {
+      this.stall.arm(Date.now());
+      return;
+    }
+    const action = this.stall.check(Date.now());
+    if (action === 'kick') {
+      console.warn('droid-office: the office page painted nothing after loading; restarting its painting');
+      this.contents.stopPainting();
+      this.contents.startPainting();
+      this.visibility.reapply();
+    } else if (action === 'reload') {
+      console.warn('droid-office: the office page still painted nothing; reloading it');
+      this.reloadPage();
+    } else if (action === 'fail') {
+      this.endStallWatch();
+      this.noTexture('the office page loaded but no frame reached the window within 10 s, even after restarting its painting and reloading it');
     }
   }
 
@@ -306,11 +349,22 @@ export class PresenterWindow {
     else if (action === 'dialog') void this.askAfterCrash(reason);
   }
 
+  /** True while the app itself is reloading the page (crash, GPU or stall recovery): the office's "Leave the office?" guard must not ask the owner about that. */
+  reloading = false;
+  private reloadingTimer: NodeJS.Timeout | undefined;
+
   private reloadPage(): void {
     if (this.closed || this.contents.isDestroyed()) return;
+    this.reloading = true;
+    clearTimeout(this.reloadingTimer);
+    this.reloadingTimer = setTimeout(() => {
+      this.reloading = false;
+    }, 5000);
+    this.reloadingTimer.unref();
     try {
       this.contents.reload();
     } catch (err) {
+      this.reloading = false;
       console.warn(`droid-office: reloading the office page failed: ${(err as Error).message}`);
     }
   }
@@ -414,9 +468,11 @@ export class PresenterWindow {
     this.closed = true;
     clearTimeout(this.watchdog);
     clearInterval(this.recheck);
+    this.endStallWatch();
     clearTimeout(this.settle);
     this.inputRate.stop();
     clearTimeout(this.gpuTimer);
+    clearTimeout(this.reloadingTimer);
     app.removeListener('child-process-gone', this.onChildGone);
     ipcMain.removeHandler('presenter:stats');
     ipcMain.removeAllListeners('presenter:hdr');

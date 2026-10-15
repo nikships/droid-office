@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { windowOpenAction } from '../src/desktop/links.js';
-import { CRASH_WINDOW_MS, CrashPolicy, FirstFrameGate, GpuRecovery, IMPORT_FAILURE_LIMIT, trustedFrame } from '../src/desktop/presenter-recovery.js';
+import { CRASH_WINDOW_MS, CrashPolicy, FirstFrameGate, GpuRecovery, IMPORT_FAILURE_LIMIT, PaintStall, STALL_FAIL_MS, STALL_KICK_MS, STALL_RELOAD_MS, trustedFrame } from '../src/desktop/presenter-recovery.js';
 import { formatStartupFailure, rendererCrashFailure } from '../src/desktop/startup-failure.js';
 
 test('a crashed page is reloaded once, and a second crash within a minute asks the owner', () => {
@@ -87,4 +87,37 @@ test('the crash dialog has its own kind and says what to do', () => {
   assert.equal(failure.title, 'The office window crashed');
   assert.match(formatStartupFailure(failure), /Reload it to try again/);
   assert.match(failure.detail, /reason: crashed/);
+});
+
+test('a page that paints after loading is never kicked, reloaded or failed', () => {
+  const stall = new PaintStall();
+  stall.arm(0);
+  assert.equal(stall.check(STALL_KICK_MS[0] - 1), 'wait');
+  stall.painted();
+  assert.equal(stall.armed, false);
+  assert.equal(stall.check(60_000), 'wait');
+});
+
+test('a silent page is kicked twice, reloaded once, then fails within ten seconds of loading', () => {
+  const stall = new PaintStall();
+  stall.arm(0);
+  assert.equal(stall.check(STALL_KICK_MS[0]), 'kick');
+  assert.equal(stall.check(STALL_KICK_MS[0] + 10), 'wait', 'one kick per step');
+  assert.equal(stall.check(STALL_KICK_MS[1]), 'kick');
+  assert.equal(stall.check(STALL_KICK_MS[1] + 10), 'wait');
+  assert.equal(stall.check(STALL_RELOAD_MS), 'reload');
+  // The reload loads the page again, which arms the watch again; the reload is not forgotten.
+  stall.arm(STALL_RELOAD_MS + 200);
+  assert.equal(stall.check(STALL_RELOAD_MS + 200 + STALL_FAIL_MS - 1), 'wait');
+  assert.equal(stall.check(STALL_RELOAD_MS + 200 + STALL_FAIL_MS), 'fail');
+  assert.ok(STALL_RELOAD_MS + 200 + STALL_FAIL_MS < 10_000);
+});
+
+test('a paint after the reload forgets it, so a later stall starts over', () => {
+  const stall = new PaintStall();
+  stall.arm(0);
+  stall.check(STALL_RELOAD_MS);
+  stall.painted();
+  stall.arm(20_000);
+  assert.equal(stall.check(20_000 + STALL_KICK_MS[0]), 'kick');
 });
