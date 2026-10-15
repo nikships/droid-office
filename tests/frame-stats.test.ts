@@ -4,7 +4,7 @@ import { extraRefreshes, FrameStats, type FrameSample, pacingText, percentile, s
 
 const R120 = 1000 / 120;
 const R60 = 1000 / 60;
-const cpu = { update: 1, scene: 3, hands: 0.5 };
+const cpu = { update: 1, scene: 3, hands: 0.5, finish: 0.25 };
 
 /** Paced frames at `gaps` (ms) apart from t=1000. */
 function frames(gaps: number[], paced = true): FrameSample[] {
@@ -65,7 +65,7 @@ test('the report counts missed frames and repeated refreshes at 120 FPS on 120 H
   assert.ok(Math.abs(r.frameTime.p99 - 4 * R120) < 1e-9);
   assert.ok(Math.abs(r.frameTime.max - 4 * R120) < 1e-9);
   assert.ok(r.fps > 115 && r.fps < 120);
-  assert.deepEqual(r.cpu.total, { p50: 4.5, p95: 4.5, p99: 4.5, max: 4.5 });
+  assert.deepEqual(r.cpu.total, { p50: 4.75, p95: 4.75, p99: 4.75, max: 4.75 });
   assert.deepEqual(r.cpu.scene, { p50: 3, p95: 3, p99: 3, max: 3 });
   assert.deepEqual(r.gpu, { scene: null, hands: null });
   assert.equal(pacingText(r), 'p50 8.3 · p95 8.3 · p99 33.3 ms · 2 missed · 4 repeated');

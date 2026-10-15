@@ -60,3 +60,8 @@ export function officeArgs(dir: string, port: number, home = os.homedir()): stri
   const asProject = path.resolve(dir) !== defaultOfficeDir(home) && startedInProject(dir);
   return [...(asProject ? [dir] : ['--home', dir]), '--port', String(port)];
 }
+
+/** Whether a run with its own userData (--user-data-dir) may attach to the office on `port`: only an office that is up, and never the default port the owner's own office uses. */
+export function isolatedPortOk(port: number, state: 'office' | 'free' | 'other'): boolean {
+  return state === 'office' && port !== DEFAULT_PORT;
+}

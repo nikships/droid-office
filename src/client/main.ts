@@ -132,6 +132,7 @@ import { GraphicsLab } from './ui/graphics-lab';
 import { bakeBudget, bakeKey, loadRemaster, type RemasterSettings, resolveRemaster, saveRemaster } from './remaster-settings';
 import { bakeCache } from './gi-cache';
 import { FrameStats, pacingText } from './frame-stats';
+import { presenterStats, reportHdr } from './native-bridge';
 import { GpuTimer } from './gpu-timer';
 import { gpuBusy, statsText } from './graphics';
 import { withToken } from './token';
@@ -3483,6 +3484,7 @@ const remaster = new Remaster(
   { sun, hemi, ambient },
   remasterParams,
   () => {
+    reportHdr(remaster.hdr.active);
     graphicsLab.paint();
     renderWake();
   },
@@ -3877,10 +3879,11 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     renderer.autoClear = autoClear;
     sky.shading(true);
   }
+  const handsEnd = performance.now();
   if (remaster.active) remaster.finishFrame();
   if (timing) gpuHands.end();
   loading.drew();
-  frameStats.record({ at: frame.at, paced: frame.paced, cpu: { update: drawStart - frameStart, scene: sceneEnd - drawStart, hands: performance.now() - sceneEnd } });
+  frameStats.record({ at: frame.at, paced: frame.paced, cpu: { update: drawStart - frameStart, scene: sceneEnd - drawStart, hands: handsEnd - sceneEnd, finish: performance.now() - handsEnd } });
 }
 
 /** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
@@ -4099,6 +4102,7 @@ const automation = createAutomation({
     renderWake();
   },
   frames: () => framesDrawn,
+  presenterStats: (reset, samples) => presenterStats(reset, 1000 / Math.min(settings.graphics.fpsCap, 1000 / renderLoop.refreshMs), samples),
   frameStats: (reset) => {
     if (reset) frameStats.reset();
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
