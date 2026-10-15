@@ -106,8 +106,9 @@ test('presenter stats on an empty ring are zeros, and one frame has no interval 
   assert.ok(Math.abs(one.latency.p50 - 9) < 0.01);
 });
 
-test('the present mode is direct unless the display link is asked for', () => {
-  assert.equal(presentMode({}), 'direct');
+test('the present mode is paced unless a comparison asks for another', () => {
+  assert.equal(presentMode({}), 'paced');
   assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'link' }), 'link');
-  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'bogus' }), 'direct');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'direct' }), 'direct');
+  assert.equal(presentMode({ DROID_OFFICE_PRESENT_MODE: 'bogus' }), 'paced');
 });

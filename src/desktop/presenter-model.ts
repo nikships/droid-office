@@ -12,12 +12,13 @@ export function layerPixelFormat(osr: OsrPixelFormat): 'rgbaf16' | 'bgra' {
   return osr === 'rgbaf16' ? 'rgbaf16' : 'bgra';
 }
 
-/** How the addon puts a frame on the display: as it arrives (`direct`), or on the next `CAMetalDisplayLink` update (`link`). */
-export type PresentMode = 'direct' | 'link';
+/** How the addon puts a frame on the display: as it arrives (`direct`), as it arrives but held to the vsync grid so a steady cadence stays steady (`paced`), or on the next `CAMetalDisplayLink` update (`link`). */
+export type PresentMode = 'direct' | 'paced' | 'link';
 
-/** `DROID_OFFICE_PRESENT_MODE=link` picks the display link; anything else is `direct`, the lower-latency mode. */
+/** `DROID_OFFICE_PRESENT_MODE` picks `link` or `direct` for a comparison; anything else is `paced`, the default. */
 export function presentMode(env: Record<string, string | undefined>): PresentMode {
-  return env.DROID_OFFICE_PRESENT_MODE === 'link' ? 'link' : 'direct';
+  const mode = env.DROID_OFFICE_PRESENT_MODE;
+  return mode === 'link' || mode === 'direct' ? mode : 'paced';
 }
 
 const MIN_OSR_FPS = 30;
