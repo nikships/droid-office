@@ -82,6 +82,7 @@ static __weak DOPresenterView *gCurrent;
   BOOL _decoupled;
   BOOL _rawCapture;
   id _rawObserver;
+  id _eventMonitor;
   // The buttons that went down as a Control-click, which AppKit reports as the left button and the page expects as the right.
   BOOL _ctrlClick;
   BOOL _lastFocus;
@@ -115,6 +116,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)dealloc {
+  [self removeEventMonitor];
   [self releaseCapture];
   [NSNotificationCenter.defaultCenter removeObserver:self];
 }
@@ -164,6 +166,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)viewWillMoveToWindow:(NSWindow *)newWindow {
+  [self removeEventMonitor];
   [NSNotificationCenter.defaultCenter removeObserver:self name:NSWindowDidBecomeKeyNotification object:self.window];
   [NSNotificationCenter.defaultCenter removeObserver:self name:NSWindowDidResignKeyNotification object:self.window];
   [super viewWillMoveToWindow:newWindow];
@@ -174,9 +177,62 @@ static __weak DOPresenterView *gCurrent;
   if (!self.window) return;
   gCurrent = self;
   self.window.acceptsMouseMovedEvents = YES;
+  [self installEventMonitor];
   [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowKeyChanged:) name:NSWindowDidBecomeKeyNotification object:self.window];
   [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowKeyChanged:) name:NSWindowDidResignKeyNotification object:self.window];
   [self reportFocus];
+}
+
+// The window's content view is Electron's BridgedContentView, whose hit test answers itself for any subview it did not host, so AppKit
+// hands every click, drag and scroll to a views tree with nothing in it and never to this view; only the tracking area (hover) reaches it
+// by itself. A local monitor sees those events before they are dispatched and gives this view the ones that landed on it. Keys follow the
+// first responder, which a click on the content view takes away, so it is taken back; keys themselves are left alone so that menu key
+// equivalents still work.
+- (void)installEventMonitor {
+  if (_eventMonitor) return;
+  const NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDown | NSEventMaskRightMouseUp |
+                           NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp | NSEventMaskOtherMouseDragged | NSEventMaskScrollWheel |
+                           NSEventMaskKeyDown | NSEventMaskKeyUp | NSEventMaskFlagsChanged;
+  __weak DOPresenterView *weak = self;
+  _eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:mask handler:^NSEvent *(NSEvent *e) {
+    DOPresenterView *view = weak;
+    return view ? [view routed:e] : e;
+  }];
+}
+
+- (void)removeEventMonitor {
+  if (!_eventMonitor) return;
+  [NSEvent removeMonitor:_eventMonitor];
+  _eventMonitor = nil;
+}
+
+- (NSEvent *)routed:(NSEvent *)e {
+  NSWindow *window = self.window;
+  if (!window || e.window != window || window.attachedSheet || NSApp.modalWindow) return e;
+  if (e.type == NSEventTypeKeyDown || e.type == NSEventTypeKeyUp || e.type == NSEventTypeFlagsChanged) {
+    if (window.isKeyWindow && window.firstResponder != self && !window.attachedSheet) [window makeFirstResponder:self];
+    return e;
+  }
+  if (!NSPointInRect([self convertPoint:e.locationInWindow fromView:nil], self.bounds)) return e;
+  // Only what the content view itself took: the title bar, the traffic lights and the resize edges are the window frame's and stay its.
+  NSView *content = window.contentView;
+  NSView *frame = content.superview ?: content;
+  NSView *hit = [frame hitTest:[frame convertPoint:e.locationInWindow fromView:nil]];
+  if (hit == self || [hit isDescendantOf:self] || !(hit == content || [hit isDescendantOf:content])) return e;
+  switch (e.type) {
+    case NSEventTypeLeftMouseDown: [self mouseDown:e]; break;
+    case NSEventTypeLeftMouseUp: [self mouseUp:e]; break;
+    case NSEventTypeLeftMouseDragged: [self mouseDragged:e]; break;
+    case NSEventTypeRightMouseDown: [self rightMouseDown:e]; break;
+    case NSEventTypeRightMouseUp: [self rightMouseUp:e]; break;
+    case NSEventTypeRightMouseDragged: [self rightMouseDragged:e]; break;
+    case NSEventTypeOtherMouseDown: [self otherMouseDown:e]; break;
+    case NSEventTypeOtherMouseUp: [self otherMouseUp:e]; break;
+    case NSEventTypeOtherMouseDragged: [self otherMouseDragged:e]; break;
+    case NSEventTypeScrollWheel: [self scrollWheel:e]; break;
+    default: return e;
+  }
+  return nil;
 }
 
 - (void)windowKeyChanged:(NSNotification *)note {
