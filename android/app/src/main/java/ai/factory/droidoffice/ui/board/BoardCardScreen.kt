@@ -1,6 +1,30 @@
 package ai.factory.droidoffice.ui.board
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.viewinterop.AndroidView
+import ai.factory.droidoffice.core.OfficeJson
+import ai.factory.droidoffice.core.WB_STICKY_COLORS
+import ai.factory.droidoffice.core.WbPage
+import ai.factory.droidoffice.core.WbPageMsg
+import ai.factory.droidoffice.ui.components.Chip
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -102,9 +126,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * One Whiteboard card, as the office renders it with its marks: pinch to zoom, drag to move,
- * double-tap to zoom in or back to fit, long-press to pin a comment there, tap a pin to read its
- * thread. Comments sheet lists every thread (reply, resolve, reopen) and the card's sticky notes.
+ * One Whiteboard card. Where the WebView can host it, the card is live, as the office's window shows
+ * it (CardPage): its video plays, its forms and buttons work, and in Mark up a tap pins a comment and a
+ * long-press places a sticky note. Otherwise it's the office's latest render with its marks: pinch to
+ * zoom, long-press to pin a comment, tap a pin to read its thread. The Comments sheet lists every
+ * thread (reply, resolve, reopen) and the card's sticky notes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,6 +138,8 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val snackbar = LocalSnackbar.current
+    val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val boards by connection.boards.collectAsStateWithLifecycle()
     val floor = boards[floorId]
@@ -122,7 +150,16 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
     var focusThread by rememberSaveable { mutableStateOf<String?>(null) }
     var draftX by rememberSaveable { mutableStateOf<Double?>(null) }
     var draftY by rememberSaveable { mutableStateOf<Double?>(null) }
+    // What the live page anchored the draft to (an element of the card, or a point), as JSON.
+    var draftAnchor by rememberSaveable { mutableStateOf<String?>(null) }
     val draft = if (draftX != null && draftY != null) WbPoint(draftX!!, draftY!!) else null
+    var stickyOpen by rememberSaveable { mutableStateOf<String?>(null) }
+    var chosenMode by rememberSaveable(cardId) { mutableStateOf<String?>(null) }
+    // A canvas has nothing to use, so it opens ready to mark up.
+    val mode = chosenMode ?: if (card?.isCanvas == true) MODE_MARKUP else MODE_USE
+    var immersive by rememberSaveable { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
+    val actedAt = remember(cardId) { mutableMapOf<String, Long>() }
 
     LifecycleStartEffect(cardId) {
         connection.watchBoard(WATCH)
@@ -140,76 +177,222 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
         }
     }
 
-    suspend fun apply(what: String, vararg ops: kotlinx.serialization.json.JsonObject): Boolean = when (val r = connection.applyBoard(floorId, ops.toList())) {
+    suspend fun apply(what: String, vararg ops: JsonObject): Boolean = when (val r = connection.applyBoard(floorId, ops.toList())) {
         is WbResult.Ok -> true
         is WbResult.Invalid -> {
             snackbar.showSnackbar("$what didn't work: ${r.reason}")
             false
         }
         WbResult.Expired -> {
-            snackbar.showSnackbar("The office lost track of that change, so it wasn't saved. Try again.")
+            snackbar.showSnackbar(EXPIRED)
             false
         }
     }
 
-    Column(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Bg).imePadding()) {
-        Header(card, board, onBack, onPing = { pinging = true }, onShow = { onWall ->
-            scope.launch {
-                if (apply("Showing it on the wall", WbOps.show(if (onWall) null else cardId))) {
-                    snackbar.showSnackbar(if (onWall) "The wall shows the grid again" else "The wall shows ${card?.title?.ifBlank { null } ?: "this card"}")
-                }
-            }
-        })
-        if (board != null && card == null) {
-            Gone(onBack)
-            return@Column
-        }
-        if (card == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Spinner(Modifier.size(26.dp)) }
-            return@Column
-        }
-        Page(
-            floorId = floorId,
-            card = card,
-            board = board,
-            since = since ?: board.readPoint(WB_OWNER, cardId),
-            renderAt = floor.renders[cardId]?.at,
-            renderCurrent = floor.renders[cardId]?.current ?: false,
-            renderError = floor.renders[cardId]?.error ?: floor.renderer.reason.takeIf { !floor.renderer.available },
-            draft = draft,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            onDraft = { p ->
-                draftX = p.x
-                draftY = p.y
-            },
-            onThread = { id ->
-                focusThread = id
-                comments = true
-            },
-        )
-        if (draft != null) {
-            NewComment(
-                onCancel = {
-                    draftX = null
-                    draftY = null
+    // ---- The live page ----
+
+    val raw = floor?.cards?.get(cardId)
+    val cap = floor?.caps?.get(cardId)
+    val canLive = remember { CardPage.supported() }
+    val live = canLive && card != null && raw != null && (card.isCanvas || cap != null)
+    var generation by remember(cardId) { mutableIntStateOf(0) }
+    val inbox = remember { arrayOf<(WbPageMsg) -> Unit>({}) }
+    val page = if (live) {
+        remember(cardId, generation) {
+            CardPage(
+                context,
+                cardId,
+                object : CardFiles {
+                    override fun card(cap: String, path: String) = connection.cardFile(cap, path)
+                    override fun picture(hash: String) = connection.boardFile(floorId, cardId, hash)
                 },
-                onSend = { text ->
-                    scope.launch {
-                        val thread = WbOps.newId("t")
-                        if (apply("The comment", WbOps.commentAdd(cardId, thread, WbOps.newId("m"), draft, text))) {
-                            draftX = null
-                            draftY = null
-                        }
-                    }
-                },
+                onMessage = { inbox[0](it) },
+                onGone = { generation++ },
             )
-        } else {
-            Footer(card, onComments = {
-                focusThread = null
-                comments = true
-            })
+        }
+    } else {
+        null
+    }
+    if (page != null) DisposableEffect(page) { onDispose { page.destroy() } }
+    var readyCount by remember(page) { mutableIntStateOf(0) }
+    val opened = remember(page) { intArrayOf(0) }
+    var widthDp by remember { mutableFloatStateOf(0f) }
+    val sinceNow = since ?: board?.readPoint(WB_OWNER, cardId) ?: 0
+    val changedMarks = if (board != null && card != null) board.changedMarks(card, sinceNow) else emptySet()
+
+    fun clearDraft() {
+        draftX = null
+        draftY = null
+        draftAnchor = null
+        page?.send(WbPage.draft(null))
+    }
+
+    fun acted(name: String) {
+        // A page that records actions by itself (a game, a timer) would otherwise bury the screen in snackbars.
+        val now = System.currentTimeMillis()
+        if (now - (actedAt[name] ?: 0) < ACTED_TOAST_MS) return
+        actedAt[name] = now
+        scope.launch {
+            val r = snackbar.showSnackbar("Recorded “$name” on this card. Workers see it when they read the board.", actionLabel = "Ping a worker", duration = SnackbarDuration.Long)
+            if (r == SnackbarResult.ActionPerformed) pinging = true
         }
     }
+
+    SideEffect {
+        inbox[0] = { msg ->
+            when (msg) {
+                WbPageMsg.Ready -> readyCount++
+                is WbPageMsg.Ops -> if (msg.ops.isEmpty()) {
+                    page?.send(WbPage.done(msg.id, false, 0))
+                } else {
+                    connection.applyBoard(floorId, msg.ops) { r ->
+                        page?.send(WbPage.done(msg.id, r is WbResult.Ok, (r as? WbResult.Ok)?.rev ?: 0))
+                        when (r) {
+                            is WbResult.Ok -> msg.action?.let(::acted)
+                            is WbResult.Invalid -> scope.launch { snackbar.showSnackbar("${msg.what} didn't work: ${r.reason}") }
+                            WbResult.Expired -> scope.launch { snackbar.showSnackbar(EXPIRED) }
+                        }
+                    }
+                }
+                is WbPageMsg.Comment -> {
+                    stickyOpen = null
+                    draftX = msg.point.x
+                    draftY = msg.point.y
+                    draftAnchor = msg.anchor.toString()
+                }
+                is WbPageMsg.Sticky -> stickyOpen = msg.id
+                is WbPageMsg.Thread -> {
+                    focusThread = msg.id
+                    comments = true
+                }
+                is WbPageMsg.Shortcut -> if (msg.key == "m") chosenMode = if (mode == MODE_USE) MODE_MARKUP else MODE_USE else immersive = !immersive
+            }
+        }
+    }
+    if (page != null && board != null && card != null && raw != null) {
+        SideEffect { page.contentRev = card.stamps.content?.rev ?: 0 }
+        LaunchedEffect(page, readyCount, raw, cap, changedMarks) {
+            if (readyCount == 0) return@LaunchedEffect
+            if (opened[0] != readyCount) {
+                opened[0] = readyCount
+                page.send(WbPage.open(raw, board.rev, cap, page.secret, mode, floor.live, changedMarks, widthDp))
+                draft?.let { page.send(WbPage.draft(it)) }
+            } else {
+                page.send(WbPage.card(raw, board.rev, cap, changedMarks))
+            }
+        }
+        LaunchedEffect(page, readyCount, mode) { if (readyCount > 0) page.send(WbPage.mode(mode)) }
+        LaunchedEffect(page, readyCount, floor.live) { if (readyCount > 0) page.send(WbPage.live(floor.live)) }
+        LaunchedEffect(page, readyCount, widthDp) { if (readyCount > 0 && widthDp > 0) page.send(WbPage.width(widthDp)) }
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null || page == null) return@rememberLauncherForActivityResult
+        adding = true
+        scope.launch {
+            val picture = withContext(Dispatchers.IO) { runCatching { loadBoardPicture(context, uri) }.getOrNull() }
+            if (picture == null) {
+                snackbar.showSnackbar("That picture couldn't be read")
+            } else {
+                connection.boardBlob(floorId, picture.mime, picture.bytes)
+                    .onSuccess { page.send(WbPage.picture(it, picture.width, picture.height)) }
+                    .onFailure { snackbar.showSnackbar(it.message ?: "The picture couldn't be added") }
+            }
+            adding = false
+        }
+    }
+
+    Box(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Bg)) {
+        Column(Modifier.fillMaxSize().imePadding()) {
+            if (!immersive) {
+                Header(card, board, onBack, onPing = { pinging = true }, onFullscreen = if (page != null) ({ immersive = true }) else null, onShow = { onWall ->
+                    scope.launch {
+                        if (apply("Showing it on the wall", WbOps.show(if (onWall) null else cardId))) {
+                            snackbar.showSnackbar(if (onWall) "The wall shows the grid again" else "The wall shows ${card?.title?.ifBlank { null } ?: "this card"}")
+                        }
+                    }
+                })
+            }
+            if (board != null && card == null) {
+                Gone(onBack)
+                return@Column
+            }
+            if (card == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Spinner(Modifier.size(26.dp)) }
+                return@Column
+            }
+            if (page != null) {
+                key(page) {
+                    AndroidView(
+                        factory = { page.view },
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                            .onSizeChanged { widthDp = it.width / density.density }
+                            .tagged(Tags.Board.LIVE)
+                            .semantics { contentDescription = "${card.title.ifBlank { "The card" }}, live" },
+                    )
+                }
+            } else {
+                Page(
+                    floorId = floorId,
+                    card = card,
+                    board = board,
+                    since = sinceNow,
+                    renderAt = floor.renders[cardId]?.at,
+                    renderCurrent = floor.renders[cardId]?.current ?: false,
+                    renderError = floor.renders[cardId]?.error ?: floor.renderer.reason.takeIf { !floor.renderer.available },
+                    draft = draft,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onDraft = { p ->
+                        draftX = p.x
+                        draftY = p.y
+                        draftAnchor = null
+                    },
+                    onThread = { id ->
+                        focusThread = id
+                        comments = true
+                    },
+                )
+            }
+            if (draft != null) {
+                NewComment(
+                    onCancel = ::clearDraft,
+                    onSend = { text ->
+                        scope.launch {
+                            val anchor = draftAnchor?.let { runCatching { OfficeJson.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: WbOps.pointAnchor(draft)
+                            if (apply("The comment", WbOps.commentAdd(cardId, WbOps.newId("t"), WbOps.newId("m"), anchor, text))) clearDraft()
+                        }
+                    },
+                )
+            } else if (!immersive && page != null) {
+                LiveFooter(
+                    card,
+                    mode,
+                    adding,
+                    onMode = { chosenMode = it },
+                    onPicture = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onComments = {
+                        focusThread = null
+                        comments = true
+                    },
+                )
+            } else if (!immersive) {
+                Footer(card, onComments = {
+                    focusThread = null
+                    comments = true
+                })
+            }
+        }
+        if (immersive) {
+            IconButton(
+                onClick = { immersive = false },
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(40.dp)
+                    .panel(CircleShape, Palette.SurfaceHover.copy(alpha = 0.85f), Palette.BorderStrong)
+                    .tagged(Tags.Board.FULLSCREEN),
+            ) { Icon(OfficeIcons.Collapse, "Leave full screen", tint = Palette.Text) }
+            BackHandler { immersive = false }
+        }
+    }
+    HideSystemBars(immersive)
 
     if (comments && card != null) {
         CommentsSheet(
@@ -217,18 +400,82 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
             board = board,
             since = since ?: 0,
             focus = focusThread,
+            live = page != null,
             onDismiss = { comments = false },
             onReply = { thread, text -> scope.launch { apply("The reply", WbOps.commentReply(cardId, thread, WbOps.newId("m"), text)) } },
             onResolve = { thread, resolved ->
                 scope.launch { apply(if (resolved) "Reopening it" else "Resolving it", if (resolved) WbOps.commentReopen(cardId, thread) else WbOps.commentResolve(cardId, thread)) }
+            },
+            onShow = { id ->
+                comments = false
+                page?.send(WbPage.focus(id))
+            },
+            onMove = { id ->
+                comments = false
+                page?.send(WbPage.pick("thread", id))
+            },
+            onSticky = { id ->
+                comments = false
+                stickyOpen = id
+            },
+        )
+    }
+    stickyOpen?.let { id ->
+        if (card == null) return@let
+        val sticky = card.stickies.firstOrNull { it.id == id }
+        StickySheet(
+            id = id,
+            sticky = sticky,
+            canMove = page != null && !card.isCanvas,
+            onDone = { text, color ->
+                stickyOpen = null
+                val newText = text.takeIf { it != sticky?.text.orEmpty() }
+                val newColor = color.takeIf { it != (sticky?.color ?: WB_STICKY_COLORS.first()) }
+                if (newText != null || newColor != null) scope.launch { apply("The sticky note", WbOps.stickyEdit(cardId, id, newText, newColor)) }
+            },
+            onMove = {
+                stickyOpen = null
+                page?.send(WbPage.pick("sticky", id))
+            },
+            onDelete = {
+                stickyOpen = null
+                scope.launch { apply("Deleting the sticky note", WbOps.stickyRm(cardId, id)) }
             },
         )
     }
     if (pinging) PingSheet(onDismiss = { pinging = false })
 }
 
+/** Use or Mark up, a picture to add, and the comments, under the live card. */
 @Composable
-private fun Header(card: WbCard?, board: WbBoard?, onBack: () -> Unit, onPing: () -> Unit, onShow: (onWall: Boolean) -> Unit) {
+private fun LiveFooter(card: WbCard, mode: String, adding: Boolean, onMode: (String) -> Unit, onPicture: () -> Unit, onComments: () -> Unit) {
+    Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 10.dp)) {
+        val hint = when {
+            mode == MODE_USE -> "Use the card as in the office. Mark up to comment on it."
+            card.isCanvas -> "Tap to comment, long-press for a sticky note."
+            else -> "Tap to comment, long-press for a sticky note, drag to scroll."
+        }
+        Text(hint, style = MaterialTheme.typography.bodySmall, maxLines = 2, modifier = Modifier.tagged(Tags.Board.HINT))
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Use", mode == MODE_USE, { onMode(MODE_USE) }, Modifier.tagged(Tags.Board.MODE_USE))
+            Chip("Mark up", mode == MODE_MARKUP, { onMode(MODE_MARKUP) }, Modifier.tagged(Tags.Board.MODE_MARKUP))
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onPicture, enabled = !adding, modifier = Modifier.tagged(Tags.Board.ADD_PICTURE)) {
+                if (adding) Spinner(Modifier.size(18.dp)) else Icon(OfficeIcons.Picture, "Add a picture", tint = Palette.TextSecondary)
+            }
+            SecondaryButton(
+                if (card.threads.isEmpty()) "Comments" else "Comments · ${card.openThreads}",
+                onComments,
+                Modifier.height(44.dp).tagged(Tags.Board.COMMENTS),
+                icon = OfficeIcons.Comment,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Header(card: WbCard?, board: WbBoard?, onBack: () -> Unit, onPing: () -> Unit, onFullscreen: (() -> Unit)?, onShow: (onWall: Boolean) -> Unit) {
     val now = rememberNow(30_000)
     Row(
         Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -253,6 +500,9 @@ private fun Header(card: WbCard?, board: WbBoard?, onBack: () -> Unit, onPing: (
             IconButton(onClick = { onShow(onWall) }, modifier = Modifier.tagged(Tags.Board.SHOW)) {
                 Icon(OfficeIcons.Whiteboard, if (onWall) "Put the grid back on the wall" else "Show on the wall", tint = if (onWall) Palette.Accent else Palette.TextSecondary)
             }
+        }
+        if (card != null && onFullscreen != null) {
+            IconButton(onClick = onFullscreen, modifier = Modifier.tagged(Tags.Board.FULLSCREEN)) { Icon(OfficeIcons.Expand, "Full screen", tint = Palette.TextSecondary) }
         }
         IconButton(onClick = onPing, modifier = Modifier.tagged(Tags.Board.PING)) { Icon(OfficeIcons.Bell, "Ping a worker", tint = Palette.TextSecondary) }
     }
@@ -477,9 +727,13 @@ private fun CommentsSheet(
     board: WbBoard,
     since: Long,
     focus: String?,
+    live: Boolean,
     onDismiss: () -> Unit,
     onReply: (thread: String, text: String) -> Unit,
     onResolve: (thread: String, resolved: Boolean) -> Unit,
+    onShow: (id: String) -> Unit,
+    onMove: (id: String) -> Unit,
+    onSticky: (id: String) -> Unit,
 ) {
     val now = rememberNow(30_000)
     val threads = WhiteboardView.threads(card)
@@ -499,18 +753,18 @@ private fun CommentsSheet(
                 Column {
                     Eyebrow("Comments", color = Palette.Accent)
                     Text(card.title.ifBlank { "Untitled" }, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (threads.isEmpty()) Text("No comments yet. Long-press the page to start one.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+                    if (threads.isEmpty()) Text(if (live) "No comments yet. In Mark up, tap the card to start one." else "No comments yet. Long-press the page to start one.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
                 }
             }
-            items(threads, key = { it.id }) { t -> ThreadCard(t, board.threadChangedSince(t, since), now, onReply, onResolve) }
+            items(threads, key = { it.id }) { t -> ThreadCard(t, board.threadChangedSince(t, since), now, live, onReply, onResolve, onShow, onMove) }
             if (card.stickies.isNotEmpty()) {
                 item(key = "stickies") { Eyebrow("Sticky notes", Modifier.padding(top = 8.dp)) }
-                items(card.stickies, key = { "s-" + it.id }) { StickyRow(it) }
+                items(card.stickies, key = { "s-" + it.id }) { StickyRow(it) { onSticky(it.id) } }
             }
             if (card.pictures.isNotEmpty()) {
                 item(key = "pictures") {
                     Text(
-                        "${card.pictures.size} picture${if (card.pictures.size == 1) "" else "s"} on this card, drawn on the page.",
+                        "${card.pictures.size} picture${if (card.pictures.size == 1) "" else "s"} on this card${if (live) "" else ", drawn on the page"}.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 6.dp),
                     )
@@ -521,7 +775,16 @@ private fun CommentsSheet(
 }
 
 @Composable
-private fun ThreadCard(t: WbThread, changed: Boolean, now: Long, onReply: (String, String) -> Unit, onResolve: (String, Boolean) -> Unit) {
+private fun ThreadCard(
+    t: WbThread,
+    changed: Boolean,
+    now: Long,
+    live: Boolean,
+    onReply: (String, String) -> Unit,
+    onResolve: (String, Boolean) -> Unit,
+    onShow: (String) -> Unit,
+    onMove: (String) -> Unit,
+) {
     var reply by rememberSaveable(t.id) { mutableStateOf("") }
     Column(
         Modifier.fillMaxWidth()
@@ -536,6 +799,10 @@ private fun ThreadCard(t: WbThread, changed: Boolean, now: Long, onReply: (Strin
                 style = LocalOfficeType.current.eyebrow.copy(color = if (changed) Palette.Accent else Palette.TextSecondary),
                 modifier = Modifier.weight(1f),
             )
+            if (live) {
+                TextButton(onClick = { onShow(t.id) }, modifier = Modifier.tagged(Tags.Board.showThread(t.id))) { Text("Show", color = Palette.TextSecondary) }
+                TextButton(onClick = { onMove(t.id) }, modifier = Modifier.tagged(Tags.Board.moveThread(t.id))) { Text("Move", color = Palette.TextSecondary) }
+            }
             TextButton(onClick = { onResolve(t.id, t.resolved) }, modifier = Modifier.tagged(Tags.Board.resolve(t.id))) {
                 Text(if (t.resolved) "Reopen" else "Resolve", color = Palette.Accent)
             }
@@ -579,12 +846,12 @@ private fun ThreadCard(t: WbThread, changed: Boolean, now: Long, onReply: (Strin
 }
 
 @Composable
-private fun StickyRow(s: WbSticky) {
+private fun StickyRow(s: WbSticky, onOpen: () -> Unit) {
     val color = parseColor(WhiteboardView.stickyColor(s.color), Palette.Warning)
     Text(
         s.text.ifBlank { "(empty note)" },
         style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF1B1B1B)),
-        modifier = Modifier.fillMaxWidth().panel(RoundedCornerShape(8.dp), color, color).tagged(Tags.Board.sticky(s.id)).padding(12.dp),
+        modifier = Modifier.fillMaxWidth().panel(RoundedCornerShape(8.dp), color, color).clickable(onClick = onOpen).tagged(Tags.Board.sticky(s.id)).padding(12.dp),
     )
 }
 
@@ -609,4 +876,9 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 private const val MAX_ZOOM = 6f
+private const val MODE_USE = "use"
+private const val MODE_MARKUP = "markup"
+/** How long a card's same action stays quiet after its "Recorded" snackbar (ACTED_TOAST_MS). */
+private const val ACTED_TOAST_MS = 4000L
+private const val EXPIRED = "The office lost track of that change, so it wasn't saved. Try again."
 private const val WATCH = "board-card"

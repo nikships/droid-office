@@ -245,6 +245,46 @@ class WhiteboardTest {
     }
 
     @Test
+    fun capabilitiesAndTheCardsAsSentAreKeptForTheLivePage() {
+        val w = Wire()
+        w.sync.status(true)
+        w.sync.welcome("home")
+        val capped = obj(snapshot("home", "e1").toString().removeSuffix("}") + ""","caps":{"c1":"kOne","c2":7}}""")
+        w.sync.handle("whiteboard", capped)
+        var f = w.sync.floor("home")!!
+        assertEquals(mapOf("c1" to "kOne"), f.caps)
+        // Exactly as sent, fields the app doesn't model included.
+        assertEquals("true", f.cards["c1"]!!["future"]!!.jsonPrimitive.content)
+        assertEquals(setOf("c1", "c2"), f.cards.keys)
+        // A patch adds the capabilities of the cards it made.
+        w.sync.handle("whiteboard", obj("""{"t":"whiteboard","floor":"home","update":{"kind":"patch","patch":{"rev":13,"at":1,"actor":$atlas,"ops":[]}},"caps":{"c3":"kThree"}}"""))
+        assertEquals(mapOf("c1" to "kOne", "c3" to "kThree"), w.sync.floor("home")!!.caps)
+        // A snapshot from an office that sends none keeps them.
+        w.sync.handle("whiteboard", snapshot("home", "e1", rev = 13))
+        f = w.sync.floor("home")!!
+        assertEquals("kThree", f.caps["c3"])
+    }
+
+    @Test
+    fun theMarksSomeoneElseChanged() {
+        val b = decodeBoard()
+        val c1 = b.card("c1")!!
+        // Atlas replied in t2 at rev 8; everything else is the owner's.
+        assertEquals(setOf("t2"), b.changedMarks(c1, since = 5))
+        assertEquals(emptySet<String>(), b.changedMarks(c1, since = 8))
+    }
+
+    @Test
+    fun theLivePagesOpsAreTheOfficesLiterals() {
+        val anchor = obj("""{"kind":"element","point":{"x":1,"y":2},"wbId":"x"}""")
+        assertEquals(anchor, WbOps.commentAdd("c1", "t1", "m1", anchor, "Here")["anchor"])
+        assertEquals("""{"kind":"point","point":{"x":1.5,"y":2.0}}""", WbOps.pointAnchor(WbPoint(1.54, 2.0)).toString())
+        assertEquals("""{"op":"sticky.edit","card":"c1","id":"s1","text":"Hi"}""", WbOps.stickyEdit("c1", "s1", text = "Hi").toString())
+        assertEquals("""{"op":"sticky.edit","card":"c1","id":"s1","color":"blue"}""", WbOps.stickyEdit("c1", "s1", color = "blue").toString())
+        assertEquals("""{"op":"sticky.rm","card":"c1","id":"s1"}""", WbOps.stickyRm("c1", "s1").toString())
+    }
+
+    @Test
     fun rendersAndTheRendererAreKept() {
         val w = Wire()
         w.sync.status(true)

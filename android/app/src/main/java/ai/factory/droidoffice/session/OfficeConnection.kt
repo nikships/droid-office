@@ -17,6 +17,8 @@ import ai.factory.droidoffice.core.ServerMsg
 import ai.factory.droidoffice.core.TermEvent
 import ai.factory.droidoffice.core.TermFeed
 import ai.factory.droidoffice.core.TermSize
+import ai.factory.droidoffice.core.WbFetched
+import ai.factory.droidoffice.core.WbFileRef
 import ai.factory.droidoffice.core.WbFloor
 import ai.factory.droidoffice.core.WbPinged
 import ai.factory.droidoffice.core.WbRenderStatus
@@ -328,6 +330,27 @@ class OfficeConnection(
     suspend fun boardImage(floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? {
         val (base, auth) = current ?: return null
         return api.boardImage(base, auth, floor, card, thumb, tile, version)
+    }
+
+    /** Sends a batch; [done] runs on the main thread once the office has committed it or said why not. */
+    fun applyBoard(floorId: String, ops: List<JsonObject>, done: (WbResult) -> Unit) = whiteboard.apply(floorId, ops, done)
+
+    /** A file of a live card's page, on the route the app uses now. Blocking: the WebView asks on its own thread. */
+    fun cardFile(cap: String, path: String): WbFetched? {
+        val (base, _) = current ?: return null
+        return api.cardFile(base, cap, path)
+    }
+
+    /** A picture on a card, by hash. Blocking, like [cardFile]. */
+    fun boardFile(floor: String, card: String, hash: String): WbFetched? {
+        val (base, auth) = current ?: return null
+        return api.boardFile(base, auth, floor, card, hash)
+    }
+
+    /** Uploads a picture for the board; the batch that puts it on a card has to follow within the hour. */
+    suspend fun boardBlob(floor: String, mime: String, bytes: ByteArray): Result<WbFileRef> {
+        val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        return api.boardBlob(base, auth, floor, mime, bytes)
     }
 
     private fun newWhiteboard() = WhiteboardSync(::send).also { s ->

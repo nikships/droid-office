@@ -1,0 +1,170 @@
+/* The card surface, after the office window's .wb-* rules in src/client/style.css. */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+}
+
+:root {
+  --accent: #ee6018;
+  --info: #3b82f6;
+  --unzoom: 1;
+  --font-sans: 'Geist', system-ui, sans-serif;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #1a1a1a;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  font-family: var(--font-sans);
+}
+html.canvas, html.canvas body { background: #141414; }
+
+/* An artifact: the frame scrolls itself, so the host page never does. */
+html.html, html.html body { overflow: hidden; }
+
+#board { position: relative; }
+
+.page { position: relative; width: 1280px; overflow: hidden; background: #fff; }
+.frame { position: absolute; left: 0; top: 0; display: block; width: 1280px; border: 0; background: #fff; }
+.frame.incoming { visibility: hidden; }
+
+/* Mark up: one finger is the board's (tap to comment, hold for a sticky, drag to scroll); two pinch and pan. */
+.catcher { position: absolute; inset: 0; z-index: 1; display: none; touch-action: pinch-zoom; }
+.markup .catcher, .picking .catcher { display: block; }
+
+.marks { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2; pointer-events: none; }
+.marks > * { pointer-events: auto; }
+
+.canvas-stage {
+  position: relative;
+  background-color: #141414;
+  background-image: radial-gradient(rgba(255, 255, 255, .1) 1px, transparent 1.5px);
+  background-size: 24px 24px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Pictures under stickies under pins, as the office paints them. */
+.picture { z-index: 1; }
+.sticky { z-index: 2; }
+.pin { z-index: 3; }
+
+.pin {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  transform: translate(0, -100%) scale(var(--unzoom));
+  transform-origin: 0 100%;
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  background: var(--accent);
+  color: #fff;
+  font: 600 12px/24px var(--font-sans);
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+  touch-action: manipulation;
+}
+.pin::after { content: ''; position: absolute; right: -4px; top: -4px; width: 9px; height: 9px; border-radius: 50%; background: var(--who, #fff); border: 1px solid rgba(0, 0, 0, .45); }
+.pin.resolved { background: #6b6b6b; opacity: .75; }
+.pin.detached { border-style: dashed; opacity: .6; }
+.pin.changed { box-shadow: 0 0 0 4px rgba(238, 96, 24, .45), 0 2px 6px rgba(0, 0, 0, .4); }
+.pin.on { background: var(--info); }
+.pin.draft { background: #fff; border-color: var(--accent); color: var(--accent); }
+
+.sticky {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 2px;
+  background: var(--sticky, #ffd866);
+  color: #232323;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .2);
+  font: 400 15px/1.4 var(--font-sans);
+  touch-action: pinch-zoom;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sticky-bar { flex: none; display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 8px; font-size: 11px; color: rgba(0, 0, 0, .55); overflow: hidden; white-space: nowrap; }
+.sticky-bar .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .3); }
+.sticky-bar .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sticky-text { flex: 1; min-height: 0; padding: 0 8px 8px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sticky-text.blank::before { content: 'Tap to write'; color: rgba(0, 0, 0, .4); }
+
+.picture { position: absolute; box-shadow: 0 6px 16px rgba(0, 0, 0, .3); background: rgba(255, 255, 255, .6); touch-action: pinch-zoom; }
+.picture img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-select: none; pointer-events: none; }
+
+.resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  transform: scale(var(--unzoom));
+  transform-origin: 100% 100%;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, .3) 50%);
+  touch-action: none;
+}
+
+.mark-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  transform: scale(var(--unzoom));
+  transform-origin: 100% 0;
+  border: 0;
+  border-radius: 0 0 0 6px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font: 400 13px/24px var(--font-sans);
+  text-align: center;
+}
+
+.dragging { opacity: .85; box-shadow: 0 12px 28px rgba(0, 0, 0, .4); }
+.sticky.detached, .picture.detached { opacity: .6; outline: 2px dashed rgba(239, 68, 68, .8); outline-offset: 2px; }
+.sticky.changed, .picture.changed { outline: 3px solid rgba(238, 96, 24, .7); outline-offset: 2px; }
+.flash { animation: flash .7s ease-in-out 2; }
+@keyframes flash { 50% { filter: brightness(1.35); transform-origin: 0 100%; } }
+
+.ghost { position: absolute; border: 2px dashed var(--accent); background: rgba(255, 216, 102, .35); pointer-events: none !important; }
+
+/* Over the frame while it loads, and the reload banner: sized for the phone, whatever the zoom. */
+.placeholder, .banner {
+  position: fixed;
+  left: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  width: 1280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(10px * var(--unzoom));
+  color: #d4d4d4;
+  font: 400 calc(14px * var(--unzoom))/1.4 var(--font-sans);
+}
+.placeholder { top: 0; bottom: 0; flex-direction: column; background: #1a1a1a; }
+.placeholder small { color: #8c8c8c; font-size: calc(12px * var(--unzoom)); }
+.banner { top: 0; padding: calc(8px * var(--unzoom)); background: rgba(20, 20, 20, .92); border-bottom: 1px solid #333; }
+.banner button { font: inherit; color: #fff; background: #333; border: 1px solid #555; border-radius: calc(6px * var(--unzoom)); padding: calc(4px * var(--unzoom)) calc(10px * var(--unzoom)); }
+.hidden { display: none !important; }
+.spinner {
+  width: calc(22px * var(--unzoom));
+  height: calc(22px * var(--unzoom));
+  border: calc(2px * var(--unzoom)) solid rgba(255, 255, 255, .2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
