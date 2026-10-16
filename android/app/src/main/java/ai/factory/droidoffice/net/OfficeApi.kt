@@ -3,6 +3,9 @@ package ai.factory.droidoffice.net
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.Probe
+import ai.factory.droidoffice.core.WbFetched
+import ai.factory.droidoffice.core.WbFileRef
+import ai.factory.droidoffice.core.WbRenderStatus
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +177,72 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         runCatching { client.newCall(request(base, "api/prompt/image", auth).url(url).delete().build()).await().close() }
     }
 
+    /** A Whiteboard card's latest image size, tiles and canvas origin (GET /api/whiteboard/render/status). */
+    suspend fun boardRenderStatus(base: String, auth: OfficeAuth, floor: String, card: String): WbRenderStatus? = withContext(Dispatchers.IO) {
+        val req = request(base, "api/whiteboard/render/status", auth, "floor" to floor, "card" to card).get().build()
+        try {
+            client.newCall(req).await().use { res ->
+                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<WbRenderStatus>(res.body.string()) }.getOrNull()
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /**
+     * A card's latest image as PNG bytes (GET /api/whiteboard/render): its grid thumbnail, or one tile
+     * of the full page. [version] is the render's time, so a newer render is never served from a cache.
+     */
+    suspend fun boardImage(base: String, auth: OfficeAuth, floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? = withContext(Dispatchers.IO) {
+        val req = request(
+            base, "api/whiteboard/render", auth,
+            "floor" to floor, "card" to card, "size" to if (thumb) "thumb" else "full", "tile" to "$tile", "v" to "$version",
+        ).get().build()
+        try {
+            client.newCall(req).await().use { res -> if (res.isSuccessful) res.body.bytes() else null }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /**
+     * A card's file for the live card page (GET /whiteboard/c/<cap>/<path>, [path] still
+     * percent-encoded). The capability is its only credential, so no auth goes with it. Blocking: the
+     * WebView asks on its own thread.
+     */
+    fun cardFile(base: String, cap: String, path: String): WbFetched? {
+        val url = base.toHttpUrl().newBuilder().addPathSegments("whiteboard/c").addPathSegment(cap).apply { if (path.isNotEmpty()) addEncodedPathSegments(path) }.build()
+        return fetch(Request.Builder().url(url).get().build())
+    }
+
+    /** A picture a card holds, by hash (GET /api/whiteboard/file), with the office's auth. Blocking. */
+    fun boardFile(base: String, auth: OfficeAuth, floor: String, card: String, hash: String): WbFetched? =
+        fetch(request(base, "api/whiteboard/file", auth, "floor" to floor, "card" to card, "hash" to hash).get().build())
+
+    /** Uploads a picture for a batch that puts it on the board (POST /api/whiteboard/blob): its FileRef, or why not. */
+    suspend fun boardBlob(base: String, auth: OfficeAuth, floor: String, mime: String, bytes: ByteArray): Result<WbFileRef> = withContext(Dispatchers.IO) {
+        val req = request(base, "api/whiteboard/blob", auth, "floor" to floor, "mime" to mime).post(bytes.toRequestBody(mime.toMediaType())).build()
+        try {
+            client.newCall(req).await().use { res ->
+                val text = res.body.string()
+                val ref = if (res.isSuccessful) runCatching { OfficeJson.decodeFromString<WbFileRef>(text) }.getOrNull()?.takeIf { it.hash.isNotEmpty() } else null
+                val error = runCatching { (OfficeJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject)?.get("error") as? kotlinx.serialization.json.JsonPrimitive }.getOrNull()?.content
+                if (ref != null) Result.success(ref) else Result.failure(IOException(error ?: "The office answered ${res.code}"))
+            }
+        } catch (e: IOException) {
+            Result.failure(e)
+        }
+    }
+
+    private fun fetch(req: Request): WbFetched? = try {
+        client.newCall(req).execute().use { res ->
+            val headers = res.headers.names().associate { it.lowercase() to res.headers[it].orEmpty() }
+            WbFetched(res.code, res.header("Content-Type"), headers, res.body.bytes())
+        }
+    } catch (_: IOException) {
+        null
+    }
+
     fun socket(base: String, auth: OfficeAuth, floor: String?, name: String, listener: WebSocketListener): WebSocket {
         val http = base.toHttpUrl().newBuilder().addPathSegment("ws").apply {
             if (!floor.isNullOrBlank()) addQueryParameter("floor", floor)
@@ -185,8 +254,9 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         return client.newWebSocket(builder.build(), listener)
     }
 
-    private fun request(base: String, path: String, auth: OfficeAuth): Request.Builder {
+    private fun request(base: String, path: String, auth: OfficeAuth, vararg query: Pair<String, String>): Request.Builder {
         val url: HttpUrl = base.toHttpUrl().newBuilder().addPathSegments(path).apply {
+            for ((k, v) in query) addQueryParameter(k, v)
             if (auth is OfficeAuth.Lan) addQueryParameter("t", auth.token)
         }.build()
         return Request.Builder().url(url).header("Origin", base).apply {

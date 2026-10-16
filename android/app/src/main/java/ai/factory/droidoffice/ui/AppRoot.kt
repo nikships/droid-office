@@ -73,6 +73,8 @@ import ai.factory.droidoffice.notify.Banner
 import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.WhiteboardPing
+import ai.factory.droidoffice.ui.board.BoardCardScreen
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.LocalOpenUpdates
 import ai.factory.droidoffice.ui.components.UpdateDialog
@@ -105,6 +107,7 @@ sealed interface Incoming {
 @Serializable data object HomeKey : NavKey
 @Serializable data class WorkerKey(val id: String, val draft: String? = null) : NavKey
 @Serializable data object OfficesKey : NavKey
+@Serializable data class BoardCardKey(val floor: String, val card: String) : NavKey
 
 val LocalGraph = staticCompositionLocalOf<AppGraph> { error("no graph") }
 val LocalSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("no snackbar") }
@@ -200,7 +203,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
     // Unpaired while looking at a worker: back to the office screen, which offers to pair again.
     val link by graph.connection.link.collectAsStateWithLifecycle()
     LaunchedEffect(link.phase) {
-        if (link.phase == Phase.Unauthorized && nav.contains { it is WorkerKey }) nav.home()
+        if (link.phase == Phase.Unauthorized && nav.contains { it is WorkerKey || it is BoardCardKey }) nav.home()
     }
 
     // The office's own toasts, as snackbars.
@@ -209,6 +212,14 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
             // A newer toast replaces an older one, but not a message with something to tap.
             snackbar.currentSnackbarData?.takeIf { it.visuals.actionLabel == null }?.dismiss()
             launch { snackbar.showSnackbar(t.text, withDismissAction = t.level != "info") }
+        }
+    }
+
+    // How a Whiteboard ping went, from whichever screen sent it.
+    LaunchedEffect(Unit) {
+        graph.connection.pinged.collect { p ->
+            val name = graph.connection.data.value.workers[p.worker]?.name?.ifBlank { null } ?: "The worker"
+            launch { snackbar.showSnackbar(if (p.ok) WhiteboardPing.outcome(name, p.how) else p.error ?: "Couldn't ping $name", withDismissAction = !p.ok) }
         }
     }
 
@@ -259,11 +270,15 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                     entry<HomeKey> {
                         MainTabs(
                             onOpenWorker = { id, draft -> nav.push(WorkerKey(id, draft)) },
+                            onOpenCard = { floor, card -> nav.push(BoardCardKey(floor, card)) },
                             onScan = { nav.push(ScanKey) },
                         )
                     }
                     entry<WorkerKey> { key ->
                         WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft)
+                    }
+                    entry<BoardCardKey> { key ->
+                        BoardCardScreen(floorId = key.floor, cardId = key.card, onBack = { nav.pop() })
                     }
                     entry<OfficesKey> {
                         OfficesScreen(onBack = { nav.pop() }, onPairNew = { nav.push(ScanKey) }, onSwitched = { nav.home() })

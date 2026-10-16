@@ -117,10 +117,15 @@ export class PlayerController {
   rig: ((dt: number) => void) | null = null;
   /** A click (not a drag) on the scene, at the crosshair. */
   onClick: (() => void) | null = null;
+  /** A held primary action, when the scene consumes it instead of an ordinary click. */
+  onPress: (() => boolean) | null = null;
+  onRelease: (() => void) | null = null;
+  onCancelPress: (() => void) | null = null;
+  private pressed = false;
   /** Pointer input actually changed the camera, not just a cursor hovering over the page. */
   onLook: (() => void) | null = null;
   private keys = new Set<string>();
-  private drag: { x: number; y: number; moved: number } | null = null;
+  private drag: { x: number; y: number; moved: number; button: number } | null = null;
   /** Set when this browser won't lock the pointer; looking around falls back to drag-to-look. */
   private lockFailed = false;
   private lockPending = false;
@@ -157,7 +162,14 @@ export class PlayerController {
   private lockRaw = false;
   /** The last lock request returned a promise: its rejection, not pointerlockerror, says what to do, in either order. */
   private lockPromised = false;
-  enabled = true;
+  private controlsEnabled = true;
+  get enabled(): boolean {
+    return this.controlsEnabled;
+  }
+  set enabled(value: boolean) {
+    this.controlsEnabled = value;
+    if (!value) this.cancelPress();
+  }
   /** False while the mouse picks something else (an emote on the wheel), so it doesn't turn the camera. */
   mouseLook = true;
 
@@ -175,12 +187,22 @@ export class PlayerController {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
+      this.cancelPress();
+      this.drag = null;
       this.keys.clear();
       this.escDownAt = 0;
       this.lockOnEscUp = false;
     });
     // Captured, since the window an Esc closes stops it going any further.
-    window.addEventListener('keydown', (e) => e.key === 'Escape' && (this.escDownAt = performance.now()), true);
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key !== 'Escape') return;
+        this.escDownAt = performance.now();
+        this.cancelPress();
+      },
+      true,
+    );
     window.addEventListener(
       'keyup',
       (e) => {
@@ -199,22 +221,38 @@ export class PlayerController {
 
     dom.addEventListener('pointerdown', (e) => {
       if (!this.enabled) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (e.pointerType === 'mouse' && !this.lockFailed) {
         if (this.locked) {
-          if (e.button === 0) this.onClick?.();
+          if (!this.pressed && !(this.pressed = this.onPress?.() ?? false)) this.onClick?.();
           return;
         }
         this.lock();
       }
       // Drag to look around, without pointer lock.
-      this.drag = { x: e.clientX, y: e.clientY, moved: 0 };
+      this.drag = { x: e.clientX, y: e.clientY, moved: 0, button: e.button };
+      if (!this.lockPending && (e.pointerType !== 'mouse' || this.lockFailed)) this.pressed = this.onPress?.() ?? false;
     });
     window.addEventListener('pointerup', (e) => {
+      if (e.button !== 0 && e.button !== undefined) return;
       const d = this.drag;
       this.drag = null;
+      if (this.pressed) {
+        this.pressed = false;
+        if (this.enabled && (this.locked || e.target === dom)) this.onRelease?.();
+        else this.onCancelPress?.();
+        return;
+      }
       // A click that captured the mouse is not also a click on the world.
-      if (!d || d.moved > 5 || !this.enabled || this.locked || this.lockPending || e.target !== dom) return;
+      if (!d || d.button !== e.button || d.moved > 5 || !this.enabled || this.locked || this.lockPending || e.target !== dom) return;
       this.onClick?.();
+    });
+    dom.addEventListener('pointercancel', () => {
+      this.cancelPress();
+      this.drag = null;
+    });
+    dom.addEventListener('contextmenu', (e) => {
+      if (this.enabled) e.preventDefault();
     });
     window.addEventListener('pointermove', (e) => {
       const now = performance.now();
@@ -243,6 +281,7 @@ export class PlayerController {
     document.addEventListener('pointerlockchange', () => {
       this.lockPending = false;
       if (!this.locked) {
+        this.cancelPress();
         this.letGo = this.letting;
         this.letting = false;
         const again = this.lockAfter && this.enabled && this.canLock;
@@ -268,6 +307,12 @@ export class PlayerController {
 
   get locked(): boolean {
     return document.pointerLockElement === this.dom;
+  }
+
+  private cancelPress() {
+    if (!this.pressed) return;
+    this.pressed = false;
+    this.onCancelPress?.();
   }
 
   /** Whether the mouse is captured and staying so: not while it's being let go of for a window. */

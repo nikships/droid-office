@@ -383,8 +383,8 @@ export class Hands {
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
-  fireGun() {
-    this.gun?.muzzle.fire();
+  fireGun(superShot = false) {
+    this.gun?.muzzle.fire(superShot);
   }
 
   private arm(side: 1 | -1): Arm {

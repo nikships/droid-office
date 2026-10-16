@@ -68,9 +68,11 @@ import { TeamLines, type TeamLink } from './world/team-lines';
 import { teamSummary } from '../shared/team';
 import { BloodSpray, gunHit, Puff, setMagnumModel } from './world/gun';
 import { GUN_TRICKS, GunMotion, type GunCue, type GunTrickId } from './world/gun-motion';
-import { type Sidearm, SPELL_CONFETTI, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
+import { type Sidearm, SPELL_CONFETTI, SPELL_SUPER, SPELL_TIP, SpellBolt, SpellImpact, Sparkles, TipTrail, setWandModel } from './world/wand';
 import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
 import { protegoWorkers, wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
+import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
+import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -583,6 +585,54 @@ let drawnArm: Sidearm = settings.sidearm;
 const gunMotion = new GunMotion();
 /** The wand's draw, casts and spells, played on your hands. */
 const wandMotion = new WandMotion();
+const shotCharge = new SidearmCharge();
+/** The same charge, under the finger on the Mac's trackpad; silent where there is none (see haptics.ts). */
+const chargeHaptics = new ChargeHaptics();
+let stopChargeSound: (() => void) | null = null;
+let chargeReady = false;
+const chargeLabel = h('span', {}, 'Charging');
+const chargeHud = h('div.shot-charge.hidden', { role: 'progressbar', 'aria-label': 'Shot charge', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('div.shot-charge-ring'), chargeLabel);
+document.body.append(chargeHud);
+
+function clearChargeFeedback() {
+  stopChargeSound?.();
+  stopChargeSound = null;
+  chargeReady = false;
+  chargeHaptics.reset();
+  chargeHud.classList.add('hidden');
+}
+
+function cancelShotCharge() {
+  shotCharge.cancel();
+  clearChargeFeedback();
+  gunMotion.cancelCharge();
+  wandMotion.cancelCharge();
+}
+
+function updateShotCharge(now: number) {
+  if (!shotCharge.held) return;
+  if (!gunOut || !player.enabled || modalOpen() || emoteWheel.isOpen) return cancelShotCharge();
+  if (shotCharge.elapsed(now) < SHOT_CHARGE_PREVIEW_MS) return;
+  const progress = shotCharge.progress(now);
+  chargeHaptics.charge(progress);
+  if (!stopChargeSound) stopChargeSound = sound.sidearmCharge(drawnArm === 'wand');
+  if (drawnArm === 'wand') wandMotion.charge(progress);
+  else gunMotion.charge(progress);
+  chargeHud.classList.remove('hidden');
+  chargeHud.classList.toggle('charged', progress === 1);
+  chargeHud.style.setProperty('--charge-angle', `${progress * 360}deg`);
+  chargeHud.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+  chargeLabel.textContent = progress === 1 ? 'Charged · release' : 'Charging';
+  if (progress === 1 && !chargeReady) {
+    chargeReady = true;
+    chargeHaptics.charged();
+    if (drawnArm === 'wand') sound.wandCue('ready');
+    else sound.gunCue('cock');
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) cancelShotCharge();
+});
 /** Lock the intended worker at the start; aim and reach must still agree when the magic lands. */
 let wandRecipient: { spell: 'ship' | 'leviosa'; id: string } | null = null;
 const lastWandShip = new Map<string, number>();
@@ -623,6 +673,7 @@ function toggleGun() {
 
 /** Both straight away, no move: what's in your hand is gone this frame. */
 function stowArms() {
+  cancelShotCharge();
   wandRecipient = null;
   gunMotion.stow();
   wandMotion.stow();
@@ -631,6 +682,7 @@ function stowArms() {
 
 /** The gun back in its holster (the wand put away): with a move, or `quiet`ly straight away when your hands are needed. */
 function holsterGun(quiet = false) {
+  cancelShotCharge();
   // Even on its way back in: something else wants your hands now.
   if (quiet) stowArms();
   if (!gunOut) return;
@@ -645,10 +697,12 @@ function holsterGun(quiet = false) {
 
 /** 1–6 with the gun out: a trick in place of an emote; with the wand, a spell. As many as you like, each from the top. */
 function gunTrick(id: GunTrickId) {
+  cancelShotCharge();
   if (!gunMotion.trick(id)) return;
   hintKey = 'stale';
 }
 function wandSpell(id: WandSpellId) {
+  cancelShotCharge();
   if (!wandMotion.spell(id)) return;
   wandRecipient = null;
   if (id === 'ship' || id === 'leviosa') {
@@ -756,7 +810,8 @@ function wandCues(cues: readonly WandCue[]) {
     const tip = wandTipAt(tipWorld);
     switch (cue) {
       case 'release':
-        if (tip) castBolt(tip);
+      case 'superRelease':
+        if (tip) castBolt(tip, cue === 'superRelease');
         break;
       case 'lumos':
         setLumos(!lumos);
@@ -801,26 +856,28 @@ function addEffect(effect: (typeof puffs)[number]) {
 }
 
 /** A click with the gun (or the wand) out: fire at what's under the crosshair, or flick the wand at it. */
-function fireGun() {
+function fireGun(superShot = false) {
+  chargeHaptics.release(superShot);
   if (drawnArm === 'wand') {
-    // The bolt leaves on the flick's release cue, a tenth of a second on (see wandCues).
-    if (wandMotion.cast()) {
+    // The bolt leaves on the gesture's release cue (see wandCues).
+    if (wandMotion.cast(superShot)) {
       wandRecipient = null;
       hintKey = 'stale';
     }
     return;
   }
-  gunMotion.fire();
-  hands.fireGun();
-  me.fire();
-  sound.gunshot();
+  gunMotion.fire(superShot);
+  hands.fireGun(superShot);
+  me.fire(superShot);
+  sound.gunshot(superShot);
   // One shell of kick up the camera.
-  if (!reduceMotion.matches) thud = Math.max(thud, 0.4);
+  if (!reduceMotion.matches) thud = Math.max(thud, superShot ? 0.72 : 0.4);
   // Smoke curling off the muzzle.
   const tip = muzzleAt(new THREE.Vector3());
   if (tip) {
     const at = tip.clone();
-    for (let i = 0; i < 2; i++) {
+    if (superShot) addEffect(new Sparkles(tip, camera.getWorldDirection(blowDir), { colors: ['#fff3d8', '#ffc16b', '#ff8533'], count: 12, speed: 2.2, size: 0.009, seconds: 0.3, lift: -1.8 }));
+    for (let i = 0; i < (superShot ? 6 : 2); i++) {
       at.x += (Math.random() - 0.5) * 0.05;
       at.y += Math.random() * 0.04;
       at.z += (Math.random() - 0.5) * 0.05;
@@ -829,7 +886,7 @@ function fireGun() {
   }
   raycaster.setFromCamera(CROSSHAIR, camera);
   const result = aimedShot();
-  landShot(result, raycaster.ray.direction.clone());
+  landShot(result, raycaster.ray.direction.clone(), superShot);
 }
 
 /**
@@ -837,16 +894,16 @@ function fireGun() {
  * gets there (BOLT_SPEED), where it does what a shot does (landShot). A miss off into the distance
  * just flies out of sight.
  */
-function castBolt(tip: THREE.Vector3) {
+function castBolt(tip: THREE.Vector3, superShot: boolean) {
   if (upTop) return;
   raycaster.setFromCamera(CROSSHAIR, camera);
   const result = aimedShot();
   const direction = raycaster.ray.direction.clone();
   const to = result?.hit.point.clone() ?? raycaster.ray.at(40, new THREE.Vector3());
-  addEffect(new SpellBolt(tip, to, () => result && landShot(result, direction)));
-  addEffect(new Sparkles(tip, direction, { colors: SPELL_TIP, count: 9, speed: 0.6, size: 0.012, seconds: 0.45, lift: 0.2 }));
+  addEffect(new SpellBolt(tip, to, () => result && landShot(result, direction, superShot), superShot));
+  addEffect(new Sparkles(tip, direction, { colors: superShot ? SPELL_SUPER : SPELL_TIP, count: superShot ? 24 : 9, speed: superShot ? 1.1 : 0.6, size: superShot ? 0.018 : 0.012, seconds: superShot ? 0.65 : 0.45, lift: 0.2 }));
   // A spell barely nudges the camera.
-  if (!reduceMotion.matches) thud = Math.max(thud, 0.08);
+  if (!reduceMotion.matches) thud = Math.max(thud, superShot ? 0.2 : 0.08);
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -865,14 +922,15 @@ function aimedShot(): ReturnType<typeof gunHit> {
 }
 
 /** Where a shot strikes something that isn't a worker: dust and a crack, or a spell's mark fizzling out. */
-function missAt(hit: THREE.Intersection) {
+function missAt(hit: THREE.Intersection, superShot: boolean) {
   const normal = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? null;
   if (wandOut()) {
-    addEffect(new SpellImpact(hit.point, normal, false));
-    sound.fizzle(hit.point);
+    addEffect(new SpellImpact(hit.point, normal, false, superShot));
+    sound.fizzle(hit.point, superShot);
     return;
   }
   addEffect(new Puff(hit.point, normal));
+  if (superShot) addEffect(new Sparkles(hit.point, normal, { colors: ['#ffd497', '#ff8533'], count: 15, speed: 2, size: 0.012, seconds: 0.4, lift: -2 }));
   sound.impact(hit.point);
 }
 
@@ -882,29 +940,30 @@ function missAt(hit: THREE.Intersection) {
  * the wound with a wet smack (or the pinwheel flashes out on it in a burst of sparks, with the
  * wand) and is shot: the server starts its revival window (worker.shoot) and every client on the
  * floor sees it go down, its session still running. Shooting it again while it's down confirms the
- * kill. An interactive surface instead opens its UI, without a reach limit.
+ * kill; a super shot skips the revival window. An interactive surface instead opens its UI,
+ * without a reach limit.
  */
-function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
+function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3, superShot: boolean) {
   if (result?.laptopWorkerId) return openWorkerTerminal(result.laptopWorkerId);
   if (result?.hit.object === office.bossScreen) return openOfficeShell(net);
   if (result?.interactable && openPane(result.interactable, runUnder({ it: result.interactable, hit: result.hit }))) return;
   const hit = result?.hit;
   const workerId = result?.workerId ?? null;
   if (!hit || workerId === null) {
-    if (hit) missAt(hit);
+    if (hit) missAt(hit, superShot);
     return;
   }
   // A guest isn't the office's to shoot, nor is a cloud worker on its Factory computer: the round goes into its chair like a miss.
   const target = store.workers.get(workerId);
   if (target?.guest || target?.cloud) {
-    missAt(hit);
+    missAt(hit, superShot);
     hintToast(target.cloud ? `${target.name} works on ${cloudBadge(target.cloud)}: there's nobody really at this desk ${arms().target}` : `${target.name} is a guest from outside the office: the office leaves it alone`, 'info');
     return;
   }
   const out = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : direction.clone().negate();
   if (wandOut()) {
-    addEffect(new SpellImpact(hit.point, out, true));
-    sound.spellHit(hit.point);
+    addEffect(new SpellImpact(hit.point, out, true, superShot));
+    sound.spellHit(hit.point, superShot);
   } else {
     addEffect(new BloodSpray(hit.point, out, direction));
     sound.hit(hit.point);
@@ -914,7 +973,7 @@ function landShot(result: ReturnType<typeof gunHit>, direction: THREE.Vector3) {
   const desk = v ? office.desks.get(v.deskId) : undefined;
   if (!v || !w || !desk) return;
   // A second shot at a body on the floor confirms the kill: the server dismisses it now and the body ascends.
-  net.send({ t: 'worker.shoot', workerId });
+  net.send({ t: 'worker.shoot', workerId, superShot });
 }
 
 /** Walk up to a body to revive it; the gun can stay drawn. */
@@ -2833,8 +2892,8 @@ function renderGunHint(el: HTMLElement) {
   if (k === hintKey) return;
   hintKey = k;
   const a = arms();
-  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? `${a.name} · 💡 Lumos` : a.name;
-  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
+  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? '🪄 Wand · 💡 Lumos' : a.name;
+  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('Hold', 'Charge'), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
   el.classList.remove('hidden');
 }
 /** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
@@ -3188,14 +3247,25 @@ let aimedRun: number | undefined;
 /** The tab or Jira card on the issues board under the crosshair. */
 let aimedSpot: BoardSpot | null = null;
 
+player.onPress = () => {
+  if (modalOpen() || emoteWheel.isOpen || !gunOut) return false;
+  shotCharge.begin(performance.now());
+  renderWake();
+  return true;
+};
+player.onRelease = () => {
+  const shot = shotCharge.release(performance.now());
+  clearChargeFeedback();
+  if (!shot || !gunOut || modalOpen() || emoteWheel.isOpen) return cancelShotCharge();
+  fireGun(shot.superShot);
+};
+player.onCancelPress = cancelShotCharge;
+
 player.onClick = () => {
   if (modalOpen()) return;
   if (emoteWheel.isOpen) return emoteWheel.click();
-  // The gun out: a click fires at what's under the crosshair.
-  if (gunOut) {
-    fireGun();
-    return;
-  }
+  // Armed primary input fires on release instead.
+  if (gunOut) return;
   if (hanger.active) {
     reach();
     hanger.place();
@@ -3617,6 +3687,7 @@ function sceneMotion(): SceneMotion {
     !!errand ||
     !!gunMotion.doing ||
     !!wandMotion.doing ||
+    shotCharge.held ||
     !!me.emoteId ||
     readingNow() ||
     now < lookedUntil;
@@ -3739,6 +3810,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     holsterGun(true);
     toggleGun();
   }
+  updateShotCharge(now);
   const gunCuesNow = gunMotion.update(dt);
   const wandCuesNow = wandMotion.update(dt);
   me.setGunPose(gunMotion.pose);

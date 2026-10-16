@@ -22,7 +22,7 @@ test('releases retain Mac app packaging and checkout startup checks, but no serv
 });
 
 test('installation guidance points to the Mac release and keeps source development available', () => {
-  for (const file of ['README.md', 'docs/guide.md']) {
+  for (const file of ['README.md', 'docs/guide/getting-started.md']) {
     const text = read(file);
     assert.match(text, /only supported production install/);
     assert.match(text, /Droid-Office-<version>-arm64\.dmg/);

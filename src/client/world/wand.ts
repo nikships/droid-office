@@ -280,6 +280,8 @@ export const SPELL_HIT = ['#ffffff', ORANGE, ORANGE_HOT, '#ffd8c2', WHITE];
 export const SPELL_MISS = [ORANGE, '#8c8c8c', '#ffffff'];
 /** Sparks shaken off the tip as it casts. */
 export const SPELL_TIP = ['#ffffff', ORANGE_HOT, ORANGE];
+/** A super cast burns pale gold instead of the ordinary orange. */
+export const SPELL_SUPER = ['#ffffff', '#fff0bd', '#ffc16b', ORANGE_HOT];
 /** Ship it's confetti: Factory's oranges, white and steel. */
 export const SPELL_CONFETTI = [ORANGE, ORANGE_HOT, ORANGE_DEEP, WHITE, '#ffffff', '#8c8c8c'];
 
@@ -366,23 +368,31 @@ export class SpellBolt {
   private streak: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private dir: THREE.Vector3;
   private at = new THREE.Vector3();
+  private across = new THREE.Vector3();
+  private up = new THREE.Vector3();
 
   constructor(
     from: THREE.Vector3,
     to: THREE.Vector3,
     private onLand?: () => void,
+    private superShot = false,
   ) {
     this.from = from.clone();
     this.to = to.clone();
     const length = from.distanceTo(to);
     this.seconds = Math.min(BOLT_MAX, Math.max(0.03, length / BOLT_SPEED));
     this.dir = to.clone().sub(from).normalize();
-    this.bloom = glowSprite(ORANGE, 0.16, 0.95);
-    this.head = glowSprite('#ffffff', 0.055, 1);
-    for (let i = 0; i < TAIL; i++) this.tail.push(glowSprite(i % 3 ? ORANGE : ORANGE_HOT, 0.09 * (1 - i / TAIL) + 0.012, 0.8 * (1 - i / TAIL)));
+    this.across.crossVectors(this.dir, Math.abs(this.dir.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
+    this.up.crossVectors(this.across, this.dir).normalize();
+    this.bloom = glowSprite(superShot ? '#ffc16b' : ORANGE, superShot ? 0.32 : 0.16, 0.95);
+    this.head = glowSprite('#ffffff', superShot ? 0.095 : 0.055, 1);
+    for (let i = 0; i < TAIL * (superShot ? 2 : 1); i++) {
+      const p = (i % TAIL) / TAIL;
+      this.tail.push(glowSprite(superShot ? SPELL_SUPER[i % SPELL_SUPER.length] : i % 3 ? ORANGE : ORANGE_HOT, (superShot ? 0.12 : 0.09) * (1 - p) + 0.012, 0.8 * (1 - p)));
+    }
     this.streak = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0035, 0.0035, 1, 5).rotateX(Math.PI / 2).translate(0, 0, -0.5),
-      new THREE.MeshBasicMaterial({ color: ORANGE_HOT, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
+      new THREE.CylinderGeometry(superShot ? 0.008 : 0.0035, superShot ? 0.008 : 0.0035, 1, 5).rotateX(Math.PI / 2).translate(0, 0, -0.5),
+      new THREE.MeshBasicMaterial({ color: superShot ? '#fff0bd' : ORANGE_HOT, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
     );
     this.group.add(this.streak, ...this.tail, this.bloom, this.head);
     this.place(0);
@@ -409,7 +419,7 @@ export class SpellBolt {
     this.head.material.opacity = 0;
     this.bloom.material.opacity = 0.95 * k * k;
     this.streak.material.opacity = 0.85 * k;
-    for (const [i, s] of this.tail.entries()) s.material.opacity = 0.8 * (1 - i / TAIL) * k;
+    for (const [i, s] of this.tail.entries()) s.material.opacity = 0.8 * (1 - (i % TAIL) / TAIL) * k;
     return k > 0;
   }
 
@@ -422,7 +432,16 @@ export class SpellBolt {
     this.bloom.position.copy(this.at);
     this.bloom.material.rotation = this.t * 9;
     const tailLen = Math.min(travelled, 0.9);
-    for (const [i, s] of this.tail.entries()) s.position.copy(this.at).addScaledVector(this.dir, -(tailLen * i) / TAIL);
+    for (const [i, s] of this.tail.entries()) {
+      const p = (i % TAIL) / TAIL;
+      s.position.copy(this.at).addScaledVector(this.dir, -tailLen * p);
+      if (this.superShot) {
+        // Two counterposed strands coil around the white-hot core, tapering into its head.
+        const angle = this.t * 28 - p * Math.PI * 3 + Math.floor(i / TAIL) * Math.PI;
+        const radius = Math.sin(p * Math.PI) * 0.065;
+        s.position.addScaledVector(this.across, Math.cos(angle) * radius).addScaledVector(this.up, Math.sin(angle) * radius);
+      }
+    }
     this.streak.position.copy(this.at);
     this.streak.lookAt(this.at.clone().add(this.dir));
     this.streak.scale.set(1, 1, Math.max(0.001, Math.min(travelled, 2.2)));
@@ -454,21 +473,47 @@ export class SpellImpact {
   private flash: THREE.Sprite;
   private sparks: Sparkles;
   private size: number;
+  private crown: THREE.Group | null = null;
 
-  constructor(at: THREE.Vector3, normal: THREE.Vector3 | null, hit: boolean) {
-    this.size = hit ? 0.5 : 0.32;
+  constructor(
+    at: THREE.Vector3,
+    normal: THREE.Vector3 | null,
+    hit: boolean,
+    private superShot = false,
+  ) {
+    this.size = (hit ? 0.5 : 0.32) * (superShot ? 1.65 : 1);
     const face = (normal ?? new THREE.Vector3(0, 1, 0)).clone().normalize();
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    this.sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), additive(ORANGE_HOT, 1));
+    this.sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), additive(superShot ? '#fff0bd' : ORANGE_HOT, 1));
     this.ring = new THREE.Mesh((ringGeo ??= new THREE.RingGeometry(0.96, 1, 48)), additive(WHITE, 0.9));
     const mark = new THREE.Group();
     mark.add(this.sigil, this.ring);
+    if (superShot) {
+      this.crown = new THREE.Group();
+      this.crown.name = 'super-spell-crown';
+      const halo = new THREE.Mesh((ringGeo ??= new THREE.RingGeometry(0.96, 1, 48)), additive('#ffc16b', 0.8));
+      this.crown.add(halo);
+      for (let i = 0; i < 8; i++) {
+        const tick = new THREE.Mesh(new THREE.PlaneGeometry(0.11, 0.025), additive('#fff0bd', 0.9));
+        const angle = (i * Math.PI) / 4;
+        tick.position.set(Math.cos(angle), Math.sin(angle), 0);
+        tick.rotation.z = angle;
+        this.crown.add(tick);
+      }
+      mark.add(this.crown);
+    }
     // Flat on the surface, a hair off it so it doesn't flicker into it.
     mark.position.copy(at).addScaledVector(face, 0.006);
     mark.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), face);
-    this.flash = glowSprite('#ffffff', hit ? 0.5 : 0.3, 1);
+    this.flash = glowSprite('#ffffff', (hit ? 0.5 : 0.3) * (superShot ? 1.5 : 1), 1);
     this.flash.position.copy(at).addScaledVector(face, 0.03);
-    this.sparks = new Sparkles(at, face, { colors: hit ? SPELL_HIT : SPELL_MISS, count: hit ? 22 : 11, speed: hit ? 1.8 : 1.1, size: hit ? 0.022 : 0.016, seconds: hit ? 0.95 : 0.6 });
+    this.sparks = new Sparkles(at, face, {
+      colors: superShot ? SPELL_SUPER : hit ? SPELL_HIT : SPELL_MISS,
+      count: superShot ? 38 : hit ? 22 : 11,
+      speed: superShot ? 2.5 : hit ? 1.8 : 1.1,
+      size: hit ? 0.022 : 0.016,
+      seconds: superShot ? 1.1 : hit ? 0.95 : 0.6,
+    });
     this.group.add(mark, this.flash, this.sparks.group);
     this.sparks.group.position.copy(at);
     this.place(0);
@@ -477,7 +522,7 @@ export class SpellImpact {
   update(dt: number): boolean {
     this.t += dt;
     const sparks = this.sparks.update(dt);
-    const p = Math.min(1, this.t / IMPACT_TIME);
+    const p = Math.min(1, this.t / (this.superShot ? 0.85 : IMPACT_TIME));
     this.place(p);
     return p < 1 || sparks;
   }
@@ -490,6 +535,11 @@ export class SpellImpact {
     this.ring.scale.setScalar(this.size * (0.3 + 1.1 * grow));
     this.ring.material.opacity = 0.9 * (1 - p) ** 2;
     this.flash.material.opacity = Math.max(0, 1 - p * 4);
+    if (this.crown) {
+      this.crown.scale.setScalar(this.size * (0.55 + grow));
+      this.crown.rotation.z = p * 1.4;
+      for (const mesh of this.crown.children as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[]) mesh.material.opacity = (1 - p) ** 1.5 * 0.85;
+    }
   }
 
   dispose() {
@@ -497,6 +547,11 @@ export class SpellImpact {
     this.ring.material.dispose();
     this.flash.material.dispose();
     this.sparks.dispose();
+    this.crown?.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (object.geometry !== ringGeo) object.geometry.dispose();
+      object.material.dispose();
+    });
   }
 }
 

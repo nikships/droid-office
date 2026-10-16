@@ -203,8 +203,12 @@ interface Casualty {
   lean: number;
   /** Which side it sprawls out on. */
   side: number;
-  /** Where it lands on the floor. */
+  /** Where its origin lands, lifted so no part of it sinks into the floor. */
   floor: THREE.Vector3;
+  /** The top of whatever is underfoot where it lands: the pool and beam sit on it. */
+  ground: number;
+  /** Its origin's height once eased face-up for the beam, again clear of the floor. */
+  supine: number;
   pool: THREE.Group;
   laptop: CasualtyLaptop | null;
   /** 0 → 1 as the shut laptop shrinks away. */
@@ -221,7 +225,37 @@ const smooth = (p: number) => {
   const u = THREE.MathUtils.clamp(p, 0, 1);
   return u * u * (3 - 2 * u);
 };
+/**
+ * The fallen pose turns about the body's own axes: yaw, then tip over forward or back, then roll
+ * onto a shoulder. Tipping about the world's x after the yaw instead rolls a sideways-facing body
+ * head-first into the floor.
+ */
+const FALLEN = 'YXZ';
 const SUPINE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+const vertex = new THREE.Vector3();
+
+/**
+ * How far below its origin the lowest visible vertex of `root` sits when turned to `pose`, or
+ * null when it has no mesh. A worker lies on its side or back, so its round body reaches well
+ * below its feet, and how far depends on the pose it was caught in when it went down.
+ */
+function reach(root: THREE.Object3D, pose: THREE.Quaternion): number | null {
+  const kept = root.quaternion.clone();
+  root.quaternion.copy(pose);
+  root.updateMatrixWorld(true);
+  const origin = root.matrixWorld.elements[13];
+  let low = Infinity;
+  root.traverseVisible((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const position = mesh.geometry.getAttribute('position');
+    if (!position) return;
+    for (let i = 0; i < position.count; i++) low = Math.min(low, vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).y);
+  });
+  root.quaternion.copy(kept);
+  root.updateMatrixWorld(true);
+  return Number.isFinite(low) ? origin - low : null;
+}
 
 export class Casualties {
   private all = new Map<string, Casualty>();
@@ -249,7 +283,7 @@ export class Casualties {
     let nearest: string | null = null;
     let distance = radius;
     for (const [id, c] of this.all) {
-      if (!this.dying(id) || Math.abs(c.floor.y + FEET - at.y) > 1.5) continue;
+      if (!this.dying(id) || Math.abs(c.ground - at.y) > 1.5) continue;
       const d = Math.hypot(c.floor.x - at.x, c.floor.z - at.z);
       if (d < distance) {
         nearest = id;
@@ -295,11 +329,17 @@ export class Casualties {
     let top = this.ground(floor.x, floor.z, from.y);
     if (!Number.isFinite(top)) top = this.ground(from.x, from.z, from.y);
     if (!Number.isFinite(top)) top = from.y + FEET;
-    floor.y = top - FEET;
+    const tip = (Math.random() < 0.5 ? -1 : 1) * (1.35 + Math.random() * 0.25);
+    const lean = (Math.random() - 0.5) * 0.5;
+    // Lying down, the body reaches below its feet: lift it until its lowest point rests on the floor.
+    const landed = new THREE.Quaternion().setFromEuler(new THREE.Euler(tip, yaw + lean + side * 0.9, lean * 0.6 + side * 0.35, FALLEN));
+    floor.y = top + (reach(model.root, landed) ?? -FEET);
+    // The beam only ever lifts it: face-up never sinks lower than where it lay.
+    const supine = Math.max(floor.y, top + (reach(model.root, SUPINE) ?? -FEET));
     const pool = look === 'spell' ? spellCircle() : bloodPool();
-    // On top of whatever is underfoot, not at the body's origin (feet are FEET above it, and the
-    // rugs under the desks stand 0.021 proud of the floorboards).
-    pool.position.set(floor.x, floor.y + FEET + 0.03, floor.z);
+    // On top of whatever is underfoot, not at the body's origin (the rugs under the desks stand
+    // 0.021 proud of the floorboards).
+    pool.position.set(floor.x, top + 0.03, floor.z);
     pool.rotation.y = Math.random() * Math.PI * 2;
     this.parent.add(pool);
     this.all.set(id, {
@@ -312,10 +352,12 @@ export class Casualties {
       bleed: 0,
       from,
       yaw,
-      tip: (Math.random() < 0.5 ? -1 : 1) * (1.35 + Math.random() * 0.25),
-      lean: (Math.random() - 0.5) * 0.5,
+      tip,
+      lean,
       side,
       floor,
+      ground: top,
+      supine,
       pool,
       laptop: null,
       lgone: 0,
@@ -350,7 +392,7 @@ export class Casualties {
     c.t = 0;
     c.rotation.copy(c.model.root.quaternion);
     c.beam = heavenlyBeam(ASCEND_HEIGHT);
-    c.beam.root.position.set(c.floor.x, c.floor.y + FEET + 0.025, c.floor.z);
+    c.beam.root.position.set(c.floor.x, c.ground + 0.025, c.floor.z);
     this.parent.add(c.beam.root);
     c.model.root.traverse((object) => {
       if ((object as THREE.Sprite).isSprite) object.visible = false;
@@ -394,7 +436,7 @@ export class Casualties {
         const p = Math.min(1, c.t / FALL_TIME);
         const e = easeOut(p);
         root.position.set(THREE.MathUtils.lerp(c.from.x, c.floor.x, e), THREE.MathUtils.lerp(c.from.y, c.floor.y, e) + Math.sin(p * Math.PI) * 0.3, THREE.MathUtils.lerp(c.from.z, c.floor.z, e));
-        root.rotation.set(c.tip * e, c.yaw + (c.lean + c.side * 0.9) * e, (c.lean * 0.6 + c.side * 0.35) * e);
+        root.rotation.set(c.tip * e, c.yaw + (c.lean + c.side * 0.9) * e, (c.lean * 0.6 + c.side * 0.35) * e, FALLEN);
         if (p >= 1) this.land(c);
         return;
       }
@@ -407,7 +449,12 @@ export class Casualties {
         const p = smooth(c.t / BEAM_TIME);
         this.beamOpacity(c, p);
         root.quaternion.slerpQuaternions(c.rotation, SUPINE, p);
+        // Rolling over swings the body lower than either end pose does, so keep it clear on the
+        // way, and never let it sink back: the beam is taking it.
+        const clear = reach(root, root.quaternion);
+        root.position.y = Math.max(root.position.y, c.floor.y + (c.supine - c.floor.y) * p, clear === null ? -Infinity : c.ground + clear);
         if (c.t >= BEAM_TIME) {
+          c.supine = Math.max(c.supine, root.position.y);
           c.phase = 'ascend';
           c.t = 0;
         }
@@ -416,7 +463,7 @@ export class Casualties {
       case 'ascend': {
         const p = THREE.MathUtils.clamp(c.t / ASCEND_TIME, 0, 1);
         // Ease into the rise without moving sideways or shrinking the worker.
-        root.position.y = c.floor.y + ASCEND_HEIGHT * p * p;
+        root.position.y = c.supine + ASCEND_HEIGHT * p * p;
         c.pool.scale.setScalar(Math.max(0.001, Math.max(0.05, POOL_R * easeOut(c.bleed)) * (1 - smooth(p / 0.3))));
         if (p >= 1) {
           c.phase = 'fade';
@@ -433,7 +480,7 @@ export class Casualties {
   /** Down: it lands with a thud and starts bleeding out. */
   private land(c: Casualty) {
     c.model.root.position.copy(c.floor);
-    c.model.root.rotation.set(c.tip, c.yaw + c.lean + c.side * 0.9, c.lean * 0.6 + c.side * 0.35);
+    c.model.root.rotation.set(c.tip, c.yaw + c.lean + c.side * 0.9, c.lean * 0.6 + c.side * 0.35, FALLEN);
     c.phase = 'bled';
     c.t = 0;
     this.hooks.onLand(c.floor, c.look);
@@ -472,7 +519,7 @@ export class Casualties {
   private reseat(c: Casualty) {
     c.seat.add(c.model.root);
     c.model.root.position.set(0, 0, 0);
-    c.model.root.rotation.set(0, 0, 0);
+    c.model.root.rotation.set(0, 0, 0, 'XYZ');
     c.model.root.scale.setScalar(c.scale);
     c.model.revive();
   }
