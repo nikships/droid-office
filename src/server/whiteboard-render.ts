@@ -718,7 +718,8 @@ async function answer(route: Route, pin: PinnedCard, harness: string) {
       } catch {
         rel = '\0';
       }
-      const out = pin.serve(rel, { method: req.method() });
+      const h = req.headers();
+      const out = pin.serve(rel, { method: req.method(), range: h.range, ifRange: h['if-range'] });
       return await route.fulfill({ status: out.status, headers: out.headers, body: out.body });
     }
     const pic = /^\/pic\/([0-9a-f]{64})$/.exec(url.pathname);

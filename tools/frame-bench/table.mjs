@@ -53,6 +53,48 @@ export function tables(rows) {
       );
     }
   }
+  const natives = paced.filter((r) => r.presenter);
+  if (natives.length) {
+    const pgroups = new Map();
+    for (const r of natives) pgroups.set(key(r), [...(pgroups.get(key(r)) ?? []), r]);
+    lines.push('', ...header('Config', 'Cap', 'Scenario', 'Runs', 'Presented fps', 'Dropped', 'Paint to display p50 ms', 'p95 ms', 'p99 ms', 'Mailbox wait p50 ms', 'p95 ms', 'Presenter GPU p50 ms', 'p95 ms', 'Late', 'Early'));
+    for (const g of pgroups.values()) {
+      const r = g[0];
+      const p = (pick) => g.map((x) => pick(x.presenter));
+      lines.push(
+        `| ${r.config} | ${r.cap} | ${r.scenario} | ${g.length} | ${spreadOf(p((x) => x.fps))} | ${spreadOf(
+          p((x) => x.dropped),
+          0,
+        )} | ${spreadOf(p((x) => x.latency.p50))} | ${spreadOf(p((x) => x.latency.p95))} | ${spreadOf(p((x) => x.latency.p99))} | ${spreadOf(p((x) => x.wait.p50))} | ${spreadOf(p((x) => x.wait.p95))} | ${spreadOf(
+          p((x) => x.gpu.p50),
+          2,
+        )} | ${spreadOf(
+          p((x) => x.gpu.p95),
+          2,
+        )} | ${spreadOf(
+          p((x) => x.late),
+          0,
+        )} | ${spreadOf(
+          p((x) => x.early),
+          0,
+        )} |`,
+      );
+    }
+  }
+  const used = paced.filter((r) => r.resources);
+  if (used.length) {
+    const ugroups = new Map();
+    for (const r of used) ugroups.set(key(r), [...(ugroups.get(key(r)) ?? []), r]);
+    lines.push('', ...header('Config', 'Cap', 'Scenario', 'Runs', 'App CPU % of a core', 'renderer', 'gpu process', 'main', 'Memory MB median', 'max', 'GPU util % median', 'max'));
+    for (const g of ugroups.values()) {
+      const r = g[0];
+      const u = (pick) => g.map((x) => pick(x.resources)).filter((v) => v != null);
+      const maybe = (xs, digits = 0) => (xs.length ? spreadOf(xs, digits) : '-');
+      lines.push(
+        `| ${r.config} | ${r.cap} | ${r.scenario} | ${g.length} | ${maybe(u((x) => x.cpuPct.total))} | ${maybe(u((x) => x.cpuPct.renderer))} | ${maybe(u((x) => x.cpuPct.gpu))} | ${maybe(u((x) => x.cpuPct.main))} | ${maybe(u((x) => x.rssMb.median))} | ${maybe(u((x) => x.rssMb.max))} | ${maybe(u((x) => x.gpu.device.median))} | ${maybe(u((x) => x.gpu.device.max))} |`,
+      );
+    }
+  }
   const loads = rows.filter((r) => r.scenario?.startsWith('load-'));
   if (loads.length) {
     lines.push('', ...header('Config', 'Renderer', 'Cap', 'Load', 'Page shown s', 'Warm-up done s', 'RAF p50 ms', 'RAF p99 ms', 'RAF longest ms', 'Slow frames'));

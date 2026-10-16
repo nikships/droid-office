@@ -1,0 +1,279 @@
+/* --- MANAGED FONT IMPORTS START (do not edit manually) --- */
+/* INTERNAL USE NAME: Heading */
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+/* INTERNAL USE NAME: Body */
+@import url('https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+/* --- MANAGED FONT IMPORTS END --- */
+
+/* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
+
+/* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
+
+:root,
+:root[data-brand='factory'] {
+  --bg-void: #020202;
+  --bg-base: #020202;
+  --bg-panel: #0a0a0a;
+  --bg-raised: #101010;
+  --bg-hover: #161616;
+  --bg-active: #1b1b1b;
+  --bg-input: #050505;
+  --bg-sidebar: #050505;
+  --bg-titlebar: #020202;
+  --line-faint: rgba(255, 255, 255, 0.05);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --text: #eeeeee;
+  --text-dim: #8c8c8c;
+  --text-faint: rgba(255, 255, 255, 0.32);
+  --text-ghost: rgba(255, 255, 255, 0.2);
+  --accent: #ee6018;
+  --accent-bright: #ef6f2e;
+  --accent-deep: #d15010;
+  --accent-dim: #ee601822;
+  --purple: #a78bfa;
+  --purple-dim: #a78bfa22;
+  --amber: #f5a623;
+  --amber-dim: #f5a62322;
+  --green: #34d399;
+  --green-dim: #34d39922;
+  --red: #ef4444;
+  --red-dim: #ef444422;
+  --blue: #60a5fa;
+  --blue-dim: #60a5fa22;
+  --status-queued: var(--text-faint);
+  --status-running: var(--accent);
+  --status-success: var(--green);
+  --status-fail: var(--red);
+  --status-skipped: var(--text-faint);
+  --status-accepted: var(--green);
+  --status-rejected: var(--amber);
+  --status-failed: var(--red);
+  --status-killed: var(--text-faint);
+  --btn-primary-label-on-light-fill: #020202;
+  --btn-primary-hover-fill: #ffffff;
+  --accents-refiner: #b87a9e;
+  --accents-planner: #9b7ede;
+  --accents-builder: #4fa8b8;
+  --accents-scout: #d19a3d;
+  --accents-finisher: #5b8fd9;
+  --accents-reviewer: #e0605f;
+  --accents-documenter: #3cb87a;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+  --s16: 64px;
+  --r-sm: 3px;
+  --r: 4px;
+  --r-lg: 6px;
+  --r-xl: 8px;
+  --r-full: 999px;
+  --shadow-sm: none;
+  --shadow-shadow: none;
+  --shadow-lg: none;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --fast: 120ms;
+  --normal: 150ms;
+  --slow: 300ms;
+  --sidebar-w: 264px;
+  --sidebar-w-collapsed: 56px;
+  --titlebar-h: 52px;
+  --lane-h: 44px;
+  --lane-gap: 6px;
+  --font: 'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2-xl: 28px;
+  --text-3-xl: 36px;
+  --leading-tight: 1.25;
+  --leading: 1.5;
+  --leading-loose: 1.7;
+  --label-size: 11px;
+  --label-tracking: 0.08em;
+  --eyebrow-tracking: 0.16em;
+}
+/* --- MANAGED TYPOGRAPHY VARS START (do not edit manually) --- */
+html {
+  --font-body: Geist, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-heading: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+/* --- MANAGED TYPOGRAPHY VARS END --- */
+
+/* --- BASE TYPOGRAPHY START (do not edit manually) --- */
+@layer base {
+  body {
+    font-family: var(--font-body, inherit);
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading, var(--font-body, inherit));
+  }
+}
+/* --- BASE TYPOGRAPHY END --- */
+
+/* --- GLOBAL RESET START --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  overflow: auto;
+  user-select: none;
+  cursor: default;
+  background: var(--bg-void);
+  color: var(--text);
+  font-family: var(--font);
+}
+input,
+textarea,
+[contenteditable],
+.selectable {
+  user-select: text;
+}
+::selection {
+  background: var(--accent);
+  color: var(--bg-void);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-full);
+}
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+/* --- GLOBAL RESET END --- */
+
+/* --- PRIMITIVES START --- */
+/* Button, Badge and Card styling is owned by the installed design-system components. */
+.input,
+.select,
+.textarea {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-sm);
+  padding: var(--s2) var(--s3);
+  transition: border-color var(--fast) var(--ease);
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+.input.invalid,
+.textarea.invalid {
+  border-color: var(--red);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.field > label {
+  font-size: var(--label-size);
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.field .hint {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.field .error {
+  font-size: var(--text-xs);
+  color: var(--red);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.scroll {
+  overflow: auto;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.faint {
+  color: var(--text-faint);
+}
+.eyebrow {
+  font-size: var(--label-size);
+  letter-spacing: var(--eyebrow-tracking);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.eyebrow.index {
+  color: var(--text-ghost);
+}
+/* --- PRIMITIVES END --- */
+
+/* --- FACTORY SHELL START --- */
+[data-brand='factory'] .shell {
+  display: flex;
+  height: 100%;
+  background: var(--bg-void);
+}
+[data-brand='factory'] .sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--line);
+  flex-shrink: 0;
+}
+[data-brand='factory'] .content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+/* --- FACTORY SHELL END --- */

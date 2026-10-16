@@ -703,24 +703,61 @@ export class OfficeSound {
 
   // ---- The .44 Magnum ----------------------------------------------------------------------------
 
-  /** Your shot: a loud crack over a deep boom. It's your gun, so it isn't positional. */
-  gunshot() {
+  /** A held charge, through the usual volume bus. Canceling fades and stops every voice. */
+  sidearmCharge(wand: boolean): () => void {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return () => {};
+    this.count(wand ? 'wandChargeHold' : 'gunChargeHold');
+    const bus = ctx.createGain();
+    const now = ctx.currentTime;
+    bus.gain.setValueAtTime(0, now);
+    bus.gain.linearRampToValueAtTime(1, now + 0.08);
+    bus.connect(this.ambience);
+    const voices: AudioScheduledSourceNode[] = [];
+    for (const ratio of [1, wand ? 2.005 : 1.012]) {
+      const tone = ctx.createOscillator();
+      tone.type = wand ? 'sine' : 'triangle';
+      tone.frequency.setValueAtTime((wand ? 220 : 65) * ratio, now);
+      tone.frequency.exponentialRampToValueAtTime((wand ? 880 : 130) * ratio, now + 0.63);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.012, now);
+      gain.gain.linearRampToValueAtTime(wand ? 0.045 : 0.035, now + 0.63);
+      tone.connect(gain).connect(bus);
+      tone.start(now);
+      // A safety cap also frees audio if the page disappears without delivering a release.
+      tone.stop(now + 30);
+      voices.push(tone);
+    }
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      bus.gain.cancelScheduledValues(ctx.currentTime);
+      bus.gain.setValueAtTime(bus.gain.value, ctx.currentTime);
+      bus.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.035);
+      for (const voice of voices) voice.stop(ctx.currentTime + 0.04);
+    };
+  }
+
+  /** A normal crack, or a heavy round's dry attack, pressure slap, sub-bass body and steel tail. */
+  gunshot(superShot = false) {
     this.unlock();
     const ctx = this.ctx;
     if (!ctx) return;
     if (ctx.state === 'suspended') void ctx.resume();
-    this.count('gunshot');
+    this.count(superShot ? 'gunSuperShot' : 'gunshot');
     const t0 = ctx.currentTime + 0.005;
     // The crack: white noise through a wide band, gone in a blink.
     const crack = this.noise(this.buf.white);
     const cg = ctx.createGain();
     envelope(cg.gain, t0, [
-      [0.008, 0.9],
-      [0.09, 0.25],
-      [0.3, 0],
+      [superShot ? 0.002 : 0.008, superShot ? 0.75 : 0.9],
+      [0.09, superShot ? 0.3 : 0.25],
+      [superShot ? 0.22 : 0.3, 0],
     ]);
     crack
-      .connect(biquad(ctx, 'bandpass', 1600, 0.5))
+      .connect(biquad(ctx, 'bandpass', superShot ? 1100 : 1600, 0.5))
       .connect(cg)
       .connect(this.ambience);
     crack.start(t0);
@@ -728,15 +765,22 @@ export class OfficeSound {
     // The boom under it: low noise swelling and rolling off.
     const boom = this.noise(this.buf.brown, true);
     const tone = biquad(ctx, 'lowpass', 420, 0.6);
-    tone.frequency.setValueAtTime(420, t0);
-    tone.frequency.exponentialRampToValueAtTime(90, t0 + 0.5);
+    tone.frequency.setValueAtTime(superShot ? 300 : 420, t0);
+    tone.frequency.exponentialRampToValueAtTime(superShot ? 55 : 90, t0 + (superShot ? 0.7 : 0.5));
     const bg = ctx.createGain();
     bg.gain.setValueAtTime(0.0001, t0);
-    bg.gain.exponentialRampToValueAtTime(0.7, t0 + 0.015);
-    bg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
+    bg.gain.exponentialRampToValueAtTime(superShot ? 0.8 : 0.7, t0 + 0.015);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t0 + (superShot ? 0.95 : 0.7));
     boom.connect(tone).connect(bg).connect(this.ambience);
     boom.start(t0);
-    boom.stop(t0 + 0.75);
+    boom.stop(t0 + (superShot ? 1 : 0.75));
+    if (superShot) {
+      // Not two reports: a single pressure front followed by the barrel/frame ringing down.
+      this.blip(this.ambience, t0, 92, 0.42, 0.38, 0.22, 'sine');
+      this.swish(t0 + 0.025, 0.08, 1800, 420, 0.2, 0.6);
+      this.blip(this.ambience, t0 + 0.04, 2140, 0.94, 0.22, 0.025, 'triangle');
+      this.click(t0 + 0.26, 2600, 0.07);
+    }
   }
 
   /**
@@ -867,28 +911,28 @@ export class OfficeSound {
   }
 
   /** A spell landing on a worker, from where it hit: a soft "boing" down and a sprinkle of chimes. */
-  spellHit(at: Pos) {
+  spellHit(at: Pos, superShot = false) {
     const ctx = this.ctx;
     if (!ctx) return;
-    this.count('spellHit');
+    this.count(superShot ? 'superSpellHit' : 'spellHit');
     const out = this.panner(at, 3, 0.9);
     out.connect(this.ambience);
     const t0 = ctx.currentTime + 0.005;
-    this.blip(out, t0, 880, 0.5, 0.3, 0.14);
-    [2093, 2637, 3136].forEach((f, i) => this.blip(out, t0 + 0.05 + i * 0.06, f, 1, 0.22, 0.05));
-    this.shimmer(out, t0, 0.5, 0.05);
+    this.blip(out, t0, superShot ? 262 : 880, superShot ? 2 : 0.5, superShot ? 0.55 : 0.3, superShot ? 0.16 : 0.14, superShot ? 'triangle' : 'sine');
+    (superShot ? [1047, 1568, 2093] : [2093, 2637, 3136]).forEach((f, i) => this.blip(out, t0 + 0.05 + i * 0.06, f, 1, superShot ? 0.6 : 0.22, 0.05));
+    this.shimmer(out, t0, superShot ? 0.85 : 0.5, 0.05);
   }
 
   /** A spell fizzling out on a wall or the floor, from where it landed. */
-  fizzle(at: Pos) {
+  fizzle(at: Pos, superShot = false) {
     const ctx = this.ctx;
     if (!ctx) return;
     this.count('fizzle');
     const out = this.panner(at, 3, 0.9);
     out.connect(this.ambience);
     const t0 = ctx.currentTime + 0.005;
-    this.blip(out, t0, 1400, 0.6, 0.16, 0.06, 'triangle');
-    this.shimmer(out, t0, 0.3, 0.04);
+    this.blip(out, t0, superShot ? 660 : 1400, superShot ? 0.25 : 0.6, superShot ? 0.35 : 0.16, superShot ? 0.09 : 0.06, 'triangle');
+    this.shimmer(out, t0, superShot ? 0.55 : 0.3, 0.04);
   }
 
   /** A worker under the wand's spell drifting off on the floor: a soft bump and a sleepy three-note slide down. */
@@ -948,6 +992,14 @@ export class OfficeSound {
         break;
       case 'release':
         this.wandZap();
+        break;
+      case 'superRelease':
+        // A firm magical snap with a descending body and a luminous, suspended chord.
+        this.count('wandSuperRelease');
+        this.swish(t0, 0.14, 2800, 650, 0.2, 0.7);
+        this.blip(this.ambience, t0, 196, 0.3, 0.22, 0.17, 'triangle');
+        [1568, 2093, 3136].forEach((f, i) => this.blip(this.ambience, t0 + 0.025 + i * 0.035, f, 1.005, 0.55 - i * 0.07, 0.045 - i * 0.005));
+        this.shimmer(this.ambience, t0 + 0.03, 0.65, 0.045);
         break;
       case 'lumos':
         // The tip catching light: a rising bell over a breath of glitter.

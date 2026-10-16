@@ -11,9 +11,10 @@
 // Results are appended to <out>/results.jsonl, one line per scenario run. See tools/frame-bench/README.md.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { startResourceSampler } from './resource.mjs';
 import { Cdp } from './cdp.mjs';
 import { launchApp } from './launch.mjs';
-import { CONFIGS, clockOffset, displayPacing, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
+import { CONFIGS, clockOffset, displayPacing, ensureRendering, installPageHooks, loadOffice, machineRecord, SCENARIOS, sleep, spread, startDisplayTrace, storageFor } from './lib.mjs';
 import { tables } from './table.mjs';
 
 const argv = process.argv.slice(2);
@@ -86,7 +87,7 @@ try {
   const plan = configs.flatMap((config) => caps.map((cap) => ({ config, cap })));
   const rng = seeded(Number(arg('seed', '1')));
   for (let rep = 1; rep <= repeat; rep++) {
-    for (const { config, cap } of shuffle(plan, rng)) {
+    for (const { config, cap } of argv.includes('--ordered') ? plan : shuffle(plan, rng)) {
       const storage = storageFor(clone, { config, cap });
       const load = await loadOffice(cdp, storage);
       const state = JSON.parse(await cdp.eval('JSON.stringify({ stats: office.frameStats() })')).stats;
@@ -97,25 +98,43 @@ try {
       )) {
         const run = SCENARIOS[name];
         if (!run) throw new Error(`unknown scenario ${name}: ${Object.keys(SCENARIOS).join(', ')}, load`);
+        await ensureRendering(cdp);
         const trace = traceBinary ? await startDisplayTrace(traceBinary, path.join(out, `trace-${config}-${cap}-${name}-${rep}.json`)) : null;
         const clockBefore = await clockOffset(cdp);
+        const sampler = argv.includes('--resources') ? await startResourceSampler(app) : null;
         const failure = await withTimeout(run({ cdp, seconds }), (seconds + 150) * 1000, `${name} did not finish`);
         if (failure) {
           // One stuck scenario must not stall the matrix: note it, put the page back and go on.
           record({ label, config, cap, scenario: name, rep, failed: failure });
           console.log(`bench:   ${name} #${rep}: FAILED ${failure}`);
+          await sampler?.stop().catch(() => undefined);
           await trace?.stop().catch(() => undefined);
           await cdp.eval('document.exitPointerLock(); office.closeAll()', { timeout: 20_000 }).catch(() => undefined);
           continue;
         }
+        const resources = sampler ? await sampler.stop() : null;
         const clockAfter = await clockOffset(cdp);
         const frames = trace ? await trace.stop() : null;
-        const got = JSON.parse(await cdp.eval('JSON.stringify({ report: window.__bench.report, t0: window.__bench.t0, t1: window.__bench.t1 })'));
+        await cdp.eval('window.__bench.presenterDone');
+        const got = JSON.parse(await cdp.eval('JSON.stringify({ report: window.__bench.report, t0: window.__bench.t0, t1: window.__bench.t1, presenter: window.__bench.presenter })'));
         if (!got.report) throw new Error(`${name} produced no report`);
-        const row = { label, config, cap, scenario: name, rep, seconds, renderer: got.report.renderer, report: got.report, machine: { load: machineRecord().load } };
+        const row = {
+          label,
+          config,
+          cap,
+          scenario: name,
+          rep,
+          seconds,
+          renderer: got.report.renderer,
+          report: got.report,
+          ...(got.presenter ? { presenter: got.presenter } : {}),
+          ...(resources ? { resources } : {}),
+          machine: { load: machineRecord().load },
+        };
         if (frames) {
           // The page's window in hrtime, from the clock offset taken before and after the run (their gap bounds the drift).
           const [lo, hi] = [got.t0 * 1e6 + clockBefore.offsetNs, got.t1 * 1e6 + clockAfter.offsetNs];
+          row.window = { loNs: lo, hiNs: hi };
           row.clock = { driftUs: (clockAfter.offsetNs - clockBefore.offsetNs) / 1e3, rttUs: Math.max(clockBefore.rtt, clockAfter.rtt) / 1e3 };
           row.display = {
             ...displayPacing(

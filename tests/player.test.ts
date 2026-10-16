@@ -189,6 +189,85 @@ test('only actual pointer-driven camera changes wake rendering, not unlocked hov
 
 const desk: Collider = { minX: -1.05, maxX: 1.05, minZ: -0.53, maxZ: 0.53, top: 0.78 };
 
+test('held primary actions fire only on release; secondary clicks do nothing and disabling cancels', (t) => {
+  const { player, dom, win, land } = pointerLock(t);
+  const clicks: string[] = [];
+  player.onClick = () => clicks.push('normal');
+  player.onPress = () => {
+    clicks.push('press');
+    return true;
+  };
+  player.onRelease = () => clicks.push('release');
+  player.onCancelPress = () => clicks.push('cancel');
+  land(true);
+  const down = (button: number) => dom.dispatchEvent(Object.assign(new Event('pointerdown'), { pointerType: 'mouse', button }));
+  const up = (button: number) => win.dispatchEvent(Object.assign(new Event('pointerup'), { button }));
+  down(0);
+  down(2);
+  down(1);
+  up(2);
+  assert.deepEqual(clicks, ['press'], 'holding never fires and a secondary release cannot fire it');
+  up(0);
+  up(0);
+  assert.deepEqual(clicks, ['press', 'release']);
+  const context = new Event('contextmenu', { cancelable: true });
+  dom.dispatchEvent(context);
+  assert.equal(context.defaultPrevented, true);
+  down(0);
+  player.enabled = false;
+  down(0);
+  down(2);
+  player.enabled = true;
+  up(0);
+  assert.deepEqual(clicks, ['press', 'release', 'press', 'cancel']);
+  const disabledContext = new Event('contextmenu', { cancelable: true });
+  player.enabled = false;
+  dom.dispatchEvent(disabledContext);
+  assert.equal(disabledContext.defaultPrevented, false);
+});
+
+test('drag-to-look supports held aiming, consumes capture clicks, and cancels on blur or pointer cancellation', (t) => {
+  const { player, dom, win, land } = pointerLock(t);
+  const clicks: string[] = [];
+  player.onClick = () => clicks.push('normal');
+  player.onPress = () => {
+    clicks.push('press');
+    return true;
+  };
+  player.onRelease = () => clicks.push('release');
+  player.onCancelPress = () => clicks.push('cancel');
+  const down = (button: number) => dom.dispatchEvent(Object.assign(new Event('pointerdown'), { pointerType: 'mouse', button, clientX: 50, clientY: 50 }));
+  const up = (button: number) => {
+    const event = Object.assign(new Event('pointerup'), { button });
+    Object.defineProperty(event, 'target', { value: dom });
+    win.dispatchEvent(event);
+  };
+  down(0);
+  land(true);
+  up(0);
+  assert.deepEqual(clicks, [], 'the click that locks the pointer is consumed');
+  land(false);
+  Object.defineProperty(dom, 'requestPointerLock', { value: undefined });
+  down(2);
+  up(2);
+  down(0);
+  up(0);
+  assert.deepEqual(clicks, ['press', 'release']);
+  down(0);
+  win.dispatchEvent(Object.assign(new Event('pointermove'), { clientX: 60, clientY: 50 }));
+  up(0);
+  assert.deepEqual(clicks, ['press', 'release', 'press', 'release'], 'you can aim while holding the trigger');
+  down(1);
+  up(1);
+  down(0);
+  win.dispatchEvent(new Event('blur'));
+  up(0);
+  down(0);
+  dom.dispatchEvent(new Event('pointercancel'));
+  up(0);
+  assert.deepEqual(clicks.slice(-4), ['press', 'cancel', 'press', 'cancel']);
+});
+
 /** Pointer-lock events land asynchronously; callers choose when each request or release lands. */
 function pointerLock(t: TestContext) {
   const rig = controller(t, []);
@@ -197,7 +276,7 @@ function pointerLock(t: TestContext) {
   let locked = false;
   Object.defineProperty(rig.doc, 'pointerLockElement', { get: () => (locked ? rig.dom : null) });
   const request = t.mock.fn(() => undefined);
-  Object.defineProperty(rig.dom, 'requestPointerLock', { value: request });
+  Object.defineProperty(rig.dom, 'requestPointerLock', { configurable: true, value: request });
   Object.defineProperty(rig.doc, 'exitPointerLock', { value: t.mock.fn() });
   return {
     ...rig,

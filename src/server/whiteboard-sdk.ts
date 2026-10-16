@@ -6,7 +6,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '4';
+export const SDK_VERSION = '5';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -92,10 +92,20 @@ export const SDK_SCRIPT = String.raw`(function () {
       if (isObj(p)) delete p[last];
     }
   }
+  // The host never echoes the frame's own writes back, so the frame tells its own listeners. A write
+  // made from inside a state listener doesn't fire again, so a listener that writes can't loop.
+  var firing = false;
+  function fireState(changes) {
+    if (firing) return;
+    firing = true;
+    try { fire('state', api.state.get(), changes); } finally { firing = false; }
+  }
+  function own(path) { return [{ path: path, author: { kind: 'owner' } }]; }
   function write(w) {
     if (rendering) return;
     applyLocal(w);
     post({ type: 'write', write: w });
+    fireState(own(w.path));
   }
 
   var api = {
@@ -145,6 +155,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       var msg = { type: 'action', name: name };
       if (data !== undefined) msg.data = value;
       post(msg);
+      fireState(own([ACTIONS, name]));
     }
   };
   Object.defineProperty(api, 'card', { enumerable: true, get: function () { return copy(card); } });
@@ -690,7 +701,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       showRemote(before, []);
       var first = !started;
       started = true;
-      fire('state', api.state.get(), []);
+      fireState([]);
       if (first) {
         resolveReady(api);
         fire('ready', api);
@@ -703,7 +714,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       var changes = Array.isArray(d.changes) ? d.changes : [];
       state = copy(d.state);
       showRemote(was, changes);
-      fire('state', api.state.get(), changes);
+      fireState(changes);
     } else if (d.type === 'anchorAt') {
       if (Number.isSafeInteger(d.req) && isPoint(d.point)) post({ type: 'anchor', req: d.req, anchor: anchorAt(d.point) });
     } else if (d.type === 'locate') {

@@ -54,7 +54,7 @@ export async function launchApp({ app, clone, userData, debugPort, log }) {
     pid: child.pid,
     quit() {
       try {
-        process.kill(-child.pid, 'SIGTERM');
+        process.kill(-child.pid, 'SIGKILL');
       } catch {
         // already gone
       }

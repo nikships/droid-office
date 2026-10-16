@@ -88,7 +88,7 @@ collect it and its owned worktrees and branches are deleted.
 | `src/shared/protocol.ts` | Revival duration, worker deadline, shoot and revive actions |
 | `src/server/workers.ts`, `src/server/worktrees.ts`, `src/server/server.ts` | Persisted deadlines, session-preserving revival and gun-specific owned-resource cleanup |
 | `src/client/sound.ts` | `gunshot`, `gunDraw`, `gunHolster`, body thud, medic siren sting (Web Audio synth, same patterns as `thunder`/`gong`) |
-| `docs/guide.md` | `7` row in Controls plus a short section |
+| `docs/guide/controls.md` | `7` row in Controls plus a short section |
 | `tests/casualties.test.ts` (new) | State-machine and timeline unit tests (Node-loadable, like other world modules) |
 
 Out of scope: kill confirmations for other players,

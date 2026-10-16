@@ -289,6 +289,24 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 }
 .crosshair.free .look-hint { display: block; }
 .crosshair.on .look-hint { transform: translateX(-50%) scale(.625); transform-origin: top center; }
+.shot-charge {
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+  transform: translate(-50%, -50%); pointer-events: none; color: var(--accent);
+}
+.shot-charge-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(currentColor var(--charge-angle, 0deg), #ffffff26 0deg);
+  mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  filter: drop-shadow(0 0 5px #ff853366);
+}
+.shot-charge span {
+  position: absolute; top: 62px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text-secondary); font: 500 10px/1.4 var(--font-mono);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.shot-charge.charged { color: #fff0bd; }
+.shot-charge.charged span { color: #fff0bd; border-color: #ffc16b88; }
 /* The emote wheel (hold G): six emotes round a ring in the middle of the screen, over the crosshair. */
 .emote-wheel { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle, rgba(2, 2, 2, .4), transparent 45%); }
 .emote-wheel .ring {

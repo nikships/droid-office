@@ -750,8 +750,8 @@ export class Person {
   }
 
   /** Fires it: a flash at the muzzle (the recoil is the pose's kick). */
-  fire() {
-    this.gun?.muzzle.fire();
+  fire(superShot = false) {
+    this.gun?.muzzle.fire(superShot);
   }
 
   /** Where the gun's muzzle is, or null with the gun holstered. */

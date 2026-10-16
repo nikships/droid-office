@@ -102,6 +102,46 @@ test('real workers ease face-up and rise vertically at full size, on the floor o
   }
 });
 
+test('a real worker lies on the floor, never through it, whichever way its desk faces and however it falls', () => {
+  const restore = canvasDocument();
+  const lowest = (root: THREE.Object3D) => {
+    root.updateMatrixWorld(true);
+    let low = Infinity;
+    const v = new THREE.Vector3();
+    root.traverseVisible((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const position = mesh.geometry.getAttribute('position');
+      for (let i = 0; i < position.count; i++) low = Math.min(low, v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).y);
+    });
+    return low;
+  };
+  try {
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      for (const ground of [0, 3.2]) {
+        for (let i = 0; i < 12; i++) {
+          const f = fixture(yaw, 0.82, ground, i % 2 ? 'spell' : 'blood');
+          while (f.casualties.phaseOf('patient') === 'fall') {
+            f.frame();
+            assert.ok(lowest(f.model.root) - ground > -0.02, 'clear of the floor as it tumbles');
+          }
+          const landed = lowest(f.model.root) - ground;
+          assert.ok(landed > -1e-6, `nothing below the floor once down (lowest point ${landed})`);
+          assert.ok(landed < 0.01, `resting on it, not floating (lowest point ${landed})`);
+          const head = new THREE.Vector3(0, 1, 0).applyQuaternion(f.model.root.quaternion);
+          assert.ok(head.y > -0.1, `lying flat, not standing on its head (head ${head.y})`);
+          f.casualties.confirm('patient', f.laptop);
+          for (let frame = 0; frame < Math.ceil(BEAM_TIME * 60) + 1; frame++) {
+            f.frame();
+            assert.ok(lowest(f.model.root) - ground > -0.02, 'still clear of the floor turning face-up for the beam');
+          }
+        }
+      }
+    }
+  } finally {
+    restore();
+  }
+});
 test('ascent never changes shared worker materials and releases beam resources once', () => {
   const restore = canvasDocument();
   try {
