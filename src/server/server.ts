@@ -1515,7 +1515,7 @@ export async function startServer(cfg: Config) {
       case 'worker.revive': {
         const w = worker(msg.workerId);
         if (!w) break;
-        warn(c, msg.t === 'worker.shoot' ? w.floor.workers.shoot(w.wid) : w.floor.workers.revive(w.wid));
+        warn(c, msg.t === 'worker.shoot' ? w.floor.workers.shoot(w.wid, msg.superShot === true) : w.floor.workers.revive(w.wid));
         break;
       }
       case 'worker.kill': {

@@ -778,8 +778,8 @@ export type ClientMsg =
   | { t: 'worker.resume'; workerId: string }
   /** `deleteSession`: a cloud worker's Factory session is deleted too, not just left on the Factory account. */
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup; deleteSession?: boolean }
-  /** Drops the worker for 30 seconds; expiry deletes its owned worktrees and branches. */
-  | { t: 'worker.shoot'; workerId: string }
+  /** Drops the worker for 30 seconds; a second hit or super shot immediately deletes its owned worktrees and branches. */
+  | { t: 'worker.shoot'; workerId: string; superShot?: boolean }
   /** Revives a nearby shot worker before its deadline, without restarting its session. */
   | { t: 'worker.revive'; workerId: string }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */

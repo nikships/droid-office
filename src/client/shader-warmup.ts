@@ -104,12 +104,16 @@ export function spellStandIns(): { world: THREE.Group; hands: THREE.Group } {
   world.add(new Sparkles(at, null, { count: 1 }).group);
   world.add(new SpellBolt(at, new THREE.Vector3(0, -40, 1)).group);
   world.add(new SpellImpact(at, new THREE.Vector3(0, 1, 0), false).group);
+  world.add(new SpellBolt(at, new THREE.Vector3(0, -40, 1), undefined, true).group);
+  world.add(new SpellImpact(at, new THREE.Vector3(0, 1, 0), true, true).group);
   world.add(new TipTrail().points);
   world.add(new Puff(at, new THREE.Vector3(0, 1, 0)).group);
   world.add(new BloodSpray(at, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, -1)).group);
   world.add(casualtyMarkers());
   world.add(smokeWisp(), pageLeaf(false), pageLeaf(true), cord());
-  hands.add(new Wand().group, new Ward().group, magnum(), new Muzzle().group, pageLeaf(true));
+  const superMuzzle = new Muzzle();
+  superMuzzle.fire(true);
+  hands.add(new Wand().group, new Ward().group, magnum(), new Muzzle().group, superMuzzle.group, pageLeaf(true));
   for (const root of [world, hands]) {
     hideLights(root);
     root.traverse((object) => {

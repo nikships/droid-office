@@ -18,7 +18,7 @@ export const WAND_SPELLS = [
 ] as const;
 
 export type WandSpellId = (typeof WAND_SPELLS)[number]['id'];
-export type WandMoveId = 'draw' | 'holster' | 'cast' | WandSpellId;
+export type WandMoveId = 'draw' | 'holster' | 'cast' | 'super' | WandSpellId;
 
 /**
  * What a move sounds like and when its magic happens. main.ts turns these into sound (sound.ts
@@ -26,7 +26,7 @@ export type WandMoveId = 'draw' | 'holster' | 'cast' | WandSpellId;
  * the light at the tip on or off, `flick`, `confetti` and `shield` set off their spells, `spark`
  * is one spit of the sparkler, `party` starts the office dance, and `tick` is one segment of the progress bar lighting up.
  */
-export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'lumos' | 'swish' | 'flick' | 'spark' | 'party' | 'confetti' | 'tick' | 'done' | 'shield';
+export type WandCue = 'draw' | 'holster' | 'whoosh' | 'boot' | 'ready' | 'charge' | 'release' | 'superRelease' | 'lumos' | 'swish' | 'flick' | 'spark' | 'party' | 'confetti' | 'tick' | 'done' | 'shield';
 
 export const WAND_CHANNELS = ['out', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'twirl', 'spin', 'glow', 'charge', 'trail'] as const;
 export type WandChannel = (typeof WAND_CHANNELS)[number];
@@ -73,6 +73,8 @@ const TAU = Math.PI * 2;
 
 /** When a cast's bolt leaves the tip: the bottom of the flick, a tenth of a second after the click. */
 export const RELEASE_AT = 0.11;
+/** A fully held charge snaps forward promptly when the trigger is released. */
+export const SUPER_RELEASE_AT = 0.08;
 
 /** Each segment's tick as Run the build fills the progress bar, from the first to the tenth. */
 const BUILD_FROM = 0.45;
@@ -237,6 +239,62 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       [0, 'charge'],
       [RELEASE_AT, 'release'],
     ],
+  },
+  // From the held charge's coiled pose, drive the tip forward and follow through.
+  super: {
+    seconds: 0.72,
+    tracks: {
+      pitch: [
+        [0, 0.42],
+        [SUPER_RELEASE_AT, -0.95, 'snap'],
+        [0.3, -0.88],
+        [0.72, 0, 'inOut'],
+      ],
+      roll: [
+        [0, -0.3],
+        [SUPER_RELEASE_AT, 0.16, 'snap'],
+        [0.72, 0, 'inOut'],
+      ],
+      z: [
+        [0, 0.045],
+        [SUPER_RELEASE_AT, -0.12, 'snap'],
+        [0.3, -0.1],
+        [0.72, 0, 'inOut'],
+      ],
+      y: [
+        [0, 0.025],
+        [SUPER_RELEASE_AT, -0.065, 'snap'],
+        [0.72, 0, 'inOut'],
+      ],
+      x: [
+        [0, 0.015],
+        [SUPER_RELEASE_AT, -0.025, 'snap'],
+        [0.72, 0, 'inOut'],
+      ],
+      spin: [
+        [0, 1],
+        [0.38, 1],
+        [0.72, 0],
+      ],
+      charge: [
+        [0, 1],
+        [0.24, 1],
+        [0.48, 0],
+      ],
+      glow: [
+        [0, 0.8],
+        [SUPER_RELEASE_AT, 1.8, 'snap'],
+        [0.34, 0.5],
+        [0.72, 0],
+      ],
+      trail: [
+        [0, 0.4],
+        [SUPER_RELEASE_AT, 1],
+        [0.34, 1],
+        [0.6, 0],
+      ],
+    },
+    cues: [[SUPER_RELEASE_AT, 'superRelease']],
   },
   // Up and a twist of the wrist: the emitter lights the room, or goes out.
   lumos: {
@@ -614,6 +672,7 @@ export class WandMotion {
   private wanted = false;
   private move: { id: WandMoveId; spec: WandMove; t: number; from: WandPose | null; blend: number; cue: number } | null = null;
   private current: WandPose | null = null;
+  private charging: number | null = null;
 
   /** The wand and the hand holding it now, or null with it put away. Read it fresh each frame. */
   get pose(): Readonly<WandPose> | null {
@@ -650,6 +709,7 @@ export class WandMotion {
     this.wanted = false;
     this.move = null;
     this.current = null;
+    this.charging = null;
   }
 
   /** Plays a spell from the top, even over itself. False with the wand away. */
@@ -660,10 +720,23 @@ export class WandMotion {
   }
 
   /** A cast at the crosshair: its `release` cue comes RELEASE_AT later. False with the wand away. */
-  cast(): boolean {
+  cast(superShot = false): boolean {
     if (!this.wanted) return false;
-    this.start('cast', WAND_MOVES.cast, CAST_BLEND);
+    const id = superShot ? 'super' : 'cast';
+    this.start(id, WAND_MOVES[id], CAST_BLEND);
     return true;
+  }
+
+  charge(amount: number) {
+    if (!this.wanted) return;
+    if (this.charging === null) this.start('cast', { seconds: CAST_BLEND, tracks: {}, cues: [] }, CAST_BLEND);
+    this.charging = Math.max(0, Math.min(1, amount));
+  }
+
+  cancelCharge() {
+    if (this.charging === null) return;
+    this.charging = null;
+    if (this.wanted) this.start('cast', { seconds: CAST_BLEND, tracks: {}, cues: [] }, CAST_BLEND);
   }
 
   update(dt: number): WandCue[] {
@@ -687,10 +760,23 @@ export class WandMotion {
       const w = p * p * (3 - 2 * p);
       for (const c of WAND_CHANNELS) pose[c] = live.from[c] + (pose[c] - live.from[c]) * w;
     }
+    if (this.charging !== null) {
+      const p = this.charging;
+      pose.pitch += 0.42 * p;
+      pose.roll -= 0.3 * p;
+      pose.z += 0.045 * p;
+      pose.y += 0.025 * p;
+      pose.x += 0.015 * p;
+      pose.charge = p;
+      pose.spin = p;
+      pose.glow = 0.8 * p * p;
+      pose.trail = 0.4 * p;
+    }
     return cues;
   }
 
   private start(id: WandMoveId, spec: WandMove, blend = BLEND) {
+    this.charging = null;
     let from: WandPose | null = null;
     if (this.current) {
       from = { ...this.current };

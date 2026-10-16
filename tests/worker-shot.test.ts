@@ -130,6 +130,50 @@ test('kill before the deadline rejects every cleanup option and preserves the wo
   assert.deepEqual(f.saved(), []);
 });
 
+test('a super shot immediately dismisses an awake worker and deletes dirty work and unpublished commits', async (t) => {
+  const f = fixture(t);
+  const workers = f.manager();
+  const w = spawn(workers, 'desk-1', true);
+  const other = spawn(workers, 'desk-2');
+  const branch = w.worktree!.branch;
+  const cwd = path.join(f.dir, w.worktree!.path);
+  writeFileSync(path.join(cwd, 'a.txt'), 'unpublished');
+  git(cwd, 'commit', '-qam', 'unpublished work');
+  writeFileSync(path.join(cwd, 'dirty.txt'), 'discard me');
+  const before = Date.now();
+  assert.equal(workers.shoot(w.id, true), undefined);
+  assert.equal(workers.get(w.id), undefined);
+  assert.ok(f.updates.at(-1)!.downedUntil! >= before);
+  assert.ok(f.updates.at(-1)!.downedUntil! <= Date.now(), 'publish an expired downed state so clients show the ascent, not a walk-out');
+  assert.deepEqual(f.removed, [w.id]);
+  assert.equal(workers.revive(w.id), 'No such worker');
+  assert.equal(workers.shoot(w.id, true), 'No such worker');
+  for (let i = 0; i < 250 && !f.toasts.length; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(existsSync(cwd), false);
+  assert.equal(git(f.dir, 'branch', '--list', branch), '');
+  assert.equal(git(f.dir, 'branch', '--show-current'), 'main');
+  assert.equal(other.downedUntil, undefined);
+  assert.equal(workers.get(other.id), other);
+  assert.deepEqual(
+    f.saved().map((x) => x.id),
+    [other.id],
+  );
+});
+
+test('a super shot also finishes an already downed worker without waiting for its timer', (t) => {
+  const f = fixture(t);
+  const workers = f.manager();
+  const w = spawn(workers);
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  workers.shoot(w.id);
+  t.mock.timers.tick(1000);
+  assert.equal(workers.shoot(w.id, true), undefined);
+  assert.equal(workers.get(w.id), undefined);
+  assert.deepEqual(f.removed, [w.id]);
+  t.mock.timers.tick(REVIVE_MS);
+  assert.deepEqual(f.removed, [w.id], 'the old revival timer cannot dismiss twice');
+});
+
 test('revival cancels only that worker’s timer and leaves its session untouched', (t) => {
   const f = fixture(t);
   const workers = f.manager();

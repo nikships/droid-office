@@ -17,7 +17,7 @@
 | F | Hang a picture from the web on a wall (scroll to size it, click to hang it) |
 | Q | Put back the issue card you're carrying |
 | G / 1–6 | Emote: hold G for the wheel (point and let go) or press 1–6 to wave, give a thumbs up, clap, dance, point or facepalm; it plays on your character. With the wand drawn they're its spells: Lumos, swish and flick, sparkler, ship it, run the build, Protego. With the Magnum drawn they're its tricks: twirl, inspect, cylinder spin, yy, blow the smoke off, flip |
-| 7 | Draw the droid wand, or the .44 Magnum if you picked it in ⚙️ Settings → You (or put it away; mash it to cancel one into the other); click to cast or fire at the worker under the crosshair, or at a laptop screen to open its UI from any distance |
+| 7 | Draw the droid wand, or the .44 Magnum if you picked it in ⚙️ Settings → You (or put it away; mash it to cancel one into the other); tap left-click for a normal shot, hold for 0.75s and release for a charged shot; either opens a laptop screen's UI from any distance |
 | / | Search every terminal on your floor |
 | Tab | The ☰ menu: every window, and what shows on screen |
 | Esc | Close any window and get back to looking around. In a terminal, Esc goes to the program (to back out of a menu or interrupt the agent) |
