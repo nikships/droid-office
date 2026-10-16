@@ -59,7 +59,7 @@ Every new feature that ships in the original project is brought over, adapted to
 
 Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed.
 
-You need `git` and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab. See [the Mac app](docs/guide.md#the-mac-app).
+You need `git` and the [Droid CLI](https://docs.factory.ai/cli/getting-started/quickstart) (`droid`) signed in. For the boards, sign in to `gh` for GitHub or `glab` for GitLab. See [the Mac app](docs/guide/getting-started.md#the-mac-app).
 
 There are no supported command-line installers or standalone server releases.
 
@@ -74,7 +74,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`. This is a developer checkout, not a production install. See [Development](docs/guide.md#development) for builds, tests and running the Mac app from source.
+Open `http://localhost:5173`. This is a developer checkout, not a production install. See [Development](docs/guide/development.md) for builds, tests and running the Mac app from source.
 
 ## Your office in your pocket
 
@@ -90,7 +90,7 @@ Open `http://localhost:5173`. This is a developer checkout, not a production ins
 
 | Guide | What's in it |
 | --- | --- |
-| [The full guide](docs/guide.md) | The Mac app, every feature, controls, developer setup, and how it all works |
+| [The full guide](docs/guide/) | The Mac app, every feature, controls, developer setup, and how it all works |
 | [Droid Office for Android](android/README.md) | Installing and pairing the phone app, how it connects over Wi-Fi and Tailscale, and building it |
 
 ## Credits and license

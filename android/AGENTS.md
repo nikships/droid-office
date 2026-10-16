@@ -18,7 +18,7 @@ CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest li
 ## The office is the contract
 
 - The app speaks the office's WebSocket protocol (`src/shared/protocol.ts`) and HTTP routes (`src/server/server.ts`). `core/Protocol.kt` mirrors the messages the app uses; when the server adds or renames a field the app reads, update it and `ProtocolTest`. Unknown fields and messages are ignored (`ignoreUnknownKeys`), so an older app keeps working against a newer office.
-- Pairing (`droidoffice://pair` links, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) is described in [docs/guide.md "Droid Office for Android"](../docs/guide.md#droid-office-for-android). `core/Pairing.kt` must keep parsing every link the office can print, including the plain join URL with `?t=`.
+- Pairing (`droidoffice://pair` links, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) is described in [docs/guide/android.md "Droid Office for Android"](../docs/guide/android.md). `core/Pairing.kt` must keep parsing every link the office can print, including the plain join URL with `?t=`.
 - An office from before phone pairing has no `/api/mobile/*`: the app falls back to the LAN token. Keep that path working.
 
 ## Code

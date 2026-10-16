@@ -257,7 +257,7 @@ The work is split into pieces with their own branches, each merged into the `fea
 Rules every piece follows:
 
 - Match the codebase: comments that say why in plain sentences, its naming, Biome's format, and no new dependency unless it's truly needed.
-- Keep wiring into the big shared files (`src/client/main.ts`, `src/client/world/office.ts`, `src/shared/layout.ts`, `src/shared/protocol.ts`, `src/server/server.ts`, `docs/guide.md`) small, one block per file where possible: the logic goes in the feature's own module, which exports one mount or register function.
+- Keep wiring into the big shared files (`src/client/main.ts`, `src/client/world/office.ts`, `src/shared/layout.ts`, `src/shared/protocol.ts`, `src/server/server.ts`, `docs/guide/how-it-works.md`) small, one block per file where possible: the logic goes in the feature's own module, which exports one mount or register function.
 - Status and feedback on actions use the office's toasts and its windows' inline errors.
 - The boards use the Factory look the office already has (`world/machine.ts`, `world/factory-props.ts`): near-black panels, mono type, letter-spaced labels, the orange `#ee6018` accent, green, amber and red load colors, and the pinwheel glyph from `toon.ts`.
 - Tests are `tests/factory-<piece>.test.ts`, injecting `fetch` with answers copied from the real API. `npm run test:coverage` has floors, so new code needs real tests. Then check the piece in a clone of the owner's office against their real account (the `office-clone` skill).
