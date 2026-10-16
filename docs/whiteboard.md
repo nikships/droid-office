@@ -136,7 +136,7 @@ Output is short readable text by default, with `--json` for exact structures. Er
 
 The office injects a small script into every artifact's sandbox:
 
-- `whiteboard.state.get(path?)`, `whiteboard.state.set(value)`, `whiteboard.state.merge(obj)`, `whiteboard.state.del(path)`, and `whiteboard.on('state', fn)` when the owner or an agent changes it.
+- `whiteboard.state.get(path?)`, `whiteboard.state.set(value)`, `whiteboard.state.merge(obj)`, `whiteboard.state.del(path)`, and `whiteboard.on('state', fn)` whenever it changes: at once for the page's own writes and presses (the window never echoes those back, so the page tells its own listeners), and as they arrive for the owner's and agents'. A write made inside a state listener doesn't fire it again, so a listener that writes can't loop.
 - `whiteboard.action(name, data?)` records the last press of a named action (`{ name, data, at }`) in the card's state. A `<button data-wb-action="approve">` does that with no script. The window confirms each press the board accepts with a toast, at most once every few seconds for the same action, so a button with no script of its own still visibly works.
 - Form fields with a `name` or `id` are saved into `state.fields` and restored on load, with no script.
 - `whiteboard.card` holds the card's id, title and author.
