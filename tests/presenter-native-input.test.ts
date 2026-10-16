@@ -47,3 +47,21 @@ test('text the input system hands over is copied: an attributed string is emptie
   assert.match(body('- (void)insertText:'), /PlainString\(string\)/);
   assert.match(body('- (void)setMarkedText:'), /PlainString\(string\)/);
 });
+
+test('nothing escapes an event handler: AppKit turns an exception that does into a crash of the app', () => {
+  assert.match(source, /static void Swallowed\(/);
+  const routed = body('- (NSEvent *)routed:');
+  assert.match(routed, /@try \{/);
+  assert.match(routed, /@catch \(NSException \*ex\)/);
+  for (const handler of ['- (void)keyDown:', '- (void)keyUp:', '- (void)flagsChanged:', '- (void)mouseDown:', '- (void)mouseMoved:', '- (void)scrollWheel:', '- (void)emit:']) {
+    assert.match(body(handler), /@try|GUARDED\(/, `${handler} is not guarded`);
+  }
+  assert.match(body('- (void)keyDown:'), /_handlingKey = NO/);
+});
+
+test('key-only NSEvent properties are read for key events only: characters raises on a flags-changed event', () => {
+  const describe = source.slice(source.indexOf('static NSString *Describe'), source.indexOf('static NSString *ClassOf'));
+  assert.match(describe, /if \(e\.type != NSEventTypeKeyDown && e\.type != NSEventTypeKeyUp\) return head;/);
+  assert.ok(describe.indexOf('return head;') < describe.indexOf('e.characters'));
+  assert.doesNotMatch(body('- (void)flagsChanged:'), /\.characters|isARepeat/);
+});

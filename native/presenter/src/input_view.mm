@@ -51,8 +51,25 @@ static void TraceWrite(NSString *format, ...) {
     if (TraceFile()) TraceWrite(__VA_ARGS__); \
   } while (0)
 
+// `characters`, `charactersIgnoringModifiers` and `isARepeat` raise NSInternalInconsistencyException on any event that is not a key down or up (a
+// flags-changed event is one), and an exception that gets out of an AppKit event handler ends the app.
+// Nothing may escape an event handler: AppKit turns an exception that does into a crash of the whole app. The event is dropped and logged.
+static void Swallowed(const char *where, NSException *ex) {
+  NSLog(@"droid-office: input: %s: %@: %@", where, ex.name, ex.reason);
+  TRACE(@"EXCEPTION in %s: %@: %@", where, ex.name, ex.reason);
+}
+
+#define GUARDED(where, ...) \
+  @try { \
+    __VA_ARGS__ \
+  } @catch (NSException * ex) { \
+    Swallowed(where, ex); \
+  }
+
 static NSString *Describe(NSEvent *e) {
-  return [NSString stringWithFormat:@"type=%lu keyCode=%d chars=%@ base=%@ mods=%lx repeat=%d", (unsigned long)e.type, (int)e.keyCode, [e.characters debugDescription], [e.charactersIgnoringModifiers debugDescription], (unsigned long)e.modifierFlags, e.type == NSEventTypeFlagsChanged ? 0 : (int)e.isARepeat];
+  NSString *head = [NSString stringWithFormat:@"type=%lu keyCode=%d mods=%lx", (unsigned long)e.type, (int)e.keyCode, (unsigned long)e.modifierFlags];
+  if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp) return head;
+  return [head stringByAppendingFormat:@" chars=%@ base=%@ repeat=%d", [e.characters debugDescription], [e.charactersIgnoringModifiers debugDescription], (int)e.isARepeat];
 }
 
 static NSString *ClassOf(id o) {
@@ -176,7 +193,7 @@ static __weak DOPresenterView *gCurrent;
 
 - (void)emit:(NSDictionary *)event {
   void (^sink)(NSDictionary *) = self.eventSink;
-  if (sink) sink(event);
+  GUARDED("emit", if (sink) sink(event););
 }
 
 - (void)reportFocus {
@@ -247,6 +264,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (NSEvent *)routed:(NSEvent *)e {
+  @try {
   NSWindow *window = self.window;
   BOOL isKey = e.type == NSEventTypeKeyDown || e.type == NSEventTypeKeyUp || e.type == NSEventTypeFlagsChanged;
   if (isKey)
@@ -280,6 +298,10 @@ static __weak DOPresenterView *gCurrent;
     default: return e;
   }
   return nil;
+  } @catch (NSException *ex) {
+    Swallowed("monitor", ex);
+    return e;
+  }
 }
 
 - (void)windowKeyChanged:(NSNotification *)note {
@@ -370,33 +392,32 @@ static __weak DOPresenterView *gCurrent;
   [self emit:@{@"type": @"delta", @"dx": @(dx), @"dy": @(dy), @"raw": @(raw), @"buttons": @(Buttons()), @"mods": @(mods)}];
 }
 
-- (void)mouseDown:(NSEvent *)e { [self down:e button:0]; }
-- (void)mouseUp:(NSEvent *)e { [self up:e button:0]; }
-- (void)rightMouseDown:(NSEvent *)e { [self down:e button:1]; }
-- (void)rightMouseUp:(NSEvent *)e { [self up:e button:1]; }
-- (void)otherMouseDown:(NSEvent *)e { [self down:e button:(int)e.buttonNumber == 2 ? 2 : 3]; }
-- (void)otherMouseUp:(NSEvent *)e { [self up:e button:(int)e.buttonNumber == 2 ? 2 : 3]; }
-- (void)mouseMoved:(NSEvent *)e { [self moved:e]; }
-- (void)mouseDragged:(NSEvent *)e { [self moved:e]; }
-- (void)rightMouseDragged:(NSEvent *)e { [self moved:e]; }
-- (void)otherMouseDragged:(NSEvent *)e { [self moved:e]; }
+- (void)mouseDown:(NSEvent *)e { GUARDED("mouseDown", [self down:e button:0];) }
+- (void)mouseUp:(NSEvent *)e { GUARDED("mouseUp", [self up:e button:0];) }
+- (void)rightMouseDown:(NSEvent *)e { GUARDED("rightMouseDown", [self down:e button:1];) }
+- (void)rightMouseUp:(NSEvent *)e { GUARDED("rightMouseUp", [self up:e button:1];) }
+- (void)otherMouseDown:(NSEvent *)e { GUARDED("otherMouseDown", [self down:e button:(int)e.buttonNumber == 2 ? 2 : 3];) }
+- (void)otherMouseUp:(NSEvent *)e { GUARDED("otherMouseUp", [self up:e button:(int)e.buttonNumber == 2 ? 2 : 3];) }
+- (void)mouseMoved:(NSEvent *)e { GUARDED("mouseMoved", [self moved:e];) }
+- (void)mouseDragged:(NSEvent *)e { GUARDED("mouseDragged", [self moved:e];) }
+- (void)rightMouseDragged:(NSEvent *)e { GUARDED("rightMouseDragged", [self moved:e];) }
+- (void)otherMouseDragged:(NSEvent *)e { GUARDED("otherMouseDragged", [self moved:e];) }
 
 - (void)mouseEntered:(NSEvent *)e {
   _inside = YES;
-  [self emitMouse:@"enter" event:e button:0];
+  GUARDED("mouseEntered", [self emitMouse:@"enter" event:e button:0];)
 }
 
 - (void)mouseExited:(NSEvent *)e {
   _inside = NO;
-  if (!_captured) [self emitMouse:@"leave" event:e button:0];
+  GUARDED("mouseExited", if (!_captured) [self emitMouse:@"leave" event:e button:0];)
 }
 
 - (void)scrollWheel:(NSEvent *)e {
-  NSPoint p = [self pointOf:e];
-  [self emit:@{
+  GUARDED("scrollWheel", NSPoint p = [self pointOf:e]; [self emit:@{
     @"type": @"scroll", @"x": @(p.x), @"y": @(p.y), @"dx": @(e.scrollingDeltaX), @"dy": @(e.scrollingDeltaY),
     @"precise": @(e.hasPreciseScrollingDeltas), @"mods": @(Mods(e.modifierFlags)),
-  }];
+  }];)
 }
 
 #pragma mark - Pointer capture
@@ -482,6 +503,19 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)keyDown:(NSEvent *)e {
+  @try {
+    [self handleKeyDown:e];
+  } @catch (NSException *ex) {
+    // Left set, the key state would swallow every key that follows.
+    _handlingKey = NO;
+    _pending = nil;
+    _commands = nil;
+    _committed = nil;
+    Swallowed("keyDown", ex);
+  }
+}
+
+- (void)handleKeyDown:(NSEvent *)e {
   TRACE(@"keyDown %@ textActive=%d marked=%lu inputContext=%d", Describe(e), _textActive, (unsigned long)_marked.length, self.inputContext != nil);
   if (!_textActive && !_marked.length) return [self emitKey:e kind:@"down" handled:NO commands:nil];
   BOOL hadMarked = _marked.length > 0;
@@ -508,6 +542,10 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)keyUp:(NSEvent *)e {
+  GUARDED("keyUp", [self handleKeyUp:e];)
+}
+
+- (void)handleKeyUp:(NSEvent *)e {
   TRACE(@"keyUp %@", Describe(e));
   BOOL handled = [_handledKeys containsObject:@(e.keyCode)];
   [_handledKeys removeObject:@(e.keyCode)];
@@ -515,13 +553,12 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)flagsChanged:(NSEvent *)e {
-  TRACE(@"flagsChanged %@", Describe(e));
-  [self emit:@{@"type": @"flags", @"keyCode": @(e.keyCode), @"mods": @(Mods(e.modifierFlags))}];
+  GUARDED("flagsChanged", TRACE(@"flagsChanged %@", Describe(e)); [self emit:@{@"type": @"flags", @"keyCode": @(e.keyCode), @"mods": @(Mods(e.modifierFlags))}];)
 }
 
 // Menu key equivalents (Copy, Paste, Quit) are the menu's: the page never sees them, as in a browser.
 - (BOOL)performKeyEquivalent:(NSEvent *)e {
-  TRACE(@"performKeyEquivalent %@", Describe(e));
+  GUARDED("performKeyEquivalent", TRACE(@"performKeyEquivalent %@", Describe(e));)
   return NO;
 }
 
