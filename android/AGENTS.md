@@ -13,18 +13,19 @@ Run from `android/` with JDK 17+ (CI uses 21). The SDK path comes from `ANDROID_
 | Build and install a debug APK on the connected device | `./gradlew installDebug` |
 | Release APK (R8) | `./gradlew assembleRelease` |
 
-CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest lintDebug` and then `assembleRelease`; run the same before a PR. On a pull request it runs only when the PR touches `android/` or the workflow. `npm` checks don't cover the Kotlin code; they do cover the terminal page's JavaScript (below).
+CI's `android` job in `.github/workflows/release.yml` runs `testDebugUnitTest lintDebug` and then `assembleRelease`; run the same before a PR. On a pull request it runs only when the PR touches `android/` or the workflow. `npm` checks don't cover the Kotlin code; they do cover the terminal and Whiteboard pages' JavaScript (below).
 
 ## The office is the contract
 
 - The app speaks the office's WebSocket protocol (`src/shared/protocol.ts`) and HTTP routes (`src/server/server.ts`). `core/Protocol.kt` mirrors the messages the app uses; when the server adds or renames a field the app reads, update it and `ProtocolTest`. Unknown fields and messages are ignored (`ignoreUnknownKeys`), so an older app keeps working against a newer office.
-- Pairing (`droidoffice://pair` links, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) is described in [docs/guide.md "Droid Office for Android"](../docs/guide.md#droid-office-for-android). `core/Pairing.kt` must keep parsing every link the office can print, including the plain join URL with `?t=`.
+- Pairing (`droidoffice://pair` links, `/api/mobile/pair`, `/api/mobile/hello`, device tokens, close code `4401`) is described in [docs/guide/android.md "Droid Office for Android"](../docs/guide/android.md). `core/Pairing.kt` must keep parsing every link the office can print, including the plain join URL with `?t=`.
 - An office from before phone pairing has no `/api/mobile/*`: the app falls back to the LAN token. Keep that path working.
 
 ## Code
 
 - `core/` is pure Kotlin with no Android imports, so its JUnit tests run on the JVM. Put logic there (parsing, ordering, labels, the terminal model) and keep `ui/` to layout and state wiring.
 - The terminal is xterm.js in a WebView: the page is `app/src/main/assets/terminal/`, talking to `ui/worker/TerminalPage.kt` through the messages in `core/TermPage.kt`. Its DOM-free logic lives in `input.js` and is tested by `tests/android-terminal.test.ts` in the root `npm test`, which also checks `theme.js` against the office's terminal colours. Never edit `terminal/vendor/`: it is written by `node tools/android-terminal.mjs`. The page loads nothing from the network and never forwards xterm's own `onData`: the PTY's answers to queries already come from the office's terminal.
+- A Whiteboard card opens live in a WebView: the page is `app/src/main/assets/whiteboard/`, talking to `ui/board/CardPage.kt` through the routes and messages in `core/WbPage.kt`. It frames the card with the office's `CARD_SANDBOX` and `CARD_ALLOW` and speaks the window's bridge (`src/shared/whiteboard-bridge.ts`); the app listens to that page's origin only, never to the card's frame. Its DOM-free logic lives in `marks.js` and is checked against the office's reducer and marks code by `tests/android-whiteboard.test.ts`. When the window's surface or bridge changes, change the page with it.
 - One `OfficeConnection` owns the socket for the current office. Screens and services `hold(tag)` and `release(tag)` it rather than opening their own.
 - Tokens only ever go through `TokenVault`. Never log a token, a pairing link or a request URL that carries `t=` or `d=`.
 - Plain HTTP and `ws://` are allowed only to private addresses, enforced by `net/CleartextGuard.kt` on the address actually connected. Every OkHttp client gets it as a network interceptor.

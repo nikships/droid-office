@@ -227,15 +227,17 @@ export class Muzzle {
   readonly group = new THREE.Group();
   private t = Infinity;
   private fresh = false;
+  private heavy = false;
   private core: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private star: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
   private light: THREE.PointLight;
+  private rings: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[] = [];
 
   /** `at` is where the flash sits on the prop, `colors` its white-hot core and the star round it. */
   constructor(
     private flash: FlashLight = ROOM_FLASH,
     at: THREE.Vector3 = MUZZLE_AT,
-    colors: { core: string; star: string } = { core: '#fff6d8', star: '#ffb347' },
+    private colors: { core: string; star: string } = { core: '#fff6d8', star: '#ffb347' },
   ) {
     this.group.position.copy(at);
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -256,25 +258,34 @@ export class Muzzle {
       this.group.add(blade);
       this.star.push(blade);
     }
+    for (let i = 0; i < 2; i++) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.91, 1, 48), additive(i ? '#ffae64' : '#fff0cb', 0));
+      ring.name = 'super-shot-pressure-ring';
+      this.rings.push(ring);
+      this.group.add(ring);
+    }
     this.light = new THREE.PointLight(flash.color, 0, flash.distance, flash.decay);
     this.light.position.z = flash.ahead;
     this.group.add(this.light);
   }
 
-  fire() {
+  fire(superShot = false) {
+    this.heavy = superShot;
     this.t = 0;
     this.fresh = true;
     // A different star each shot, at full brightness from the shot's own frame.
     this.group.rotation.z = Math.random() * Math.PI;
+    this.core.material.color.set(superShot ? '#ffffff' : this.colors.core);
+    for (const blade of this.star) blade.material.color.set(superShot ? '#ffd497' : this.colors.star);
     this.show(1);
   }
 
   get lit(): boolean {
-    return this.t < FLASH_TIME;
+    return this.t < (this.heavy ? 0.22 : FLASH_TIME);
   }
 
   update(dt: number) {
-    if (this.t >= FLASH_TIME) return;
+    if (!this.lit) return;
 
     // Keep the flash at full brightness for its first frame.
     if (this.fresh) {
@@ -282,15 +293,21 @@ export class Muzzle {
       return;
     }
     this.t += dt;
-    this.show(Math.max(0, 1 - this.t / FLASH_TIME));
+    this.show(Math.max(0, 1 - this.t / (this.heavy ? 0.22 : FLASH_TIME)));
   }
 
   private show(k: number) {
     this.core.material.opacity = k;
     this.core.scale.setScalar(0.6 + 0.4 * k);
     for (const b of this.star) b.material.opacity = k * 0.9;
-    this.group.scale.setScalar(1 + (1 - k) * 0.6);
-    this.light.intensity = this.flash.intensity * k * k;
+    this.group.scale.setScalar((this.heavy ? 1.8 : 1) * (1 + (1 - k) * 0.6));
+    this.light.intensity = this.flash.intensity * (this.heavy ? 1.6 : 1) * k * k;
+    for (const [i, ring] of this.rings.entries()) {
+      const p = Math.max(0, Math.min(1, (this.t - i * 0.025) / 0.18));
+      ring.position.z = 0.04 + p * 0.32;
+      ring.scale.setScalar(0.025 + p * 0.13);
+      ring.material.opacity = this.heavy && this.t >= i * 0.025 ? (1 - p) ** 2 * 0.75 : 0;
+    }
   }
 
   dispose() {

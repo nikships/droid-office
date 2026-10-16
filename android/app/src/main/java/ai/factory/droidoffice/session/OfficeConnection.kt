@@ -17,6 +17,13 @@ import ai.factory.droidoffice.core.ServerMsg
 import ai.factory.droidoffice.core.TermEvent
 import ai.factory.droidoffice.core.TermFeed
 import ai.factory.droidoffice.core.TermSize
+import ai.factory.droidoffice.core.WbFetched
+import ai.factory.droidoffice.core.WbFileRef
+import ai.factory.droidoffice.core.WbFloor
+import ai.factory.droidoffice.core.WbPinged
+import ai.factory.droidoffice.core.WbRenderStatus
+import ai.factory.droidoffice.core.WbResult
+import ai.factory.droidoffice.core.WhiteboardSync
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.data.AuthMode
@@ -27,6 +34,7 @@ import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.net.OfficeAuth
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
@@ -50,6 +58,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonObject
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -127,6 +136,19 @@ class OfficeConnection(
     /** A worker this phone just hired arrived at its desk. */
     private val _hired = MutableSharedFlow<WorkerInfo>(extraBufferCapacity = 4)
     val hired: SharedFlow<WorkerInfo> = _hired.asSharedFlow()
+
+    private val _boards = MutableStateFlow<Map<String, WbFloor>>(emptyMap())
+
+    /** Each floor's Whiteboard this connection has a snapshot of, by floor id. */
+    val boards: StateFlow<Map<String, WbFloor>> = _boards.asStateFlow()
+
+    private val _pinged = MutableSharedFlow<WbPinged>(extraBufferCapacity = 8)
+
+    /** What became of a Whiteboard ping this phone sent. */
+    val pinged: SharedFlow<WbPinged> = _pinged.asSharedFlow()
+
+    private val boardWatchers = HashSet<String>()
+    private var whiteboard = newWhiteboard()
 
     private val holders = MutableStateFlow<Set<String>>(emptySet())
     private val nonce = MutableStateFlow(0)
@@ -271,6 +293,71 @@ class OfficeConnection(
         scope.launch { api.unstageImage(base, auth, floor, id) }
     }
 
+    /**
+     * Something on screen shows a Whiteboard: committed changes are fetched as they arrive while one
+     * watches, and once when the first starts again. Main thread only, like the board itself.
+     */
+    fun watchBoard(tag: String) {
+        boardWatchers += tag
+        whiteboard.watching = true
+    }
+
+    fun unwatchBoard(tag: String) {
+        boardWatchers -= tag
+        whiteboard.watching = boardWatchers.isNotEmpty()
+    }
+
+    /** Applies the owner's changes to a floor's Whiteboard; answers once the office committed them, or why not. */
+    suspend fun applyBoard(floorId: String, ops: List<JsonObject>): WbResult {
+        val done = CompletableDeferred<WbResult>()
+        whiteboard.apply(floorId, ops) { done.complete(it) }
+        return done.await()
+    }
+
+    /** Fires and forgets: the board shows the change once the office commits it. */
+    fun applyBoardLater(floorId: String, ops: List<JsonObject>) = whiteboard.apply(floorId, ops)
+
+    fun refreshBoard(floorId: String) = whiteboard.refresh(floorId)
+
+    /** Types the Whiteboard line into a worker's terminal, as its status allows; [pinged] says how it went. */
+    fun pingBoard(workerId: String): Boolean = send(WbPinged.ping(workerId))
+
+    suspend fun boardRenderStatus(floor: String, card: String): WbRenderStatus? {
+        val (base, auth) = current ?: return null
+        return api.boardRenderStatus(base, auth, floor, card)
+    }
+
+    suspend fun boardImage(floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? {
+        val (base, auth) = current ?: return null
+        return api.boardImage(base, auth, floor, card, thumb, tile, version)
+    }
+
+    /** Sends a batch; [done] runs on the main thread once the office has committed it or said why not. */
+    fun applyBoard(floorId: String, ops: List<JsonObject>, done: (WbResult) -> Unit) = whiteboard.apply(floorId, ops, done)
+
+    /** A file of a live card's page, on the route the app uses now. Blocking: the WebView asks on its own thread. */
+    fun cardFile(cap: String, path: String): WbFetched? {
+        val (base, _) = current ?: return null
+        return api.cardFile(base, cap, path)
+    }
+
+    /** A picture on a card, by hash. Blocking, like [cardFile]. */
+    fun boardFile(floor: String, card: String, hash: String): WbFetched? {
+        val (base, auth) = current ?: return null
+        return api.boardFile(base, auth, floor, card, hash)
+    }
+
+    /** Uploads a picture for the board; the batch that puts it on a card has to follow within the hour. */
+    suspend fun boardBlob(floor: String, mime: String, bytes: ByteArray): Result<WbFileRef> {
+        val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        return api.boardBlob(base, auth, floor, mime, bytes)
+    }
+
+    private fun newWhiteboard() = WhiteboardSync(::send).also { s ->
+        s.watching = boardWatchers.isNotEmpty()
+        s.onChange = { _boards.value = s.all() }
+    }
+
     /** Unpairs from the office when it can (best effort: it may be off), then forgets it here. */
     suspend fun forget(office: PairedOffice) {
         if (office.auth == AuthMode.Device) {
@@ -299,6 +386,9 @@ class OfficeConnection(
             synchronized(holds) { holds.clear() }
             feeds.clear()
             models = null
+            whiteboard.close()
+            whiteboard = newWhiteboard()
+            _boards.value = emptyMap()
         }
         if (!d.wanted) {
             _link.value = Link(Phase.Idle, office.id)
@@ -411,16 +501,20 @@ class OfficeConnection(
             upgrade?.cancel()
             socket = null
             ws.cancel()
+            whiteboard.status(false)
         }
     }
 
     private fun handle(officeId: String, msg: ServerMsg) {
         when (msg) {
             is ServerMsg.Welcome -> {
+                whiteboard.status(true)
+                whiteboard.welcome(msg.view.floor)
                 enter(officeId, msg.view, msg.floors, msg.version)
                 msg.view.project?.name?.ifBlank { null }?.let { p -> scope.launch { store.update(officeId) { it.copy(project = p) } } }
             }
             is ServerMsg.FloorEnter -> {
+                whiteboard.enter(msg.view.floor)
                 enter(officeId, msg.view, null, null)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
@@ -449,6 +543,8 @@ class OfficeConnection(
             is ServerMsg.Toast -> _toasts.tryEmit(msg)
             is ServerMsg.Pulls -> _data.update { it.copy(pulls = msg.state.items) }
             is ServerMsg.Worktree -> _worktrees.tryEmit(msg)
+            is ServerMsg.Whiteboard -> whiteboard.handle(msg.t, msg.obj)
+            is ServerMsg.Pinged -> _pinged.tryEmit(msg.result)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
         }
     }

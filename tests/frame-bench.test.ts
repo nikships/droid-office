@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { clonePort } from '../tools/frame-bench/launch.mjs';
 import { displayPacing, pct, spread, storageFor } from '../tools/frame-bench/lib.mjs';
 import { latencies } from '../tools/frame-bench/latency.mjs';
+import { cpuSeconds, parseGpu, parsePs, roleOf, summarize } from '../tools/frame-bench/resource.mjs';
 import { tables } from '../tools/frame-bench/table.mjs';
 
 const MS = 1e6;
@@ -102,4 +103,51 @@ test('the results table takes the median of repeats with their range and keeps a
   assert.equal(walk.length, 1);
   assert.match(walk[0], /\| 2 \| 100 \| 9\.0 \[8\.0–10\.0\] \| 10\.0 \[9\.0–11\.0\] \| 11\.0 \[10\.0–12\.0\] \| 14\.0 \[13\.0–15\.0\] \| 1 \[0–2\] \| 1 \[0–2\] \|/);
   assert.doesNotMatch(text, /\| turn \|/);
+});
+
+test('the table adds the presenter and the resource columns when a run has them', () => {
+  const report = { frames: 100, frameTime: { p50: 8, p95: 9, p99: 10, max: 11 }, missed: 0, repeated: 0, cpu: { total: { p50: 6 } }, gpu: { scene: 4, hands: 2 } };
+  const presenter = { fps: 119.5, dropped: 3, latency: { p50: 9, p95: 12, p99: 15 }, wait: { p50: 2, p95: 4 }, gpu: { p50: 0.4, p95: 0.6 }, late: 1, early: 0 };
+  const resources = { cpuPct: { total: 150, renderer: 100, gpu: 30, main: 20 }, rssMb: { median: 900, max: 950 }, gpu: { device: { median: 40, max: 70 } } };
+  const text = tables([{ config: 'remastered-sdr', cap: 120, scenario: 'walk', renderer: 'Remastered', report, presenter, resources }]);
+  assert.match(text, /\| remastered-sdr \| 120 \| walk \| 1 \| 119\.5 \| 3 \| 9\.0 \| 12\.0 \| 15\.0 \| 2\.0 \| 4\.0 \| 0\.40 \| 0\.60 \| 1 \| 0 \|/);
+  assert.match(text, /\| remastered-sdr \| 120 \| walk \| 1 \| 150 \| 100 \| 30 \| 20 \| 900 \| 950 \| 40 \| 70 \|/);
+});
+
+test('app processes, memory and GPU utilization are read from ps and ioreg output, and CPU is the time used over the window', () => {
+  assert.equal(cpuSeconds('1:02:03.50'), 3723.5);
+  assert.equal(cpuSeconds('2:03.25'), 123.25);
+  assert.equal(roleOf('/x/Droid Office.app/Contents/Frameworks/Droid Office Helper (Renderer).app/Contents/MacOS/Droid Office Helper (Renderer)'), 'renderer');
+  assert.equal(roleOf('/x/Droid Office.app/Contents/Frameworks/Droid Office Helper (GPU).app/Contents/MacOS/Droid Office Helper (GPU)'), 'gpu');
+  assert.equal(roleOf('/x/Droid Office.app/Contents/MacOS/Droid Office --user-data-dir=/y'), 'main');
+  const ps = [
+    '  10   0:10.00  200000 /private/tmp/Droid Office.app/Contents/Frameworks/Droid Office Helper (Renderer).app/Contents/MacOS/Droid Office Helper (Renderer) --type=renderer',
+    '  11   0:02.00  100000 /tmp/Droid Office.app/Contents/MacOS/Droid Office --user-data-dir=/y',
+    '  12   0:50.00  999999 /Applications/Other.app/Contents/MacOS/Other',
+  ].join('\n');
+  const first = parsePs(ps, ['/tmp/Droid Office.app', '/private/tmp/Droid Office.app']);
+  assert.deepEqual(
+    first.map((p: { pid: number; role: string }) => [p.pid, p.role]),
+    [
+      [10, 'renderer'],
+      [11, 'main'],
+    ],
+  );
+  const last = first.map((p: { pid: number; cpuSec: number }) => ({ ...p, cpuSec: p.cpuSec + (p.pid === 10 ? 10 : 5) }));
+  const gpu = parseGpu('"Tiler Utilization %"=12, "Renderer Utilization %"=48, "Device Utilization %"=50, "In use system memory"=1048576');
+  assert.deepEqual(gpu, { device: 50, renderer: 48, tiler: 12, memoryMb: 1 });
+  const summary = summarize({
+    first,
+    last,
+    seconds: 10,
+    samples: [
+      { procs: first, gpu },
+      { procs: last, gpu: { ...gpu, device: 70 } },
+    ],
+  });
+  assert.equal(summary.cpuPct.renderer, 100);
+  assert.equal(summary.cpuPct.main, 50);
+  assert.equal(summary.cpuPct.total, 150);
+  assert.equal(summary.rssMb.median, 300000 / 1024);
+  assert.equal(summary.gpu.device.max, 70);
 });

@@ -75,11 +75,29 @@ export async function loadOffice(cdp, storage, { clearBake = false } = {}) {
   const warm = Date.now() - t0;
   // HDR starts asynchronously (a WebGPU device) and the loop needs a few seconds to settle after the warm-up.
   await sleep(4000);
+  await ensureRendering(cdp);
   return { shownMs: shown, warmMs: warm };
 }
 
 /**
- * How the page's performance.now() (ms) lines up with process.hrtime (ns, CLOCK_MONOTONIC) right now: the sample with the
+ * Chromium stops animation frames for a window another app covers or the user switched away from, and every number after
+ * that is zeros or stalls. Brings the page forward and waits until it draws; throws when it never does.
+ */
+export async function ensureRendering(cdp) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await cdp.send('Page.bringToFront').catch(() => undefined);
+    const before = await cdp.eval('window.__raf.length');
+    await sleep(600);
+    const after = await cdp.eval('window.__raf.length');
+    // Animation frames flowing is the test: a presenter build keeps its page in a hidden window, whose visibility is not.
+    if (after - before >= 20) return;
+    await sleep(2000);
+  }
+  throw new Error('the page is not drawing (hidden or covered by another window)');
+}
+
+/**
+ * How the page's performance.now() (ms) lines up with process.hrtime (ns, CLOCK_MONOTONIC_RAW) right now: the sample with the
  * shortest DevTools round trip, taking the page's clock at the middle of it. hrtime = pageMs * 1e6 + offsetNs.
  */
 export async function clockOffset(cdp) {
@@ -102,8 +120,14 @@ export const PAGE_LIB = `(() => {
   window.__bench = {
     sleep,
     // A measurement is the frames between begin() and end(); end() keeps the page's own report of them.
-    begin: () => { office.frameStats({ reset: true }); window.__bench.t0 = epoch(); window.__bench.report = null; },
-    end: () => { window.__bench.t1 = epoch(); window.__bench.report = office.frameStats(); },
+    // The Mac app's native presenter (a build that has it) keeps its own counters, reset and read the same way; null elsewhere.
+    begin: () => { office.frameStats({ reset: true }); if (typeof office.presenterStats === 'function') office.presenterStats({ reset: true }).catch(() => {}); window.__bench.t0 = epoch(); window.__bench.report = null; },
+    end: () => {
+      window.__bench.t1 = epoch();
+      window.__bench.report = office.frameStats();
+      window.__bench.presenter = null;
+      window.__bench.presenterDone = typeof office.presenterStats === 'function' ? office.presenterStats().then((s) => { window.__bench.presenter = s; }, () => {}) : Promise.resolve();
+    },
     rafGaps: () => { const a = window.__raf; const g = []; for (let i = 1; i < a.length; i++) g.push(a[i] - a[i - 1]); return g; },
   };
 })();`;
@@ -232,7 +256,12 @@ export async function startDisplayTrace(binary, file, { seconds = 600, region } 
     stop: () =>
       new Promise((resolve) => {
         child.removeAllListeners('exit');
-        child.once('exit', () => resolve(JSON.parse(readFileSync(file, 'utf8')).frames));
+        child.once('exit', () => {
+          const trace = JSON.parse(readFileSync(file, 'utf8'));
+          // A recorder built before the clock fix writes CLOCK_MONOTONIC, which is seconds off process.hrtime.
+          if (!String(trace.clock).includes('MONOTONIC_RAW')) throw new Error(`display-trace wrote ${trace.clock}: rebuild it`);
+          resolve(trace.frames);
+        });
         child.kill('SIGINT');
       }),
   };

@@ -7,7 +7,7 @@ description: Test, verify or screenshot the Droid Office 3D UI (the three.js off
 
 Every office tab exposes `window.office`. It walks or teleports you to desks, boards and places, presses keys at them, opens ☰ menu windows, rides the elevator, sets the camera and returns JSON state for assertions. Use it for every check in the 3D UI; never steer by hand with keys or mouse drags.
 
-The full command reference lives in [docs/guide.md, "Automation API"](../../../docs/guide.md#automation-api-windowoffice) and the code in `src/client/automation.ts`.
+The full command reference lives in [docs/guide/development.md, "Automation API"](../../../docs/guide/development.md#automation-api-windowoffice) and the code in `src/client/automation.ts`.
 
 ## 1. Build and start a clone of the owner's office
 

@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.ui.asks.AsksScreen
+import ai.factory.droidoffice.ui.board.WhiteboardScreen
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.HireSheet
 import ai.factory.droidoffice.ui.home.HomeScreen
@@ -52,19 +53,23 @@ import ai.factory.droidoffice.ui.theme.Palette
 enum class MainTab(val label: String, val icon: ImageVector, val tag: String) {
     Asks("Asks", OfficeIcons.Bell, Tags.Tab.ASKS),
     Office("Office", OfficeIcons.Building, Tags.Tab.OFFICE),
+    Board("Board", OfficeIcons.Whiteboard, Tags.Tab.BOARD),
     Me("Me", OfficeIcons.Agent, Tags.Tab.ME),
 }
 
 /**
- * The app once paired: Asks (questions waiting on you), Office (every worker, hiring) and Me (this
- * phone's offices and settings). A bar along the bottom on a phone, a rail down the side on a
+ * The app once paired: Asks (questions waiting on you), Office (every worker, hiring), Board (the
+ * floor's Whiteboard) and Me (this phone's offices and settings). A bar along the bottom on a phone, a rail down the side on a
  * tablet, where Office keeps its list-and-terminal panes.
  */
 @Composable
-fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onScan: () -> Unit) {
+fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (floor: String, card: String) -> Unit, onScan: () -> Unit) {
     val graph = LocalGraph.current
     val data by graph.connection.data.collectAsStateWithLifecycle()
     val waiting = data.workers.values.count { it.state == WorkerStatus.NeedsInput }
+    val boards by graph.connection.boards.collectAsStateWithLifecycle()
+    val changed = data.floorId?.let { boards[it]?.board?.changedCards() } ?: 0
+    val badge = { t: MainTab -> if (t == MainTab.Asks) waiting else if (t == MainTab.Board) changed else 0 }
     var tab by rememberSaveable { mutableStateOf<MainTab?>(null) }
     var hiring by rememberSaveable { mutableStateOf(false) }
     // Opens on Asks when something is waiting the first time the office is in, else on Office.
@@ -79,6 +84,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onScan: () -> U
                     when (t) {
                         MainTab.Asks -> AsksScreen(onOpenWorker = onOpenWorker, onHire = { hiring = true })
                         MainTab.Office -> HomeScreen(onOpenWorker = { onOpenWorker(it, null) }, onOffices = { tab = MainTab.Me }, onScan = onScan)
+                        MainTab.Board -> WhiteboardScreen(onOpenCard = onOpenCard)
                         MainTab.Me -> OfficesScreen(onBack = { tab = MainTab.Office }, onPairNew = onScan, onSwitched = { tab = MainTab.Office }, embedded = true)
                     }
                 }
@@ -91,7 +97,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onScan: () -> U
                         NavigationRailItem(
                             selected = t == shown,
                             onClick = { tab = t },
-                            icon = { TabIcon(t, if (t == MainTab.Asks) waiting else 0) },
+                            icon = { TabIcon(t, badge(t)) },
                             label = { Text(t.label, style = MaterialTheme.typography.labelMedium) },
                             colors = NavigationRailItemDefaults.colors(
                                 selectedIconColor = Palette.Accent, selectedTextColor = Palette.Accent, indicatorColor = Palette.AccentMuted,
@@ -113,7 +119,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onScan: () -> U
                         NavigationBarItem(
                             selected = t == shown,
                             onClick = { tab = t },
-                            icon = { TabIcon(t, if (t == MainTab.Asks) waiting else 0) },
+                            icon = { TabIcon(t, badge(t)) },
                             label = { Text(t.label, style = MaterialTheme.typography.labelMedium) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = Palette.Accent, selectedTextColor = Palette.Accent, indicatorColor = Palette.AccentMuted,
@@ -131,9 +137,10 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onScan: () -> U
 
 @Composable
 private fun TabIcon(t: MainTab, badge: Int) {
+    val what = if (t == MainTab.Board) "changed" else "waiting"
     BadgedBox(
         badge = {
-            if (badge > 0) Badge(containerColor = Palette.Danger, contentColor = Palette.Text, modifier = Modifier.semantics { contentDescription = "$badge waiting" }) {
+            if (badge > 0) Badge(containerColor = Palette.Danger, contentColor = Palette.Text, modifier = Modifier.semantics { contentDescription = "$badge $what" }) {
                 Text("$badge", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text))
             }
         },

@@ -286,7 +286,7 @@ window.start = function (page, hash, kind) {
   commit([{ op: 'card.create', card: 'c1', kind: kind || 'html', title: 'Form', content: kind === 'canvas' ? undefined : content(hash) }]);
   var host = {
     floor: 'f',
-    apply: function (ops) { applied.push(ops); setTimeout(function () { commit(ops); }, 0); return Promise.resolve(true); },
+    apply: function (ops) { applied.push(ops); if (window.applyAtOnce) commit(ops); else setTimeout(function () { commit(ops); }, 0); return Promise.resolve(true); },
     notify: function () {},
     acted: function () {},
     cardUrl: function (n) { loads.push(version); return '/card/' + version + '/#wb=' + n; },
@@ -566,6 +566,53 @@ test('a content reload keeps the focused field, its caret and what was typed; ty
   assert.deepEqual(errors, []);
 });
 
+const LIVE_STATE = `<!doctype html><html><body>
+<button id="add" type="button">Add</button>
+<button id="pick" type="button" data-wb-action="pick" data-wb-data='{"o":"b"}'>B</button>
+<ul id="list"></ul><output id="picked"></output>
+<script>
+window.events = [];
+whiteboard.on('state', function (s, changes) {
+  events.push(changes.map(function (c) { return c.path.join('.') + ':' + c.author.kind; }));
+  document.getElementById('list').textContent = (s.todos || []).join(',');
+  document.getElementById('picked').textContent = s.actions && s.actions.pick ? s.actions.pick.data.o : '';
+});
+whiteboard.on('state', function (s) { if ((s.todos || []).length && !s.seen) whiteboard.state.set('seen', true); });
+document.getElementById('add').onclick = function () {
+  var todos = whiteboard.state.get('todos') || [];
+  whiteboard.state.set('todos', todos.concat('t' + (todos.length + 1)));
+};
+</script></body></html>`;
+
+test("a page's state listeners hear its own writes and presses at once, and a listener that writes doesn't loop", { skip, timeout: 60_000 }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(() => closeBrowser());
+  const context = await newIsolatedContext(browser, { viewport: { width: 1440, height: 900 } });
+  t.after(() => context.close().catch(() => {}));
+  const css = readFileSync('src/client/style.css', 'utf8').replace(/^@import[^\n]*\n/m, '');
+  await serve(context, () => surfaceHost(bundle(SURFACE_ENTRY, 'WB'), css), new Map([['live', LIVE_STATE]]));
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(`${ORIGIN}/host`);
+  // The window's sync shows a batch on its board at once (WhiteboardSync.apply); so does this host.
+  await page.evaluate(`window.applyAtOnce = true; start('live', '${hash(1)}')`);
+  const frame = await waitFor(() => frameOf(page, 'live'), 'the live frame');
+  await frame.waitForFunction('window.whiteboard && whiteboard.card.id === "c1" && events.length === 1');
+
+  // The click and the repaint happen in one task: nothing waits for the board to come back. The
+  // host's own updates come later, in tasks of their own, so each click fires exactly one event.
+  const click = (id: string, out: string) => frame.evaluate(`(function () { var n = events.length; document.getElementById('${id}').click(); return [document.getElementById('${out}').textContent, events.slice(n)]; })()`);
+  assert.deepEqual(await click('add', 'list'), ['t1', [['todos:owner']]], "the listener's own write fires nothing more");
+  assert.deepEqual(await click('add', 'list'), ['t1,t2', [['todos:owner']]]);
+  assert.deepEqual(await click('pick', 'picked'), ['b', [['actions.pick:owner']]]);
+  const state = () => page.evaluate(`WB.findCard(board, 'c1').state`) as Promise<{ todos?: string[]; seen?: boolean; actions?: { pick?: { data: { o: string } } } }>;
+  await waitFor(async () => (await state()).actions?.pick?.data.o === 'b', 'the press on the board');
+  assert.deepEqual((await state()).todos, ['t1', 't2']);
+  assert.equal((await state()).seen, true, 'a write from inside a listener still reaches the board');
+  await waitFor(() => frame.evaluate(`document.getElementById('list').textContent === 't1,t2'`), 'the page to agree with the board');
+  assert.deepEqual(errors, []);
+});
 function livePageHost(bundled: string): string {
   return `<!doctype html><html><head><style>
 .wb-surface { width: 640px; height: 400px; position: relative; overflow: hidden; }

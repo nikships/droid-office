@@ -888,23 +888,26 @@ export class WorkerManager {
   /**
    * Down a worker without interrupting its session. A shot at a worker already down confirms the
    * kill: its revival window closes now and it is dismissed as if the deadline had passed.
+   * A super shot does both at once, publishing the downed state before removal for the ascent.
    */
-  shoot(id: string): string | undefined {
+  shoot(id: string, superShot = false): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
     if (this.closing) return 'The office is closing';
-    if (w.info.downedUntil !== undefined) {
-      clearTimeout(w.downedTimer);
-      w.downedTimer = undefined;
-      // kill() refuses while the deadline is still ahead; closing it here is what lets it through.
-      w.info.downedUntil = Math.min(w.info.downedUntil, Date.now());
-      this.dismiss(w);
-      return undefined;
+    if (w.info.downedUntil === undefined) {
+      w.info.downedUntil = Date.now() + (superShot ? 0 : WORKER_REVIVE_MS);
+      this.persist();
+      this.emitUpdate(w);
+      if (!superShot) {
+        this.scheduleDismissal(w);
+        return undefined;
+      }
     }
-    w.info.downedUntil = Date.now() + WORKER_REVIVE_MS;
-    this.persist();
-    this.emitUpdate(w);
-    this.scheduleDismissal(w);
+    clearTimeout(w.downedTimer);
+    w.downedTimer = undefined;
+    // kill() refuses while the deadline is still ahead; closing it here is what lets it through.
+    w.info.downedUntil = Math.min(w.info.downedUntil, Date.now());
+    this.dismiss(w);
     return undefined;
   }
 

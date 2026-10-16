@@ -68,6 +68,16 @@ object OfficeIcons {
     val Building = icon("Building", "M4 21V4.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1V21", "M15 9h4a1 1 0 0 1 1 1v11", "M2.5 21h19", "M8 7.5h3", "M8 11h3", "M8 14.5h3")
     val Unplug = icon("Unplug", "M3 3l18 18", "M8.5 8.5L6 11a4.2 4.2 0 0 0 6 6l2.5-2.5", "M15.5 15.5L18 13a4.2 4.2 0 0 0-6-6L9.5 9.5", "M19 5l2-2", "M3 21l2-2")
     val Sparkle = icon("Sparkle", "M12 3.5l1.8 5.2 5.2 1.8-5.2 1.8L12 17.5l-1.8-5.2L5 10.5l5.2-1.8z", "M18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z")
+    val Whiteboard = icon("Whiteboard", "M3.5 5a1.5 1.5 0 0 1 1.5-1.5h14A1.5 1.5 0 0 1 20.5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 15z", "M12 16.5v4", "M8.5 20.5h7", "M7.5 12.5l3-3.5 2.5 2 3.5-4")
+    val Comment = icon("Comment", "M4.5 6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5V16h0a2 2 0 0 1-2-2z")
+    val Picture = icon(
+        "Picture",
+        "M4.5 5.5a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z",
+        "M4.5 16l4.5-4.5 3.5 3.5 2.5-2.5 4.5 4.5",
+        fills = listOf(dot(15.5f, 8.5f, 1.4f) to 1f),
+    )
+    val Expand = icon("Expand", "M4 9V4h5", "M20 9V4h-5", "M4 15v5h5", "M20 15v5h-5")
+    val Collapse = icon("Collapse", "M9 4v5H4", "M15 4v5h5", "M9 20v-5H4", "M15 20v-5h5")
     val Bell = icon("Bell", "M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z", "M10 20.5a2 2 0 0 0 4 0")
     val Link = icon("Link", "M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1", "M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1")
     val Shell = icon("Shell", "M4 17.5l5-5.5-5-5.5", "M11.5 18h8.5")

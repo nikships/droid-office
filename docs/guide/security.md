@@ -1,0 +1,14 @@
+# Security notes
+
+Anyone who reaches the office can drive Droid in that directory, and through it run commands as the user that runs the office. Treat the LAN token and the join URL like SSH access:
+
+- The token is random per start, kept only in memory, and checked with one timing-safe compare per connection. Restarting the office mints a new one and cuts off the old join URL. Loopback connects freely, so anyone already on the machine is already in.
+- Only enable `--trust-proxy` behind a proxy that appends `X-Forwarded-For` (Caddy and nginx both do). The office uses the rightmost hop. The loopback bypass reads the socket's own peer address, which headers can't spoof.
+- Run the office as a dedicated, unprivileged user, in the project you mean to use.
+- The WebSocket upgrade checks the `Origin` header and the LAN token. A paired phone's device token in the `Authorization` header stands in for both, since no web page can set that header on a WebSocket. The hook endpoint only listens on loopback and needs a random per-worker token.
+- Device tokens are 256 random bits, shown to the phone once and kept only as SHA-256 hashes in `devices.json` (mode 0600), checked in constant time. Forget a phone in ⚙️ Settings → **Phone** and its token is refused at once. The pairing code and the list of phones are served only to the office's own page on its own machine.
+- Workers don't inherit the LAN token or any parent agent-session variables.
+- The automation relay (`/api/automation`) sits behind the same LAN gate. It takes JSON only and refuses any `Origin` but the office's own, so a web page open in your browser can't drive your office tab over loopback.
+- The Jira API token is written to the office's `.droid-office/jira.json` with mode 0600 and is used only by the office's own read requests to Jira. It never goes to a browser, a log or a worker's environment, and Jira's error messages are scrubbed of it. A read-only token is enough, and is the safer choice: the office never writes to Jira, so it doesn't need a token that can.
+- The Factory API key is written to the office's `.droid-office/factory.json` with mode 0600 and is used only by the office's own requests to Factory. It never goes to a browser, a log or a worker's environment, and Factory's error messages are scrubbed of it. A Factory feature's routes act on Factory as that key, so they sit behind the LAN gate, and anything that changes something must come from the office's own page or a paired phone, so a web page you have open can't drive Factory through your loopback.
+- The picture fetcher (`/api/image`) sits behind the same LAN gate. It fetches any http(s) link it's given, from the office's machine. That gives nobody new reach: anyone at the office can already run `curl` from a shell worker. Pictures are served with a sandboxing `Content-Security-Policy`, so an SVG can't run script on the office's origin.
