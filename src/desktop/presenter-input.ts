@@ -43,6 +43,8 @@ export interface PresenterInputOptions {
   /** Whether the native window is the key window right now. */
   focused: () => boolean;
   log?: (message: string) => void;
+  /** Diagnostic: one line per input step (`input-trace.ts`). */
+  trace?: (line: string) => void;
 }
 
 const SHIM = "globalThis[Symbol.for('droid-office.shim')]";
@@ -76,12 +78,17 @@ export class PresenterInput {
     page.on('did-start-navigation', (details: { isMainFrame?: boolean; isSameDocument?: boolean }) => {
       if (details?.isMainFrame && !details.isSameDocument) this.releaseLock();
     });
-    page.on('did-finish-load', () => void this.attach().then(() => this.pageHidden && this.applyVisibility()));
+    page.on('did-finish-load', () => {
+      this.trace(`did-finish-load url=${page.getURL()}`);
+      void this.attach().then(() => this.pageHidden && this.applyVisibility());
+    });
     page.on('render-process-gone', () => {
+      this.trace('render-process-gone');
       this.attached = false;
       this.releaseLock();
     });
     page.debugger.on('detach', () => {
+      this.trace('debugger detach');
       this.attached = false;
       this.releaseLock();
     });
@@ -117,6 +124,10 @@ export class PresenterInput {
     this.options.log?.(message);
   }
 
+  private trace(line: string) {
+    this.options.trace?.(line);
+  }
+
   /** Tells the page whether its window can be seen. A page nobody sees stops drawing, as a background tab does; the page learns it only from here. */
   setPageVisible(visible: boolean): void {
     this.pageHidden = !visible;
@@ -129,7 +140,7 @@ export class PresenterInput {
 
   /** The session has no target before the first page commits and hangs, so this runs from `did-finish-load`, never before. */
   private async attach(): Promise<void> {
-    if (this.stopped || this.attached) return;
+    if (this.stopped || this.attached) return this.trace(`attach skipped stopped=${this.stopped} attached=${this.attached}`);
     this.focus = this.options.focused();
     const { debugger: dbg } = this.options.page;
     try {
@@ -144,7 +155,9 @@ export class PresenterInput {
       const tree = (await dbg.sendCommand('Page.getFrameTree')) as { frameTree?: { frame?: { id?: string } } };
       this.mainFrameId = tree.frameTree?.frame?.id;
       await this.setFocus(this.focus);
+      this.trace(`attached focus=${this.focus} mainFrame=${this.mainFrameId}`);
     } catch (err) {
+      this.trace(`attach failed: ${(err as Error).message}`);
       this.attached = false;
       this.log(`input: could not attach to the page: ${(err as Error).message}`);
     }
@@ -177,9 +190,11 @@ export class PresenterInput {
   // --- The page's channel to main -----------------------------------------------------------------------------------
 
   private hostCalled(contextId: number, payload: unknown) {
-    if (!trustedContext(this.contexts.get(contextId), this.mainFrameId, this.options.officeOrigin())) return;
+    if (!trustedContext(this.contexts.get(contextId), this.mainFrameId, this.options.officeOrigin())) return this.trace(`host message from an untrusted context ${contextId}: ${String(payload).slice(0, 80)}`);
     const message = parseHostMessage(payload);
-    if (message) this.hostMessage(message);
+    if (!message) return this.trace(`host message rejected: ${String(payload).slice(0, 80)}`);
+    this.trace(`host ${JSON.stringify(message)}`);
+    this.hostMessage(message);
   }
 
   private hostMessage(m: HostMessage) {
@@ -244,6 +259,7 @@ export class PresenterInput {
   }
 
   private dispatch(event: NativeEvent) {
+    if (event.type !== 'delta' && event.type !== 'scroll' && !(event.type === 'mouse' && (event.kind === 'move' || event.kind === 'enter' || event.kind === 'leave'))) this.trace(`native ${JSON.stringify(event)}`);
     switch (event.type) {
       case 'mouse':
         return this.mouse(event);
@@ -315,9 +331,16 @@ export class PresenterInput {
 
   /** A protocol command in order after the ones before it. A refused command is logged and never stops the ones after it. */
   private command(method: string, params: object) {
-    if (!this.attached) return;
+    if (!this.attached) return this.trace(`${method} dropped: not attached`);
     const dbg = this.options.page.debugger;
-    this.queue = this.queue.then(() => dbg.sendCommand(method, params)).catch((err: Error) => this.log(`input: ${method}: ${err.message}`));
+    this.trace(`${method} ${JSON.stringify(params)}`);
+    this.queue = this.queue
+      .then(() => dbg.sendCommand(method, params))
+      .then(() => this.trace(`${method} ok`))
+      .catch((err: Error) => {
+        this.trace(`${method} failed: ${err.message}`);
+        this.log(`input: ${method}: ${err.message}`);
+      });
   }
 
   // --- Focus and cursor ---------------------------------------------------------------------------------------------

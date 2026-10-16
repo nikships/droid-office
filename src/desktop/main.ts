@@ -9,6 +9,7 @@ import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
 import { type Office, probePort, startOffice } from './office.js';
 import type { NativeEvent } from './input-events.js';
+import { createTrace, traceFile } from './input-trace.js';
 import { type InputNative, PresenterInput } from './presenter-input.js';
 import { PresenterWindow, presenterModule } from './presenter.js';
 import { officeRuntime } from './runtime.js';
@@ -101,6 +102,7 @@ function createWindow(loadOffice = true) {
     officeOrigin: () => (officeUrl ? new URL(officeUrl).origin : undefined),
     focused: () => created.base.isFocused(),
     log: (message) => console.warn(`droid-office: ${message}`),
+    trace: createTrace(traceFile()),
   });
   created.onNativeEvent = (event) => input.handle(event as unknown as NativeEvent);
   created.onVisibleChange = (visible) => input.setPageVisible(visible);

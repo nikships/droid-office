@@ -20,6 +20,42 @@ static NSString *PlainString(id s) {
   return [s isKindOfClass:NSAttributedString.class] ? [(NSAttributedString *)s string] : (NSString *)s;
 }
 
+// Diagnostic: DROID_OFFICE_INPUT_TRACE=<file> appends a line per input step (src/desktop/input-trace.ts writes the page side to the same file).
+static FILE *TraceFile(void) {
+  static FILE *file;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    const char *path = getenv("DROID_OFFICE_INPUT_TRACE");
+    if (path && *path) file = fopen(path, "a");
+  });
+  return file;
+}
+
+static void TraceWrite(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void TraceWrite(NSString *format, ...) {
+  FILE *file = TraceFile();
+  if (!file) return;
+  va_list args;
+  va_start(args, format);
+  NSString *line = [[NSString alloc] initWithFormat:format arguments:args];
+  va_end(args);
+  fprintf(file, "%.3f native %s\n", NSDate.date.timeIntervalSince1970, line.UTF8String);
+  fflush(file);
+}
+
+#define TRACE(...) \
+  do { \
+    if (TraceFile()) TraceWrite(__VA_ARGS__); \
+  } while (0)
+
+static NSString *Describe(NSEvent *e) {
+  return [NSString stringWithFormat:@"type=%lu keyCode=%d chars=%@ base=%@ mods=%lx repeat=%d", (unsigned long)e.type, (int)e.keyCode, [e.characters debugDescription], [e.charactersIgnoringModifiers debugDescription], (unsigned long)e.modifierFlags, e.type == NSEventTypeFlagsChanged ? 0 : (int)e.isARepeat];
+}
+
+static NSString *ClassOf(id o) {
+  return o ? NSStringFromClass([o class]) : @"nil";
+}
+
 static NSCursor *HiddenCursor(void) {
   static NSCursor *c;
   static dispatch_once_t once;
@@ -142,6 +178,7 @@ static __weak DOPresenterView *gCurrent;
 
 - (void)reportFocus {
   BOOL focused = self.window.isKeyWindow && self.window.firstResponder == self;
+  TRACE(@"reportFocus key=%d firstResponder=%@ focused=%d known=%d last=%d", self.window.isKeyWindow, ClassOf(self.window.firstResponder), focused, _focusKnown, _lastFocus);
   if (_focusKnown && focused == _lastFocus) return;
   _focusKnown = YES;
   _lastFocus = focused;
@@ -208,9 +245,16 @@ static __weak DOPresenterView *gCurrent;
 
 - (NSEvent *)routed:(NSEvent *)e {
   NSWindow *window = self.window;
+  BOOL isKey = e.type == NSEventTypeKeyDown || e.type == NSEventTypeKeyUp || e.type == NSEventTypeFlagsChanged;
+  if (isKey)
+    TRACE(@"monitor %@ ours=%d keyWindow=%d appActive=%d sheet=%d modal=%d firstResponder=%@ textActive=%d inputContext=%d marked=%lu", Describe(e), e.window == window, window.isKeyWindow, NSApp.isActive,
+          window.attachedSheet != nil, NSApp.modalWindow != nil, ClassOf(window.firstResponder), _textActive, self.inputContext != nil, (unsigned long)_marked.length);
   if (!window || e.window != window || window.attachedSheet || NSApp.modalWindow) return e;
-  if (e.type == NSEventTypeKeyDown || e.type == NSEventTypeKeyUp || e.type == NSEventTypeFlagsChanged) {
-    if (window.isKeyWindow && window.firstResponder != self && !window.attachedSheet) [window makeFirstResponder:self];
+  if (isKey) {
+    if (window.isKeyWindow && window.firstResponder != self && !window.attachedSheet) {
+      [window makeFirstResponder:self];
+      TRACE(@"monitor took first responder: now %@", ClassOf(window.firstResponder));
+    }
     return e;
   }
   if (!NSPointInRect([self convertPoint:e.locationInWindow fromView:nil], self.bounds)) return e;
@@ -415,6 +459,7 @@ static __weak DOPresenterView *gCurrent;
 #pragma mark - Keyboard and input method
 
 - (void)setTextInputActive:(BOOL)active {
+  TRACE(@"setTextInputActive %d (was %d)", active, _textActive);
   if (_textActive == active) return;
   _textActive = active;
   if (!active) [self cancelComposition];
@@ -426,6 +471,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)emitKey:(NSEvent *)e kind:(NSString *)kind handled:(BOOL)handled commands:(NSArray<NSString *> *)commands {
+  TRACE(@"emitKey %@ %@ handled=%d commands=%@ sink=%d", kind, Describe(e), handled, [commands componentsJoinedByString:@","], self.eventSink != nil);
   [self emit:@{
     @"type": @"key", @"kind": kind, @"keyCode": @(e.keyCode), @"chars": e.characters ?: @"", @"base": e.charactersIgnoringModifiers ?: @"",
     @"mods": @(Mods(e.modifierFlags)), @"repeat": @(e.isARepeat), @"handled": @(handled), @"commands": commands ?: @[],
@@ -433,6 +479,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)keyDown:(NSEvent *)e {
+  TRACE(@"keyDown %@ textActive=%d marked=%lu inputContext=%d", Describe(e), _textActive, (unsigned long)_marked.length, self.inputContext != nil);
   if (!_textActive && !_marked.length) return [self emitKey:e kind:@"down" handled:NO commands:nil];
   BOOL hadMarked = _marked.length > 0;
   _handlingKey = YES;
@@ -442,6 +489,7 @@ static __weak DOPresenterView *gCurrent;
   _composeTouched = NO;
   [self interpretKeyEvents:@[ e ]];
   _handlingKey = NO;
+  TRACE(@"keyDown interpreted: committed=%@ commands=%@ pending=%lu composeTouched=%d marked=%lu", [_committed debugDescription], [_commands debugDescription], (unsigned long)_pending.count, _composeTouched, (unsigned long)_marked.length);
   BOOL composing = hadMarked || _marked.length > 0 || _composeTouched;
   // A plain key types what it says: any one-character commit of the key's own characters is the key itself, not an input method's doing.
   BOOL plain = !composing && (_committed.count == 0 || (_committed.count == 1 && [_committed[0] isEqualToString:e.characters ?: @""]));
@@ -457,17 +505,20 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)keyUp:(NSEvent *)e {
+  TRACE(@"keyUp %@", Describe(e));
   BOOL handled = [_handledKeys containsObject:@(e.keyCode)];
   [_handledKeys removeObject:@(e.keyCode)];
   [self emitKey:e kind:@"up" handled:handled commands:nil];
 }
 
 - (void)flagsChanged:(NSEvent *)e {
+  TRACE(@"flagsChanged %@", Describe(e));
   [self emit:@{@"type": @"flags", @"keyCode": @(e.keyCode), @"mods": @(Mods(e.modifierFlags))}];
 }
 
 // Menu key equivalents (Copy, Paste, Quit) are the menu's: the page never sees them, as in a browser.
 - (BOOL)performKeyEquivalent:(NSEvent *)e {
+  TRACE(@"performKeyEquivalent %@", Describe(e));
   return NO;
 }
 
@@ -488,6 +539,7 @@ static __weak DOPresenterView *gCurrent;
 
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
   NSString *text = PlainString(string);
+  TRACE(@"insertText %@ handlingKey=%d", [text debugDescription], _handlingKey);
   if (_handlingKey) [_committed addObject:text];
   [_marked setString:@""];
   _markedSel = NSMakeRange(0, 0);
@@ -496,6 +548,7 @@ static __weak DOPresenterView *gCurrent;
 
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
   NSString *text = PlainString(string);
+  TRACE(@"setMarkedText %@ handlingKey=%d", [text debugDescription], _handlingKey);
   _composeTouched = YES;
   if (text.length == 0) {
     BOOL had = _marked.length > 0;
@@ -554,6 +607,7 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)doCommandBySelector:(SEL)selector {
+  TRACE(@"doCommandBySelector %@ handlingKey=%d", NSStringFromSelector(selector), _handlingKey);
   // Only the commands a key brought (an arrow, Delete, Option-Delete) matter; the page runs them as editing commands.
   if (_handlingKey) [_commands addObject:NSStringFromSelector(selector)];
 }
