@@ -2892,8 +2892,8 @@ function renderGunHint(el: HTMLElement) {
   if (k === hintKey) return;
   hintKey = k;
   const a = arms();
-  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? `${a.name} · 💡 Lumos` : a.name;
-  el.replaceChildren(h('span.title', {}, title), key('Tap', a.fire), key('Hold + release', 'Charged shot'), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
+  const title = doing ? `${doing.emoji} ${doing.label}` : wand && lumos ? '🪄 Wand · 💡 Lumos' : a.name;
+  el.replaceChildren(h('span.title', {}, title), key('Click', a.fire), key('Hold', 'Charge'), key('1–6', wand ? 'Spells' : 'Tricks'), key('7', a.away));
   el.classList.remove('hidden');
 }
 /** On the ladder: which way it goes from here, and how to get off. Down a pole: just hold on. */
