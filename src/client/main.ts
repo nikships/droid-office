@@ -3949,10 +3949,11 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     renderer.autoClear = autoClear;
     sky.shading(true);
   }
+  const handsEnd = performance.now();
   if (remaster.active) remaster.finishFrame();
   if (timing) gpuHands.end();
   loading.drew();
-  frameStats.record({ at: frame.at, paced: frame.paced, cpu: { update: drawStart - frameStart, scene: sceneEnd - drawStart, hands: performance.now() - sceneEnd } });
+  frameStats.record({ at: frame.at, paced: frame.paced, cpu: { update: drawStart - frameStart, scene: sceneEnd - drawStart, hands: handsEnd - sceneEnd, finish: performance.now() - handsEnd } });
 }
 
 /** Draw on the next frame instead of waiting out an idle gap. Input and scene changes both call this. */
