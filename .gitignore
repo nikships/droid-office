@@ -1,5 +1,7 @@
 node_modules
 dist
+.firebase
+firebase-debug.log*
 # The Mac app that `npm run package:mac` builds.
 release
 .droid-office

@@ -18,6 +18,9 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'website/**'
+      - 'firebase.json'
+      - '.firebaserc'
       - 'bin/**'
       - 'tests/**'
       - 'README.md'
@@ -38,6 +41,9 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'website/**'
+      - 'firebase.json'
+      - '.firebaserc'
       - 'bin/**'
       - 'tests/**'
       - 'README.md'
@@ -116,6 +122,9 @@ jobs:
       - run: npm run lint
 
       - run: npm run typecheck
+
+      - name: Build the website
+        run: npm run build:website
 
       # The Whiteboard renderer's tests start a real headless Chromium, with its sandbox on. It lives
       # outside the workspace, in the one folder the office and the Mac app share.
