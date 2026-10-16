@@ -724,7 +724,8 @@ export async function startServer(cfg: Config) {
     } catch {
       rel = '\0';
     }
-    const opts = { method: req.method, ifNoneMatch: req.headers['if-none-match'] };
+    const ifRange = req.headers['if-range'];
+    const opts = { method: req.method, ifNoneMatch: req.headers['if-none-match'], range: req.headers.range, ifRange: Array.isArray(ifRange) ? ifRange[0] : ifRange };
     let out: CardResponse | undefined;
     if (/^[ks][A-Za-z0-9_-]{20,80}$/.test(cap)) for (const f of floors.values()) if ((out = f.whiteboard.serve(cap, rel, opts))) break;
     out ??= cardResponse(undefined, rel, () => undefined, opts);

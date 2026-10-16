@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MAX_HTML_BYTES, OWNER, OWNER_AUTHOR, findCard, type Author, type Op } from '../src/shared/whiteboard.js';
-import { CARD_HEADERS, CARD_SANDBOX, NoRenderer, WhiteboardStore, cardResponse, injectSdk, renderStatus, type CrashPoint, type WhiteboardOptions } from '../src/server/whiteboard.js';
+import { CARD_HEADERS, CARD_SANDBOX, NoRenderer, WhiteboardStore, byteRange, cardResponse, injectSdk, renderStatus, type CrashPoint, type WhiteboardOptions } from '../src/server/whiteboard.js';
 import { cssReferences, htmlReferences, imageSize, loadPackage, loadPage, pictureMime } from '../src/server/whiteboard-assets.js';
 import { SDK_SCRIPT } from '../src/server/whiteboard-sdk.js';
 
@@ -403,6 +403,27 @@ test('card answers: sandboxed, capability-scoped, SDK injected into the page onl
   const head = store.serve(cap1, '', { method: 'HEAD' })!;
   assert.equal(head.body.length, 0);
   assert.equal(store.serve(cap1, '', { method: 'POST' })!.status, 405);
+  // Ranged answers, so a video or audio file can seek.
+  const full = store.serve(cap1, '')!;
+  const size = full.body.length;
+  assert.equal(full.headers['accept-ranges'], 'bytes');
+  const part = store.serve(cap1, '', { range: 'bytes=2-5' })!;
+  assert.equal(part.status, 206);
+  assert.equal(part.headers['content-range'], `bytes 2-5/${size}`);
+  assert.equal(part.headers['content-length'], '4');
+  assert.deepEqual(part.body, full.body.subarray(2, 6));
+  assert.equal(part.headers['content-security-policy'], `sandbox ${CARD_SANDBOX}`, 'a ranged answer is sandboxed too');
+  assert.deepEqual(store.serve(cap1, '', { range: 'bytes=-3' })!.body, full.body.subarray(size - 3));
+  assert.equal(store.serve(cap1, '', { range: `bytes=10-${size * 2}` })!.headers['content-range'], `bytes 10-${size - 1}/${size}`);
+  const past = store.serve(cap1, '', { range: `bytes=${size}-` })!;
+  assert.equal(past.status, 416);
+  assert.equal(past.headers['content-range'], `bytes */${size}`);
+  assert.equal(store.serve(cap1, '', { range: 'bytes=0-1', method: 'HEAD' })!.body.length, 0);
+  assert.equal(store.serve(cap1, '', { range: 'bytes=0-1', ifRange: full.headers.etag })!.status, 206);
+  assert.equal(store.serve(cap1, '', { range: 'bytes=0-1', ifRange: '"stale"' })!.status, 200, 'a changed file is sent whole');
+  for (const whole of ['bytes=0-1,4-5', 'bytes=5-2', 'items=0-1', 'bytes=-']) assert.equal(store.serve(cap1, '', { range: whole })!.status, 200, whole);
+  assert.equal(byteRange('bytes=-0', 10), 'unsatisfiable');
+  assert.equal(byteRange('bytes=0-', 0), 'unsatisfiable');
   assert.equal(cardResponse(undefined, '', () => undefined).status, 404);
   for (const v of Object.values(CARD_HEADERS)) assert.equal(typeof v, 'string');
   // Injection without a head, and a page that closes its own script tag in a string.

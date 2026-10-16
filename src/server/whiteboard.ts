@@ -127,7 +127,34 @@ export function injectSdk(html: string, script = SDK_SCRIPT): string {
  * The answer for `rel` (a path inside the card's folder, '' for its page) from a card's files, served
  * the same way by the card route and the renderer.
  */
-export function cardResponse(content: CardContent | undefined, rel: string, blob: (hash: string) => Buffer | undefined, opts: { method?: string; ifNoneMatch?: string } = {}): CardResponse {
+/** What a card route request asks for, from its method and headers. */
+export interface CardRequest {
+  method?: string;
+  ifNoneMatch?: string;
+  /** The Range header: media elements only seek through ranged answers. */
+  range?: string;
+  ifRange?: string;
+}
+
+/**
+ * The single byte range a Range header asks for in a body of `size` bytes: `[start, end]` inclusive,
+ * 'unsatisfiable' for one past the end, or undefined to answer with the whole body (no header, a
+ * malformed one, or several ranges, which a server may ignore).
+ */
+export function byteRange(header: string | undefined, size: number): [number, number] | 'unsatisfiable' | undefined {
+  const m = header && /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
+  if (!m || (m[1] === '' && m[2] === '')) return undefined;
+  if (m[1] === '') {
+    const suffix = Number(m[2]);
+    return suffix === 0 || size === 0 ? 'unsatisfiable' : [Math.max(0, size - suffix), size - 1];
+  }
+  const start = Number(m[1]);
+  const last = m[2] === '' ? size - 1 : Number(m[2]);
+  if (start >= size) return 'unsatisfiable';
+  return last < start ? undefined : [start, Math.min(last, size - 1)];
+}
+
+export function cardResponse(content: CardContent | undefined, rel: string, blob: (hash: string) => Buffer | undefined, opts: CardRequest = {}): CardResponse {
   const fail = (status: number, text: string): CardResponse => ({ status, headers: { ...CARD_HEADERS, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }, body: Buffer.from(text) });
   if (opts.method && opts.method !== 'GET' && opts.method !== 'HEAD') return { ...fail(405, 'GET or HEAD'), headers: { ...fail(405, '').headers, allow: 'GET, HEAD' } };
   if (!content) return fail(404, 'This card has no files');
@@ -136,12 +163,20 @@ export function cardResponse(content: CardContent | undefined, rel: string, blob
   if (!ref) return fail(404, 'Not found');
   const page = name === content.entry;
   const etag = `"${ref.hash.slice(0, 32)}${page ? `-${SDK_VERSION}` : ''}"`;
-  const headers = { ...CARD_HEADERS, 'content-type': ref.mime, etag };
+  const headers = { ...CARD_HEADERS, 'content-type': ref.mime, etag, 'accept-ranges': 'bytes' };
   if (opts.ifNoneMatch === etag) return { status: 304, headers, body: Buffer.alloc(0) };
   const bytes = blob(ref.hash);
   if (!bytes) return fail(404, 'Not found');
   const body = page && /^text\/html\b/i.test(ref.mime) ? Buffer.from(injectSdk(bytes.toString('utf8'))) : bytes;
-  return { status: 200, headers: { ...headers, 'content-length': String(body.length) }, body: opts.method === 'HEAD' ? Buffer.alloc(0) : body };
+  const head = opts.method === 'HEAD';
+  const range = opts.ifRange === undefined || opts.ifRange === etag ? byteRange(opts.range, body.length) : undefined;
+  if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'content-range': `bytes */${body.length}`, 'content-length': '0' }, body: Buffer.alloc(0) };
+  if (range) {
+    const [start, end] = range;
+    const part = body.subarray(start, end + 1);
+    return { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${body.length}`, 'content-length': String(part.length) }, body: head ? Buffer.alloc(0) : part };
+  }
+  return { status: 200, headers: { ...headers, 'content-length': String(body.length) }, body: head ? Buffer.alloc(0) : body };
 }
 
 // ---- The renderer, plugged in ----
@@ -171,7 +206,7 @@ export interface PinnedCard {
   /** The page's URL path on the office's own address, serving this snapshot's files; undefined for a canvas. */
   readonly entryUrl?: string;
   /** What the card route answers for `rel` in this snapshot, byte for byte. */
-  serve(rel: string, opts?: { method?: string; ifNoneMatch?: string }): CardResponse;
+  serve(rel: string, opts?: CardRequest): CardResponse;
   /** A blob this snapshot holds (a picture's file, say), by hash. */
   blob(hash: string): Buffer | undefined;
   release(): void;
@@ -504,7 +539,7 @@ export class WhiteboardStore {
   }
 
   /** What a card route answers for a capability of this store, or undefined when it isn't one of its. */
-  serve(cap: string, rel: string, opts: { method?: string; ifNoneMatch?: string } = {}): CardResponse | undefined {
+  serve(cap: string, rel: string, opts: CardRequest = {}): CardResponse | undefined {
     const pinned = this.snapshots.get(cap);
     if (pinned) return pinned.serve(rel, opts);
     const id = this.caps.get(cap);

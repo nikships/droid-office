@@ -138,7 +138,8 @@ THE ARTIFACT JAVASCRIPT API
     whiteboard.state.set(value)          replaces the whole state;  set(path, value) sets one value
     whiteboard.state.merge(obj)          merges leaves;  merge(path, obj) under a path
     whiteboard.state.del(path)           removes a path
-    whiteboard.on('state', fn)           fn(state, changes) when the owner or an agent changes it
+    whiteboard.on('state', fn)           fn(state, changes) whenever it changes: the page's own writes and
+                                         presses at once, the owner's and agents' as they arrive
     whiteboard.on('ready', fn), whiteboard.ready   once the state has arrived
     whiteboard.on('mode', fn), whiteboard.mode     'use', or 'markup' while the owner marks up
     whiteboard.action(name, data?)       records the press in state.actions[name] = { name, data, at }

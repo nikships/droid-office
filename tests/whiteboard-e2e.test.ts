@@ -135,6 +135,10 @@ test('an agent and the owner share a floor Whiteboard end to end: office-whitebo
   assert.equal(page.headers.get('access-control-allow-credentials'), null);
   assert.match(await page.text(), /data-droid-office-whiteboard/);
   assert.equal((await fetch(`${base}/whiteboard/c/${cap}/style.css`)).headers.get('content-type'), 'text/css; charset=utf-8');
+  const ranged = await fetch(`${base}/whiteboard/c/${cap}/style.css`, { headers: { range: 'bytes=0-1' } });
+  assert.equal(ranged.status, 206, 'media seeks through ranged answers');
+  assert.equal(ranged.headers.get('content-range'), 'bytes 0-1/18');
+  assert.equal(await ranged.text(), 'h1');
   assert.equal((await fetch(`${base}/whiteboard/c/${cap}/..%2F..%2Fboard.json`)).status, 404);
   const forged = await fetch(`${base}/whiteboard/c/k${'A'.repeat(40)}/`);
   assert.equal(forged.status, 404);
