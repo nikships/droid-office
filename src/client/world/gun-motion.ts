@@ -582,6 +582,8 @@ export class GunMotion {
   private move: { id: GunMoveId | 'recover'; spec: GunMove; t: number; from: GunPose | null; blend: number; cue: number } | null = null;
   private current: GunPose | null = null;
   private kickT = -1;
+  private heavy = false;
+  private charging: number | null = null;
 
   /** The gun and the hand holding it now, or null with it in its holster. Read it fresh each frame. */
   get pose(): Readonly<GunPose> | null {
@@ -620,6 +622,7 @@ export class GunMotion {
     this.move = null;
     this.current = null;
     this.kickT = -1;
+    this.charging = null;
   }
 
   /** Plays a trick from the top, even over itself. False with the gun away. */
@@ -630,10 +633,25 @@ export class GunMotion {
   }
 
   /** A shot: a trick (or the draw) gives way to the ready at once, and the recoil kicks it up. */
-  fire() {
+  fire(superShot = false) {
     if (!this.wanted) return;
+    this.heavy = superShot;
+    this.charging = null;
     this.kickT = 0;
     if (this.move && this.move.id !== 'recover') this.start('recover', RECOVER, FIRE_BLEND);
+  }
+
+  charge(amount: number) {
+    if (!this.wanted) return;
+    if (this.charging === null) this.start('recover', RECOVER, FIRE_BLEND);
+    this.charging = Math.max(0, Math.min(1, amount));
+    this.kickT = -1;
+  }
+
+  cancelCharge() {
+    if (this.charging === null) return;
+    this.charging = null;
+    if (this.wanted) this.start('recover', RECOVER, FIRE_BLEND);
   }
 
   update(dt: number): GunCue[] {
@@ -660,14 +678,24 @@ export class GunMotion {
     }
     pose.kick = 0;
     if (this.kickT >= 0) {
-      pose.kick = Math.max(0, 1 - this.kickT / KICK_TIME);
+      const duration = this.heavy ? 0.42 : KICK_TIME;
+      const p = Math.min(1, this.kickT / duration);
+      pose.kick = this.heavy ? 1.85 * (1 - p) ** 2 : 1 - p;
+      // A heavy round rolls the wrist, then settles through a small counter-roll.
+      if (this.heavy) pose.roll += 0.12 * (1 - p) ** 2 - 0.035 * Math.sin(p * Math.PI);
       this.kickT += dt;
-      if (this.kickT >= KICK_TIME) this.kickT = -1;
+      if (this.kickT >= duration) this.kickT = -1;
+    }
+    if (this.charging !== null) {
+      pose.pitch += this.charging * 0.14;
+      pose.roll -= this.charging * 0.08;
+      pose.z += this.charging * 0.035;
     }
     return cues;
   }
 
   private start(id: GunMoveId | 'recover', spec: GunMove, blend = BLEND) {
+    this.charging = null;
     let from: GunPose | null = null;
     if (this.current) {
       from = { ...this.current, kick: 0 };
