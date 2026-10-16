@@ -34,6 +34,17 @@ test('the monitor leaves the window frame, other windows, sheets and menu key eq
   assert.doesNotMatch(keys, /return nil/);
 });
 
+test('a mouse-moved event that reaches the view twice (first responder and tracking area) is taken once', () => {
+  assert.match(body('- (void)moved:'), /if \(e\.timestamp == _lastMoveAt\) return;/);
+});
+
+test('keys the offscreen page leaves unhandled are never handed back to the app menu', () => {
+  // Chromium offers them to the menu as a synthetic key down: a bare Command matched About (an item with no key equivalent) and a plain E
+  // matched the fn+E Emoji & Symbols item AppKit adds to the Edit menu.
+  const presenter = readFileSync(new URL('../src/desktop/presenter.ts', import.meta.url), 'utf8');
+  assert.match(presenter, /this\.contents\.setIgnoreMenuShortcuts\(true\)/);
+});
+
 test('the monitor is installed once per window and removed when the view leaves it or is released', () => {
   assert.match(body('- (void)viewDidMoveToWindow'), /installEventMonitor/);
   assert.match(body('- (void)viewWillMoveToWindow:'), /removeEventMonitor/);

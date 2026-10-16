@@ -1,11 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FPS_CAPS, GRAPHICS_DEFAULTS, gpuBusy, halton, jitterAt, jitterPhases, normalizeGraphics, normalizeOverhead, normalizeScale, renderSize, statsText } from '../src/client/graphics.js';
+import {
+  FPS_CAPS,
+  GRAPHICS_DEFAULTS,
+  LOOK_SENSITIVITY_MAX,
+  LOOK_SENSITIVITY_MIN,
+  normalizeLookSensitivity,
+  gpuBusy,
+  halton,
+  jitterAt,
+  jitterPhases,
+  normalizeGraphics,
+  normalizeOverhead,
+  normalizeScale,
+  renderSize,
+  statsText,
+} from '../src/client/graphics.js';
 import { parseIoreg } from '../src/server/gpu-stats.js';
 
 test('graphics settings default to native resolution with MSAA and the overlay on', () => {
   assert.deepEqual(normalizeGraphics(undefined), GRAPHICS_DEFAULTS);
-  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false });
+  assert.deepEqual(GRAPHICS_DEFAULTS, { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false, lookSensitivity: 1 });
 });
 
 test('saved graphics settings are clamped and snapped, bad values fall back', () => {
@@ -18,13 +33,25 @@ test('saved graphics settings are clamped and snapped, bad values fall back', ()
     fpsCap: 60,
     stats: false,
     rawMouse: false,
+    lookSensitivity: 1,
   });
   assert.ok(!('shadows' in normalizeGraphics({ shadows: 'live' })));
   assert.equal(normalizeGraphics({ scale: 0.1 }).scale, 0.5);
   assert.equal(normalizeGraphics({ scale: 4 }).scale, 1);
-  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', overhead: '50%', fpsCap: 144, stats: 'yes', rawMouse: 'on' }), GRAPHICS_DEFAULTS);
+  assert.deepEqual(normalizeGraphics({ scale: 'big', taa: 1, sharpen: Number.NaN, shadows: 'soft', overhead: '50%', fpsCap: 144, stats: 'yes', rawMouse: 'on', lookSensitivity: '2x' }), GRAPHICS_DEFAULTS);
   assert.equal(normalizeGraphics({ rawMouse: true }).rawMouse, true);
   assert.equal(normalizeScale(0.775), 0.8);
+});
+
+test('look sensitivity is kept from 0.1× to 3× in steps of 0.05', () => {
+  assert.equal(normalizeGraphics({ lookSensitivity: 0.5 }).lookSensitivity, 0.5);
+  assert.equal(normalizeGraphics({ lookSensitivity: 2.37 }).lookSensitivity, 2.35);
+  assert.equal(normalizeGraphics({ lookSensitivity: 0 }).lookSensitivity, LOOK_SENSITIVITY_MIN);
+  assert.equal(normalizeGraphics({ lookSensitivity: 10 }).lookSensitivity, LOOK_SENSITIVITY_MAX);
+  assert.equal(normalizeGraphics({ lookSensitivity: Number.NaN }).lookSensitivity, 1);
+  assert.equal(normalizeGraphics({ lookSensitivity: Number.POSITIVE_INFINITY }).lookSensitivity, 1);
+  assert.equal(normalizeLookSensitivity(0.35), 0.35);
+  assert.equal(normalizeLookSensitivity(1.024), 1);
 });
 
 test('the overhead lights go from off to as built, in 5% steps', () => {

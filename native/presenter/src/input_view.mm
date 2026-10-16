@@ -143,6 +143,9 @@ static __weak DOPresenterView *gCurrent;
   BOOL _ctrlClick;
   BOOL _lastFocus;
   BOOL _focusKnown;
+  // AppKit hands this view each mouse-moved event twice, once as the first responder of a window that accepts them and once as the
+  // owner of the tracking area; taken twice, every captured delta turned the view twice as far.
+  NSTimeInterval _lastMoveAt;
 
   BOOL _textActive;
   NSRect _imeRect;
@@ -375,6 +378,8 @@ static __weak DOPresenterView *gCurrent;
 }
 
 - (void)moved:(NSEvent *)e {
+  if (e.timestamp == _lastMoveAt) return;
+  _lastMoveAt = e.timestamp;
   // A window that opens under a cursor that is already still gets no enter event until the cursor moves.
   if (!_inside && !_captured) {
     _inside = YES;

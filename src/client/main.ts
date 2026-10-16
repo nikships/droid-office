@@ -3509,6 +3509,7 @@ async function pollSystemGpu() {
 function applyGraphics() {
   upscaler.configure(settings.graphics);
   player.rawInput = settings.graphics.rawMouse;
+  player.lookSensitivity = settings.graphics.lookSensitivity;
   const overhead = settings.graphics.overhead;
   sky.setOverhead(overhead);
   // The next frame gives the bounce light its new bake key: the old brightness stays up until it's loaded or baked.

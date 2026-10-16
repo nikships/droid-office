@@ -154,6 +154,8 @@ export class PlayerController {
   private lockedAt = 0;
   /** Ask for the mouse raw (`unadjustedMovement`: no OS pointer acceleration) when capturing it. */
   rawInput = false;
+  /** Multiplies how far a captured move turns the view (Settings → Graphics → Mouse). Dragging to look is not changed. */
+  lookSensitivity = 1;
   /** This browser said it can't read the mouse raw; later locks don't ask. */
   private rawUnsupported = false;
   /** Whether the last lock taken reads the mouse raw; null before one is taken. */
@@ -267,7 +269,8 @@ export class PlayerController {
         this.relock = step.relock;
         if (!step.look) return;
         if (lockWarp(e.movementX, e.movementY, now - this.lockedAt)) return;
-        this.look(e.movementX * LOOK_SPEED, e.movementY * LOOK_SPEED);
+        const speed = LOOK_SPEED * this.lookSensitivity;
+        this.look(e.movementX * speed, e.movementY * speed);
         return;
       }
       if (!this.drag) return;

@@ -28,6 +28,7 @@ test('every setting is in a category', () => {
     ['Sharpening', 'graphics'],
     ['Frame rate limit', 'graphics'],
     ['Raw mouse input', 'graphics'],
+    ['Look sensitivity', 'graphics'],
     ['Overhead lights', 'graphics'],
     ['Performance overlay', 'graphics'],
     ['Desktop notifications', 'notify'],

@@ -18,6 +18,8 @@ export interface GraphicsSettings {
   stats: boolean;
   /** Read the captured mouse raw, without the OS's pointer acceleration, where the browser can. */
   rawMouse: boolean;
+  /** How far captured mouse movement turns the view, as a multiple of the office's own speed, 0.1–3. */
+  lookSensitivity: number;
 }
 
 export const RENDER_SCALE_MIN = 0.5;
@@ -25,7 +27,11 @@ export const RENDER_SCALE_STEP = 0.05;
 
 export const OVERHEAD_STEP = 0.05;
 
-export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false };
+export const LOOK_SENSITIVITY_MIN = 0.1;
+export const LOOK_SENSITIVITY_MAX = 3;
+export const LOOK_SENSITIVITY_STEP = 0.05;
+
+export const GRAPHICS_DEFAULTS: GraphicsSettings = { scale: 1, taa: false, sharpen: 0.5, overhead: 1, fpsCap: 120, stats: true, rawMouse: false, lookSensitivity: 1 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -40,6 +46,12 @@ export function normalizeOverhead(v: number): number {
   return clamp(Math.round((v * 100) / step) * step, 0, 100) / 100;
 }
 
+/** Snapped to the slider's steps, in hundredths so 0.35 is saved as 0.35, and held to 0.1–3. */
+export function normalizeLookSensitivity(v: number): number {
+  const step = Math.round(LOOK_SENSITIVITY_STEP * 100);
+  return clamp(Math.round((v * 100) / step) * step, LOOK_SENSITIVITY_MIN * 100, LOOK_SENSITIVITY_MAX * 100) / 100;
+}
+
 /** Saved graphics settings, with anything missing or out of range back at its default. */
 export function normalizeGraphics(saved: unknown): GraphicsSettings {
   const g = { ...GRAPHICS_DEFAULTS };
@@ -52,6 +64,7 @@ export function normalizeGraphics(saved: unknown): GraphicsSettings {
   if (FPS_CAPS.includes(s.fpsCap as FpsCap)) g.fpsCap = s.fpsCap as FpsCap;
   if (typeof s.stats === 'boolean') g.stats = s.stats;
   if (typeof s.rawMouse === 'boolean') g.rawMouse = s.rawMouse;
+  if (typeof s.lookSensitivity === 'number' && Number.isFinite(s.lookSensitivity)) g.lookSensitivity = normalizeLookSensitivity(s.lookSensitivity);
   return g;
 }
 
