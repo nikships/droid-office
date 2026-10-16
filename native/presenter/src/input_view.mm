@@ -16,8 +16,11 @@ static int Buttons(void) {
   return (int)[NSEvent pressedMouseButtons] & 7;
 }
 
+// A copy: an attributed string's `string` is a live view of its storage, which AppKit's text input reuses and empties once insertText:
+// returns, so a reference kept until the key has been interpreted reads as "" (every real keystroke, though never a synthesized one).
 static NSString *PlainString(id s) {
-  return [s isKindOfClass:NSAttributedString.class] ? [(NSAttributedString *)s string] : (NSString *)s;
+  NSString *text = [s isKindOfClass:NSAttributedString.class] ? [(NSAttributedString *)s string] : (NSString *)s;
+  return [text copy] ?: @"";
 }
 
 // Diagnostic: DROID_OFFICE_INPUT_TRACE=<file> appends a line per input step (src/desktop/input-trace.ts writes the page side to the same file).

@@ -40,3 +40,10 @@ test('the monitor is installed once per window and removed when the view leaves 
   assert.match(body('- (void)dealloc'), /removeEventMonitor/);
   assert.match(body('- (void)installEventMonitor'), /if \(_eventMonitor\) return;/);
 });
+
+test('text the input system hands over is copied: an attributed string is emptied by AppKit once insertText: returns', () => {
+  const text = source.slice(source.indexOf('static NSString *PlainString'), source.indexOf('static NSCursor *HiddenCursor'));
+  assert.match(text, /\[text copy\]/);
+  assert.match(body('- (void)insertText:'), /PlainString\(string\)/);
+  assert.match(body('- (void)setMarkedText:'), /PlainString\(string\)/);
+});
