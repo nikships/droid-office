@@ -2,7 +2,7 @@
 
 A 3D office in the browser where its owner hires droid workers at desks and works in their live PTYs. A Node server owns the workers, terminals, boards and state; a Vite/three.js client renders the office.
 
-Read [docs/guide.md "How it works"](docs/guide.md#how-it-works) before changing how a subsystem behaves (status hooks, PTY host, worktrees, pipelines, floors, state files).
+Read [docs/guide/how-it-works.md "How it works"](docs/guide/how-it-works.md) before changing how a subsystem behaves (status hooks, PTY host, worktrees, pipelines, floors, state files).
 
 Planned work has written plans; follow them and keep them current when doing that work:
 
@@ -26,7 +26,7 @@ Planned work has written plans; follow them and keep them current when doing tha
 | `bin/office-workers.js` | Plain-Node `office-workers` command that agents use to hire and run subagents (`src/server/team.ts`) |
 | `tests/` | `node:test` suites run through `tsx` |
 | `deploy/` | `aws.sh` (EC2 lifecycle) and `provision.sh` (machine setup it runs) |
-| `docs/` | `guide.md` (every feature, setup and how each subsystem works) and the README pictures |
+| `docs/` | `guide/` (chapters for every feature, setup and how each subsystem works) and the README pictures |
 
 ## Nested instructions
 

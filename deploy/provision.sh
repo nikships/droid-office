@@ -117,12 +117,12 @@ fi
 if [[ -e /etc/apparmor.d/abi/4.0 ]] && command -v apparmor_parser >/dev/null 2>&1; then
   profile=$(mktemp)
   if ! DROID_OFFICE_BROWSERS_PATH="$BROWSERS" node /opt/droid-office/bin/droid-office.js browser apparmor-profile >"$profile" 2>/dev/null || [[ ! -s "$profile" ]]; then
-    echo "    (couldn't write the AppArmor profile for Chromium; see docs/guide.md)"
+    echo "    (couldn't write the AppArmor profile for Chromium; see docs/guide/getting-started.md)"
   elif ! quiet_soft sudo install -m 644 -o root -g root "$profile" /etc/apparmor.d/droid-office-chromium; then
-    echo "    (couldn't install the AppArmor profile for Chromium; see docs/guide.md)"
+    echo "    (couldn't install the AppArmor profile for Chromium; see docs/guide/getting-started.md)"
   else
     quiet_soft sudo apparmor_parser -r /etc/apparmor.d/droid-office-chromium ||
-      echo "    (the AppArmor profile for Chromium didn't load; see docs/guide.md)"
+      echo "    (the AppArmor profile for Chromium didn't load; see docs/guide/getting-started.md)"
   fi
   rm -f "$profile"
 fi

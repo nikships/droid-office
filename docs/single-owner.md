@@ -32,7 +32,7 @@ person: it has no role, profile or presence.
 
 The default bind address remains `0.0.0.0`. Use `--host 127.0.0.1` to keep access
 on the office's own machine. TLS and trusted reverse proxies remain available.
-See [the guide](guide.md#access) for details.
+See [the guide](guide/getting-started.md#access) for details.
 
 ## Existing data
 
