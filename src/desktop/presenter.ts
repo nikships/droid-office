@@ -143,6 +143,10 @@ export class PresenterWindow {
       },
     });
     this.contents = this.page.webContents;
+    // Keys the page does not handle are handed back by Chromium to the application menu as a synthetic key down, as a browser does for its shortcuts. The menu
+    // then matches an empty key equivalent against a bare Command (About) and AppKit's fn+E item against a plain E (Emoji & Symbols). The real Command
+    // shortcuts are matched by AppKit on the hardware event before the page ever sees it, so nothing is lost by refusing the hand-back.
+    this.contents.setIgnoreMenuShortcuts(true);
     this.visibility = new PageVisibility({
       startPainting: () => this.contents.startPainting(),
       stopPainting: () => this.contents.stopPainting(),
