@@ -32,6 +32,7 @@ import { Subagents } from './subagents.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
+import { TrackpadHaptics } from './haptics.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg } from '../shared/protocol.js';
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
@@ -202,6 +203,8 @@ export async function startServer(cfg: Config) {
   const tailscale = new TailscaleWatch();
   void tailscale.get();
   const clients = new Map<string, Client>();
+  /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
+  const trackpadHaptics = new TrackpadHaptics();
   /** What the office is called where it has no project of its own to go by (webhooks). */
   const officeName = cfg.project ? path.basename(cfg.project) : 'the office';
   // Droid lists its own models (built-in and custom); its settings file is the fallback.
@@ -882,6 +885,20 @@ export async function startServer(cfg: Config) {
         if (!ownPage(req)) return send(res, 200, { stats: null, reason: 'not on the office’s machine' });
         const stats = await readGpuStats();
         return send(res, 200, stats ? { stats } : { stats: null, reason: process.platform === 'darwin' ? 'ioreg failed' : 'macOS only' });
+      }
+      // A charged shot's trackpad taps. Only a page on this machine has a finger on this trackpad;
+      // any other page is told there is nothing to feel so it stops asking (see haptics.ts).
+      if (p === '/api/haptics') {
+        if (req.method !== 'POST') return send(res, 405, { error: 'POST' }, { allow: 'POST' });
+        if (!ownPage(req)) return send(res, 200, { ok: false, supported: false, reason: 'not on the office’s machine' });
+        let body: { pattern?: unknown } | null;
+        try {
+          body = JSON.parse(await readBody(req, 1024));
+        } catch {
+          return send(res, 400, { error: 'Send JSON: {"pattern": "tick" | "charged" | "super"}' });
+        }
+        const result = trackpadHaptics.perform(body && typeof body === 'object' ? body.pattern : undefined);
+        return result.ok ? send(res, 200, result) : send(res, result.supported ? 400 : 200, { ...result, ...(result.supported ? { error: 'Unknown pattern' } : {}) });
       }
       if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });

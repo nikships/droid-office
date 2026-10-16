@@ -72,6 +72,7 @@ import { type Sidearm, SPELL_CONFETTI, SPELL_SUPER, SPELL_TIP, SpellBolt, SpellI
 import { WAND_SPELLS, WandMotion, type WandCue, type WandSpellId } from './world/wand-motion';
 import { protegoWorkers, wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from './wand-actions';
 import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
+import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
 import { Hanger } from './hanging';
 import { redrawText } from './world/toon';
@@ -585,6 +586,8 @@ const gunMotion = new GunMotion();
 /** The wand's draw, casts and spells, played on your hands. */
 const wandMotion = new WandMotion();
 const shotCharge = new SidearmCharge();
+/** The same charge, under the finger on the Mac's trackpad; silent where there is none (see haptics.ts). */
+const chargeHaptics = new ChargeHaptics();
 let stopChargeSound: (() => void) | null = null;
 let chargeReady = false;
 const chargeLabel = h('span', {}, 'Charging');
@@ -595,6 +598,7 @@ function clearChargeFeedback() {
   stopChargeSound?.();
   stopChargeSound = null;
   chargeReady = false;
+  chargeHaptics.reset();
   chargeHud.classList.add('hidden');
 }
 
@@ -610,6 +614,7 @@ function updateShotCharge(now: number) {
   if (!gunOut || !player.enabled || modalOpen() || emoteWheel.isOpen) return cancelShotCharge();
   if (shotCharge.elapsed(now) < SHOT_CHARGE_PREVIEW_MS) return;
   const progress = shotCharge.progress(now);
+  chargeHaptics.charge(progress);
   if (!stopChargeSound) stopChargeSound = sound.sidearmCharge(drawnArm === 'wand');
   if (drawnArm === 'wand') wandMotion.charge(progress);
   else gunMotion.charge(progress);
@@ -620,6 +625,7 @@ function updateShotCharge(now: number) {
   chargeLabel.textContent = progress === 1 ? 'Charged · release' : 'Charging';
   if (progress === 1 && !chargeReady) {
     chargeReady = true;
+    chargeHaptics.charged();
     if (drawnArm === 'wand') sound.wandCue('ready');
     else sound.gunCue('cock');
   }
@@ -851,6 +857,7 @@ function addEffect(effect: (typeof puffs)[number]) {
 
 /** A click with the gun (or the wand) out: fire at what's under the crosshair, or flick the wand at it. */
 function fireGun(superShot = false) {
+  chargeHaptics.release(superShot);
   if (drawnArm === 'wand') {
     // The bolt leaves on the gesture's release cue (see wandCues).
     if (wandMotion.cast(superShot)) {
