@@ -62,6 +62,19 @@ object Tags {
         const val COMMENT_CANCEL = "board.comment.cancel"
         const val PING_SHEET = "board.ping_sheet"
         const val GONE = "board.gone"
+        /** The card live, as the office's window shows it (a WebView: its content isn't in a dump). */
+        const val LIVE = "board.live"
+        const val MODE_USE = "board.mode.use"
+        const val MODE_MARKUP = "board.mode.markup"
+        const val ADD_PICTURE = "board.add_picture"
+        const val HINT = "board.hint"
+        const val STICKY_SHEET = "board.sticky_sheet"
+        const val STICKY_INPUT = "board.sticky.input"
+        const val STICKY_SAVE = "board.sticky.save"
+        const val STICKY_MOVE = "board.sticky.move"
+        const val STICKY_DELETE = "board.sticky.delete"
+        /** Full screen for the live card, and the button that leaves it. */
+        const val FULLSCREEN = "board.fullscreen"
 
         fun card(id: String) = "board.card/$id"
         fun thread(id: String) = "board.thread/$id"
@@ -69,6 +82,9 @@ object Tags {
         fun replySend(id: String) = "board.thread.reply_send/$id"
         fun resolve(id: String) = "board.thread.resolve/$id"
         fun sticky(id: String) = "board.sticky/$id"
+        fun stickyColor(name: String) = "board.sticky.color/$name"
+        fun showThread(id: String) = "board.thread.show/$id"
+        fun moveThread(id: String) = "board.thread.move/$id"
         fun pingWorker(id: String) = "board.ping/$id"
     }
 

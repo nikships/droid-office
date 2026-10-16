@@ -25,6 +25,12 @@ const val WB_OWNER = "owner"
 /** The canonical layout width every artifact and its marks use (CANONICAL_WIDTH). */
 const val WB_CANONICAL_WIDTH = 1280
 
+/** The longest sticky note (MAX_STICKY_TEXT_LENGTH). */
+const val WB_MAX_STICKY_TEXT = 2_000
+
+/** The colours a sticky comes in, by the name the board stores (STICKY_COLORS). */
+val WB_STICKY_COLORS = listOf("yellow", "pink", "blue", "green", "orange", "purple")
+
 @Serializable
 data class WbAuthor(val kind: String = "owner", val id: String? = null, val name: String? = null, val color: String? = null) {
     val isOwner: Boolean get() = kind == "owner"
@@ -70,9 +76,14 @@ data class WbSticky(
     val stamps: Map<String, WbStamp> = emptyMap(),
 )
 
+/** A file the board holds, by its content hash (FileRef). */
+@Serializable
+data class WbFileRef(val hash: String = "", val size: Long = 0, val mime: String = "")
+
 @Serializable
 data class WbPicture(
     val id: String,
+    val file: WbFileRef = WbFileRef(),
     val anchor: WbAnchor = WbAnchor(),
     val box: WbBox = WbBox(),
     val detached: Boolean = false,
@@ -161,6 +172,13 @@ data class WbBoard(
         isChanged(thread.stamps.resolved, reader, since) || thread.messages.any { isChanged(it.stamp, reader, since) }
 
     fun changedCards(reader: String = WB_OWNER): Int = cards.count { changed(it.id, reader) }
+
+    /** The comment threads, stickies and pictures on [card] someone else changed after [since], by id. */
+    fun changedMarks(card: WbCard, since: Long, reader: String = WB_OWNER): Set<String> = buildSet {
+        for (t in card.threads) if (threadChangedSince(t, since, reader) || isChanged(t.stamps.anchor, reader, since)) add(t.id)
+        for (s in card.stickies) if (s.stamps.values.any { isChanged(it, reader, since) }) add(s.id)
+        for (p in card.pictures) if (p.stamps.values.any { isChanged(it, reader, since) }) add(p.id)
+    }
 }
 
 /** A card's latest render, as `whiteboard.rendered` says (WhiteboardRenderInfo). */
@@ -215,18 +233,33 @@ object WbOps {
     fun newId(prefix: String, random: Random = Random.Default): String = prefix + (1..12).map { ALPHABET[random.nextInt(ALPHABET.length)] }.joinToString("")
 
     /** A new comment thread pinned at a canonical point. */
-    fun commentAdd(card: String, thread: String, message: String, at: WbPoint, text: String): JsonObject = op("comment.add", card) {
+    fun commentAdd(card: String, thread: String, message: String, at: WbPoint, text: String): JsonObject =
+        commentAdd(card, thread, message, pointAnchor(at), text)
+
+    /** A new comment thread on the anchor the page found under the owner's tap (an element, or a point). */
+    fun commentAdd(card: String, thread: String, message: String, anchor: JsonObject, text: String): JsonObject = op("comment.add", card) {
         put("thread", thread)
         put("message", message)
-        putJsonObject("anchor") {
-            put("kind", "point")
-            putJsonObject("point") {
-                put("x", round(at.x))
-                put("y", round(at.y))
-            }
-        }
+        put("anchor", anchor)
         put("text", text)
     }
+
+    fun pointAnchor(at: WbPoint): JsonObject = buildJsonObject {
+        put("kind", "point")
+        putJsonObject("point") {
+            put("x", round(at.x))
+            put("y", round(at.y))
+        }
+    }
+
+    /** A sticky's text or colour (either may be left as it is). */
+    fun stickyEdit(card: String, id: String, text: String? = null, color: String? = null): JsonObject = op("sticky.edit", card) {
+        put("id", id)
+        if (text != null) put("text", text)
+        if (color != null) put("color", color)
+    }
+
+    fun stickyRm(card: String, id: String): JsonObject = op("sticky.rm", card) { put("id", id) }
 
     fun commentReply(card: String, thread: String, message: String, text: String): JsonObject = op("comment.reply", card) {
         put("thread", thread)
@@ -283,6 +316,10 @@ data class WbFloor(
     val pending: Int = 0,
     /** On this floor with a snapshot: committed changes arrive. */
     val live: Boolean = false,
+    /** Each card's capability for its files (`/whiteboard/c/<cap>/…`), by card id; none from an office that sends none. */
+    val caps: Map<String, String> = emptyMap(),
+    /** Each card exactly as the office sent it, for the live page, which reads it as the office's own window does. */
+    val cards: Map<String, JsonObject> = emptyMap(),
 )
 
 /**
@@ -307,6 +344,8 @@ class WhiteboardSync(private val send: (String) -> Boolean) {
         val pending = mutableListOf<Pending>()
         var renderer = WbRendererStatus()
         var renders: Map<String, WbRenderInfo> = emptyMap()
+        var caps: Map<String, String> = emptyMap()
+        var cards: Map<String, JsonObject> = emptyMap()
         var live = false
         var syncing = false
         var stale = false
@@ -327,7 +366,7 @@ class WhiteboardSync(private val send: (String) -> Boolean) {
     /** Called after anything a screen shows changed. */
     var onChange: () -> Unit = {}
 
-    fun floor(id: String): WbFloor? = floors[id]?.let { f -> WbFloor(f.id, f.board, f.renderer, f.renders, f.pending.size, f.live) }
+    fun floor(id: String): WbFloor? = floors[id]?.let { f -> WbFloor(f.id, f.board, f.renderer, f.renders, f.pending.size, f.live, f.caps, f.cards) }
 
     fun all(): Map<String, WbFloor> = floors.keys.associateWith { floor(it)!! }
 
@@ -412,12 +451,17 @@ class WhiteboardSync(private val send: (String) -> Boolean) {
 
     private fun update(f: Floor, o: JsonObject) {
         val u = o["update"] as? JsonObject ?: return
+        val caps = (o["caps"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { k to it } }?.toMap()
         when (u.str("kind")) {
             "snapshot" -> {
-                val board = u["board"]?.let { runCatching { OfficeJson.decodeFromJsonElement<WbBoard>(it) }.getOrNull() } ?: return
+                val raw = u["board"] as? JsonObject ?: return
+                val board = runCatching { OfficeJson.decodeFromJsonElement<WbBoard>(raw) }.getOrNull() ?: return
                 val epoch = u.str("epoch") ?: return
                 f.board = board
                 f.epoch = epoch
+                f.cards = (raw["cards"] as? JsonArray).orEmpty().mapNotNull { c -> (c as? JsonObject)?.let { obj -> obj.str("id")?.let { it to obj } } }.toMap()
+                // The snapshot's map is every card's; one without it (an older office) keeps what it had.
+                if (caps != null) f.caps = caps
                 (o["renderer"] as? JsonObject)?.let { r -> runCatching { OfficeJson.decodeFromJsonElement<WbRendererStatus>(r) }.getOrNull()?.let { f.renderer = it } }
                 f.live = current == f.id
                 f.syncing = false
@@ -434,6 +478,8 @@ class WhiteboardSync(private val send: (String) -> Boolean) {
                 }
             }
             "patch" -> {
+                // A patch names the capabilities of the cards it made, which the next snapshot repeats.
+                if (caps != null) f.caps = f.caps + caps
                 if (!f.live) return
                 val rev = ((u["patch"] as? JsonObject)?.get("rev") as? JsonPrimitive)?.longOrNull ?: return
                 if (rev <= (f.board?.rev ?: -1)) return
