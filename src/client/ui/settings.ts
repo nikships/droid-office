@@ -15,7 +15,20 @@ import { factoryKeySettings } from './factory-settings';
 import { openPhone, pairedPhones } from './phone';
 import type { PairedDevice } from '../../shared/devices';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup, parsePatterns } from '../../shared/worktree-setup';
-import { FPS_CAPS, OVERHEAD_STEP, RENDER_SCALE_MIN, RENDER_SCALE_STEP, normalizeOverhead, normalizeScale, type FpsCap, type GraphicsSettings } from '../graphics';
+import {
+  FPS_CAPS,
+  LOOK_SENSITIVITY_MAX,
+  LOOK_SENSITIVITY_MIN,
+  LOOK_SENSITIVITY_STEP,
+  OVERHEAD_STEP,
+  RENDER_SCALE_MIN,
+  RENDER_SCALE_STEP,
+  normalizeLookSensitivity,
+  normalizeOverhead,
+  normalizeScale,
+  type FpsCap,
+  type GraphicsSettings,
+} from '../graphics';
 
 const SIDEARMS: [Sidearm, string, string, string][] = [
   ['wand', '🪄', 'Droid wand', 'A flicked spell puts a worker to sleep on a glowing circle. Six spells on 1–6. No blood.'],
@@ -806,8 +819,18 @@ export function openSettings(
     () => settings.graphics.rawMouse,
     (on) => graphicsSet({ rawMouse: on }),
   );
+  const lookMin = LOOK_SENSITIVITY_MIN * 100;
+  const lookMax = LOOK_SENSITIVITY_MAX * 100;
+  const look = h('input', { type: 'range', min: lookMin, max: lookMax, step: LOOK_SENSITIVITY_STEP * 100, 'aria-label': 'Look sensitivity' });
+  const lookValue = h('span.vol-pct');
+  look.addEventListener('input', () => graphicsSet({ lookSensitivity: normalizeLookSensitivity(Number(look.value) / 100) }));
+  const lookRow = h('div.volume', {}, look, lookValue);
   const paintGraphics = () => {
     const g = settings.graphics;
+    const lookPct = Math.round(g.lookSensitivity * 100);
+    look.value = String(lookPct);
+    look.style.setProperty('--fill', `${((lookPct - lookMin) / (lookMax - lookMin)) * 100}%`);
+    lookValue.textContent = `${g.lookSensitivity.toFixed(2)}×`;
     for (const [s, v] of [
       [scale, g.scale],
       [sharpen, g.sharpen],
@@ -913,6 +936,10 @@ export function openSettings(
             'Looking around follows the mouse’s own movement, without the pointer acceleration macOS adds, so the same hand movement always turns the view the same amount. Where the browser can’t, the mouse works as usual. Takes effect the next time the office captures the mouse.',
           ),
           control: rawMouse.el,
+        }),
+        card('Look sensitivity', {
+          desc: desc('How far the view turns for the same mouse movement while the office has the mouse. 1× is the office’s own speed; lower turns slower, higher faster. Raw input on or off, it applies at once.'),
+          control: lookRow,
         }),
       ),
       group(

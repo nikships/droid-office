@@ -12,3 +12,6 @@ pw.txt
 .env
 .env.*
 !.env.example
+
+# Built native addons (npm run build:native).
+native/*/build

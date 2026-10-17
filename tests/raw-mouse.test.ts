@@ -104,6 +104,19 @@ for (const order of ['unsupported', 'unsupported-event-last'] as const) {
   });
 }
 
+test('look sensitivity scales how far a captured move turns the view', async (t) => {
+  const { player, move } = page(t, () => 'grant');
+  player.lock();
+  await settle();
+  await new Promise((r) => setTimeout(r, LOCK_WARP_MS + 20));
+  for (const sensitivity of [0.5, 1, 2.5]) {
+    player.lookSensitivity = sensitivity;
+    const yaw = player.camYaw;
+    move(100);
+    assert.ok(Math.abs(yaw - player.camYaw - 100 * 0.0022 * sensitivity) < 1e-9, `at ${sensitivity}× turned ${yaw - player.camYaw}`);
+  }
+});
+
 test('a captured move turns the view by all of it once the lock has settled, but not the warp as it lands', async (t) => {
   const { player, move } = page(t, () => 'grant');
   player.lock();

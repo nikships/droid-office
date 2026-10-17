@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { BrowserWindow, type IpcMainEvent, ipcMain } from 'electron';
+import { type BaseWindow, BrowserWindow, type IpcMainEvent, ipcMain } from 'electron';
 import { UPDATE_ACTIONS, type UpdateAction, type UpdateView } from './update-view.js';
 
 const WIDTH = 440;
@@ -64,7 +64,7 @@ document.addEventListener('keydown', (e) => {
 
 export interface UpdateWindowOptions {
   /** The office window to attach to as a sheet, so it opens on the full-screen window's Space. */
-  parent?: BrowserWindow;
+  parent?: BaseWindow;
   onAction: (action: UpdateAction) => void;
   onClosed: () => void;
 }

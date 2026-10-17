@@ -38,6 +38,7 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Sharpening' },
   { pane: 'graphics', title: 'Frame rate limit' },
   { pane: 'graphics', title: 'Raw mouse input' },
+  { pane: 'graphics', title: 'Look sensitivity' },
   { pane: 'graphics', title: 'Overhead lights' },
   { pane: 'graphics', title: 'Performance overlay' },
   { pane: 'notify', title: 'Desktop notifications' },

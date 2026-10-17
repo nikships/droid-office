@@ -55,7 +55,7 @@ Every new feature that ships in the original project is brought over, adapted to
 
 ## Get started in a minute
 
-**The Mac app release (Apple Silicon) is the only supported production install.**
+**The Mac app release is the only supported production install.** It needs **macOS 14 (Sonoma) or later on a Mac with an Apple M-series Pro, Max or Ultra chip**, ideally with a 120 Hz ProMotion display. Intel Macs and base M chips (plain M1 to M5) aren't supported: the app tells you so and quits.
 
 Download `Droid-Office-<version>-arm64.dmg` from the [latest release](https://github.com/nikships/droid-office/releases/latest), open it and drag **Droid Office** into Applications. It starts the office itself, opens it full screen and keeps itself up to date. Node.js isn't needed.
 
