@@ -73,26 +73,33 @@ export class PresenterInput {
   constructor(private readonly options: PresenterInputOptions) {
     this.lock = new PointerLock(() => options.native.inputCapabilities().rawMouse);
     const { page } = options;
-    page.on('cursor-changed', (_e: unknown, type: string, image: { toPNG(): Buffer; isEmpty(): boolean }, scale: number, _size: unknown, hotspot: { x: number; y: number }) => this.cursorChanged(type, image, scale, hotspot));
+    page.on('cursor-changed', (_e: unknown, type: string, image: { toPNG(): Buffer; isEmpty(): boolean }, scale: number, _size: unknown, hotspot: { x: number; y: number }) => {
+      if (!this.stopped) this.cursorChanged(type, image, scale, hotspot);
+    });
     // A page that is going away takes its pointer lock with it.
     page.on('did-start-navigation', (details: { isMainFrame?: boolean; isSameDocument?: boolean }) => {
-      if (details?.isMainFrame && !details.isSameDocument) this.releaseLock();
+      if (!this.stopped && details?.isMainFrame && !details.isSameDocument) this.releaseLock();
     });
     page.on('did-finish-load', () => {
+      if (this.stopped) return;
       this.trace(`did-finish-load url=${page.getURL()}`);
       void this.attach().then(() => this.pageHidden && this.applyVisibility());
     });
     page.on('render-process-gone', () => {
+      if (this.stopped) return;
       this.trace('render-process-gone');
       this.attached = false;
       this.releaseLock();
     });
     page.debugger.on('detach', () => {
+      if (this.stopped) return;
       this.trace('debugger detach');
       this.attached = false;
       this.releaseLock();
     });
-    page.debugger.on('message', (_e, method, params) => this.protocolEvent(method, params));
+    page.debugger.on('message', (_e, method, params) => {
+      if (!this.stopped) this.protocolEvent(method, params);
+    });
   }
 
   /** Attaches now. It also happens by itself when a page finishes loading; this is for a page that already has. */
@@ -100,14 +107,24 @@ export class PresenterInput {
     await this.attach();
   }
 
+  /**
+   * Ends all input: the page is going away (the app is quitting, or its window is closing), so nothing from the native view or the page
+   * is acted on after this. It can run when the native view is already gone and every call into it throws, and when the page is gone and
+   * every call into it throws, so each step is on its own.
+   */
   stop(): void {
-    this.stopped = true;
-    // Runs from the window's 'closed' handler, when the native view is already gone and every call into it throws.
+    if (this.stopped) return;
     try {
       this.releaseLock();
-      this.options.native.inputSetTextInput(false);
     } catch {
       // Nothing left to release.
+    }
+    this.stopped = true;
+    this.attached = false;
+    try {
+      this.options.native.inputSetTextInput(false);
+    } catch {
+      // The native view is gone.
     }
     try {
       if (this.options.page.debugger.isAttached()) this.options.page.debugger.detach();
@@ -135,6 +152,7 @@ export class PresenterInput {
   }
 
   private applyVisibility() {
+    if (this.stopped) return;
     void this.evaluate(`${SHIM}?.visibility(${this.pageHidden})`);
   }
 
@@ -243,14 +261,21 @@ export class PresenterInput {
   }
 
   private evaluate(expression: string): Promise<unknown> {
-    if (!this.attached) return Promise.resolve();
-    return this.options.page.debugger.sendCommand('Runtime.evaluate', { expression }).catch((err: Error) => this.log(`input: evaluate failed: ${err.message}`));
+    if (this.stopped || !this.attached) return Promise.resolve();
+    try {
+      return this.options.page.debugger.sendCommand('Runtime.evaluate', { expression }).catch((err: Error) => this.log(`input: evaluate failed: ${err.message}`));
+    } catch (err) {
+      // A destroyed page throws at once instead of rejecting.
+      this.log(`input: evaluate failed: ${(err as Error).message}`);
+      return Promise.resolve();
+    }
   }
 
   // --- Native events ------------------------------------------------------------------------------------------------
 
   /** Everything the native view reports arrives here. It never throws: input must not take the main process down. */
   handle(event: NativeEvent): void {
+    if (this.stopped) return;
     try {
       this.dispatch(event);
     } catch (err) {
@@ -284,7 +309,13 @@ export class PresenterInput {
   }
 
   private send(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent) {
-    this.options.page.sendInputEvent(event);
+    if (this.stopped) return;
+    try {
+      this.options.page.sendInputEvent(event);
+    } catch (err) {
+      // A destroyed page throws; the event is dropped, and what follows it in the same step (the cursor) still runs.
+      this.log(`input: sendInputEvent failed: ${(err as Error).message}`);
+    }
   }
 
   private mouse(e: NativeMouse) {
@@ -331,11 +362,11 @@ export class PresenterInput {
 
   /** A protocol command in order after the ones before it. A refused command is logged and never stops the ones after it. */
   private command(method: string, params: object) {
-    if (!this.attached) return this.trace(`${method} dropped: not attached`);
+    if (this.stopped || !this.attached) return this.trace(`${method} dropped: not attached`);
     const dbg = this.options.page.debugger;
     this.trace(`${method} ${JSON.stringify(params)}`);
     this.queue = this.queue
-      .then(() => dbg.sendCommand(method, params))
+      .then(() => (this.stopped ? undefined : dbg.sendCommand(method, params)))
       .then(() => this.trace(`${method} ok`))
       .catch((err: Error) => {
         this.trace(`${method} failed: ${err.message}`);
@@ -349,12 +380,12 @@ export class PresenterInput {
     this.focus = focused;
     if (!focused) this.releaseLock();
     void this.setFocus(focused);
-    if (focused) this.options.page.focus();
+    if (focused) this.onPage(() => this.options.page.focus());
   }
 
   /** The offscreen window can never be the real key window, so the page is told it has focus instead. */
   private async setFocus(focused: boolean) {
-    if (!this.attached) return;
+    if (this.stopped || !this.attached) return;
     try {
       await this.options.page.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: focused });
     } catch (err) {
@@ -368,6 +399,15 @@ export class PresenterInput {
     if (png && png.length <= MAX_CURSOR_PNG) this.cursor = { png, hotspot, scale };
     else this.cursor = { name: png ? 'arrow' : nativeCursor(type) };
     if (!this.lock.locked) this.applyCursor();
+  }
+
+  /** A call into the page that a destroyed page answers by throwing is dropped. */
+  private onPage(fn: () => void) {
+    try {
+      fn();
+    } catch (err) {
+      this.log(`input: ${(err as Error).message}`);
+    }
   }
 
   private applyCursor() {

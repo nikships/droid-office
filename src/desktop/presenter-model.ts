@@ -105,14 +105,19 @@ export interface InputFrameRateEffects {
 export class InputFrameRate {
   private lastInput = Number.NEGATIVE_INFINITY;
   private stop_: (() => void) | undefined;
+  private disposed = false;
 
   constructor(private readonly effects: InputFrameRateEffects) {}
 
   onInput(): void {
-    if (!this.effects.isVisible()) return;
+    if (this.disposed || !this.effects.isVisible()) return;
     this.lastInput = this.effects.now();
     if (this.stop_) return;
-    this.effects.reapply();
+    try {
+      this.effects.reapply();
+    } catch {
+      return;
+    }
     this.stop_ = this.effects.repeat(() => this.tick(), INPUT_REAPPLY_TICK_MS);
   }
 
@@ -121,13 +126,25 @@ export class InputFrameRate {
       this.stop();
       return;
     }
-    this.effects.reapply();
+    // A timer that raises ends the app with an uncaught exception, and one that raises once will raise on every tick after it (the page it sets the rate of is gone).
+    try {
+      this.effects.reapply();
+    } catch {
+      this.stop();
+      return;
+    }
     if (this.effects.now() - this.lastInput >= INPUT_REAPPLY_TRAIL_MS) this.stop();
   }
 
   stop(): void {
     this.stop_?.();
     this.stop_ = undefined;
+  }
+
+  /** The page is going away: no input starts the timer again. */
+  dispose(): void {
+    this.disposed = true;
+    this.stop();
   }
 }
 
