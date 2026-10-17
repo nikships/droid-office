@@ -16,6 +16,7 @@ import {
   TextureLedger,
   windowVisible,
 } from './presenter-model.js';
+import { PresenterTimers } from './presenter-lifecycle.js';
 import { CrashPolicy, FirstFrameGate, GPU_REPAINT_MS, GpuRecovery, PaintStall, trustedFrame } from './presenter-recovery.js';
 import { failStartup, loadNative, logStartupFailure, StartupAborted } from './startup.js';
 import { nativeModuleFailure, rendererCrashFailure, sharedTextureFailure } from './startup-failure.js';
@@ -96,9 +97,10 @@ export class PresenterWindow {
   onNativeEvent: ((event: Record<string, unknown>) => void) | undefined;
   /** Called whenever the page becomes visible or hidden (a minimized or covered window), so the office page can pause its own render loop. */
   onVisibleChange: ((visible: boolean) => void) | undefined;
-  private watchdog: NodeJS.Timeout | undefined;
-  private recheck: NodeJS.Timeout | undefined;
-  private settle: NodeJS.Timeout | undefined;
+  /** Every timer, so that one `quiesce()` ends them all before the page is destroyed. */
+  private readonly timers = new PresenterTimers();
+  /** Called once when the page is going away (the app quits or the window closes), so the input code stops touching it. */
+  onGone: (() => void) | undefined;
   private gotTexture = false;
   private shown = false;
   private failed = false;
@@ -106,10 +108,9 @@ export class PresenterWindow {
   private readonly crashes = new CrashPolicy();
   private readonly gpu = new GpuRecovery();
   private readonly stall = new PaintStall();
-  private stallTimer: NodeJS.Timeout | undefined;
-  private gpuTimer: NodeJS.Timeout | undefined;
   private asking = false;
   private readonly onChildGone = (_event: unknown, details: Electron.Details): void => this.childGone(details);
+  private readonly onBeforeQuit = (): void => this.quiesce();
   private closed = false;
   private hdr = false;
   private readonly visibility: PageVisibility;
@@ -148,18 +149,14 @@ export class PresenterWindow {
     // shortcuts are matched by AppKit on the hardware event before the page ever sees it, so nothing is lost by refusing the hand-back.
     this.contents.setIgnoreMenuShortcuts(true);
     this.visibility = new PageVisibility({
-      startPainting: () => this.contents.startPainting(),
-      stopPainting: () => this.contents.stopPainting(),
-      setFrameRate: (fps) => this.contents.setFrameRate(fps),
+      startPainting: () => this.onPage((contents) => contents.startPainting()),
+      stopPainting: () => this.onPage((contents) => contents.stopPainting()),
+      setFrameRate: (fps) => this.onPage((contents) => contents.setFrameRate(fps)),
       notify: (visible) => this.onVisibleChange?.(visible),
     });
     this.inputRate = new InputFrameRate({
       now: () => performance.now(),
-      repeat: (fn, ms) => {
-        const timer = setInterval(fn, ms);
-        timer.unref();
-        return () => clearInterval(timer);
-      },
+      repeat: (fn, ms) => this.timers.every('input', ms, fn, { unref: true }),
       reapply: () => this.visibility.reapply(),
       isVisible: () => this.visibility.isVisible(),
     });
@@ -214,14 +211,18 @@ export class PresenterWindow {
     this.base.on('enter-full-screen', () => this.resizePage());
     this.base.on('leave-full-screen', () => this.resizePage());
     this.base.once('closed', () => this.dispose());
-    this.watchdog = setTimeout(
-      () =>
-        this.noTexture(
-          this.gotTexture
-            ? `no frame had been drawn within ${FIRST_TEXTURE_MS / 1000} s of the window opening, though the page painted (its shared textures could not be shown)`
-            : `no paint event carried a shared texture within ${FIRST_TEXTURE_MS / 1000} s of the window opening`,
-        ),
-      FIRST_TEXTURE_MS,
+    // Quitting closes the offscreen page's window, and destroys its contents, before the visible window's 'closed' arrives: a timer or event in between would touch a destroyed page.
+    // 'before-quit' comes first of all, 'close' is the page's window beginning to go and 'destroyed' is the contents gone, so each of them ends the presenter's work with the page.
+    app.on('before-quit', this.onBeforeQuit);
+    this.page.once('close', () => this.quiesce());
+    this.page.once('closed', () => this.dispose());
+    this.contents.once('destroyed', () => this.quiesce());
+    this.timers.after('watchdog', FIRST_TEXTURE_MS, () =>
+      this.noTexture(
+        this.gotTexture
+          ? `no frame had been drawn within ${FIRST_TEXTURE_MS / 1000} s of the window opening, though the page painted (its shared textures could not be shown)`
+          : `no paint event carried a shared texture within ${FIRST_TEXTURE_MS / 1000} s of the window opening`,
+      ),
     );
     this.registerIpc();
   }
@@ -238,7 +239,17 @@ export class PresenterWindow {
   }
 
   focus(): void {
-    this.native.focus();
+    if (!this.closed) this.native.focus();
+  }
+
+  /** Whether the page is gone or going: its window closed, its contents destroyed or the app quitting. Nothing may touch it then. */
+  private gone(): boolean {
+    return this.closed || this.timers.isStopped || this.contents.isDestroyed() || this.page.isDestroyed();
+  }
+
+  /** Runs `fn` on the page's contents unless the page is gone, so a late timer or event is a no-op. */
+  private onPage(fn: (contents: WebContents) => void): void {
+    if (!this.gone()) fn(this.contents);
   }
 
   private paint(texture: Electron.OffscreenSharedTexture | undefined): void {
@@ -266,7 +277,7 @@ export class PresenterWindow {
     this.stall.painted();
     this.endStallWatch();
     this.gpu.painted();
-    clearTimeout(this.gpuTimer);
+    this.timers.clear('gpu');
     // The display link draws only once the window is on screen, so in that diagnostic mode the first texture is what shows it.
     if (this.mode === 'link') this.firstDrawn();
     const id = this.ledger.hold(texture);
@@ -279,20 +290,18 @@ export class PresenterWindow {
   }
 
   private watchStall(): void {
-    if (this.closed || this.failed || !trustedFrame(this.contents.mainFrame.url, this.options.officeOrigin())) return;
+    if (this.gone() || this.failed || !trustedFrame(this.contents.mainFrame.url, this.options.officeOrigin())) return;
     this.stall.arm(Date.now());
-    this.stallTimer ??= setInterval(() => this.checkStall(), 250);
-    this.stallTimer.unref();
+    if (!this.timers.has('stall')) this.timers.every('stall', 250, () => this.checkStall(), { unref: true });
   }
 
   private endStallWatch(): void {
-    clearInterval(this.stallTimer);
-    this.stallTimer = undefined;
+    this.timers.clear('stall');
   }
 
   private checkStall(): void {
     // A hidden page makes no frames on purpose; the watch starts again when it is shown.
-    if (this.closed || this.failed || this.contents.isDestroyed()) {
+    if (this.gone() || this.failed) {
       this.endStallWatch();
       return;
     }
@@ -316,9 +325,9 @@ export class PresenterWindow {
   }
 
   private noTexture(why: string): void {
-    if (this.closed || this.failed) return;
+    if (this.gone() || this.failed) return;
     this.failed = true;
-    clearTimeout(this.watchdog);
+    this.timers.clear('watchdog');
     try {
       failStartup(sharedTextureFailure(why));
     } catch (err) {
@@ -327,6 +336,7 @@ export class PresenterWindow {
   }
 
   private resizePage(): void {
+    if (this.gone()) return;
     const size = pageSize({ width: this.base.getContentSize()[0]!, height: this.base.getContentSize()[1]! });
     this.page.setContentSize(size.width, size.height);
   }
@@ -341,12 +351,12 @@ export class PresenterWindow {
   private firstDrawn(): void {
     if (this.closed || this.failed || !this.gate.drawn()) return;
     this.shown = true;
-    clearTimeout(this.watchdog);
+    this.timers.clear('watchdog');
     this.options.onFirstFrame(this.base);
   }
 
   private rendererGone(reason: string): void {
-    if (this.closed) return;
+    if (this.gone()) return;
     const action = this.crashes.onGone(reason, Date.now(), this.options.isQuitting());
     console.warn(`droid-office: the office page's process is gone (${reason}): ${action}`);
     if (action === 'reload') this.reloadPage();
@@ -355,16 +365,18 @@ export class PresenterWindow {
 
   /** True while the app itself is reloading the page (crash, GPU or stall recovery): the office's "Leave the office?" guard must not ask the owner about that. */
   reloading = false;
-  private reloadingTimer: NodeJS.Timeout | undefined;
 
   private reloadPage(): void {
-    if (this.closed || this.contents.isDestroyed()) return;
+    if (this.gone()) return;
     this.reloading = true;
-    clearTimeout(this.reloadingTimer);
-    this.reloadingTimer = setTimeout(() => {
-      this.reloading = false;
-    }, 5000);
-    this.reloadingTimer.unref();
+    this.timers.after(
+      'reloading',
+      5000,
+      () => {
+        this.reloading = false;
+      },
+      { unref: true },
+    );
     try {
       this.contents.reload();
     } catch (err) {
@@ -380,7 +392,7 @@ export class PresenterWindow {
     logStartupFailure(failure);
     try {
       const { response } = await dialog.showMessageBox(this.base, { type: 'error', message: failure.title, detail: failure.detail, buttons: ['Reload', 'Quit'], defaultId: 0, cancelId: 1 });
-      if (this.closed) return;
+      if (this.gone()) return;
       if (response === 0) {
         this.crashes.reset();
         this.reloadPage();
@@ -391,7 +403,7 @@ export class PresenterWindow {
   }
 
   private async unresponsive(): Promise<void> {
-    if (this.closed || this.asking) return;
+    if (this.gone() || this.asking) return;
     this.asking = true;
     try {
       const { response } = await dialog.showMessageBox(this.base, {
@@ -402,7 +414,7 @@ export class PresenterWindow {
         defaultId: 0,
         cancelId: 0,
       });
-      if (this.closed || this.contents.isDestroyed() || response !== 1) return;
+      if (this.gone() || response !== 1) return;
       this.contents.forcefullyCrashRenderer();
     } finally {
       this.asking = false;
@@ -410,25 +422,24 @@ export class PresenterWindow {
   }
 
   private childGone(details: Electron.Details): void {
-    if (this.closed || details.type !== 'GPU' || details.reason === 'clean-exit') return;
+    if (this.gone() || details.type !== 'GPU' || details.reason === 'clean-exit') return;
     console.warn(`droid-office: the GPU process is gone (${details.reason})`);
     this.armGpuTimer();
   }
 
   /** The page paints again by itself after the GPU process restarts; if it stays silent it is reloaded, and if it stays silent after that the app says so and quits. */
   private armGpuTimer(): void {
-    clearTimeout(this.gpuTimer);
-    this.gpuTimer = setTimeout(() => {
-      if (this.closed) return;
+    this.timers.after('gpu', GPU_REPAINT_MS, () => {
+      if (this.gone()) return;
       if (this.gpu.silentFor() === 'reload') {
         this.reloadPage();
         this.armGpuTimer();
       } else this.noTexture('the GPU process crashed and the office page did not paint again after a reload');
-    }, GPU_REPAINT_MS);
+    });
   }
 
   private applyDisplay(state: DisplayState): void {
-    if (this.closed) return;
+    if (this.gone()) return;
     this.maxFps = osrFrameRate(state.maxFps);
     this.visibility.setDisplayRate(this.maxFps);
     this.native.setPacing({ followDisplay: true });
@@ -438,24 +449,24 @@ export class PresenterWindow {
 
   /** A window nobody can see (minimized, covered, on another Space) makes no frames and its page is slowed to the floor frame rate and told it is hidden (`onVisibleChange`), which is what pauses the office's render loop. */
   private setVisible(visible: boolean): void {
+    if (this.gone()) return;
     this.visibility.set(visible);
-    clearTimeout(this.settle);
+    this.timers.clear('settle');
     // A visible page must run at the display's rate, so it is set again once the fullscreen or restore transition has settled: a rate lost to it must not leave a visible page at the hidden floor.
-    if (visible) this.settle = setTimeout(() => this.visibility.reapply(), 500);
-    if (visible || this.closed) {
-      clearInterval(this.recheck);
-      this.recheck = undefined;
-    } else if (!this.recheck) {
+    if (visible) this.timers.after('settle', 500, () => this.visibility.reapply());
+    if (visible) this.timers.clear('recheck');
+    else if (!this.timers.has('recheck')) {
       // An occlusion event is the only thing that turns a hidden page back on, so while hidden the window's real state is read once a second: a missed event must not strand a window that is on screen at the floor frame rate.
-      this.recheck = setInterval(() => {
-        if (!this.closed && windowVisible(this.native.displayInfo() as unknown as DisplayState)) this.setVisible(true);
-      }, 1000);
+      this.timers.every('recheck', 1000, () => {
+        if (!this.gone() && windowVisible(this.native.displayInfo() as unknown as DisplayState)) this.setVisible(true);
+      });
     }
   }
 
   private registerIpc(): void {
     // The page is untrusted: only its main frame, at the office's origin, may ask for anything.
-    const own = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => event.sender === this.contents && event.senderFrame === this.contents.mainFrame && trustedFrame(event.senderFrame?.url, this.options.officeOrigin());
+    const own = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
+      !this.gone() && event.sender === this.contents && event.senderFrame === this.contents.mainFrame && trustedFrame(event.senderFrame?.url, this.options.officeOrigin());
     ipcMain.handle('presenter:stats', (event, reset: unknown, plannedMs: unknown, samples: unknown) => {
       if (!own(event)) return null;
       return this.stats({ reset: reset === true, plannedMs: typeof plannedMs === 'number' && plannedMs > 0 ? plannedMs : undefined, samples: samples === true });
@@ -467,17 +478,20 @@ export class PresenterWindow {
     });
   }
 
+  /** The page is going away: every timer and listener that reaches it ends, and nothing starts again. The window is torn down by `dispose` once it has closed. */
+  private quiesce(): void {
+    if (this.timers.isStopped) return;
+    this.timers.stop();
+    this.inputRate.dispose();
+    app.removeListener('child-process-gone', this.onChildGone);
+    this.onGone?.();
+  }
+
   private dispose(): void {
     if (this.closed) return;
     this.closed = true;
-    clearTimeout(this.watchdog);
-    clearInterval(this.recheck);
-    this.endStallWatch();
-    clearTimeout(this.settle);
-    this.inputRate.stop();
-    clearTimeout(this.gpuTimer);
-    clearTimeout(this.reloadingTimer);
-    app.removeListener('child-process-gone', this.onChildGone);
+    this.quiesce();
+    app.removeListener('before-quit', this.onBeforeQuit);
     ipcMain.removeHandler('presenter:stats');
     ipcMain.removeAllListeners('presenter:hdr');
     this.native.close();

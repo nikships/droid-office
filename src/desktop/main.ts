@@ -106,6 +106,8 @@ function createWindow(loadOffice = true) {
   });
   created.onNativeEvent = (event) => input.handle(event as unknown as NativeEvent);
   created.onVisibleChange = (visible) => input.setPageVisible(visible);
+  // Quitting destroys the page before this window's 'closed': from then on no native event or visibility change may reach it.
+  created.onGone = () => input.stop();
   // A right click the page left alone gets the menu a browser would show, since an offscreen page has no native one.
   contents.on('context-menu', (_event, params) => {
     const items = contextMenu(
