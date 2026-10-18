@@ -31,7 +31,7 @@ export function runRows(state: PipelinesState, now: number): RunRow[] {
     }
     if (r.state === 'pending') return { ...base, side: stateWord(r).toUpperCase(), sideSub: `for ${clock(waitTime(r, now))}` };
     const took = runTime(r, now);
-    return { ...base, side: r.state === 'success' || r.state === 'failure' ? (took ? clock(took) : STATE_WORD[r.state]) : STATE_WORD[r.state], sideSub: `${ago(r.updatedAt, now)} ago`.replace('now ago', 'just now') };
+    return { ...base, side: r.state === 'success' || r.state === 'failure' ? (took ? clock(took) : STATE_WORD[r.state]) : STATE_WORD[r.state], sideSub: `${ago(r.updatedAt, now)} ago` };
   };
   return [...running.map(row), ...pending.map(row), ...recent.map(row)];
 }

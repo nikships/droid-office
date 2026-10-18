@@ -281,7 +281,7 @@ test('the board lists running runs with their progress, then waiting, then finis
   assert.deepEqual([by.get(6)?.title, by.get(6)?.side, by.get(6)?.sideSub, by.get(6)?.progress], ['Release', '1s', 'running', undefined]);
   assert.deepEqual([by.get(3)?.side, by.get(3)?.sideSub], ['NEEDS APPROVAL', 'for 20s']);
   assert.deepEqual([by.get(1)?.side, by.get(1)?.sideSub, by.get(1)?.sub], ['2m 00s', '1m ago', 'main  ·  push  ·  @ada']);
-  assert.deepEqual([by.get(5)?.side, by.get(5)?.sideSub, by.get(5)?.sub], ['cancelled', 'just now', 'main  ·  by hand']);
+  assert.deepEqual([by.get(5)?.side, by.get(5)?.sideSub, by.get(5)?.sub], ['cancelled', '10s ago', 'main  ·  by hand']);
 });
 
 /** A forge that answers from what the test sets, and remembers what it was asked to do. */
