@@ -59,17 +59,21 @@ export function renderWorkers(onOpen: (id: string) => void) {
   $('worker-count').textContent = hired ? String(hired) : '';
 }
 
+/** The meter pulses orange for this many seconds before the buzz wears off. */
+const FADING_SECONDS = 10;
 let caffeineKey = '';
 /** The caffeine meter: a cup per coffee in a row, and a bar that drains over the buzz's minute. */
 export function renderCaffeine(caffeine: Caffeine, now: number) {
   const left = caffeine.left(now);
   const jittery = caffeine.jitter(now) > 0;
-  const k = `${Math.ceil(left)}|${caffeine.cups}|${jittery}`;
+  const fading = left > 0 && left <= FADING_SECONDS;
+  const k = `${Math.ceil(left)}|${caffeine.cups}|${jittery}|${fading}`;
   if (k === caffeineKey) return;
   caffeineKey = k;
   const el = $('caffeine');
   el.classList.toggle('hidden', !left);
   el.classList.toggle('jittery', jittery);
+  el.classList.toggle('fading', fading);
   if (!left) return;
   $('caffeine-cups').textContent = '☕'.repeat(Math.min(caffeine.cups, 3));
   // The bar eases down a second at a time (see its CSS transition), so aim for where it will be in one.

@@ -365,8 +365,11 @@ img.glyph { display: inline-block; width: 1em; height: 1em; vertical-align: -0.1
 .caffeine .left { min-width: 24px; font-variant-numeric: tabular-nums; }
 .caffeine.jittery { animation: jitters .1s steps(2) infinite; }
 .caffeine.jittery .bar span { background: var(--danger); }
+.caffeine.fading:not(.jittery) .bar span { background: var(--accent); }
+.caffeine.fading:not(.jittery) .bar { animation: caffeine-pulse 1s ease-in-out infinite; }
 @keyframes jitters { 50% { transform: translate(1px, -1px) rotate(-1.5deg); } }
-@media (prefers-reduced-motion: reduce) { .caffeine.jittery { animation: none; } }
+@keyframes caffeine-pulse { 50% { border-color: var(--accent); box-shadow: 0 0 6px var(--accent-muted); opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .caffeine.jittery, .caffeine.fading .bar { animation: none; } }
 /* The floor details make the name taller: what's under it moves down. */
 #hud:has(#project-meta:not(.hud-off)) .caffeine { translate: 0 16px; }
 
