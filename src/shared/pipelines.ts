@@ -183,7 +183,7 @@ export function ago(iso: string, now: number): string {
   if (!Number.isFinite(t)) return '';
   const s = Math.max(0, Math.floor((now - t) / 1000));
   if (s < 45) return 'now';
-  if (s < 3600) return `${Math.floor(s / 60) + 1}m`;
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`;
   if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
 }
