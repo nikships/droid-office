@@ -490,6 +490,8 @@ private fun QuickKeys(workerId: String, phone: Boolean, onPhone: () -> Unit) {
         Triple("⏎", "Enter", Keys.ENTER),
         Triple("Tab", "Tab", Keys.TAB),
         Triple("⇧Tab", "Shift Tab", Keys.SHIFT_TAB),
+        Triple("Esc", "Escape", Keys.ESC),
+        Triple("⌫", "Backspace", Keys.BACKSPACE),
     )
     Row(
         Modifier.fillMaxWidth().tagged(Tags.Worker.KEYS).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
