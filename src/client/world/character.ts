@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
@@ -148,8 +149,7 @@ interface Capsule {
   readonly half: number;
   readonly r: number;
 }
-/** The worker's bean (see Worker) and a person's torso (see Person). */
-const BEAN: Capsule = { y: 0.55, half: 0.15, r: 0.28 };
+/** A person's torso (see Person). */
 const TORSO: Capsule = { y: 0.72, half: 0.14, r: 0.26 };
 
 /** The point on `c` at height `y`, `a` round from the front (+z; +x is positive), `out` off its surface, into `at`; returns the outward normal. */
@@ -280,29 +280,6 @@ function personKit(): THREE.Group {
   return kit('person', () => [lanyard(TORSO, 0.86, 1.05, 0.6, CREW.orange), ...idCard(TORSO, 0.775, 0.095, 0.13), ...patch(TORSO, 0.83, 0.74, 0.085), hug(TORSO, glyphFlat(0.22, 2), CREW.orange, 0.78, Math.PI, 0.004)]);
 }
 
-/** A worker's crew kit, under its headset: the lanyard runs below its ear cups, the card hangs below its eyes. */
-function workerKit(): THREE.Group {
-  return kit('worker', () => [lanyard(BEAN, 0.49, 0.8, 0.75, CREW.orange), ...idCard(BEAN, 0.425, 0.095, 0.125), ...patch(BEAN, 0.47, 0.76, 0.07), hug(BEAN, glyphFlat(0.17, 2), CREW.orange, 0.58, Math.PI, 0.004)]);
-}
-
-let headsetGeo: THREE.BufferGeometry | null = null;
-/** A worker's headset in graphite: the band (front to back, under the antenna), the ear cups and a boom out to its mic. */
-function headset(): THREE.BufferGeometry {
-  let geo = headsetGeo;
-  if (!geo) {
-    const band = new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI).translate(0, 0.72, 0).rotateY(Math.PI / 2);
-    const parts: THREE.BufferGeometry[] = [band];
-    for (const sx of [-1, 1]) parts.push(new THREE.SphereGeometry(0.07, 10, 8).translate(sx * 0.29, 0.72, 0));
-    const boom = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0.3, 0.7, 0.04), new THREE.Vector3(0.37, 0.6, 0.2), MIC);
-    parts.push(new THREE.TubeGeometry(boom, 8, 0.012, 5, false));
-    geo = mergeGeometries(parts.map((p) => tint(p, CREW.graphite)))!;
-    geo.deleteAttribute('color');
-    headsetGeo = geo;
-  }
-  return geo;
-}
-/** The tip of a worker's mic boom, where its orange LED is. */
-const MIC = new THREE.Vector3(0.17, 0.565, 0.255);
 let ledMat: THREE.MeshToonMaterial | null = null;
 /** The LED's lit orange, without the cartoon outline that would swallow something so small. */
 function ledMaterial(): THREE.MeshToonMaterial {
@@ -1129,15 +1106,179 @@ export function labelFade(d: number): number {
   return u * u * (3 - 2 * u);
 }
 
-/** The little Droid worker that sits at a desk. Forward is +z. */
+/** Articulated joint pivots of `droid-worker.glb`, matching `DROID_WORKER` in `tools/props/generate.py`. */
+export const WORKER_PIVOTS = {
+  rotor: new THREE.Vector3(0.045, 0.465, 0.169),
+  armL: new THREE.Vector3(-0.3, 0.55, 0.05),
+  armR: new THREE.Vector3(0.3, 0.55, 0.05),
+  footL: new THREE.Vector3(-0.12, 0.2, 0.05),
+  footR: new THREE.Vector3(0.12, 0.2, 0.05),
+  eyeL: new THREE.Vector3(-0.098, 0.785, 0.192),
+  eyeR: new THREE.Vector3(0.098, 0.785, 0.192),
+  pupilL: new THREE.Vector3(-0.098, 0.785, 0.2),
+  pupilR: new THREE.Vector3(0.098, 0.785, 0.2),
+  bulb: new THREE.Vector3(0, 1.195, 0),
+} as const;
+
+const WORKER_EYE_Y = WORKER_PIVOTS.eyeL.y;
+
+interface WorkerPart {
+  geo: THREE.BufferGeometry;
+  mat: THREE.MeshToonMaterial | 'skin';
+}
+
+interface WorkerModel {
+  skin: THREE.BufferGeometry;
+  body: WorkerPart[];
+  rotor: WorkerPart[];
+  armL: WorkerPart[];
+  armR: WorkerPart[];
+  footL: WorkerPart[];
+  footR: WorkerPart[];
+  eyeL: THREE.BufferGeometry;
+  eyeR: THREE.BufferGeometry;
+  pupilL: THREE.BufferGeometry;
+  pupilR: THREE.BufferGeometry;
+  bulb: THREE.BufferGeometry;
+}
+
+let workerModel: WorkerModel | null = null;
+const waitingWorkers = new Set<Worker>();
+let workerMats: Record<string, THREE.MeshToonMaterial> | null = null;
+
+function getWorkerMats(): Record<string, THREE.MeshToonMaterial> {
+  if (workerMats) return workerMats;
+  const noOutline = (m: THREE.MeshToonMaterial) => {
+    m.userData.outlineParameters = { visible: false };
+    return m;
+  };
+  workerMats = {
+    DroidBlack: toon('#161618'),
+    DroidGraphite: toon('#2a2b30'),
+    DroidSteel: toon('#52545c'),
+    DroidLight: noOutline(toon('#eceeef')),
+    DroidOrange: ledMaterial(),
+    DroidVisor: noOutline(toon('#070709')),
+    DroidRubber: toon('#101012'),
+    DroidEye: noOutline(toon('#f4f7fa', { emissive: '#3a3c40' })),
+    DroidPupil: noOutline(toon('#0d0e11')),
+  };
+  return workerMats;
+}
+
+/**
+ * Takes `droid-worker.glb`'s scene (as GLTFLoader gives it) as the model every worker is made from,
+ * centering each articulated limb/optic around its joint pivot in `WORKER_PIVOTS` and upgrading any
+ * worker built before the GLB arrived.
+ */
+export function setWorkerModel(scene: THREE.Object3D) {
+  const mats = getWorkerMats();
+  const centered = (geo: THREE.BufferGeometry, pivot?: THREE.Vector3): THREE.BufferGeometry => {
+    const g = geo.clone();
+    if (pivot) g.translate(-pivot.x, -pivot.y, -pivot.z);
+    return g;
+  };
+  const part = (m: THREE.Mesh, pivot?: THREE.Vector3): WorkerPart => {
+    const matName = (m.material as THREE.Material)?.name ?? '';
+    return {
+      geo: centered(m.geometry, pivot),
+      mat: matName === 'DroidSkin' ? 'skin' : (mats[matName] ?? mats.DroidGraphite),
+    };
+  };
+  const next: Partial<WorkerModel> = { body: [], rotor: [], armL: [], armR: [], footL: [], footR: [] };
+  scene.updateMatrixWorld(true);
+  scene.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const node = o.parent?.name && o.parent.name !== 'Scene' ? o.parent.name : o.name;
+    switch (node) {
+      case 'DroidSkin':
+        next.skin = centered(o.geometry);
+        break;
+      case 'DroidRotor':
+        next.rotor!.push(part(o, WORKER_PIVOTS.rotor));
+        break;
+      case 'DroidArmL':
+        next.armL!.push(part(o, WORKER_PIVOTS.armL));
+        break;
+      case 'DroidArmR':
+        next.armR!.push(part(o, WORKER_PIVOTS.armR));
+        break;
+      case 'DroidFootL':
+        next.footL!.push(part(o, WORKER_PIVOTS.footL));
+        break;
+      case 'DroidFootR':
+        next.footR!.push(part(o, WORKER_PIVOTS.footR));
+        break;
+      case 'EyeL':
+        next.eyeL = centered(o.geometry, WORKER_PIVOTS.eyeL);
+        break;
+      case 'EyeR':
+        next.eyeR = centered(o.geometry, WORKER_PIVOTS.eyeR);
+        break;
+      case 'PupilL':
+        next.pupilL = centered(o.geometry, WORKER_PIVOTS.pupilL);
+        break;
+      case 'PupilR':
+        next.pupilR = centered(o.geometry, WORKER_PIVOTS.pupilR);
+        break;
+      case 'Bulb':
+        next.bulb = centered(o.geometry, WORKER_PIVOTS.bulb);
+        break;
+      default:
+        next.body!.push(part(o));
+        break;
+    }
+  });
+  if (next.skin && next.eyeL && next.eyeR && next.pupilL && next.pupilR && next.bulb) {
+    workerModel = next as WorkerModel;
+    for (const w of waitingWorkers) w.fillModel();
+    waitingWorkers.clear();
+  }
+}
+
+/** Parses `droid-worker.glb` from its bytes (tests read it off disk; the office loads it with the props). */
+export function parseWorker(glb: ArrayBuffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(
+      glb,
+      '',
+      (gltf) => {
+        setWorkerModel(gltf.scene);
+        resolve();
+      },
+      reject,
+    );
+  });
+}
+
+/** True once `droid-worker.glb` has been registered via `setWorkerModel`. */
+export function workerReady(): boolean {
+  return workerModel !== null;
+}
+
+/** Procedural stand-in for the worker's colored armor plates before `droid-worker.glb` lands. */
+function proceduralWorkerSkin(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (const sx of [-1, 1]) {
+    parts.push(new THREE.BoxGeometry(0.085, 0.038, 0.28).translate(sx * 0.145, 0.928, 0.005));
+    parts.push(new THREE.BoxGeometry(0.036, 0.19, 0.22).translate(sx * 0.222, 0.785, 0.015));
+    parts.push(new THREE.BoxGeometry(0.105, 0.185, 0.3).translate(sx * 0.178, 0.515, 0));
+  }
+  return mergeGeometries(parts)!;
+}
+
+/** The autonomous Factory Droid worker that sits at a desk. Forward is +z. */
 export class Worker {
   readonly root = new THREE.Group();
   private body = new THREE.Group();
+  private skinMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>;
+  private chassis = new THREE.Group();
+  private rotor = new THREE.Group();
 
-  /** Its antenna bulb, lit in its status color so you can tell from across the room. */
+  /** Its antenna beacon bulb, lit in its status color so you can tell from across the room. */
   private bulb: { mat: THREE.MeshToonMaterial; mesh: THREE.Mesh };
-  private armL: THREE.Object3D;
-  private armR: THREE.Object3D;
+  private armL: THREE.Group;
+  private armR: THREE.Group;
   private bubble: THREE.Sprite | null = null;
   private bubbleKey = '';
   /** The bubble is a task card: it hangs from its tail instead of floating. */
@@ -1168,7 +1309,7 @@ export class Worker {
   /** Swish and flick lifts it briefly without changing its task or status. */
   private levitating: number | null = null;
   private pupils: THREE.Mesh[] = [];
-  private feet: THREE.Mesh[] = [];
+  private feet: THREE.Group[] = [];
   /** Sent home: the box of its things in its arms, and how far into its waddle it is. */
   private leaving: { box: THREE.Group; boxT: number; stride: number } | null = null;
   /** Shot: light out, face slack, flat where it fell while its session keeps running (see die). */
@@ -1211,8 +1352,6 @@ export class Worker {
   /** Beside its laptop, where the globe floats (see setPropSpot). */
   private spot = new THREE.Vector3(-1, 1.1, 1.3);
   private skin: THREE.MeshToonMaterial;
-  /** Its Factory crew kit: lanyard, ID card and pinwheel patches. */
-  private crew: THREE.Group;
   /** How far through its stride it is, walking in. */
   private stride = 0;
 
@@ -1221,50 +1360,72 @@ export class Worker {
     private color: string,
   ) {
     const skin = (this.skin = toonUnique(color));
-    const white = toon('#ffffff');
-    const ink = toon('#1d1d1d');
+    const mats = getWorkerMats();
 
     this.root.add(this.body);
-    // Bean-shaped body
-    const bean = mesh(new THREE.CapsuleGeometry(0.28, 0.3, 8, 16), skin, 0, 0.55, 0);
-    this.body.add(bean);
-    // Big cartoon eyes
-    for (const sx of [-1, 1]) {
-      const eye = mesh(new THREE.SphereGeometry(0.09, 12, 10), white, sx * 0.11, 0.7, 0.23);
-      eye.scale.z = 0.6;
+    // Keep the colored armor mesh at body.children[0] so casualties-ascent and tint checks find it.
+    this.skinMesh = new THREE.Mesh(proceduralWorkerSkin(), skin);
+    this.skinMesh.castShadow = true;
+    this.body.add(this.skinMesh);
+    this.body.add(this.chassis);
+
+    // Procedural stand-in chassis (swapped for droid-worker.glb in fillModel once loaded).
+    this.chassis.add(mesh(roundedBox(0.46, 0.295, 0.34, 0.045), mats.DroidBlack, 0, 0.785, -0.005));
+    this.chassis.add(mesh(roundedBox(0.425, 0.22, 0.065, 0.024), mats.DroidGraphite, 0, 0.785, 0.152));
+    this.chassis.add(mesh(new THREE.BoxGeometry(0.37, 0.162, 0.018), mats.DroidVisor, 0, 0.785, 0.184));
+    this.chassis.add(mesh(roundedBox(0.39, 0.21, 0.28, 0.03), mats.DroidBlack, 0, 0.495, 0));
+    this.chassis.add(mesh(roundedBox(0.28, 0.13, 0.23, 0.02), mats.DroidGraphite, 0, 0.35, 0));
+    this.chassis.add(mesh(roundedBox(0.28, 0.075, 0.21, 0.016), mats.DroidBlack, 0, 0.242, 0));
+    this.chassis.add(mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.14, 10), mats.DroidGraphite, 0, 1.052, 0));
+    const led = mesh(new THREE.SphereGeometry(0.022, 8, 6), mats.DroidOrange, 0.142, 0.645, 0.24);
+    led.name = 'headset-led';
+    this.chassis.add(led);
+
+    // Chest pinwheel rotor.
+    this.rotor.position.copy(WORKER_PIVOTS.rotor);
+    this.rotor.add(mesh(glyphFlat(0.108, 2), mats.DroidLight, 0, 0, 0));
+    this.body.add(this.rotor);
+
+    // Visor LED optics and aperture pupils.
+    for (const [eyePivot, pupilPivot] of [
+      [WORKER_PIVOTS.eyeL, WORKER_PIVOTS.pupilL],
+      [WORKER_PIVOTS.eyeR, WORKER_PIVOTS.pupilR],
+    ] as const) {
+      const eye = mesh(new THREE.BoxGeometry(0.098, 0.082, 0.014), mats.DroidEye, eyePivot.x, eyePivot.y, eyePivot.z);
       this.body.add(eye);
-      const pupil = mesh(new THREE.SphereGeometry(0.045, 10, 8), ink, sx * 0.11, 0.7, 0.29);
+      const pupil = mesh(new THREE.BoxGeometry(0.046, 0.048, 0.012), mats.DroidPupil, pupilPivot.x, pupilPivot.y, pupilPivot.z);
       this.body.add(pupil);
       this.eyes.push(eye, pupil);
       this.pupils.push(pupil);
     }
-    // Headset: band, ear cups and a mic with Factory's orange LED on it.
-    this.body.add(mesh(headset(), toon(CREW.graphite), 0, 0, 0));
-    const led = mesh(new THREE.SphereGeometry(0.024, 8, 6), ledMaterial(), MIC.x, MIC.y, MIC.z);
-    led.name = 'headset-led';
-    this.body.add(led);
-    // Its crew kit: lanyard, ID card and patches.
-    this.crew = workerKit();
-    this.body.add(this.crew);
-    // Antenna with status bulb.
-    this.body.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), toon(CREW.graphite), 0, 1.07, 0));
+
+    // Roof status beacon bulb.
     const mat = toonUnique(STATUS_BULB.starting);
     mat.emissive = new THREE.Color(STATUS_BULB.starting).multiplyScalar(0.6);
-    this.bulb = { mat, mesh: mesh(new THREE.SphereGeometry(0.075, 12, 10), mat, 0, 1.2, 0) };
+    this.bulb = {
+      mat,
+      mesh: mesh(new THREE.CylinderGeometry(0.056, 0.056, 0.095, 8), mat, WORKER_PIVOTS.bulb.x, WORKER_PIVOTS.bulb.y, WORKER_PIVOTS.bulb.z),
+    };
     this.body.add(this.bulb.mesh);
 
-    const arm = (x: number) => {
+    // Articulated servo arms.
+    const arm = (pivotPos: THREE.Vector3, side: number) => {
       const pivot = new THREE.Group();
-      pivot.position.set(x, 0.55, 0.05);
-      pivot.add(mesh(new THREE.CapsuleGeometry(0.055, 0.16, 4, 8), skin, 0, -0.12, 0));
+      pivot.position.copy(pivotPos);
+      pivot.add(mesh(new THREE.BoxGeometry(0.068, 0.11, 0.072), mats.DroidBlack, 0, -0.065, 0));
+      pivot.add(mesh(new THREE.BoxGeometry(0.022, 0.088, 0.058), skin, side * 0.032, -0.065, 0));
+      pivot.add(mesh(new THREE.BoxGeometry(0.066, 0.095, 0.076), mats.DroidGraphite, 0, -0.175, 0.012));
       this.body.add(pivot);
       return pivot;
     };
-    this.armL = arm(-0.3);
-    this.armR = arm(0.3);
-    // Black work boots.
-    for (const sx of [-1, 1]) {
-      const foot = mesh(new THREE.CapsuleGeometry(0.06, 0.1, 4, 8), toon(CREW.black), sx * 0.12, 0.2, 0.05);
+    this.armL = arm(WORKER_PIVOTS.armL, -1);
+    this.armR = arm(WORKER_PIVOTS.armR, 1);
+
+    // Heavy mech stabilizer boots.
+    for (const footPivot of [WORKER_PIVOTS.footL, WORKER_PIVOTS.footR]) {
+      const foot = new THREE.Group();
+      foot.position.copy(footPivot);
+      foot.add(mesh(new THREE.BoxGeometry(0.128, 0.085, 0.208), mats.DroidBlack, 0, -0.078, 0.012));
       this.body.add(foot);
       this.feet.push(foot);
     }
@@ -1278,7 +1439,39 @@ export class Worker {
     for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
     this.root.add(this.globe.group);
 
+    if (workerModel) this.fillModel();
+    else waitingWorkers.add(this);
+
     this.setName(name);
+  }
+
+  /** Replaces the procedural stand-in meshes with the `droid-worker.glb` parts once loaded. */
+  fillModel() {
+    if (!workerModel) return;
+    const replaceGroup = (group: THREE.Group, parts: WorkerPart[]) => {
+      for (const child of group.children) {
+        if ((child as THREE.Mesh).isMesh) (child as THREE.Mesh).geometry.dispose();
+      }
+      group.clear();
+      for (const p of parts) {
+        group.add(new THREE.Mesh(p.geo.clone(), p.mat === 'skin' ? this.skin : p.mat));
+      }
+    };
+    this.skinMesh.geometry.dispose();
+    this.skinMesh.geometry = workerModel.skin.clone();
+    replaceGroup(this.chassis, workerModel.body);
+    replaceGroup(this.rotor, workerModel.rotor);
+    replaceGroup(this.armL, workerModel.armL);
+    replaceGroup(this.armR, workerModel.armR);
+    replaceGroup(this.feet[0], workerModel.footL);
+    replaceGroup(this.feet[1], workerModel.footR);
+    const opticGeos = [workerModel.eyeL, workerModel.pupilL, workerModel.eyeR, workerModel.pupilR];
+    this.eyes.forEach((e, i) => {
+      e.geometry.dispose();
+      e.geometry = opticGeos[i].clone();
+    });
+    this.bulb.mesh.geometry.dispose();
+    this.bulb.mesh.geometry = workerModel.bulb.clone();
   }
 
   /** Where the globe floats, in its own space: beside its laptop, where the card over its head doesn't hide it. */
@@ -1403,7 +1596,7 @@ export class Worker {
     this.armL.position.set(-0.3, 0.55, 0.05);
     this.armR.position.set(0.3, 0.55, 0.05);
     this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2, 0.05));
-    for (const p of this.pupils) p.position.y = 0.7;
+    for (const p of this.pupils) p.position.y = WORKER_EYE_Y;
     this.bulbOut();
     if (this.bubble) {
       this.root.remove(this.bubble);
@@ -1415,9 +1608,9 @@ export class Worker {
     this.bubble = textSprite(farewell, { bg: '#0a0a0a', color: '#eeeeee', border: '#2f2f2f', size: 34 });
     this.root.add(this.bubble);
     // Looking down, brows up in the middle.
-    for (const p of this.pupils) p.position.y -= 0.035;
+    for (const p of this.pupils) p.position.y -= 0.022;
     for (const sx of [-1, 1]) {
-      const brow = mesh(new THREE.CapsuleGeometry(0.014, 0.08, 4, 6), toon('#1d1d1d'), sx * 0.11, 0.83, 0.228);
+      const brow = mesh(new THREE.CapsuleGeometry(0.012, 0.075, 4, 6), toon('#1d1d1d'), sx * 0.098, WORKER_EYE_Y + 0.052, 0.198);
       brow.rotation.z = Math.PI / 2 - sx * 0.4;
       this.body.add(brow);
     }
@@ -1464,14 +1657,14 @@ export class Worker {
       this.bubble = null;
     }
     this.bubbleKey = 'dead';
-    for (const p of this.pupils) p.position.y = 0.62;
+    for (const p of this.pupils) p.position.y = WORKER_EYE_Y - 0.028;
   }
 
   /** Revived: back on its feet with its session untouched, light and bubble as its status says. */
   revive() {
     if (!this.dead) return;
     this.dead = false;
-    for (const p of this.pupils) p.position.y = 0.7;
+    for (const p of this.pupils) p.position.y = WORKER_EYE_Y;
     for (const e of this.eyes) e.scale.y = 1;
     this.settle();
     this.bubbleKey = '';
@@ -1578,7 +1771,10 @@ export class Worker {
     this.armL.position.set(-0.3 + s.reach * 0.07, 0.55 - s.drop, 0.05 + s.reach * 0.12);
     this.armR.position.set(0.3 - s.reach * 0.07, 0.55 - s.drop + s.reach * 0.04, 0.05 + s.reach * 0.14);
     this.feet.forEach((f, i) => f.position.set(i ? 0.12 : -0.12, 0.2 + (i ? s.tap * 0.07 : 0), 0.05 + s.kick + (i ? s.tap * 0.03 : 0)));
-    for (const p of this.pupils) p.position.y = 0.7 + s.look;
+    for (const p of this.pupils) p.position.y = WORKER_EYE_Y + s.look;
+    if (!isAsleep(this.status)) {
+      this.rotor.rotation.z -= dt * (this.status === 'working' ? 8.5 : 1.8);
+    }
     this.body.rotation.x = s.lean;
     let twirl = 0;
     if (this.twirlT >= 0) {
@@ -1755,7 +1951,8 @@ export class Worker {
     // Whatever it was acting out waits: shoulders back in place, eyes ahead, the papers and globe put away.
     this.armL.position.set(-0.3, 0.55, 0.05);
     this.armR.position.set(0.3, 0.55, 0.05);
-    for (const p of this.pupils) p.position.y = 0.7;
+    for (const p of this.pupils) p.position.y = WORKER_EYE_Y;
+    this.rotor.rotation.z -= dt * 14;
     for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
     const k = 1 - Math.exp(-dt * 18);
     [this.armL, this.armR].forEach((a, i) => {
@@ -1802,6 +1999,7 @@ export class Worker {
   }
 
   dispose() {
+    waitingWorkers.delete(this);
     if (this.bubble) disposeSprite(this.bubble);
     if (this.nameTag) disposeSprite(this.nameTag);
   }

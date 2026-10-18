@@ -53,7 +53,7 @@ import { buildOffice, type DeskView, type InteractKind, type Interactable } from
 import { loadPropManifest, preloadProps, propManifest, propScene } from './world/props';
 import { buildRooftop, type Rooftop } from './world/rooftop';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
-import { Person, type PrBadge, Worker, type Stage } from './world/character';
+import { Person, type PrBadge, setWorkerModel, Worker, type Stage } from './world/character';
 import { Hands } from './world/hands';
 import { Smoke } from './world/smoke';
 import { HAZE_MAX, Sky, describeSky, type ScreenGlow } from './world/sky';
@@ -186,6 +186,8 @@ const propsReady = loadPropManifest()
     if (gun) setMagnumModel(gun);
     const wand = propScene('wand');
     if (wand) setWandModel(wand);
+    const worker = propScene('droid-worker');
+    if (worker) setWorkerModel(worker);
   })
   .catch((err) => console.warn('office: prop GLBs unavailable, keeping procedural props', err));
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);

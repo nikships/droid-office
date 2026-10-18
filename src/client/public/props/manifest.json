@@ -25,6 +25,20 @@
     "url": "/props/droid-computer.glb",
     "width": 0.45
   },
+  "droid-worker": {
+    "bytes": 340648,
+    "depth": 0.475,
+    "height": 1.1625,
+    "materials": 11,
+    "tags": [
+      "factory",
+      "hero",
+      "part"
+    ],
+    "triangles": 7540,
+    "url": "/props/droid-worker.glb",
+    "width": 0.698
+  },
   "macbook-base": {
     "bytes": 115328,
     "depth": 0.5305,
