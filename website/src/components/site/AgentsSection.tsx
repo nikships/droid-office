@@ -3,7 +3,7 @@ import { Eyebrow } from '../Eyebrow';
 import { AutoHealLog } from './AutoHealLog';
 import { Reveal } from './Reveal';
 import { SectionHeader } from './SectionHeader';
-import { VideoPlaceholder } from './VideoPlaceholder';
+import { VideoFrame } from './VideoFrame';
 import { autoHealVideo, boardAgents, teamLeadVideo } from '../../data/agents';
 const icons: Record<string, LucideIcon> = {
   issues: CircleDot,
@@ -54,7 +54,7 @@ export function AgentsSection() {
               Turn on Auto-heal for a floor. When a run on that floor fails, the Pipeline agent finds the root cause and hires a worker to push the fix. You see it happen on the wall.
             </p>
             <div className="mt-8">
-              <VideoPlaceholder video={autoHealVideo} />
+              <VideoFrame video={autoHealVideo} />
             </div>
           </Reveal>
           <Reveal delay={0.08} className="lg:sticky lg:top-20">
@@ -64,7 +64,7 @@ export function AgentsSection() {
 
         <div className="mt-20 grid gap-10 lg:grid-cols-[1.2fr_1fr] lg:items-center">
           <Reveal className="order-2 lg:order-1">
-            <VideoPlaceholder video={teamLeadVideo} />
+            <VideoFrame video={teamLeadVideo} />
           </Reveal>
           <Reveal delay={0.08} className="order-1 lg:order-2">
             <Eyebrow index="03.2">Team lead</Eyebrow>

@@ -1,4 +1,4 @@
-import type { AutoHealStep, BoardAgent, VideoBrief } from '../types/content';
+import type { AutoHealStep, BoardAgent, VideoClip } from '../types/content';
 
 export const boardAgents: BoardAgent[] = [
   {
@@ -44,26 +44,16 @@ export const autoHealSteps: AutoHealStep[] = [
   { time: '14:12:27', actor: 'ci / test', message: 'main #483 passed', status: 'success' },
 ];
 
-export const autoHealVideo: VideoBrief = {
-  slot: 'auto-heal',
+export const autoHealVideo: VideoClip = {
   title: 'Auto-heal: a red run wakes the Pipeline agent',
   duration: '0:30',
-  shows: [
-    'A run on the Pipelines board turns red while Auto-heal is on for the floor.',
-    'The Pipeline agent at the kiosk wakes and reads the failed job.',
-    'It names the root cause, then a new fixer worker sits down at a desk.',
-    'The fix lands as a PR card, and the next run on the board goes green.',
-  ],
+  src: '/videos/auto-heal.mp4',
+  poster: '/videos/auto-heal.jpg',
 };
 
-export const teamLeadVideo: VideoBrief = {
-  slot: 'team-lead',
+export const teamLeadVideo: VideoClip = {
   title: 'A team lead splitting one job across desks',
-  duration: '0:25',
-  shows: [
-    'Hire a team lead at the Team kiosk and give it one large task.',
-    'The lead posts its plan, then four subagents walk in and sit at separate desks.',
-    'Quick cuts between the subagents’ live terminals working in parallel.',
-    'The lead collects the reports and marks the job done.',
-  ],
+  duration: '0:28',
+  src: '/videos/team-lead.mp4',
+  poster: '/videos/team-lead.jpg',
 };

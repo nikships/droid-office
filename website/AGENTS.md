@@ -8,4 +8,5 @@ React, Vite and Tailwind; an npm workspace using the root `package-lock.json`.
 - `npm run deploy:website` uses Firebase CLI to deploy only Hosting to project `droid-office`.
   The root `firebase.json` typechecks and builds first, then publishes `website/dist`.
 - The public site is https://droid-office.web.app.
-- Preserve the supplied design and content, including explicit video placeholders until footage is ready.
+- Preserve the supplied design and content.
+- The videos and their posters are in `public/videos/` (1280×720 H.264, no audio, `+faststart`). They are captured from a clone of the owner's office with the `office-video-capture` skill; replace a clip by re-recording it, not with mocked footage.

@@ -1,4 +1,4 @@
-import type { FunThing, Pillar, VideoBrief } from '../types/content';
+import type { FunThing, Pillar, VideoClip } from '../types/content';
 
 export const pillars: Pillar[] = [
   {
@@ -29,15 +29,9 @@ export const funThings: FunThing[] = [
   { name: 'Droid wand', note: 'send a finished worker home' },
 ];
 
-export const playVideo: VideoBrief = {
-  slot: 'play',
+export const playVideo: VideoClip = {
   title: 'A lap around the office',
-  duration: '0:30',
-  shows: [
-    'Slide down the fire pole to the floor below, landing next to a row of busy workers.',
-    'Hand an issue card to a worker. It finishes, does a spin and throws confetti.',
-    'The PR merges and someone rings the merge gong.',
-    'Ride the elevator to the rooftop: jukebox playing, real weather over the city.',
-    'Wave the Droid wand to send a finished worker home.',
-  ],
+  duration: '0:44',
+  src: '/videos/play.mp4',
+  poster: '/videos/play.jpg',
 };

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Reveal } from './Reveal';
 import { SectionHeader } from './SectionHeader';
-import { VideoPlaceholder } from './VideoPlaceholder';
+import { VideoFrame } from './VideoFrame';
 import { tourChapters } from '../../data/tour';
 
 export function TourSection() {
@@ -76,7 +76,7 @@ export function TourSection() {
           <div id="tour-panel" role="tabpanel" aria-labelledby={`tab-${active.id}`} className="lg:sticky lg:top-20 lg:self-start">
             <AnimatePresence mode="wait">
               <motion.div key={active.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}>
-                <VideoPlaceholder video={active.video} size="lg" />
+                <VideoFrame video={active.video} size="lg" />
               </motion.div>
             </AnimatePresence>
           </div>

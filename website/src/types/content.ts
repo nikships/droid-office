@@ -1,8 +1,8 @@
-export type VideoBrief = {
-  slot: string;
+export type VideoClip = {
   title: string;
   duration: string;
-  shows: string[];
+  src: string;
+  poster: string;
 };
 
 export type TourChapter = {
@@ -11,7 +11,7 @@ export type TourChapter = {
   label: string;
   title: string;
   summary: string;
-  video: VideoBrief;
+  video: VideoClip;
 };
 
 export type Pillar = {

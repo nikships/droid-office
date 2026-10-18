@@ -1,6 +1,6 @@
 import { Eyebrow } from '../Eyebrow';
 import { Reveal } from './Reveal';
-import { VideoPlaceholder } from './VideoPlaceholder';
+import { VideoFrame } from './VideoFrame';
 import { demoReel } from '../../data/tour';
 
 export function ReelSection() {
@@ -10,9 +10,9 @@ export function ReelSection() {
         <Reveal>
           <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
             <Eyebrow index="00">The reel</Eyebrow>
-            <span className="font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Full walkthrough · 1:30</span>
+            <span className="font-heading text-[10px] uppercase tracking-[0.1em] text-text-dim">Full walkthrough · {demoReel.duration}</span>
           </div>
-          <VideoPlaceholder video={demoReel} size="lg" />
+          <VideoFrame video={demoReel} size="lg" controls />
         </Reveal>
       </div>
     </section>

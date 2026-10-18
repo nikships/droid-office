@@ -1,7 +1,7 @@
 import { Eye, Gamepad2, LayoutGrid, type LucideIcon } from 'lucide-react';
 import { Reveal } from './Reveal';
 import { SectionHeader } from './SectionHeader';
-import { VideoPlaceholder } from './VideoPlaceholder';
+import { VideoFrame } from './VideoFrame';
 import { images } from '../../data/links';
 import { funThings, pillars, playVideo } from '../../data/play';
 const icons: Record<string, LucideIcon> = {
@@ -60,7 +60,7 @@ export function PlaySection() {
         </div>
 
         <Reveal className="mt-4">
-          <VideoPlaceholder video={playVideo} />
+          <VideoFrame video={playVideo} />
         </Reveal>
       </div>
     </section>
