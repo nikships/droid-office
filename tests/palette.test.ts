@@ -40,6 +40,25 @@ test('scattered letters match in order, and prefer the starts of words', () => {
   assert.ok(matchText('flr', 'Fix Login Redirect')!.score > matchText('flr', 'aflxxxxxr')!.score);
 });
 
+test('"bb" finds Big Byte by its initials, after a name that starts with it', () => {
+  const workers: PaletteItem[] = [{ title: 'Hubbard' }, { title: 'Big Byte' }, { title: 'Bob' }, { title: 'Bbq' }];
+  assert.deepEqual(titles('bb', workers), ['Bbq', 'Big Byte', 'Hubbard', 'Bob']);
+  const m = matchText('bb', 'Big Byte')!;
+  assert.deepEqual(m.hits, [0, 4]);
+  assert.ok(m.score < matchText('bb', 'Bbq')!.score, 'a prefix beats initials');
+  assert.ok(m.score > matchText('bb', 'The bb gun')!.score, 'initials beat a word start');
+  assert.ok(matchText('BB', 'big-byte')!.score > 800, 'any case, any separator');
+});
+
+test('initials start at the first word, in order, and all of them beat the first few', () => {
+  assert.ok(matchText('bb', 'Big Byte')!.score > matchText('bb', 'Big Byte Bot')!.score);
+  assert.ok(matchText('bbb', 'Big Byte Bot')!.score > 800);
+  assert.equal(matchText('yb', 'Big Byte'), null, 'out of order');
+  assert.ok(matchText('bt', 'Big Byte')!.score < 600, 'not every letter a word start is only scattered');
+  assert.ok(matchText('bb', 'Old Big Byte')!.score < 600, 'not from the first word');
+  assert.deepEqual(matchText('flr', 'Fix Login Redirect')!.hits, [0, 4, 10]);
+});
+
 test('several words match anywhere in the text, in any order', () => {
   const m = matchText('redirect fix', 'Fix Login Redirect')!;
   assert.ok(m);

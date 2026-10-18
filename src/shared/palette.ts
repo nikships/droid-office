@@ -27,9 +27,13 @@ export interface PaletteMatch<T extends PaletteItem> {
 /** The most the palette lists at once: past that, typing more narrows it down. */
 export const PALETTE_MAX = 50;
 
-/** What each kind of match is worth: the whole text, its start, the start of a word, anywhere in it, a scattered subsequence. */
+/**
+ * What each kind of match is worth: the whole text, its start, the first letters of its words, the
+ * start of a word, anywhere in it, a scattered subsequence.
+ */
 const EXACT = 1000;
 const PREFIX = 900;
+const INITIALS = 850;
 const WORD_START = 800;
 const INSIDE = 600;
 const WORDS = 500;
@@ -54,6 +58,18 @@ function wordStart(text: string, i: number): boolean {
 
 const range = (from: number, n: number) => Array.from({ length: n }, (_, k) => from + k);
 
+/**
+ * Where `letters` are the first letters of the words of `text` (both folded), from its first word
+ * on, and whether they are every word's; or null.
+ */
+function initialsOf(text: string, letters: string): { hits: number[]; all: boolean } | null {
+  const starts: number[] = [];
+  for (let i = 0; i < text.length; i++) if (/[\p{L}\p{N}]/u.test(text[i]) && wordStart(text, i)) starts.push(i);
+  if (starts.length < letters.length) return null;
+  for (let k = 0; k < letters.length; k++) if (text[starts[k]] !== letters[k]) return null;
+  return { hits: starts.slice(0, letters.length), all: starts.length === letters.length };
+}
+
 /** Where `word` is in `text` (both folded), preferring the start of a word, or -1. */
 function findWord(text: string, word: string, from = 0): number {
   let first = -1;
@@ -66,9 +82,10 @@ function findWord(text: string, word: string, from = 0): number {
 
 /**
  * How well `query` matches `text`, or null when it doesn't: the whole text beats its start, which
- * beats the start of a word inside it, which beats the letters anywhere in it, then every typed
- * word somewhere in it, and last the letters in order but scattered (fewer, closer gaps and
- * letters at word starts score higher). A shorter text wins a tie. An empty query matches all.
+ * beats its words' initials ("bb" for "Big Byte"; all of them beat the first few), which beat the
+ * start of a word inside it, which beats the letters anywhere in it, then every typed word
+ * somewhere in it, and last the letters in order but scattered (fewer, closer gaps and letters at
+ * word starts score higher). A shorter text wins a tie. An empty query matches all.
  */
 export function matchText(query: string, text: string): TextMatch | null {
   const q = fold(query.replace(/\s+/g, ' ').trim());
@@ -79,7 +96,12 @@ export function matchText(query: string, text: string): TextMatch | null {
   const whole = t.trim() === q;
   if (whole) return { score: EXACT + short, hits: range(t.indexOf(q), q.length) };
   const at = findWord(t, q);
-  if (at >= 0) return { score: (at === 0 ? PREFIX : wordStart(t, at) ? WORD_START : INSIDE) + short, hits: range(at, q.length) };
+  if (at === 0) return { score: PREFIX + short, hits: range(0, q.length) };
+  if (q.length > 1 && !q.includes(' ')) {
+    const initials = initialsOf(t, q);
+    if (initials) return { score: INITIALS + (initials.all ? 25 : 0) + short, hits: initials.hits };
+  }
+  if (at >= 0) return { score: (wordStart(t, at) ? WORD_START : INSIDE) + short, hits: range(at, q.length) };
 
   // Several words ("login fix"): each one somewhere, in any order.
   const words = q.split(' ');
