@@ -85,7 +85,7 @@ test('times read like a clock and an age', () => {
   assert.equal(clock(42_000), '42s');
   assert.equal(clock(185_000), '3m 05s');
   assert.equal(clock(4_320_000), '1h 12m');
-  assert.equal(ago(iso(10_000), NOW), 'now');
+  assert.equal(ago(iso(10_000), NOW), '10s');
   assert.equal(ago(iso(240_000), NOW), '4m');
   assert.equal(ago(iso(3 * 3600_000), NOW), '3h');
   assert.equal(ago(iso(2 * 86400_000), NOW), '2d');

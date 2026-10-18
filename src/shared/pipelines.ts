@@ -177,12 +177,12 @@ export function clock(ms: number): string {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
-/** How long ago, in a few letters: `now`, `4m`, `3h`, `2d`. */
+/** How long ago, in a few letters: `10s`, `4m`, `3h`, `2d`. */
 export function ago(iso: string, now: number): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
   const s = Math.max(0, Math.floor((now - t) / 1000));
-  if (s < 45) return 'now';
+  if (s < 45) return `${Math.round(s / 60)}s`;
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`;
   if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
